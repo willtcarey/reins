@@ -30,17 +30,57 @@ export class HeraldSessions extends LitElement {
     this.refresh();
   }
 
+  override willUpdate(changed: Map<string, unknown>) {
+    // When the active session changes (e.g. new session created),
+    // ensure it appears in the sidebar list immediately — even if
+    // the session file hasn't been persisted to disk yet.
+    if (changed.has("activeSessionId") && this.activeSessionId) {
+      const found = this.sessions.some(s => s.id === this.activeSessionId);
+      if (!found) {
+        this.ensureActiveSession();
+      }
+    }
+  }
+
+  /**
+   * Re-fetch the session list from the server. If the active session
+   * still isn't in the list (empty session not yet persisted), insert
+   * a placeholder entry so the user sees it immediately.
+   */
   async refresh() {
     this.loading = true;
     try {
       const resp = await fetch("/api/sessions");
       if (resp.ok) {
         this.sessions = await resp.json();
+        this.ensureActiveSession();
       }
     } catch {
       // Silently fail — list will be empty
     }
     this.loading = false;
+  }
+
+  /**
+   * If the active session isn't in the list (new session not yet
+   * persisted to disk), add a synthetic placeholder entry.
+   */
+  private ensureActiveSession() {
+    if (!this.activeSessionId) return;
+    const found = this.sessions.some(s => s.id === this.activeSessionId);
+    if (!found) {
+      this.sessions = [
+        {
+          path: "",
+          id: this.activeSessionId,
+          created: new Date().toISOString(),
+          modified: new Date().toISOString(),
+          messageCount: 0,
+          firstMessage: "",
+        },
+        ...this.sessions,
+      ];
+    }
   }
 
   private handleNewSession() {
