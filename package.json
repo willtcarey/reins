@@ -1,0 +1,9 @@
+{
+  "name": "herald",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "dev": "bun --watch packages/backend/src/index.ts",
+    "build": "echo 'frontend build not yet configured'"
+  }
+}

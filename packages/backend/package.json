@@ -1,0 +1,12 @@
+{
+  "name": "@herald/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "^0.52.9"
+  }
+}
