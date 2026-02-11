@@ -275,9 +275,9 @@ export class HeraldDiff extends LitElement {
     );
 
     return html`
-      <div class="mb-3 border border-zinc-700 rounded-lg overflow-hidden">
+      <div class="mb-3 border border-zinc-700 rounded-lg">
         <button
-          class="w-full flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-750 text-sm cursor-pointer"
+          class="w-full flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-750 text-sm cursor-pointer sticky top-0 z-10 rounded-t-lg border-b border-zinc-700"
           @click=${() => this.toggleFile(file.path)}
         >
           <span class="text-zinc-500 font-mono text-xs">${collapsed ? "▶" : "▼"}</span>
