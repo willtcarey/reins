@@ -257,6 +257,27 @@ export class HeraldChat extends LitElement {
     });
   }
 
+  /** Return a short contextual summary for a tool call based on its name & args. */
+  private toolSummary(name: string, args: Record<string, any> | undefined): string {
+    if (!args) return "";
+    switch (name.toLowerCase()) {
+      case "bash":
+        return args.command ?? "";
+      case "read":
+        return args.path ?? "";
+      case "edit":
+        return args.path ?? "";
+      case "write":
+        return args.path ?? "";
+      default:
+        // Generic: show first string-valued arg as context
+        for (const v of Object.values(args)) {
+          if (typeof v === "string" && v.length > 0) return v.length > 120 ? v.slice(0, 117) + "…" : v;
+        }
+        return "";
+    }
+  }
+
   private toggleTool(id: string) {
     const next = new Set(this.expandedTools);
     if (next.has(id)) {
@@ -326,16 +347,19 @@ export class HeraldChat extends LitElement {
     const result = this.messages.find(
       (m): m is ToolResultMessage => m.role === "toolResult" && m.toolCallId === tc.id
     );
+    const summary = this.toolSummary(tc.name, tc.arguments);
 
     return html`
       <div class="mt-1 ml-2 border-l-2 border-zinc-600 pl-3">
         <button
-          class="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+          class="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer truncate max-w-full"
+          title="${summary || tc.name}"
           @click=${() => this.toggleTool(tc.id)}
         >
-          <span class="font-mono">${expanded ? "▼" : "▶"}</span>
-          <span class="font-semibold">${tc.name}</span>
-          ${result?.isError ? html`<span class="text-red-400 ml-1">error</span>` : nothing}
+          <span class="font-mono flex-shrink-0">${expanded ? "▼" : "▶"}</span>
+          <span class="font-semibold flex-shrink-0">${tc.name}</span>
+          ${result?.isError ? html`<span class="text-red-400 ml-1 flex-shrink-0">error</span>` : nothing}
+          ${summary ? html`<span class="font-mono text-zinc-500 truncate">${summary}</span>` : nothing}
         </button>
         ${expanded ? html`
           <div class="mt-1 text-xs">
@@ -403,14 +427,16 @@ export class HeraldChat extends LitElement {
             `;
           }
           // tool block
+          const summary = this.toolSummary(block.name, block.args);
           return html`
-            <div class="mt-1 mb-1 ml-2 border-l-2 ${block.status === "running" ? "border-yellow-500" : "border-zinc-600"} pl-3 flex items-center gap-2 text-xs text-zinc-400">
+            <div class="mt-1 mb-1 ml-2 border-l-2 ${block.status === "running" ? "border-yellow-500" : "border-zinc-600"} pl-3 flex items-center gap-2 text-xs text-zinc-400 truncate" title="${summary || block.name}">
               ${block.status === "running" ? html`
-                <span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin"></span>
+                <span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>
               ` : html`
-                <span class="text-zinc-500">✓</span>
+                <span class="text-zinc-500 flex-shrink-0">✓</span>
               `}
-              <span class="font-mono font-semibold">${block.name}</span>
+              <span class="font-mono font-semibold flex-shrink-0">${block.name}</span>
+              ${summary ? html`<span class="font-mono text-zinc-500 truncate">${summary}</span>` : nothing}
             </div>
           `;
         })}
