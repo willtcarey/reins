@@ -28,7 +28,12 @@ let session: AgentSession;
 async function initSession(): Promise<void> {
   const tools = createCodingTools(PROJECT_DIR);
   const sessionManager = SessionManager.create(PROJECT_DIR);
-  const model = getModel("anthropic", "claude-sonnet-4-5-20250929");
+
+  // Allow explicit override via env vars, otherwise let the SDK auto-discover
+  // from ~/.pi/agent/auth.json (OAuth) or environment API keys
+  const provider = process.env.HERALD_PROVIDER;
+  const modelId = process.env.HERALD_MODEL;
+  const model = provider && modelId ? getModel(provider as any, modelId) : undefined;
 
   const result = await createAgentSession({
     cwd: PROJECT_DIR,
