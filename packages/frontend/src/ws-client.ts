@@ -18,6 +18,17 @@ export interface HeraldState {
 export interface InitPayload {
   messages: any[];
   state: HeraldState;
+  sessionId: string;
+}
+
+export interface SessionListItem {
+  path: string;
+  id: string;
+  name?: string;
+  created: string;
+  modified: string;
+  messageCount: number;
+  firstMessage: string;
 }
 
 /** Inbound message shapes from the backend */
@@ -176,6 +187,14 @@ export class HeraldClient {
 
   getMessages(): void {
     this.send({ type: "get_messages" });
+  }
+
+  switchSession(sessionPath: string): void {
+    this.send({ type: "switch_session", sessionPath });
+  }
+
+  newSession(): void {
+    this.send({ type: "new_session" });
   }
 
   private send(data: unknown): void {

@@ -1,20 +1,22 @@
 /**
  * Herald App Shell
  *
- * Root component that creates the two-panel layout (chat + diff),
- * initializes the WebSocket client, and wires everything together.
+ * Root component with session sidebar, chat panel, and diff panel.
+ * Initializes the WebSocket client and wires everything together.
  * Uses light DOM for Tailwind compatibility.
  */
 
 import { LitElement, html } from "lit";
-import { customElement, state, query } from "lit/decorators.js";
+import { customElement, state } from "lit/decorators.js";
 import { HeraldClient } from "./ws-client.js";
 import type { HeraldChat } from "./chat-panel.js";
 import type { HeraldDiff } from "./diff-panel.js";
+import type { HeraldSessions } from "./session-sidebar.js";
 
 // Ensure sub-components are registered
 import "./chat-panel.js";
 import "./diff-panel.js";
+import "./session-sidebar.js";
 
 // Tools that modify files and should trigger a diff refresh
 const FILE_MODIFYING_TOOLS = new Set(["write", "edit", "bash"]);
@@ -28,6 +30,7 @@ export class HeraldApp extends LitElement {
   private client = new HeraldClient();
 
   @state() private connected = false;
+  @state() private activeSessionId = "";
 
   override connectedCallback() {
     super.connectedCallback();
@@ -36,20 +39,25 @@ export class HeraldApp extends LitElement {
       this.connected = connected;
     });
 
+    // Track active session and refresh sidebar on session changes
+    this.client.onInit((data) => {
+      this.activeSessionId = data.sessionId;
+      const sidebar = this.querySelector("herald-sessions") as HeraldSessions | null;
+      sidebar?.refresh();
+    });
+
     // Refresh diff panel when file-modifying tools complete
     this.client.onEvent((event) => {
       if (
         event.type === "tool_execution_end" &&
         FILE_MODIFYING_TOOLS.has(event.toolName)
       ) {
-        // Small delay to let fs settle
         setTimeout(() => {
           const diffPanel = this.querySelector("herald-diff") as HeraldDiff | null;
           diffPanel?.refresh();
         }, 500);
       }
 
-      // Also refresh on agent_end since all tools are done
       if (event.type === "agent_end") {
         setTimeout(() => {
           const diffPanel = this.querySelector("herald-diff") as HeraldDiff | null;
@@ -81,10 +89,16 @@ export class HeraldApp extends LitElement {
           </div>
         ` : ""}
 
-        <!-- Main panels -->
+        <!-- Main layout: sidebar + chat + diff -->
         <div class="flex-1 flex min-h-0">
+          <!-- Session sidebar -->
+          <herald-sessions
+            .client=${this.client}
+            .activeSessionId=${this.activeSessionId}
+          ></herald-sessions>
+
           <!-- Chat panel -->
-          <div class="w-1/2 flex flex-col border-r border-zinc-700">
+          <div class="flex-1 flex flex-col border-r border-zinc-700 min-w-0">
             <div class="flex items-center justify-between px-4 py-2 border-b border-zinc-700 bg-zinc-800/50">
               <h2 class="text-sm font-semibold text-zinc-300">Chat</h2>
               <div class="flex items-center gap-2">
@@ -98,7 +112,7 @@ export class HeraldApp extends LitElement {
           </div>
 
           <!-- Diff panel -->
-          <div class="w-1/2 flex flex-col">
+          <div class="w-1/2 flex flex-col shrink-0">
             <div class="flex items-center justify-between px-4 py-2 border-b border-zinc-700 bg-zinc-800/50">
               <h2 class="text-sm font-semibold text-zinc-300">Changes</h2>
               <button
