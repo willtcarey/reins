@@ -60,11 +60,20 @@ interface ToolResultMessage {
 
 type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage;
 
-interface StreamingToolCall {
+interface StreamingTextBlock {
+  type: "text";
+  text: string;
+}
+
+interface StreamingToolBlock {
+  type: "tool";
+  id: string;
   name: string;
   args: any;
   status: "running" | "done";
 }
+
+type StreamingBlock = StreamingTextBlock | StreamingToolBlock;
 
 // ---- Component --------------------------------------------------------------
 
@@ -80,8 +89,7 @@ export class HeraldChat extends LitElement {
 
   @state() private messages: AgentMessage[] = [];
   @state() private isStreaming = false;
-  @state() private streamingText = "";
-  @state() private streamingTools = new Map<string, StreamingToolCall>();
+  @state() private streamingBlocks: StreamingBlock[] = [];
   @state() private inputText = "";
   @state() private expandedTools = new Set<string>();
 
@@ -117,8 +125,7 @@ export class HeraldChat extends LitElement {
     this.unsubscribeInit = this.client.onInit((data) => {
       this.messages = data.messages ?? [];
       this.isStreaming = data.state.isStreaming;
-      this.streamingText = "";
-      this.streamingTools = new Map();
+      this.streamingBlocks = [];
     });
 
     this.unsubscribeEvent = this.client.onEvent((event) => {
@@ -130,43 +137,53 @@ export class HeraldChat extends LitElement {
     switch (event.type) {
       case "agent_start":
         this.isStreaming = true;
-        this.streamingText = "";
-        this.streamingTools = new Map();
+        this.streamingBlocks = [];
         break;
 
       case "message_update": {
         const ame = event.assistantMessageEvent;
         if (ame?.type === "text_delta") {
-          this.streamingText += ame.delta;
+          const blocks = [...this.streamingBlocks];
+          const last = blocks[blocks.length - 1];
+          if (last && last.type === "text") {
+            // Append to existing text block
+            blocks[blocks.length - 1] = { ...last, text: last.text + ame.delta };
+          } else {
+            // Start a new text block (either first block, or after a tool)
+            blocks.push({ type: "text", text: ame.delta });
+          }
+          this.streamingBlocks = blocks;
         }
         break;
       }
 
       case "tool_execution_start": {
-        const next = new Map(this.streamingTools);
-        next.set(event.toolCallId, {
-          name: event.toolName,
-          args: event.args,
-          status: "running",
-        });
-        this.streamingTools = next;
+        this.streamingBlocks = [
+          ...this.streamingBlocks,
+          {
+            type: "tool",
+            id: event.toolCallId,
+            name: event.toolName,
+            args: event.args,
+            status: "running",
+          },
+        ];
         break;
       }
 
       case "tool_execution_end": {
-        const existing = this.streamingTools.get(event.toolCallId);
-        if (existing) {
-          const next = new Map(this.streamingTools);
-          next.set(event.toolCallId, { ...existing, status: "done" });
-          this.streamingTools = next;
-        }
+        const blocks = this.streamingBlocks.map((b) =>
+          b.type === "tool" && b.id === event.toolCallId
+            ? { ...b, status: "done" as const }
+            : b
+        );
+        this.streamingBlocks = blocks;
         break;
       }
 
       case "agent_end":
         this.isStreaming = false;
-        this.streamingText = "";
-        this.streamingTools = new Map();
+        this.streamingBlocks = [];
         // Append new assistant/toolResult messages from the run.
         // User messages are already added optimistically in handleSend().
         if (event.messages) {
@@ -364,35 +381,39 @@ export class HeraldChat extends LitElement {
   private renderStreamingContent() {
     if (!this.isStreaming) return nothing;
 
-    return html`
-      <div class="mb-3">
-        ${this.streamingText ? html`
-          <div class="bg-zinc-800 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm">
-            ${this.renderMarkdown(this.streamingText)}
-          </div>
-        ` : nothing}
-        ${this.streamingTools.size > 0 ? html`
-          <div class="mt-1 ml-2 space-y-1">
-            ${Array.from(this.streamingTools.entries()).map(
-              ([id, tool]) => html`
-                <div class="border-l-2 ${tool.status === "running" ? "border-yellow-500" : "border-zinc-600"} pl-3 flex items-center gap-2 text-xs text-zinc-400">
-                  ${tool.status === "running" ? html`
-                    <span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin"></span>
-                  ` : html`
-                    <span class="text-zinc-500">✓</span>
-                  `}
-                  <span class="font-mono font-semibold">${tool.name}</span>
-                </div>
-              `
-            )}
-          </div>
-        ` : nothing}
-        ${!this.streamingText && this.streamingTools.size === 0 ? html`
+    if (this.streamingBlocks.length === 0) {
+      return html`
+        <div class="mb-3">
           <div class="flex items-center gap-2 text-sm text-zinc-500">
             <span class="inline-block w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin"></span>
             Thinking...
           </div>
-        ` : nothing}
+        </div>
+      `;
+    }
+
+    return html`
+      <div class="mb-3">
+        ${this.streamingBlocks.map((block) => {
+          if (block.type === "text") {
+            return html`
+              <div class="bg-zinc-800 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm mb-1">
+                ${this.renderMarkdown(block.text)}
+              </div>
+            `;
+          }
+          // tool block
+          return html`
+            <div class="mt-1 mb-1 ml-2 border-l-2 ${block.status === "running" ? "border-yellow-500" : "border-zinc-600"} pl-3 flex items-center gap-2 text-xs text-zinc-400">
+              ${block.status === "running" ? html`
+                <span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin"></span>
+              ` : html`
+                <span class="text-zinc-500">✓</span>
+              `}
+              <span class="font-mono font-semibold">${block.name}</span>
+            </div>
+          `;
+        })}
       </div>
     `;
   }
