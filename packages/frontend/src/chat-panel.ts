@@ -60,9 +60,10 @@ interface ToolResultMessage {
 
 type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage;
 
-interface PendingTool {
+interface StreamingToolCall {
   name: string;
   args: any;
+  status: "running" | "done";
 }
 
 // ---- Component --------------------------------------------------------------
@@ -80,7 +81,7 @@ export class HeraldChat extends LitElement {
   @state() private messages: AgentMessage[] = [];
   @state() private isStreaming = false;
   @state() private streamingText = "";
-  @state() private pendingToolCalls = new Map<string, PendingTool>();
+  @state() private streamingTools = new Map<string, StreamingToolCall>();
   @state() private inputText = "";
   @state() private expandedTools = new Set<string>();
 
@@ -117,7 +118,7 @@ export class HeraldChat extends LitElement {
       this.messages = data.messages ?? [];
       this.isStreaming = data.state.isStreaming;
       this.streamingText = "";
-      this.pendingToolCalls = new Map();
+      this.streamingTools = new Map();
     });
 
     this.unsubscribeEvent = this.client.onEvent((event) => {
@@ -130,7 +131,7 @@ export class HeraldChat extends LitElement {
       case "agent_start":
         this.isStreaming = true;
         this.streamingText = "";
-        this.pendingToolCalls = new Map();
+        this.streamingTools = new Map();
         break;
 
       case "message_update": {
@@ -141,24 +142,31 @@ export class HeraldChat extends LitElement {
         break;
       }
 
-      case "tool_execution_start":
-        this.pendingToolCalls = new Map(this.pendingToolCalls);
-        this.pendingToolCalls.set(event.toolCallId, {
+      case "tool_execution_start": {
+        const next = new Map(this.streamingTools);
+        next.set(event.toolCallId, {
           name: event.toolName,
           args: event.args,
+          status: "running",
         });
+        this.streamingTools = next;
         break;
+      }
 
       case "tool_execution_end": {
-        this.pendingToolCalls = new Map(this.pendingToolCalls);
-        this.pendingToolCalls.delete(event.toolCallId);
+        const existing = this.streamingTools.get(event.toolCallId);
+        if (existing) {
+          const next = new Map(this.streamingTools);
+          next.set(event.toolCallId, { ...existing, status: "done" });
+          this.streamingTools = next;
+        }
         break;
       }
 
       case "agent_end":
         this.isStreaming = false;
         this.streamingText = "";
-        this.pendingToolCalls = new Map();
+        this.streamingTools = new Map();
         if (event.messages) {
           this.messages = event.messages;
         }
@@ -358,19 +366,23 @@ export class HeraldChat extends LitElement {
             ${this.renderMarkdown(this.streamingText)}
           </div>
         ` : nothing}
-        ${this.pendingToolCalls.size > 0 ? html`
+        ${this.streamingTools.size > 0 ? html`
           <div class="mt-1 ml-2 space-y-1">
-            ${Array.from(this.pendingToolCalls.entries()).map(
+            ${Array.from(this.streamingTools.entries()).map(
               ([id, tool]) => html`
-                <div class="border-l-2 border-yellow-500 pl-3 flex items-center gap-2 text-xs text-zinc-400">
-                  <span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin"></span>
+                <div class="border-l-2 ${tool.status === "running" ? "border-yellow-500" : "border-zinc-600"} pl-3 flex items-center gap-2 text-xs text-zinc-400">
+                  ${tool.status === "running" ? html`
+                    <span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin"></span>
+                  ` : html`
+                    <span class="text-zinc-500">✓</span>
+                  `}
                   <span class="font-mono font-semibold">${tool.name}</span>
                 </div>
               `
             )}
           </div>
         ` : nothing}
-        ${!this.streamingText && this.pendingToolCalls.size === 0 ? html`
+        ${!this.streamingText && this.streamingTools.size === 0 ? html`
           <div class="flex items-center gap-2 text-sm text-zinc-500">
             <span class="inline-block w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin"></span>
             Thinking...
