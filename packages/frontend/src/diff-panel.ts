@@ -172,7 +172,7 @@ export class HeraldDiff extends LitElement {
         break;
     }
 
-    return html`<div class="${classes} px-2 leading-5"><span class="select-none text-zinc-600 mr-2">${prefix}</span>${line.text}</div>`;
+    return html`<div class="${classes} px-2 leading-5 whitespace-pre"><span class="select-none text-zinc-600 mr-2">${prefix}</span>${line.text}</div>`;
   }
 
   private renderFile(file: DiffFile) {
