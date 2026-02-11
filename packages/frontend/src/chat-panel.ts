@@ -167,8 +167,13 @@ export class HeraldChat extends LitElement {
         this.isStreaming = false;
         this.streamingText = "";
         this.streamingTools = new Map();
+        // Append new assistant/toolResult messages from the run.
+        // User messages are already added optimistically in handleSend().
         if (event.messages) {
-          this.messages = event.messages;
+          const newMessages = event.messages.filter(
+            (m: AgentMessage) => m.role !== "user"
+          );
+          this.messages = [...this.messages, ...newMessages];
         }
         break;
 
