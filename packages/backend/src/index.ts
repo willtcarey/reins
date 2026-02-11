@@ -268,7 +268,7 @@ async function handleWsCommand(client: WsClient, raw: string): Promise<void> {
 // 3. Git diff endpoint
 // ---------------------------------------------------------------------------
 
-async function getGitDiff(): Promise<{ committed: string; uncommitted: string }> {
+async function getGitDiff(contextLines = 3): Promise<{ committed: string; uncommitted: string }> {
   const run = async (args: string[]): Promise<string> => {
     const proc = Bun.spawn(["git", ...args], {
       cwd: PROJECT_DIR,
@@ -280,9 +280,11 @@ async function getGitDiff(): Promise<{ committed: string; uncommitted: string }>
     return stdout;
   };
 
+  const ctxFlag = `-U${contextLines}`;
+
   const [committed, uncommitted] = await Promise.all([
-    run(["diff", "main...HEAD"]).catch(() => ""),
-    run(["diff", "HEAD"]).catch(() => ""),
+    run(["diff", ctxFlag, "main...HEAD"]).catch(() => ""),
+    run(["diff", ctxFlag, "HEAD"]).catch(() => ""),
   ]);
 
   return { committed, uncommitted };
@@ -343,7 +345,8 @@ async function startServer(): Promise<void> {
       // Git diff endpoint
       if (url.pathname === "/api/diff" && req.method === "GET") {
         try {
-          const diff = await getGitDiff();
+          const contextLines = Math.min(Math.max(parseInt(url.searchParams.get("context") ?? "3", 10) || 3, 0), 500);
+          const diff = await getGitDiff(contextLines);
           return Response.json(diff);
         } catch (err: any) {
           return Response.json({ error: err.message }, { status: 500 });

@@ -3,6 +3,7 @@
  *
  * Lit web component that fetches and displays the git diff from the backend.
  * Parses unified diff format and renders with colored additions/removals.
+ * Supports expanding context lines around changed hunks.
  * Uses light DOM for Tailwind compatibility.
  */
 
@@ -14,11 +15,16 @@ import { customElement, state } from "lit/decorators.js";
 interface DiffLine {
   type: "add" | "remove" | "context" | "header";
   text: string;
+  lineNo?: number; // line number in the new file (for context lines)
 }
 
 interface DiffHunk {
   header: string;
   lines: DiffLine[];
+  /** Starting line number in old file */
+  oldStart: number;
+  /** Starting line number in new file */
+  newStart: number;
 }
 
 interface DiffFile {
@@ -28,6 +34,14 @@ interface DiffFile {
 
 // ---- Diff parser -----------------------------------------------------------
 
+function parseHunkHeader(header: string): { oldStart: number; newStart: number } {
+  const match = header.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+  if (match) {
+    return { oldStart: parseInt(match[1], 10), newStart: parseInt(match[2], 10) };
+  }
+  return { oldStart: 0, newStart: 0 };
+}
+
 function parseDiff(raw: string): DiffFile[] {
   if (!raw || !raw.trim()) return [];
 
@@ -35,6 +49,7 @@ function parseDiff(raw: string): DiffFile[] {
   const lines = raw.split("\n");
   let currentFile: DiffFile | null = null;
   let currentHunk: DiffHunk | null = null;
+  let newLineNo = 0;
 
   for (const line of lines) {
     // New file header: diff --git a/path b/path
@@ -71,9 +86,13 @@ function parseDiff(raw: string): DiffFile[] {
     // Hunk header: @@ -a,b +c,d @@
     if (line.startsWith("@@")) {
       if (!currentFile) continue;
+      const { oldStart, newStart } = parseHunkHeader(line);
+      newLineNo = newStart;
       currentHunk = {
         header: line,
         lines: [],
+        oldStart,
+        newStart,
       };
       currentFile.hunks.push(currentHunk);
       continue;
@@ -82,11 +101,14 @@ function parseDiff(raw: string): DiffFile[] {
     // Diff content lines
     if (currentHunk) {
       if (line.startsWith("+")) {
-        currentHunk.lines.push({ type: "add", text: line.slice(1) });
+        currentHunk.lines.push({ type: "add", text: line.slice(1), lineNo: newLineNo });
+        newLineNo++;
       } else if (line.startsWith("-")) {
         currentHunk.lines.push({ type: "remove", text: line.slice(1) });
+        // removed lines don't increment new file line number
       } else if (line.startsWith(" ")) {
-        currentHunk.lines.push({ type: "context", text: line.slice(1) });
+        currentHunk.lines.push({ type: "context", text: line.slice(1), lineNo: newLineNo });
+        newLineNo++;
       } else if (line === "\\ No newline at end of file") {
         // Skip this marker
       }
@@ -95,6 +117,11 @@ function parseDiff(raw: string): DiffFile[] {
 
   return files;
 }
+
+// ---- Constants -------------------------------------------------------------
+
+const DEFAULT_CONTEXT = 3;
+const EXPAND_STEP = 20;
 
 // ---- Component --------------------------------------------------------------
 
@@ -108,6 +135,7 @@ export class HeraldDiff extends LitElement {
   @state() private loading = false;
   @state() private error: string | null = null;
   @state() private collapsedFiles = new Set<string>();
+  @state() private contextLines = DEFAULT_CONTEXT;
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -127,7 +155,7 @@ export class HeraldDiff extends LitElement {
 
   async refresh() {
     try {
-      const resp = await fetch("/api/diff");
+      const resp = await fetch(`/api/diff?context=${this.contextLines}`);
       if (!resp.ok) {
         this.error = `HTTP ${resp.status}`;
         return;
@@ -153,9 +181,20 @@ export class HeraldDiff extends LitElement {
     this.collapsedFiles = next;
   }
 
+  private async expandContext() {
+    this.contextLines += EXPAND_STEP;
+    await this.refresh();
+  }
+
+  private async resetContext() {
+    this.contextLines = DEFAULT_CONTEXT;
+    await this.refresh();
+  }
+
   private renderLine(line: DiffLine) {
     let prefix = " ";
     let classes = "text-zinc-300";
+    const lineNoStr = line.lineNo != null ? String(line.lineNo).padStart(4) : "    ";
 
     switch (line.type) {
       case "add":
@@ -172,7 +211,56 @@ export class HeraldDiff extends LitElement {
         break;
     }
 
-    return html`<div class="${classes} px-2 leading-5 whitespace-pre"><span class="select-none text-zinc-600 mr-2">${prefix}</span>${line.text}</div>`;
+    return html`<div class="${classes} px-2 leading-5 whitespace-pre font-mono"><span class="select-none text-zinc-600 mr-1 inline-block w-[3.5ch] text-right">${line.lineNo != null ? line.lineNo : ""}</span><span class="select-none text-zinc-600 mr-2">${prefix}</span>${line.text}</div>`;
+  }
+
+  private renderExpandButton(label: string, onClick: () => void) {
+    return html`
+      <button
+        class="w-full py-1 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 cursor-pointer flex items-center justify-center gap-1 border-t border-zinc-700/50 transition-colors"
+        @click=${onClick}
+      >
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+        </svg>
+        ${label}
+      </button>
+    `;
+  }
+
+  private renderHunkSeparator(prevHunk: DiffHunk | null, nextHunk: DiffHunk) {
+    // If there's a gap between hunks, show an expand button
+    if (!prevHunk) {
+      // First hunk — if it doesn't start at line 1, there are lines above we could show
+      if (nextHunk.newStart > 1) {
+        return this.renderExpandButton(
+          `Show more lines above`,
+          () => this.expandContext()
+        );
+      }
+      return nothing;
+    }
+
+    // Calculate the gap between the end of prevHunk and start of nextHunk
+    const prevEndLine = this.getHunkEndLine(prevHunk);
+    const gap = nextHunk.newStart - prevEndLine - 1;
+    if (gap > 0) {
+      return this.renderExpandButton(
+        `Expand ${gap} hidden line${gap !== 1 ? "s" : ""}`,
+        () => this.expandContext()
+      );
+    }
+
+    return nothing;
+  }
+
+  private getHunkEndLine(hunk: DiffHunk): number {
+    // Walk backwards through lines to find the last new-file line number
+    for (let i = hunk.lines.length - 1; i >= 0; i--) {
+      const line = hunk.lines[i];
+      if (line.lineNo != null) return line.lineNo;
+    }
+    return hunk.newStart;
   }
 
   private renderFile(file: DiffFile) {
@@ -198,10 +286,11 @@ export class HeraldDiff extends LitElement {
           ${removeCount > 0 ? html`<span class="text-red-400 text-xs font-mono">-${removeCount}</span>` : nothing}
         </button>
         ${!collapsed ? html`
-          <div class="font-mono text-xs overflow-x-auto">
+          <div class="text-xs overflow-x-auto">
             ${file.hunks.map(
-              (hunk) => html`
-                <div class="bg-zinc-900/50 px-2 py-1 text-zinc-500 text-xs border-t border-zinc-700">
+              (hunk, i) => html`
+                ${this.renderHunkSeparator(i > 0 ? file.hunks[i - 1] : null, hunk)}
+                <div class="bg-zinc-900/50 px-2 py-1 text-zinc-500 text-xs border-t border-zinc-700 font-mono">
                   ${hunk.header}
                 </div>
                 ${hunk.lines.map((line) => this.renderLine(line))}
@@ -232,6 +321,15 @@ export class HeraldDiff extends LitElement {
 
     return html`
       <div class="h-full overflow-y-auto p-4">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-xs text-zinc-500">Context: ${this.contextLines} lines</span>
+          ${this.contextLines > DEFAULT_CONTEXT
+            ? html`<button
+                class="text-xs text-zinc-500 hover:text-zinc-300 underline cursor-pointer"
+                @click=${() => this.resetContext()}
+              >Reset</button>`
+            : nothing}
+        </div>
         ${this.files.map((file) => this.renderFile(file))}
       </div>
     `;
