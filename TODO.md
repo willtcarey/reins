@@ -8,4 +8,4 @@
 - [ ] Sidebar updating
 - [ ] Working directory switcher/indicator
 - [ ] Diff view doesn't show untracked files
-- [x] Figure out how to run the service persistently
+- [ ] Figure out how to run the service persistently
