@@ -4,6 +4,6 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "build": "bun run --filter '@herald/frontend' build",
-    "dev": "bun run --filter '@herald/frontend' dev & bun --watch packages/backend/src/index.ts"
+    "dev": "bun run --filter '@herald/frontend' dev & bun packages/backend/dev.ts"
   }
 }
