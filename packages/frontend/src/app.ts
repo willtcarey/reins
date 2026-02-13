@@ -185,7 +185,7 @@ export class AppShell extends LitElement {
     const hasProject = this.activeProjectId != null;
 
     return html`
-      <div class="h-screen w-screen flex flex-col bg-zinc-900 text-zinc-100">
+      <div class="h-screen w-screen flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden">
         <!-- Connection status bar -->
         ${!this.connected ? html`
           <div class="bg-yellow-800 text-yellow-200 text-xs text-center py-1">
@@ -194,7 +194,7 @@ export class AppShell extends LitElement {
         ` : ""}
 
         <!-- Main layout: sidebar + content -->
-        <div class="flex-1 flex min-h-0">
+        <div class="flex-1 flex min-h-0 min-w-0 overflow-hidden">
           <!-- Session sidebar -->
           <session-sidebar
             .client=${this.client}
