@@ -12,7 +12,7 @@ import {
   openSession, findOpenSession, serializeSession,
   readSessionFromDisk, serializeSessionList,
 } from "./sessions.js";
-import { getGitDiff } from "./git.js";
+import { getGitDiff, detectDefaultBranch } from "./git.js";
 import {
   listProjects, getProject, createProject,
   updateProject, deleteProject, touchProject,
@@ -66,7 +66,8 @@ export async function handleFetch(
       if (!existsSync(body.path)) {
         return Response.json({ error: `Directory does not exist: ${body.path}` }, { status: 400 });
       }
-      const project = createProject(body.name, body.path, body.base_branch);
+      const baseBranch = body.base_branch || await detectDefaultBranch(body.path);
+      const project = createProject(body.name, body.path, baseBranch);
       return Response.json(project, { status: 201 });
     } catch (err: any) {
       if (err.message?.includes("UNIQUE constraint")) {
