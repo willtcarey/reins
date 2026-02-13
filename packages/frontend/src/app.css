@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* Ensure full-height layout with no overflow */
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
 /* Diff line colors — background only so syntax highlighting shows through */
 .diff-add {
   @apply bg-green-900/30 text-zinc-200;

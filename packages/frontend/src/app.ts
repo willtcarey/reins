@@ -185,7 +185,7 @@ export class AppShell extends LitElement {
     const hasProject = this.activeProjectId != null;
 
     return html`
-      <div class="h-screen w-screen flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden">
+      <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden">
         <!-- Connection status bar -->
         ${!this.connected ? html`
           <div class="bg-yellow-800 text-yellow-200 text-xs text-center py-1">

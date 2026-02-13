@@ -29,7 +29,7 @@ export class SessionSidebar extends LitElement {
   activeProjectId: number | null = null;
 
   @state() private sessions: SessionListItem[] = [];
-  @state() private collapsed = false;
+  @state() private collapsed = window.matchMedia("(max-width: 768px)").matches;
   @state() private loading = false;
 
   override connectedCallback() {
