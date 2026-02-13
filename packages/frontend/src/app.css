@@ -1,12 +1,12 @@
 @import "tailwindcss";
 
-/* Diff line colors */
+/* Diff line colors — background only so syntax highlighting shows through */
 .diff-add {
-  @apply bg-green-900/30 text-green-300;
+  @apply bg-green-900/30 text-zinc-200;
 }
 
 .diff-remove {
-  @apply bg-red-900/30 text-red-300;
+  @apply bg-red-900/30 text-zinc-200;
 }
 
 /* Syntax highlighting (highlight.js tokens) — dark theme */
