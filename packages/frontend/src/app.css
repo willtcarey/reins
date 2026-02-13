@@ -45,9 +45,13 @@
   @apply text-zinc-200;
 }
 
+.prose p {
+  @apply my-3;
+}
+
 .prose ul,
 .prose ol {
-  @apply text-zinc-300;
+  @apply text-zinc-300 my-2;
 }
 
 .prose table {

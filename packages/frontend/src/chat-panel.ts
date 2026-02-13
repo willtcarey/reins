@@ -301,7 +301,7 @@ export class HeraldChat extends LitElement {
   private renderMarkdown(text: string): ReturnType<typeof html> {
     try {
       const rendered = marked.parse(text) as string;
-      return html`<div class="prose prose-invert prose-sm max-w-none break-words">${unsafeHTML(rendered)}</div>`;
+      return html`<div class="prose prose-invert prose-sm max-w-none break-words leading-relaxed">${unsafeHTML(rendered)}</div>`;
     } catch {
       return html`<pre class="whitespace-pre-wrap text-sm">${text}</pre>`;
     }
@@ -317,9 +317,7 @@ export class HeraldChat extends LitElement {
 
     return html`
       <div class="flex justify-end mb-3">
-        <div class="bg-blue-600 text-white rounded-2xl rounded-br-md px-4 py-2 max-w-[80%] text-sm whitespace-pre-wrap">
-          ${text}
-        </div>
+        <div class="bg-blue-600 text-white rounded-2xl rounded-br-md px-3 py-1.5 max-w-[80%] text-sm whitespace-pre-wrap">${text}</div>
       </div>
     `;
   }
