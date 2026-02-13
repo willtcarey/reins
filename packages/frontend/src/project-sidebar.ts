@@ -24,6 +24,7 @@ export class HeraldProjects extends LitElement {
   @state() private showAddForm = false;
   @state() private addName = "";
   @state() private addPath = "";
+  @state() private addBaseBranch = "main";
   @state() private addError = "";
   @state() private loading = false;
   @state() private dropdownOpen = false;
@@ -90,6 +91,7 @@ export class HeraldProjects extends LitElement {
     this.dropdownOpen = false;
     this.addName = "";
     this.addPath = "";
+    this.addBaseBranch = "main";
     this.addError = "";
   }
 
@@ -109,7 +111,11 @@ export class HeraldProjects extends LitElement {
       const resp = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: this.addName.trim(), path: this.addPath.trim() }),
+        body: JSON.stringify({
+          name: this.addName.trim(),
+          path: this.addPath.trim(),
+          base_branch: this.addBaseBranch.trim() || "main",
+        }),
       });
       if (!resp.ok) {
         const data = await resp.json();
@@ -178,6 +184,7 @@ export class HeraldProjects extends LitElement {
                   <div class="min-w-0">
                     <div class="text-xs text-zinc-200 truncate">${p.name}</div>
                     <div class="text-[10px] text-zinc-500 truncate">${p.path}</div>
+                    <div class="text-[10px] text-zinc-600 truncate">base: ${p.base_branch}</div>
                   </div>
                   <button
                     class="p-1 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
@@ -221,6 +228,14 @@ export class HeraldProjects extends LitElement {
                      placeholder-zinc-500 focus:outline-none focus:border-zinc-500 font-mono"
               .value=${this.addPath}
               @input=${(e: InputEvent) => this.addPath = (e.target as HTMLInputElement).value}
+            />
+            <input
+              type="text"
+              placeholder="Base branch (default: main)"
+              class="w-full px-2 py-1.5 text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-200
+                     placeholder-zinc-500 focus:outline-none focus:border-zinc-500 font-mono"
+              .value=${this.addBaseBranch}
+              @input=${(e: InputEvent) => this.addBaseBranch = (e.target as HTMLInputElement).value}
             />
             ${this.addError ? html`
               <div class="text-[10px] text-red-400">${this.addError}</div>

@@ -14,6 +14,7 @@ export interface Project {
   id: number;
   name: string;
   path: string;
+  base_branch: string;
   created_at: string;
   last_opened_at: string;
 }
@@ -39,10 +40,17 @@ function getDb(): Database {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       path TEXT NOT NULL UNIQUE,
+      base_branch TEXT NOT NULL DEFAULT 'main',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       last_opened_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
+
+  // Migration: add base_branch to existing databases
+  const cols = db.query("PRAGMA table_info(projects)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "base_branch")) {
+    db.exec("ALTER TABLE projects ADD COLUMN base_branch TEXT NOT NULL DEFAULT 'main'");
+  }
 
   return db;
 }
@@ -57,20 +65,21 @@ export function getProject(id: number): Project | null {
   return (d.query("SELECT * FROM projects WHERE id = ?").get(id) as Project) ?? null;
 }
 
-export function createProject(name: string, path: string): Project {
+export function createProject(name: string, path: string, baseBranch = "main"): Project {
   const d = getDb();
-  const result = d.query("INSERT INTO projects (name, path) VALUES (?, ?) RETURNING *").get(name, path) as Project;
+  const result = d.query("INSERT INTO projects (name, path, base_branch) VALUES (?, ?, ?) RETURNING *").get(name, path, baseBranch) as Project;
   return result;
 }
 
-export function updateProject(id: number, updates: { name?: string; path?: string }): Project | null {
+export function updateProject(id: number, updates: { name?: string; path?: string; base_branch?: string }): Project | null {
   const d = getDb();
   const existing = getProject(id);
   if (!existing) return null;
 
   const name = updates.name ?? existing.name;
   const path = updates.path ?? existing.path;
-  d.query("UPDATE projects SET name = ?, path = ? WHERE id = ?").run(name, path, id);
+  const baseBranch = updates.base_branch ?? existing.base_branch;
+  d.query("UPDATE projects SET name = ?, path = ?, base_branch = ? WHERE id = ?").run(name, path, baseBranch, id);
   return getProject(id);
 }
 

@@ -7,6 +7,7 @@
 export async function getGitDiff(
   projectDir: string,
   contextLines = 3,
+  baseBranch = "main",
 ): Promise<{ committed: string; uncommitted: string }> {
   const run = async (args: string[]): Promise<string> => {
     const proc = Bun.spawn(["git", ...args], {
@@ -22,7 +23,7 @@ export async function getGitDiff(
   const ctxFlag = `-U${contextLines}`;
 
   const [committed, uncommitted, untrackedList] = await Promise.all([
-    run(["diff", ctxFlag, "main...HEAD"]).catch(() => ""),
+    run(["diff", ctxFlag, `${baseBranch}...HEAD`]).catch(() => ""),
     run(["diff", ctxFlag, "HEAD"]).catch(() => ""),
     run(["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
   ]);

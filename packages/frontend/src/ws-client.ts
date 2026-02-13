@@ -39,6 +39,7 @@ export interface ProjectInfo {
   id: number;
   name: string;
   path: string;
+  base_branch: string;
   created_at: string;
   last_opened_at: string;
 }

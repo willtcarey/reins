@@ -59,14 +59,14 @@ export async function handleFetch(
   // Create a project
   if (url.pathname === "/api/projects" && req.method === "POST") {
     try {
-      const body = await req.json() as { name?: string; path?: string };
+      const body = await req.json() as { name?: string; path?: string; base_branch?: string };
       if (!body.name || !body.path) {
         return Response.json({ error: "name and path are required" }, { status: 400 });
       }
       if (!existsSync(body.path)) {
         return Response.json({ error: `Directory does not exist: ${body.path}` }, { status: 400 });
       }
-      const project = createProject(body.name, body.path);
+      const project = createProject(body.name, body.path, body.base_branch);
       return Response.json(project, { status: 201 });
     } catch (err: any) {
       if (err.message?.includes("UNIQUE constraint")) {
@@ -163,11 +163,12 @@ export async function handleFetch(
     // GET /api/projects/:id/diff — git diff
     if (subPath === "diff" && req.method === "GET") {
       try {
+        const project = getProject(projectId)!;
         const contextLines = Math.min(
           Math.max(parseInt(url.searchParams.get("context") ?? "3", 10) || 3, 0),
           500,
         );
-        const diff = await getGitDiff(projectDir, contextLines);
+        const diff = await getGitDiff(projectDir, contextLines, project.base_branch);
         return Response.json(diff);
       } catch (err: any) {
         return Response.json({ error: err.message }, { status: 500 });
