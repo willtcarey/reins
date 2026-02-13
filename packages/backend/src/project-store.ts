@@ -4,6 +4,10 @@
  * SQLite-backed persistence for Herald projects.
  * Each project is a name + directory path mapping.
  * Database lives at .herald/herald.db in the workspace root.
+ *
+ * Migrations are applied in order and tracked in a `migrations` table.
+ * New migrations should be appended to the MIGRATIONS array — never
+ * modify existing entries or the original CREATE TABLE.
  */
 
 import { Database } from "bun:sqlite";
@@ -24,6 +28,18 @@ const WORKSPACE_ROOT = resolve(import.meta.dirname!, "../../..");
 const HERALD_DIR = join(WORKSPACE_ROOT, ".herald");
 const DB_PATH = join(HERALD_DIR, "herald.db");
 
+// ---- Migrations ------------------------------------------------------------
+// Append-only. Each entry is [name, sql]. They run in order, once each.
+
+const MIGRATIONS: [name: string, sql: string][] = [
+  [
+    "001_add_base_branch",
+    "ALTER TABLE projects ADD COLUMN base_branch TEXT NOT NULL DEFAULT 'main'",
+  ],
+];
+
+// ---- Database init ---------------------------------------------------------
+
 let db: Database | null = null;
 
 function getDb(): Database {
@@ -35,25 +51,45 @@ function getDb(): Database {
 
   db = new Database(DB_PATH);
   db.exec("PRAGMA journal_mode = WAL");
+
+  // Original schema — never modify this, add migrations instead
   db.exec(`
     CREATE TABLE IF NOT EXISTS projects (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       path TEXT NOT NULL UNIQUE,
-      base_branch TEXT NOT NULL DEFAULT 'main',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       last_opened_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
 
-  // Migration: add base_branch to existing databases
-  const cols = db.query("PRAGMA table_info(projects)").all() as { name: string }[];
-  if (!cols.some((c) => c.name === "base_branch")) {
-    db.exec("ALTER TABLE projects ADD COLUMN base_branch TEXT NOT NULL DEFAULT 'main'");
-  }
+  runMigrations(db);
 
   return db;
 }
+
+function runMigrations(db: Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS migrations (
+      name TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  const applied = new Set(
+    (db.query("SELECT name FROM migrations").all() as { name: string }[])
+      .map((r) => r.name),
+  );
+
+  for (const [name, sql] of MIGRATIONS) {
+    if (applied.has(name)) continue;
+    db.exec(sql);
+    db.query("INSERT INTO migrations (name) VALUES (?)").run(name);
+    console.log(`  Migration applied: ${name}`);
+  }
+}
+
+// ---- CRUD ------------------------------------------------------------------
 
 export function listProjects(): Project[] {
   const d = getDb();
