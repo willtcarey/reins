@@ -44,6 +44,7 @@ export class AppShell extends LitElement {
   @state() private activeSessionId = "";
   @state() private activeProjectId: number | null = null;
   @state() private sessionData: SessionData | null = null;
+  @state() private activeTab: "chat" | "changes" = "chat";
 
   /** Tracks whether we've loaded the initial session for the current project. */
   private projectSessionLoaded = false;
@@ -202,39 +203,48 @@ export class AppShell extends LitElement {
           ></session-sidebar>
 
           ${hasProject ? html`
-            <!-- Chat panel -->
-            <div class="flex-1 flex flex-col border-r border-zinc-700 min-w-0">
-              <div class="flex items-center justify-between px-4 py-2 border-b border-zinc-700 bg-zinc-800/50">
-                <h2 class="text-sm font-semibold text-zinc-300">Chat</h2>
-                <div class="flex items-center gap-2">
+            <div class="flex-1 flex flex-col min-w-0">
+              <!-- Tab bar -->
+              <div class="flex items-center border-b border-zinc-700 bg-zinc-800/50">
+                <button
+                  class="px-4 py-2 text-sm font-semibold transition-colors cursor-pointer ${this.activeTab === "chat" ? "text-zinc-100 border-b-2 border-blue-500" : "text-zinc-500 hover:text-zinc-300"}"
+                  @click=${() => this.activeTab = "chat"}
+                >
+                  Chat
+                </button>
+                <button
+                  class="px-4 py-2 text-sm font-semibold transition-colors cursor-pointer ${this.activeTab === "changes" ? "text-zinc-100 border-b-2 border-blue-500" : "text-zinc-500 hover:text-zinc-300"}"
+                  @click=${() => this.activeTab = "changes"}
+                >
+                  Changes
+                </button>
+                <div class="flex-1"></div>
+                <div class="flex items-center gap-2 px-4">
+                  ${this.activeTab === "changes" ? html`
+                    <button
+                      class="text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                      @click=${this.handleRefreshDiff}
+                      title="Refresh diff"
+                    >
+                      Refresh
+                    </button>
+                  ` : ""}
                   ${this.connected
                     ? html`<span class="w-2 h-2 rounded-full bg-green-500" title="Connected"></span>`
                     : html`<span class="w-2 h-2 rounded-full bg-red-500" title="Disconnected"></span>`
                   }
                 </div>
               </div>
+
+              <!-- Tab content -->
               <chat-panel
-                class="flex-1 min-h-0"
+                class="flex-1 min-h-0 ${this.activeTab === "chat" ? "" : "hidden"}"
                 .client=${this.client}
                 .sessionId=${this.activeSessionId}
                 .sessionData=${this.sessionData}
               ></chat-panel>
-            </div>
-
-            <!-- Diff panel -->
-            <div class="w-1/2 flex flex-col shrink-0">
-              <div class="flex items-center justify-between px-4 py-2 border-b border-zinc-700 bg-zinc-800/50">
-                <h2 class="text-sm font-semibold text-zinc-300">Changes</h2>
-                <button
-                  class="text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
-                  @click=${this.handleRefreshDiff}
-                  title="Refresh diff"
-                >
-                  Refresh
-                </button>
-              </div>
               <diff-panel
-                class="flex-1 min-h-0"
+                class="flex-1 min-h-0 ${this.activeTab === "changes" ? "" : "hidden"}"
                 .activeProjectId=${this.activeProjectId}
               ></diff-panel>
             </div>
