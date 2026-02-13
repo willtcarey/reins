@@ -2,7 +2,7 @@
  * Herald Backend Server (entry point)
  *
  * Owns long-lived state (sessions, clients, Bun server) and delegates
- * all request handling to handlers.ts through a mutable reference.
+ * request handling to routes.ts and ws.ts through mutable references.
  *
  * In dev mode (HERALD_DEV=1), watches src/ for changes and hot-reloads
  * the handler module without restarting the process — agent sessions
@@ -15,7 +15,8 @@ import { resolve } from "path";
 import type { ServerState, ManagedSession, WsClient } from "./state.js";
 
 // We import the handler types but load via dynamic import so we can reload
-import type * as HandlersModule from "./handlers.js";
+import type * as RoutesModule from "./routes.js";
+import type * as WsModule from "./ws.js";
 
 const PORT = parseInt(process.env.HERALD_PORT || "3100", 10);
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -61,16 +62,27 @@ setInterval(() => {
 // 2. Hot-reloadable handler reference
 // ---------------------------------------------------------------------------
 
-const HANDLERS_PATH = resolve(import.meta.dirname!, "handlers.ts");
+const SRC_DIR = resolve(import.meta.dirname!, ".");
+const ROUTES_PATH = resolve(SRC_DIR, "routes.ts");
+const WS_PATH = resolve(SRC_DIR, "ws.ts");
 
-let handlers: typeof HandlersModule;
+let routes: typeof RoutesModule;
+let ws: typeof WsModule;
 
-async function loadHandlers(): Promise<typeof HandlersModule> {
+async function loadHandlers(): Promise<void> {
   if (IS_DEV) {
     // Cache-bust: Bun treats different query strings as distinct modules
-    return import(`${HANDLERS_PATH}?t=${Date.now()}`) as Promise<typeof HandlersModule>;
+    const t = Date.now();
+    [routes, ws] = await Promise.all([
+      import(`${ROUTES_PATH}?t=${t}`) as Promise<typeof RoutesModule>,
+      import(`${WS_PATH}?t=${t}`) as Promise<typeof WsModule>,
+    ]);
+  } else {
+    [routes, ws] = await Promise.all([
+      import("./routes.js"),
+      import("./ws.js"),
+    ]);
   }
-  return import("./handlers.js");
 }
 
 // ---------------------------------------------------------------------------
@@ -78,10 +90,9 @@ async function loadHandlers(): Promise<typeof HandlersModule> {
 // ---------------------------------------------------------------------------
 
 if (IS_DEV) {
-  const srcDir = resolve(import.meta.dirname!, ".");
   let debounce: ReturnType<typeof setTimeout> | null = null;
 
-  watch(srcDir, { recursive: true }, (_event, filename) => {
+  watch(SRC_DIR, { recursive: true }, (_event, filename) => {
     if (!filename?.endsWith(".ts")) return;
     // Don't reload for state.ts changes (types only) or index.ts (this file)
     if (filename === "index.ts" || filename === "state.ts") return;
@@ -89,7 +100,7 @@ if (IS_DEV) {
     if (debounce) clearTimeout(debounce);
     debounce = setTimeout(async () => {
       try {
-        handlers = await loadHandlers();
+        await loadHandlers();
         console.log(`\x1b[36m[hot reload]\x1b[0m ${filename} reloaded`);
       } catch (err) {
         console.error(`\x1b[31m[hot reload]\x1b[0m Failed to reload:`, err);
@@ -104,26 +115,26 @@ if (IS_DEV) {
 
 async function startServer(): Promise<void> {
   // Initial handler load
-  handlers = await loadHandlers();
+  await loadHandlers();
 
   Bun.serve({
     port: PORT,
     hostname: "0.0.0.0",
 
     async fetch(req, server) {
-      // Always go through current handler reference
-      return handlers.handleFetch(state, req, server) as any;
+      // Always go through current handler references
+      return routes.handleFetch(state, req, server) as any;
     },
 
     websocket: {
-      open(ws) {
-        handlers.handleWsOpen(state, ws);
+      open(wsConn) {
+        ws.handleWsOpen(state, wsConn);
       },
-      message(ws, message) {
-        handlers.handleWsMessage(state, ws, message);
+      message(wsConn, message) {
+        ws.handleWsMessage(state, wsConn, message);
       },
-      close(ws) {
-        handlers.handleWsClose(state, ws);
+      close(wsConn) {
+        ws.handleWsClose(state, wsConn);
       },
     },
   });
