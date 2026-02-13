@@ -135,7 +135,7 @@ export class AppShell extends LitElement {
       // Load the most recent session's full data
       const latest = sessions[0];
       const resp = await fetch(
-        `/api/projects/${this.activeProjectId}/sessions/${encodeURIComponent(latest.path)}`
+        `/api/projects/${this.activeProjectId}/sessions/${encodeURIComponent(latest.id)}`
       );
       if (!resp.ok) return;
       const data: SessionData = await resp.json();

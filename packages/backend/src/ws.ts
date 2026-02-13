@@ -2,11 +2,17 @@
  * WebSocket Handlers
  *
  * Handles WebSocket lifecycle (open/message/close) and command dispatch.
- * Commands: prompt, steer, abort — each requires sessionId + sessionPath.
+ * Commands: prompt, steer, abort — each requires sessionId.
+ *
+ * Sessions are backed by SQLite; the WS layer ensures they're open in memory
+ * before dispatching commands. The projectDir is needed to resume a session
+ * (tools need a cwd), so it's resolved from the project the session belongs to.
  */
 
 import type { ServerState, WsClient } from "./state.js";
 import { ensureSessionOpen } from "./sessions.js";
+import { getSession } from "./session-store.js";
+import { getProject } from "./project-store.js";
 
 function sendToWs(ws: any, data: unknown): void {
   try {
@@ -16,12 +22,22 @@ function sendToWs(ws: any, data: unknown): void {
   }
 }
 
+/**
+ * Resolve the project directory for a session ID.
+ */
+function resolveProjectDir(sessionId: string): string | null {
+  const row = getSession(sessionId);
+  if (!row) return null;
+  const project = getProject(row.project_id);
+  return project?.path ?? null;
+}
+
 async function handleWsCommand(
   state: ServerState,
   client: WsClient,
   raw: string,
 ): Promise<void> {
-  let cmd: { type: string; sessionId?: string; sessionPath?: string; message?: string };
+  let cmd: { type: string; sessionId?: string; message?: string };
   try {
     cmd = JSON.parse(raw);
   } catch {
@@ -29,9 +45,8 @@ async function handleWsCommand(
     return;
   }
 
-  // All commands require sessionId + sessionPath
-  if (!cmd.sessionId || !cmd.sessionPath) {
-    sendToWs(client.ws, { type: "error", error: "Missing sessionId or sessionPath" });
+  if (!cmd.sessionId) {
+    sendToWs(client.ws, { type: "error", error: "Missing sessionId" });
     return;
   }
 
@@ -39,7 +54,9 @@ async function handleWsCommand(
     case "prompt": {
       if (!cmd.message) { sendToWs(client.ws, { type: "error", error: "Missing message field" }); return; }
       try {
-        const managed = await ensureSessionOpen(state, cmd.sessionId, cmd.sessionPath);
+        const projectDir = resolveProjectDir(cmd.sessionId);
+        if (!projectDir) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
+        const managed = await ensureSessionOpen(state, cmd.sessionId, projectDir);
         sendToWs(client.ws, { type: "ack", command: "prompt" });
         await managed.session.prompt(cmd.message);
       } catch (err: any) {
@@ -51,7 +68,9 @@ async function handleWsCommand(
     case "steer": {
       if (!cmd.message) { sendToWs(client.ws, { type: "error", error: "Missing message field" }); return; }
       try {
-        const managed = await ensureSessionOpen(state, cmd.sessionId, cmd.sessionPath);
+        const projectDir = resolveProjectDir(cmd.sessionId);
+        if (!projectDir) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
+        const managed = await ensureSessionOpen(state, cmd.sessionId, projectDir);
         sendToWs(client.ws, { type: "ack", command: "steer" });
         await managed.session.steer(cmd.message);
       } catch (err: any) {
@@ -61,7 +80,6 @@ async function handleWsCommand(
     }
 
     case "abort": {
-      // Abort only works on already-open sessions (no point opening to abort)
       const managed = state.sessions.get(cmd.sessionId!);
       if (!managed) { sendToWs(client.ws, { type: "error", error: "Session not active" }); return; }
       managed.lastActivity = Date.now();

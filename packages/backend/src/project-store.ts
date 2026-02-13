@@ -8,10 +8,7 @@
  * Schema is managed by migrations.ts — see that file to add new columns.
  */
 
-import { Database } from "bun:sqlite";
-import { mkdirSync, existsSync } from "fs";
-import { join, resolve } from "path";
-import { runMigrations } from "./migrations.js";
+import { getDb } from "./db.js";
 
 export interface Project {
   id: number;
@@ -20,27 +17,6 @@ export interface Project {
   base_branch: string;
   created_at: string;
   last_opened_at: string;
-}
-
-// Resolve .reins/ relative to the workspace root (two levels up from src/)
-const WORKSPACE_ROOT = resolve(import.meta.dirname!, "../../..");
-const DATA_DIR = join(WORKSPACE_ROOT, ".reins");
-const DB_PATH = join(DATA_DIR, "reins.db");
-
-let db: Database | null = null;
-
-function getDb(): Database {
-  if (db) return db;
-
-  if (!existsSync(DATA_DIR)) {
-    mkdirSync(DATA_DIR, { recursive: true });
-  }
-
-  db = new Database(DB_PATH);
-  db.exec("PRAGMA journal_mode = WAL");
-  runMigrations(db);
-
-  return db;
 }
 
 // ---- CRUD ------------------------------------------------------------------

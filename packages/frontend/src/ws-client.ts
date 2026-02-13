@@ -19,20 +19,18 @@ export interface SessionState {
 }
 
 export interface SessionData {
-  path: string;
   id: string;
   messages: any[];
   state: SessionState;
 }
 
 export interface SessionListItem {
-  path: string;
   id: string;
-  name?: string;
-  created: string;
-  modified: string;
-  messageCount: number;
-  firstMessage: string;
+  name: string | null;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+  first_message: string | null;
 }
 
 export interface ProjectInfo {
@@ -165,16 +163,16 @@ export class AppClient {
 
   // ---- Commands ------------------------------------------------------------
 
-  prompt(sessionId: string, sessionPath: string, message: string): void {
-    this.send({ type: "prompt", sessionId, sessionPath, message });
+  prompt(sessionId: string, message: string): void {
+    this.send({ type: "prompt", sessionId, message });
   }
 
-  steer(sessionId: string, sessionPath: string, message: string): void {
-    this.send({ type: "steer", sessionId, sessionPath, message });
+  steer(sessionId: string, message: string): void {
+    this.send({ type: "steer", sessionId, message });
   }
 
-  abort(sessionId: string, sessionPath: string): void {
-    this.send({ type: "abort", sessionId, sessionPath });
+  abort(sessionId: string): void {
+    this.send({ type: "abort", sessionId });
   }
 
   private send(data: unknown): void {

@@ -10,6 +10,6 @@ export const API = {
   projects:  "/api/projects",
   project:   "/api/projects/:id",
   sessions:  "/api/projects/:id/sessions",
-  session:   "/api/projects/:id/sessions/:path+",
+  session:   "/api/projects/:id/sessions/:sessionId",
   diff:      "/api/projects/:id/diff",
 } as const;

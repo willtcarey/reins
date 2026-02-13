@@ -80,12 +80,12 @@ export class SessionSidebar extends LitElement {
     if (!found) {
       this.sessions = [
         {
-          path: "",
           id: this.activeSessionId,
-          created: new Date().toISOString(),
-          modified: new Date().toISOString(),
-          messageCount: 0,
-          firstMessage: "",
+          name: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          message_count: 0,
+          first_message: null,
         },
         ...this.sessions,
       ];
@@ -104,10 +104,10 @@ export class SessionSidebar extends LitElement {
     }
   }
 
-  private async handleSelectSession(sessionPath: string) {
-    if (this.activeProjectId == null || !sessionPath) return;
+  private async handleSelectSession(sessionId: string) {
+    if (this.activeProjectId == null || !sessionId) return;
     try {
-      const resp = await fetch(`/api/projects/${this.activeProjectId}/sessions/${encodeURIComponent(sessionPath)}`);
+      const resp = await fetch(`/api/projects/${this.activeProjectId}/sessions/${encodeURIComponent(sessionId)}`);
       if (!resp.ok) return;
       const data: SessionData = await resp.json();
       this.notifyApp(data);
@@ -141,18 +141,18 @@ export class SessionSidebar extends LitElement {
 
   private renderSession(s: SessionListItem) {
     const isActive = s.id === this.activeSessionId;
-    const label = s.name || s.firstMessage || "Empty session";
+    const label = s.name || s.first_message || "Empty session";
     const truncated = label.length > 60 ? label.slice(0, 60) + "..." : label;
-    const date = this.formatRelativeDate(s.modified);
+    const date = this.formatRelativeDate(s.updated_at);
 
     return html`
       <button
         class="w-full text-left px-3 py-2.5 border-b border-zinc-700/50 cursor-pointer transition-colors
           ${isActive ? "bg-zinc-700/60" : "hover:bg-zinc-700/30"}"
-        @click=${() => this.handleSelectSession(s.path)}
+        @click=${() => this.handleSelectSession(s.id)}
       >
         <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
-        <div class="text-[10px] text-zinc-500 mt-0.5">${date} · ${s.messageCount} messages</div>
+        <div class="text-[10px] text-zinc-500 mt-0.5">${date} · ${s.message_count} messages</div>
       </button>
     `;
   }

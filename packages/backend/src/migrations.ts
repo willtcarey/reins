@@ -23,6 +23,36 @@ const MIGRATIONS: [name: string, sql: string][] = [
     "002_add_base_branch",
     "ALTER TABLE projects ADD COLUMN base_branch TEXT NOT NULL DEFAULT 'main'",
   ],
+  [
+    "003_create_sessions",
+    `CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      model_provider TEXT,
+      model_id TEXT,
+      thinking_level TEXT DEFAULT 'off'
+    )`,
+  ],
+  [
+    "004_create_session_messages",
+    `CREATE TABLE session_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      seq INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      message_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(session_id, seq)
+    )`,
+  ],
+  [
+    "005_session_indexes",
+    `CREATE INDEX idx_session_messages_session ON session_messages(session_id, seq);
+     CREATE INDEX idx_sessions_project ON sessions(project_id, updated_at DESC)`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

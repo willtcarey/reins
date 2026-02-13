@@ -206,18 +206,14 @@ export class ChatPanel extends LitElement {
     }
   }
 
-  private get sessionPath(): string {
-    return this.sessionData?.path ?? "";
-  }
-
   private handleSend() {
     const text = this.inputText.trim();
-    if (!text || !this.client || !this.sessionId || !this.sessionPath) return;
+    if (!text || !this.client || !this.sessionId) return;
 
     if (this.isStreaming) {
-      this.client.steer(this.sessionId, this.sessionPath, text);
+      this.client.steer(this.sessionId, text);
     } else {
-      this.client.prompt(this.sessionId, this.sessionPath, text);
+      this.client.prompt(this.sessionId, text);
     }
 
     // Optimistically add user message
@@ -235,8 +231,8 @@ export class ChatPanel extends LitElement {
   }
 
   private handleStop() {
-    if (this.sessionId && this.sessionPath) {
-      this.client?.abort(this.sessionId, this.sessionPath);
+    if (this.sessionId) {
+      this.client?.abort(this.sessionId);
     }
   }
 
