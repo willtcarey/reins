@@ -1,9 +1,11 @@
 /**
  * Git Diff Route (project-scoped)
+ *
+ * Returns a pre-parsed, syntax-highlighted diff structure.
  */
 
 import type { RouterGroup, RouteContext } from "../router.js";
-import { getGitDiff } from "../git.js";
+import { getHighlightedDiff } from "../git.js";
 import { getProject } from "../project-store.js";
 
 export function registerDiffRoutes(router: RouterGroup) {
@@ -15,7 +17,7 @@ export function registerDiffRoutes(router: RouterGroup) {
       Math.max(parseInt(ctx.url.searchParams.get("context") ?? "3", 10) || 3, 0),
       500,
     );
-    const diff = await getGitDiff(projectDir, contextLines, project.base_branch);
-    return Response.json(diff);
+    const files = await getHighlightedDiff(projectDir, contextLines, project.base_branch);
+    return Response.json({ files });
   });
 }

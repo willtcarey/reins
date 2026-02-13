@@ -9,6 +9,77 @@
   @apply bg-red-900/30 text-red-300;
 }
 
+/* Syntax highlighting (highlight.js tokens) — dark theme */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-name {
+  color: #c792ea;
+}
+
+.hljs-string,
+.hljs-attr,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+  color: #c3e88d;
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-title.function_ {
+  color: #82aaff;
+}
+
+.hljs-comment,
+.hljs-quote,
+.hljs-meta {
+  color: #6a737d;
+  font-style: italic;
+}
+
+.hljs-number,
+.hljs-literal {
+  color: #f78c6c;
+}
+
+.hljs-type,
+.hljs-template-tag,
+.hljs-template-variable {
+  color: #ffcb6b;
+}
+
+.hljs-regexp,
+.hljs-link {
+  color: #89ddff;
+}
+
+.hljs-variable,
+.hljs-params {
+  color: #d4d4d4;
+}
+
+.hljs-deletion {
+  color: #ff5370;
+}
+
+.hljs-tag {
+  color: #f07178;
+}
+
+.hljs-attr {
+  color: #ffcb6b;
+}
+
+.hljs-subst {
+  color: #d4d4d4;
+}
+
+.hljs-punctuation,
+.hljs-operator {
+  color: #89ddff;
+}
+
 /* Markdown prose overrides for dark theme */
 .prose pre {
   @apply bg-zinc-900 text-zinc-200 rounded-lg overflow-x-auto;

@@ -1,121 +1,34 @@
 /**
  * Herald Diff Panel
  *
- * Lit web component that fetches and displays the git diff from the backend.
- * Parses unified diff format and renders with colored additions/removals.
- * Supports expanding context lines around changed hunks.
+ * Lit web component that fetches and displays a syntax-highlighted git diff
+ * from the backend. The backend returns pre-parsed, pre-highlighted HTML.
  * Uses light DOM for Tailwind compatibility.
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { unsafeHTML } from "lit/directives/unsafe-html.js";
 
-// ---- Diff parser types -----------------------------------------------------
+// ---- Types (mirrors backend response) -------------------------------------
 
 interface DiffLine {
-  type: "add" | "remove" | "context" | "header";
-  text: string;
-  lineNo?: number; // line number in the new file (for context lines)
+  type: "context" | "add" | "remove";
+  html: string;
+  oldLine?: number;
+  newLine?: number;
 }
 
 interface DiffHunk {
   header: string;
   lines: DiffLine[];
-  /** Starting line number in old file */
-  oldStart: number;
-  /** Starting line number in new file */
-  newStart: number;
 }
 
 interface DiffFile {
   path: string;
+  additions: number;
+  removals: number;
   hunks: DiffHunk[];
-}
-
-// ---- Diff parser -----------------------------------------------------------
-
-function parseHunkHeader(header: string): { oldStart: number; newStart: number } {
-  const match = header.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-  if (match) {
-    return { oldStart: parseInt(match[1], 10), newStart: parseInt(match[2], 10) };
-  }
-  return { oldStart: 0, newStart: 0 };
-}
-
-function parseDiff(raw: string): DiffFile[] {
-  if (!raw || !raw.trim()) return [];
-
-  const files: DiffFile[] = [];
-  const lines = raw.split("\n");
-  let currentFile: DiffFile | null = null;
-  let currentHunk: DiffHunk | null = null;
-  let newLineNo = 0;
-
-  for (const line of lines) {
-    // New file header: diff --git a/path b/path
-    if (line.startsWith("diff --git")) {
-      const match = line.match(/diff --git a\/(.*?) b\/(.*)/);
-      currentFile = {
-        path: match ? match[2] : line,
-        hunks: [],
-      };
-      files.push(currentFile);
-      currentHunk = null;
-      continue;
-    }
-
-    // Skip metadata lines (index, ---, +++)
-    if (line.startsWith("index ") || line.startsWith("---") || line.startsWith("+++")) {
-      continue;
-    }
-
-    // New mode / deleted / renamed lines
-    if (
-      line.startsWith("new file mode") ||
-      line.startsWith("deleted file mode") ||
-      line.startsWith("old mode") ||
-      line.startsWith("new mode") ||
-      line.startsWith("rename from") ||
-      line.startsWith("rename to") ||
-      line.startsWith("similarity index") ||
-      line.startsWith("Binary files")
-    ) {
-      continue;
-    }
-
-    // Hunk header: @@ -a,b +c,d @@
-    if (line.startsWith("@@")) {
-      if (!currentFile) continue;
-      const { oldStart, newStart } = parseHunkHeader(line);
-      newLineNo = newStart;
-      currentHunk = {
-        header: line,
-        lines: [],
-        oldStart,
-        newStart,
-      };
-      currentFile.hunks.push(currentHunk);
-      continue;
-    }
-
-    // Diff content lines
-    if (currentHunk) {
-      if (line.startsWith("+")) {
-        currentHunk.lines.push({ type: "add", text: line.slice(1), lineNo: newLineNo });
-        newLineNo++;
-      } else if (line.startsWith("-")) {
-        currentHunk.lines.push({ type: "remove", text: line.slice(1) });
-        // removed lines don't increment new file line number
-      } else if (line.startsWith(" ")) {
-        currentHunk.lines.push({ type: "context", text: line.slice(1), lineNo: newLineNo });
-        newLineNo++;
-      } else if (line === "\\ No newline at end of file") {
-        // Skip this marker
-      }
-    }
-  }
-
-  return files;
 }
 
 // ---- Constants -------------------------------------------------------------
@@ -170,10 +83,7 @@ export class HeraldDiff extends LitElement {
         return;
       }
       const data = await resp.json();
-      const combined = [data.committed ?? "", data.uncommitted ?? ""]
-        .filter(Boolean)
-        .join("\n");
-      this.files = parseDiff(combined);
+      this.files = data.files ?? [];
       this.error = null;
     } catch (err: any) {
       this.error = err.message ?? "Failed to fetch diff";
@@ -203,7 +113,7 @@ export class HeraldDiff extends LitElement {
   private renderLine(line: DiffLine) {
     let prefix = " ";
     let classes = "text-zinc-300";
-    const lineNoStr = line.lineNo != null ? String(line.lineNo).padStart(4) : "    ";
+    const lineNo = line.newLine ?? line.oldLine;
 
     switch (line.type) {
       case "add":
@@ -220,7 +130,7 @@ export class HeraldDiff extends LitElement {
         break;
     }
 
-    return html`<div class="${classes} px-2 leading-5 whitespace-pre font-mono"><span class="select-none text-zinc-600 mr-1 inline-block w-[3.5ch] text-right">${line.lineNo != null ? line.lineNo : ""}</span><span class="select-none text-zinc-600 mr-2">${prefix}</span>${line.text}</div>`;
+    return html`<div class="${classes} px-2 leading-5 whitespace-pre font-mono"><span class="select-none text-zinc-600 mr-1 inline-block w-[3.5ch] text-right">${lineNo ?? ""}</span><span class="select-none text-zinc-600 mr-2">${prefix}</span>${unsafeHTML(line.html)}</div>`;
   }
 
   private renderExpandButton(label: string, onClick: () => void) {
@@ -238,10 +148,11 @@ export class HeraldDiff extends LitElement {
   }
 
   private renderHunkSeparator(prevHunk: DiffHunk | null, nextHunk: DiffHunk) {
-    // If there's a gap between hunks, show an expand button
     if (!prevHunk) {
-      // First hunk — if it doesn't start at line 1, there are lines above we could show
-      if (nextHunk.newStart > 1) {
+      // First hunk — check if there are hidden lines above
+      const firstLine = nextHunk.lines[0];
+      const startLine = firstLine?.newLine ?? firstLine?.oldLine ?? 1;
+      if (startLine > 1) {
         return this.renderExpandButton(
           `Show more lines above`,
           () => this.expandContext()
@@ -250,9 +161,10 @@ export class HeraldDiff extends LitElement {
       return nothing;
     }
 
-    // Calculate the gap between the end of prevHunk and start of nextHunk
-    const prevEndLine = this.getHunkEndLine(prevHunk);
-    const gap = nextHunk.newStart - prevEndLine - 1;
+    // Calculate gap between hunks
+    const prevLastLine = this.getHunkEndLine(prevHunk);
+    const nextFirstLine = nextHunk.lines[0]?.newLine ?? nextHunk.lines[0]?.oldLine ?? 0;
+    const gap = nextFirstLine - prevLastLine - 1;
     if (gap > 0) {
       return this.renderExpandButton(
         `Expand ${gap} hidden line${gap !== 1 ? "s" : ""}`,
@@ -264,24 +176,16 @@ export class HeraldDiff extends LitElement {
   }
 
   private getHunkEndLine(hunk: DiffHunk): number {
-    // Walk backwards through lines to find the last new-file line number
     for (let i = hunk.lines.length - 1; i >= 0; i--) {
       const line = hunk.lines[i];
-      if (line.lineNo != null) return line.lineNo;
+      if (line.newLine != null) return line.newLine;
+      if (line.oldLine != null) return line.oldLine;
     }
-    return hunk.newStart;
+    return 0;
   }
 
   private renderFile(file: DiffFile) {
     const collapsed = this.collapsedFiles.has(file.path);
-    const addCount = file.hunks.reduce(
-      (sum, h) => sum + h.lines.filter((l) => l.type === "add").length,
-      0
-    );
-    const removeCount = file.hunks.reduce(
-      (sum, h) => sum + h.lines.filter((l) => l.type === "remove").length,
-      0
-    );
 
     return html`
       <div class="mb-3 border border-zinc-700 rounded-lg">
@@ -291,8 +195,8 @@ export class HeraldDiff extends LitElement {
         >
           <span class="text-zinc-500 font-mono text-xs">${collapsed ? "▶" : "▼"}</span>
           <span class="font-mono text-zinc-200 flex-1 text-left truncate">${file.path}</span>
-          ${addCount > 0 ? html`<span class="text-green-400 text-xs font-mono">+${addCount}</span>` : nothing}
-          ${removeCount > 0 ? html`<span class="text-red-400 text-xs font-mono">-${removeCount}</span>` : nothing}
+          ${file.additions > 0 ? html`<span class="text-green-400 text-xs font-mono">+${file.additions}</span>` : nothing}
+          ${file.removals > 0 ? html`<span class="text-red-400 text-xs font-mono">-${file.removals}</span>` : nothing}
         </button>
         ${!collapsed ? html`
           <div class="text-xs overflow-x-auto">
