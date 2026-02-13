@@ -24,6 +24,10 @@ bun run --filter '@herald/frontend' dev  # starts frontend build watcher
 bun run build        # builds frontend to packages/frontend/dist
 ```
 
+## Backend
+
+- **Adding API routes**: see [`packages/backend/docs/ROUTER.md`](packages/backend/docs/ROUTER.md)
+
 ## Notes
 
 - Use `bun` for all package management and script execution (not npm/yarn/pnpm).
