@@ -1,5 +1,5 @@
 /**
- * Herald App Shell
+ * App Shell
  *
  * Root component with session sidebar, chat panel, and diff panel.
  * Initializes the WebSocket client and wires everything together.
@@ -12,11 +12,11 @@
 
 import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { HeraldClient } from "./ws-client.js";
+import { AppClient } from "./ws-client.js";
 import type { SessionData, SessionListItem } from "./ws-client.js";
-import type { HeraldChat } from "./chat-panel.js";
-import type { HeraldDiff } from "./diff-panel.js";
-import type { HeraldSessions } from "./session-sidebar.js";
+import type { ChatPanel } from "./chat-panel.js";
+import type { DiffPanel } from "./diff-panel.js";
+import type { SessionSidebar } from "./session-sidebar.js";
 
 // Ensure sub-components are registered
 import "./chat-panel.js";
@@ -32,13 +32,13 @@ function parseProjectIdFromHash(): number | null {
   return match ? parseInt(match[1], 10) : null;
 }
 
-@customElement("herald-app")
-export class HeraldApp extends LitElement {
+@customElement("app-shell")
+export class AppShell extends LitElement {
   override createRenderRoot() {
     return this;
   }
 
-  private client = new HeraldClient();
+  private client = new AppClient();
 
   @state() private connected = false;
   @state() private activeSessionId = "";
@@ -75,14 +75,14 @@ export class HeraldApp extends LitElement {
         FILE_MODIFYING_TOOLS.has(event.toolName)
       ) {
         setTimeout(() => {
-          const diffPanel = this.querySelector("herald-diff") as HeraldDiff | null;
+          const diffPanel = this.querySelector("diff-panel") as DiffPanel | null;
           diffPanel?.refresh();
         }, 500);
       }
 
       if (event.type === "agent_end") {
         setTimeout(() => {
-          const diffPanel = this.querySelector("herald-diff") as HeraldDiff | null;
+          const diffPanel = this.querySelector("diff-panel") as DiffPanel | null;
           diffPanel?.refresh();
         }, 500);
       }
@@ -124,7 +124,7 @@ export class HeraldApp extends LitElement {
       const sessions: SessionListItem[] = await listResp.json();
 
       // Let the sidebar know about the list
-      const sidebar = this.querySelector("herald-sessions") as HeraldSessions | null;
+      const sidebar = this.querySelector("session-sidebar") as SessionSidebar | null;
       sidebar?.setSessionList(sessions);
 
       if (sessions.length === 0) {
@@ -153,12 +153,12 @@ export class HeraldApp extends LitElement {
   public loadSession(data: SessionData) {
     this.sessionData = data;
     this.activeSessionId = data.id;
-    const sidebar = this.querySelector("herald-sessions") as HeraldSessions | null;
+    const sidebar = this.querySelector("session-sidebar") as SessionSidebar | null;
     sidebar?.refresh();
   }
 
   private handleRefreshDiff() {
-    const diffPanel = this.querySelector("herald-diff") as HeraldDiff | null;
+    const diffPanel = this.querySelector("diff-panel") as DiffPanel | null;
     diffPanel?.refresh();
   }
 
@@ -195,11 +195,11 @@ export class HeraldApp extends LitElement {
         <!-- Main layout: sidebar + content -->
         <div class="flex-1 flex min-h-0">
           <!-- Session sidebar -->
-          <herald-sessions
+          <session-sidebar
             .client=${this.client}
             .activeSessionId=${this.activeSessionId}
             .activeProjectId=${this.activeProjectId}
-          ></herald-sessions>
+          ></session-sidebar>
 
           ${hasProject ? html`
             <!-- Chat panel -->
@@ -213,12 +213,12 @@ export class HeraldApp extends LitElement {
                   }
                 </div>
               </div>
-              <herald-chat
+              <chat-panel
                 class="flex-1 min-h-0"
                 .client=${this.client}
                 .sessionId=${this.activeSessionId}
                 .sessionData=${this.sessionData}
-              ></herald-chat>
+              ></chat-panel>
             </div>
 
             <!-- Diff panel -->
@@ -233,10 +233,10 @@ export class HeraldApp extends LitElement {
                   Refresh
                 </button>
               </div>
-              <herald-diff
+              <diff-panel
                 class="flex-1 min-h-0"
                 .activeProjectId=${this.activeProjectId}
-              ></herald-diff>
+              ></diff-panel>
             </div>
           ` : this.renderEmptyState()}
         </div>
@@ -247,6 +247,6 @@ export class HeraldApp extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    "herald-app": HeraldApp;
+    "app-shell": AppShell;
   }
 }

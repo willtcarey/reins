@@ -1,6 +1,6 @@
 # Backend Hot Reload
 
-In dev mode (`HERALD_DEV=1`), the backend hot-reloads handler code without
+In dev mode (`REINS_DEV=1`), the backend hot-reloads handler code without
 restarting the process. Agent sessions stay alive mid-turn.
 
 ## Architecture

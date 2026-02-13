@@ -1,5 +1,5 @@
 /**
- * Herald Chat Panel
+ * Chat Panel
  *
  * Lit web component that renders the conversation between the user and the
  * agent, handles streaming text updates, tool call display, and user input.
@@ -10,7 +10,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked } from "marked";
-import type { HeraldClient, SessionData } from "./ws-client.js";
+import type { AppClient, SessionData } from "./ws-client.js";
 
 // Configure marked for safe defaults
 marked.setOptions({
@@ -77,15 +77,15 @@ type StreamingBlock = StreamingTextBlock | StreamingToolBlock;
 
 // ---- Component --------------------------------------------------------------
 
-@customElement("herald-chat")
-export class HeraldChat extends LitElement {
+@customElement("chat-panel")
+export class ChatPanel extends LitElement {
   // Use light DOM for Tailwind compatibility
   override createRenderRoot() {
     return this;
   }
 
   @property({ attribute: false })
-  client: HeraldClient | null = null;
+  client: AppClient | null = null;
 
   @property({ type: String })
   sessionId = "";
@@ -505,6 +505,6 @@ export class HeraldChat extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    "herald-chat": HeraldChat;
+    "chat-panel": ChatPanel;
   }
 }

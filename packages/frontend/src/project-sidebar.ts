@@ -1,5 +1,5 @@
 /**
- * Herald Project Sidebar
+ * Project Sidebar
  *
  * Displays at the top of the sidebar. Shows a project switcher dropdown
  * and an "Add Project" form. Projects are persisted server-side in SQLite.
@@ -10,8 +10,8 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ProjectInfo } from "./ws-client.js";
 
-@customElement("herald-projects")
-export class HeraldProjects extends LitElement {
+@customElement("project-sidebar")
+export class ProjectSidebar extends LitElement {
   override createRenderRoot() {
     return this;
   }
@@ -134,7 +134,7 @@ export class HeraldProjects extends LitElement {
 
   private async handleDeleteProject(e: Event, project: ProjectInfo) {
     e.stopPropagation();
-    if (!confirm(`Remove "${project.name}" from Herald?\n\nThis won't delete any files on disk.`)) return;
+    if (!confirm(`Remove "${project.name}" from REINS?\n\nThis won't delete any files on disk.`)) return;
 
     try {
       await fetch(`/api/projects/${project.id}`, { method: "DELETE" });
@@ -260,6 +260,6 @@ export class HeraldProjects extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    "herald-projects": HeraldProjects;
+    "project-sidebar": ProjectSidebar;
   }
 }

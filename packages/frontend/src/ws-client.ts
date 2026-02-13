@@ -1,7 +1,7 @@
 /**
- * Herald WebSocket Client
+ * WebSocket Client
  *
- * Thin client that connects to the Herald backend WebSocket endpoint.
+ * Thin client that connects to the backend WebSocket endpoint.
  * The WS is a stateless broadcast channel:
  *  - Receives all active session events (each tagged with sessionId)
  *  - Sends commands (prompt, steer, abort) with explicit sessionId
@@ -11,7 +11,7 @@
 
 // ---- Types ----------------------------------------------------------------
 
-export interface HeraldSessionState {
+export interface SessionState {
   model: { provider: string; id: string } | null;
   thinkingLevel: string;
   isStreaming: boolean;
@@ -22,7 +22,7 @@ export interface SessionData {
   path: string;
   id: string;
   messages: any[];
-  state: HeraldSessionState;
+  state: SessionState;
 }
 
 export interface SessionListItem {
@@ -55,7 +55,7 @@ export type ConnectionListener = (connected: boolean) => void;
 
 // ---- Client ----------------------------------------------------------------
 
-export class HeraldClient {
+export class AppClient {
   private ws: WebSocket | null = null;
   private url: string;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;

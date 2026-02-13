@@ -1,4 +1,4 @@
-# Herald
+# REINS
 
 Bun monorepo with two packages:
 
@@ -15,7 +15,7 @@ bun install
 
 ```sh
 bun run dev          # starts backend with --watch
-bun run --filter '@herald/frontend' dev  # starts frontend build watcher
+bun run --filter '@reins/frontend' dev  # starts frontend build watcher
 ```
 
 ## Build

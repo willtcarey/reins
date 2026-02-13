@@ -1,5 +1,5 @@
 /**
- * Herald Server State (shared types)
+ * Server State (shared types)
  *
  * Type definitions for the long-lived state that survives hot reloads.
  * The actual state objects are owned by index.ts; handlers.ts receives

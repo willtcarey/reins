@@ -83,13 +83,13 @@ async function handleWsCommand(
 export function handleWsOpen(state: ServerState, ws: any): void {
   const client: WsClient = { ws };
   state.clients.add(client);
-  (ws as any)._heraldClient = client;
+  (ws as any)._wsClient = client;
 
   console.log(`WebSocket client connected (total: ${state.clients.size})`);
 }
 
 export function handleWsMessage(state: ServerState, ws: any, message: string | Buffer): void {
-  const client = (ws as any)._heraldClient as WsClient;
+  const client = (ws as any)._wsClient as WsClient;
   const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
   handleWsCommand(state, client, raw).catch((err) => {
     console.error("WebSocket command error:", err);
@@ -98,7 +98,7 @@ export function handleWsMessage(state: ServerState, ws: any, message: string | B
 }
 
 export function handleWsClose(state: ServerState, ws: any): void {
-  const client = (ws as any)._heraldClient as WsClient | undefined;
+  const client = (ws as any)._wsClient as WsClient | undefined;
   if (client) {
     state.clients.delete(client);
   }

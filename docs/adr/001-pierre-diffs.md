@@ -6,7 +6,7 @@
 
 ## Context
 
-Herald has a custom diff viewer consisting of:
+REINS has a custom diff viewer consisting of:
 
 - **`packages/frontend/src/diff-panel.ts`** — a Lit web component (~230 lines) that renders syntax-highlighted unified diffs with collapsible files, hunk separators, and context expansion.
 - **`packages/backend/src/highlighter.ts`** — highlight.js-based syntax highlighter (~130 lines) that tokenizes full files and splits highlighted HTML across lines with balanced span tags.

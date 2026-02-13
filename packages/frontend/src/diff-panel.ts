@@ -1,5 +1,5 @@
 /**
- * Herald Diff Panel
+ * Diff Panel
  *
  * Lit web component that fetches and displays a syntax-highlighted git diff
  * from the backend. The backend returns pre-parsed, pre-highlighted HTML.
@@ -38,8 +38,8 @@ const EXPAND_STEP = 20;
 
 // ---- Component --------------------------------------------------------------
 
-@customElement("herald-diff")
-export class HeraldDiff extends LitElement {
+@customElement("diff-panel")
+export class DiffPanel extends LitElement {
   override createRenderRoot() {
     return this;
   }
@@ -251,6 +251,6 @@ export class HeraldDiff extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    "herald-diff": HeraldDiff;
+    "diff-panel": DiffPanel;
   }
 }

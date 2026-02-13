@@ -1,10 +1,10 @@
 /**
- * Herald Backend Server (entry point)
+ * Backend Server (entry point)
  *
  * Owns long-lived state (sessions, clients, Bun server) and delegates
  * request handling to routes.ts and ws.ts through mutable references.
  *
- * In dev mode (HERALD_DEV=1), watches src/ for changes and hot-reloads
+ * In dev mode (REINS_DEV=1), watches src/ for changes and hot-reloads
  * the handler module without restarting the process — agent sessions
  * stay alive mid-turn.
  */
@@ -18,12 +18,12 @@ import type { ServerState, ManagedSession, WsClient } from "./state.js";
 import type * as RoutesModule from "./routes.js";
 import type * as WsModule from "./ws.js";
 
-const PORT = parseInt(process.env.HERALD_PORT || "3100", 10);
+const PORT = parseInt(process.env.REINS_PORT || "3100", 10);
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const EVICTION_CHECK_INTERVAL_MS = 60 * 1000;
-const IS_DEV = process.env.HERALD_DEV === "1";
+const IS_DEV = process.env.REINS_DEV === "1";
 
-console.log(`Herald backend starting...`);
+console.log(`REINS backend starting...`);
 console.log(`  Port: ${PORT}`);
 if (IS_DEV) console.log(`  Hot reload: enabled`);
 
@@ -31,8 +31,8 @@ if (IS_DEV) console.log(`  Hot reload: enabled`);
 // 1. Long-lived state (survives hot reloads)
 // ---------------------------------------------------------------------------
 
-const explicitProvider = process.env.HERALD_PROVIDER;
-const explicitModelId = process.env.HERALD_MODEL;
+const explicitProvider = process.env.REINS_PROVIDER;
+const explicitModelId = process.env.REINS_MODEL;
 const explicitModel =
   explicitProvider && explicitModelId
     ? getModel(explicitProvider as any, explicitModelId)
@@ -139,10 +139,10 @@ async function startServer(): Promise<void> {
     },
   });
 
-  console.log(`Herald backend listening on http://localhost:${PORT}`);
+  console.log(`REINS backend listening on http://localhost:${PORT}`);
 }
 
 startServer().catch((err) => {
-  console.error("Fatal: failed to start Herald backend:", err);
+  console.error("Fatal: failed to start REINS backend:", err);
   process.exit(1);
 });

@@ -1,9 +1,9 @@
 /**
  * Project Store
  *
- * SQLite-backed persistence for Herald projects.
+ * SQLite-backed persistence for projects.
  * Each project is a name + directory path mapping.
- * Database lives at .herald/herald.db in the workspace root.
+ * Database lives at .reins/reins.db in the workspace root.
  *
  * Schema is managed by migrations.ts — see that file to add new columns.
  */
@@ -22,18 +22,18 @@ export interface Project {
   last_opened_at: string;
 }
 
-// Resolve .herald/ relative to the workspace root (two levels up from src/)
+// Resolve .reins/ relative to the workspace root (two levels up from src/)
 const WORKSPACE_ROOT = resolve(import.meta.dirname!, "../../..");
-const HERALD_DIR = join(WORKSPACE_ROOT, ".herald");
-const DB_PATH = join(HERALD_DIR, "herald.db");
+const DATA_DIR = join(WORKSPACE_ROOT, ".reins");
+const DB_PATH = join(DATA_DIR, "reins.db");
 
 let db: Database | null = null;
 
 function getDb(): Database {
   if (db) return db;
 
-  if (!existsSync(HERALD_DIR)) {
-    mkdirSync(HERALD_DIR, { recursive: true });
+  if (!existsSync(DATA_DIR)) {
+    mkdirSync(DATA_DIR, { recursive: true });
   }
 
   db = new Database(DB_PATH);

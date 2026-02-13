@@ -1,5 +1,5 @@
 /**
- * Herald Session Sidebar
+ * Session Sidebar
  *
  * Collapsible sidebar that lists sessions for the current project,
  * allows switching between them, and creating new sessions.
@@ -8,18 +8,18 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HeraldClient, SessionListItem, SessionData } from "./ws-client.js";
-import type { HeraldApp } from "./app.js";
+import type { AppClient, SessionListItem, SessionData } from "./ws-client.js";
+import type { AppShell } from "./app.js";
 import "./project-sidebar.js";
 
-@customElement("herald-sessions")
-export class HeraldSessions extends LitElement {
+@customElement("session-sidebar")
+export class SessionSidebar extends LitElement {
   override createRenderRoot() {
     return this;
   }
 
   @property({ attribute: false })
-  client: HeraldClient | null = null;
+  client: AppClient | null = null;
 
   @property({ type: String })
   activeSessionId = "";
@@ -117,7 +117,7 @@ export class HeraldSessions extends LitElement {
   }
 
   private notifyApp(data: SessionData) {
-    const app = this.closest("herald-app") as HeraldApp | null;
+    const app = this.closest("app-shell") as AppShell | null;
     app?.loadSession(data);
   }
 
@@ -175,9 +175,9 @@ export class HeraldSessions extends LitElement {
     return html`
       <div class="w-64 h-full bg-zinc-850 border-r border-zinc-700 flex flex-col shrink-0">
         <!-- Project switcher -->
-        <herald-projects
+        <project-sidebar
           .activeProjectId=${this.activeProjectId}
-        ></herald-projects>
+        ></project-sidebar>
 
         <!-- Header -->
         <div class="flex items-center justify-between px-3 py-2 border-b border-zinc-700">
@@ -216,6 +216,6 @@ export class HeraldSessions extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    "herald-sessions": HeraldSessions;
+    "session-sidebar": SessionSidebar;
   }
 }

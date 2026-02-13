@@ -1,9 +1,9 @@
 {
-  "name": "herald",
+  "name": "reins",
   "private": true,
   "workspaces": ["packages/*"],
   "scripts": {
-    "build": "bun run --filter '@herald/frontend' build",
-    "dev": "bun run --filter '@herald/frontend' dev & bun packages/backend/dev.ts"
+    "build": "bun run --filter '@reins/frontend' build",
+    "dev": "bun run --filter '@reins/frontend' dev & bun packages/backend/dev.ts"
   }
 }
