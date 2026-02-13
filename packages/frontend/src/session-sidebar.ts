@@ -3,11 +3,14 @@
  *
  * Collapsible sidebar that lists sessions for the current project,
  * allows switching between them, and creating new sessions.
+ * All session operations go through REST.
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HeraldClient, SessionListItem } from "./ws-client.js";
+import type { HeraldClient, SessionListItem, SessionData } from "./ws-client.js";
+import type { HeraldApp } from "./app.js";
+import "./project-sidebar.js";
 
 @customElement("herald-sessions")
 export class HeraldSessions extends LitElement {
@@ -21,6 +24,10 @@ export class HeraldSessions extends LitElement {
   @property({ type: String })
   activeSessionId = "";
 
+  /** Current project ID from the URL route. Null = no project selected. */
+  @property({ type: Number })
+  activeProjectId: number | null = null;
+
   @state() private sessions: SessionListItem[] = [];
   @state() private collapsed = false;
   @state() private loading = false;
@@ -31,9 +38,9 @@ export class HeraldSessions extends LitElement {
   }
 
   override willUpdate(changed: Map<string, unknown>) {
-    // When the active session changes (e.g. new session created),
-    // ensure it appears in the sidebar list immediately — even if
-    // the session file hasn't been persisted to disk yet.
+    if (changed.has("activeProjectId")) {
+      this.refresh();
+    }
     if (changed.has("activeSessionId") && this.activeSessionId) {
       const found = this.sessions.some(s => s.id === this.activeSessionId);
       if (!found) {
@@ -42,15 +49,21 @@ export class HeraldSessions extends LitElement {
     }
   }
 
-  /**
-   * Re-fetch the session list from the server. If the active session
-   * still isn't in the list (empty session not yet persisted), insert
-   * a placeholder entry so the user sees it immediately.
-   */
+  /** Accept a pre-fetched session list (avoids a redundant fetch). */
+  setSessionList(sessions: SessionListItem[]) {
+    this.sessions = sessions;
+    this.loading = false;
+    this.ensureActiveSession();
+  }
+
   async refresh() {
+    if (this.activeProjectId == null) {
+      this.sessions = [];
+      return;
+    }
     this.loading = true;
     try {
-      const resp = await fetch("/api/sessions");
+      const resp = await fetch(`/api/projects/${this.activeProjectId}/sessions`);
       if (resp.ok) {
         this.sessions = await resp.json();
         this.ensureActiveSession();
@@ -61,10 +74,6 @@ export class HeraldSessions extends LitElement {
     this.loading = false;
   }
 
-  /**
-   * If the active session isn't in the list (new session not yet
-   * persisted to disk), add a synthetic placeholder entry.
-   */
   private ensureActiveSession() {
     if (!this.activeSessionId) return;
     const found = this.sessions.some(s => s.id === this.activeSessionId);
@@ -83,12 +92,33 @@ export class HeraldSessions extends LitElement {
     }
   }
 
-  private handleNewSession() {
-    this.client?.newSession();
+  private async handleNewSession() {
+    if (this.activeProjectId == null) return;
+    try {
+      const resp = await fetch(`/api/projects/${this.activeProjectId}/sessions`, { method: "POST" });
+      if (!resp.ok) return;
+      const data: SessionData = await resp.json();
+      this.notifyApp(data);
+    } catch {
+      // silent
+    }
   }
 
-  private handleSelectSession(path: string) {
-    this.client?.switchSession(path);
+  private async handleSelectSession(sessionPath: string) {
+    if (this.activeProjectId == null || !sessionPath) return;
+    try {
+      const resp = await fetch(`/api/projects/${this.activeProjectId}/sessions/${encodeURIComponent(sessionPath)}`);
+      if (!resp.ok) return;
+      const data: SessionData = await resp.json();
+      this.notifyApp(data);
+    } catch {
+      // silent
+    }
+  }
+
+  private notifyApp(data: SessionData) {
+    const app = this.closest("herald-app") as HeraldApp | null;
+    app?.loadSession(data);
   }
 
   private toggleCollapse() {
@@ -144,6 +174,11 @@ export class HeraldSessions extends LitElement {
 
     return html`
       <div class="w-64 h-full bg-zinc-850 border-r border-zinc-700 flex flex-col shrink-0">
+        <!-- Project switcher -->
+        <herald-projects
+          .activeProjectId=${this.activeProjectId}
+        ></herald-projects>
+
         <!-- Header -->
         <div class="flex items-center justify-between px-3 py-2 border-b border-zinc-700">
           <h2 class="text-xs font-semibold text-zinc-400 uppercase tracking-wide">Sessions</h2>

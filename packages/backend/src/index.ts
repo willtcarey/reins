@@ -9,7 +9,6 @@
  * stay alive mid-turn.
  */
 
-import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { getModel } from "@mariozechner/pi-ai";
 import { watch } from "fs";
 import { resolve } from "path";
@@ -19,13 +18,11 @@ import type { ServerState, ManagedSession, WsClient } from "./state.js";
 import type * as HandlersModule from "./handlers.js";
 
 const PORT = parseInt(process.env.HERALD_PORT || "3100", 10);
-const PROJECT_DIR = process.env.HERALD_PROJECT_DIR || process.cwd();
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const EVICTION_CHECK_INTERVAL_MS = 60 * 1000;
 const IS_DEV = process.env.HERALD_DEV === "1";
 
 console.log(`Herald backend starting...`);
-console.log(`  Project dir: ${PROJECT_DIR}`);
 console.log(`  Port: ${PORT}`);
 if (IS_DEV) console.log(`  Hot reload: enabled`);
 
@@ -43,19 +40,16 @@ const explicitModel =
 const state: ServerState = {
   sessions: new Map<string, ManagedSession>(),
   clients: new Set<WsClient>(),
-  defaultSessionId: "",
-  projectDir: PROJECT_DIR,
   frontendDir: new URL("../../frontend/", import.meta.url).pathname,
   explicitModel,
 };
 
-// Idle eviction
+// Idle eviction — evict sessions that haven't had activity recently
+// and aren't currently streaming
 setInterval(() => {
   const now = Date.now();
   for (const [id, managed] of state.sessions) {
     if (managed.session.isStreaming) continue;
-    const hasViewers = [...state.clients].some((c) => c.activeSessionId === id);
-    if (hasViewers) continue;
     if (now - managed.lastActivity > IDLE_TIMEOUT_MS) {
       state.sessions.delete(id);
       console.log(`  Session evicted (idle): ${id} (remaining: ${state.sessions.size})`);
@@ -111,14 +105,6 @@ if (IS_DEV) {
 async function startServer(): Promise<void> {
   // Initial handler load
   handlers = await loadHandlers();
-
-  // Open the most recent session (or create a new one)
-  const sessionManager = SessionManager.continueRecent(PROJECT_DIR);
-  const initial = await handlers.openSession(state, sessionManager);
-  state.defaultSessionId = initial.id;
-
-  console.log(`  Model: ${initial.session.model?.provider}/${initial.session.model?.id ?? "none"}`);
-  console.log(`  Thinking: ${initial.session.thinkingLevel}`);
 
   Bun.serve({
     port: PORT,

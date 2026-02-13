@@ -1,24 +1,28 @@
 /**
  * Herald WebSocket Client
  *
- * Thin client that connects to the Herald backend WebSocket endpoint,
- * sends commands (prompt, steer, abort, get_state, get_messages),
- * and dispatches incoming events to subscribers.
+ * Thin client that connects to the Herald backend WebSocket endpoint.
+ * The WS is a stateless broadcast channel:
+ *  - Receives all active session events (each tagged with sessionId)
+ *  - Sends commands (prompt, steer, abort) with explicit sessionId
+ *
+ * Session lifecycle (create, load, list) is handled via REST.
  */
 
 // ---- Types ----------------------------------------------------------------
 
-export interface HeraldState {
+export interface HeraldSessionState {
   model: { provider: string; id: string } | null;
   thinkingLevel: string;
   isStreaming: boolean;
   messageCount: number;
 }
 
-export interface InitPayload {
+export interface SessionData {
+  path: string;
+  id: string;
   messages: any[];
-  state: HeraldState;
-  sessionId: string;
+  state: HeraldSessionState;
 }
 
 export interface SessionListItem {
@@ -31,18 +35,22 @@ export interface SessionListItem {
   firstMessage: string;
 }
 
+export interface ProjectInfo {
+  id: number;
+  name: string;
+  path: string;
+  created_at: string;
+  last_opened_at: string;
+}
+
 /** Inbound message shapes from the backend */
 export type ServerMessage =
-  | { type: "init"; data: InitPayload }
-  | { type: "event"; event: any }
+  | { type: "event"; sessionId: string; event: any }
   | { type: "ack"; command: string }
-  | { type: "state"; data: HeraldState }
-  | { type: "messages"; data: { messages: any[] } }
   | { type: "error"; error: string };
 
-export type EventListener = (event: any) => void;
+export type EventListener = (sessionId: string, event: any) => void;
 export type ConnectionListener = (connected: boolean) => void;
-export type InitListener = (data: InitPayload) => void;
 
 // ---- Client ----------------------------------------------------------------
 
@@ -54,11 +62,9 @@ export class HeraldClient {
   private maxReconnectDelay = 10000;
   private eventListeners = new Set<EventListener>();
   private connectionListeners = new Set<ConnectionListener>();
-  private initListeners = new Set<InitListener>();
   private connected = false;
 
   constructor(url?: string) {
-    // Default: derive WebSocket URL from current page location
     if (url) {
       this.url = url;
     } else {
@@ -80,7 +86,7 @@ export class HeraldClient {
       this.reconnectTimer = null;
     }
     if (this.ws) {
-      this.ws.onclose = null; // prevent reconnect
+      this.ws.onclose = null;
       this.ws.close();
       this.ws = null;
     }
@@ -110,9 +116,7 @@ export class HeraldClient {
       this.scheduleReconnect();
     };
 
-    ws.onerror = () => {
-      // onerror is always followed by onclose in browsers
-    };
+    ws.onerror = () => {};
 
     this.ws = ws;
   }
@@ -142,26 +146,17 @@ export class HeraldClient {
 
   private handleMessage(msg: ServerMessage): void {
     switch (msg.type) {
-      case "init":
-        for (const listener of this.initListeners) {
-          listener(msg.data);
-        }
-        break;
-
       case "event":
         for (const listener of this.eventListeners) {
-          listener(msg.event);
+          listener(msg.sessionId, msg.event);
         }
         break;
 
-      case "state":
-      case "messages":
       case "ack":
       case "error":
-        // These are handled by promise-based request/response if needed,
-        // but also forwarded as events for general listeners
+        // Forward as synthetic events for general listeners
         for (const listener of this.eventListeners) {
-          listener({ type: `ws_${msg.type}`, ...msg });
+          listener("", { type: `ws_${msg.type}`, ...msg });
         }
         break;
     }
@@ -169,32 +164,16 @@ export class HeraldClient {
 
   // ---- Commands ------------------------------------------------------------
 
-  prompt(message: string): void {
-    this.send({ type: "prompt", message });
+  prompt(sessionId: string, sessionPath: string, message: string): void {
+    this.send({ type: "prompt", sessionId, sessionPath, message });
   }
 
-  steer(message: string): void {
-    this.send({ type: "steer", message });
+  steer(sessionId: string, sessionPath: string, message: string): void {
+    this.send({ type: "steer", sessionId, sessionPath, message });
   }
 
-  abort(): void {
-    this.send({ type: "abort" });
-  }
-
-  getState(): void {
-    this.send({ type: "get_state" });
-  }
-
-  getMessages(): void {
-    this.send({ type: "get_messages" });
-  }
-
-  switchSession(sessionPath: string): void {
-    this.send({ type: "switch_session", sessionPath });
-  }
-
-  newSession(): void {
-    this.send({ type: "new_session" });
+  abort(sessionId: string, sessionPath: string): void {
+    this.send({ type: "abort", sessionId, sessionPath });
   }
 
   private send(data: unknown): void {
@@ -213,10 +192,5 @@ export class HeraldClient {
   onConnection(listener: ConnectionListener): () => void {
     this.connectionListeners.add(listener);
     return () => this.connectionListeners.delete(listener);
-  }
-
-  onInit(listener: InitListener): () => void {
-    this.initListeners.add(listener);
-    return () => this.initListeners.delete(listener);
   }
 }

@@ -3,13 +3,12 @@
  *
  * SQLite-backed persistence for Herald projects.
  * Each project is a name + directory path mapping.
- * Database lives at ~/.herald/herald.db
+ * Database lives at .herald/herald.db in the workspace root.
  */
 
 import { Database } from "bun:sqlite";
 import { mkdirSync, existsSync } from "fs";
-import { join } from "path";
-import { homedir } from "os";
+import { join, resolve } from "path";
 
 export interface Project {
   id: number;
@@ -19,7 +18,9 @@ export interface Project {
   last_opened_at: string;
 }
 
-const HERALD_DIR = join(homedir(), ".herald");
+// Resolve .herald/ relative to the workspace root (two levels up from src/)
+const WORKSPACE_ROOT = resolve(import.meta.dirname!, "../../..");
+const HERALD_DIR = join(WORKSPACE_ROOT, ".herald");
 const DB_PATH = join(HERALD_DIR, "herald.db");
 
 let db: Database | null = null;
@@ -54,11 +55,6 @@ export function listProjects(): Project[] {
 export function getProject(id: number): Project | null {
   const d = getDb();
   return (d.query("SELECT * FROM projects WHERE id = ?").get(id) as Project) ?? null;
-}
-
-export function getProjectByPath(path: string): Project | null {
-  const d = getDb();
-  return (d.query("SELECT * FROM projects WHERE path = ?").get(path) as Project) ?? null;
 }
 
 export function createProject(name: string, path: string): Project {

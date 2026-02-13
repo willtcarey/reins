@@ -10,7 +10,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked } from "marked";
-import type { HeraldClient } from "./ws-client.js";
+import type { HeraldClient, SessionData } from "./ws-client.js";
 
 // Configure marked for safe defaults
 marked.setOptions({
@@ -87,6 +87,12 @@ export class HeraldChat extends LitElement {
   @property({ attribute: false })
   client: HeraldClient | null = null;
 
+  @property({ type: String })
+  sessionId = "";
+
+  @property({ attribute: false })
+  sessionData: SessionData | null = null;
+
   @state() private messages: AgentMessage[] = [];
   @state() private isStreaming = false;
   @state() private streamingBlocks: StreamingBlock[] = [];
@@ -94,7 +100,6 @@ export class HeraldChat extends LitElement {
   @state() private expandedTools = new Set<string>();
 
   private unsubscribeEvent?: () => void;
-  private unsubscribeInit?: () => void;
   private scrollContainer: HTMLElement | null = null;
   private shouldAutoScroll = true;
 
@@ -106,12 +111,17 @@ export class HeraldChat extends LitElement {
   override disconnectedCallback() {
     super.disconnectedCallback();
     this.unsubscribeEvent?.();
-    this.unsubscribeInit?.();
   }
 
   override updated(changed: Map<string, unknown>) {
     if (changed.has("client")) {
       this.wireClient();
+    }
+    // Load messages from session data when it changes
+    if (changed.has("sessionData") && this.sessionData) {
+      this.messages = this.sessionData.messages ?? [];
+      this.isStreaming = this.sessionData.state.isStreaming;
+      this.streamingBlocks = [];
     }
     // Auto-scroll after render
     this.autoScroll();
@@ -119,16 +129,11 @@ export class HeraldChat extends LitElement {
 
   private wireClient() {
     this.unsubscribeEvent?.();
-    this.unsubscribeInit?.();
     if (!this.client) return;
 
-    this.unsubscribeInit = this.client.onInit((data) => {
-      this.messages = data.messages ?? [];
-      this.isStreaming = data.state.isStreaming;
-      this.streamingBlocks = [];
-    });
-
-    this.unsubscribeEvent = this.client.onEvent((event) => {
+    this.unsubscribeEvent = this.client.onEvent((sessionId, event) => {
+      // Only handle events for our session
+      if (sessionId !== this.sessionId) return;
       this.handleAgentEvent(event);
     });
   }
@@ -201,15 +206,18 @@ export class HeraldChat extends LitElement {
     }
   }
 
+  private get sessionPath(): string {
+    return this.sessionData?.path ?? "";
+  }
+
   private handleSend() {
     const text = this.inputText.trim();
-    if (!text || !this.client) return;
+    if (!text || !this.client || !this.sessionId || !this.sessionPath) return;
 
     if (this.isStreaming) {
-      // If streaming, treat as steer
-      this.client.steer(text);
+      this.client.steer(this.sessionId, this.sessionPath, text);
     } else {
-      this.client.prompt(text);
+      this.client.prompt(this.sessionId, this.sessionPath, text);
     }
 
     // Optimistically add user message
@@ -227,7 +235,9 @@ export class HeraldChat extends LitElement {
   }
 
   private handleStop() {
-    this.client?.abort();
+    if (this.sessionId && this.sessionPath) {
+      this.client?.abort(this.sessionId, this.sessionPath);
+    }
   }
 
   private handleKeyDown(e: KeyboardEvent) {

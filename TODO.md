@@ -9,3 +9,5 @@
 - [ ] Working directory switcher/indicator
 - [ ] Diff view doesn't show untracked files
 - [ ] Figure out how to run the service persistently
+- [ ] Mobile support
+- [ ] Image support in the chat interface

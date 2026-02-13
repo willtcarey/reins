@@ -8,7 +8,7 @@
  */
 
 import { LitElement, html, nothing } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 
 // ---- Diff parser types -----------------------------------------------------
 
@@ -131,6 +131,10 @@ export class HeraldDiff extends LitElement {
     return this;
   }
 
+  /** Current project ID from the URL route. Null = no project selected. */
+  @property({ type: Number })
+  activeProjectId: number | null = null;
+
   @state() private files: DiffFile[] = [];
   @state() private loading = false;
   @state() private error: string | null = null;
@@ -154,8 +158,13 @@ export class HeraldDiff extends LitElement {
   }
 
   async refresh() {
+    if (this.activeProjectId == null) {
+      this.files = [];
+      this.error = null;
+      return;
+    }
     try {
-      const resp = await fetch(`/api/diff?context=${this.contextLines}`);
+      const resp = await fetch(`/api/projects/${this.activeProjectId}/diff?context=${this.contextLines}`);
       if (!resp.ok) {
         this.error = `HTTP ${resp.status}`;
         return;

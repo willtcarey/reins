@@ -4,11 +4,16 @@
  * Root component with session sidebar, chat panel, and diff panel.
  * Initializes the WebSocket client and wires everything together.
  * Uses light DOM for Tailwind compatibility.
+ *
+ * Routing: hash-based
+ *  - `#/project/:id` — view a saved project
+ *  - (empty hash)    — no project selected, show empty state
  */
 
 import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { HeraldClient } from "./ws-client.js";
+import type { SessionData, SessionListItem } from "./ws-client.js";
 import type { HeraldChat } from "./chat-panel.js";
 import type { HeraldDiff } from "./diff-panel.js";
 import type { HeraldSessions } from "./session-sidebar.js";
@@ -21,6 +26,12 @@ import "./session-sidebar.js";
 // Tools that modify files and should trigger a diff refresh
 const FILE_MODIFYING_TOOLS = new Set(["write", "edit", "bash"]);
 
+/** Parse `#/project/3` → 3, anything else → null */
+function parseProjectIdFromHash(): number | null {
+  const match = location.hash.match(/^#\/project\/(\d+)$/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
 @customElement("herald-app")
 export class HeraldApp extends LitElement {
   override createRenderRoot() {
@@ -31,23 +42,34 @@ export class HeraldApp extends LitElement {
 
   @state() private connected = false;
   @state() private activeSessionId = "";
+  @state() private activeProjectId: number | null = null;
+  @state() private sessionData: SessionData | null = null;
+
+  /** Tracks whether we've loaded the initial session for the current project. */
+  private projectSessionLoaded = false;
 
   override connectedCallback() {
     super.connectedCallback();
 
+    // Read initial route
+    this.activeProjectId = parseProjectIdFromHash();
+
+    // Listen for hash changes (project switches)
+    window.addEventListener("hashchange", this.onHashChange);
+
     this.client.onConnection((connected) => {
       this.connected = connected;
-    });
-
-    // Track active session and refresh sidebar on session changes
-    this.client.onInit((data) => {
-      this.activeSessionId = data.sessionId;
-      const sidebar = this.querySelector("herald-sessions") as HeraldSessions | null;
-      sidebar?.refresh();
+      // When WS connects (or reconnects), load the session for the current project
+      if (connected && !this.projectSessionLoaded && this.activeProjectId != null) {
+        this.loadProjectSession();
+      }
     });
 
     // Refresh diff panel when file-modifying tools complete
-    this.client.onEvent((event) => {
+    this.client.onEvent((sessionId, event) => {
+      // Only react to events for the session we're viewing
+      if (sessionId !== this.activeSessionId) return;
+
       if (
         event.type === "tool_execution_end" &&
         FILE_MODIFYING_TOOLS.has(event.toolName)
@@ -71,7 +93,68 @@ export class HeraldApp extends LitElement {
 
   override disconnectedCallback() {
     super.disconnectedCallback();
+    window.removeEventListener("hashchange", this.onHashChange);
     this.client.disconnect();
+  }
+
+  private onHashChange = () => {
+    const newProjectId = parseProjectIdFromHash();
+    if (newProjectId !== this.activeProjectId) {
+      this.activeProjectId = newProjectId;
+      this.projectSessionLoaded = false;
+      this.activeSessionId = "";
+      this.sessionData = null;
+
+      if (newProjectId != null) {
+        this.loadProjectSession();
+      }
+    }
+  };
+
+  /**
+   * Load the most recent session for the current project via REST.
+   * Fetches the session list first (sidebar uses this too), then loads
+   * the most recent one. If no sessions exist, leaves sessionData null.
+   */
+  private async loadProjectSession() {
+    if (this.activeProjectId == null) return;
+    try {
+      const listResp = await fetch(`/api/projects/${this.activeProjectId}/sessions`);
+      if (!listResp.ok) return;
+      const sessions: SessionListItem[] = await listResp.json();
+
+      // Let the sidebar know about the list
+      const sidebar = this.querySelector("herald-sessions") as HeraldSessions | null;
+      sidebar?.setSessionList(sessions);
+
+      if (sessions.length === 0) {
+        this.projectSessionLoaded = true;
+        return;
+      }
+
+      // Load the most recent session's full data
+      const latest = sessions[0];
+      const resp = await fetch(
+        `/api/projects/${this.activeProjectId}/sessions/${encodeURIComponent(latest.path)}`
+      );
+      if (!resp.ok) return;
+      const data: SessionData = await resp.json();
+      this.sessionData = data;
+      this.activeSessionId = data.id;
+      this.projectSessionLoaded = true;
+    } catch {
+      // Will retry on next connect
+    }
+  }
+
+  /**
+   * Called by the session sidebar when the user clicks a session or creates a new one.
+   */
+  public loadSession(data: SessionData) {
+    this.sessionData = data;
+    this.activeSessionId = data.id;
+    const sidebar = this.querySelector("herald-sessions") as HeraldSessions | null;
+    sidebar?.refresh();
   }
 
   private handleRefreshDiff() {
@@ -79,7 +162,27 @@ export class HeraldApp extends LitElement {
     diffPanel?.refresh();
   }
 
+  private renderEmptyState() {
+    return html`
+      <div class="flex-1 flex items-center justify-center">
+        <div class="text-center max-w-md px-6">
+          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+               class="mx-auto mb-4 text-zinc-600">
+            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>
+          </svg>
+          <h2 class="text-lg font-medium text-zinc-400 mb-2">No project selected</h2>
+          <p class="text-sm text-zinc-500">
+            Select a project from the sidebar or add a new one to get started.
+          </p>
+        </div>
+      </div>
+    `;
+  }
+
   override render() {
+    const hasProject = this.activeProjectId != null;
+
     return html`
       <div class="h-screen w-screen flex flex-col bg-zinc-900 text-zinc-100">
         <!-- Connection status bar -->
@@ -89,42 +192,53 @@ export class HeraldApp extends LitElement {
           </div>
         ` : ""}
 
-        <!-- Main layout: sidebar + chat + diff -->
+        <!-- Main layout: sidebar + content -->
         <div class="flex-1 flex min-h-0">
           <!-- Session sidebar -->
           <herald-sessions
             .client=${this.client}
             .activeSessionId=${this.activeSessionId}
+            .activeProjectId=${this.activeProjectId}
           ></herald-sessions>
 
-          <!-- Chat panel -->
-          <div class="flex-1 flex flex-col border-r border-zinc-700 min-w-0">
-            <div class="flex items-center justify-between px-4 py-2 border-b border-zinc-700 bg-zinc-800/50">
-              <h2 class="text-sm font-semibold text-zinc-300">Chat</h2>
-              <div class="flex items-center gap-2">
-                ${this.connected
-                  ? html`<span class="w-2 h-2 rounded-full bg-green-500" title="Connected"></span>`
-                  : html`<span class="w-2 h-2 rounded-full bg-red-500" title="Disconnected"></span>`
-                }
+          ${hasProject ? html`
+            <!-- Chat panel -->
+            <div class="flex-1 flex flex-col border-r border-zinc-700 min-w-0">
+              <div class="flex items-center justify-between px-4 py-2 border-b border-zinc-700 bg-zinc-800/50">
+                <h2 class="text-sm font-semibold text-zinc-300">Chat</h2>
+                <div class="flex items-center gap-2">
+                  ${this.connected
+                    ? html`<span class="w-2 h-2 rounded-full bg-green-500" title="Connected"></span>`
+                    : html`<span class="w-2 h-2 rounded-full bg-red-500" title="Disconnected"></span>`
+                  }
+                </div>
               </div>
+              <herald-chat
+                class="flex-1 min-h-0"
+                .client=${this.client}
+                .sessionId=${this.activeSessionId}
+                .sessionData=${this.sessionData}
+              ></herald-chat>
             </div>
-            <herald-chat class="flex-1 min-h-0" .client=${this.client}></herald-chat>
-          </div>
 
-          <!-- Diff panel -->
-          <div class="w-1/2 flex flex-col shrink-0">
-            <div class="flex items-center justify-between px-4 py-2 border-b border-zinc-700 bg-zinc-800/50">
-              <h2 class="text-sm font-semibold text-zinc-300">Changes</h2>
-              <button
-                class="text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
-                @click=${this.handleRefreshDiff}
-                title="Refresh diff"
-              >
-                Refresh
-              </button>
+            <!-- Diff panel -->
+            <div class="w-1/2 flex flex-col shrink-0">
+              <div class="flex items-center justify-between px-4 py-2 border-b border-zinc-700 bg-zinc-800/50">
+                <h2 class="text-sm font-semibold text-zinc-300">Changes</h2>
+                <button
+                  class="text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                  @click=${this.handleRefreshDiff}
+                  title="Refresh diff"
+                >
+                  Refresh
+                </button>
+              </div>
+              <herald-diff
+                class="flex-1 min-h-0"
+                .activeProjectId=${this.activeProjectId}
+              ></herald-diff>
             </div>
-            <herald-diff class="flex-1 min-h-0"></herald-diff>
-          </div>
+          ` : this.renderEmptyState()}
         </div>
       </div>
     `;
