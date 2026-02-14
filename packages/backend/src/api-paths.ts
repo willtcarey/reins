@@ -12,4 +12,5 @@ export const API = {
   sessions:  "/api/projects/:id/sessions",
   session:   "/api/projects/:id/sessions/:sessionId",
   diff:      "/api/projects/:id/diff",
+  file:      "/api/projects/:id/file",
 } as const;

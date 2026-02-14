@@ -15,6 +15,7 @@ import { registerHealthRoutes } from "./health.js";
 import { registerProjectRoutes } from "./projects.js";
 import { registerSessionRoutes } from "./sessions.js";
 import { registerDiffRoutes } from "./diff.js";
+import { registerFileRoutes } from "./file.js";
 
 // ---- Project middleware ----------------------------------------------------
 
@@ -43,6 +44,7 @@ export function buildRouter() {
   router.group(API.project, projectMiddleware, (r) => {
     registerSessionRoutes(r);
     registerDiffRoutes(r);
+    registerFileRoutes(r);
   });
 
   return router;

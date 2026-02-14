@@ -111,11 +111,28 @@ html, body {
   @apply border-zinc-700;
 }
 
-.prose h1,
-.prose h2,
-.prose h3,
+.prose h1 {
+  @apply text-zinc-200 text-2xl font-bold mt-6 mb-4;
+}
+
+.prose h2 {
+  @apply text-zinc-200 text-xl font-bold mt-5 mb-3 pb-1 border-b border-zinc-700;
+}
+
+.prose h3 {
+  @apply text-zinc-200 text-lg font-semibold mt-4 mb-2;
+}
+
 .prose h4 {
-  @apply text-zinc-200;
+  @apply text-zinc-200 text-base font-semibold mt-3 mb-2;
+}
+
+.prose h5 {
+  @apply text-zinc-200 text-sm font-semibold mt-3 mb-1;
+}
+
+.prose h6 {
+  @apply text-zinc-400 text-sm font-semibold mt-3 mb-1;
 }
 
 .prose strong {
@@ -126,21 +143,33 @@ html, body {
   @apply my-3;
 }
 
-.prose ul,
+.prose ul {
+  @apply text-zinc-300 my-2 pl-6 list-disc;
+}
+
 .prose ol {
-  @apply text-zinc-300 my-2;
+  @apply text-zinc-300 my-2 pl-6 list-decimal;
+}
+
+.prose li {
+  @apply my-1;
+}
+
+.prose li > ul,
+.prose li > ol {
+  @apply my-1;
 }
 
 .prose table {
-  @apply text-zinc-300;
+  @apply text-zinc-300 w-full my-3 border-collapse border border-zinc-700;
 }
 
 .prose th {
-  @apply border-zinc-700 text-zinc-200;
+  @apply border border-zinc-700 text-zinc-200 bg-zinc-800 px-3 py-1.5 text-left text-sm font-semibold;
 }
 
 .prose td {
-  @apply border-zinc-700;
+  @apply border border-zinc-700 px-3 py-1.5 text-sm;
 }
 
 /* Scrollbar styling */
