@@ -353,6 +353,8 @@ export class ChatPanel extends LitElement {
     );
     const summary = this.toolSummary(tc.name, tc.arguments);
 
+    const images = result ? this.getToolResultImages(result) : [];
+
     return html`
       <div class="mt-1 ml-2 border-l-2 border-zinc-600 pl-3">
         <button
@@ -365,13 +367,25 @@ export class ChatPanel extends LitElement {
           ${result?.isError ? html`<span class="text-red-400 ml-1 flex-shrink-0">error</span>` : nothing}
           ${summary ? html`<span class="font-mono text-zinc-500 truncate">${summary}</span>` : nothing}
         </button>
+        ${!expanded && images.length > 0 ? html`
+          <div class="mt-1">
+            ${images.map(
+              (img) => html`<img src="data:${img.mimeType};base64,${img.data}" class="max-w-full max-h-96 rounded mt-1" alt="Tool result image" />`
+            )}
+          </div>
+        ` : nothing}
         ${expanded ? html`
           <div class="mt-1 text-xs">
             <div class="text-zinc-500 mb-1">Arguments:</div>
             <pre class="bg-zinc-900 rounded p-2 overflow-x-auto text-zinc-300 max-h-48 overflow-y-auto">${JSON.stringify(tc.arguments, null, 2)}</pre>
             ${result ? html`
               <div class="text-zinc-500 mt-2 mb-1">Result${result.isError ? " (error)" : ""}:</div>
-              <pre class="bg-zinc-900 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto ${result.isError ? "text-red-400" : "text-zinc-300"}">${this.getToolResultText(result)}</pre>
+              ${this.getToolResultImages(result).map(
+                (img) => html`<img src="data:${img.mimeType};base64,${img.data}" class="max-w-full max-h-96 rounded mt-1 mb-1" alt="Tool result image" />`
+              )}
+              ${this.getToolResultText(result) ? html`
+                <pre class="bg-zinc-900 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto ${result.isError ? "text-red-400" : "text-zinc-300"}">${this.getToolResultText(result)}</pre>
+              ` : nothing}
             ` : nothing}
           </div>
         ` : nothing}
@@ -385,6 +399,12 @@ export class ChatPanel extends LitElement {
       .map((c) => c.text)
       .join("\n")
       .slice(0, 5000); // Truncate very long results for display
+  }
+
+  private getToolResultImages(msg: ToolResultMessage): { data: string; mimeType: string }[] {
+    return msg.content.filter(
+      (c): c is { type: "image"; data: string; mimeType: string } => c.type === "image"
+    );
   }
 
   private renderToolResultMessage(_msg: ToolResultMessage) {
