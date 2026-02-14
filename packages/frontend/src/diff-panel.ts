@@ -200,6 +200,7 @@ export class DiffPanel extends LitElement {
         </button>
         ${!collapsed ? html`
           <div class="text-xs overflow-x-auto">
+            <div class="min-w-full w-fit">
             ${file.hunks.map(
               (hunk, i) => html`
                 ${this.renderHunkSeparator(i > 0 ? file.hunks[i - 1] : null, hunk)}
@@ -209,6 +210,7 @@ export class DiffPanel extends LitElement {
                 ${hunk.lines.map((line) => this.renderLine(line))}
               `
             )}
+            </div>
           </div>
         ` : nothing}
       </div>
