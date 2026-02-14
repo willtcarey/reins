@@ -118,10 +118,17 @@ export class ChatPanel extends LitElement {
       this.wireClient();
     }
     // Load messages from session data when it changes
-    if (changed.has("sessionData") && this.sessionData) {
-      this.messages = this.sessionData.messages ?? [];
-      this.isStreaming = this.sessionData.state.isStreaming;
-      this.streamingBlocks = [];
+    if (changed.has("sessionData")) {
+      if (this.sessionData) {
+        this.messages = this.sessionData.messages ?? [];
+        this.isStreaming = this.sessionData.state.isStreaming;
+        this.streamingBlocks = [];
+      } else {
+        // Session cleared (e.g. project switch) — reset everything
+        this.messages = [];
+        this.isStreaming = false;
+        this.streamingBlocks = [];
+      }
     }
     // Auto-scroll after render
     this.autoScroll();

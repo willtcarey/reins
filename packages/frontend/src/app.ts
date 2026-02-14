@@ -85,6 +85,9 @@ export class AppShell extends LitElement {
         setTimeout(() => {
           const diffPanel = this.querySelector("diff-panel") as DiffPanel | null;
           diffPanel?.refresh();
+          // Refresh sidebar so session names/first messages update
+          const sidebar = this.querySelector("session-sidebar") as SessionSidebar | null;
+          sidebar?.refresh();
         }, 500);
       }
     });
