@@ -46,9 +46,6 @@ export class AppShell extends LitElement {
   @state() private sessionData: SessionData | null = null;
   @state() private activeTab: "chat" | "changes" = "chat";
 
-  /** Tracks whether we've loaded the initial session for the current project. */
-  private projectSessionLoaded = false;
-
   override connectedCallback() {
     super.connectedCallback();
 
@@ -60,9 +57,9 @@ export class AppShell extends LitElement {
 
     this.client.onConnection((connected) => {
       this.connected = connected;
-      // When WS connects (or reconnects), load the session for the current project
-      if (connected && !this.projectSessionLoaded && this.activeProjectId != null) {
-        this.loadProjectSession();
+      // On reconnect, re-fetch the active session to catch up on missed events
+      if (connected && this.activeSessionId) {
+        this.fetchSession(this.activeSessionId);
       }
     });
 
@@ -71,28 +68,25 @@ export class AppShell extends LitElement {
       // Only react to events for the session we're viewing
       if (sessionId !== this.activeSessionId) return;
 
-      if (
-        event.type === "tool_execution_end" &&
-        FILE_MODIFYING_TOOLS.has(event.toolName)
-      ) {
-        setTimeout(() => {
-          const diffPanel = this.querySelector("diff-panel") as DiffPanel | null;
-          diffPanel?.refresh();
-        }, 500);
+      const refreshDiff =
+        (event.type === "tool_execution_end" && FILE_MODIFYING_TOOLS.has(event.toolName)) ||
+        event.type === "agent_end";
+
+      if (refreshDiff) {
+        setTimeout(() => this.getDiffPanel()?.refresh(), 500);
       }
 
       if (event.type === "agent_end") {
-        setTimeout(() => {
-          const diffPanel = this.querySelector("diff-panel") as DiffPanel | null;
-          diffPanel?.refresh();
-          // Refresh sidebar so session names/first messages update
-          const sidebar = this.querySelector("session-sidebar") as SessionSidebar | null;
-          sidebar?.refresh();
-        }, 500);
+        setTimeout(() => this.getSidebar()?.refresh(), 500);
       }
     });
 
     this.client.connect();
+
+    // Load initial session for the current project (uses REST, not WS)
+    if (this.activeProjectId != null) {
+      this.loadProjectSession();
+    }
   }
 
   override disconnectedCallback() {
@@ -105,7 +99,6 @@ export class AppShell extends LitElement {
     const newProjectId = parseProjectIdFromHash();
     if (newProjectId !== this.activeProjectId) {
       this.activeProjectId = newProjectId;
-      this.projectSessionLoaded = false;
       this.activeSessionId = "";
       this.sessionData = null;
 
@@ -114,6 +107,31 @@ export class AppShell extends LitElement {
       }
     }
   };
+
+  private getSidebar(): SessionSidebar | null {
+    return this.querySelector("session-sidebar") as SessionSidebar | null;
+  }
+
+  private getDiffPanel(): DiffPanel | null {
+    return this.querySelector("diff-panel") as DiffPanel | null;
+  }
+
+  /**
+   * Fetch a single session's full data via REST and apply it.
+   */
+  private async fetchSession(sessionId: string): Promise<boolean> {
+    if (this.activeProjectId == null) return false;
+    try {
+      const resp = await fetch(
+        `/api/projects/${this.activeProjectId}/sessions/${encodeURIComponent(sessionId)}`
+      );
+      if (!resp.ok) return false;
+      this.loadSession(await resp.json());
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   /**
    * Load the most recent session for the current project via REST.
@@ -128,26 +146,14 @@ export class AppShell extends LitElement {
       const sessions: SessionListItem[] = await listResp.json();
 
       // Let the sidebar know about the list
-      const sidebar = this.querySelector("session-sidebar") as SessionSidebar | null;
-      sidebar?.setSessionList(sessions);
+      this.getSidebar()?.setSessionList(sessions);
 
-      if (sessions.length === 0) {
-        this.projectSessionLoaded = true;
-        return;
-      }
+      if (sessions.length === 0) return;
 
       // Load the most recent session's full data
-      const latest = sessions[0];
-      const resp = await fetch(
-        `/api/projects/${this.activeProjectId}/sessions/${encodeURIComponent(latest.id)}`
-      );
-      if (!resp.ok) return;
-      const data: SessionData = await resp.json();
-      this.sessionData = data;
-      this.activeSessionId = data.id;
-      this.projectSessionLoaded = true;
+      await this.fetchSession(sessions[0].id);
     } catch {
-      // Will retry on next connect
+      // Silently fail — user can retry via sidebar
     }
   }
 
@@ -157,13 +163,11 @@ export class AppShell extends LitElement {
   public loadSession(data: SessionData) {
     this.sessionData = data;
     this.activeSessionId = data.id;
-    const sidebar = this.querySelector("session-sidebar") as SessionSidebar | null;
-    sidebar?.refresh();
+    this.getSidebar()?.refresh();
   }
 
   private handleRefreshDiff() {
-    const diffPanel = this.querySelector("diff-panel") as DiffPanel | null;
-    diffPanel?.refresh();
+    this.getDiffPanel()?.refresh();
   }
 
   private renderEmptyState() {
