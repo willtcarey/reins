@@ -470,7 +470,7 @@ export class ChatPanel extends LitElement {
         <div class="border-t border-zinc-700 p-3">
           <div class="flex gap-2 items-end">
             <textarea
-              class="flex-1 bg-zinc-800 text-zinc-100 rounded-lg px-3 py-2 text-sm resize-none outline-none focus:ring-1 focus:ring-blue-500 placeholder-zinc-500"
+              class="flex-1 bg-zinc-800 text-zinc-100 rounded-lg px-3 py-2 text-base resize-none outline-none focus:ring-1 focus:ring-blue-500 placeholder-zinc-500"
               rows="1"
               placeholder="${this.isStreaming ? "Send a steering message..." : "Type a message..."}"
               .value=${this.inputText}
