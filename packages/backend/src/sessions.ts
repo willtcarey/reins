@@ -5,37 +5,96 @@
  * Pi runs with SessionManager.inMemory(); we own persistence.
  */
 
-import { createAgentSession, createCodingTools, SessionManager } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, createCodingTools, SessionManager, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import type { ServerState, ManagedSession } from "./state.js";
 import {
   createSession as dbCreateSession,
   getSession as dbGetSession,
   listSessions as dbListSessions,
+  listTaskSessions as dbListTaskSessions,
   persistMessages,
   replaceAllMessages,
   loadMessages,
   updateSessionMeta,
   type SessionListItem,
 } from "./session-store.js";
+import { getTask, touchTask, type TaskRow } from "./task-store.js";
+import { checkoutBranch } from "./git.js";
+
+/**
+ * Build a task system prompt prefix for injection.
+ */
+function buildTaskPromptPrefix(task: { title: string; description: string | null }): string {
+  let prompt = `## Task\nTitle: ${task.title}`;
+  if (task.description) {
+    prompt += `\nDescription: ${task.description}`;
+  }
+  prompt += "\n\nYou are working on this task.";
+  return prompt;
+}
+
+/**
+ * Resolve a task by ID and check out its branch.
+ * Returns null for non-task sessions (no taskId).
+ * Throws if a taskId is provided but the task doesn't exist.
+ */
+async function resolveTask(
+  taskId: number | null | undefined,
+  projectDir: string,
+): Promise<TaskRow | null> {
+  if (!taskId) return null;
+  const task = getTask(taskId);
+  if (!task) throw new Error(`Task not found: ${taskId}`);
+  await checkoutBranch(projectDir, task.branch_name);
+  return task;
+}
+
+/**
+ * Build session options common to both create and resume paths.
+ * Sets up tools, session manager, model, and (for task sessions) the
+ * resource loader with the task system prompt injected.
+ */
+async function buildSessionOpts(
+  state: ServerState,
+  projectDir: string,
+  task: TaskRow | null,
+) {
+  const sessionManager = SessionManager.inMemory();
+  const tools = createCodingTools(projectDir);
+
+  const sessionOpts: any = {
+    cwd: projectDir,
+    tools,
+    sessionManager,
+    model: state.explicitModel,
+  };
+
+  if (task) {
+    sessionOpts.resourceLoader = new DefaultResourceLoader({
+      cwd: projectDir,
+      appendSystemPrompt: buildTaskPromptPrefix(task),
+    });
+    await sessionOpts.resourceLoader.reload();
+  }
+
+  return sessionOpts;
+}
 
 /**
  * Create a brand-new session for a project.
+ * If opts.taskId is provided, the session is linked to that task and
+ * the task's branch is checked out before creating the agent session.
  */
 export async function createNewSession(
   state: ServerState,
   projectId: number,
   projectDir: string,
+  opts?: { taskId?: number },
 ): Promise<ManagedSession> {
-  const sessionManager = SessionManager.inMemory();
-  const tools = createCodingTools(projectDir);
-  const result = await createAgentSession({
-    cwd: projectDir,
-    tools,
-    sessionManager,
-    model: state.explicitModel,
-  });
-
+  const task = await resolveTask(opts?.taskId, projectDir);
+  const sessionOpts = await buildSessionOpts(state, projectDir, task);
+  const result = await createAgentSession(sessionOpts);
   const agentSession = result.session;
   const id = agentSession.sessionId;
 
@@ -49,10 +108,16 @@ export async function createNewSession(
     modelProvider: model?.provider,
     modelId: model?.id,
     thinkingLevel: agentSession.thinkingLevel,
+    taskId: opts?.taskId,
   });
 
+  // Touch task's updated_at
+  if (opts?.taskId) {
+    touchTask(opts.taskId);
+  }
+
   const managed = wireSession(state, agentSession, id);
-  console.log(`  Session created: ${id} (total: ${state.sessions.size})`);
+  console.log(`  Session created: ${id}${task ? ` (task: ${task.title})` : ""} (total: ${state.sessions.size})`);
   return managed;
 }
 
@@ -75,14 +140,9 @@ export async function resumeSession(
   const row = dbGetSession(sessionId);
   if (!row) throw new Error(`Session not found: ${sessionId}`);
 
-  const sessionManager = SessionManager.inMemory();
-  const tools = createCodingTools(projectDir);
-  const result = await createAgentSession({
-    cwd: projectDir,
-    tools,
-    sessionManager,
-    model: state.explicitModel,
-  });
+  const task = await resolveTask(row.task_id, projectDir);
+  const sessionOpts = await buildSessionOpts(state, projectDir, task);
+  const result = await createAgentSession(sessionOpts);
 
   const agentSession = result.session;
 
@@ -180,8 +240,11 @@ export async function ensureSessionOpen(
  */
 export function serializeSession(managed: ManagedSession) {
   const s = managed.session;
+  // Look up task_id from DB row
+  const row = dbGetSession(managed.id);
   return {
     id: managed.id,
+    task_id: row?.task_id ?? null,
     messages: s.messages,
     state: {
       model: s.model ? { provider: s.model.provider, id: s.model.id } : null,
@@ -201,6 +264,7 @@ export function serializeSessionFromDb(sessionId: string) {
   const messages = loadMessages(sessionId);
   return {
     id: row.id,
+    task_id: row.task_id,
     messages,
     state: {
       model: row.model_provider && row.model_id
@@ -214,8 +278,15 @@ export function serializeSessionFromDb(sessionId: string) {
 }
 
 /**
- * List sessions for a project (from SQLite).
+ * List scratch sessions for a project (from SQLite).
  */
 export function serializeSessionList(projectId: number): SessionListItem[] {
   return dbListSessions(projectId);
+}
+
+/**
+ * List sessions for a task (from SQLite).
+ */
+export function serializeTaskSessionList(taskId: number): SessionListItem[] {
+  return dbListTaskSessions(taskId);
 }
