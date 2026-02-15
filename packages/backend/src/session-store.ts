@@ -153,12 +153,6 @@ export function updateSessionMeta(
   );
 }
 
-export function deleteSession(id: string): boolean {
-  const db = getDb();
-  const result = db.query("DELETE FROM sessions WHERE id = ?").run(id);
-  return result.changes > 0;
-}
-
 // ---- Message persistence ---------------------------------------------------
 
 /**
@@ -226,13 +220,3 @@ export function loadMessages(sessionId: string): any[] {
   return rows.map((r) => JSON.parse(r.message_json));
 }
 
-/**
- * Get the message count for a session.
- */
-export function getMessageCount(sessionId: string): number {
-  const db = getDb();
-  const row = db
-    .query("SELECT COUNT(*) AS cnt FROM session_messages WHERE session_id = ?")
-    .get(sessionId) as { cnt: number };
-  return row.cnt;
-}

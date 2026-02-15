@@ -6,6 +6,7 @@
  */
 
 import hljs from "highlight.js";
+import { escapeHtml } from "./html-utils.js";
 
 const EXT_TO_LANG: Record<string, string> = {
   ts: "typescript",
@@ -138,10 +139,4 @@ function splitHighlightedLines(html: string): string[] {
   return result;
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+

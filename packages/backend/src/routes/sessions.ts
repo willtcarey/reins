@@ -32,7 +32,6 @@ export function registerSessionRoutes(router: RouterGroup) {
   // Get a specific session by ID
   router.get("/sessions/:sessionId", async (ctx: RouteContext) => {
     const sessionId = ctx.params.sessionId;
-    const projectDir = (ctx as any).projectDir as string;
 
     // If already open in memory, use that (includes isStreaming state)
     const existing = ctx.state.sessions.get(sessionId);

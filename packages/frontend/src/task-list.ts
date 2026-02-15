@@ -9,6 +9,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { SessionListItem, TaskListItem } from "./ws-client.js";
+import { formatRelativeDate } from "./format.js";
 
 @customElement("task-list")
 export class TaskList extends LitElement {
@@ -97,25 +98,11 @@ export class TaskList extends LitElement {
     );
   }
 
-  private formatRelativeDate(iso: string): string {
-    const d = new Date(iso);
-    const now = Date.now();
-    const diffMs = now - d.getTime();
-    const minutes = Math.floor(diffMs / 60000);
-    if (minutes < 1) return "just now";
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    if (days < 7) return `${days}d ago`;
-    return d.toLocaleDateString();
-  }
-
   private renderSession(s: SessionListItem) {
     const isActive = s.id === this.activeSessionId;
     const label = s.name || s.first_message || "Empty session";
     const truncated = label.length > 60 ? label.slice(0, 60) + "..." : label;
-    const date = this.formatRelativeDate(s.updated_at);
+    const date = formatRelativeDate(s.updated_at);
 
     return html`
       <button
@@ -132,7 +119,7 @@ export class TaskList extends LitElement {
   private renderTask(task: TaskListItem) {
     const isExpanded = this.expandedTaskId === task.id;
     const sessions = this.taskSessions.get(task.id) ?? [];
-    const date = this.formatRelativeDate(task.updated_at);
+    const date = formatRelativeDate(task.updated_at);
 
     return html`
       <div class="border-b border-zinc-700/50">

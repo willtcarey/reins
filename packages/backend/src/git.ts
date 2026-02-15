@@ -5,6 +5,7 @@
  */
 
 import { highlightLines } from "./highlighter.js";
+import { escapeHtml } from "./html-utils.js";
 
 async function run(projectDir: string, args: string[]): Promise<string> {
   const proc = Bun.spawn(["git", ...args], {
@@ -13,7 +14,7 @@ async function run(projectDir: string, args: string[]): Promise<string> {
     stderr: "pipe",
   });
   const stdout = await new Response(proc.stdout).text();
-  const exitCode = await proc.exited;
+  await proc.exited;
   return stdout;
 }
 
@@ -118,7 +119,7 @@ export async function checkoutBranch(
 
 // ---- Working-tree diff -----------------------------------------------------
 
-export async function getGitDiff(
+async function getGitDiff(
   projectDir: string,
   contextLines = 3,
   baseBranch = "main",
@@ -320,10 +321,4 @@ export async function getHighlightedDiff(
   });
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+
