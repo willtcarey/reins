@@ -13,7 +13,27 @@ async function run(projectDir: string, args: string[]): Promise<string> {
     stderr: "pipe",
   });
   const stdout = await new Response(proc.stdout).text();
-  await proc.exited;
+  const exitCode = await proc.exited;
+  return stdout;
+}
+
+/**
+ * Like run(), but throws with stderr on non-zero exit.
+ */
+async function runChecked(projectDir: string, args: string[]): Promise<string> {
+  const proc = Bun.spawn(["git", ...args], {
+    cwd: projectDir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    throw new Error(`git ${args[0]} failed (exit ${exitCode}): ${stderr.trim()}`);
+  }
   return stdout;
 }
 
@@ -56,6 +76,47 @@ export async function detectDefaultBranch(projectDir: string): Promise<string> {
   }
   return "main";
 }
+
+// ---- Branch operations -----------------------------------------------------
+
+/**
+ * Create a branch from a base branch without checking it out.
+ * Throws if the branch already exists.
+ */
+export async function createBranch(
+  projectDir: string,
+  branchName: string,
+  baseBranch: string,
+): Promise<void> {
+  await runChecked(projectDir, ["branch", branchName, baseBranch]);
+}
+
+/**
+ * Check whether a local branch exists.
+ */
+export async function branchExists(
+  projectDir: string,
+  branchName: string,
+): Promise<boolean> {
+  const proc = Bun.spawn(
+    ["git", "show-ref", "--verify", "--quiet", `refs/heads/${branchName}`],
+    { cwd: projectDir, stdout: "pipe", stderr: "pipe" },
+  );
+  const exitCode = await proc.exited;
+  return exitCode === 0;
+}
+
+/**
+ * Check out a branch.
+ */
+export async function checkoutBranch(
+  projectDir: string,
+  branchName: string,
+): Promise<void> {
+  await runChecked(projectDir, ["checkout", branchName]);
+}
+
+// ---- Working-tree diff -----------------------------------------------------
 
 export async function getGitDiff(
   projectDir: string,

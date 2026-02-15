@@ -2,6 +2,11 @@
  * Git Diff Route (project-scoped)
  *
  * Returns a pre-parsed, syntax-highlighted diff structure.
+ *
+ * Always uses the working-tree-aware diff (`baseBranch...HEAD` + uncommitted
+ * + untracked). When a task session is active, the task branch is already
+ * checked out, so this naturally shows all task changes (committed AND
+ * uncommitted) against the project's base branch.
  */
 
 import type { RouterGroup, RouteContext } from "../router.js";
@@ -17,6 +22,7 @@ export function registerDiffRoutes(router: RouterGroup) {
       Math.max(parseInt(ctx.url.searchParams.get("context") ?? "3", 10) || 3, 0),
       500,
     );
+
     const files = await getHighlightedDiff(projectDir, contextLines, project.base_branch);
     return Response.json({ files });
   });

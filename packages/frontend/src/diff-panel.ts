@@ -60,6 +60,7 @@ export class DiffPanel extends LitElement {
   @property({ type: Number })
   activeProjectId: number | null = null;
 
+
   @state() private files: DiffFile[] = [];
   @state() private loading = false;
   @state() private error: string | null = null;
@@ -79,6 +80,12 @@ export class DiffPanel extends LitElement {
     super.connectedCallback();
     this.refresh();
     this.pollTimer = setInterval(() => this.refresh(), 5000);
+  }
+
+  override willUpdate(changed: Map<string, unknown>) {
+    if (changed.has("activeProjectId")) {
+      this.refresh();
+    }
   }
 
   override disconnectedCallback() {

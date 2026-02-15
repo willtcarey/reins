@@ -21,6 +21,7 @@ export interface SessionRow {
   model_provider: string | null;
   model_id: string | null;
   thinking_level: string;
+  task_id: number | null;
 }
 
 export interface SessionListItem {
@@ -46,13 +47,13 @@ export interface SessionMessageRow {
 export function createSession(
   id: string,
   projectId: number,
-  opts?: { modelProvider?: string; modelId?: string; thinkingLevel?: string },
+  opts?: { modelProvider?: string; modelId?: string; thinkingLevel?: string; taskId?: number },
 ): SessionRow {
   const db = getDb();
   return db
     .query(
-      `INSERT INTO sessions (id, project_id, model_provider, model_id, thinking_level)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO sessions (id, project_id, model_provider, model_id, thinking_level, task_id)
+       VALUES (?, ?, ?, ?, ?, ?)
        RETURNING *`,
     )
     .get(
@@ -61,6 +62,7 @@ export function createSession(
       opts?.modelProvider ?? null,
       opts?.modelId ?? null,
       opts?.thinkingLevel ?? "off",
+      opts?.taskId ?? null,
     ) as SessionRow;
 }
 
@@ -91,10 +93,38 @@ export function listSessions(projectId: number): SessionListItem[] {
          WHERE role = 'user'
            AND seq = (SELECT MIN(seq) FROM session_messages sm2 WHERE sm2.session_id = session_messages.session_id AND sm2.role = 'user')
        ) fm ON fm.session_id = s.id
-       WHERE s.project_id = ?
+       WHERE s.project_id = ? AND s.task_id IS NULL
        ORDER BY s.updated_at DESC`,
     )
     .all(projectId) as SessionListItem[];
+}
+
+export function listTaskSessions(taskId: number): SessionListItem[] {
+  const db = getDb();
+  return db
+    .query(
+      `SELECT
+         s.id,
+         s.name,
+         s.created_at,
+         s.updated_at,
+         COALESCE(mc.cnt, 0) AS message_count,
+         fm.first_message
+       FROM sessions s
+       LEFT JOIN (
+         SELECT session_id, COUNT(*) AS cnt FROM session_messages GROUP BY session_id
+       ) mc ON mc.session_id = s.id
+       LEFT JOIN (
+         SELECT session_id,
+           json_extract(message_json, '$.content[0].text') AS first_message
+         FROM session_messages
+         WHERE role = 'user'
+           AND seq = (SELECT MIN(seq) FROM session_messages sm2 WHERE sm2.session_id = session_messages.session_id AND sm2.role = 'user')
+       ) fm ON fm.session_id = s.id
+       WHERE s.task_id = ?
+       ORDER BY s.updated_at DESC`,
+    )
+    .all(taskId) as SessionListItem[];
 }
 
 export function updateSessionMeta(

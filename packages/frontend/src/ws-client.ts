@@ -20,6 +20,7 @@ export interface SessionState {
 
 export interface SessionData {
   id: string;
+  task_id: number | null;
   messages: any[];
   state: SessionState;
 }
@@ -31,6 +32,17 @@ export interface SessionListItem {
   updated_at: string;
   message_count: number;
   first_message: string | null;
+}
+
+export interface TaskListItem {
+  id: number;
+  project_id: number;
+  title: string;
+  description: string | null;
+  branch_name: string;
+  created_at: string;
+  updated_at: string;
+  session_count: number;
 }
 
 export interface ProjectInfo {

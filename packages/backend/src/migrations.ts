@@ -53,6 +53,23 @@ const MIGRATIONS: [name: string, sql: string][] = [
     `CREATE INDEX idx_session_messages_session ON session_messages(session_id, seq);
      CREATE INDEX idx_sessions_project ON sessions(project_id, updated_at DESC)`,
   ],
+  [
+    "006_create_tasks",
+    `CREATE TABLE tasks (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+       title TEXT NOT NULL,
+       description TEXT,
+       branch_name TEXT NOT NULL,
+       created_at TEXT NOT NULL DEFAULT (datetime('now')),
+       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+     );
+     CREATE INDEX idx_tasks_project ON tasks(project_id, updated_at DESC)`,
+  ],
+  [
+    "007_add_session_task_id",
+    `ALTER TABLE sessions ADD COLUMN task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

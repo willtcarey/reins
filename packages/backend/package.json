@@ -7,6 +7,7 @@
     "dev": "bun --watch src/index.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
     "@mariozechner/pi-ai": "^0.52.9",
     "@mariozechner/pi-coding-agent": "^0.52.9",
     "highlight.js": "^11.11.1"
