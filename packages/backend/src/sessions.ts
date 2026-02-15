@@ -52,8 +52,9 @@ async function resolveTask(
 
 /**
  * Build session options common to both create and resume paths.
- * Sets up tools, session manager, model, and (for task sessions) the
- * resource loader with the task system prompt injected.
+ * Sets up tools, session manager, model, and resource loader.
+ * Always creates a DefaultResourceLoader with the project's cwd so that
+ * skills, extensions, and context files are discovered correctly.
  */
 async function buildSessionOpts(
   state: ServerState,
@@ -63,22 +64,19 @@ async function buildSessionOpts(
   const sessionManager = SessionManager.inMemory();
   const tools = createCodingTools(projectDir);
 
-  const sessionOpts: any = {
+  const resourceLoader = new DefaultResourceLoader({
+    cwd: projectDir,
+    ...(task ? { appendSystemPrompt: buildTaskPromptPrefix(task) } : {}),
+  });
+  await resourceLoader.reload();
+
+  return {
     cwd: projectDir,
     tools,
     sessionManager,
+    resourceLoader,
     model: state.explicitModel,
   };
-
-  if (task) {
-    sessionOpts.resourceLoader = new DefaultResourceLoader({
-      cwd: projectDir,
-      appendSystemPrompt: buildTaskPromptPrefix(task),
-    });
-    await sessionOpts.resourceLoader.reload();
-  }
-
-  return sessionOpts;
 }
 
 /**
