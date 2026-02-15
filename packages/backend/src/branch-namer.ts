@@ -1,56 +1,63 @@
 /**
  * Branch Name Generation
  *
- * Uses a fast LLM (Haiku) to generate clean git branch names from task titles.
- * Falls back to simple slugification if the LLM is unavailable or returns invalid output.
+ * Uses a lightweight Pi agent session (no tools) to generate clean git branch
+ * names from task titles. Falls back to simple slugification if the LLM is
+ * unavailable or returns invalid output.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
+import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
+import { getModel } from "@mariozechner/pi-ai";
 
 const BRANCH_PATTERN = /^task\/[a-z0-9][a-z0-9\-]*$/;
-const TIMEOUT_MS = 5000;
+const TIMEOUT_MS = 10_000;
+
+const SYSTEM_PROMPT =
+  "You generate git branch names. Given a task title, return ONLY a branch name in the format task/<slug>. " +
+  "The slug should be lowercase, use hyphens for spaces, and be concise (2-5 words). " +
+  "No explanation, no quotes, no backticks — just the branch name.";
 
 /**
- * Generate a git branch name from a task title.
- * Returns a name like `task/refactor-auth-middleware`.
+ * Generate a git branch name from a task title using the Pi SDK.
+ * Creates a minimal throwaway session with no tools.
  */
 export async function generateBranchName(title: string): Promise<string> {
   try {
-    const client = new Anthropic();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const { session } = await createAgentSession({
+      tools: [],
+      model: getModel("anthropic", "claude-haiku-4-5"),
+      sessionManager: SessionManager.inMemory(),
+      resourceLoader: {
+        async reload() {},
+        getSystemPrompt() { return SYSTEM_PROMPT; },
+        getSkills() { return []; },
+        getPromptTemplates() { return []; },
+        getContextFiles() { return []; },
+        getDiagnostics() { return []; },
+      } as any,
+    });
 
-    try {
-      const response = await client.messages.create(
-        {
-          model: "claude-haiku-4-0",
-          max_tokens: 60,
-          system:
-            "You generate git branch names. Given a task title, return ONLY a branch name in the format task/<slug>. " +
-            "The slug should be lowercase, use hyphens for spaces, and be concise (2-5 words). " +
-            "No explanation, no quotes, no backticks — just the branch name.",
-          messages: [{ role: "user", content: title }],
-        },
-        { signal: controller.signal },
-      );
-      clearTimeout(timeout);
+    // prompt() returns when the agent turn is done
+    const result = await Promise.race([
+      session.prompt(title, { expandTemplates: false }),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), TIMEOUT_MS)),
+    ]);
 
-      const text =
-        response.content[0]?.type === "text"
-          ? response.content[0].text.trim().replace(/^["'`]+|["'`]+$/g, "")
-          : "";
-
-      if (BRANCH_PATTERN.test(text)) {
-        return text;
-      }
-    } catch {
-      clearTimeout(timeout);
+    if (result === "timeout") {
+      session.dispose();
+      return slugifyBranchName(title);
     }
-  } catch {
-    // SDK construction failed (no API key, etc.)
+
+    const text = session.getLastAssistantText()?.trim().replace(/^["'`]+|["'`]+$/g, "") ?? "";
+    session.dispose();
+
+    if (BRANCH_PATTERN.test(text)) {
+      return text;
+    }
+  } catch (err) {
+    // Session creation or prompt failed — fall through to slugify
   }
 
-  // Fallback: simple slugification
   return slugifyBranchName(title);
 }
 
