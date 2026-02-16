@@ -14,13 +14,15 @@ import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { AppClient } from "./ws-client.js";
 import type { SessionData, SessionListItem } from "./ws-client.js";
-import type { ChatPanel } from "./chat-panel.js";
-import type { DiffPanel } from "./diff-panel.js";
 import type { SessionSidebar } from "./session-sidebar.js";
+import type { DiffPanel } from "./changes/diff-panel.js";
+import { DiffStore } from "./changes/diff-store.js";
+import { FileTreeState } from "./changes/file-tree-state.js";
 
 // Ensure sub-components are registered
 import "./chat-panel.js";
-import "./diff-panel.js";
+import "./changes/diff-panel.js";
+import "./changes/diff-file-tree.js";
 import "./session-sidebar.js";
 
 // Tools that modify files and should trigger a diff refresh
@@ -39,6 +41,8 @@ export class AppShell extends LitElement {
   }
 
   private client = new AppClient();
+  private diffStore = new DiffStore();
+  private fileTreeState = new FileTreeState();
 
   @state() private connected = false;
   @state() private activeSessionId = "";
@@ -51,6 +55,7 @@ export class AppShell extends LitElement {
 
     // Read initial route
     this.activeProjectId = parseProjectIdFromHash();
+    this.diffStore.setProject(this.activeProjectId);
 
     // Listen for hash changes (project switches)
     window.addEventListener("hashchange", this.onHashChange);
@@ -73,7 +78,7 @@ export class AppShell extends LitElement {
         event.type === "agent_end";
 
       if (refreshDiff) {
-        setTimeout(() => this.getDiffPanel()?.refresh(), 500);
+        setTimeout(() => this.diffStore.refresh(), 500);
       }
 
       if (event.type === "agent_end") {
@@ -93,6 +98,7 @@ export class AppShell extends LitElement {
     super.disconnectedCallback();
     window.removeEventListener("hashchange", this.onHashChange);
     this.client.disconnect();
+    this.diffStore.dispose();
   }
 
   private onHashChange = () => {
@@ -101,6 +107,8 @@ export class AppShell extends LitElement {
       this.activeProjectId = newProjectId;
       this.activeSessionId = "";
       this.sessionData = null;
+      this.diffStore.setProject(newProjectId);
+      this.fileTreeState.reset();
 
       if (newProjectId != null) {
         this.loadProjectSession();
@@ -110,10 +118,6 @@ export class AppShell extends LitElement {
 
   private getSidebar(): SessionSidebar | null {
     return this.querySelector("session-sidebar") as SessionSidebar | null;
-  }
-
-  private getDiffPanel(): DiffPanel | null {
-    return this.querySelector("diff-panel") as DiffPanel | null;
   }
 
   /**
@@ -167,7 +171,24 @@ export class AppShell extends LitElement {
   }
 
   private handleRefreshDiff() {
-    this.getDiffPanel()?.refresh();
+    this.diffStore.refresh();
+  }
+
+  private getDiffPanel(): DiffPanel | null {
+    return this.querySelector("diff-panel") as DiffPanel | null;
+  }
+
+  /**
+   * Handle file-select from the chat-tab file tree:
+   * switch to the Changes tab, then scroll to that file's diff card.
+   */
+  private handleChatFileSelect(e: Event) {
+    const path = (e as CustomEvent<string>).detail;
+    this.activeTab = "changes";
+    // Wait one frame for the diff panel to become visible, then scroll
+    requestAnimationFrame(() => {
+      this.getDiffPanel()?.scrollToFile(path);
+    });
   }
 
   private renderEmptyState() {
@@ -244,15 +265,26 @@ export class AppShell extends LitElement {
               </div>
 
               <!-- Tab content -->
-              <chat-panel
-                class="flex-1 min-h-0 ${this.activeTab === "chat" ? "" : "hidden"}"
-                .client=${this.client}
-                .sessionId=${this.activeSessionId}
-                .sessionData=${this.sessionData}
-              ></chat-panel>
+              <div class="flex-1 flex min-h-0 ${this.activeTab === "chat" ? "" : "hidden"}">
+                <chat-panel
+                  class="flex-1 min-h-0 min-w-0"
+                  .client=${this.client}
+                  .sessionId=${this.activeSessionId}
+                  .sessionData=${this.sessionData}
+                ></chat-panel>
+                <!-- File tree sidebar (chat tab, wide screens only) -->
+                <div class="w-60 border-l border-zinc-700 shrink-0 hidden lg:block">
+                  <diff-file-tree
+                    .store=${this.diffStore}
+                    .treeState=${this.fileTreeState}
+                    @file-select=${this.handleChatFileSelect}
+                  ></diff-file-tree>
+                </div>
+              </div>
               <diff-panel
                 class="flex-1 min-h-0 ${this.activeTab === "changes" ? "" : "hidden"}"
-                .activeProjectId=${this.activeProjectId}
+                .store=${this.diffStore}
+                .treeState=${this.fileTreeState}
               ></diff-panel>
             </div>
           ` : this.renderEmptyState()}
