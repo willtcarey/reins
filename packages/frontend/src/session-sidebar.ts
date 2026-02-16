@@ -185,23 +185,21 @@ export class SessionSidebar extends LitElement {
   // ---- Render --------------------------------------------------------------
 
   override render() {
-    if (this.collapsed) {
-      return html`
-        <div class="w-10 h-full bg-zinc-850 border-r border-zinc-700 flex flex-col items-center pt-2 shrink-0">
-          <button
-            class="p-1.5 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
-            @click=${this.toggleCollapse}
-            title="Show sidebar"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-          </button>
-        </div>
-      `;
-    }
-
     return html`
+      <!-- Collapsed rail -->
+      <div class="${this.collapsed ? "" : "hidden"} w-10 h-full bg-zinc-850 border-r border-zinc-700 flex flex-col items-center pt-2 shrink-0">
+        <button
+          class="p-1.5 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
+          @click=${this.toggleCollapse}
+          title="Show sidebar"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+      </div>
+
+      <!-- Expanded sidebar -->
       <div
-        class="w-64 h-full bg-zinc-850 border-r border-zinc-700 flex flex-col shrink-0"
+        class="${this.collapsed ? "hidden" : ""} w-64 h-full bg-zinc-850 border-r border-zinc-700 flex flex-col shrink-0"
         @select-session=${this.handleSelectSession}
         @new-session=${this.handleNewSession}
         @new-task-session=${this.handleNewTaskSession}
@@ -230,7 +228,7 @@ export class SessionSidebar extends LitElement {
 
         <!-- Scrollable content -->
         <div class="flex-1 overflow-y-auto">
-          ${this.loading ? html`
+          ${this.loading && this.tasks.length === 0 && this.sessions.length === 0 ? html`
             <div class="p-3 text-xs text-zinc-500">Loading...</div>
           ` : html`
             <task-list
