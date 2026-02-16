@@ -62,6 +62,8 @@ export class DiffPanel extends LitElement {
 
 
   @state() private files: DiffFile[] = [];
+  @state() private branch: string | null = null;
+  @state() private baseBranch: string | null = null;
   @state() private loading = false;
   @state() private error: string | null = null;
   @state() private collapsedFiles = new Set<string>();
@@ -110,6 +112,8 @@ export class DiffPanel extends LitElement {
       }
       const data = await resp.json();
       this.files = data.files ?? [];
+      this.branch = data.branch ?? null;
+      this.baseBranch = data.baseBranch ?? null;
       this.error = null;
 
       // Re-fetch markdown for files currently in rendered mode
@@ -414,7 +418,20 @@ export class DiffPanel extends LitElement {
 
     return html`
       <div class="h-full overflow-y-auto p-4">
-        <div class="flex items-center gap-2 mb-3">
+        <div class="flex items-center gap-2 mb-3 flex-wrap">
+          ${this.branch ? html`
+            <span class="inline-flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
+              <svg class="w-3 h-3 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+              </svg>
+              ${this.branch}
+            </span>
+          ` : nothing}
+          ${this.baseBranch && this.branch && this.baseBranch !== this.branch ? html`
+            <span class="text-xs text-zinc-600">←</span>
+            <span class="text-xs font-mono text-zinc-500">${this.baseBranch}</span>
+          ` : nothing}
+          <div class="flex-1"></div>
           <span class="text-xs text-zinc-500">Context: ${this.contextLines} lines</span>
           ${this.contextLines > DEFAULT_CONTEXT
             ? html`<button

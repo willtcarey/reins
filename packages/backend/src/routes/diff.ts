@@ -10,7 +10,7 @@
  */
 
 import type { RouterGroup, RouteContext } from "../router.js";
-import { getHighlightedDiff } from "../git.js";
+import { getHighlightedDiff, getCurrentBranch } from "../git.js";
 import { getProject } from "../project-store.js";
 
 export function registerDiffRoutes(router: RouterGroup) {
@@ -23,7 +23,10 @@ export function registerDiffRoutes(router: RouterGroup) {
       500,
     );
 
-    const files = await getHighlightedDiff(projectDir, contextLines, project.base_branch);
-    return Response.json({ files });
+    const [files, branch] = await Promise.all([
+      getHighlightedDiff(projectDir, contextLines, project.base_branch),
+      getCurrentBranch(projectDir),
+    ]);
+    return Response.json({ files, branch, baseBranch: project.base_branch });
   });
 }

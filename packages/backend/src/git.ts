@@ -117,6 +117,14 @@ export async function checkoutBranch(
   await runChecked(projectDir, ["checkout", branchName]);
 }
 
+/**
+ * Get the current branch name (HEAD).
+ */
+export async function getCurrentBranch(projectDir: string): Promise<string> {
+  const result = await run(projectDir, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  return result.trim() || "HEAD";
+}
+
 // ---- Working-tree diff -----------------------------------------------------
 
 async function getGitDiff(
