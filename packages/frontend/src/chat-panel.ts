@@ -481,7 +481,7 @@ export class ChatPanel extends LitElement {
         <!-- Messages area -->
         <div
           id="chat-scroll"
-          class="flex-1 overflow-y-auto p-4 space-y-1"
+          class="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-1"
           @scroll=${this.handleScroll}
         >
           ${this.messages.length === 0 && !this.isStreaming ? html`
