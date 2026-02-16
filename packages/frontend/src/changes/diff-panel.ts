@@ -1,16 +1,23 @@
 /**
  * Diff Panel
  *
- * Lit web component that fetches and displays a syntax-highlighted git diff
- * from the backend. The backend returns pre-parsed, pre-highlighted HTML.
+ * Lit web component that displays a syntax-highlighted git diff.
+ * The backend returns pre-parsed, pre-highlighted HTML.
  * Markdown files can be toggled between raw diff and rendered preview.
  * Uses light DOM for Tailwind compatibility.
+ *
+ * Receives its data from a shared DiffStore instance.
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked } from "marked";
+import type { DiffFile, DiffHunk, DiffLine } from "./types.js";
+import type { DiffStore } from "./diff-store.js";
+import type { FileTreeState } from "./file-tree-state.js";
+import { ScrollSpy } from "./scroll-spy.js";
+import "./diff-file-tree.js";
 
 // Configure marked for markdown rendering
 marked.setOptions({
@@ -18,34 +25,17 @@ marked.setOptions({
   gfm: true,
 });
 
-// ---- Types (mirrors backend response) -------------------------------------
-
-interface DiffLine {
-  type: "context" | "add" | "remove";
-  html: string;
-  oldLine?: number;
-  newLine?: number;
-}
-
-interface DiffHunk {
-  header: string;
-  lines: DiffLine[];
-}
-
-interface DiffFile {
-  path: string;
-  additions: number;
-  removals: number;
-  hunks: DiffHunk[];
-}
-
 // ---- Constants -------------------------------------------------------------
 
-const DEFAULT_CONTEXT = 3;
 const EXPAND_STEP = 20;
 
 function isMarkdown(path: string): boolean {
   return /\.(md|mdx|markdown)$/i.test(path);
+}
+
+/** Convert a file path to a valid HTML id for scroll targeting. */
+function fileCardId(path: string): string {
+  return "diff-" + path.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
 // ---- Component --------------------------------------------------------------
@@ -56,18 +46,15 @@ export class DiffPanel extends LitElement {
     return this;
   }
 
-  /** Current project ID from the URL route. Null = no project selected. */
-  @property({ type: Number })
-  activeProjectId: number | null = null;
+  /** Shared diff data store. */
+  @property({ attribute: false })
+  store: DiffStore | null = null;
 
+  /** Shared file tree UI state. */
+  @property({ attribute: false })
+  treeState: FileTreeState | null = null;
 
-  @state() private files: DiffFile[] = [];
-  @state() private branch: string | null = null;
-  @state() private baseBranch: string | null = null;
-  @state() private loading = false;
-  @state() private error: string | null = null;
   @state() private collapsedFiles = new Set<string>();
-  @state() private contextLines = DEFAULT_CONTEXT;
 
   /** Tracks which markdown files are in "rendered" mode vs "raw" (diff) mode */
   @state() private renderedFiles = new Set<string>();
@@ -76,65 +63,92 @@ export class DiffPanel extends LitElement {
   /** Tracks which files are currently being fetched */
   @state() private markdownLoading = new Set<string>();
 
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  /** The file path currently topmost in the scroll viewport. */
+  @state() private activeFile: string | null = null;
+
+  private _unsubscribe: (() => void) | null = null;
+
+  private scrollSpy = new ScrollSpy({
+    containerSelector: "[data-diff-scroll]",
+    itemSelector: "[data-file-path]",
+    dataAttribute: "filePath",
+    onActiveChange: (path) => { this.activeFile = path; },
+  });
 
   override connectedCallback() {
     super.connectedCallback();
-    this.refresh();
-    this.pollTimer = setInterval(() => this.refresh(), 5000);
+    this._subscribe();
   }
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("activeProjectId")) {
-      this.refresh();
+    if (changed.has("store")) {
+      this._subscribe();
     }
+  }
+
+  override updated() {
+    this.scrollSpy.update(this);
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
+    this._unsubscribe?.();
+    this._unsubscribe = null;
+    this.scrollSpy.destroy();
+  }
+
+  private _subscribe() {
+    this._unsubscribe?.();
+    this._unsubscribe = null;
+    if (this.store) {
+      this._unsubscribe = this.store.subscribe(() => {
+        this._onStoreUpdate();
+        this.requestUpdate();
+      });
     }
   }
 
-  async refresh() {
-    if (this.activeProjectId == null) {
-      this.files = [];
-      this.error = null;
-      return;
-    }
-    try {
-      const resp = await fetch(`/api/projects/${this.activeProjectId}/diff?context=${this.contextLines}`);
-      if (!resp.ok) {
-        this.error = `HTTP ${resp.status}`;
-        return;
-      }
-      const data = await resp.json();
-      this.files = data.files ?? [];
-      this.branch = data.branch ?? null;
-      this.baseBranch = data.baseBranch ?? null;
-      this.error = null;
+  /** Called when the store notifies us of new data. */
+  private _onStoreUpdate() {
+    if (!this.store) return;
+    const files = this.store.data.files;
 
-      // Re-fetch markdown for files currently in rendered mode
-      // so the preview stays up to date without flicker
-      const activePaths = [...this.renderedFiles].filter((p) =>
-        this.files.some((f) => f.path === p)
-      );
-      // Clear cache entries for files no longer in the diff
-      const cacheNext = new Map(this.markdownCache);
-      for (const key of cacheNext.keys()) {
-        if (!this.files.some((f) => f.path === key)) cacheNext.delete(key);
+    // Clean up markdown cache for files no longer in the diff
+    const cacheNext = new Map(this.markdownCache);
+    let cacheChanged = false;
+    for (const key of cacheNext.keys()) {
+      if (!files.some((f) => f.path === key)) {
+        cacheNext.delete(key);
+        cacheChanged = true;
       }
-      this.markdownCache = cacheNext;
-
-      // Silently refresh active rendered files in the background
-      for (const p of activePaths) {
-        this.fetchMarkdown(p);
-      }
-    } catch (err: any) {
-      this.error = err.message ?? "Failed to fetch diff";
     }
+    if (cacheChanged) this.markdownCache = cacheNext;
+
+    // Re-fetch markdown for files currently in rendered mode
+    const activePaths = [...this.renderedFiles].filter((p) =>
+      files.some((f) => f.path === p)
+    );
+    for (const p of activePaths) {
+      this.fetchMarkdown(p);
+    }
+  }
+
+  // ---- File navigation --------------------------------------------------------
+
+  /**
+   * Scroll to a file's diff card by path.
+   * Can be called externally (e.g. from app-shell) or internally via tree click.
+   */
+  public scrollToFile(path: string) {
+    const card = this.querySelector(`#${CSS.escape(fileCardId(path))}`);
+    if (card) {
+      card.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
+  private handleFileSelect(e: Event) {
+    const path = (e as CustomEvent<string>).detail;
+    this.scrollToFile(path);
   }
 
   private toggleFile(path: string) {
@@ -166,7 +180,8 @@ export class DiffPanel extends LitElement {
   }
 
   private async fetchMarkdown(path: string) {
-    if (this.activeProjectId == null) return;
+    const projectId = this.store?.projectId;
+    if (projectId == null) return;
 
     const loadingNext = new Set(this.markdownLoading);
     loadingNext.add(path);
@@ -174,7 +189,7 @@ export class DiffPanel extends LitElement {
 
     try {
       const resp = await fetch(
-        `/api/projects/${this.activeProjectId}/file?path=${encodeURIComponent(path)}`
+        `/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`
       );
       if (!resp.ok) {
         const cacheNext = new Map(this.markdownCache);
@@ -196,16 +211,6 @@ export class DiffPanel extends LitElement {
       loadingNext.delete(path);
       this.markdownLoading = loadingNext;
     }
-  }
-
-  private async expandContext() {
-    this.contextLines += EXPAND_STEP;
-    await this.refresh();
-  }
-
-  private async resetContext() {
-    this.contextLines = DEFAULT_CONTEXT;
-    await this.refresh();
   }
 
   private renderLine(line: DiffLine) {
@@ -253,7 +258,7 @@ export class DiffPanel extends LitElement {
       if (startLine > 1) {
         return this.renderExpandButton(
           `Show more lines above`,
-          () => this.expandContext()
+          () => this.store?.expandContext(EXPAND_STEP)
         );
       }
       return nothing;
@@ -266,7 +271,7 @@ export class DiffPanel extends LitElement {
     if (gap > 0) {
       return this.renderExpandButton(
         `Expand ${gap} hidden line${gap !== 1 ? "s" : ""}`,
-        () => this.expandContext()
+        () => this.store?.expandContext(EXPAND_STEP)
       );
     }
 
@@ -377,7 +382,7 @@ export class DiffPanel extends LitElement {
     const isRendered = isMd && this.renderedFiles.has(file.path);
 
     return html`
-      <div class="mb-3 border border-zinc-700 rounded-lg">
+      <div class="mb-3 border border-zinc-700 rounded-lg" id=${fileCardId(file.path)} data-file-path=${file.path}>
         <button
           class="w-full flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-750 text-sm cursor-pointer sticky top-0 z-10 rounded-t-lg border-b border-zinc-700"
           @click=${() => this.toggleFile(file.path)}
@@ -400,15 +405,20 @@ export class DiffPanel extends LitElement {
   }
 
   override render() {
-    if (this.error) {
+    if (!this.store) return nothing;
+
+    const { files, branch, baseBranch } = this.store.data;
+    const { contextLines, defaultContext, error } = this.store;
+
+    if (error) {
       return html`
         <div class="flex items-center justify-center h-full text-red-400 text-sm p-4">
-          Error: ${this.error}
+          Error: ${error}
         </div>
       `;
     }
 
-    if (this.files.length === 0) {
+    if (files.length === 0) {
       return html`
         <div class="flex items-center justify-center h-full text-zinc-500 text-sm">
           No changes yet
@@ -417,30 +427,48 @@ export class DiffPanel extends LitElement {
     }
 
     return html`
-      <div class="h-full overflow-y-auto p-4">
-        <div class="flex items-center gap-2 mb-3 flex-wrap">
-          ${this.branch ? html`
+      <div class="h-full flex flex-col">
+        <!-- Header: branch info & context controls -->
+        <div class="flex items-center gap-2 px-4 py-2 flex-wrap shrink-0 border-b border-zinc-700/50">
+          ${branch ? html`
             <span class="inline-flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
               <svg class="w-3 h-3 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
               </svg>
-              ${this.branch}
+              ${branch}
             </span>
           ` : nothing}
-          ${this.baseBranch && this.branch && this.baseBranch !== this.branch ? html`
+          ${baseBranch && branch && baseBranch !== branch ? html`
             <span class="text-xs text-zinc-600">←</span>
-            <span class="text-xs font-mono text-zinc-500">${this.baseBranch}</span>
+            <span class="text-xs font-mono text-zinc-500">${baseBranch}</span>
           ` : nothing}
           <div class="flex-1"></div>
-          <span class="text-xs text-zinc-500">Context: ${this.contextLines} lines</span>
-          ${this.contextLines > DEFAULT_CONTEXT
+          <span class="text-xs text-zinc-500">Context: ${contextLines} lines</span>
+          ${contextLines > defaultContext
             ? html`<button
                 class="text-xs text-zinc-500 hover:text-zinc-300 underline cursor-pointer"
-                @click=${() => this.resetContext()}
+                @click=${() => this.store?.resetContext()}
               >Reset</button>`
             : nothing}
         </div>
-        ${this.files.map((file) => this.renderFile(file))}
+
+        <!-- Two-column layout: diff list + file tree -->
+        <div class="flex-1 flex min-h-0">
+          <!-- Scrollable diff list -->
+          <div class="flex-1 overflow-y-auto p-4" data-diff-scroll>
+            ${files.map((file) => this.renderFile(file))}
+          </div>
+
+          <!-- File tree sidebar -->
+          <div class="w-60 border-l border-zinc-700 shrink-0 hidden lg:block">
+            <diff-file-tree
+              .store=${this.store}
+              .treeState=${this.treeState}
+              .activeFile=${this.activeFile}
+              @file-select=${this.handleFileSelect}
+            ></diff-file-tree>
+          </div>
+        </div>
       </div>
     `;
   }
