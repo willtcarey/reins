@@ -4,16 +4,16 @@
  * Utilities for retrieving git diffs and branch info from a project directory.
  */
 
-import { highlightLines } from "./highlighter.js";
-import { escapeHtml } from "./html-utils.js";
-
 async function run(projectDir: string, args: string[]): Promise<string> {
   const proc = Bun.spawn(["git", ...args], {
     cwd: projectDir,
     stdout: "pipe",
     stderr: "pipe",
   });
-  const stdout = await new Response(proc.stdout).text();
+  const [stdout] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
   await proc.exited;
   return stdout;
 }
@@ -36,30 +36,6 @@ async function runChecked(projectDir: string, args: string[]): Promise<string> {
     throw new Error(`git ${args[0]} failed (exit ${exitCode}): ${stderr.trim()}`);
   }
   return stdout;
-}
-
-/**
- * Read a file blob at a given git ref. Returns null if the file doesn't exist at that ref.
- */
-async function readBlob(projectDir: string, ref: string, filePath: string): Promise<string | null> {
-  try {
-    const content = await run(projectDir, ["show", `${ref}:${filePath}`]);
-    return content;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Read the current working-tree version of a file (includes unstaged changes).
- */
-async function readWorkingFile(projectDir: string, filePath: string): Promise<string | null> {
-  try {
-    const file = Bun.file(`${projectDir}/${filePath}`);
-    return await file.text();
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -158,25 +134,25 @@ async function getGitDiff(
   return { committed, uncommitted: fullUncommitted };
 }
 
-// ---- Highlighted diff types ------------------------------------------------
+// ---- Diff types ------------------------------------------------------------
 
-export interface HighlightedDiffLine {
+export interface DiffLine {
   type: "context" | "add" | "remove";
-  html: string;
+  text: string;
   oldLine?: number;
   newLine?: number;
 }
 
-export interface HighlightedDiffHunk {
+export interface DiffHunk {
   header: string;
-  lines: HighlightedDiffLine[];
+  lines: DiffLine[];
 }
 
-export interface HighlightedDiffFile {
+export interface DiffFile {
   path: string;
   additions: number;
   removals: number;
-  hunks: HighlightedDiffHunk[];
+  hunks: DiffHunk[];
 }
 
 // ---- Diff parser -----------------------------------------------------------
@@ -239,82 +215,119 @@ function parseUnifiedDiff(raw: string): ParsedFile[] {
       } else if (line.startsWith(" ")) {
         currentHunk.lines.push({ prefix: " ", text: line.slice(1) });
       }
-      // skip "\ No newline at end of file" and other lines
     }
   }
 
   return files;
 }
 
-// ---- Build highlighted diff ------------------------------------------------
+// ---- Lightweight file summary ----------------------------------------------
+
+export interface DiffFileSummary {
+  path: string;
+  additions: number;
+  removals: number;
+}
 
 /**
- * Get a fully parsed, syntax-highlighted diff structure ready for the frontend.
+ * Parse `git diff --numstat` output into file summaries.
  */
-export async function getHighlightedDiff(
+function parseNumstat(raw: string): DiffFileSummary[] {
+  if (!raw?.trim()) return [];
+  return raw.trim().split("\n").filter(Boolean).map((line) => {
+    const [add, rem, ...pathParts] = line.split("\t");
+    return {
+      path: pathParts.join("\t"),
+      additions: add === "-" ? 0 : parseInt(add, 10) || 0,
+      removals: rem === "-" ? 0 : parseInt(rem, 10) || 0,
+    };
+  });
+}
+
+/**
+ * Get a lightweight list of changed files with +/− counts.
+ */
+export async function getChangedFiles(
+  projectDir: string,
+  baseBranch = "main",
+): Promise<DiffFileSummary[]> {
+  const [committed, uncommitted, untrackedList] = await Promise.all([
+    run(projectDir, ["diff", "--numstat", `${baseBranch}...HEAD`]).catch(() => ""),
+    run(projectDir, ["diff", "--numstat", "HEAD"]).catch(() => ""),
+    run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
+  ]);
+
+  const fileMap = new Map<string, DiffFileSummary>();
+
+  for (const f of parseNumstat(committed)) {
+    fileMap.set(f.path, f);
+  }
+  for (const f of parseNumstat(uncommitted)) {
+    const existing = fileMap.get(f.path);
+    if (existing) {
+      existing.additions += f.additions;
+      existing.removals += f.removals;
+    } else {
+      fileMap.set(f.path, f);
+    }
+  }
+
+  const untrackedFiles = untrackedList.trim().split("\n").filter(Boolean);
+  for (const filePath of untrackedFiles) {
+    if (fileMap.has(filePath)) continue;
+    try {
+      const content = await Bun.file(`${projectDir}/${filePath}`).text();
+      const lineCount = content.split("\n").length;
+      fileMap.set(filePath, { path: filePath, additions: lineCount, removals: 0 });
+    } catch {
+      fileMap.set(filePath, { path: filePath, additions: 0, removals: 0 });
+    }
+  }
+
+  return [...fileMap.values()];
+}
+
+// ---- Build diff (no highlighting) ------------------------------------------
+
+/**
+ * Get a fully parsed diff structure with raw text lines (no syntax highlighting).
+ * Highlighting is handled client-side.
+ */
+export async function getDiff(
   projectDir: string,
   contextLines = 3,
   baseBranch = "main",
-): Promise<HighlightedDiffFile[]> {
+): Promise<DiffFile[]> {
   const rawDiff = await getGitDiff(projectDir, contextLines, baseBranch);
   const combined = [rawDiff.committed, rawDiff.uncommitted].filter(Boolean).join("\n");
   const parsed = parseUnifiedDiff(combined);
 
   if (parsed.length === 0) return [];
 
-  // Collect unique file paths and read both old/new blobs in parallel
-  const filePaths = [...new Set(parsed.map((f) => f.path))];
-
-  const [oldBlobs, newBlobs] = await Promise.all([
-    Promise.all(filePaths.map((p) => readBlob(projectDir, baseBranch, p))),
-    Promise.all(filePaths.map((p) => readWorkingFile(projectDir, p))),
-  ]);
-
-  // Build maps of highlighted lines per file: path → line number (1-based) → html
-  const oldHighlighted = new Map<string, string[]>();
-  const newHighlighted = new Map<string, string[]>();
-
-  for (let i = 0; i < filePaths.length; i++) {
-    const path = filePaths[i];
-    if (oldBlobs[i] != null) {
-      oldHighlighted.set(path, highlightLines(path, oldBlobs[i]!));
-    }
-    if (newBlobs[i] != null) {
-      newHighlighted.set(path, highlightLines(path, newBlobs[i]!));
-    }
-  }
-
-  // Assemble the highlighted diff structure
   return parsed.map((file) => {
-    const oldLines = oldHighlighted.get(file.path);
-    const newLines = newHighlighted.get(file.path);
     let additions = 0;
     let removals = 0;
 
-    const hunks: HighlightedDiffHunk[] = file.hunks.map((hunk) => {
+    const hunks: DiffHunk[] = file.hunks.map((hunk) => {
       let oldLineNo = hunk.oldStart;
       let newLineNo = hunk.newStart;
 
-      const lines: HighlightedDiffLine[] = hunk.lines.map((line) => {
+      const lines: DiffLine[] = hunk.lines.map((line) => {
         switch (line.prefix) {
           case "+": {
             additions++;
-            const html = newLines?.[newLineNo - 1] ?? escapeHtml(line.text);
-            const result: HighlightedDiffLine = { type: "add", html, newLine: newLineNo };
+            const result: DiffLine = { type: "add", text: line.text, newLine: newLineNo };
             newLineNo++;
             return result;
           }
           case "-": {
             removals++;
-            const html = oldLines?.[oldLineNo - 1] ?? escapeHtml(line.text);
-            const result: HighlightedDiffLine = { type: "remove", html, oldLine: oldLineNo };
+            const result: DiffLine = { type: "remove", text: line.text, oldLine: oldLineNo };
             oldLineNo++;
             return result;
           }
           default: {
-            // Context — prefer new file highlighting
-            const html = newLines?.[newLineNo - 1] ?? oldLines?.[oldLineNo - 1] ?? escapeHtml(line.text);
-            const result: HighlightedDiffLine = { type: "context", html, oldLine: oldLineNo, newLine: newLineNo };
+            const result: DiffLine = { type: "context", text: line.text, oldLine: oldLineNo, newLine: newLineNo };
             oldLineNo++;
             newLineNo++;
             return result;
@@ -328,5 +341,3 @@ export async function getHighlightedDiff(
     return { path: file.path, additions, removals, hunks };
   });
 }
-
-

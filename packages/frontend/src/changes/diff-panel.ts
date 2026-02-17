@@ -2,7 +2,8 @@
  * Diff Panel
  *
  * Lit web component that displays a syntax-highlighted git diff.
- * The backend returns pre-parsed, pre-highlighted HTML.
+ * The backend returns raw diff hunks; syntax highlighting is performed
+ * client-side via Shiki in a web worker.
  * Markdown files can be toggled between raw diff and rendered preview.
  * Uses light DOM for Tailwind compatibility.
  *
@@ -78,11 +79,14 @@ export class DiffPanel extends LitElement {
   override connectedCallback() {
     super.connectedCallback();
     this._subscribe();
+    // Fetch full diff when the panel becomes visible
+    this.store?.fetchFullDiff();
   }
 
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has("store")) {
       this._subscribe();
+      this.store?.fetchFullDiff();
     }
   }
 
@@ -95,6 +99,8 @@ export class DiffPanel extends LitElement {
     this._unsubscribe?.();
     this._unsubscribe = null;
     this.scrollSpy.destroy();
+    // Release the full diff data when leaving the view
+    this.store?.clearFullDiff();
   }
 
   private _subscribe() {
@@ -111,7 +117,8 @@ export class DiffPanel extends LitElement {
   /** Called when the store notifies us of new data. */
   private _onStoreUpdate() {
     if (!this.store) return;
-    const files = this.store.data.files;
+
+    const files = this.store.fullData?.files ?? [];
 
     // Clean up markdown cache for files no longer in the diff
     const cacheNext = new Map(this.markdownCache);
@@ -213,6 +220,13 @@ export class DiffPanel extends LitElement {
     }
   }
 
+  private escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
   private renderLine(line: DiffLine) {
     let prefix = " ";
     let classes = "text-zinc-300";
@@ -233,7 +247,13 @@ export class DiffPanel extends LitElement {
         break;
     }
 
-    return html`<div class="${classes} px-2 leading-5 whitespace-pre font-mono"><span class="select-none text-zinc-600 mr-1 inline-block w-[3.5ch] text-right">${lineNo ?? ""}</span><span class="select-none text-zinc-600 mr-2">${prefix}</span>${unsafeHTML(line.html)}</div>`;
+    // Always use unsafeHTML so the directive type is consistent across renders.
+    // Switching between a plain text value and unsafeHTML in the same template
+    // position causes Lit to retain the old text node alongside the directive's
+    // nodes, resulting in duplicate lines.
+    const content = unsafeHTML(line.html ?? this.escapeHtml(line.text));
+
+    return html`<div class="${classes} px-2 leading-5 whitespace-pre font-mono"><span class="select-none text-zinc-600 mr-1 inline-block w-[3.5ch] text-right">${lineNo ?? ""}</span><span class="select-none text-zinc-600 mr-2">${prefix}</span>${content}</div>`;
   }
 
   private renderExpandButton(label: string, onClick: () => void) {
@@ -407,8 +427,7 @@ export class DiffPanel extends LitElement {
   override render() {
     if (!this.store) return nothing;
 
-    const { files, branch, baseBranch } = this.store.data;
-    const { contextLines, defaultContext, error } = this.store;
+    const { error } = this.store;
 
     if (error) {
       return html`
@@ -417,6 +436,24 @@ export class DiffPanel extends LitElement {
         </div>
       `;
     }
+
+    if (this.store.fullLoading && !this.store.fullData) {
+      return html`
+        <div class="flex items-center justify-center h-full text-zinc-500 text-sm gap-2">
+          <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+          Loading diff…
+        </div>
+      `;
+    }
+
+    const fullData = this.store.fullData;
+    const files = fullData?.files ?? [];
+    const branch = fullData?.branch ?? this.store.fileData.branch;
+    const baseBranch = fullData?.baseBranch ?? this.store.fileData.baseBranch;
+    const { contextLines, defaultContext } = this.store;
 
     if (files.length === 0) {
       return html`

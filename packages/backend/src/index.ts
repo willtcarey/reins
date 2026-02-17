@@ -11,7 +11,8 @@
 
 import { getModel } from "@mariozechner/pi-ai";
 import { watch } from "fs";
-import { resolve } from "path";
+import { resolve, join } from "path";
+import { mkdirSync, existsSync } from "fs";
 import type { ServerState, ManagedSession, WsClient } from "./state.js";
 
 // We import the handler types but load via dynamic import so we can reload
@@ -69,13 +70,38 @@ const WS_PATH = resolve(SRC_DIR, "ws.ts");
 let routes: typeof RoutesModule;
 let ws: typeof WsModule;
 
+/**
+ * Dev build output directory — placed under packages/backend/ so that
+ * bare-specifier imports (e.g. @mariozechner/pi-coding-agent) resolve
+ * against the workspace's node_modules via Bun's module resolution.
+ */
+const DEV_BUILD_DIR = resolve(SRC_DIR, "../.dev-build");
+
 async function loadHandlers(): Promise<void> {
   if (IS_DEV) {
-    // Cache-bust: Bun treats different query strings as distinct modules
+    // Bundle routes.ts and ws.ts (with all transitive src/ deps) into temp
+    // files. Node_modules stay external (cached by Bun's module system).
+    // This ensures ANY source file change is picked up on reload.
+    if (!existsSync(DEV_BUILD_DIR)) mkdirSync(DEV_BUILD_DIR, { recursive: true });
+
+    const result = await Bun.build({
+      entrypoints: [ROUTES_PATH, WS_PATH],
+      outdir: DEV_BUILD_DIR,
+      target: "bun",
+      format: "esm",
+      packages: "external",
+    });
+
+    if (!result.success) {
+      const msgs = result.logs.map((l) => l.message ?? String(l)).join("\n");
+      throw new Error(`Dev build failed:\n${msgs}`);
+    }
+
+    // Cache-bust the bundled output so Bun imports the fresh version
     const t = Date.now();
     [routes, ws] = await Promise.all([
-      import(`${ROUTES_PATH}?t=${t}`) as Promise<typeof RoutesModule>,
-      import(`${WS_PATH}?t=${t}`) as Promise<typeof WsModule>,
+      import(`${join(DEV_BUILD_DIR, "routes.js")}?t=${t}`) as Promise<typeof RoutesModule>,
+      import(`${join(DEV_BUILD_DIR, "ws.js")}?t=${t}`) as Promise<typeof WsModule>,
     ]);
   } else {
     [routes, ws] = await Promise.all([

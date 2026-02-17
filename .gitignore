@@ -1,5 +1,6 @@
 .local/
 .reins/
+.dev-build/
 node_modules/
 dist/
 .env

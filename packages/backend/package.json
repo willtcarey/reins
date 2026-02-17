@@ -8,7 +8,6 @@
   },
   "dependencies": {
     "@mariozechner/pi-ai": "^0.52.9",
-    "@mariozechner/pi-coding-agent": "^0.52.9",
-    "highlight.js": "^11.11.1"
+    "@mariozechner/pi-coding-agent": "^0.52.9"
   }
 }

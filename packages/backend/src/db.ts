@@ -7,10 +7,10 @@
 
 import { Database } from "bun:sqlite";
 import { mkdirSync, existsSync } from "fs";
-import { join, resolve } from "path";
+import { join } from "path";
 import { runMigrations } from "./migrations.js";
 
-const WORKSPACE_ROOT = resolve(import.meta.dirname!, "../../..");
+const WORKSPACE_ROOT = process.cwd();
 const DATA_DIR = join(WORKSPACE_ROOT, ".reins");
 const DB_PATH = join(DATA_DIR, "reins.db");
 

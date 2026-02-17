@@ -12,7 +12,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { styleMap } from "lit/directives/style-map.js";
-import type { DiffFile } from "./types.js";
+import type { DiffFileSummary } from "./types.js";
 import type { DiffStore } from "./diff-store.js";
 import type { FileTreeState } from "./file-tree-state.js";
 
@@ -32,7 +32,7 @@ interface TreeNode {
  * Build a nested tree structure from a flat list of file paths.
  * Directories are sorted before files; each group is sorted alphabetically.
  */
-function buildTree(files: DiffFile[]): TreeNode[] {
+function buildTree(files: DiffFileSummary[]): TreeNode[] {
   const root: TreeNode = {
     name: "",
     path: "",
