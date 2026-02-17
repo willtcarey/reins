@@ -13,9 +13,9 @@ import {
   createHighlighter,
   type Highlighter,
   type BundledLanguage,
-} from "shiki/bundle/web";
+} from "shiki/bundle/full";
 
-// Map file extensions to Shiki language identifiers (bundle/web subset)
+// Map file extensions to Shiki language identifiers
 const EXT_TO_LANG: Record<string, BundledLanguage> = {
   ts: "typescript",
   tsx: "tsx",
@@ -52,6 +52,7 @@ const EXT_TO_LANG: Record<string, BundledLanguage> = {
   graphql: "graphql",
   gql: "graphql",
   r: "r",
+  rb: "ruby",
   svelte: "svelte",
   vue: "vue",
   coffee: "coffee",
