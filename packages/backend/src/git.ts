@@ -57,7 +57,43 @@ export async function detectDefaultBranch(projectDir: string): Promise<string> {
 // ---- Branch operations -----------------------------------------------------
 
 /**
- * Create a branch from a base branch without checking it out.
+ * Fetch the latest refs from origin for a given branch.
+ * Returns true if the fetch succeeded, false if the remote doesn't exist.
+ */
+export async function fetchOrigin(
+  projectDir: string,
+  branch: string,
+): Promise<boolean> {
+  try {
+    await runChecked(projectDir, ["fetch", "origin", branch]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the best available ref for a base branch.
+ * Prefers origin/<branch> if available, falls back to the local branch.
+ */
+export async function resolveBaseBranchRef(
+  projectDir: string,
+  baseBranch: string,
+): Promise<string> {
+  const remoteRef = `origin/${baseBranch}`;
+  const proc = Bun.spawn(
+    ["git", "show-ref", "--verify", "--quiet", `refs/remotes/${remoteRef}`],
+    { cwd: projectDir, stdout: "pipe", stderr: "pipe" },
+  );
+  const exitCode = await proc.exited;
+  return exitCode === 0 ? remoteRef : baseBranch;
+}
+
+/**
+ * Create a branch from the base branch without checking it out.
+ * Fetches from origin first when available so the branch starts from
+ * the latest upstream commit. Falls back to the local branch for
+ * repos without a remote.
  * Throws if the branch already exists.
  */
 export async function createBranch(
@@ -65,7 +101,9 @@ export async function createBranch(
   branchName: string,
   baseBranch: string,
 ): Promise<void> {
-  await runChecked(projectDir, ["branch", branchName, baseBranch]);
+  await fetchOrigin(projectDir, baseBranch);
+  const ref = await resolveBaseBranchRef(projectDir, baseBranch);
+  await runChecked(projectDir, ["branch", branchName, ref]);
 }
 
 /**

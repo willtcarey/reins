@@ -12,7 +12,7 @@
  */
 
 import type { RouterGroup, RouteContext } from "../router.js";
-import { getDiff, getChangedFiles, getCurrentBranch } from "../git.js";
+import { getDiff, getChangedFiles, getCurrentBranch, resolveBaseBranchRef } from "../git.js";
 import { getProject } from "../project-store.js";
 
 export function registerDiffRoutes(router: RouterGroup) {
@@ -25,8 +25,9 @@ export function registerDiffRoutes(router: RouterGroup) {
     const projectDir = (ctx as any).projectDir as string;
     const project = getProject(projectId)!;
 
+    const baseBranchRef = await resolveBaseBranchRef(projectDir, project.base_branch);
     const [files, branch] = await Promise.all([
-      getChangedFiles(projectDir, project.base_branch),
+      getChangedFiles(projectDir, baseBranchRef),
       getCurrentBranch(projectDir),
     ]);
     return Response.json({ files, branch, baseBranch: project.base_branch });
@@ -45,8 +46,9 @@ export function registerDiffRoutes(router: RouterGroup) {
       500,
     );
 
+    const baseBranchRef = await resolveBaseBranchRef(projectDir, project.base_branch);
     const [files, branch] = await Promise.all([
-      getDiff(projectDir, contextLines, project.base_branch),
+      getDiff(projectDir, contextLines, baseBranchRef),
       getCurrentBranch(projectDir),
     ]);
     return Response.json({ files, branch, baseBranch: project.base_branch });
