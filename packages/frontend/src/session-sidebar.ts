@@ -12,11 +12,12 @@
  */
 
 import { LitElement, html, nothing } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
+import { customElement, property, state, query } from "lit/decorators.js";
 import type { AppClient, SessionListItem, SessionData, TaskListItem } from "./ws-client.js";
 import type { AppShell } from "./app.js";
-import type { TaskList } from "./task-list.js";
 import type { ActivityState } from "./activity-tracker.js";
+import type { TaskList } from "./task-list.js";
+import type { TaskForm } from "./task-form.js";
 import "./project-sidebar.js";
 import "./task-form.js";
 import "./task-list.js";
@@ -46,7 +47,9 @@ export class SessionSidebar extends LitElement {
   @state() private sessions: SessionListItem[] = []; // scratch sessions only
   @state() private collapsed = window.matchMedia("(max-width: 768px)").matches;
   @state() private loading = false;
-  @state() private showNewTaskForm = false;
+
+  @query("task-form") private taskForm!: TaskForm;
+  @query("task-list") private taskList!: TaskList;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -57,7 +60,6 @@ export class SessionSidebar extends LitElement {
     if (changed.has("activeProjectId")) {
       this.tasks = [];
       this.sessions = [];
-      this.showNewTaskForm = false;
       this.refresh();
     }
     if (changed.has("activeSessionId") && this.activeSessionId) {
@@ -91,15 +93,11 @@ export class SessionSidebar extends LitElement {
       }
 
       // Refresh expanded task sessions in the child
-      this.getTaskList()?.refreshExpanded();
+      this.taskList?.refreshExpanded();
     } catch {
       // Silently fail
     }
     this.loading = false;
-  }
-
-  private getTaskList(): TaskList | null {
-    return this.querySelector("task-list") as TaskList | null;
   }
 
   private ensureActiveSession() {
@@ -107,7 +105,7 @@ export class SessionSidebar extends LitElement {
     const found = this.sessions.some(s => s.id === this.activeSessionId);
     if (!found) {
       // Check task sessions too
-      if (this.getTaskList()?.hasSession(this.activeSessionId)) return;
+      if (this.taskList?.hasSession(this.activeSessionId)) return;
       // Add stub entry for scratch sessions
       this.sessions = [
         {
@@ -174,9 +172,9 @@ export class SessionSidebar extends LitElement {
   }
 
   private async handleTaskCreated() {
-    this.showNewTaskForm = false;
     await this.refresh();
   }
+
 
   private notifyApp(data: SessionData) {
     const app = this.closest("app-shell") as AppShell | null;
@@ -225,7 +223,6 @@ export class SessionSidebar extends LitElement {
         @new-session=${this.handleNewSession}
         @new-task-session=${this.handleNewTaskSession}
         @task-created=${this.handleTaskCreated}
-        @task-cancelled=${() => { this.showNewTaskForm = false; }}
         @toggle-collapse=${this.toggleCollapse}
       >
         <!-- Project switcher -->
@@ -237,15 +234,14 @@ export class SessionSidebar extends LitElement {
         <div class="p-2 border-b border-zinc-700">
           <button
             class="w-full py-1.5 px-3 text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600 rounded cursor-pointer transition-colors"
-            @click=${() => { this.showNewTaskForm = !this.showNewTaskForm; }}
+            @click=${() => { this.taskForm?.open(); }}
           >
             + New Task
           </button>
         </div>
 
-        ${this.showNewTaskForm ? html`
-          <task-form .projectId=${this.activeProjectId}></task-form>
-        ` : nothing}
+        <!-- Task creation dialog -->
+        <task-form .projectId=${this.activeProjectId}></task-form>
 
         <!-- Scrollable content -->
         <div class="flex-1 overflow-y-auto">

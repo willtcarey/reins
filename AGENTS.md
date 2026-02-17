@@ -38,6 +38,10 @@ We keep ADRs in `docs/adr/` using the format `NNN-slug.md`. Offer to write an AD
 
 See existing ADRs in [`docs/adr/`](docs/adr/) for the format to follow.
 
+## Tech Debt
+
+We track tech debt in [`docs/tech-debt.md`](docs/tech-debt.md). When you identify potential tech debt during a task, suggest it to the user — but only add it to the document once confirmed.
+
 ## Notes
 
 - Use `bun` for all package management and script execution (not npm/yarn/pnpm).
