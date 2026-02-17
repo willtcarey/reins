@@ -42,6 +42,10 @@ See existing ADRs in [`docs/adr/`](docs/adr/) for the format to follow.
 
 We track tech debt in [`docs/tech-debt.md`](docs/tech-debt.md). When you identify potential tech debt during a task, suggest it to the user — but only add it to the document once confirmed.
 
+## Feature Documentation
+
+User-facing feature docs live in [`docs/features/`](docs/features/). When adding or changing a feature, update the relevant doc (or create a new one). These describe *how the system works* from the user's perspective — UX, not UI.
+
 ## Notes
 
 - Use `bun` for all package management and script execution (not npm/yarn/pnpm).
