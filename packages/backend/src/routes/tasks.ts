@@ -36,7 +36,7 @@ export function registerTaskRoutes(router: RouterGroup) {
     const projectId = parseInt(ctx.params.id, 10);
     const projectDir = (ctx as any).projectDir as string;
     const project = getProject(projectId)!;
-    const body = (await ctx.req.json()) as { title?: string; description?: string };
+    const body = (await ctx.req.json()) as { title?: string; description?: string; branch_name?: string };
 
     if (!body.title?.trim()) {
       badRequest("Title is required");
@@ -45,8 +45,8 @@ export function registerTaskRoutes(router: RouterGroup) {
     const title = body.title!.trim();
     const description = body.description?.trim() || null;
 
-    // Generate branch name
-    const branchName = await generateBranchName(title);
+    // Use provided branch name or generate one
+    const branchName = body.branch_name?.trim() || await generateBranchName(title);
 
     // Check for collision
     if (await branchExists(projectDir, branchName)) {
