@@ -321,6 +321,7 @@ export class AppShell extends LitElement {
                 class="flex-1 min-h-0 ${this.activeTab === "changes" ? "" : "hidden"}"
                 .store=${this.diffStore}
                 .treeState=${this.fileTreeState}
+                .visible=${this.activeTab === "changes"}
               ></diff-panel>`)}
             </div>
           ` : this.renderEmptyState()}

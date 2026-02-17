@@ -15,6 +15,7 @@ let nextId = 0;
 export class Highlighter {
   private worker: Worker;
   private pending = new Map<number, HighlightCallback>();
+  private fileRefs = new Map<number, DiffFile[]>();
 
   constructor() {
     this.worker = new Worker("/dist/changes/highlight-worker.js", {
@@ -29,8 +30,15 @@ export class Highlighter {
    * Request highlighting for a set of diff files. When results arrive,
    * the `html` field on each DiffLine is populated in-place and the
    * callback is invoked so the component can re-render.
+   *
+   * Any previously pending requests are cancelled (their callbacks will
+   * be silently dropped) so only the latest set of files is highlighted.
    */
   highlight(files: DiffFile[], onComplete: HighlightCallback): void {
+    // Cancel all previously pending requests — they reference stale file arrays
+    this.pending.clear();
+    this.fileRefs.clear();
+
     const id = nextId++;
 
     // Build a flat request: for each file, collect all line texts in hunk order
@@ -45,14 +53,17 @@ export class Highlighter {
 
     // Store file ref so the response handler can write html back in-place
     this.pending.set(id, onComplete);
-    (this as any)[`_files_${id}`] = files;
+    this.fileRefs.set(id, files);
 
     this.worker.postMessage(request);
   }
 
   private handleResponse(resp: HighlightResponse): void {
-    const fileRef: DiffFile[] | undefined = (this as any)[`_files_${resp.id}`];
+    const fileRef = this.fileRefs.get(resp.id);
     const callback = this.pending.get(resp.id);
+
+    // If this response was for a cancelled request, ignore it
+    if (!callback) return;
 
     if (fileRef) {
       // Write highlighted HTML back into the DiffLine objects in-place
@@ -69,11 +80,11 @@ export class Highlighter {
         }
       }
 
-      delete (this as any)[`_files_${resp.id}`];
+      this.fileRefs.delete(resp.id);
     }
 
     this.pending.delete(resp.id);
-    callback?.();
+    callback();
   }
 
   dispose(): void {

@@ -55,6 +55,10 @@ export class DiffPanel extends LitElement {
   @property({ attribute: false })
   treeState: FileTreeState | null = null;
 
+  /** Whether this panel is currently visible (set by the parent). */
+  @property({ type: Boolean })
+  visible = false;
+
   @state() private collapsedFiles = new Set<string>();
 
   /** Tracks which markdown files are in "rendered" mode vs "raw" (diff) mode */
@@ -79,14 +83,16 @@ export class DiffPanel extends LitElement {
   override connectedCallback() {
     super.connectedCallback();
     this._subscribe();
-    // Fetch full diff when the panel becomes visible
-    this.store?.fetchFullDiff();
   }
 
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has("store")) {
       this._subscribe();
-      this.store?.fetchFullDiff();
+      // Fetch if we're already visible when the store is set
+      if (this.visible) this._fetchFresh();
+    }
+    if (changed.has("visible") && this.visible) {
+      this._fetchFresh();
     }
   }
 
@@ -101,6 +107,15 @@ export class DiffPanel extends LitElement {
     this.scrollSpy.destroy();
     // Release the full diff data when leaving the view
     this.store?.clearFullDiff();
+  }
+
+  /** Re-fetch the full diff, clearing stale component-level state. */
+  private _fetchFresh() {
+    this.collapsedFiles = new Set();
+    this.renderedFiles = new Set();
+    this.markdownCache = new Map();
+    this.markdownLoading = new Set();
+    this.store?.fetchFullDiff();
   }
 
   private _subscribe() {
