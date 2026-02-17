@@ -19,6 +19,8 @@ import type { SessionSidebar } from "./session-sidebar.js";
 import type { DiffPanel } from "./changes/diff-panel.js";
 import { DiffStore } from "./changes/diff-store.js";
 import { FileTreeState } from "./changes/file-tree-state.js";
+import { ActivityTracker } from "./activity-tracker.js";
+
 
 // Ensure sub-components are registered
 import "./chat-panel.js";
@@ -44,12 +46,15 @@ export class AppShell extends LitElement {
   private client = new AppClient();
   private diffStore = new DiffStore();
   private fileTreeState = new FileTreeState();
+  private activityTracker = new ActivityTracker();
+
 
   @state() private connected = false;
   @state() private activeSessionId = "";
   @state() private activeProjectId: number | null = null;
   @state() private sessionData: SessionData | null = null;
   @state() private activeTab: "chat" | "changes" = "chat";
+  @state() private activityMap = new Map<string, import("./activity-tracker.js").ActivityState>();
 
   override connectedCallback() {
     super.connectedCallback();
@@ -69,9 +74,17 @@ export class AppShell extends LitElement {
       }
     });
 
-    // Refresh diff panel when file-modifying tools complete
+    // Track session activity and refresh diff panel
     this.client.onEvent((sessionId, event) => {
-      // Only react to events for the session we're viewing
+      // Track activity for all sessions
+      if (sessionId && event.type === "agent_start") {
+        this.activityTracker.setRunning(sessionId);
+      } else if (sessionId && event.type === "agent_end") {
+        this.activityTracker.setFinished(sessionId, this.activeSessionId);
+        setTimeout(() => this.getSidebar()?.refresh(), 500);
+      }
+
+      // Only refresh diff for the session we're viewing
       if (sessionId !== this.activeSessionId) return;
 
       const refreshDiff =
@@ -81,10 +94,12 @@ export class AppShell extends LitElement {
       if (refreshDiff) {
         setTimeout(() => this.diffStore.refresh(), 500);
       }
+    });
 
-      if (event.type === "agent_end") {
-        setTimeout(() => this.getSidebar()?.refresh(), 500);
-      }
+    // React to activity state changes (favicon, title, sidebar)
+    this.activityTracker.onChange(() => {
+      this.activityMap = this.activityTracker.getAll();
+      this.updateTitleAndFavicon();
     });
 
     this.client.connect();
@@ -100,6 +115,7 @@ export class AppShell extends LitElement {
     window.removeEventListener("hashchange", this.onHashChange);
     this.client.disconnect();
     this.diffStore.dispose();
+
   }
 
   private onHashChange = () => {
@@ -168,11 +184,29 @@ export class AppShell extends LitElement {
   public loadSession(data: SessionData) {
     this.sessionData = data;
     this.activeSessionId = data.id;
+    // Clear "finished" notification for this session (user is now viewing it)
+    this.activityTracker.clear(data.id);
     this.getSidebar()?.refresh();
+  }
+
+  private updateTitleAndFavicon(): void {
+    const { running, finished } = this.activityTracker.summary;
+
+    // Update document title
+    if (running > 0) {
+      document.title = `(${running} running) REINS`;
+    } else if (finished > 0) {
+      document.title = `(${finished} new) REINS`;
+    } else {
+      document.title = "REINS";
+    }
+
+
   }
 
   private handleRefreshDiff() {
     this.diffStore.refresh();
+    this.diffStore.fetchFullDiff();
   }
 
   private getDiffPanel(): DiffPanel | null {
@@ -229,6 +263,7 @@ export class AppShell extends LitElement {
             .client=${this.client}
             .activeSessionId=${this.activeSessionId}
             .activeProjectId=${this.activeProjectId}
+            .activityMap=${this.activityMap}
           ></session-sidebar>
 
           ${hasProject ? html`

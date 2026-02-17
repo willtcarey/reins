@@ -8,6 +8,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { SessionListItem } from "./ws-client.js";
+import type { ActivityState } from "./activity-tracker.js";
 import { formatRelativeDate } from "./format.js";
 
 @customElement("session-list")
@@ -25,6 +26,10 @@ export class SessionList extends LitElement {
   /** Whether the project also has tasks — controls the section heading. */
   @property({ type: Boolean })
   hasTasks = false;
+
+  /** Activity states for sessions (running/finished indicators). */
+  @property({ attribute: false })
+  activityMap = new Map<string, ActivityState>();
 
   private handleSelectSession(sessionId: string) {
     this.dispatchEvent(
@@ -48,6 +53,15 @@ export class SessionList extends LitElement {
     );
   }
 
+  private renderActivityDot(sessionId: string) {
+    const state = this.activityMap.get(sessionId);
+    if (!state) return nothing;
+    const classes = state === "running"
+      ? "w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"
+      : "w-2 h-2 rounded-full bg-amber-500 shrink-0";
+    return html`<span class="${classes}" title="${state === "running" ? "Running" : "New activity"}"></span>`;
+  }
+
   private renderSession(s: SessionListItem) {
     const isActive = s.id === this.activeSessionId;
     const label = s.name || s.first_message || "Empty session";
@@ -60,7 +74,10 @@ export class SessionList extends LitElement {
           ${isActive ? "bg-zinc-700/60" : "hover:bg-zinc-700/30"}"
         @click=${() => this.handleSelectSession(s.id)}
       >
-        <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
+        <div class="flex items-center gap-1.5">
+          ${this.renderActivityDot(s.id)}
+          <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
+        </div>
         <div class="text-[10px] text-zinc-500 mt-0.5">${date} · ${s.message_count} messages</div>
       </button>
     `;

@@ -16,6 +16,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { AppClient, SessionListItem, SessionData, TaskListItem } from "./ws-client.js";
 import type { AppShell } from "./app.js";
 import type { TaskList } from "./task-list.js";
+import type { ActivityState } from "./activity-tracker.js";
 import "./project-sidebar.js";
 import "./task-form.js";
 import "./task-list.js";
@@ -36,6 +37,10 @@ export class SessionSidebar extends LitElement {
   /** Current project ID from the URL route. Null = no project selected. */
   @property({ type: Number })
   activeProjectId: number | null = null;
+
+  /** Activity states for all sessions (running/finished indicators). */
+  @property({ attribute: false })
+  activityMap = new Map<string, ActivityState>();
 
   @state() private tasks: TaskListItem[] = [];
   @state() private sessions: SessionListItem[] = []; // scratch sessions only
@@ -182,6 +187,21 @@ export class SessionSidebar extends LitElement {
     this.collapsed = !this.collapsed;
   }
 
+  /** Render a small badge dot on the collapsed rail if there's activity. */
+  private renderRailBadge() {
+    let hasRunning = false;
+    let hasFinished = false;
+    for (const state of this.activityMap.values()) {
+      if (state === "running") hasRunning = true;
+      else if (state === "finished") hasFinished = true;
+    }
+    if (!hasRunning && !hasFinished) return nothing;
+    const colorClass = hasRunning
+      ? "bg-green-500 animate-pulse"
+      : "bg-amber-500";
+    return html`<span class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${colorClass}"></span>`;
+  }
+
   // ---- Render --------------------------------------------------------------
 
   override render() {
@@ -189,11 +209,12 @@ export class SessionSidebar extends LitElement {
       <!-- Collapsed rail -->
       <div class="${this.collapsed ? "" : "hidden"} w-10 h-full bg-zinc-850 border-r border-zinc-700 flex flex-col items-center pt-2 shrink-0">
         <button
-          class="p-1.5 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
+          class="relative p-1.5 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
           @click=${this.toggleCollapse}
           title="Show sidebar"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+          ${this.renderRailBadge()}
         </button>
       </div>
 
@@ -235,12 +256,14 @@ export class SessionSidebar extends LitElement {
               .projectId=${this.activeProjectId}
               .tasks=${this.tasks}
               .activeSessionId=${this.activeSessionId}
+              .activityMap=${this.activityMap}
             ></task-list>
 
             <session-list
               .sessions=${this.sessions}
               .activeSessionId=${this.activeSessionId}
               .hasTasks=${this.tasks.length > 0}
+              .activityMap=${this.activityMap}
             ></session-list>
           `}
         </div>

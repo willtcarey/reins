@@ -9,6 +9,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { SessionListItem, TaskListItem } from "./ws-client.js";
+import type { ActivityState } from "./activity-tracker.js";
 import { formatRelativeDate } from "./format.js";
 
 @customElement("task-list")
@@ -25,6 +26,10 @@ export class TaskList extends LitElement {
 
   @property({ type: String })
   activeSessionId = "";
+
+  /** Activity states for sessions (running/finished indicators). */
+  @property({ attribute: false })
+  activityMap = new Map<string, ActivityState>();
 
   @state() private expandedTaskId: number | null = null;
   @state() private taskSessions = new Map<number, SessionListItem[]>();
@@ -98,6 +103,28 @@ export class TaskList extends LitElement {
     );
   }
 
+  private renderActivityDot(sessionId: string) {
+    const state = this.activityMap.get(sessionId);
+    if (!state) return nothing;
+    const classes = state === "running"
+      ? "w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"
+      : "w-2 h-2 rounded-full bg-amber-500 shrink-0";
+    return html`<span class="${classes}" title="${state === "running" ? "Running" : "New activity"}"></span>`;
+  }
+
+  /** Check if any session within a task has activity. */
+  private getTaskActivity(taskId: number): ActivityState | undefined {
+    const sessions = this.taskSessions.get(taskId);
+    if (!sessions) return undefined;
+    let hasFinished = false;
+    for (const s of sessions) {
+      const state = this.activityMap.get(s.id);
+      if (state === "running") return "running";
+      if (state === "finished") hasFinished = true;
+    }
+    return hasFinished ? "finished" : undefined;
+  }
+
   private renderSession(s: SessionListItem) {
     const isActive = s.id === this.activeSessionId;
     const label = s.name || s.first_message || "Empty session";
@@ -110,10 +137,22 @@ export class TaskList extends LitElement {
           ${isActive ? "bg-zinc-700/60" : "hover:bg-zinc-700/30"}"
         @click=${() => this.handleSelectSession(s.id)}
       >
-        <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
+        <div class="flex items-center gap-1.5">
+          ${this.renderActivityDot(s.id)}
+          <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
+        </div>
         <div class="text-[10px] text-zinc-500 mt-0.5">${date} · ${s.message_count} messages</div>
       </button>
     `;
+  }
+
+  private renderTaskActivityDot(taskId: number) {
+    const state = this.getTaskActivity(taskId);
+    if (!state) return nothing;
+    const classes = state === "running"
+      ? "w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"
+      : "w-2 h-2 rounded-full bg-amber-500 shrink-0";
+    return html`<span class="${classes}"></span>`;
   }
 
   private renderTask(task: TaskListItem) {
@@ -129,7 +168,10 @@ export class TaskList extends LitElement {
         >
           <span class="text-zinc-500 text-[10px] mt-0.5 shrink-0">${isExpanded ? "▼" : "▶"}</span>
           <div class="flex-1 min-w-0">
-            <div class="text-xs text-zinc-200 truncate">${task.title}</div>
+            <div class="flex items-center gap-1.5">
+              <div class="text-xs text-zinc-200 truncate">${task.title}</div>
+              ${this.renderTaskActivityDot(task.id)}
+            </div>
             <div class="text-[10px] text-zinc-500 mt-0.5">
               ${date} · ${task.session_count} session${task.session_count !== 1 ? "s" : ""}
             </div>
