@@ -24,13 +24,7 @@ When a task session is opened, the task's branch is checked out automatically.
 
 ## Creating a task
 
-When you create a task you provide:
-
-| Field | Required | Notes |
-|---|---|---|
-| **Title** | Yes | Short summary of the work. |
-| **Description** | No | Longer context — shown to the agent in every session. |
-| **Branch name** | No | If left blank, a name is generated automatically in `task/<slug>` format. |
+Describe what you want to do in plain language — e.g. "add dark mode support" or "fix the login bug where sessions expire too early". Reins generates the task title, description, and branch name automatically from your input.
 
 ## Working on a task
 
