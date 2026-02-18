@@ -72,28 +72,30 @@ export async function fetchOrigin(
   }
 }
 
+
 /**
- * Resolve the best available ref for a base branch.
- * Prefers origin/<branch> if available, falls back to the local branch.
+ * Fast-forward the local base branch to match origin without checking it out.
+ * This keeps the local branch up to date so diffs against it are accurate.
+ * Silently skips if there's no remote or the fast-forward fails (e.g. the
+ * local branch has diverged).
  */
-export async function resolveBaseBranchRef(
+export async function pullBaseBranch(
   projectDir: string,
   baseBranch: string,
-): Promise<string> {
-  const remoteRef = `origin/${baseBranch}`;
-  const proc = Bun.spawn(
-    ["git", "show-ref", "--verify", "--quiet", `refs/remotes/${remoteRef}`],
-    { cwd: projectDir, stdout: "pipe", stderr: "pipe" },
-  );
-  const exitCode = await proc.exited;
-  return exitCode === 0 ? remoteRef : baseBranch;
+): Promise<void> {
+  const fetched = await fetchOrigin(projectDir, baseBranch);
+  if (!fetched) return;
+  // Fast-forward the local branch without checking it out.
+  // This will fail (harmlessly) if the local branch has diverged.
+  await run(projectDir, ["fetch", ".", `origin/${baseBranch}:${baseBranch}`]);
 }
 
 /**
  * Create a branch from the base branch without checking it out.
- * Fetches from origin first when available so the branch starts from
- * the latest upstream commit. Falls back to the local branch for
- * repos without a remote.
+ * Pulls the local base branch to match origin first so the new branch
+ * (and subsequent diffs against the local base) start from the latest
+ * upstream commit. Falls back gracefully for repos without a remote or
+ * when the local branch has diverged.
  * Throws if the branch already exists.
  */
 export async function createBranch(
@@ -101,9 +103,8 @@ export async function createBranch(
   branchName: string,
   baseBranch: string,
 ): Promise<void> {
-  await fetchOrigin(projectDir, baseBranch);
-  const ref = await resolveBaseBranchRef(projectDir, baseBranch);
-  await runChecked(projectDir, ["branch", branchName, ref]);
+  await pullBaseBranch(projectDir, baseBranch);
+  await runChecked(projectDir, ["branch", branchName, baseBranch]);
 }
 
 /**

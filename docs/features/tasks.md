@@ -18,7 +18,7 @@ Task sessions inherit context from their parent task: the agent's system prompt 
 
 Every task gets its own git branch, created when the task is created. This keeps work isolated — multiple tasks can be in flight without interfering with each other.
 
-The branch is created **from the latest upstream state** of the project's base branch. When a remote (`origin`) is available, Reins fetches and branches from `origin/<baseBranch>` so the task starts from the most up-to-date commit. For repos without a remote it falls back to the local base branch.
+The branch is created **from the latest upstream state** of the project's base branch. When a remote (`origin`) is available, Reins pulls the local base branch forward to match before branching, so the task starts from the most up-to-date commit. For repos without a remote, or when the local branch has diverged, it branches from whatever the local base branch points to.
 
 When a task session is opened, the task's branch is checked out automatically.
 
