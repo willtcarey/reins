@@ -96,3 +96,39 @@ export function touchTask(id: number): void {
   const db = getDb();
   db.query("UPDATE tasks SET updated_at = datetime('now') WHERE id = ?").run(id);
 }
+
+/**
+ * Delete a task and all its associated sessions + messages.
+ * Returns true if the task was found and deleted, false otherwise.
+ */
+export function deleteTask(id: number): boolean {
+  const db = getDb();
+  const task = getTask(id);
+  if (!task) return false;
+
+  const tx = db.transaction(() => {
+    // Delete messages for all sessions belonging to this task
+    db.query(
+      `DELETE FROM session_messages WHERE session_id IN
+       (SELECT id FROM sessions WHERE task_id = ?)`,
+    ).run(id);
+    // Delete sessions belonging to this task
+    db.query("DELETE FROM sessions WHERE task_id = ?").run(id);
+    // Delete the task itself
+    db.query("DELETE FROM tasks WHERE id = ?").run(id);
+  });
+  tx();
+
+  return true;
+}
+
+/**
+ * Get the IDs of all sessions belonging to a task.
+ */
+export function getTaskSessionIds(taskId: number): string[] {
+  const db = getDb();
+  const rows = db
+    .query("SELECT id FROM sessions WHERE task_id = ?")
+    .all(taskId) as { id: string }[];
+  return rows.map((r) => r.id);
+}

@@ -12,10 +12,12 @@ import {
   getTask,
   listTasks,
   updateTask,
+  deleteTask,
+  getTaskSessionIds,
 } from "../task-store.js";
 import { generateBranchName } from "../branch-namer.js";
 import { generateTask } from "../task-generator.js";
-import { createBranch, branchExists } from "../git.js";
+import { createBranch, branchExists, deleteBranch, getCurrentBranch, checkoutBranch } from "../git.js";
 import {
   createNewSession,
   serializeSession,
@@ -123,6 +125,57 @@ export function registerTaskRoutes(router: RouterGroup) {
     const updated = updateTask(taskId, body);
     if (!updated) notFound("Task not found");
     return Response.json(updated);
+  });
+
+  // Delete a task (with sessions, messages, and git branch)
+  router.delete("/tasks/:taskId", async (ctx: RouteContext) => {
+    const projectId = parseInt(ctx.params.id, 10);
+    const taskId = parseInt(ctx.params.taskId, 10);
+    const projectDir = (ctx as any).projectDir as string;
+
+    const task = getTask(taskId);
+    if (!task) notFound("Task not found");
+    if (task!.project_id !== projectId) notFound("Task not found");
+
+    // Check for active (in-memory, streaming) sessions
+    const sessionIds = getTaskSessionIds(taskId);
+    const activeSessions: string[] = [];
+    for (const sid of sessionIds) {
+      const managed = ctx.state.sessions.get(sid);
+      if (managed && managed.session.isStreaming) {
+        activeSessions.push(sid);
+      }
+    }
+    if (activeSessions.length > 0) {
+      return Response.json(
+        { error: `Cannot delete task: ${activeSessions.length} session(s) are currently running` },
+        { status: 409 },
+      );
+    }
+
+    // Remove in-memory sessions for this task
+    for (const sid of sessionIds) {
+      ctx.state.sessions.delete(sid);
+    }
+
+    // Delete task (cascades sessions + messages in DB)
+    deleteTask(taskId);
+
+    // Delete the git branch (best-effort — may fail if checked out)
+    try {
+      const currentBranch = await getCurrentBranch(projectDir);
+      if (currentBranch === task!.branch_name) {
+        // Switch away first
+        const project = getProject(projectId)!;
+        await checkoutBranch(projectDir, project.base_branch);
+      }
+      await deleteBranch(projectDir, task!.branch_name);
+    } catch (err: any) {
+      // Branch may already be gone — log but don't fail
+      console.warn(`  Could not delete branch ${task!.branch_name}: ${err.message}`);
+    }
+
+    return Response.json({ ok: true });
   });
 
   // ---- Task Sessions -------------------------------------------------------

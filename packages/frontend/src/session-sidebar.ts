@@ -13,7 +13,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
-import { navigateToSession } from "./router.js";
+import { navigateToSession, navigateToProject } from "./router.js";
 import type { ProjectStore } from "./project-store.js";
 import type { ActivityState } from "./activity-tracker.js";
 import type { TaskList } from "./task-list.js";
@@ -100,6 +100,22 @@ export class SessionSidebar extends LitElement {
     await this.store?.refreshLists();
   }
 
+  private async handleDeleteTask(e: CustomEvent<{ taskId: number }>) {
+    const store = this.store;
+    if (!store) return;
+
+    const result = await store.deleteTask(e.detail.taskId);
+    if ("error" in result) {
+      alert(result.error);
+      return;
+    }
+
+    // If the store cleared the active session, navigate to project root
+    if (!store.sessionId && store.projectId != null) {
+      navigateToProject(store.projectId);
+    }
+  }
+
   private toggleCollapse() {
     this.collapsed = !this.collapsed;
   }
@@ -149,6 +165,7 @@ export class SessionSidebar extends LitElement {
         @new-session=${this.handleNewSession}
         @new-task-session=${this.handleNewTaskSession}
         @task-created=${this.handleTaskCreated}
+        @delete-task=${this.handleDeleteTask}
         @toggle-collapse=${this.toggleCollapse}
       >
         <!-- Project switcher -->

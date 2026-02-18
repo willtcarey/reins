@@ -34,6 +34,16 @@ function buildHash(projectId: number, sessionId?: string): string {
 }
 
 /**
+ * Navigate to a project URL (no specific session).
+ * The app shell will resolve to the most recent session.
+ */
+export function navigateToProject(projectId: number): void {
+  const hash = buildHash(projectId);
+  if (location.hash === hash) return;
+  location.hash = hash;
+}
+
+/**
  * Navigate to a session URL.
  * Uses replaceState when `replace` is true (e.g. redirecting from a bare
  * project URL to include the resolved session ID).

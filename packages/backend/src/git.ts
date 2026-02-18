@@ -132,6 +132,17 @@ export async function checkoutBranch(
 }
 
 /**
+ * Delete a local branch. Uses -D (force) so it works even if unmerged.
+ * Throws if the branch is currently checked out.
+ */
+export async function deleteBranch(
+  projectDir: string,
+  branchName: string,
+): Promise<void> {
+  await runChecked(projectDir, ["branch", "-D", branchName]);
+}
+
+/**
  * Get the current branch name (HEAD).
  */
 export async function getCurrentBranch(projectDir: string): Promise<string> {

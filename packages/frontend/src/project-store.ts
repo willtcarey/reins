@@ -159,6 +159,32 @@ export class ProjectStore {
     }
   }
 
+  /**
+   * Delete a task. Returns success or an error string.
+   */
+  async deleteTask(taskId: number): Promise<{ ok: true } | { error: string }> {
+    if (this.projectId == null) return { error: "No project" };
+    try {
+      const resp = await fetch(
+        `/api/projects/${this.projectId}/tasks/${taskId}`,
+        { method: "DELETE" },
+      );
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        return { error: body.error || `HTTP ${resp.status}` };
+      }
+      // If the active session belonged to this task, clear it
+      if (this.sessionData?.task_id === taskId) {
+        this.sessionId = "";
+        this.sessionData = null;
+      }
+      await this.fetchLists();
+      return { ok: true };
+    } catch {
+      return { error: "Network error" };
+    }
+  }
+
   // ---- Internal fetching ----------------------------------------------------
 
   private async fetchLists() {

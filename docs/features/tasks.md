@@ -36,6 +36,16 @@ Once a task exists you can create sessions under it. Each session:
 
 You can create as many sessions as you like per task. This is useful for breaking work into steps, trying different approaches, or resuming after reviewing changes.
 
+## Deleting a task
+
+Deleting a task removes:
+
+- The task itself
+- All sessions and their message history
+- The task's git branch
+
+A task cannot be deleted while any of its sessions are actively running. Stop the running session first, then delete.
+
 ## Lifecycle
 
 Tasks are persistent — they survive server restarts. The `updated_at` timestamp is bumped whenever a new session is created under a task, keeping the most active tasks sorted to the top of the list.
