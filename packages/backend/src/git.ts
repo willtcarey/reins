@@ -284,21 +284,30 @@ function parseNumstat(raw: string): DiffFileSummary[] {
 
 /**
  * Get a lightweight list of changed files with +/− counts.
+ *
+ * @param mode - `"branch"` (default) shows all changes against the base branch
+ *               (committed + uncommitted). `"uncommitted"` shows only uncommitted
+ *               working-tree changes.
  */
 export async function getChangedFiles(
   projectDir: string,
   baseBranch = "main",
+  mode: "branch" | "uncommitted" = "branch",
 ): Promise<DiffFileSummary[]> {
   const [committed, uncommitted, untrackedList] = await Promise.all([
-    run(projectDir, ["diff", "--numstat", `${baseBranch}...HEAD`]).catch(() => ""),
+    mode === "branch"
+      ? run(projectDir, ["diff", "--numstat", `${baseBranch}...HEAD`]).catch(() => "")
+      : "",
     run(projectDir, ["diff", "--numstat", "HEAD"]).catch(() => ""),
     run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
   ]);
 
   const fileMap = new Map<string, DiffFileSummary>();
 
-  for (const f of parseNumstat(committed)) {
-    fileMap.set(f.path, f);
+  if (mode === "branch") {
+    for (const f of parseNumstat(committed)) {
+      fileMap.set(f.path, f);
+    }
   }
   for (const f of parseNumstat(uncommitted)) {
     const existing = fileMap.get(f.path);
@@ -330,14 +339,23 @@ export async function getChangedFiles(
 /**
  * Get a fully parsed diff structure with raw text lines (no syntax highlighting).
  * Highlighting is handled client-side.
+ *
+ * @param mode - `"branch"` (default) shows all changes against the base branch
+ *               (committed + uncommitted). `"uncommitted"` shows only uncommitted
+ *               working-tree changes.
  */
 export async function getDiff(
   projectDir: string,
   contextLines = 3,
   baseBranch = "main",
+  mode: "branch" | "uncommitted" = "branch",
 ): Promise<DiffFile[]> {
   const rawDiff = await getGitDiff(projectDir, contextLines, baseBranch);
-  const combined = [rawDiff.committed, rawDiff.uncommitted].filter(Boolean).join("\n");
+  const parts =
+    mode === "uncommitted"
+      ? [rawDiff.uncommitted]
+      : [rawDiff.committed, rawDiff.uncommitted];
+  const combined = parts.filter(Boolean).join("\n");
   const parsed = parseUnifiedDiff(combined);
 
   if (parsed.length === 0) return [];

@@ -44,7 +44,7 @@ We track tech debt in [`docs/tech-debt.md`](docs/tech-debt.md). When you identif
 
 ## Feature Documentation
 
-User-facing feature docs live in [`docs/features/`](docs/features/). When adding or changing a feature, update the relevant doc (or create a new one). These describe *how the system works* from the user's perspective — UX, not UI.
+User-facing feature docs live in [`docs/features/`](docs/features/). When adding or changing a feature, update the relevant doc (or create a new one). These describe *how the user interacts with the feature* — not UI affordances or implementation details like what resets when, what labels appear, or how the system responds internally.
 
 ## Notes
 

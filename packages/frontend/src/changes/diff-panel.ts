@@ -468,7 +468,7 @@ export class DiffPanel extends LitElement {
     const files = fullData?.files ?? [];
     const branch = fullData?.branch ?? this.store.fileData.branch;
     const baseBranch = fullData?.baseBranch ?? this.store.fileData.baseBranch;
-    const { contextLines, defaultContext } = this.store;
+    const { contextLines, defaultContext, diffMode } = this.store;
 
     if (files.length === 0) {
       return html`
@@ -490,9 +490,12 @@ export class DiffPanel extends LitElement {
               ${branch}
             </span>
           ` : nothing}
-          ${baseBranch && branch && baseBranch !== branch ? html`
+          ${diffMode === "branch" && baseBranch && branch && baseBranch !== branch ? html`
             <span class="text-xs text-zinc-600">←</span>
             <span class="text-xs font-mono text-zinc-500">${baseBranch}</span>
+          ` : nothing}
+          ${diffMode === "uncommitted" ? html`
+            <span class="text-xs text-zinc-500 italic">uncommitted only</span>
           ` : nothing}
           <div class="flex-1"></div>
           <span class="text-xs text-zinc-500">Context: ${contextLines} lines</span>

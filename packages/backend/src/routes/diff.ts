@@ -24,10 +24,11 @@ export function registerDiffRoutes(router: RouterGroup) {
     const projectId = parseInt(ctx.params.id, 10);
     const projectDir = (ctx as any).projectDir as string;
     const project = getProject(projectId)!;
+    const mode = ctx.url.searchParams.get("mode") === "uncommitted" ? "uncommitted" : "branch";
 
     const baseBranchRef = await resolveBaseBranchRef(projectDir, project.base_branch);
     const [files, branch] = await Promise.all([
-      getChangedFiles(projectDir, baseBranchRef),
+      getChangedFiles(projectDir, baseBranchRef, mode),
       getCurrentBranch(projectDir),
     ]);
     return Response.json({ files, branch, baseBranch: project.base_branch });
@@ -45,10 +46,11 @@ export function registerDiffRoutes(router: RouterGroup) {
       Math.max(parseInt(ctx.url.searchParams.get("context") ?? "3", 10) || 3, 0),
       500,
     );
+    const mode = ctx.url.searchParams.get("mode") === "uncommitted" ? "uncommitted" : "branch";
 
     const baseBranchRef = await resolveBaseBranchRef(projectDir, project.base_branch);
     const [files, branch] = await Promise.all([
-      getDiff(projectDir, contextLines, baseBranchRef),
+      getDiff(projectDir, contextLines, baseBranchRef, mode),
       getCurrentBranch(projectDir),
     ]);
     return Response.json({ files, branch, baseBranch: project.base_branch });

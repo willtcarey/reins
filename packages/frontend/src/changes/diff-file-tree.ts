@@ -14,6 +14,7 @@ import { customElement, property } from "lit/decorators.js";
 import { styleMap } from "lit/directives/style-map.js";
 import type { DiffFileSummary } from "./types.js";
 import type { DiffStore } from "./diff-store.js";
+import type { DiffMode } from "./diff-store.js";
 import type { FileTreeState } from "./file-tree-state.js";
 
 interface TreeNode {
@@ -153,6 +154,12 @@ export class DiffFileTree extends LitElement {
     this.treeState?.toggleDir(path);
   }
 
+  private handleModeChange(e: Event) {
+    const select = e.target as HTMLSelectElement;
+    const mode = select.value as DiffMode;
+    this.store?.setDiffMode(mode);
+  }
+
   private selectFile(path: string) {
     this.dispatchEvent(
       new CustomEvent("file-select", {
@@ -259,8 +266,23 @@ export class DiffFileTree extends LitElement {
     const totalRemovals = files.reduce((s, f) => s + f.removals, 0);
     const tree = buildTree(files);
 
+    const currentMode = this.store?.diffMode ?? "branch";
+    const baseBranch = this.store?.data.baseBranch;
+
     return html`
       <div class="h-full flex flex-col min-w-0">
+        <!-- Mode selector -->
+        <div class="px-3 py-2 border-b border-zinc-700 shrink-0">
+          <select
+            class="w-full bg-zinc-800 text-zinc-300 text-xs rounded border border-zinc-600 px-2 py-1.5 cursor-pointer focus:outline-none focus:border-zinc-500 appearance-none"
+            style="background-image: url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E&quot;); background-repeat: no-repeat; background-position: right 6px center;"
+            .value=${currentMode}
+            @change=${this.handleModeChange}
+          >
+            <option value="branch">Branch changes${baseBranch ? ` (vs ${baseBranch})` : ""}</option>
+            <option value="uncommitted">Uncommitted changes</option>
+          </select>
+        </div>
         <!-- Summary header -->
         <div class="px-3 py-2 text-xs text-zinc-400 border-b border-zinc-700 flex items-center gap-2 shrink-0">
           <span>${files.length} file${files.length !== 1 ? "s" : ""}</span>

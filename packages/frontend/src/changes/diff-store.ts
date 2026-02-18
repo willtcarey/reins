@@ -16,6 +16,8 @@ import { Highlighter } from "./highlighter.js";
 const DEFAULT_CONTEXT = 3;
 const POLL_INTERVAL = 5000;
 
+export type DiffMode = "branch" | "uncommitted";
+
 export interface DiffFileData {
   files: DiffFileSummary[];
   branch: string | null;
@@ -45,6 +47,9 @@ export class DiffStore {
   error: string | null = null;
   loading = false;
   contextLines = DEFAULT_CONTEXT;
+
+  /** Which changes to show: all branch changes or only uncommitted. */
+  diffMode: DiffMode = "branch";
 
   // ---- Private state --------------------------------------------------------
 
@@ -97,6 +102,20 @@ export class DiffStore {
     this._restartPolling();
   }
 
+  // ---- Diff mode -------------------------------------------------------------
+
+  /** Switch between branch and uncommitted diff modes. Re-fetches data. */
+  async setDiffMode(mode: DiffMode) {
+    if (mode === this.diffMode) return;
+    this.diffMode = mode;
+    this.fullData = null;
+    this.notify();
+    // Re-poll file list immediately with the new mode
+    await this.refresh();
+    // If the full diff was visible, re-fetch it too
+    await this.fetchFullDiff();
+  }
+
   // ---- Context lines --------------------------------------------------------
 
   /** Change the number of context lines and re-fetch full diff. */
@@ -128,7 +147,7 @@ export class DiffStore {
 
     try {
       const resp = await fetch(
-        `/api/projects/${this._projectId}/diff/files`
+        `/api/projects/${this._projectId}/diff/files?mode=${this.diffMode}`
       );
       if (!resp.ok) {
         this.error = `HTTP ${resp.status}`;
@@ -164,7 +183,7 @@ export class DiffStore {
 
     try {
       const resp = await fetch(
-        `/api/projects/${this._projectId}/diff?context=${this.contextLines}`
+        `/api/projects/${this._projectId}/diff?context=${this.contextLines}&mode=${this.diffMode}`
       );
       if (!resp.ok) {
         this.error = `HTTP ${resp.status}`;
