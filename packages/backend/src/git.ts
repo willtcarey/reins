@@ -367,9 +367,22 @@ export async function getDiff(
       ? [rawDiff.uncommitted]
       : [rawDiff.committed, rawDiff.uncommitted];
   const combined = parts.filter(Boolean).join("\n");
-  const parsed = parseUnifiedDiff(combined);
+  const rawParsed = parseUnifiedDiff(combined);
 
-  if (parsed.length === 0) return [];
+  if (rawParsed.length === 0) return [];
+
+  // Merge duplicate files — the same path can appear in both committed and
+  // uncommitted diffs. Combine their hunks into a single entry.
+  const mergedMap = new Map<string, ParsedFile>();
+  for (const file of rawParsed) {
+    const existing = mergedMap.get(file.path);
+    if (existing) {
+      existing.hunks.push(...file.hunks);
+    } else {
+      mergedMap.set(file.path, { path: file.path, hunks: [...file.hunks] });
+    }
+  }
+  const parsed = [...mergedMap.values()];
 
   return parsed.map((file) => {
     let additions = 0;
