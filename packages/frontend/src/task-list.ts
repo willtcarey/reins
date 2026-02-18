@@ -101,6 +101,17 @@ export class TaskList extends LitElement {
     );
   }
 
+  private handleEditTask(task: TaskListItem, e: Event) {
+    e.stopPropagation();
+    this.dispatchEvent(
+      new CustomEvent("edit-task", {
+        bubbles: true,
+        composed: true,
+        detail: { task },
+      }),
+    );
+  }
+
   private handleDeleteTask(task: TaskListItem, e: Event) {
     e.stopPropagation();
     this.deleteConfirmTask = task;
@@ -213,7 +224,14 @@ export class TaskList extends LitElement {
             </div>
           </button>
           <button
-            class="px-2 py-2.5 text-zinc-600 hover:text-red-400 opacity-0 group-hover/task:opacity-100 transition-all cursor-pointer shrink-0"
+            class="px-2 py-2.5 text-zinc-600 hover:text-zinc-300 md:opacity-0 md:group-hover/task:opacity-100 transition-all cursor-pointer shrink-0"
+            title="Edit task"
+            @click=${(e: Event) => this.handleEditTask(task, e)}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+          </button>
+          <button
+            class="px-2 py-2.5 text-zinc-600 hover:text-red-400 md:opacity-0 md:group-hover/task:opacity-100 transition-all cursor-pointer shrink-0"
             title="Delete task"
             @click=${(e: Event) => this.handleDeleteTask(task, e)}
           >

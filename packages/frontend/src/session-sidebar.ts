@@ -18,8 +18,10 @@ import type { ProjectStore } from "./project-store.js";
 import type { ActivityState } from "./activity-tracker.js";
 import type { TaskList } from "./task-list.js";
 import type { TaskForm } from "./task-form.js";
+import type { TaskDetail } from "./task-detail.js";
 import "./project-sidebar.js";
 import "./task-form.js";
+import "./task-detail.js";
 import "./task-list.js";
 import "./session-list.js";
 
@@ -41,6 +43,7 @@ export class SessionSidebar extends LitElement {
   private _unsubscribe: (() => void) | null = null;
 
   @query("task-form") private taskForm!: TaskForm;
+  @query("task-detail") private taskDetail!: TaskDetail;
   @query("task-list") private taskList!: TaskList;
 
   override connectedCallback() {
@@ -94,6 +97,22 @@ export class SessionSidebar extends LitElement {
       return;
     }
     navigateToSession(store.projectId, result.sessionId);
+  }
+
+  private handleEditTask(e: CustomEvent<{ task: import("./ws-client.js").TaskListItem }>) {
+    this.taskDetail?.open(e.detail.task);
+  }
+
+  private async handleSaveTask(e: CustomEvent<{ taskId: number; title: string; description: string | null }>) {
+    const store = this.store;
+    if (!store) return;
+    const { taskId, title, description } = e.detail;
+    const result = await store.updateTask(taskId, { title, description });
+    if ("error" in result) {
+      this.taskDetail?.saveComplete(result.error);
+    } else {
+      this.taskDetail?.saveComplete();
+    }
   }
 
   private async handleTaskCreated() {
@@ -165,6 +184,8 @@ export class SessionSidebar extends LitElement {
         @new-session=${this.handleNewSession}
         @new-task-session=${this.handleNewTaskSession}
         @task-created=${this.handleTaskCreated}
+        @save-task=${this.handleSaveTask}
+        @edit-task=${this.handleEditTask}
         @delete-task=${this.handleDeleteTask}
         @toggle-collapse=${this.toggleCollapse}
       >
@@ -183,8 +204,9 @@ export class SessionSidebar extends LitElement {
           </button>
         </div>
 
-        <!-- Task creation dialog -->
+        <!-- Task dialogs -->
         <task-form .projectId=${projectId}></task-form>
+        <task-detail></task-detail>
 
         <!-- Scrollable content -->
         <div class="flex-1 overflow-y-auto">

@@ -69,10 +69,10 @@ export class TaskForm extends LitElement {
   override render() {
     return html`
       <dialog
-        class="bg-transparent p-0 m-auto backdrop:bg-black/50 backdrop:backdrop-blur-sm"
+        class="bg-transparent p-0 m-auto max-h-dvh overflow-hidden backdrop:bg-black/50 backdrop:backdrop-blur-sm"
         @click=${this.handleBackdropClick}
       >
-        <div class="bg-zinc-800 border border-zinc-600 rounded-lg shadow-xl w-96 p-4">
+        <div class="bg-zinc-800 border border-zinc-600 rounded-lg shadow-xl w-[calc(100vw-2rem)] max-w-96 p-4">
           <h3 class="text-sm font-medium text-zinc-200 mb-3">New Task</h3>
 
           <textarea

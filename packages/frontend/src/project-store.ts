@@ -160,6 +160,34 @@ export class ProjectStore {
   }
 
   /**
+   * Update a task's title and/or description. Returns success or an error string.
+   */
+  async updateTask(
+    taskId: number,
+    updates: { title?: string; description?: string | null },
+  ): Promise<{ ok: true } | { error: string }> {
+    if (this.projectId == null) return { error: "No project" };
+    try {
+      const resp = await fetch(
+        `/api/projects/${this.projectId}/tasks/${taskId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        },
+      );
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        return { error: body.error || `HTTP ${resp.status}` };
+      }
+      await this.fetchLists();
+      return { ok: true };
+    } catch {
+      return { error: "Network error" };
+    }
+  }
+
+  /**
    * Delete a task. Returns success or an error string.
    */
   async deleteTask(taskId: number): Promise<{ ok: true } | { error: string }> {

@@ -26,6 +26,12 @@ When a task session is opened, the task's branch is checked out automatically.
 
 Describe what you want to do in plain language — e.g. "add dark mode support" or "fix the login bug where sessions expire too early". Reins generates the task title, description, and branch name automatically from your input.
 
+## Editing a task
+
+You can view and edit a task's title and description after creation. Hover over a task in the sidebar and click the pencil icon to open the edit dialog. This is useful for refining the AI-generated title or description, or adding more detail as you learn more about the work.
+
+The branch name is shown in the edit dialog for reference but cannot be changed.
+
 ## Working on a task
 
 Once a task exists you can create sessions under it. Each session:
