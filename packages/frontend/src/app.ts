@@ -215,9 +215,7 @@ export class AppShell extends LitElement {
               <!-- Tab bar -->
               <div class="flex items-center border-b border-zinc-700 bg-zinc-800/50">
                 <branch-indicator
-                  .projectId=${store.projectId}
-                  .taskId=${store.sessionData?.task_id ?? null}
-                  .baseBranch=${this.diffStore.fileData.baseBranch}
+                  .currentBranch=${this.diffStore.fileData.branch}
                 ></branch-indicator>
                 <button
                   class="px-4 py-2 text-sm font-semibold transition-colors cursor-pointer ${this.activeTab === "chat" ? "text-zinc-100 border-b-2 border-blue-500" : "text-zinc-500 hover:text-zinc-300"}"

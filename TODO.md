@@ -13,7 +13,7 @@
 - [ ] Figure out how to run the service persistently
 - [x] Mobile support
 - [x] Image support in the chat interface
-- [ ] Task-aware changes tab — introduce a task-specific diff endpoint that diffs the task branch against the project's base branch, and have the changes tab automatically show the relevant diff when viewing a task session
+- [ ] Task-aware changes tab — when viewing a task session, show that task's branch and diff against the base branch, even if the task branch isn't currently checked out. Right now the branch indicator and changes tab always reflect the working tree, so viewing a different task's session shows misleading context.
 - [ ] Comments on changes — allow users to comment on individual changes and inject those comments into the session context so the LLM can see and respond to feedback
 - [ ] Continue refactoring `diff-panel.ts` into smaller components
   - Extract markdown preview/toggle into a `<diff-markdown-preview>` component
