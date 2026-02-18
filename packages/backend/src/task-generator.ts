@@ -5,7 +5,7 @@
  * into a structured task (title, description, branch name).
  */
 
-import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, SessionManager, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
 import { getModel } from "@mariozechner/pi-ai";
 import { slugifyBranchName } from "./branch-namer.js";
 
@@ -30,18 +30,20 @@ Return ONLY valid JSON. No markdown fences, no explanation, no extra text.`;
  */
 export async function generateTask(prompt: string): Promise<GeneratedTask> {
   try {
+    const resourceLoader = new DefaultResourceLoader({
+      systemPrompt: SYSTEM_PROMPT,
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+    });
+    await resourceLoader.reload();
+
     const { session } = await createAgentSession({
       tools: [],
-      model: getModel("anthropic", "claude-sonnet-4-20250514"),
+      model: getModel("anthropic", "claude-haiku-4-5"),
       sessionManager: SessionManager.inMemory(),
-      resourceLoader: {
-        async reload() {},
-        getSystemPrompt() { return SYSTEM_PROMPT; },
-        getSkills() { return []; },
-        getPromptTemplates() { return []; },
-        getContextFiles() { return []; },
-        getDiagnostics() { return []; },
-      } as any,
+      resourceLoader,
     });
 
     const result = await Promise.race([

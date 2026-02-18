@@ -6,7 +6,7 @@
  * unavailable or returns invalid output.
  */
 
-import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, SessionManager, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
 import { getModel } from "@mariozechner/pi-ai";
 
 const BRANCH_PATTERN = /^task\/[a-z0-9][a-z0-9\-]*$/;
@@ -23,18 +23,20 @@ const SYSTEM_PROMPT =
  */
 export async function generateBranchName(title: string): Promise<string> {
   try {
+    const resourceLoader = new DefaultResourceLoader({
+      systemPrompt: SYSTEM_PROMPT,
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+    });
+    await resourceLoader.reload();
+
     const { session } = await createAgentSession({
       tools: [],
       model: getModel("anthropic", "claude-haiku-4-5"),
       sessionManager: SessionManager.inMemory(),
-      resourceLoader: {
-        async reload() {},
-        getSystemPrompt() { return SYSTEM_PROMPT; },
-        getSkills() { return []; },
-        getPromptTemplates() { return []; },
-        getContextFiles() { return []; },
-        getDiagnostics() { return []; },
-      } as any,
+      resourceLoader,
     });
 
     // prompt() returns when the agent turn is done
