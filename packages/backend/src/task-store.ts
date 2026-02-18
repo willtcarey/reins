@@ -21,6 +21,7 @@ export interface TaskRow {
 
 export interface TaskListItem extends TaskRow {
   session_count: number;
+  session_ids: string[];
 }
 
 // ---- CRUD ------------------------------------------------------------------
@@ -48,14 +49,16 @@ export function getTask(id: number): TaskRow | null {
 
 export function listTasks(projectId: number): TaskListItem[] {
   const db = getDb();
-  return db
+  const rows = db
     .query(
       `SELECT
          t.*,
-         COALESCE(sc.cnt, 0) AS session_count
+         COALESCE(sc.cnt, 0) AS session_count,
+         COALESCE(sc.ids, '[]') AS session_ids_json
        FROM tasks t
        LEFT JOIN (
-         SELECT task_id, COUNT(*) AS cnt
+         SELECT task_id, COUNT(*) AS cnt,
+                json_group_array(id) AS ids
          FROM sessions
          WHERE task_id IS NOT NULL
          GROUP BY task_id
@@ -63,7 +66,12 @@ export function listTasks(projectId: number): TaskListItem[] {
        WHERE t.project_id = ?
        ORDER BY t.updated_at DESC`,
     )
-    .all(projectId) as TaskListItem[];
+    .all(projectId) as (TaskRow & { session_count: number; session_ids_json: string })[];
+
+  return rows.map(({ session_ids_json, ...rest }) => ({
+    ...rest,
+    session_ids: JSON.parse(session_ids_json),
+  }));
 }
 
 export function updateTask(

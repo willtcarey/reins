@@ -2,40 +2,36 @@
  * App Shell
  *
  * Root component with session sidebar, chat panel, and diff panel.
- * Initializes the WebSocket client and wires everything together.
- * Uses light DOM for Tailwind compatibility.
+ * Initializes shared stores, the WebSocket client, and wires everything
+ * together. Uses light DOM for Tailwind compatibility.
  *
  * Routing: hash-based
- *  - `#/project/:id` — view a saved project
- *  - (empty hash)    — no project selected, show empty state
+ *  - `#/project/:id`                    — view project, resolves to most recent session
+ *  - `#/project/:id/session/:sessionId` — view a specific session
+ *  - (empty hash)                       — no project selected, show empty state
  */
 
 import { LitElement, html } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { customElement, state } from "lit/decorators.js";
 import { AppClient } from "./ws-client.js";
-import type { SessionData, SessionListItem } from "./ws-client.js";
-import type { SessionSidebar } from "./session-sidebar.js";
 import type { DiffPanel } from "./changes/diff-panel.js";
 import { DiffStore } from "./changes/diff-store.js";
 import { FileTreeState } from "./changes/file-tree-state.js";
 import { ActivityTracker } from "./activity-tracker.js";
-
+import { ProjectStore } from "./project-store.js";
+import { parseHash, navigateToSession } from "./router.js";
+import type { Route } from "./router.js";
 
 // Ensure sub-components are registered
 import "./chat-panel.js";
 import "./changes/diff-panel.js";
 import "./changes/diff-file-tree.js";
 import "./session-sidebar.js";
+import "./branch-indicator.js";
 
 // Tools that modify files and should trigger a diff refresh
 const FILE_MODIFYING_TOOLS = new Set(["write", "edit", "bash"]);
-
-/** Parse `#/project/3` → 3, anything else → null */
-function parseProjectIdFromHash(): number | null {
-  const match = location.hash.match(/^#\/project\/(\d+)$/);
-  return match ? parseInt(match[1], 10) : null;
-}
 
 @customElement("app-shell")
 export class AppShell extends LitElement {
@@ -44,48 +40,55 @@ export class AppShell extends LitElement {
   }
 
   private client = new AppClient();
+  private projectStore = new ProjectStore();
   private diffStore = new DiffStore();
   private fileTreeState = new FileTreeState();
   private activityTracker = new ActivityTracker();
-
+  private _unsubscribeStore: (() => void) | null = null;
 
   @state() private connected = false;
-  @state() private activeSessionId = "";
-  @state() private activeProjectId: number | null = null;
-  @state() private sessionData: SessionData | null = null;
   @state() private activeTab: "chat" | "changes" = "chat";
   @state() private activityMap = new Map<string, import("./activity-tracker.js").ActivityState>();
+  /** Bumped on every store notification to trigger a re-render. */
+  @state() private _storeVersion = 0;
 
   override connectedCallback() {
     super.connectedCallback();
 
-    // Read initial route
-    this.activeProjectId = parseProjectIdFromHash();
-    this.diffStore.setProject(this.activeProjectId);
+    // Subscribe to project store changes
+    this._unsubscribeStore = this.projectStore.subscribe(() => {
+      this._storeVersion++;
+    });
 
-    // Listen for hash changes (project switches)
+    // Apply initial route
+    const route = parseHash();
+    this.diffStore.setProject(route.projectId);
+    this.applyRoute(route);
+
+    // Listen for hash changes
     window.addEventListener("hashchange", this.onHashChange);
 
     this.client.onConnection((connected) => {
       this.connected = connected;
       // On reconnect, re-fetch the active session to catch up on missed events
-      if (connected && this.activeSessionId) {
-        this.fetchSession(this.activeSessionId);
+      if (connected && this.projectStore.sessionId) {
+        this.projectStore.refreshSession();
       }
     });
 
     // Track session activity and refresh diff panel
     this.client.onEvent((sessionId, event) => {
+      const store = this.projectStore;
       // Track activity for all sessions
       if (sessionId && event.type === "agent_start") {
         this.activityTracker.setRunning(sessionId);
       } else if (sessionId && event.type === "agent_end") {
-        this.activityTracker.setFinished(sessionId, this.activeSessionId);
-        setTimeout(() => this.getSidebar()?.refresh(), 500);
+        this.activityTracker.setFinished(sessionId, store.sessionId);
+        setTimeout(() => store.refreshLists(), 500);
       }
 
       // Only refresh diff for the session we're viewing
-      if (sessionId !== this.activeSessionId) return;
+      if (sessionId !== store.sessionId) return;
 
       const refreshDiff =
         (event.type === "tool_execution_end" && FILE_MODIFYING_TOOLS.has(event.toolName)) ||
@@ -96,103 +99,46 @@ export class AppShell extends LitElement {
       }
     });
 
-    // React to activity state changes (favicon, title, sidebar)
+    // React to activity state changes (favicon, title)
     this.activityTracker.onChange(() => {
       this.activityMap = this.activityTracker.getAll();
       this.updateTitleAndFavicon();
     });
 
     this.client.connect();
-
-    // Load initial session for the current project (uses REST, not WS)
-    if (this.activeProjectId != null) {
-      this.loadProjectSession();
-    }
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
+    this._unsubscribeStore?.();
     window.removeEventListener("hashchange", this.onHashChange);
     this.client.disconnect();
     this.diffStore.dispose();
-
   }
 
   private onHashChange = () => {
-    const newProjectId = parseProjectIdFromHash();
-    if (newProjectId !== this.activeProjectId) {
-      this.activeProjectId = newProjectId;
-      this.activeSessionId = "";
-      this.sessionData = null;
-      this.diffStore.setProject(newProjectId);
+    const route = parseHash();
+    if (route.projectId !== this.projectStore.projectId) {
+      this.diffStore.setProject(route.projectId);
       this.fileTreeState.reset();
-
-      if (newProjectId != null) {
-        this.loadProjectSession();
-      }
     }
+    this.applyRoute(route);
   };
 
-  private getSidebar(): SessionSidebar | null {
-    return this.querySelector("session-sidebar") as SessionSidebar | null;
-  }
-
-  /**
-   * Fetch a single session's full data via REST and apply it.
-   */
-  private async fetchSession(sessionId: string): Promise<boolean> {
-    if (this.activeProjectId == null) return false;
-    try {
-      const resp = await fetch(
-        `/api/projects/${this.activeProjectId}/sessions/${encodeURIComponent(sessionId)}`
-      );
-      if (!resp.ok) return false;
-      this.loadSession(await resp.json());
-      return true;
-    } catch {
-      return false;
+  private async applyRoute(route: Route) {
+    const result = await this.projectStore.setRoute(route.projectId, route.sessionId);
+    if (result?.navigateTo && route.projectId != null) {
+      navigateToSession(route.projectId, result.navigateTo, true);
     }
-  }
-
-  /**
-   * Load the most recent session for the current project via REST.
-   * Fetches the session list first (sidebar uses this too), then loads
-   * the most recent one. If no sessions exist, leaves sessionData null.
-   */
-  private async loadProjectSession() {
-    if (this.activeProjectId == null) return;
-    try {
-      const listResp = await fetch(`/api/projects/${this.activeProjectId}/sessions`);
-      if (!listResp.ok) return;
-      const sessions: SessionListItem[] = await listResp.json();
-
-      // Let the sidebar know about the list
-      this.getSidebar()?.setSessionList(sessions);
-
-      if (sessions.length === 0) return;
-
-      // Load the most recent session's full data
-      await this.fetchSession(sessions[0].id);
-    } catch {
-      // Silently fail — user can retry via sidebar
+    // Clear activity notification when viewing a session
+    if (this.projectStore.sessionData) {
+      this.activityTracker.clear(this.projectStore.sessionData.id);
     }
-  }
-
-  /**
-   * Called by the session sidebar when the user clicks a session or creates a new one.
-   */
-  public loadSession(data: SessionData) {
-    this.sessionData = data;
-    this.activeSessionId = data.id;
-    // Clear "finished" notification for this session (user is now viewing it)
-    this.activityTracker.clear(data.id);
-    this.getSidebar()?.refresh();
   }
 
   private updateTitleAndFavicon(): void {
     const { running, finished } = this.activityTracker.summary;
 
-    // Update document title
     if (running > 0) {
       document.title = `(${running} running) REINS`;
     } else if (finished > 0) {
@@ -200,8 +146,6 @@ export class AppShell extends LitElement {
     } else {
       document.title = "REINS";
     }
-
-
   }
 
   private handleRefreshDiff() {
@@ -220,7 +164,6 @@ export class AppShell extends LitElement {
   private handleChatFileSelect(e: Event) {
     const path = (e as CustomEvent<string>).detail;
     this.activeTab = "changes";
-    // Wait one frame for the diff panel to become visible, then scroll
     requestAnimationFrame(() => {
       this.getDiffPanel()?.scrollToFile(path);
     });
@@ -245,7 +188,10 @@ export class AppShell extends LitElement {
   }
 
   override render() {
-    const hasProject = this.activeProjectId != null;
+    // Read from store (the _storeVersion state ensures re-renders on changes)
+    void this._storeVersion;
+    const store = this.projectStore;
+    const hasProject = store.projectId != null;
 
     return html`
       <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden">
@@ -260,9 +206,7 @@ export class AppShell extends LitElement {
         <div class="flex-1 flex min-h-0 min-w-0 overflow-hidden">
           <!-- Session sidebar -->
           <session-sidebar
-            .client=${this.client}
-            .activeSessionId=${this.activeSessionId}
-            .activeProjectId=${this.activeProjectId}
+            .store=${store}
             .activityMap=${this.activityMap}
           ></session-sidebar>
 
@@ -270,6 +214,11 @@ export class AppShell extends LitElement {
             <div class="flex-1 flex flex-col min-w-0">
               <!-- Tab bar -->
               <div class="flex items-center border-b border-zinc-700 bg-zinc-800/50">
+                <branch-indicator
+                  .projectId=${store.projectId}
+                  .taskId=${store.sessionData?.task_id ?? null}
+                  .baseBranch=${this.diffStore.fileData.baseBranch}
+                ></branch-indicator>
                 <button
                   class="px-4 py-2 text-sm font-semibold transition-colors cursor-pointer ${this.activeTab === "chat" ? "text-zinc-100 border-b-2 border-blue-500" : "text-zinc-500 hover:text-zinc-300"}"
                   @click=${() => this.activeTab = "chat"}
@@ -305,8 +254,8 @@ export class AppShell extends LitElement {
                 <chat-panel
                   class="flex-1 min-h-0 min-w-0"
                   .client=${this.client}
-                  .sessionId=${this.activeSessionId}
-                  .sessionData=${this.sessionData}
+                  .sessionId=${store.sessionId}
+                  .sessionData=${store.sessionData}
                 ></chat-panel>
                 <!-- File tree sidebar (chat tab, wide screens only) -->
                 <div class="w-60 border-l border-zinc-700 shrink-0 hidden lg:block">
@@ -317,7 +266,7 @@ export class AppShell extends LitElement {
                   ></diff-file-tree>
                 </div>
               </div>
-              ${keyed(this.activeProjectId, html`<diff-panel
+              ${keyed(store.projectId, html`<diff-panel
                 class="flex-1 min-h-0 ${this.activeTab === "changes" ? "" : "hidden"}"
                 .store=${this.diffStore}
                 .treeState=${this.fileTreeState}

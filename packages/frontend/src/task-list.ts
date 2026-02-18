@@ -39,6 +39,21 @@ export class TaskList extends LitElement {
       this.expandedTaskId = null;
       this.taskSessions = new Map();
     }
+    if (changed.has("activeSessionId") || changed.has("tasks")) {
+      this.autoExpandForActiveSession();
+    }
+  }
+
+  /**
+   * If the active session belongs to a task, expand that task.
+   */
+  private autoExpandForActiveSession() {
+    if (!this.activeSessionId) return;
+    const task = this.tasks.find(t => t.session_ids.includes(this.activeSessionId));
+    if (task && task.id !== this.expandedTaskId) {
+      this.expandedTaskId = task.id;
+      this.fetchTaskSessions(task.id);
+    }
   }
 
   /** Re-fetch sessions for the currently expanded task. */
@@ -46,14 +61,6 @@ export class TaskList extends LitElement {
     if (this.expandedTaskId != null) {
       await this.fetchTaskSessions(this.expandedTaskId);
     }
-  }
-
-  /** Check whether a session ID exists inside any expanded task sessions. */
-  hasSession(sessionId: string): boolean {
-    for (const [, sessions] of this.taskSessions) {
-      if (sessions.some(s => s.id === sessionId)) return true;
-    }
-    return false;
   }
 
   private async handleExpandTask(taskId: number) {

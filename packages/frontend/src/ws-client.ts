@@ -43,6 +43,7 @@ export interface TaskListItem {
   created_at: string;
   updated_at: string;
   session_count: number;
+  session_ids: string[];
 }
 
 export interface ProjectInfo {

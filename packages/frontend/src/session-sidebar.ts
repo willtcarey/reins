@@ -7,14 +7,14 @@
  *  - task-list        — task listing with expandable sessions
  *  - session-list     — scratch session listing
  *
- * Owns the data-fetching and coordinates child components via
- * properties (down) and events (up).
+ * Reads project-level data (tasks, sessions) from the shared ProjectStore
+ * and calls store actions for mutations (create session, create task session).
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
-import type { AppClient, SessionListItem, SessionData, TaskListItem } from "./ws-client.js";
-import type { AppShell } from "./app.js";
+import { navigateToSession } from "./router.js";
+import type { ProjectStore } from "./project-store.js";
 import type { ActivityState } from "./activity-tracker.js";
 import type { TaskList } from "./task-list.js";
 import type { TaskForm } from "./task-form.js";
@@ -30,155 +30,74 @@ export class SessionSidebar extends LitElement {
   }
 
   @property({ attribute: false })
-  client: AppClient | null = null;
-
-  @property({ type: String })
-  activeSessionId = "";
-
-  /** Current project ID from the URL route. Null = no project selected. */
-  @property({ type: Number })
-  activeProjectId: number | null = null;
+  store: ProjectStore | null = null;
 
   /** Activity states for all sessions (running/finished indicators). */
   @property({ attribute: false })
   activityMap = new Map<string, ActivityState>();
 
-  @state() private tasks: TaskListItem[] = [];
-  @state() private sessions: SessionListItem[] = []; // scratch sessions only
   @state() private collapsed = window.matchMedia("(max-width: 768px)").matches;
-  @state() private loading = false;
+
+  private _unsubscribe: (() => void) | null = null;
 
   @query("task-form") private taskForm!: TaskForm;
   @query("task-list") private taskList!: TaskList;
 
   override connectedCallback() {
     super.connectedCallback();
-    this.refresh();
+    this._subscribe();
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this._unsubscribe?.();
+    this._unsubscribe = null;
   }
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("activeProjectId")) {
-      this.tasks = [];
-      this.sessions = [];
-      this.refresh();
-    }
-    if (changed.has("activeSessionId") && this.activeSessionId) {
-      this.ensureActiveSession();
+    if (changed.has("store")) {
+      this._subscribe();
     }
   }
 
-  /** Accept a pre-fetched session list (avoids a redundant fetch). */
-  setSessionList(sessions: SessionListItem[]) {
-    this.sessions = sessions;
-    this.loading = false;
-    this.ensureActiveSession();
-  }
-
-  async refresh() {
-    if (this.activeProjectId == null) {
-      this.tasks = [];
-      this.sessions = [];
-      return;
-    }
-    this.loading = true;
-    try {
-      const [tasksResp, sessionsResp] = await Promise.all([
-        fetch(`/api/projects/${this.activeProjectId}/tasks`),
-        fetch(`/api/projects/${this.activeProjectId}/sessions`),
-      ]);
-      if (tasksResp.ok) this.tasks = await tasksResp.json();
-      if (sessionsResp.ok) {
-        this.sessions = await sessionsResp.json();
-        this.ensureActiveSession();
-      }
-
-      // Refresh expanded task sessions in the child
+  private _subscribe() {
+    this._unsubscribe?.();
+    this._unsubscribe = this.store?.subscribe(() => {
+      this.requestUpdate();
       this.taskList?.refreshExpanded();
-    } catch {
-      // Silently fail
-    }
-    this.loading = false;
-  }
-
-  private ensureActiveSession() {
-    if (!this.activeSessionId) return;
-    const found = this.sessions.some(s => s.id === this.activeSessionId);
-    if (!found) {
-      // Check task sessions too
-      if (this.taskList?.hasSession(this.activeSessionId)) return;
-      // Add stub entry for scratch sessions
-      this.sessions = [
-        {
-          id: this.activeSessionId,
-          name: null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          message_count: 0,
-          first_message: null,
-        },
-        ...this.sessions,
-      ];
-    }
+    }) ?? null;
   }
 
   // ---- Event handlers from child components --------------------------------
 
-  private async handleSelectSession(e: CustomEvent<{ sessionId: string }>) {
-    const sessionId = e.detail.sessionId;
-    if (this.activeProjectId == null || !sessionId) return;
-    try {
-      const resp = await fetch(
-        `/api/projects/${this.activeProjectId}/sessions/${encodeURIComponent(sessionId)}`
-      );
-      if (!resp.ok) return;
-      const data: SessionData = await resp.json();
-      this.notifyApp(data);
-    } catch {
-      // silent
-    }
+  private handleSelectSession(e: CustomEvent<{ sessionId: string }>) {
+    const store = this.store;
+    if (!store?.projectId || !e.detail.sessionId) return;
+    navigateToSession(store.projectId, e.detail.sessionId);
   }
 
   private async handleNewSession() {
-    if (this.activeProjectId == null) return;
-    try {
-      const resp = await fetch(`/api/projects/${this.activeProjectId}/sessions`, { method: "POST" });
-      if (!resp.ok) return;
-      const data: SessionData = await resp.json();
-      this.notifyApp(data);
-    } catch {
-      // silent
+    const store = this.store;
+    if (!store?.projectId) return;
+    const sessionId = await store.createSession();
+    if (sessionId) {
+      navigateToSession(store.projectId, sessionId);
     }
   }
 
   private async handleNewTaskSession(e: CustomEvent<{ taskId: number }>) {
-    const taskId = e.detail.taskId;
-    if (this.activeProjectId == null) return;
-    try {
-      const resp = await fetch(
-        `/api/projects/${this.activeProjectId}/tasks/${taskId}/sessions`,
-        { method: "POST" }
-      );
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        alert(data.error || `Error creating session (HTTP ${resp.status})`);
-        return;
-      }
-      const data: SessionData = await resp.json();
-      this.notifyApp(data);
-      await this.refresh();
-    } catch {
-      // silent
+    const store = this.store;
+    if (!store?.projectId) return;
+    const result = await store.createTaskSession(e.detail.taskId);
+    if ("error" in result) {
+      alert(result.error);
+      return;
     }
+    navigateToSession(store.projectId, result.sessionId);
   }
 
   private async handleTaskCreated() {
-    await this.refresh();
-  }
-
-
-  private notifyApp(data: SessionData) {
-    const app = this.closest("app-shell") as AppShell | null;
-    app?.loadSession(data);
+    await this.store?.refreshLists();
   }
 
   private toggleCollapse() {
@@ -203,6 +122,13 @@ export class SessionSidebar extends LitElement {
   // ---- Render --------------------------------------------------------------
 
   override render() {
+    const store = this.store;
+    const projectId = store?.projectId ?? null;
+    const tasks = store?.tasks ?? [];
+    const sessions = store?.sessions ?? [];
+    const activeSessionId = store?.sessionId ?? "";
+    const loading = store?.loading ?? false;
+
     return html`
       <!-- Collapsed rail -->
       <div class="${this.collapsed ? "" : "hidden"} w-10 h-full bg-zinc-850 border-r border-zinc-700 flex flex-col items-center pt-2 shrink-0">
@@ -227,7 +153,7 @@ export class SessionSidebar extends LitElement {
       >
         <!-- Project switcher -->
         <project-sidebar
-          .activeProjectId=${this.activeProjectId}
+          .activeProjectId=${projectId}
         ></project-sidebar>
 
         <!-- New Task button -->
@@ -241,24 +167,24 @@ export class SessionSidebar extends LitElement {
         </div>
 
         <!-- Task creation dialog -->
-        <task-form .projectId=${this.activeProjectId}></task-form>
+        <task-form .projectId=${projectId}></task-form>
 
         <!-- Scrollable content -->
         <div class="flex-1 overflow-y-auto">
-          ${this.loading && this.tasks.length === 0 && this.sessions.length === 0 ? html`
+          ${loading && tasks.length === 0 && sessions.length === 0 ? html`
             <div class="p-3 text-xs text-zinc-500">Loading...</div>
           ` : html`
             <task-list
-              .projectId=${this.activeProjectId}
-              .tasks=${this.tasks}
-              .activeSessionId=${this.activeSessionId}
+              .projectId=${projectId}
+              .tasks=${tasks}
+              .activeSessionId=${activeSessionId}
               .activityMap=${this.activityMap}
             ></task-list>
 
             <session-list
-              .sessions=${this.sessions}
-              .activeSessionId=${this.activeSessionId}
-              .hasTasks=${this.tasks.length > 0}
+              .sessions=${sessions}
+              .activeSessionId=${activeSessionId}
+              .hasTasks=${tasks.length > 0}
               .activityMap=${this.activityMap}
             ></session-list>
           `}
