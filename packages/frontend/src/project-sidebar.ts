@@ -2,13 +2,15 @@
  * Project Sidebar
  *
  * Displays at the top of the sidebar. Shows a project switcher dropdown
- * and an "Add Project" form. Projects are persisted server-side in SQLite.
- * Switching projects navigates via URL hash — no WebSocket involvement.
+ * and buttons to add/edit projects. Project creation and editing happen
+ * in a modal dialog (project-form).
  */
 
 import { LitElement, html, nothing } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
+import { customElement, property, state, query } from "lit/decorators.js";
 import type { ProjectInfo } from "./ws-client.js";
+import type { ProjectForm } from "./project-form.js";
+import "./project-form.js";
 
 @customElement("project-sidebar")
 export class ProjectSidebar extends LitElement {
@@ -21,13 +23,10 @@ export class ProjectSidebar extends LitElement {
   activeProjectId: number | null = null;
 
   @state() private projects: ProjectInfo[] = [];
-  @state() private showAddForm = false;
-  @state() private addName = "";
-  @state() private addPath = "";
-  @state() private addBaseBranch = "main";
-  @state() private addError = "";
   @state() private loading = false;
   @state() private dropdownOpen = false;
+
+  @query("project-form") private projectForm!: ProjectForm;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -87,49 +86,23 @@ export class ProjectSidebar extends LitElement {
   }
 
   private openAddForm() {
-    this.showAddForm = true;
     this.dropdownOpen = false;
-    this.addName = "";
-    this.addPath = "";
-    this.addBaseBranch = "main";
-    this.addError = "";
+    this.projectForm.open({ mode: "create" });
   }
 
-  private cancelAdd() {
-    this.showAddForm = false;
-    this.addError = "";
+  private openEditForm(e: Event, project: ProjectInfo) {
+    e.stopPropagation();
+    this.dropdownOpen = false;
+    this.projectForm.open({ mode: "edit", project });
   }
 
-  private async submitAdd(e: Event) {
-    e.preventDefault();
-    if (!this.addName.trim() || !this.addPath.trim()) {
-      this.addError = "Both name and path are required";
-      return;
-    }
+  private async handleProjectCreated(e: CustomEvent<{ project: ProjectInfo }>) {
+    await this.refresh();
+    location.hash = `#/project/${e.detail.project.id}`;
+  }
 
-    try {
-      const resp = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: this.addName.trim(),
-          path: this.addPath.trim(),
-          base_branch: this.addBaseBranch.trim() || "main",
-        }),
-      });
-      if (!resp.ok) {
-        const data = await resp.json();
-        this.addError = data.error || "Failed to create project";
-        return;
-      }
-      const project: ProjectInfo = await resp.json();
-      this.showAddForm = false;
-      await this.refresh();
-      // Navigate to the new project
-      location.hash = `#/project/${project.id}`;
-    } catch (err: any) {
-      this.addError = err.message || "Network error";
-    }
+  private async handleProjectUpdated() {
+    await this.refresh();
   }
 
   private async handleDeleteProject(e: Event, project: ProjectInfo) {
@@ -148,7 +121,10 @@ export class ProjectSidebar extends LitElement {
 
   override render() {
     return html`
-      <div class="border-b border-zinc-700">
+      <div class="border-b border-zinc-700"
+        @project-created=${this.handleProjectCreated}
+        @project-updated=${this.handleProjectUpdated}
+      >
         <!-- Project selector button -->
         <div class="relative">
           <button
@@ -186,16 +162,28 @@ export class ProjectSidebar extends LitElement {
                     <div class="text-[10px] text-zinc-500 truncate">${p.path}</div>
                     <div class="text-[10px] text-zinc-600 truncate">base: ${p.base_branch}</div>
                   </div>
-                  <button
-                    class="p-1 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                    @click=${(e: Event) => this.handleDeleteProject(e, p)}
-                    title="Remove project"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
-                         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
-                    </svg>
-                  </button>
+                  <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      class="p-1 text-zinc-600 hover:text-zinc-200 cursor-pointer"
+                      @click=${(e: Event) => this.openEditForm(e, p)}
+                      title="Edit project"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/>
+                      </svg>
+                    </button>
+                    <button
+                      class="p-1 text-zinc-600 hover:text-red-400 cursor-pointer"
+                      @click=${(e: Event) => this.handleDeleteProject(e, p)}
+                      title="Remove project"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+                      </svg>
+                    </button>
+                  </div>
                 </button>
               `)}
 
@@ -210,49 +198,8 @@ export class ProjectSidebar extends LitElement {
           ` : nothing}
         </div>
 
-        <!-- Add project form (inline) -->
-        ${this.showAddForm ? html`
-          <form class="px-3 py-2 space-y-2 bg-zinc-800/50" @submit=${this.submitAdd}>
-            <input
-              type="text"
-              placeholder="Project name"
-              class="w-full px-2 py-1.5 text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-200
-                     placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
-              .value=${this.addName}
-              @input=${(e: InputEvent) => this.addName = (e.target as HTMLInputElement).value}
-            />
-            <input
-              type="text"
-              placeholder="/path/to/project"
-              class="w-full px-2 py-1.5 text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-200
-                     placeholder-zinc-500 focus:outline-none focus:border-zinc-500 font-mono"
-              .value=${this.addPath}
-              @input=${(e: InputEvent) => this.addPath = (e.target as HTMLInputElement).value}
-            />
-            <input
-              type="text"
-              placeholder="Base branch (default: main)"
-              class="w-full px-2 py-1.5 text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-200
-                     placeholder-zinc-500 focus:outline-none focus:border-zinc-500 font-mono"
-              .value=${this.addBaseBranch}
-              @input=${(e: InputEvent) => this.addBaseBranch = (e.target as HTMLInputElement).value}
-            />
-            ${this.addError ? html`
-              <div class="text-[10px] text-red-400">${this.addError}</div>
-            ` : nothing}
-            <div class="flex gap-2">
-              <button
-                type="submit"
-                class="flex-1 py-1 px-2 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded cursor-pointer transition-colors"
-              >Add</button>
-              <button
-                type="button"
-                class="flex-1 py-1 px-2 text-xs bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded cursor-pointer transition-colors"
-                @click=${this.cancelAdd}
-              >Cancel</button>
-            </div>
-          </form>
-        ` : nothing}
+        <!-- Project form modal (shared for create and edit) -->
+        <project-form></project-form>
       </div>
     `;
   }
