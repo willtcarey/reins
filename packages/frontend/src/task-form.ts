@@ -89,7 +89,7 @@ export class TaskForm extends LitElement {
 
           <input
             type="text"
-            class="w-full px-2.5 py-1.5 text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors"
+            class="w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors"
             placeholder="Task title"
             .value=${this.title}
             @input=${(e: Event) => this.title = (e.target as HTMLInputElement).value}
@@ -100,7 +100,7 @@ export class TaskForm extends LitElement {
           />
 
           <textarea
-            class="w-full mt-2 px-2.5 py-1.5 text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors resize-none"
+            class="w-full mt-2 px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors resize-none"
             rows="3"
             placeholder="Description (optional)"
             .value=${this.description}
@@ -112,7 +112,7 @@ export class TaskForm extends LitElement {
 
           <input
             type="text"
-            class="w-full mt-2 px-2.5 py-1.5 text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors font-mono"
+            class="w-full mt-2 px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors font-mono"
             placeholder="Branch name (auto-generated if empty)"
             .value=${this.branch}
             @input=${(e: Event) => this.branch = (e.target as HTMLInputElement).value}
