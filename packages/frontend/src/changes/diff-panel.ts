@@ -470,48 +470,45 @@ export class DiffPanel extends LitElement {
     const baseBranch = fullData?.baseBranch ?? this.store.fileData.baseBranch;
     const { contextLines, defaultContext, diffMode } = this.store;
 
-    if (files.length === 0) {
-      return html`
-        <div class="flex items-center justify-center h-full text-zinc-500 text-sm">
-          No changes yet
-        </div>
-      `;
-    }
-
     return html`
       <div class="h-full flex flex-col">
-        <!-- Header: branch info & context controls -->
-        <div class="flex items-center gap-2 px-4 py-2 flex-wrap shrink-0 border-b border-zinc-700/50">
-          ${branch ? html`
-            <span class="inline-flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
-              <svg class="w-3 h-3 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
-              </svg>
-              ${branch}
-            </span>
-          ` : nothing}
-          ${diffMode === "branch" && baseBranch && branch && baseBranch !== branch ? html`
-            <span class="text-xs text-zinc-600">←</span>
-            <span class="text-xs font-mono text-zinc-500">${baseBranch}</span>
-          ` : nothing}
-          ${diffMode === "uncommitted" ? html`
-            <span class="text-xs text-zinc-500 italic">uncommitted only</span>
-          ` : nothing}
-          <div class="flex-1"></div>
-          <span class="text-xs text-zinc-500">Context: ${contextLines} lines</span>
-          ${contextLines > defaultContext
-            ? html`<button
-                class="text-xs text-zinc-500 hover:text-zinc-300 underline cursor-pointer"
-                @click=${() => this.store?.resetContext()}
-              >Reset</button>`
-            : nothing}
-        </div>
+        ${files.length > 0 ? html`
+          <!-- Header: branch info & context controls -->
+          <div class="flex items-center gap-2 px-4 py-2 flex-wrap shrink-0 border-b border-zinc-700/50">
+            ${branch ? html`
+              <span class="inline-flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
+                <svg class="w-3 h-3 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+                </svg>
+                ${branch}
+              </span>
+            ` : nothing}
+            ${diffMode === "branch" && baseBranch && branch && baseBranch !== branch ? html`
+              <span class="text-xs text-zinc-600">←</span>
+              <span class="text-xs font-mono text-zinc-500">${baseBranch}</span>
+            ` : nothing}
+            ${diffMode === "uncommitted" ? html`
+              <span class="text-xs text-zinc-500 italic">uncommitted only</span>
+            ` : nothing}
+            <div class="flex-1"></div>
+            <span class="text-xs text-zinc-500">Context: ${contextLines} lines</span>
+            ${contextLines > defaultContext
+              ? html`<button
+                  class="text-xs text-zinc-500 hover:text-zinc-300 underline cursor-pointer"
+                  @click=${() => this.store?.resetContext()}
+                >Reset</button>`
+              : nothing}
+          </div>
+        ` : nothing}
 
         <!-- Two-column layout: diff list + file tree -->
         <div class="flex-1 flex min-h-0">
           <!-- Scrollable diff list -->
           <div class="flex-1 overflow-y-auto p-4" data-diff-scroll>
-            ${files.map((file) => this.renderFile(file))}
+            ${files.length > 0
+              ? files.map((file) => this.renderFile(file))
+              : html`<div class="flex items-center justify-center h-full text-zinc-500 text-sm">No changes yet</div>`
+            }
           </div>
 
           <!-- File tree sidebar -->
