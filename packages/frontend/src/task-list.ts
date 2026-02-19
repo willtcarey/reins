@@ -204,7 +204,7 @@ export class TaskList extends LitElement {
   }
 
   private renderBranchInfo(task: TaskListItem) {
-    if (task.status === "merged") return nothing;
+    if (task.status === "closed") return nothing;
 
     const stats = task.diffStats;
     return html`
@@ -226,19 +226,19 @@ export class TaskList extends LitElement {
     const isExpanded = this.expandedTaskId === task.id;
     const sessions = this.taskSessions.get(task.id) ?? [];
     const date = formatRelativeDate(task.updated_at);
-    const isMerged = task.status === "merged";
+    const isClosed = task.status === "closed";
 
     return html`
-      <div class="border-b border-zinc-700/50 group/task ${isMerged ? "opacity-50" : ""}">
+      <div class="border-b border-zinc-700/50 group/task ${isClosed ? "opacity-50" : ""}">
         <div class="flex items-start transition-colors hover:bg-zinc-700/30">
           <button
             class="flex-1 text-left px-3 py-2.5 cursor-pointer flex items-start gap-2 min-w-0"
             @click=${() => this.handleExpandTask(task.id)}
           >
-            <span class="text-zinc-500 text-[10px] mt-0.5 shrink-0">${isMerged ? "✓" : isExpanded ? "▼" : "▶"}</span>
+            <span class="text-zinc-500 text-[10px] mt-0.5 shrink-0">${isClosed ? "✓" : isExpanded ? "▼" : "▶"}</span>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-1.5">
-                <div class="text-xs ${isMerged ? "text-zinc-400" : "text-zinc-200"} truncate">${task.title}</div>
+                <div class="text-xs ${isClosed ? "text-zinc-400" : "text-zinc-200"} truncate">${task.title}</div>
                 ${this.renderTaskActivityDot(task.id)}
               </div>
               ${this.renderBranchInfo(task)}

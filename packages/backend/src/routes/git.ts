@@ -19,10 +19,12 @@ import {
   getCurrentBranch,
   checkoutBranch,
   deleteBranch,
+  branchExists,
+  remoteBranchExists,
   pushBranch,
   rebaseBranch,
 } from "../git.js";
-import { listOpenTasks, markTasksMerged } from "../task-store.js";
+import { listOpenTasks, markTasksClosed } from "../task-store.js";
 
 export function registerGitRoutes(router: RouterGroup) {
   /**
@@ -45,8 +47,8 @@ export function registerGitRoutes(router: RouterGroup) {
     if (shouldFetch) {
       await fetchAll(projectDir);
       await fastForwardBaseBranch(projectDir, project.base_branch);
-      // Reconcile merged task statuses
-      await reconcileMergedTasks(projectId, projectDir, project.base_branch);
+      // Reconcile closed task statuses
+      await reconcileClosedTasks(projectId, projectDir, project.base_branch);
     }
 
     const spread = await getSpread(projectDir, branch!, project.base_branch);
@@ -98,10 +100,17 @@ export function registerGitRoutes(router: RouterGroup) {
 }
 
 /**
- * Check which open tasks have been merged into the base branch and update
- * their status. Called after fetch + fast-forward so local refs are current.
+ * Check which open tasks should be closed and update their status.
+ * Called after fetch + fast-forward so local refs are current.
+ *
+ * A task is closed when:
+ *  1. Its branch is reachable from the base branch (i.e. merged but not yet
+ *     deleted), OR
+ *  2. Its branch no longer exists locally or on the remote — this covers
+ *     fast-forward merges where the branch was deleted before reconciliation
+ *     ran, so `git branch --merged` can no longer see it.
  */
-async function reconcileMergedTasks(
+async function reconcileClosedTasks(
   projectId: number,
   projectDir: string,
   baseBranch: string,
@@ -109,22 +118,41 @@ async function reconcileMergedTasks(
   const openTasks = listOpenTasks(projectId);
   if (openTasks.length === 0) return;
 
+  // 1. Branches that are still around and fully merged
   const mergedBranches = new Set(await getMergedBranches(projectDir, baseBranch));
-  const mergedTasks = openTasks.filter((t) => mergedBranches.has(t.branch_name));
-  if (mergedTasks.length === 0) return;
 
-  markTasksMerged(mergedTasks.map((t) => t.id));
+  const toClose: typeof openTasks = [];
+  const toCleanUpBranch: typeof openTasks = [];
 
-  // Clean up local branches — they're fully in the base branch now
+  for (const task of openTasks) {
+    if (mergedBranches.has(task.branch_name)) {
+      // Branch exists and is merged — close + delete branch
+      toClose.push(task);
+      toCleanUpBranch.push(task);
+    } else {
+      // 2. Branch gone everywhere — treat as closed
+      const local = await branchExists(projectDir, task.branch_name);
+      const remote = await remoteBranchExists(projectDir, task.branch_name);
+      if (!local && !remote) {
+        toClose.push(task);
+      }
+    }
+  }
+
+  if (toClose.length === 0) return;
+
+  markTasksClosed(toClose.map((t) => t.id));
+
+  // Clean up local branches for tasks that were detected via --merged
   const currentBranch = await getCurrentBranch(projectDir);
-  for (const task of mergedTasks) {
+  for (const task of toCleanUpBranch) {
     try {
       if (currentBranch === task.branch_name) {
         await checkoutBranch(projectDir, baseBranch);
       }
       await deleteBranch(projectDir, task.branch_name);
     } catch (err: any) {
-      console.warn(`  Could not delete merged branch ${task.branch_name}: ${err.message}`);
+      console.warn(`  Could not delete branch ${task.branch_name}: ${err.message}`);
     }
   }
 }

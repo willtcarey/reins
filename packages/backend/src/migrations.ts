@@ -86,6 +86,10 @@ const MIGRATIONS: [name: string, sql: string][] = [
      UPDATE tasks SET created_at = created_at || 'Z' WHERE created_at NOT LIKE '%Z';
      UPDATE tasks SET updated_at = updated_at || 'Z' WHERE updated_at NOT LIKE '%Z'`,
   ],
+  [
+    "010_rename_task_status_merged_to_closed",
+    `UPDATE tasks SET status = 'closed' WHERE status = 'merged'`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

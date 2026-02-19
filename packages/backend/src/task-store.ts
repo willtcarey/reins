@@ -9,7 +9,7 @@ import { getDb } from "./db.js";
 
 // ---- Types -----------------------------------------------------------------
 
-export type TaskStatus = "open" | "merged";
+export type TaskStatus = "open" | "closed";
 
 export interface TaskRow {
   id: number;
@@ -67,7 +67,7 @@ export function listTasks(projectId: number): TaskListItem[] {
          GROUP BY task_id
        ) sc ON sc.task_id = t.id
        WHERE t.project_id = ?
-       ORDER BY CASE t.status WHEN 'merged' THEN 1 ELSE 0 END, t.updated_at DESC`,
+       ORDER BY CASE t.status WHEN 'closed' THEN 1 ELSE 0 END, t.updated_at DESC`,
     )
     .all(projectId) as (TaskRow & { session_count: number; session_ids_json: string })[];
 
@@ -126,14 +126,14 @@ export function deleteTask(id: number): boolean {
 }
 
 /**
- * Mark the given tasks as merged. One-way latch — once merged, always merged.
+ * Mark the given tasks as closed. One-way latch — once closed, always closed.
  */
-export function markTasksMerged(taskIds: number[]): void {
+export function markTasksClosed(taskIds: number[]): void {
   if (taskIds.length === 0) return;
   const db = getDb();
   const placeholders = taskIds.map(() => "?").join(", ");
   db.query(
-    `UPDATE tasks SET status = 'merged', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    `UPDATE tasks SET status = 'closed', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id IN (${placeholders}) AND status = 'open'`,
   ).run(...taskIds);
 }

@@ -56,10 +56,11 @@ A task cannot be deleted while any of its sessions are actively running. Stop th
 
 Tasks are persistent — they survive server restarts. The `updated_at` timestamp is bumped whenever a new session is created under a task, keeping the most active tasks sorted to the top of the list.
 
-### Finishing tasks
+### Closing tasks
 
-When a task's branch has been merged (via PR, merge, etc.), Reins automatically detects this and marks the task as **merged**. This detection happens during periodic remote sync — after fetching from origin and pulling the base branch, Reins checks which task branches have been fully incorporated.
+Reins automatically detects when a task's work is done and marks it as **closed**. This happens during periodic remote sync (after fetching from origin and pulling the base branch) via two checks:
 
-Once merged, a task stays merged permanently. Merged tasks no longer show diff stats (since their changes are now part of the base branch).
+1. **Branch merged** — the task branch still exists but all its commits are reachable from the base branch. Reins closes the task and cleans up the local branch.
+2. **Branch gone** — the task branch no longer exists locally or on the remote. This covers the common case where a branch is merged and deleted (via PR, CLI, etc.) before Reins gets a chance to observe it.
 
-**Limitation:** squash merges (e.g. GitHub's "squash and merge") create a new commit rather than incorporating the original branch commits, so Reins cannot detect them as merged.
+Once closed, a task stays closed permanently. Closed tasks no longer show diff stats (since their changes are now part of the base branch).

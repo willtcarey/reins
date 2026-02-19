@@ -134,6 +134,21 @@ export async function branchExists(
 }
 
 /**
+ * Check whether a remote tracking branch exists (i.e. origin/<branchName>).
+ */
+export async function remoteBranchExists(
+  projectDir: string,
+  branchName: string,
+): Promise<boolean> {
+  const proc = Bun.spawn(
+    ["git", "show-ref", "--verify", "--quiet", `refs/remotes/origin/${branchName}`],
+    { cwd: projectDir, stdout: "pipe", stderr: "pipe" },
+  );
+  const exitCode = await proc.exited;
+  return exitCode === 0;
+}
+
+/**
  * Check out a branch.
  */
 export async function checkoutBranch(
