@@ -140,7 +140,7 @@ Response: `{ "ok": true }` or `{ "error": "..." }`
 
 ## Implementation order
 
-1. Backend: add `status` column to tasks table (migration)
+1. ~~Backend: add `status` column to tasks table (migration)~~ ✅
 2. Backend: `getDiffStats`, `getSpread`, `pushBranch`, `rebaseBranch` in git.ts
 3. Backend: new `routes/git.ts` with spread/push/rebase endpoints
 4. Backend: enrich task list response with `diffStats` and `status`; reconcile merged status during spread fetch

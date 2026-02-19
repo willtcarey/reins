@@ -9,12 +9,15 @@ import { getDb } from "./db.js";
 
 // ---- Types -----------------------------------------------------------------
 
+export type TaskStatus = "open" | "merged";
+
 export interface TaskRow {
   id: number;
   project_id: number;
   title: string;
   description: string | null;
   branch_name: string;
+  status: TaskStatus;
   created_at: string;
   updated_at: string;
 }
@@ -120,6 +123,29 @@ export function deleteTask(id: number): boolean {
   tx();
 
   return true;
+}
+
+/**
+ * Mark the given tasks as merged. One-way latch — once merged, always merged.
+ */
+export function markTasksMerged(taskIds: number[]): void {
+  if (taskIds.length === 0) return;
+  const db = getDb();
+  const placeholders = taskIds.map(() => "?").join(", ");
+  db.query(
+    `UPDATE tasks SET status = 'merged', updated_at = datetime('now')
+     WHERE id IN (${placeholders}) AND status = 'open'`,
+  ).run(...taskIds);
+}
+
+/**
+ * List open tasks for a project — used for merge reconciliation.
+ */
+export function listOpenTasks(projectId: number): TaskRow[] {
+  const db = getDb();
+  return db
+    .query("SELECT * FROM tasks WHERE project_id = ? AND status = 'open'")
+    .all(projectId) as TaskRow[];
 }
 
 /**

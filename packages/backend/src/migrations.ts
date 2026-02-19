@@ -70,6 +70,10 @@ const MIGRATIONS: [name: string, sql: string][] = [
     "007_add_session_task_id",
     `ALTER TABLE sessions ADD COLUMN task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE`,
   ],
+  [
+    "008_add_task_status",
+    `ALTER TABLE tasks ADD COLUMN status TEXT NOT NULL DEFAULT 'open'`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {
