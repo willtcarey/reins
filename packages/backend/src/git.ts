@@ -303,6 +303,31 @@ export async function getMergedBranches(
   return [...names];
 }
 
+/**
+ * Check whether a branch has any commits that are not on the base branch.
+ * Returns true when `git rev-list baseBranch..branch` is non-empty, meaning
+ * the branch once diverged and its work has since been incorporated.
+ *
+ * A branch that was created from the base but never received commits will
+ * return false — it shouldn't be considered "merged."
+ */
+export async function branchHasUniqueCommits(
+  projectDir: string,
+  branch: string,
+  baseBranch: string,
+): Promise<boolean> {
+  // Check local branch first; fall back to remote tracking ref.
+  const ref = (await branchExists(projectDir, branch))
+    ? branch
+    : `origin/${branch}`;
+  const raw = await run(projectDir, [
+    "rev-list",
+    `${baseBranch}..${ref}`,
+    "--count",
+  ]);
+  return parseInt(raw.trim(), 10) > 0;
+}
+
 // ---- Working-tree diff -----------------------------------------------------
 
 async function getGitDiff(

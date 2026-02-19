@@ -21,6 +21,7 @@ import {
   deleteBranch,
   branchExists,
   remoteBranchExists,
+  branchHasUniqueCommits,
   pushBranch,
   rebaseBranch,
 } from "../git.js";
@@ -126,9 +127,19 @@ async function reconcileClosedTasks(
 
   for (const task of openTasks) {
     if (mergedBranches.has(task.branch_name)) {
-      // Branch exists and is merged — close + delete branch
-      toClose.push(task);
-      toCleanUpBranch.push(task);
+      // The branch is reachable from the base branch. Only treat it as merged
+      // if it actually contributed commits — a branch created from the base
+      // with zero commits is technically "merged" per git, but the task hasn't
+      // started yet.
+      const hasWork = await branchHasUniqueCommits(
+        projectDir,
+        task.branch_name,
+        baseBranch,
+      );
+      if (hasWork) {
+        toClose.push(task);
+        toCleanUpBranch.push(task);
+      }
     } else {
       // 2. Branch gone everywhere — treat as closed
       const local = await branchExists(projectDir, task.branch_name);
