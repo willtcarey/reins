@@ -40,10 +40,12 @@ export interface TaskListItem {
   title: string;
   description: string | null;
   branch_name: string;
+  status: "open" | "merged";
   created_at: string;
   updated_at: string;
   session_count: number;
   session_ids: string[];
+  diffStats: { additions: number; removals: number } | null;
 }
 
 export interface ProjectInfo {

@@ -11,6 +11,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { SessionListItem, TaskListItem } from "./ws-client.js";
 import type { ActivityState } from "./activity-tracker.js";
 import { formatRelativeDate } from "./format.js";
+import "./popover-menu.js";
 
 @customElement("task-list")
 export class TaskList extends LitElement {
@@ -101,8 +102,7 @@ export class TaskList extends LitElement {
     );
   }
 
-  private handleEditTask(task: TaskListItem, e: Event) {
-    e.stopPropagation();
+  private handleEditTask(task: TaskListItem) {
     this.dispatchEvent(
       new CustomEvent("edit-task", {
         bubbles: true,
@@ -112,9 +112,12 @@ export class TaskList extends LitElement {
     );
   }
 
-  private handleDeleteTask(task: TaskListItem, e: Event) {
-    e.stopPropagation();
+  private handleDeleteTask(task: TaskListItem) {
     this.deleteConfirmTask = task;
+  }
+
+  private handleCopyBranchName(task: TaskListItem) {
+    navigator.clipboard.writeText(task.branch_name).catch(() => {});
   }
 
   private handleCancelDelete() {
@@ -200,43 +203,67 @@ export class TaskList extends LitElement {
     return html`<span class="${classes}"></span>`;
   }
 
+  private renderBranchInfo(task: TaskListItem) {
+    if (task.status === "merged") return nothing;
+
+    const stats = task.diffStats;
+    return html`
+      <div class="flex items-center gap-1.5 mt-0.5">
+        <svg class="shrink-0 text-zinc-500" xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+        <span class="text-[10px] font-mono text-zinc-500 truncate">${task.branch_name}</span>
+        ${stats && (stats.additions > 0 || stats.removals > 0) ? html`
+          <span class="text-[10px] shrink-0">
+            ${stats.additions > 0 ? html`<span class="text-green-500">+${stats.additions}</span>` : nothing}
+            ${stats.additions > 0 && stats.removals > 0 ? html`<span class="text-zinc-600"> </span>` : nothing}
+            ${stats.removals > 0 ? html`<span class="text-red-400">-${stats.removals}</span>` : nothing}
+          </span>
+        ` : nothing}
+      </div>
+    `;
+  }
+
   private renderTask(task: TaskListItem) {
     const isExpanded = this.expandedTaskId === task.id;
     const sessions = this.taskSessions.get(task.id) ?? [];
     const date = formatRelativeDate(task.updated_at);
+    const isMerged = task.status === "merged";
 
     return html`
-      <div class="border-b border-zinc-700/50 group/task">
-        <div class="flex items-start">
+      <div class="border-b border-zinc-700/50 group/task ${isMerged ? "opacity-50" : ""}">
+        <div class="flex items-start transition-colors hover:bg-zinc-700/30">
           <button
-            class="flex-1 text-left px-3 py-2.5 cursor-pointer transition-colors hover:bg-zinc-700/30 flex items-start gap-2 min-w-0"
+            class="flex-1 text-left px-3 py-2.5 cursor-pointer flex items-start gap-2 min-w-0"
             @click=${() => this.handleExpandTask(task.id)}
           >
-            <span class="text-zinc-500 text-[10px] mt-0.5 shrink-0">${isExpanded ? "▼" : "▶"}</span>
+            <span class="text-zinc-500 text-[10px] mt-0.5 shrink-0">${isMerged ? "✓" : isExpanded ? "▼" : "▶"}</span>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-1.5">
-                <div class="text-xs text-zinc-200 truncate">${task.title}</div>
+                <div class="text-xs ${isMerged ? "text-zinc-400" : "text-zinc-200"} truncate">${task.title}</div>
                 ${this.renderTaskActivityDot(task.id)}
               </div>
+              ${this.renderBranchInfo(task)}
               <div class="text-[10px] text-zinc-500 mt-0.5">
                 ${date} · ${task.session_count} session${task.session_count !== 1 ? "s" : ""}
               </div>
             </div>
           </button>
-          <button
-            class="px-2 py-2.5 text-zinc-600 hover:text-zinc-300 md:opacity-0 md:group-hover/task:opacity-100 transition-all cursor-pointer shrink-0"
-            title="Edit task"
-            @click=${(e: Event) => this.handleEditTask(task, e)}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
-          </button>
-          <button
-            class="px-2 py-2.5 text-zinc-600 hover:text-red-400 md:opacity-0 md:group-hover/task:opacity-100 transition-all cursor-pointer shrink-0"
-            title="Delete task"
-            @click=${(e: Event) => this.handleDeleteTask(task, e)}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-          </button>
+          <popover-menu
+            triggerClass="md:opacity-0 md:group-hover/task:opacity-100"
+            .content=${() => html`
+              <button
+                class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
+                @click=${() => this.handleEditTask(task)}
+              >Edit</button>
+              <button
+                class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
+                @click=${() => this.handleCopyBranchName(task)}
+              >Copy branch</button>
+              <button
+                class="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-zinc-700 cursor-pointer transition-colors"
+                @click=${() => this.handleDeleteTask(task)}
+              >Delete</button>
+            `}
+          ></popover-menu>
         </div>
 
         ${isExpanded ? html`
