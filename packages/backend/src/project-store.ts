@@ -33,7 +33,7 @@ export function getProject(id: number): Project | null {
 
 export function createProject(name: string, path: string, baseBranch = "main"): Project {
   const d = getDb();
-  const result = d.query("INSERT INTO projects (name, path, base_branch) VALUES (?, ?, ?) RETURNING *").get(name, path, baseBranch) as Project;
+  const result = d.query("INSERT INTO projects (name, path, base_branch, created_at, last_opened_at) VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) RETURNING *").get(name, path, baseBranch) as Project;
   return result;
 }
 
@@ -57,5 +57,5 @@ export function deleteProject(id: number): boolean {
 
 export function touchProject(id: number): void {
   const d = getDb();
-  d.query("UPDATE projects SET last_opened_at = datetime('now') WHERE id = ?").run(id);
+  d.query("UPDATE projects SET last_opened_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(id);
 }

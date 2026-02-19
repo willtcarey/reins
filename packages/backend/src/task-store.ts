@@ -38,8 +38,8 @@ export function createTask(
   const db = getDb();
   return db
     .query(
-      `INSERT INTO tasks (project_id, title, description, branch_name)
-       VALUES (?, ?, ?, ?)
+      `INSERT INTO tasks (project_id, title, description, branch_name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
     )
     .get(projectId, title, description, branchName) as TaskRow;
@@ -67,7 +67,7 @@ export function listTasks(projectId: number): TaskListItem[] {
          GROUP BY task_id
        ) sc ON sc.task_id = t.id
        WHERE t.project_id = ?
-       ORDER BY t.updated_at DESC`,
+       ORDER BY CASE t.status WHEN 'merged' THEN 1 ELSE 0 END, t.updated_at DESC`,
     )
     .all(projectId) as (TaskRow & { session_count: number; session_ids_json: string })[];
 
@@ -89,7 +89,7 @@ export function updateTask(
   const description = updates.description !== undefined ? updates.description : existing.description;
 
   db.query(
-    `UPDATE tasks SET title = ?, description = ?, updated_at = datetime('now') WHERE id = ?`,
+    `UPDATE tasks SET title = ?, description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
   ).run(title, description, id);
 
   return getTask(id);
@@ -97,7 +97,7 @@ export function updateTask(
 
 export function touchTask(id: number): void {
   const db = getDb();
-  db.query("UPDATE tasks SET updated_at = datetime('now') WHERE id = ?").run(id);
+  db.query("UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(id);
 }
 
 /**
@@ -133,7 +133,7 @@ export function markTasksMerged(taskIds: number[]): void {
   const db = getDb();
   const placeholders = taskIds.map(() => "?").join(", ");
   db.query(
-    `UPDATE tasks SET status = 'merged', updated_at = datetime('now')
+    `UPDATE tasks SET status = 'merged', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id IN (${placeholders}) AND status = 'open'`,
   ).run(...taskIds);
 }
