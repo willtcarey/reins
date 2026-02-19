@@ -23,5 +23,6 @@
 - [ ] Give users visibility into unpushed/unpulled commits — show when the local branch is ahead of or behind the remote so they know the sync state at a glance
 - [ ] Support non-`origin` remotes in git operations (fetch, branch creation, diff base resolution) — currently hardcoded to `origin`
 - [ ] Project dashboard — a landing view for a project with pinned files, new session/new task buttons, and an overview of recent activity
+- [ ] Task creation tool — expose a tool that lets the agent create a new task from within any conversation. Useful when a scratch session or an existing task surfaces work that should be tracked separately, so the user can say "create a task for this" without leaving the current context.
 - [ ] CSS not rebuilding when Tailwind classes change
   - Adding or changing utility classes in `.ts` templates doesn't take effect until a manual `bun run build`. The `dev` script runs both Bun's JS bundler and `@tailwindcss/cli` with `--watch`, but Tailwind's watcher may not be picking up changes in `.ts` files as content sources, or the two watch processes (backgrounded with `&`) may not be coordinating reliably. Need to verify Tailwind's content detection config and consider a more integrated build pipeline.
