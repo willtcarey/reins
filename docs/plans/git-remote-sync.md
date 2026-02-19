@@ -143,6 +143,6 @@ Response: `{ "ok": true }` or `{ "error": "..." }`
 1. ~~Backend: add `status` column to tasks table (migration)~~ ✅
 2. ~~Backend: `getDiffStats`, `getSpread`, `pushBranch`, `rebaseBranch` in git.ts~~ ✅
 3. ~~Backend: new `routes/git.ts` with spread/push/rebase endpoints~~ ✅
-4. Backend: enrich task list response with `diffStats` and `status`; reconcile merged status during spread fetch
+4. ~~Backend: enrich task list response with `diffStats` and `status`; reconcile merged status during spread fetch~~ ✅
 5. Frontend: update sidebar task items (branch name + diff stats + merged status)
 6. Frontend: add spread polling + sync status + rebase/push buttons to Changes tab

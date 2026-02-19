@@ -266,6 +266,21 @@ export async function rebaseBranch(
   }
 }
 
+/**
+ * List local branches whose tips are reachable from the given base branch.
+ * Returns branch names (without leading whitespace or `*` marker).
+ */
+export async function getMergedBranches(
+  projectDir: string,
+  baseBranch: string,
+): Promise<string[]> {
+  const raw = await run(projectDir, ["branch", "--merged", baseBranch]);
+  return raw
+    .split("\n")
+    .map((l) => l.trim().replace(/^\* /, ""))
+    .filter(Boolean);
+}
+
 // ---- Working-tree diff -----------------------------------------------------
 
 async function getGitDiff(

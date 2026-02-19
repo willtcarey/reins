@@ -15,9 +15,14 @@ import {
   fetchAll,
   fastForwardBaseBranch,
   getSpread,
+  getMergedBranches,
+  getCurrentBranch,
+  checkoutBranch,
+  deleteBranch,
   pushBranch,
   rebaseBranch,
 } from "../git.js";
+import { listOpenTasks, markTasksMerged } from "../task-store.js";
 
 export function registerGitRoutes(router: RouterGroup) {
   /**
@@ -40,6 +45,8 @@ export function registerGitRoutes(router: RouterGroup) {
     if (shouldFetch) {
       await fetchAll(projectDir);
       await fastForwardBaseBranch(projectDir, project.base_branch);
+      // Reconcile merged task statuses
+      await reconcileMergedTasks(projectId, projectDir, project.base_branch);
     }
 
     const spread = await getSpread(projectDir, branch!, project.base_branch);
@@ -88,4 +95,36 @@ export function registerGitRoutes(router: RouterGroup) {
       return Response.json({ error: err.message }, { status: 500 });
     }
   });
+}
+
+/**
+ * Check which open tasks have been merged into the base branch and update
+ * their status. Called after fetch + fast-forward so local refs are current.
+ */
+async function reconcileMergedTasks(
+  projectId: number,
+  projectDir: string,
+  baseBranch: string,
+): Promise<void> {
+  const openTasks = listOpenTasks(projectId);
+  if (openTasks.length === 0) return;
+
+  const mergedBranches = new Set(await getMergedBranches(projectDir, baseBranch));
+  const mergedTasks = openTasks.filter((t) => mergedBranches.has(t.branch_name));
+  if (mergedTasks.length === 0) return;
+
+  markTasksMerged(mergedTasks.map((t) => t.id));
+
+  // Clean up local branches — they're fully in the base branch now
+  const currentBranch = await getCurrentBranch(projectDir);
+  for (const task of mergedTasks) {
+    try {
+      if (currentBranch === task.branch_name) {
+        await checkoutBranch(projectDir, baseBranch);
+      }
+      await deleteBranch(projectDir, task.branch_name);
+    } catch (err: any) {
+      console.warn(`  Could not delete merged branch ${task.branch_name}: ${err.message}`);
+    }
+  }
 }
