@@ -24,9 +24,9 @@ bun run --filter '@reins/frontend' dev  # starts frontend build watcher
 bun run build        # builds frontend to packages/frontend/dist
 ```
 
-## Backend
+## Dev Docs
 
-- **Adding API routes**: see [`packages/backend/docs/ROUTER.md`](packages/backend/docs/ROUTER.md)
+Developer-facing guides (architecture, conventions, workflows) live in [`docs/dev/`](docs/dev/). See the [index](docs/dev/INDEX.md) for what's there. When adding a new dev doc, add an entry to the index.
 
 ## Architecture Decision Records
 
