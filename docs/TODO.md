@@ -13,7 +13,7 @@
 - [ ] Figure out how to run the service persistently
 - [x] Mobile support
 - [x] Image support in the chat interface
-- [ ] Task-aware changes tab — when viewing a task session, show that task's branch and diff against the base branch, even if the task branch isn't currently checked out. Right now the branch indicator and changes tab always reflect the working tree, so viewing a different task's session shows misleading context.
+- [ ] Task-specific diffs — task sessions should diff against the base branch (e.g. `master`/`main`) and contain all the task's branching logic. Scratch sessions would always diff against master as simple throwaway sessions. Open question: how to handle the workflow of pulling down someone else's branch to run it locally — this doesn't fit neatly into either the task or scratch model yet.
 - [ ] Stash uncommitted changes on branch switch — when switching between task branches, uncommitted changes carry over and muddy the other branch's working tree. Stash before switching and pop after switching back. The diff view should treat stashed changes as "uncommitted" so they still appear in the UI.
 - [ ] Comments on changes — allow users to comment on individual changes and inject those comments into the session context so the LLM can see and respond to feedback
 - [ ] Continue refactoring `diff-panel.ts` into smaller components
