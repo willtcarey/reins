@@ -274,11 +274,18 @@ export async function getMergedBranches(
   projectDir: string,
   baseBranch: string,
 ): Promise<string[]> {
-  const raw = await run(projectDir, ["branch", "--merged", baseBranch]);
-  return raw
-    .split("\n")
-    .map((l) => l.trim().replace(/^\* /, ""))
-    .filter(Boolean);
+  // Use -a to include remote tracking branches so we detect merges even when
+  // the local branch has already been deleted (e.g. merged via PR or CLI).
+  const raw = await run(projectDir, ["branch", "-a", "--merged", baseBranch]);
+  const names = new Set<string>();
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim().replace(/^\* /, "");
+    if (!trimmed) continue;
+    // Remote tracking branches appear as "remotes/origin/foo" — normalise to "foo"
+    const stripped = trimmed.replace(/^remotes\/origin\//, "");
+    names.add(stripped);
+  }
+  return [...names];
 }
 
 // ---- Working-tree diff -----------------------------------------------------
