@@ -15,7 +15,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked } from "marked";
 import type { DiffFile, DiffHunk, DiffLine } from "./types.js";
-import type { DiffStore } from "./diff-store.js";
+import type { DiffStore, SpreadData } from "./diff-store.js";
 import type { FileTreeState } from "./file-tree-state.js";
 import { ScrollSpy } from "./scroll-spy.js";
 import "./diff-file-tree.js";
@@ -91,8 +91,13 @@ export class DiffPanel extends LitElement {
       // Fetch if we're already visible when the store is set
       if (this.visible) this._fetchFresh();
     }
-    if (changed.has("visible") && this.visible) {
-      this._fetchFresh();
+    if (changed.has("visible")) {
+      if (this.visible) {
+        this._fetchFresh();
+        this.store?.startSpreadPolling();
+      } else {
+        this.store?.stopSpreadPolling();
+      }
     }
   }
 
@@ -105,6 +110,7 @@ export class DiffPanel extends LitElement {
     this._unsubscribe?.();
     this._unsubscribe = null;
     this.scrollSpy.destroy();
+    this.store?.stopSpreadPolling();
     // Release the full diff data when leaving the view
     this.store?.clearFullDiff();
   }
@@ -439,6 +445,69 @@ export class DiffPanel extends LitElement {
     `;
   }
 
+  private renderSpinner() {
+    return html`<svg class="w-3 h-3 animate-spin inline-block" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>`;
+  }
+
+  /** Render behind-base info next to the base branch name. */
+  private renderBaseSyncStatus() {
+    if (!this.store) return nothing;
+    const { spread, syncAction } = this.store;
+    if (!spread || spread.behindBase === 0) return nothing;
+
+    return html`
+      <span class="text-xs text-yellow-400">(${spread.behindBase} ahead)</span>
+      <button
+        class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-yellow-500/15 text-yellow-300 hover:bg-yellow-500/25 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        ?disabled=${syncAction !== "idle"}
+        @click=${() => this.store?.rebase()}
+      >
+        ${syncAction === "rebasing" ? this.renderSpinner() : nothing}
+        Rebase
+      </button>
+    `;
+  }
+
+  /** Render branch sync status (ahead, push, remote info). */
+  private renderBranchSyncStatus() {
+    if (!this.store) return nothing;
+    const { spread, syncAction, syncResult } = this.store;
+    if (!spread) return nothing;
+
+    const { aheadBase, aheadRemote, behindRemote } = spread;
+    // Branch has never been pushed — no remote tracking branch exists
+    const neverPushed = aheadRemote === null && aheadBase > 0;
+    const hasUnpushed = aheadRemote != null && aheadRemote > 0;
+
+    return html`
+      ${aheadBase > 0 ? html`
+        <span class="text-xs text-zinc-400">${aheadBase} ahead</span>
+      ` : nothing}
+      ${hasUnpushed ? html`
+        <span class="text-xs text-blue-400">${aheadRemote} unpushed</span>
+      ` : nothing}
+      ${hasUnpushed || neverPushed ? html`
+        <button
+          class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          ?disabled=${syncAction !== "idle"}
+          @click=${() => this.store?.push()}
+        >
+          ${syncAction === "pushing" ? this.renderSpinner() : nothing}
+          Push
+        </button>
+      ` : nothing}
+      ${behindRemote != null && behindRemote > 0 ? html`
+        <span class="text-xs text-orange-400">${behindRemote} behind origin</span>
+      ` : nothing}
+      ${syncResult && "error" in syncResult ? html`
+        <span class="text-xs text-red-400">${syncResult.error}</span>
+      ` : nothing}
+      ${syncResult && "ok" in syncResult ? html`
+        <span class="text-xs text-green-400">✓</span>
+      ` : nothing}
+    `;
+  }
+
   override render() {
     if (!this.store) return nothing;
 
@@ -452,18 +521,7 @@ export class DiffPanel extends LitElement {
       `;
     }
 
-    if (this.store.fullLoading && !this.store.fullData) {
-      return html`
-        <div class="flex items-center justify-center h-full text-zinc-500 text-sm gap-2">
-          <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-          </svg>
-          Loading diff…
-        </div>
-      `;
-    }
-
+    const isInitialLoading = this.store.fullLoading && !this.store.fullData;
     const fullData = this.store.fullData;
     const files = fullData?.files ?? [];
     const branch = fullData?.branch ?? this.store.fileData.branch;
@@ -474,38 +532,50 @@ export class DiffPanel extends LitElement {
       <div class="h-full flex min-h-0">
         <!-- Main content column -->
         <div class="flex-1 flex flex-col min-h-0 min-w-0">
-          ${files.length > 0 ? html`
-            <!-- Header: branch info & context controls -->
+          ${branch ? html`
+            <!-- Header: branch info, sync status & context controls -->
             <div class="flex items-center gap-2 px-4 py-2 flex-wrap shrink-0 border-b border-zinc-700/50">
-              ${branch ? html`
-                <span class="inline-flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
-                  <svg class="w-3 h-3 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
-                  </svg>
-                  ${branch}
-                </span>
-              ` : nothing}
-              ${diffMode === "branch" && baseBranch && branch && baseBranch !== branch ? html`
-                <span class="text-xs text-zinc-600">←</span>
+              ${baseBranch && baseBranch !== branch ? html`
                 <span class="text-xs font-mono text-zinc-500">${baseBranch}</span>
+                ${this.renderBaseSyncStatus()}
+                <span class="text-xs text-zinc-600">←</span>
               ` : nothing}
-              ${diffMode === "uncommitted" ? html`
-                <span class="text-xs text-zinc-500 italic">uncommitted only</span>
-              ` : nothing}
+              <span class="inline-flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                     class="shrink-0 text-zinc-500">
+                  <line x1="6" y1="3" x2="6" y2="15"></line>
+                  <circle cx="18" cy="6" r="3"></circle>
+                  <circle cx="6" cy="18" r="3"></circle>
+                  <path d="M18 9a9 9 0 0 1-9 9"></path>
+                </svg>
+                ${branch}
+              </span>
+              ${this.renderBranchSyncStatus()}
               <div class="flex-1"></div>
-              <span class="text-xs text-zinc-500">Context: ${contextLines} lines</span>
-              ${contextLines > defaultContext
-                ? html`<button
-                    class="text-xs text-zinc-500 hover:text-zinc-300 underline cursor-pointer"
-                    @click=${() => this.store?.resetContext()}
-                  >Reset</button>`
-                : nothing}
+              ${files.length > 0 ? html`
+                <span class="text-xs text-zinc-500">Context: ${contextLines} lines</span>
+                ${contextLines > defaultContext
+                  ? html`<button
+                      class="text-xs text-zinc-500 hover:text-zinc-300 underline cursor-pointer"
+                      @click=${() => this.store?.resetContext()}
+                    >Reset</button>`
+                  : nothing}
+              ` : nothing}
             </div>
           ` : nothing}
 
           <!-- Scrollable diff list -->
           <div class="flex-1 overflow-y-auto p-4" data-diff-scroll>
-            ${files.length > 0
+            ${isInitialLoading ? html`
+              <div class="flex items-center justify-center h-full text-zinc-500 text-sm gap-2">
+                <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                </svg>
+                Loading diff…
+              </div>
+            ` : files.length > 0
               ? files.map((file) => this.renderFile(file))
               : html`<div class="flex items-center justify-center h-full text-zinc-500 text-sm">No changes yet</div>`
             }
