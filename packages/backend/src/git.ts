@@ -85,8 +85,19 @@ export async function pullBaseBranch(
 ): Promise<void> {
   const fetched = await fetchOrigin(projectDir, baseBranch);
   if (!fetched) return;
-  // Fast-forward the local branch without checking it out.
-  // This will fail (harmlessly) if the local branch has diverged.
+  await fastForwardBaseBranch(projectDir, baseBranch);
+}
+
+/**
+ * Fast-forward the local base branch ref to match origin/<baseBranch>
+ * without checking it out. Assumes remote refs are already up to date
+ * (i.e. a fetch has already been done). Silently skips if the
+ * fast-forward fails (e.g. the local branch has diverged).
+ */
+export async function fastForwardBaseBranch(
+  projectDir: string,
+  baseBranch: string,
+): Promise<void> {
   await run(projectDir, ["fetch", ".", `origin/${baseBranch}:${baseBranch}`]);
 }
 

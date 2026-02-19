@@ -17,6 +17,7 @@ import { registerSessionRoutes } from "./sessions.js";
 import { registerDiffRoutes } from "./diff.js";
 import { registerFileRoutes } from "./file.js";
 import { registerTaskRoutes } from "./tasks.js";
+import { registerGitRoutes } from "./git.js";
 
 // ---- Project middleware ----------------------------------------------------
 
@@ -47,6 +48,7 @@ export function buildRouter() {
     registerDiffRoutes(r);
     registerFileRoutes(r);
     registerTaskRoutes(r);
+    registerGitRoutes(r);
   });
 
   return router;
