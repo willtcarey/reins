@@ -38,6 +38,10 @@ We keep ADRs in `docs/adr/` using the format `NNN-slug.md`. Offer to write an AD
 
 See the [ADR index](docs/adr/INDEX.md) for existing decisions and the format to follow.
 
+## Plans
+
+Planning docs live in [`docs/plans/`](docs/plans/) — these cover new features, architectural changes, refactorings, or any other work that benefits from a written plan. Once a plan is fully implemented, move it to `docs/plans/completed/`.
+
 ## Tech Debt
 
 We track tech debt in [`docs/tech-debt.md`](docs/tech-debt.md). When you identify potential tech debt during a task, suggest it to the user — but only add it to the document once confirmed.
