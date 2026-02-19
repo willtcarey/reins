@@ -28,7 +28,7 @@ Describe what you want to do in plain language — e.g. "add dark mode support" 
 
 ## Editing a task
 
-You can view and edit a task's title and description after creation. Hover over a task in the sidebar and click the pencil icon to open the edit dialog. This is useful for refining the AI-generated title or description, or adding more detail as you learn more about the work.
+You can view and edit a task's title and description after creation. Open the three-dot menu on a task in the sidebar and choose "Edit" to open the edit dialog. This is useful for refining the AI-generated title or description, or adding more detail as you learn more about the work.
 
 The branch name is shown in the edit dialog for reference but cannot be changed.
 
@@ -56,4 +56,10 @@ A task cannot be deleted while any of its sessions are actively running. Stop th
 
 Tasks are persistent — they survive server restarts. The `updated_at` timestamp is bumped whenever a new session is created under a task, keeping the most active tasks sorted to the top of the list.
 
-There is currently no formal "done" state for tasks. A task's branch can be merged through your normal git workflow (PR, merge, etc.) outside of Reins.
+### Finishing tasks
+
+When a task's branch has been merged (via PR, merge, etc.), Reins automatically detects this and marks the task as **merged**. This detection happens during periodic remote sync — after fetching from origin and pulling the base branch, Reins checks which task branches have been fully incorporated.
+
+Once merged, a task stays merged permanently. Merged tasks no longer show diff stats (since their changes are now part of the base branch).
+
+**Limitation:** squash merges (e.g. GitHub's "squash and merge") create a new commit rather than incorporating the original branch commits, so Reins cannot detect them as merged.

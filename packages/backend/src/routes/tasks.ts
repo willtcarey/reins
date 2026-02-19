@@ -17,7 +17,7 @@ import {
 } from "../task-store.js";
 import { generateBranchName } from "../branch-namer.js";
 import { generateTask } from "../task-generator.js";
-import { createBranch, branchExists, deleteBranch, getCurrentBranch, checkoutBranch } from "../git.js";
+import { createBranch, branchExists, deleteBranch, getCurrentBranch, checkoutBranch, getDiffStats } from "../git.js";
 import {
   createNewSession,
   serializeSession,
@@ -28,10 +28,28 @@ import { touchProject } from "../project-store.js";
 export function registerTaskRoutes(router: RouterGroup) {
   // ---- Tasks ---------------------------------------------------------------
 
-  // List tasks for a project
+  // List tasks for a project (enriched with diff stats for open tasks)
   router.get("/tasks", async (ctx: RouteContext) => {
     const projectId = parseInt(ctx.params.id, 10);
-    return Response.json(listTasks(projectId));
+    const projectDir = (ctx as any).projectDir as string;
+    const project = getProject(projectId)!;
+    const tasks = listTasks(projectId);
+
+    const enriched = await Promise.all(
+      tasks.map(async (task) => {
+        if (task.status !== "open") {
+          return { ...task, diffStats: null };
+        }
+        try {
+          const diffStats = await getDiffStats(projectDir, task.branch_name, project.base_branch);
+          return { ...task, diffStats };
+        } catch {
+          return { ...task, diffStats: null };
+        }
+      }),
+    );
+
+    return Response.json(enriched);
   });
 
   // Create a new task

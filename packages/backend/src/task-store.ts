@@ -9,12 +9,15 @@ import { getDb } from "./db.js";
 
 // ---- Types -----------------------------------------------------------------
 
+export type TaskStatus = "open" | "merged";
+
 export interface TaskRow {
   id: number;
   project_id: number;
   title: string;
   description: string | null;
   branch_name: string;
+  status: TaskStatus;
   created_at: string;
   updated_at: string;
 }
@@ -35,8 +38,8 @@ export function createTask(
   const db = getDb();
   return db
     .query(
-      `INSERT INTO tasks (project_id, title, description, branch_name)
-       VALUES (?, ?, ?, ?)
+      `INSERT INTO tasks (project_id, title, description, branch_name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
     )
     .get(projectId, title, description, branchName) as TaskRow;
@@ -64,7 +67,7 @@ export function listTasks(projectId: number): TaskListItem[] {
          GROUP BY task_id
        ) sc ON sc.task_id = t.id
        WHERE t.project_id = ?
-       ORDER BY t.updated_at DESC`,
+       ORDER BY CASE t.status WHEN 'merged' THEN 1 ELSE 0 END, t.updated_at DESC`,
     )
     .all(projectId) as (TaskRow & { session_count: number; session_ids_json: string })[];
 
@@ -86,7 +89,7 @@ export function updateTask(
   const description = updates.description !== undefined ? updates.description : existing.description;
 
   db.query(
-    `UPDATE tasks SET title = ?, description = ?, updated_at = datetime('now') WHERE id = ?`,
+    `UPDATE tasks SET title = ?, description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
   ).run(title, description, id);
 
   return getTask(id);
@@ -94,7 +97,7 @@ export function updateTask(
 
 export function touchTask(id: number): void {
   const db = getDb();
-  db.query("UPDATE tasks SET updated_at = datetime('now') WHERE id = ?").run(id);
+  db.query("UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(id);
 }
 
 /**
@@ -120,6 +123,29 @@ export function deleteTask(id: number): boolean {
   tx();
 
   return true;
+}
+
+/**
+ * Mark the given tasks as merged. One-way latch — once merged, always merged.
+ */
+export function markTasksMerged(taskIds: number[]): void {
+  if (taskIds.length === 0) return;
+  const db = getDb();
+  const placeholders = taskIds.map(() => "?").join(", ");
+  db.query(
+    `UPDATE tasks SET status = 'merged', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     WHERE id IN (${placeholders}) AND status = 'open'`,
+  ).run(...taskIds);
+}
+
+/**
+ * List open tasks for a project — used for merge reconciliation.
+ */
+export function listOpenTasks(projectId: number): TaskRow[] {
+  const db = getDb();
+  return db
+    .query("SELECT * FROM tasks WHERE project_id = ? AND status = 'open'")
+    .all(projectId) as TaskRow[];
 }
 
 /**

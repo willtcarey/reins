@@ -15,8 +15,22 @@ import { Highlighter } from "./highlighter.js";
 
 const DEFAULT_CONTEXT = 3;
 const POLL_INTERVAL = 5000;
+const SPREAD_INTERVAL = 10_000;
+const SPREAD_FETCH_EVERY = 6;
 
 export type DiffMode = "branch" | "uncommitted";
+
+/** Commit spread for a branch relative to base and remote. */
+export interface SpreadData {
+  branch: string;
+  aheadBase: number;
+  behindBase: number;
+  aheadRemote: number | null;
+  behindRemote: number | null;
+}
+
+export type SyncAction = "idle" | "pushing" | "rebasing";
+export type SyncResult = { ok: true } | { error: string } | null;
 
 export interface DiffFileData {
   files: DiffFileSummary[];
@@ -51,11 +65,23 @@ export class DiffStore {
   /** Which changes to show: all branch changes or only uncommitted. */
   diffMode: DiffMode = "branch";
 
+  /** Commit spread for the active branch (ahead/behind base & remote). */
+  spread: SpreadData | null = null;
+
+  /** Current sync action (push or rebase) in progress. */
+  syncAction: SyncAction = "idle";
+
+  /** Result of the last sync action — transient, auto-clears. */
+  syncResult: SyncResult = null;
+
   // ---- Private state --------------------------------------------------------
 
   private _projectId: number | null = null;
   private _listeners = new Set<DiffStoreListener>();
   private _pollTimer: ReturnType<typeof setInterval> | null = null;
+  private _spreadTimer: ReturnType<typeof setInterval> | null = null;
+  private _spreadTickCount = 0;
+  private _syncResultTimer: ReturnType<typeof setTimeout> | null = null;
   private _highlighter = new Highlighter();
 
   // ---- Accessors ------------------------------------------------------------
@@ -96,10 +122,14 @@ export class DiffStore {
     this._projectId = id;
     this.fileData = { files: [], branch: null, baseBranch: null };
     this.fullData = null;
+    this.spread = null;
+    this.syncAction = "idle";
+    this.syncResult = null;
     this.error = null;
     this.contextLines = DEFAULT_CONTEXT;
     this.notify();
     this._restartPolling();
+    if (this._spreadActive) this._restartSpreadPolling();
   }
 
   // ---- Diff mode -------------------------------------------------------------
@@ -221,6 +251,132 @@ export class DiffStore {
     this.notify();
   }
 
+  // ---- Spread polling (sync status) ------------------------------------------
+
+  /** Whether spread polling is active (Changes tab visible). */
+  private _spreadActive = false;
+
+  /** Start polling spread data. Call when the Changes tab becomes visible. */
+  startSpreadPolling() {
+    if (this._spreadActive) return;
+    this._spreadActive = true;
+    this._restartSpreadPolling();
+  }
+
+  /** Stop polling spread data. Call when the Changes tab is hidden. */
+  stopSpreadPolling() {
+    this._spreadActive = false;
+    this._stopSpreadPolling();
+  }
+
+  /** Fetch spread, optionally with a remote git fetch first. */
+  async fetchSpread(remote = false) {
+    const branch = this.fileData.branch;
+    if (this._projectId == null || !branch) return;
+
+    try {
+      const resp = await fetch(
+        `/api/projects/${this._projectId}/git/spread?branch=${encodeURIComponent(branch)}&fetch=${remote}`,
+      );
+      if (!resp.ok) return;
+      this.spread = await resp.json();
+      this.notify();
+    } catch {
+      // silent
+    }
+  }
+
+  // ---- Sync actions (push / rebase) -----------------------------------------
+
+  /** Push the current branch to origin. */
+  async push() {
+    const branch = this.fileData.branch;
+    if (this._projectId == null || !branch || this.syncAction !== "idle") return;
+
+    this.syncAction = "pushing";
+    this.syncResult = null;
+    this.notify();
+
+    try {
+      const resp = await fetch(`/api/projects/${this._projectId}/git/push`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ branch }),
+      });
+      const body = await resp.json();
+      this.syncResult = resp.ok ? { ok: true } : { error: body.error ?? "Push failed" };
+    } catch (err: any) {
+      this.syncResult = { error: err.message ?? "Network error" };
+    }
+
+    this.syncAction = "idle";
+    this.notify();
+    this._scheduleSyncResultClear();
+    // Refresh spread to reflect the new state
+    await this.fetchSpread();
+  }
+
+  /** Rebase the current branch onto the base branch. */
+  async rebase() {
+    const branch = this.fileData.branch;
+    if (this._projectId == null || !branch || this.syncAction !== "idle") return;
+
+    this.syncAction = "rebasing";
+    this.syncResult = null;
+    this.notify();
+
+    try {
+      const resp = await fetch(`/api/projects/${this._projectId}/git/rebase`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ branch }),
+      });
+      const body = await resp.json();
+      this.syncResult = resp.ok ? { ok: true } : { error: body.error ?? "Rebase failed" };
+    } catch (err: any) {
+      this.syncResult = { error: err.message ?? "Network error" };
+    }
+
+    this.syncAction = "idle";
+    this.notify();
+    this._scheduleSyncResultClear();
+    // Refresh spread + diff after rebase
+    await this.fetchSpread();
+    await this.fetchFullDiff();
+  }
+
+  /** Clear sync result after a delay. */
+  private _scheduleSyncResultClear() {
+    if (this._syncResultTimer) clearTimeout(this._syncResultTimer);
+    this._syncResultTimer = setTimeout(() => {
+      this.syncResult = null;
+      this.notify();
+    }, 5000);
+  }
+
+  private _restartSpreadPolling() {
+    this._stopSpreadPolling();
+    if (this._projectId == null || !this._spreadActive) return;
+
+    // First tick always fetches remote
+    this._spreadTickCount = 0;
+    this._spreadTick();
+    this._spreadTimer = setInterval(() => this._spreadTick(), SPREAD_INTERVAL);
+  }
+
+  private _spreadTick() {
+    const remote = this._spreadTickCount % SPREAD_FETCH_EVERY === 0;
+    this._spreadTickCount++;
+    this.fetchSpread(remote);
+  }
+
+  private _stopSpreadPolling() {
+    if (this._spreadTimer) {
+      clearInterval(this._spreadTimer);
+      this._spreadTimer = null;
+    }
+  }
+
   // ---- Polling --------------------------------------------------------------
 
   private _restartPolling() {
@@ -243,6 +399,8 @@ export class DiffStore {
   /** Clean up timers. Call when the app is torn down. */
   dispose() {
     this._stopPolling();
+    this._stopSpreadPolling();
+    if (this._syncResultTimer) clearTimeout(this._syncResultTimer);
     this._listeners.clear();
     this._highlighter.dispose();
   }

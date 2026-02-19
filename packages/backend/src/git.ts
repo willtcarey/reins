@@ -85,8 +85,19 @@ export async function pullBaseBranch(
 ): Promise<void> {
   const fetched = await fetchOrigin(projectDir, baseBranch);
   if (!fetched) return;
-  // Fast-forward the local branch without checking it out.
-  // This will fail (harmlessly) if the local branch has diverged.
+  await fastForwardBaseBranch(projectDir, baseBranch);
+}
+
+/**
+ * Fast-forward the local base branch ref to match origin/<baseBranch>
+ * without checking it out. Assumes remote refs are already up to date
+ * (i.e. a fetch has already been done). Silently skips if the
+ * fast-forward fails (e.g. the local branch has diverged).
+ */
+export async function fastForwardBaseBranch(
+  projectDir: string,
+  baseBranch: string,
+): Promise<void> {
   await run(projectDir, ["fetch", ".", `origin/${baseBranch}:${baseBranch}`]);
 }
 
@@ -149,6 +160,125 @@ export async function deleteBranch(
 export async function getCurrentBranch(projectDir: string): Promise<string> {
   const result = await run(projectDir, ["rev-parse", "--abbrev-ref", "HEAD"]);
   return result.trim() || "HEAD";
+}
+
+// ---- Remote sync operations ------------------------------------------------
+
+/**
+ * Fetch all remote refs from origin.
+ * Returns true if the fetch succeeded, false if there's no remote.
+ */
+export async function fetchAll(projectDir: string): Promise<boolean> {
+  try {
+    await runChecked(projectDir, ["fetch", "origin"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface Spread {
+  aheadBase: number;
+  behindBase: number;
+  aheadRemote: number | null;
+  behindRemote: number | null;
+}
+
+/**
+ * Return commit counts for a branch relative to its base and remote tracking branch.
+ * Uses local refs only — always instant. Remote fields are null if no remote tracking
+ * branch exists.
+ */
+export async function getSpread(
+  projectDir: string,
+  branch: string,
+  baseBranch: string,
+): Promise<Spread> {
+  const [aheadBase, behindBase, aheadRemote, behindRemote] = await Promise.all([
+    run(projectDir, ["rev-list", "--count", `${baseBranch}..${branch}`])
+      .then((s) => parseInt(s.trim(), 10) || 0),
+    run(projectDir, ["rev-list", "--count", `${branch}..${baseBranch}`])
+      .then((s) => parseInt(s.trim(), 10) || 0),
+    runChecked(projectDir, ["rev-list", "--count", `origin/${branch}..${branch}`])
+      .then((s) => parseInt(s.trim(), 10) || 0)
+      .catch(() => null),
+    runChecked(projectDir, ["rev-list", "--count", `${branch}..origin/${branch}`])
+      .then((s) => parseInt(s.trim(), 10) || 0)
+      .catch(() => null),
+  ]);
+
+  return { aheadBase, behindBase, aheadRemote, behindRemote };
+}
+
+export interface DiffStats {
+  additions: number;
+  removals: number;
+}
+
+/**
+ * Return total line additions/removals for a branch vs its base branch.
+ * Uses `git diff --numstat baseBranch...branch` — local only, cheap.
+ */
+export async function getDiffStats(
+  projectDir: string,
+  branch: string,
+  baseBranch: string,
+): Promise<DiffStats> {
+  const raw = await run(projectDir, ["diff", "--numstat", `${baseBranch}...${branch}`])
+    .catch(() => "");
+  let additions = 0;
+  let removals = 0;
+  for (const line of raw.trim().split("\n").filter(Boolean)) {
+    const [add, rem] = line.split("\t");
+    additions += add === "-" ? 0 : parseInt(add, 10) || 0;
+    removals += rem === "-" ? 0 : parseInt(rem, 10) || 0;
+  }
+  return { additions, removals };
+}
+
+/**
+ * Push a branch to origin. Throws on failure.
+ */
+export async function pushBranch(
+  projectDir: string,
+  branch: string,
+): Promise<void> {
+  await runChecked(projectDir, ["push", "origin", branch]);
+}
+
+/**
+ * Rebase a branch onto the base branch.
+ * On conflict, aborts and throws. (Agentic conflict resolution is handled at a higher layer.)
+ */
+export async function rebaseBranch(
+  projectDir: string,
+  branch: string,
+  baseBranch: string,
+): Promise<void> {
+  // Ensure we're on the target branch
+  await runChecked(projectDir, ["checkout", branch]);
+  try {
+    await runChecked(projectDir, ["rebase", baseBranch]);
+  } catch (err) {
+    // Abort the in-progress rebase so the repo isn't left in a broken state
+    await run(projectDir, ["rebase", "--abort"]);
+    throw err;
+  }
+}
+
+/**
+ * List local branches whose tips are reachable from the given base branch.
+ * Returns branch names (without leading whitespace or `*` marker).
+ */
+export async function getMergedBranches(
+  projectDir: string,
+  baseBranch: string,
+): Promise<string[]> {
+  const raw = await run(projectDir, ["branch", "--merged", baseBranch]);
+  return raw
+    .split("\n")
+    .map((l) => l.trim().replace(/^\* /, ""))
+    .filter(Boolean);
 }
 
 // ---- Working-tree diff -----------------------------------------------------

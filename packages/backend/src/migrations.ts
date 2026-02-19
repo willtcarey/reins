@@ -70,6 +70,22 @@ const MIGRATIONS: [name: string, sql: string][] = [
     "007_add_session_task_id",
     `ALTER TABLE sessions ADD COLUMN task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE`,
   ],
+  [
+    "008_add_task_status",
+    `ALTER TABLE tasks ADD COLUMN status TEXT NOT NULL DEFAULT 'open'`,
+  ],
+  [
+    "009_timestamps_utc_suffix",
+    `-- Fix existing timestamps that lack a timezone suffix by appending 'Z'.
+     -- Only touches rows where the value doesn't already end with 'Z'.
+     UPDATE projects SET created_at = created_at || 'Z' WHERE created_at NOT LIKE '%Z';
+     UPDATE projects SET last_opened_at = last_opened_at || 'Z' WHERE last_opened_at NOT LIKE '%Z';
+     UPDATE sessions SET created_at = created_at || 'Z' WHERE created_at NOT LIKE '%Z';
+     UPDATE sessions SET updated_at = updated_at || 'Z' WHERE updated_at NOT LIKE '%Z';
+     UPDATE session_messages SET created_at = created_at || 'Z' WHERE created_at NOT LIKE '%Z';
+     UPDATE tasks SET created_at = created_at || 'Z' WHERE created_at NOT LIKE '%Z';
+     UPDATE tasks SET updated_at = updated_at || 'Z' WHERE updated_at NOT LIKE '%Z'`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

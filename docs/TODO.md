@@ -14,6 +14,7 @@
 - [x] Mobile support
 - [x] Image support in the chat interface
 - [ ] Task-aware changes tab — when viewing a task session, show that task's branch and diff against the base branch, even if the task branch isn't currently checked out. Right now the branch indicator and changes tab always reflect the working tree, so viewing a different task's session shows misleading context.
+- [ ] Stash uncommitted changes on branch switch — when switching between task branches, uncommitted changes carry over and muddy the other branch's working tree. Stash before switching and pop after switching back. The diff view should treat stashed changes as "uncommitted" so they still appear in the UI.
 - [ ] Comments on changes — allow users to comment on individual changes and inject those comments into the session context so the LLM can see and respond to feedback
 - [ ] Continue refactoring `diff-panel.ts` into smaller components
   - Extract markdown preview/toggle into a `<diff-markdown-preview>` component
@@ -21,5 +22,6 @@
   - `diff-panel` would become a thin layout shell wiring the pieces together
 - [ ] Give users visibility into unpushed/unpulled commits — show when the local branch is ahead of or behind the remote so they know the sync state at a glance
 - [ ] Support non-`origin` remotes in git operations (fetch, branch creation, diff base resolution) — currently hardcoded to `origin`
+- [ ] Project dashboard — a landing view for a project with pinned files, new session/new task buttons, and an overview of recent activity
 - [ ] CSS not rebuilding when Tailwind classes change
   - Adding or changing utility classes in `.ts` templates doesn't take effect until a manual `bun run build`. The `dev` script runs both Bun's JS bundler and `@tailwindcss/cli` with `--watch`, but Tailwind's watcher may not be picking up changes in `.ts` files as content sources, or the two watch processes (backgrounded with `&`) may not be coordinating reliably. Need to verify Tailwind's content detection config and consider a more integrated build pipeline.

@@ -52,8 +52,8 @@ export function createSession(
   const db = getDb();
   return db
     .query(
-      `INSERT INTO sessions (id, project_id, model_provider, model_id, thinking_level, task_id)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO sessions (id, project_id, model_provider, model_id, thinking_level, task_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
     )
     .get(
@@ -142,7 +142,7 @@ export function updateSessionMeta(
 
   db.query(
     `UPDATE sessions
-     SET name = ?, model_provider = ?, model_id = ?, thinking_level = ?, updated_at = datetime('now')
+     SET name = ?, model_provider = ?, model_id = ?, thinking_level = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id = ?`,
   ).run(
     updates.name ?? session.name,
@@ -170,7 +170,7 @@ export function persistMessages(sessionId: string, messages: any[]): void {
   if (startSeq >= messages.length) return; // nothing new
 
   const insert = db.query(
-    `INSERT INTO session_messages (session_id, seq, role, message_json) VALUES (?, ?, ?, ?)`,
+    `INSERT INTO session_messages (session_id, seq, role, message_json, created_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
   );
 
   const tx = db.transaction(() => {
@@ -182,7 +182,7 @@ export function persistMessages(sessionId: string, messages: any[]): void {
   tx();
 
   // Touch updated_at
-  db.query("UPDATE sessions SET updated_at = datetime('now') WHERE id = ?").run(sessionId);
+  db.query("UPDATE sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(sessionId);
 }
 
 /**
@@ -196,7 +196,7 @@ export function replaceAllMessages(sessionId: string, messages: any[]): void {
     db.query("DELETE FROM session_messages WHERE session_id = ?").run(sessionId);
 
     const insert = db.query(
-      `INSERT INTO session_messages (session_id, seq, role, message_json) VALUES (?, ?, ?, ?)`,
+      `INSERT INTO session_messages (session_id, seq, role, message_json, created_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
     );
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
@@ -205,7 +205,7 @@ export function replaceAllMessages(sessionId: string, messages: any[]): void {
   });
   tx();
 
-  db.query("UPDATE sessions SET updated_at = datetime('now') WHERE id = ?").run(sessionId);
+  db.query("UPDATE sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(sessionId);
 }
 
 /**
