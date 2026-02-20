@@ -1,6 +1,8 @@
 # Review
 
-The Changes tab lets you review the work an agent has done. It shows a syntax-highlighted diff alongside a navigable file tree sidebar.
+The Changes tab lets you review the work an agent has done. It shows a syntax-highlighted diff alongside a navigable file tree sidebar. The diff always reflects the **selected session's branch** — not whatever branch happens to be checked out.
+
+When viewing a task session, the diff shows changes on the task's branch compared to the base branch. When viewing a scratch session (no task), the diff shows the live working copy.
 
 ## Diff modes
 
@@ -8,7 +10,7 @@ The file tree sidebar includes a dropdown at the top for switching between two d
 
 ### Branch changes (default)
 
-Shows **all changes** on the current branch compared to the base branch. This includes both committed and uncommitted work — the full picture of what the task branch has changed.
+Shows **all changes** on the selected session's branch compared to the base branch. This includes both committed and uncommitted work — the full picture of what the task branch has changed.
 
 ### Uncommitted changes
 
@@ -16,7 +18,7 @@ Shows **only uncommitted working-tree changes** — edits that haven't been comm
 
 ## Sync status
 
-The diff header shows how the current branch relates to the base branch and the remote.
+The diff header shows how the selected session's branch relates to the base branch and the remote.
 
 Next to the **base branch name**:
 

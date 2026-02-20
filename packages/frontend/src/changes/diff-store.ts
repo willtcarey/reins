@@ -77,6 +77,13 @@ export class DiffStore {
   // ---- Private state --------------------------------------------------------
 
   private _projectId: number | null = null;
+
+  /**
+   * The task branch to diff against the base branch. When set, all API
+   * calls include `?branch=...`. When null, the backend falls back to
+   * HEAD (used for scratch sessions).
+   */
+  private _branch: string | null = null;
   private _listeners = new Set<DiffStoreListener>();
   private _pollTimer: ReturnType<typeof setInterval> | null = null;
   private _spreadTimer: ReturnType<typeof setInterval> | null = null;
@@ -84,10 +91,20 @@ export class DiffStore {
   private _syncResultTimer: ReturnType<typeof setTimeout> | null = null;
   private _highlighter = new Highlighter();
 
+  /** Build the `&branch=...` query fragment if a branch is set. */
+  private get _branchParam(): string {
+    return this._branch ? `&branch=${encodeURIComponent(this._branch)}` : "";
+  }
+
   // ---- Accessors ------------------------------------------------------------
 
   get projectId(): number | null {
     return this._projectId;
+  }
+
+  /** The task branch being viewed (null for scratch sessions using HEAD). */
+  get branch(): string | null {
+    return this._branch;
   }
 
   get defaultContext(): number {
@@ -116,10 +133,11 @@ export class DiffStore {
 
   // ---- Project management ---------------------------------------------------
 
-  /** Set the active project. Resets state and restarts polling. */
+  /** Set the active project. Resets all state and restarts polling. */
   setProject(id: number | null) {
     if (id === this._projectId) return;
     this._projectId = id;
+    this._branch = null;
     this.fileData = { files: [], branch: null, baseBranch: null };
     this.fullData = null;
     this.spread = null;
@@ -129,6 +147,23 @@ export class DiffStore {
     this.contextLines = DEFAULT_CONTEXT;
     this.notify();
     this._restartPolling();
+    if (this._spreadActive) this._restartSpreadPolling();
+  }
+
+  // ---- Branch management -----------------------------------------------------
+
+  /**
+   * Set the task branch to diff. When a task session is selected, pass
+   * its branch_name. For scratch sessions (no task), pass null to fall
+   * back to HEAD behavior.
+   */
+  setBranch(branch: string | null) {
+    if (branch === this._branch) return;
+    this._branch = branch;
+    this.fullData = null;
+    this.spread = null;
+    this.notify();
+    this.refresh();
     if (this._spreadActive) this._restartSpreadPolling();
   }
 
@@ -177,7 +212,7 @@ export class DiffStore {
 
     try {
       const resp = await fetch(
-        `/api/projects/${this._projectId}/diff/files?mode=${this.diffMode}`
+        `/api/projects/${this._projectId}/diff/files?mode=${this.diffMode}${this._branchParam}`
       );
       if (!resp.ok) {
         this.error = `HTTP ${resp.status}`;
@@ -213,7 +248,7 @@ export class DiffStore {
 
     try {
       const resp = await fetch(
-        `/api/projects/${this._projectId}/diff?context=${this.contextLines}&mode=${this.diffMode}`
+        `/api/projects/${this._projectId}/diff?context=${this.contextLines}&mode=${this.diffMode}${this._branchParam}`
       );
       if (!resp.ok) {
         this.error = `HTTP ${resp.status}`;
@@ -271,7 +306,7 @@ export class DiffStore {
 
   /** Fetch spread, optionally with a remote git fetch first. */
   async fetchSpread(remote = false) {
-    const branch = this.fileData.branch;
+    const branch = this._branch ?? this.fileData.branch;
     if (this._projectId == null || !branch) return;
 
     try {
@@ -288,9 +323,9 @@ export class DiffStore {
 
   // ---- Sync actions (push / rebase) -----------------------------------------
 
-  /** Push the current branch to origin. */
+  /** Push the viewed branch to origin. */
   async push() {
-    const branch = this.fileData.branch;
+    const branch = this._branch ?? this.fileData.branch;
     if (this._projectId == null || !branch || this.syncAction !== "idle") return;
 
     this.syncAction = "pushing";
@@ -316,9 +351,9 @@ export class DiffStore {
     await this.fetchSpread();
   }
 
-  /** Rebase the current branch onto the base branch. */
+  /** Rebase the viewed branch onto the base branch. */
   async rebase() {
-    const branch = this.fileData.branch;
+    const branch = this._branch ?? this.fileData.branch;
     if (this._projectId == null || !branch || this.syncAction !== "idle") return;
 
     this.syncAction = "rebasing";

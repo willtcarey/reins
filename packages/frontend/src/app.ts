@@ -134,6 +134,22 @@ export class AppShell extends LitElement {
     if (this.projectStore.sessionData) {
       this.activityTracker.clear(this.projectStore.sessionData.id);
     }
+    // Wire the viewed session's branch into the diff store
+    this.updateDiffBranch();
+  }
+
+  /**
+   * Resolve the viewed session's task branch and update the diff store.
+   * Task sessions → task's branch_name; scratch sessions → null (HEAD).
+   */
+  private updateDiffBranch() {
+    const session = this.projectStore.sessionData;
+    if (!session?.task_id) {
+      this.diffStore.setBranch(null);
+      return;
+    }
+    const task = this.projectStore.tasks.find((t) => t.id === session.task_id);
+    this.diffStore.setBranch(task?.branch_name ?? null);
   }
 
   private updateTitleAndFavicon(): void {
@@ -215,7 +231,7 @@ export class AppShell extends LitElement {
               <!-- Tab bar -->
               <div class="flex items-center border-b border-zinc-700 bg-zinc-800/50">
                 <branch-indicator
-                  .currentBranch=${this.diffStore.fileData.branch}
+                  .currentBranch=${this.diffStore.branch ?? this.diffStore.fileData.branch}
                 ></branch-indicator>
                 <button
                   class="px-4 py-2 text-sm font-semibold transition-colors cursor-pointer ${this.activeTab === "chat" ? "text-zinc-100 border-b-2 border-blue-500" : "text-zinc-500 hover:text-zinc-300"}"

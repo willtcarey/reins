@@ -97,8 +97,8 @@ The backend decides whether to include uncommitted changes by comparing the requ
 1. ~~Backend: update `getChangedFiles()` and `getDiff()` in `git.ts` to accept optional `branch` param, with logic to include/exclude uncommitted based on whether it matches HEAD.~~
 2. ~~Backend: plumb the `branch` query param through `routes/diff.ts`.~~
 3. ~~Backend: update rebase to restore the previous branch after completing.~~
-4. Frontend: add `setBranch()` to `DiffStore`, include param in all API calls (diff, spread, push, rebase).
-5. Frontend: app shell resolves session → task → branch and calls `setBranch()` on session change.
+4. ~~Frontend: add `setBranch()` to `DiffStore`, include param in all API calls (diff, spread, push, rebase).~~
+5. ~~Frontend: app shell resolves session → task → branch and calls `setBranch()` on session change.~~
 
 ## Edge Cases
 
