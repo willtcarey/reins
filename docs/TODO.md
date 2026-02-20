@@ -11,3 +11,4 @@
 - [ ] *(2026-02-19)* Single-task lock and work queues — accept one active session at a time, deprioritise worktrees, build a queue primitive for sequential work items. See [planning doc](plans/task-queues.md).
 - [ ] *(2026-02-19)* Worktrees/sandboxing code execution (deprioritised — see task queues planning doc)
 - [ ] *(2026-02-20)* Pulling someone else's branch for local work — scratch sessions support this today but it's a loose fit. May need a dedicated workflow (e.g. associating an existing branch with a task) so the diff and sync controls work properly.
+- [ ] *(2026-02-20)* Project assistant session — every project should have a long-lived "assistant" session: an ongoing conversation with the project that doesn't require opening a task or starting a new session. Always available for quick questions, brainstorming, or lightweight interactions.
