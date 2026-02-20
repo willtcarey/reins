@@ -1,28 +1,13 @@
 # TODO
 
-- [x] Syntax highlighting in the diff view
-- [ ] Injected system prompt which talks more about the environment to bias the LLM towards file creation (may not actually need this)
-- [ ] Worktrees/sandboxing code execution
-- [ ] Better conversation design
-- [ ] Conversation naming
-- [ ] Sidebar updating
-  - New sessions always say "empty" until page refresh
-  - Switching projects doesn't clear the main view, and clicking the session on the new project is a no-op (thinks it's already loaded)
-- [x] Working directory switcher/indicator
-- [x] Diff view doesn't show untracked files
-- [ ] Figure out how to run the service persistently
-- [x] Mobile support
-- [x] Image support in the chat interface
-- [ ] Task-specific diffs — task sessions should diff against the base branch (e.g. `master`/`main`) and contain all the task's branching logic. Scratch sessions would always diff against master as simple throwaway sessions. Open question: how to handle the workflow of pulling down someone else's branch to run it locally — this doesn't fit neatly into either the task or scratch model yet.
-- [ ] Stash uncommitted changes on branch switch — when switching between task branches, uncommitted changes carry over and muddy the other branch's working tree. Stash before switching and pop after switching back. The diff view should treat stashed changes as "uncommitted" so they still appear in the UI.
-- [ ] Comments on changes — allow users to comment on individual changes and inject those comments into the session context so the LLM can see and respond to feedback
-- [ ] Continue refactoring `diff-panel.ts` into smaller components
-  - Extract markdown preview/toggle into a `<diff-markdown-preview>` component
-  - Extract per-file diff card rendering into a `<diff-file-card>` component
-  - `diff-panel` would become a thin layout shell wiring the pieces together
-- [ ] Give users visibility into unpushed/unpulled commits — show when the local branch is ahead of or behind the remote so they know the sync state at a glance
-- [ ] Support non-`origin` remotes in git operations (fetch, branch creation, diff base resolution) — currently hardcoded to `origin`
-- [ ] Project dashboard — a landing view for a project with pinned files, new session/new task buttons, and an overview of recent activity
-- [ ] Task creation tool — expose a tool that lets the agent create a new task from within any conversation. Useful when a scratch session or an existing task surfaces work that should be tracked separately, so the user can say "create a task for this" without leaving the current context.
-- [ ] CSS not rebuilding when Tailwind classes change
-  - Adding or changing utility classes in `.ts` templates doesn't take effect until a manual `bun run build`. The `dev` script runs both Bun's JS bundler and `@tailwindcss/cli` with `--watch`, but Tailwind's watcher may not be picking up changes in `.ts` files as content sources, or the two watch processes (backgrounded with `&`) may not be coordinating reliably. Need to verify Tailwind's content detection config and consider a more integrated build pipeline.
+- [ ] *(2026-02-12)* Better conversation design
+- [ ] *(2026-02-12)* Conversation naming
+- [ ] *(2026-02-14)* Injected system prompt which talks more about the environment to bias the LLM towards file creation (may not actually need this)
+- [ ] *(2026-02-14)* Comments on changes — allow users to comment on individual changes and inject those comments into the session context so the LLM can see and respond to feedback
+- [ ] *(2026-02-17)* Support non-`origin` remotes in git operations (fetch, branch creation, diff base resolution) — currently hardcoded to `origin`
+- [ ] *(2026-02-19)* Task-specific diffs — task sessions should diff against the base branch (e.g. `master`/`main`) and contain all the task's branching logic. Scratch sessions would always diff against master as simple throwaway sessions. Open question: how to handle the workflow of pulling down someone else's branch to run it locally — this doesn't fit neatly into either the task or scratch model yet.
+- [ ] *(2026-02-19)* Stash uncommitted changes on branch switch — when switching between task branches, uncommitted changes carry over and muddy the other branch's working tree. Stash before switching and pop after switching back. The diff view should treat stashed changes as "uncommitted" so they still appear in the UI.
+- [ ] *(2026-02-19)* Project dashboard — a landing view for a project with pinned files, new session/new task buttons, and an overview of recent activity
+- [ ] *(2026-02-19)* Task creation tool — expose a tool that lets the agent create a new task from within any conversation. Useful when a scratch session or an existing task surfaces work that should be tracked separately, so the user can say "create a task for this" without leaving the current context.
+- [ ] *(2026-02-19)* Single-task lock and work queues — accept one active session at a time, deprioritise worktrees, build a queue primitive for sequential work items. See [planning doc](plans/task-queues.md).
+- [ ] *(2026-02-19)* Worktrees/sandboxing code execution (deprioritised — see task queues planning doc)

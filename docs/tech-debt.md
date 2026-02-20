@@ -9,3 +9,4 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 ## Frontend
 
 - Several Lit components use manual `querySelector` instead of the idiomatic `@query` decorator (`app.ts`, `chat-panel.ts`, `task-form.ts`)
+- `diff-panel.ts` is doing too much — extract markdown preview/toggle into a `<diff-markdown-preview>` component and per-file diff card rendering into a `<diff-file-card>` component, leaving `diff-panel` as a thin layout shell
