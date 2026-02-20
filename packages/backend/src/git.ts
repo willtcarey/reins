@@ -264,12 +264,16 @@ export async function pushBranch(
 /**
  * Rebase a branch onto the base branch.
  * On conflict, aborts and throws. (Agentic conflict resolution is handled at a higher layer.)
+ * Restores the previously checked-out branch after the rebase completes.
  */
 export async function rebaseBranch(
   projectDir: string,
   branch: string,
   baseBranch: string,
 ): Promise<void> {
+  const previousBranch = await getCurrentBranch(projectDir);
+  const needsRestore = previousBranch !== branch;
+
   // Ensure we're on the target branch
   await runChecked(projectDir, ["checkout", branch]);
   try {
@@ -277,7 +281,15 @@ export async function rebaseBranch(
   } catch (err) {
     // Abort the in-progress rebase so the repo isn't left in a broken state
     await run(projectDir, ["rebase", "--abort"]);
+    if (needsRestore) {
+      await runChecked(projectDir, ["checkout", previousBranch]).catch(() => {});
+    }
     throw err;
+  }
+
+  // Restore the previously checked-out branch
+  if (needsRestore) {
+    await runChecked(projectDir, ["checkout", previousBranch]).catch(() => {});
   }
 }
 
@@ -330,30 +342,53 @@ export async function branchHasUniqueCommits(
 
 // ---- Working-tree diff -----------------------------------------------------
 
+/**
+ * Determine whether to include uncommitted/untracked changes.
+ * Returns true when `branch` is omitted (HEAD mode) or matches
+ * the currently checked-out branch.
+ */
+async function shouldIncludeUncommitted(
+  projectDir: string,
+  branch?: string,
+): Promise<boolean> {
+  if (!branch) return true;
+  const head = await getCurrentBranch(projectDir);
+  return branch === head;
+}
+
 async function getGitDiff(
   projectDir: string,
   contextLines = 3,
   baseBranch = "main",
+  branch?: string,
 ): Promise<{ committed: string; uncommitted: string }> {
   const ctxFlag = `-U${contextLines}`;
+  const ref = branch ?? "HEAD";
+  const includeUncommitted = await shouldIncludeUncommitted(projectDir, branch);
 
   const [committed, uncommitted, untrackedList] = await Promise.all([
-    run(projectDir, ["diff", ctxFlag, `${baseBranch}...HEAD`]).catch(() => ""),
-    run(projectDir, ["diff", ctxFlag, "HEAD"]).catch(() => ""),
-    run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
+    run(projectDir, ["diff", ctxFlag, `${baseBranch}...${ref}`]).catch(() => ""),
+    includeUncommitted
+      ? run(projectDir, ["diff", ctxFlag, "HEAD"]).catch(() => "")
+      : "",
+    includeUncommitted
+      ? run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => "")
+      : "",
   ]);
 
   // Generate diffs for untracked files so they appear as new files
   let untrackedDiffs = "";
-  const untrackedFiles = untrackedList.trim().split("\n").filter(Boolean);
-  if (untrackedFiles.length > 0) {
-    const diffs = await Promise.all(
-      untrackedFiles.map((file) =>
-        run(projectDir, ["diff", ctxFlag, "--no-index", "--", "/dev/null", file])
-          .catch(() => ""),
-      ),
-    );
-    untrackedDiffs = diffs.filter(Boolean).join("\n");
+  if (includeUncommitted) {
+    const untrackedFiles = untrackedList.trim().split("\n").filter(Boolean);
+    if (untrackedFiles.length > 0) {
+      const diffs = await Promise.all(
+        untrackedFiles.map((file) =>
+          run(projectDir, ["diff", ctxFlag, "--no-index", "--", "/dev/null", file])
+            .catch(() => ""),
+        ),
+      );
+      untrackedDiffs = diffs.filter(Boolean).join("\n");
+    }
   }
 
   const fullUncommitted = [uncommitted, untrackedDiffs].filter(Boolean).join("\n");
@@ -477,18 +512,28 @@ function parseNumstat(raw: string): DiffFileSummary[] {
  * @param mode - `"branch"` (default) shows all changes against the base branch
  *               (committed + uncommitted). `"uncommitted"` shows only uncommitted
  *               working-tree changes.
+ * @param branch - Optional branch to diff. When provided and not currently
+ *                 checked out, only committed changes are included.
  */
 export async function getChangedFiles(
   projectDir: string,
   baseBranch = "main",
   mode: "branch" | "uncommitted" = "branch",
+  branch?: string,
 ): Promise<DiffFileSummary[]> {
+  const ref = branch ?? "HEAD";
+  const includeUncommitted = await shouldIncludeUncommitted(projectDir, branch);
+
   const [committed, uncommitted, untrackedList] = await Promise.all([
     mode === "branch"
-      ? run(projectDir, ["diff", "--numstat", `${baseBranch}...HEAD`]).catch(() => "")
+      ? run(projectDir, ["diff", "--numstat", `${baseBranch}...${ref}`]).catch(() => "")
       : "",
-    run(projectDir, ["diff", "--numstat", "HEAD"]).catch(() => ""),
-    run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
+    includeUncommitted
+      ? run(projectDir, ["diff", "--numstat", "HEAD"]).catch(() => "")
+      : "",
+    includeUncommitted
+      ? run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => "")
+      : "",
   ]);
 
   const fileMap = new Map<string, DiffFileSummary>();
@@ -532,14 +577,17 @@ export async function getChangedFiles(
  * @param mode - `"branch"` (default) shows all changes against the base branch
  *               (committed + uncommitted). `"uncommitted"` shows only uncommitted
  *               working-tree changes.
+ * @param branch - Optional branch to diff. When provided and not currently
+ *                 checked out, only committed changes are included.
  */
 export async function getDiff(
   projectDir: string,
   contextLines = 3,
   baseBranch = "main",
   mode: "branch" | "uncommitted" = "branch",
+  branch?: string,
 ): Promise<DiffFile[]> {
-  const rawDiff = await getGitDiff(projectDir, contextLines, baseBranch);
+  const rawDiff = await getGitDiff(projectDir, contextLines, baseBranch, branch);
   const parts =
     mode === "uncommitted"
       ? [rawDiff.uncommitted]

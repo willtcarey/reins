@@ -5,10 +5,11 @@
  *   GET /diff/files — lightweight file listing with +/− counts (for polling)
  *   GET /diff       — parsed diff hunks with raw text (highlighting done client-side)
  *
- * Both use the working-tree-aware diff (`baseBranch...HEAD` + uncommitted
- * + untracked). When a task session is active, the task branch is already
- * checked out, so this naturally shows all task changes (committed AND
- * uncommitted) against the project's base branch.
+ * Both accept an optional `branch` query param. When provided, the diff is
+ * computed against that branch instead of HEAD. If the branch is not currently
+ * checked out, only committed changes are included (no uncommitted/untracked).
+ * When omitted, the endpoints use HEAD and include uncommitted changes (the
+ * previous default behavior).
  */
 
 import type { RouterGroup, RouteContext } from "../router.js";
@@ -25,12 +26,17 @@ export function registerDiffRoutes(router: RouterGroup) {
     const projectDir = (ctx as any).projectDir as string;
     const project = getProject(projectId)!;
     const mode = ctx.url.searchParams.get("mode") === "uncommitted" ? "uncommitted" : "branch";
+    const branch = ctx.url.searchParams.get("branch") ?? undefined;
 
-    const [files, branch] = await Promise.all([
-      getChangedFiles(projectDir, project.base_branch, mode),
+    const [files, currentBranch] = await Promise.all([
+      getChangedFiles(projectDir, project.base_branch, mode, branch),
       getCurrentBranch(projectDir),
     ]);
-    return Response.json({ files, branch, baseBranch: project.base_branch });
+    return Response.json({
+      files,
+      branch: branch ?? currentBranch,
+      baseBranch: project.base_branch,
+    });
   });
 
   /**
@@ -46,11 +52,16 @@ export function registerDiffRoutes(router: RouterGroup) {
       500,
     );
     const mode = ctx.url.searchParams.get("mode") === "uncommitted" ? "uncommitted" : "branch";
+    const branch = ctx.url.searchParams.get("branch") ?? undefined;
 
-    const [files, branch] = await Promise.all([
-      getDiff(projectDir, contextLines, project.base_branch, mode),
+    const [files, currentBranch] = await Promise.all([
+      getDiff(projectDir, contextLines, project.base_branch, mode, branch),
       getCurrentBranch(projectDir),
     ]);
-    return Response.json({ files, branch, baseBranch: project.base_branch });
+    return Response.json({
+      files,
+      branch: branch ?? currentBranch,
+      baseBranch: project.base_branch,
+    });
   });
 }
