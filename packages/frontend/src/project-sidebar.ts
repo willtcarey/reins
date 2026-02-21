@@ -121,7 +121,7 @@ export class ProjectSidebar extends LitElement {
 
   override render() {
     return html`
-      <div class="border-b border-zinc-700"
+      <div class=""
         @project-created=${this.handleProjectCreated}
         @project-updated=${this.handleProjectUpdated}
       >

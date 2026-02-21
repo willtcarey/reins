@@ -47,12 +47,6 @@ export class SessionList extends LitElement {
     );
   }
 
-  private handleCollapse() {
-    this.dispatchEvent(
-      new CustomEvent("toggle-collapse", { bubbles: true, composed: true })
-    );
-  }
-
   private renderActivityDot(sessionId: string) {
     const state = this.activityMap.get(sessionId);
     if (!state) return nothing;
@@ -90,17 +84,10 @@ export class SessionList extends LitElement {
         <div class="border-b border-zinc-600"></div>
       ` : nothing}
 
-      <div class="px-3 py-2 border-b border-zinc-700 flex items-center justify-between">
+      <div class="px-3 py-2 border-b border-zinc-700">
         <h2 class="text-[10px] font-semibold text-zinc-500 uppercase tracking-wide">
           ${this.hasTasks ? "Scratch Sessions" : "Sessions"}
         </h2>
-        <button
-          class="p-1 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
-          @click=${this.handleCollapse}
-          title="Hide sidebar"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-        </button>
       </div>
 
       <div class="p-2 border-b border-zinc-700">

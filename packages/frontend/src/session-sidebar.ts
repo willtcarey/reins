@@ -189,10 +189,21 @@ export class SessionSidebar extends LitElement {
         @delete-task=${this.handleDeleteTask}
         @toggle-collapse=${this.toggleCollapse}
       >
-        <!-- Project switcher -->
-        <project-sidebar
-          .activeProjectId=${projectId}
-        ></project-sidebar>
+        <!-- Project switcher + collapse toggle -->
+        <div class="flex items-center border-b border-zinc-700">
+          <div class="flex-1 min-w-0">
+            <project-sidebar
+              .activeProjectId=${projectId}
+            ></project-sidebar>
+          </div>
+          <button
+            class="p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors shrink-0"
+            @click=${this.toggleCollapse}
+            title="Hide sidebar"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+          </button>
+        </div>
 
         <!-- New Task button -->
         <div class="p-2 border-b border-zinc-700">
