@@ -11,11 +11,9 @@ import { createTaskTool } from "./create-task.js";
 
 export function createCustomTools(
   projectId: number,
-  projectDir: string,
-  baseBranch: string,
   broadcast: Broadcast,
 ): ToolDefinition[] {
   return [
-    createTaskTool(projectId, projectDir, baseBranch, broadcast),
+    createTaskTool(projectId, broadcast),
   ];
 }

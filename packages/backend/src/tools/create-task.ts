@@ -11,6 +11,7 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { TaskRow } from "../task-store.js";
 import type { Broadcast } from "../models/broadcast.js";
 import { createTaskWithBranch } from "../models/tasks.js";
+import { getProject } from "../project-store.js";
 
 const parameters = Type.Object({
   title: Type.String({ description: "Concise task title (imperative mood, e.g. \"Add dark mode support\")" }),
@@ -21,13 +22,12 @@ const parameters = Type.Object({
 });
 
 /**
- * Factory that creates the create_task tool definition, closing over
- * the project context available at session-creation time.
+ * Factory that creates the create_task tool definition.
+ * Loads the project record at execution time so that changes to the
+ * project path or base branch are picked up mid-conversation.
  */
 export function createTaskTool(
   projectId: number,
-  projectDir: string,
-  baseBranch: string,
   broadcast: Broadcast,
 ): ToolDefinition {
   return {
@@ -40,10 +40,13 @@ export function createTaskTool(
 
     async execute(_toolCallId, params) {
       try {
+        const project = getProject(projectId);
+        if (!project) throw new Error(`Project ${projectId} not found`);
+
         const task: TaskRow = await createTaskWithBranch(
           projectId,
-          projectDir,
-          baseBranch,
+          project.path,
+          project.base_branch,
           {
             title: params.title,
             description: params.description,

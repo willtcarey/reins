@@ -63,13 +63,12 @@ async function buildSessionOpts(
   state: ServerState,
   projectId: number,
   projectDir: string,
-  baseBranch: string,
   task: TaskRow | null,
 ) {
   const sessionManager = SessionManager.inMemory();
   const tools = createCodingTools(projectDir);
   const broadcast = createBroadcast(state.clients);
-  const customTools = createCustomTools(projectId, projectDir, baseBranch, broadcast);
+  const customTools = createCustomTools(projectId, broadcast);
 
   const resourceLoader = new DefaultResourceLoader({
     cwd: projectDir,
@@ -101,7 +100,7 @@ export async function createNewSession(
   const project = getProject(projectId);
   if (!project) throw new Error(`Project not found: ${projectId}`);
   const task = await resolveTask(opts?.taskId, projectDir);
-  const sessionOpts = await buildSessionOpts(state, projectId, projectDir, project.base_branch, task);
+  const sessionOpts = await buildSessionOpts(state, projectId, projectDir, task);
   const result = await createAgentSession(sessionOpts);
   const agentSession = result.session;
   const id = agentSession.sessionId;
@@ -151,7 +150,7 @@ export async function resumeSession(
   const project = getProject(row.project_id);
   if (!project) throw new Error(`Project not found: ${row.project_id}`);
   const task = await resolveTask(row.task_id, projectDir);
-  const sessionOpts = await buildSessionOpts(state, row.project_id, projectDir, project.base_branch, task);
+  const sessionOpts = await buildSessionOpts(state, row.project_id, projectDir, task);
   const result = await createAgentSession(sessionOpts);
 
   const agentSession = result.session;
