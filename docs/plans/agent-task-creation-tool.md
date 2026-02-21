@@ -62,7 +62,7 @@ This broadcast lives in `createTaskWithBranch()` itself, so every creation path 
 
 ### File changes
 
-#### 1. New model layer: `packages/backend/src/models/`
+#### 1. ✅ New model layer: `packages/backend/src/models/`
 
 Introduce a `models/` directory as a business-logic layer between routes/tools and the low-level stores (`*-store.ts`) and utilities (`git.ts`, `branch-namer.ts`). Models orchestrate store calls, git operations, validation, and WS broadcasts. Stores stay as thin DB access. Routes become thin HTTP adapters.
 
@@ -92,12 +92,12 @@ Throws on failure (branch creation errors, etc.) — callers handle errors in th
 
 Over time, other task operations (delete with branch cleanup, close, etc.) migrate here too — but that's not in scope for this change.
 
-#### 2. `packages/backend/src/routes/tasks.ts`
+#### 2. ✅ `packages/backend/src/routes/tasks.ts`
 
 - **Remove** the `POST /tasks` route (unused by the frontend — only `POST /tasks/generate` is called).
 - Refactor `POST /tasks/generate` to call `createTaskWithBranch()` instead of inlining the branch-check/create/insert sequence. The route still calls `generateTask()` first to get the LLM-generated params (including its LLM-generated `branch_name`), then passes them to the model function.
 
-#### 3. New file: `packages/backend/src/tools/create-task.ts`
+#### 3. ✅ New file: `packages/backend/src/tools/create-task.ts`
 
 Custom tool factory module. Contains:
 
@@ -107,11 +107,11 @@ Custom tool factory module. Contains:
 
 Putting this in a `tools/` subdirectory sets up a clean pattern for future custom tools.
 
-#### 4. `packages/backend/src/tools/index.ts`
+#### 4. ✅ `packages/backend/src/tools/index.ts`
 
 Barrel export for all custom tools. Exports a `createCustomTools(projectId, projectDir, baseBranch, state)` function that returns the full `ToolDefinition[]` array. This is the single entry point that `sessions.ts` calls — when we add more tools later, they just get added here.
 
-#### 5. `packages/backend/src/sessions.ts`
+#### 5. ✅ `packages/backend/src/sessions.ts`
 
 In `buildSessionOpts()`:
 - Import `createCustomTools` from `./tools/index.js`
@@ -120,7 +120,7 @@ In `buildSessionOpts()`:
 
 Update callers of `buildSessionOpts()` (`createNewSession` and `resumeSession`) to pass the new args. Both already have access to `state` and `projectId`; `baseBranch` comes from the project row via `getProject()`. Note: `resumeSession` currently doesn't receive `projectId` — it gets it from the session's DB row (`row.project_id`), then looks up the project to get `baseBranch`.
 
-#### 6. `packages/frontend/src/` — WS event handling
+#### 6. ✅ `packages/frontend/src/` — WS event handling
 
 Add a handler for the `task_created` event type in the frontend's WebSocket message handler. When received, refresh the task list for the relevant project so the sidebar updates without manual reload.
 

@@ -79,6 +79,13 @@ export class AppShell extends LitElement {
     // Track session activity and refresh diff panel
     this.client.onEvent((sessionId, event) => {
       const store = this.projectStore;
+
+      // Handle task_created broadcast (not tagged with a sessionId)
+      if (event.type === "task_created" && event.projectId === store.projectId) {
+        store.refreshLists();
+        return;
+      }
+
       // Track activity for all sessions
       if (sessionId && event.type === "agent_start") {
         this.activityTracker.setRunning(sessionId);

@@ -8,16 +8,16 @@ import type { RouterGroup, RouteContext } from "../router.js";
 import { notFound, badRequest } from "../errors.js";
 import { getProject } from "../project-store.js";
 import {
-  createTask,
   getTask,
   listTasks,
   updateTask,
   deleteTask,
   getTaskSessionIds,
 } from "../task-store.js";
-import { generateBranchName } from "../branch-namer.js";
 import { generateTask } from "../task-generator.js";
-import { createBranch, branchExists, deleteBranch, getCurrentBranch, checkoutBranch, getDiffStats } from "../git.js";
+import { deleteBranch, getCurrentBranch, checkoutBranch, getDiffStats } from "../git.js";
+import { createTaskWithBranch } from "../models/tasks.js";
+import { createBroadcast } from "../models/broadcast.js";
 import {
   createNewSession,
   serializeSession,
@@ -52,46 +52,6 @@ export function registerTaskRoutes(router: RouterGroup) {
     return Response.json(enriched);
   });
 
-  // Create a new task
-  router.post("/tasks", async (ctx: RouteContext) => {
-    const projectId = parseInt(ctx.params.id, 10);
-    const projectDir = (ctx as any).projectDir as string;
-    const project = getProject(projectId)!;
-    const body = (await ctx.req.json()) as { title?: string; description?: string; branch_name?: string };
-
-    if (!body.title?.trim()) {
-      badRequest("Title is required");
-    }
-
-    const title = body.title!.trim();
-    const description = body.description?.trim() || null;
-
-    // Use provided branch name or generate one
-    const branchName = body.branch_name?.trim() || await generateBranchName(title);
-
-    // Check for collision
-    if (await branchExists(projectDir, branchName)) {
-      return Response.json(
-        { error: `Branch "${branchName}" already exists` },
-        { status: 409 },
-      );
-    }
-
-    // Create the git branch from the project's base branch
-    try {
-      await createBranch(projectDir, branchName, project.base_branch);
-    } catch (err: any) {
-      return Response.json(
-        { error: `Failed to create branch: ${err.message}` },
-        { status: 500 },
-      );
-    }
-
-    // Create the task row
-    const task = createTask(projectId, title, description, branchName);
-    return Response.json(task, { status: 201 });
-  });
-
   // Generate a task from freeform input, then create it
   router.post("/tasks/generate", async (ctx: RouteContext) => {
     const projectId = parseInt(ctx.params.id, 10);
@@ -105,25 +65,25 @@ export function registerTaskRoutes(router: RouterGroup) {
 
     const generated = await generateTask(body.prompt!.trim());
 
-    // Ensure branch doesn't collide
-    let branchName = generated.branch_name;
-    if (await branchExists(projectDir, branchName)) {
-      // Append a short suffix
-      const suffix = Date.now().toString(36).slice(-4);
-      branchName = `${branchName}-${suffix}`;
-    }
-
     try {
-      await createBranch(projectDir, branchName, project.base_branch);
+      const task = await createTaskWithBranch(
+        projectId,
+        projectDir,
+        project.base_branch,
+        {
+          title: generated.title,
+          description: generated.description,
+          branch_name: generated.branch_name,
+        },
+        createBroadcast(ctx.state.clients),
+      );
+      return Response.json(task, { status: 201 });
     } catch (err: any) {
       return Response.json(
-        { error: `Failed to create branch: ${err.message}` },
+        { error: `Failed to create task: ${err.message}` },
         { status: 500 },
       );
     }
-
-    const task = createTask(projectId, generated.title, generated.description, branchName);
-    return Response.json(task, { status: 201 });
   });
 
   // Get a single task with its sessions

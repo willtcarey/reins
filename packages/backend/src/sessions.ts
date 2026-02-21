@@ -20,7 +20,10 @@ import {
   type SessionListItem,
 } from "./session-store.js";
 import { getTask, touchTask, type TaskRow } from "./task-store.js";
+import { getProject } from "./project-store.js";
 import { checkoutBranch } from "./git.js";
+import { createCustomTools } from "./tools/index.js";
+import { createBroadcast } from "./models/broadcast.js";
 
 /**
  * Build a task system prompt prefix for injection.
@@ -58,11 +61,15 @@ async function resolveTask(
  */
 async function buildSessionOpts(
   state: ServerState,
+  projectId: number,
   projectDir: string,
+  baseBranch: string,
   task: TaskRow | null,
 ) {
   const sessionManager = SessionManager.inMemory();
   const tools = createCodingTools(projectDir);
+  const broadcast = createBroadcast(state.clients);
+  const customTools = createCustomTools(projectId, projectDir, baseBranch, broadcast);
 
   const resourceLoader = new DefaultResourceLoader({
     cwd: projectDir,
@@ -73,6 +80,7 @@ async function buildSessionOpts(
   return {
     cwd: projectDir,
     tools,
+    customTools,
     sessionManager,
     resourceLoader,
     model: state.explicitModel,
@@ -90,8 +98,10 @@ export async function createNewSession(
   projectDir: string,
   opts?: { taskId?: number },
 ): Promise<ManagedSession> {
+  const project = getProject(projectId);
+  if (!project) throw new Error(`Project not found: ${projectId}`);
   const task = await resolveTask(opts?.taskId, projectDir);
-  const sessionOpts = await buildSessionOpts(state, projectDir, task);
+  const sessionOpts = await buildSessionOpts(state, projectId, projectDir, project.base_branch, task);
   const result = await createAgentSession(sessionOpts);
   const agentSession = result.session;
   const id = agentSession.sessionId;
@@ -138,8 +148,10 @@ export async function resumeSession(
   const row = dbGetSession(sessionId);
   if (!row) throw new Error(`Session not found: ${sessionId}`);
 
+  const project = getProject(row.project_id);
+  if (!project) throw new Error(`Project not found: ${row.project_id}`);
   const task = await resolveTask(row.task_id, projectDir);
-  const sessionOpts = await buildSessionOpts(state, projectDir, task);
+  const sessionOpts = await buildSessionOpts(state, row.project_id, projectDir, project.base_branch, task);
   const result = await createAgentSession(sessionOpts);
 
   const agentSession = result.session;
@@ -170,12 +182,11 @@ function wireSession(
     lastActivity: Date.now(),
   };
 
+  const broadcast = createBroadcast(state.clients);
+
   agentSession.subscribe((event: AgentSessionEvent) => {
     // Broadcast to all connected WS clients
-    const payload = JSON.stringify({ type: "event", sessionId, event });
-    for (const client of state.clients) {
-      try { client.ws.send(payload); } catch {}
-    }
+    broadcast({ type: "event", sessionId, event });
 
     // Persist messages after each turn (assistant message + tool results),
     // not just at agent_end. This way we don't lose data if the server
