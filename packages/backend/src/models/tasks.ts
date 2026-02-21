@@ -9,7 +9,7 @@
 
 import { createTask, type TaskRow } from "../task-store.js";
 import { slugifyBranchName } from "../branch-namer.js";
-import { branchExists, createBranch } from "../git.js";
+import { branchExists, createBranch, revParse } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
 
 export interface CreateTaskParams {
@@ -24,9 +24,10 @@ export interface CreateTaskParams {
  * 1. Derive branch_name from title if not provided.
  * 2. Check for branch collision; append suffix if needed.
  * 3. Create the git branch from baseBranch.
- * 4. Insert the task row.
- * 5. Broadcast `task_created` to all WS clients.
- * 6. Return the created TaskRow.
+ * 4. Capture the base branch SHA for merge reconciliation.
+ * 5. Insert the task row.
+ * 6. Broadcast `task_created` to all WS clients.
+ * 7. Return the created TaskRow.
  *
  * Throws on failure — callers handle errors in their own way.
  */
@@ -49,10 +50,14 @@ export async function createTaskWithBranch(
   // 3. Create git branch
   await createBranch(projectDir, branchName, baseBranch);
 
-  // 4. Insert task row
-  const task = createTask(projectId, params.title.trim(), params.description?.trim() || null, branchName);
+  // 4. Capture the base branch SHA so reconciliation can distinguish
+  //    "never committed" from "genuinely merged" later.
+  const baseCommit = await revParse(projectDir, baseBranch);
 
-  // 5. Broadcast
+  // 5. Insert task row
+  const task = createTask(projectId, params.title.trim(), params.description?.trim() || null, branchName, baseCommit);
+
+  // 6. Broadcast
   broadcast({ type: "task_created", projectId, task });
 
   return task;

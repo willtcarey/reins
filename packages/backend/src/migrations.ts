@@ -90,6 +90,10 @@ const MIGRATIONS: [name: string, sql: string][] = [
     "010_rename_task_status_merged_to_closed",
     `UPDATE tasks SET status = 'closed' WHERE status = 'merged'`,
   ],
+  [
+    "011_add_task_base_commit",
+    `ALTER TABLE tasks ADD COLUMN base_commit TEXT`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

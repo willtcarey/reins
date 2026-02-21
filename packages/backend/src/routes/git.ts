@@ -21,7 +21,7 @@ import {
   deleteBranch,
   branchExists,
   remoteBranchExists,
-  branchHasUniqueCommits,
+  getBranchTip,
   pushBranch,
   rebaseBranch,
 } from "../git.js";
@@ -128,18 +128,23 @@ async function reconcileClosedTasks(
   for (const task of openTasks) {
     if (mergedBranches.has(task.branch_name)) {
       // The branch is reachable from the base branch. Only treat it as merged
-      // if it actually contributed commits — a branch created from the base
-      // with zero commits is technically "merged" per git, but the task hasn't
-      // started yet.
-      const hasWork = await branchHasUniqueCommits(
-        projectDir,
-        task.branch_name,
-        baseBranch,
-      );
-      if (hasWork) {
-        toClose.push(task);
-        toCleanUpBranch.push(task);
+      // if it actually diverged from its creation point — a branch created
+      // from the base with zero commits is technically "merged" per git, but
+      // the task hasn't started yet.
+      //
+      // Compare the branch tip to the stored base_commit SHA: if they're equal
+      // the branch never received any commits and should be left open. If
+      // base_commit is null (pre-migration task), fall through to close —
+      // there's no way to distinguish, and closing is the safer default.
+      if (task.base_commit) {
+        const tip = await getBranchTip(projectDir, task.branch_name);
+        if (tip === task.base_commit) {
+          // Branch never diverged — skip it
+          continue;
+        }
       }
+      toClose.push(task);
+      toCleanUpBranch.push(task);
     } else {
       // 2. Branch gone everywhere — treat as closed
       const local = await branchExists(projectDir, task.branch_name);

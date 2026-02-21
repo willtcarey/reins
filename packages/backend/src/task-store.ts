@@ -17,6 +17,7 @@ export interface TaskRow {
   title: string;
   description: string | null;
   branch_name: string;
+  base_commit: string | null;
   status: TaskStatus;
   created_at: string;
   updated_at: string;
@@ -34,15 +35,16 @@ export function createTask(
   title: string,
   description: string | null,
   branchName: string,
+  baseCommit: string | null = null,
 ): TaskRow {
   const db = getDb();
   return db
     .query(
-      `INSERT INTO tasks (project_id, title, description, branch_name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      `INSERT INTO tasks (project_id, title, description, branch_name, base_commit, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
     )
-    .get(projectId, title, description, branchName) as TaskRow;
+    .get(projectId, title, description, branchName, baseCommit) as TaskRow;
 }
 
 export function getTask(id: number): TaskRow | null {

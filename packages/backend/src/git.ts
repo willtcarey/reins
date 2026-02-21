@@ -316,28 +316,35 @@ export async function getMergedBranches(
 }
 
 /**
- * Check whether a branch has any commits that are not on the base branch.
- * Returns true when `git rev-list baseBranch..branch` is non-empty, meaning
- * the branch once diverged and its work has since been incorporated.
- *
- * A branch that was created from the base but never received commits will
- * return false — it shouldn't be considered "merged."
+ * Get the commit SHA at the tip of a branch.
+ * Checks local branch first; falls back to remote tracking ref.
+ * Returns null if neither exists.
  */
-export async function branchHasUniqueCommits(
+export async function getBranchTip(
   projectDir: string,
   branch: string,
-  baseBranch: string,
-): Promise<boolean> {
-  // Check local branch first; fall back to remote tracking ref.
+): Promise<string | null> {
+  // Try local first, then remote tracking ref
   const ref = (await branchExists(projectDir, branch))
     ? branch
-    : `origin/${branch}`;
-  const raw = await run(projectDir, [
-    "rev-list",
-    `${baseBranch}..${ref}`,
-    "--count",
-  ]);
-  return parseInt(raw.trim(), 10) > 0;
+    : (await remoteBranchExists(projectDir, branch))
+      ? `origin/${branch}`
+      : null;
+  if (!ref) return null;
+  const sha = await run(projectDir, ["rev-parse", ref]);
+  return sha.trim() || null;
+}
+
+/**
+ * Get the commit SHA at the tip of a ref (branch name, HEAD, etc.).
+ * Does not check existence — use for refs known to exist (e.g. base branch).
+ */
+export async function revParse(
+  projectDir: string,
+  ref: string,
+): Promise<string> {
+  const sha = await runChecked(projectDir, ["rev-parse", ref]);
+  return sha.trim();
 }
 
 // ---- Working-tree diff -----------------------------------------------------
