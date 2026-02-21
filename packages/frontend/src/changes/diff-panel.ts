@@ -216,9 +216,10 @@ export class DiffPanel extends LitElement {
     this.markdownLoading = loadingNext;
 
     try {
-      const resp = await fetch(
-        `/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`
-      );
+      const branch = this.store?.branch ?? this.store?.fileData.branch;
+      let url = `/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`;
+      if (branch) url += `&ref=${encodeURIComponent(branch)}`;
+      const resp = await fetch(url);
       if (!resp.ok) {
         const cacheNext = new Map(this.markdownCache);
         cacheNext.set(path, `<p class="text-red-400">Failed to load file (HTTP ${resp.status})</p>`);
