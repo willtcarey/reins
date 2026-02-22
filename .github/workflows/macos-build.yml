@@ -2,6 +2,9 @@ name: macOS Build
 
 on:
   push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -13,6 +16,6 @@ jobs:
         run: |
           xcodebuild -project packages/macos/Reins.xcodeproj \
             -scheme Reins \
-            -configuration Debug \
+            -configuration Release \
             SYMROOT=$(pwd)/packages/macos/dist \
             build
