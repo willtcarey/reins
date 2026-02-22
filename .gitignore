@@ -5,5 +5,7 @@ node_modules/
 dist/
 .env
 
-# Tauri / Rust
-packages/tauri/src-tauri/target/
+# Xcode
+xcuserdata/
+DerivedData/
+*.xcworkspace

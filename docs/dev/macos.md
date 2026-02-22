@@ -9,8 +9,9 @@ network — no local asset serving or build pipeline involved.
 A lightweight SwiftUI app opens a WKWebView pointing at a backend URL.
 The URL is resolved in this order:
 
-1. **Environment variable** — `REINS_BACKEND_URL` at launch
-2. **Default** — `http://localhost:3100`
+1. **Runtime env var** — `REINS_BACKEND_URL` at launch (highest priority)
+2. **Compile-time build setting** — `REINS_BACKEND_URL` baked into the app via Info.plist
+3. **Default** — `http://localhost:3100`
 
 The backend already serves the frontend files, so relative URLs (`/api/...`,
 `/ws`) just work.
@@ -35,6 +36,19 @@ The backend must be running (locally or on the dev node).
 Cmd+R refreshes the webview. The frontend's `bun run dev` watcher rebuilds
 on file changes; just refresh to pick them up.
 
+## Setting the Backend URL at Build Time
+
+Pass the build setting to `xcodebuild`:
+
+```sh
+xcodebuild -project packages/macos/Reins.xcodeproj -scheme Reins \
+  REINS_BACKEND_URL='http://myhost:3100' build
+```
+
+Or set it in the Xcode build settings UI under the Reins target. The value
+is baked into Info.plist at compile time. A runtime `REINS_BACKEND_URL`
+environment variable still takes priority.
+
 ## Building a .app Bundle
 
 ```sh
@@ -44,6 +58,6 @@ xcodebuild -project packages/macos/Reins.xcodeproj -scheme Reins -configuration 
 ## Key Features
 
 - **Cmd+R reload** — refreshes the webview
-- **Configurable backend URL** — via `REINS_BACKEND_URL` environment variable
+- **Configurable backend URL** — compile-time build setting with runtime env var override
 - **JS-to-Swift messaging** — `WKScriptMessageHandler` bridge for future
   native features (notifications, etc.)
