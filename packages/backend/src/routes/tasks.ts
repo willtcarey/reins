@@ -98,10 +98,12 @@ export function registerTaskRoutes(router: RouterGroup) {
 
   // Update a task
   router.patch("/tasks/:taskId", async (ctx: RouteContext) => {
+    const projectId = parseInt(ctx.params.id, 10);
     const taskId = parseInt(ctx.params.taskId, 10);
     const body = (await ctx.req.json()) as { title?: string; description?: string };
     const updated = updateTask(taskId, body);
     if (!updated) notFound("Task not found");
+    createBroadcast(ctx.state.clients)({ type: "task_updated", projectId });
     return Response.json(updated);
   });
 
@@ -138,6 +140,7 @@ export function registerTaskRoutes(router: RouterGroup) {
 
     // Delete task (cascades sessions + messages in DB)
     deleteTask(taskId);
+    createBroadcast(ctx.state.clients)({ type: "task_updated", projectId });
 
     // Delete the git branch (best-effort — may fail if checked out)
     try {

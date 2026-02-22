@@ -26,6 +26,7 @@ import {
   rebaseBranch,
 } from "../git.js";
 import { listOpenTasks, markTasksClosed } from "../task-store.js";
+import { createBroadcast } from "../models/broadcast.js";
 
 export function registerGitRoutes(router: RouterGroup) {
   /**
@@ -49,7 +50,7 @@ export function registerGitRoutes(router: RouterGroup) {
       await fetchAll(projectDir);
       await fastForwardBaseBranch(projectDir, project.base_branch);
       // Reconcile closed task statuses
-      await reconcileClosedTasks(projectId, projectDir, project.base_branch);
+      await reconcileClosedTasks(projectId, projectDir, project.base_branch, createBroadcast(ctx.state.clients));
     }
 
     const spread = await getSpread(projectDir, branch!, project.base_branch);
@@ -115,6 +116,7 @@ async function reconcileClosedTasks(
   projectId: number,
   projectDir: string,
   baseBranch: string,
+  broadcast: import("../models/broadcast.js").Broadcast,
 ): Promise<void> {
   const openTasks = listOpenTasks(projectId);
   if (openTasks.length === 0) return;
@@ -158,6 +160,7 @@ async function reconcileClosedTasks(
   if (toClose.length === 0) return;
 
   markTasksClosed(toClose.map((t) => t.id));
+  broadcast({ type: "task_updated", projectId });
 
   // Clean up local branches for tasks that were detected via --merged
   const currentBranch = await getCurrentBranch(projectDir);

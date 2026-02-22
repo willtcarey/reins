@@ -80,8 +80,8 @@ export class AppShell extends LitElement {
     this.client.onEvent((sessionId, event) => {
       const store = this.projectStore;
 
-      // Handle task_created broadcast (not tagged with a sessionId)
-      if (event.type === "task_created" && event.projectId === store.projectId) {
+      // Handle task_updated broadcast (not tagged with a sessionId)
+      if (event.type === "task_updated" && event.projectId === store.projectId) {
         store.refreshLists();
         return;
       }

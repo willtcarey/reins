@@ -60,7 +60,7 @@ export interface ProjectInfo {
 /** Inbound message shapes from the backend */
 export type ServerMessage =
   | { type: "event"; sessionId: string; event: any }
-  | { type: "task_created"; projectId: number; task: TaskListItem }
+  | { type: "task_updated"; projectId: number }
   | { type: "ack"; command: string }
   | { type: "error"; error: string };
 
@@ -167,10 +167,10 @@ export class AppClient {
         }
         break;
 
-      case "task_created":
+      case "task_updated":
         // Forward as a synthetic event so app-level listeners can react
         for (const listener of this.eventListeners) {
-          listener("", { type: "task_created", projectId: msg.projectId, task: msg.task });
+          listener("", { type: "task_updated", projectId: msg.projectId });
         }
         break;
 

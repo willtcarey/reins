@@ -26,7 +26,7 @@ export interface CreateTaskParams {
  * 3. Create the git branch from baseBranch.
  * 4. Capture the base branch SHA for merge reconciliation.
  * 5. Insert the task row.
- * 6. Broadcast `task_created` to all WS clients.
+ * 6. Broadcast `task_updated` to all WS clients.
  * 7. Return the created TaskRow.
  *
  * Throws on failure — callers handle errors in their own way.
@@ -58,7 +58,7 @@ export async function createTaskWithBranch(
   const task = createTask(projectId, params.title.trim(), params.description?.trim() || null, branchName, baseCommit);
 
   // 6. Broadcast
-  broadcast({ type: "task_created", projectId, task });
+  broadcast({ type: "task_updated", projectId });
 
   return task;
 }

@@ -12,7 +12,6 @@
  */
 
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
-import type { TaskRow } from "../task-store.js";
 import type { WsClient } from "../state.js";
 
 // ---------------------------------------------------------------------------
@@ -21,7 +20,7 @@ import type { WsClient } from "../state.js";
 
 export type ServerMessage =
   | { type: "event"; sessionId: string; event: AgentSessionEvent }
-  | { type: "task_created"; projectId: number; task: TaskRow };
+  | { type: "task_updated"; projectId: number };
 
 // ---------------------------------------------------------------------------
 // Broadcast function
