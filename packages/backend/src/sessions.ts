@@ -76,7 +76,11 @@ async function buildSessionOpts(
     appendSystemPromptOverride: (base) => [
       ...base,
       "The bash tool already executes in the current working directory. Do not prefix commands with `cd` to the project root.",
-      ...(task ? [buildTaskPromptPrefix(task)] : []),
+      ...(task
+        ? [buildTaskPromptPrefix(task)]
+        : [
+            "When the user describes a problem or asks a question, focus on analysis and explanation first. Only make code changes when the user clearly indicates they want changes made. Implementation work should go in tasks.",
+          ]),
     ],
   });
   await resourceLoader.reload();
