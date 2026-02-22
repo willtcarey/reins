@@ -4,103 +4,97 @@ Status: **ready for implementation**
 
 ## Goal
 
-Add a long-lived "assistant" session to each project — an always-available conversation that doesn't require creating a task or starting a new scratch session. Useful for quick questions, brainstorming, exploring the codebase, and lightweight interactions that don't warrant their own session.
+Add a prominent "assistant" conversation to each project — an always-available, long-lived session displayed at the top of the sidebar. Useful for quick questions, brainstorming, exploring the codebase, and lightweight interactions that don't warrant a task.
 
 ## Concept
 
-Every project gets exactly one assistant session. It's created lazily (on first use) and persists indefinitely. Unlike scratch sessions, the assistant session:
+The assistant is not a new session type — it's a **UI concept**. The most recent scratch session is promoted to "assistant" status and pinned at the top of the sidebar. Under the hood it's a regular scratch session.
 
-- Is **always visible** in the sidebar — it doesn't get buried in a list.
-- **Cannot be deleted** by the user (it's intrinsic to the project).
-- Has a **fixed identity** — reopening it resumes the same conversation.
-- Does **not** check out a branch or carry task context — it operates on whatever branch is currently checked out.
+- **Always visible** at the top of the sidebar, above tasks.
+- **Long-lived** — the user keeps talking to the same session rather than creating new ones.
+- Clicking it navigates to that session. If no scratch session exists yet, one is created.
+- **"New conversation"** creates a new scratch session, which becomes the new assistant. The previous one drops into a hidden archive.
 
-The assistant session is a regular `sessions` row with a marker distinguishing it from scratch and task sessions.
+This means: no schema changes, no new session type, no new backend endpoints.
 
 ## Data Model
 
-Add a nullable `kind` column to the `sessions` table:
+No changes to the session schema. The assistant is the first item from the existing `listSessions` query (most recent scratch session, ordered by `updated_at DESC`).
 
-- `NULL` — scratch session (existing behavior, backward-compatible default)
-- `'assistant'` — the project's assistant session
-- `'task'` — task session (existing behavior, identified by non-null `task_id`)
+## Compaction: Preserve History
 
-Migration:
+The assistant session will accumulate messages over time and trigger pi's auto-compaction. Today, compaction is destructive — `replaceAllMessages` deletes all stored messages and writes the compacted set. For a long-lived assistant session, we want to **preserve the full history** for display while only sending recent context to the LLM.
 
-```sql
-ALTER TABLE sessions ADD COLUMN kind TEXT;
-```
+### Approach
 
-The `kind` column is informational for scratch/task sessions (they continue to work as before). For the assistant session it serves as the lookup key: "find the session where `project_id = ? AND kind = 'assistant'`".
+When compaction fires:
 
-**Uniqueness constraint:** Enforce at most one assistant session per project at the application level (a unique partial index would also work: `CREATE UNIQUE INDEX idx_one_assistant_per_project ON sessions(project_id) WHERE kind = 'assistant'`). Use the partial index approach for safety.
+1. **Keep all existing messages** in `session_messages` — don't delete them.
+2. **Insert a compaction summary message** — a special message row that marks the compaction boundary and contains the summary. Use a distinct role (e.g. `"compaction_summary"`) or a flag in the JSON blob.
+3. **New messages continue** with seq numbers after the summary.
 
-## Backend Changes
+Two loading modes:
 
-### Session Store (`session-store.ts`)
+- **For the LLM** (resume path, `agent.replaceMessages`): load messages from the last compaction summary onward. This is what gets sent to the model — compact context window.
+- **For display** (GET session endpoint, chat panel): load all messages. The user sees the full conversation history, with compaction summaries rendered as visual dividers.
 
-- **`getAssistantSession(projectId: number): SessionRow | null`** — look up the assistant session for a project.
-- **`createSession`** — accept an optional `kind` parameter and persist it.
+### Changes
 
-### Sessions (`sessions.ts`)
+**`session-store.ts`:**
 
-- **`openAssistantSession(state, projectId, projectDir): ManagedSession`** — get-or-create the assistant session. If the row exists, resume it. If not, create a new session with `kind = 'assistant'`. No branch checkout, no task context.
+- **`replaceAllMessages`** → rename/rework to **`applyCompaction`**. Instead of delete-all + reinsert, it:
+  1. Inserts a compaction summary message at the next seq number with role `"compaction_summary"` and the summary content.
+  2. Inserts the post-compaction messages after the summary.
+  3. Leaves all pre-compaction messages in place.
+- **`loadMessages(sessionId)`** — unchanged, returns all messages (for display).
+- **`loadMessagesForLLM(sessionId)`** — new function. Finds the last compaction summary's seq number and loads only messages after it. If no compaction summary exists, loads all messages (same as today).
 
-### Routes (`routes/sessions.ts`)
+**`sessions.ts`:**
 
-- **`POST /api/projects/:id/assistant`** — open (get-or-create) the assistant session. Returns the same `SessionData` shape as other session endpoints. Idempotent — calling it multiple times returns the same session.
-- **`GET /api/projects/:id/assistant`** — return the assistant session's data if it exists, 404 otherwise. (Alternatively, fold this into the existing `GET /sessions/:sessionId` endpoint since the session has a normal ID once created.)
+- `wireSession` compaction handler: call `applyCompaction` instead of `replaceAllMessages`.
+- `resumeSession`: use `loadMessagesForLLM` when hydrating the agent with `replaceMessages`.
 
-### Session Listing
+**`routes/sessions.ts`:**
 
-`listSessions` currently returns sessions where `task_id IS NULL`. Update the filter to also exclude `kind = 'assistant'` so the assistant session doesn't appear in the scratch session list:
+- GET session endpoint continues to use `loadMessages` (full history) — no change needed.
 
-```sql
-WHERE s.project_id = ? AND s.task_id IS NULL AND (s.kind IS NULL OR s.kind != 'assistant')
-```
+**Chat panel (`chat-panel.ts`):**
+
+- Render compaction summary messages as a visual divider/separator (e.g. a horizontal rule with "Conversation summarized" label), not as a regular chat bubble.
+
+### Note
+
+This compaction change applies to **all sessions**, not just the assistant. It's harmless for short-lived sessions (compaction rarely triggers) and beneficial for any session that happens to run long. No need to scope it to a specific session type.
 
 ## Frontend Changes
 
-### Project Store (`project-store.ts`)
-
-- Add `assistantSessionId: string | null` to the store's state.
-- On `fetchLists` (or a separate lightweight call), fetch the assistant session ID if it exists. The `POST /assistant` endpoint is only called when the user actually opens it.
-- **`openAssistantSession(): Promise<string | null>`** — call `POST /api/projects/:id/assistant`, store the returned session ID, return it for navigation.
-
-### Router (`router.ts`)
-
-Add a route for the assistant session:
-
-- `#/project/:id/assistant` — view the project's assistant session.
-
-This could alternatively reuse the existing `#/project/:id/session/:sessionId` route once the session is created, but a dedicated route makes the "open assistant" action simpler (no need to know the session ID upfront).
-
 ### Session Sidebar (`session-sidebar.ts`)
 
-Add an "Assistant" entry at the top of the sidebar content (above tasks and scratch sessions). This is a single, always-visible button — not a list.
+Replace the current scratch session list with:
 
-- If the assistant session doesn't exist yet, clicking it creates one (via `openAssistantSession()`), then navigates to it.
-- If it exists, clicking navigates directly.
-- Highlight it when it's the active session.
-- Show the activity dot when the assistant session is running/has new activity.
+1. **Assistant button** — always visible at the top of the sidebar content (above the task list). Shows the most recent scratch session. Highlighted when active. Activity dot when running/finished.
+2. **Old scratch sessions** — hidden by default. A small expandable section ("Previous sessions") reveals them if the user wants to revisit one. Not fetched on initial load.
+
+The "New Session" button becomes a "New conversation" action (on the assistant button or nearby). It creates a new scratch session, which takes over as the assistant.
+
+### Project Store (`project-store.ts`)
+
+- On `fetchLists`, continue fetching scratch sessions as today, but the sidebar only uses the first item as the assistant.
+- Optionally defer fetching the full scratch session list until the user expands "Previous sessions".
 
 ### Bare Project URL Resolution
 
-Currently, navigating to `#/project/:id` resolves to the most recent scratch session. Update `setRoute` in `ProjectStore` so that if there are no scratch sessions, it resolves to the assistant session instead (or keep current behavior and let the user click the assistant button explicitly). Leaning toward **no change** here — the assistant is always one click away, and auto-resolving to it could be confusing if the user has tasks.
+No change needed — `setRoute` already resolves `#/project/:id` to the most recent scratch session, which is the assistant.
 
 ## Implementation Steps
 
-1. **Migration** — add `kind` column and partial unique index.
-2. **Backend store + sessions** — `getAssistantSession`, updated `createSession`, `openAssistantSession` function.
-3. **Backend route** — `POST /api/projects/:id/assistant` endpoint.
-4. **Update `listSessions` filter** — exclude assistant sessions from scratch list.
-5. **Frontend store** — `assistantSessionId` state, `openAssistantSession()` action.
-6. **Frontend router** — add `#/project/:id/assistant` route (or navigate via session ID).
-7. **Frontend sidebar** — assistant button in `session-sidebar.ts`.
-8. **Feature doc** — update `docs/features/projects.md` or create a new doc.
+1. **Compaction rework** — replace destructive `replaceAllMessages` with `applyCompaction` that preserves history and inserts a summary marker. Add `loadMessagesForLLM`. Update `wireSession` and `resumeSession`.
+2. **Chat panel** — render compaction summary messages as visual dividers.
+3. **Sidebar UI** — extract the assistant (first scratch session) and display it as a pinned button at the top. Hide remaining scratch sessions behind a collapsible section.
+4. **"New conversation"** — wire up an action that creates a new scratch session and navigates to it (it becomes the new assistant automatically since it's the most recent).
+5. **Lazy fetch of old sessions** — optionally defer loading the full scratch session list until the user expands the archive section.
+6. **Feature doc** — update `docs/features/projects.md` or create a new doc.
 
-## Open Questions
+## Future Work
 
-1. **Name reset / clear conversation.** Should the user be able to "reset" the assistant session (clear its history and start fresh)? This could be a "Clear conversation" action rather than delete + recreate. Not needed for v1 but worth considering.
-2. **System prompt.** Should the assistant session get a distinct system prompt hint (e.g. "You are the project assistant for quick questions and brainstorming")? Leaning toward no — the default pi system prompt with the project's AGENTS.md context is sufficient.
-3. **Compaction.** The assistant session will accumulate messages over time. Pi's auto-compaction already handles this, so no special handling needed — but worth monitoring that long-lived sessions compact gracefully.
+- **Lazy message loading.** Once assistant sessions accumulate long histories (spanning multiple compactions), loading all messages upfront will become expensive. Add paginated/lazy loading — fetch recent messages first, load older ones as the user scrolls up. Not needed for v1.
