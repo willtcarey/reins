@@ -4,8 +4,12 @@
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 fn main() {
-    let backend_url = std::env::var("REINS_BACKEND_URL")
-        .unwrap_or_else(|_| "http://localhost:3100".to_string());
+    let backend_url = option_env!("REINS_BACKEND_URL")
+        .map(String::from)
+        .unwrap_or_else(|| {
+            std::env::var("REINS_BACKEND_URL")
+                .unwrap_or_else(|_| "http://localhost:3100".to_string())
+        });
 
     tauri::Builder::default()
         .setup(move |app| {

@@ -6,10 +6,15 @@ network — no local asset serving or build pipeline involved.
 
 ## How It Works
 
-The app is ~20 lines of Rust. On launch it reads `REINS_BACKEND_URL` (defaults
-to `http://localhost:3100`) and opens a webview pointing at that URL. The
-backend already serves the frontend files, so relative URLs (`/api/...`, `/ws`)
-just work.
+The app is ~20 lines of Rust. It opens a webview pointing at a backend URL.
+The URL is resolved in this order:
+
+1. **Compile-time** — if `REINS_BACKEND_URL` is set when building, it's baked in via `option_env!`
+2. **Runtime env var** — `REINS_BACKEND_URL` at launch overrides the default
+3. **Default** — `http://localhost:3100`
+
+The backend already serves the frontend files, so relative URLs (`/api/...`,
+`/ws`) just work.
 
 ## Prerequisites (Mac only)
 
@@ -40,6 +45,14 @@ REINS_BACKEND_URL=http://<your-tailscale-host>:3100 bun run --filter tauri build
 ```
 
 Output: `packages/tauri/src-tauri/target/release/bundle/`
+
+## CI
+
+The `.github/workflows/build-tauri-mac.yml` workflow builds the macOS `.app`
+and `.dmg` on every tag push (`v*`). It can also be triggered manually from any
+branch via `workflow_dispatch`. On tag pushes it creates a draft GitHub Release
+with the `.dmg` attached. The `REINS_BACKEND_URL` GitHub secret is baked in at
+compile time so release builds point at the production backend.
 
 ## Key Files
 
