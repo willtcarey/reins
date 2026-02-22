@@ -54,9 +54,13 @@ class WebViewModel: ObservableObject {
     }
 
     func load() {
+        print("[Reins] Loading \(backendURL)")
         let request = URLRequest(url: backendURL)
+        webView.navigationDelegate = navigationDelegate
         webView.load(request)
     }
+
+    private let navigationDelegate = WebViewNavigationDelegate()
 
     func reload() {
         webView.reload()
@@ -100,6 +104,20 @@ class MessageHandler: NSObject, WKScriptMessageHandler {
             )
             center.add(request)
         }
+    }
+}
+
+class WebViewNavigationDelegate: NSObject, WKNavigationDelegate {
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        print("[Reins] Page loaded: \(webView.url?.absoluteString ?? "unknown")")
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        print("[Reins] Navigation failed: \(error.localizedDescription)")
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        print("[Reins] Provisional navigation failed: \(error.localizedDescription)")
     }
 }
 
