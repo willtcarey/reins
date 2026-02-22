@@ -65,12 +65,18 @@ interface StreamingTextBlock {
   text: string;
 }
 
-interface StreamingToolBlock {
-  type: "tool";
+/** Normalized shape for rendering a tool call in both streaming and finalized states. */
+interface ToolBlockData {
   id: string;
   name: string;
-  args: any;
+  args: Record<string, any>;
   status: "running" | "done";
+  result?: { content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] };
+  isError?: boolean;
+}
+
+interface StreamingToolBlock extends ToolBlockData {
+  type: "tool";
 }
 
 type StreamingBlock = StreamingTextBlock | StreamingToolBlock;
@@ -186,7 +192,7 @@ export class ChatPanel extends LitElement {
       case "tool_execution_end": {
         const blocks = this.streamingBlocks.map((b) =>
           b.type === "tool" && b.id === event.toolCallId
-            ? { ...b, status: "done" as const }
+            ? { ...b, status: "done" as const, result: event.result, isError: event.isError }
             : b
         );
         this.streamingBlocks = blocks;
@@ -353,25 +359,58 @@ export class ChatPanel extends LitElement {
   }
 
   private renderToolCall(tc: ToolCall) {
-    const expanded = this.expandedTools.has(tc.id);
-    // Find matching tool result
     const result = this.messages.find(
       (m): m is ToolResultMessage => m.role === "toolResult" && m.toolCallId === tc.id
     );
-    const summary = this.toolSummary(tc.name, tc.arguments);
+    return this.renderToolBlock({
+      id: tc.id,
+      name: tc.name,
+      args: tc.arguments,
+      status: "done",
+      result: result ? { content: result.content } : undefined,
+      isError: result?.isError,
+    });
+  }
 
-    const images = result ? this.getToolResultImages(result) : [];
+  private renderToolBlock(block: ToolBlockData) {
+    const expanded = this.expandedTools.has(block.id);
+    const summary = this.toolSummary(block.name, block.args);
+    const running = block.status === "running";
 
+    const images = block.result?.content?.filter(
+      (c): c is { type: "image"; data: string; mimeType: string } => c.type === "image"
+    ) ?? [];
+
+    const resultText = block.result?.content
+      ?.filter((c): c is { type: "text"; text: string } => c.type === "text")
+      .map((c) => c.text)
+      .join("\n")
+      .slice(0, 5000) ?? "";
+
+    // Running tools: show spinner, no expand/collapse
+    if (running) {
+      return html`
+        <div class="mt-1 mb-1 ml-2 border-l-2 border-yellow-500 pl-3">
+          <div class="flex items-center gap-2 text-xs text-zinc-400 truncate" title="${summary || block.name}">
+            <span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>
+            <span class="font-mono font-semibold flex-shrink-0">${block.name}</span>
+            ${summary ? html`<span class="font-mono text-zinc-500 truncate">${summary}</span>` : nothing}
+          </div>
+        </div>
+      `;
+    }
+
+    // Done: expand/collapse with args + result
     return html`
       <div class="mt-1 ml-2 border-l-2 border-zinc-600 pl-3">
         <button
           class="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer truncate max-w-full"
-          title="${summary || tc.name}"
-          @click=${() => this.toggleTool(tc.id)}
+          title="${summary || block.name}"
+          @click=${() => this.toggleTool(block.id)}
         >
           <span class="font-mono flex-shrink-0">${expanded ? "▼" : "▶"}</span>
-          <span class="font-semibold flex-shrink-0">${tc.name}</span>
-          ${result?.isError ? html`<span class="text-red-400 ml-1 flex-shrink-0">error</span>` : nothing}
+          <span class="font-semibold flex-shrink-0">${block.name}</span>
+          ${block.isError ? html`<span class="text-red-400 ml-1 flex-shrink-0">error</span>` : nothing}
           ${summary ? html`<span class="font-mono text-zinc-500 truncate">${summary}</span>` : nothing}
         </button>
         ${!expanded && images.length > 0 ? html`
@@ -384,34 +423,20 @@ export class ChatPanel extends LitElement {
         ${expanded ? html`
           <div class="mt-1 text-xs">
             <div class="text-zinc-500 mb-1">Arguments:</div>
-            <pre class="bg-zinc-900 rounded p-2 overflow-x-auto text-zinc-300 max-h-48 overflow-y-auto">${JSON.stringify(tc.arguments, null, 2)}</pre>
-            ${result ? html`
-              <div class="text-zinc-500 mt-2 mb-1">Result${result.isError ? " (error)" : ""}:</div>
-              ${this.getToolResultImages(result).map(
+            <pre class="bg-zinc-900 rounded p-2 overflow-x-auto text-zinc-300 max-h-48 overflow-y-auto">${JSON.stringify(block.args, null, 2)}</pre>
+            ${block.result ? html`
+              <div class="text-zinc-500 mt-2 mb-1">Result${block.isError ? " (error)" : ""}:</div>
+              ${images.map(
                 (img) => html`<img src="data:${img.mimeType};base64,${img.data}" class="max-w-full max-h-96 rounded mt-1 mb-1" alt="Tool result image" />`
               )}
-              ${this.getToolResultText(result) ? html`
-                <pre class="bg-zinc-900 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto ${result.isError ? "text-red-400" : "text-zinc-300"}">${this.getToolResultText(result)}</pre>
+              ${resultText ? html`
+                <pre class="bg-zinc-900 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto ${block.isError ? "text-red-400" : "text-zinc-300"}">${resultText}</pre>
               ` : nothing}
             ` : nothing}
           </div>
         ` : nothing}
       </div>
     `;
-  }
-
-  private getToolResultText(msg: ToolResultMessage): string {
-    return msg.content
-      .filter((c): c is TextContent => c.type === "text")
-      .map((c) => c.text)
-      .join("\n")
-      .slice(0, 5000); // Truncate very long results for display
-  }
-
-  private getToolResultImages(msg: ToolResultMessage): { data: string; mimeType: string }[] {
-    return msg.content.filter(
-      (c): c is { type: "image"; data: string; mimeType: string } => c.type === "image"
-    );
   }
 
   private renderToolResultMessage(_msg: ToolResultMessage) {
@@ -457,19 +482,7 @@ export class ChatPanel extends LitElement {
               </div>
             `;
           }
-          // tool block
-          const summary = this.toolSummary(block.name, block.args);
-          return html`
-            <div class="mt-1 mb-1 ml-2 border-l-2 ${block.status === "running" ? "border-yellow-500" : "border-zinc-600"} pl-3 flex items-center gap-2 text-xs text-zinc-400 truncate" title="${summary || block.name}">
-              ${block.status === "running" ? html`
-                <span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>
-              ` : html`
-                <span class="text-zinc-500 flex-shrink-0">✓</span>
-              `}
-              <span class="font-mono font-semibold flex-shrink-0">${block.name}</span>
-              ${summary ? html`<span class="font-mono text-zinc-500 truncate">${summary}</span>` : nothing}
-            </div>
-          `;
+          return this.renderToolBlock(block);
         })}
       </div>
     `;
