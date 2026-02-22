@@ -72,7 +72,11 @@ async function buildSessionOpts(
 
   const resourceLoader = new DefaultResourceLoader({
     cwd: projectDir,
-    ...(task ? { appendSystemPrompt: buildTaskPromptPrefix(task) } : {}),
+    appendSystemPromptOverride: (base) => [
+      ...base,
+      "The bash tool already executes in the current working directory. Do not prefix commands with `cd` to the project root.",
+      ...(task ? [buildTaskPromptPrefix(task)] : []),
+    ],
   });
   await resourceLoader.reload();
 
