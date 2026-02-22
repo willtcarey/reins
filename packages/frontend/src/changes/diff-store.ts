@@ -147,7 +147,7 @@ export class DiffStore {
     this.contextLines = DEFAULT_CONTEXT;
     this.notify();
     this._restartPolling();
-    if (this._spreadActive) this._restartSpreadPolling();
+    this._restartSpreadPolling();
   }
 
   // ---- Branch management -----------------------------------------------------
@@ -164,7 +164,7 @@ export class DiffStore {
     this.spread = null;
     this.notify();
     this.refresh();
-    if (this._spreadActive) this._restartSpreadPolling();
+    this._restartSpreadPolling();
   }
 
   // ---- Diff mode -------------------------------------------------------------
@@ -288,22 +288,6 @@ export class DiffStore {
 
   // ---- Spread polling (sync status) ------------------------------------------
 
-  /** Whether spread polling is active (Changes tab visible). */
-  private _spreadActive = false;
-
-  /** Start polling spread data. Call when the Changes tab becomes visible. */
-  startSpreadPolling() {
-    if (this._spreadActive) return;
-    this._spreadActive = true;
-    this._restartSpreadPolling();
-  }
-
-  /** Stop polling spread data. Call when the Changes tab is hidden. */
-  stopSpreadPolling() {
-    this._spreadActive = false;
-    this._stopSpreadPolling();
-  }
-
   /** Fetch spread, optionally with a remote git fetch first. */
   async fetchSpread(remote = false) {
     const branch = this._branch ?? this.fileData.branch;
@@ -391,7 +375,7 @@ export class DiffStore {
 
   private _restartSpreadPolling() {
     this._stopSpreadPolling();
-    if (this._projectId == null || !this._spreadActive) return;
+    if (this._projectId == null) return;
 
     // First tick always fetches remote
     this._spreadTickCount = 0;

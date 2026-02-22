@@ -94,9 +94,6 @@ export class DiffPanel extends LitElement {
     if (changed.has("visible")) {
       if (this.visible) {
         this._fetchFresh();
-        this.store?.startSpreadPolling();
-      } else {
-        this.store?.stopSpreadPolling();
       }
     }
   }
@@ -110,7 +107,6 @@ export class DiffPanel extends LitElement {
     this._unsubscribe?.();
     this._unsubscribe = null;
     this.scrollSpy.destroy();
-    this.store?.stopSpreadPolling();
     // Release the full diff data when leaving the view
     this.store?.clearFullDiff();
   }
