@@ -16,15 +16,12 @@ fn main() {
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(600.0, 400.0)
                 .initialization_script(
-                    r#"
-                    document.addEventListener('keydown', (e) => {
-                        // Cmd+R or Ctrl+R to reload
+                    "document.addEventListener('keydown', (e) => {
                         if ((e.metaKey || e.ctrlKey) && e.key === 'r') {
                             e.preventDefault();
                             window.location.reload();
                         }
-                    });
-                    "#,
+                    });"
                 )
                 .build()?;
 
