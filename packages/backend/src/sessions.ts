@@ -14,8 +14,9 @@ import {
   listSessions as dbListSessions,
   listTaskSessions as dbListTaskSessions,
   persistMessages,
-  replaceAllMessages,
+  applyCompaction,
   loadMessages,
+  loadMessagesForLLM,
   updateSessionMeta,
   type SessionListItem,
 } from "./session-store.js";
@@ -159,14 +160,14 @@ export async function resumeSession(
 
   const agentSession = result.session;
 
-  // Hydrate with stored messages
-  const messages = loadMessages(sessionId);
+  // Hydrate with stored messages (only post-compaction for LLM context)
+  const messages = loadMessagesForLLM(sessionId);
   if (messages.length > 0) {
     agentSession.agent.replaceMessages(messages);
   }
 
   const managed = wireSession(state, agentSession, sessionId);
-  console.log(`  Session resumed: ${sessionId} (${messages.length} messages, total: ${state.sessions.size})`);
+  console.log(`  Session resumed: ${sessionId} (${messages.length} messages for LLM, total: ${state.sessions.size})`);
   return managed;
 }
 
@@ -215,12 +216,12 @@ function wireSession(
     }
 
     // After compaction, pi replaces the message array with a shorter
-    // summarized version. We need to replace (not append) our stored messages
-    // to match, otherwise resume would load the old uncompacted history.
+    // summarized version. We preserve all existing messages and append
+    // a compaction summary marker + the new compacted messages.
     if (event.type === "auto_compaction_end" && !event.aborted) {
       try {
-        replaceAllMessages(sessionId, agentSession.messages);
-        console.log(`  Compaction persisted for ${sessionId} (${agentSession.messages.length} messages)`);
+        applyCompaction(sessionId, agentSession.messages);
+        console.log(`  Compaction persisted for ${sessionId} (${agentSession.messages.length} post-compaction messages)`);
       } catch (err) {
         console.error(`  Failed to persist compaction for ${sessionId}:`, err);
       }

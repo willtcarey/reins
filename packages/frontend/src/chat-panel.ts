@@ -445,6 +445,16 @@ export class ChatPanel extends LitElement {
     return nothing;
   }
 
+  private renderCompactionSummary() {
+    return html`
+      <div class="flex items-center gap-3 my-4">
+        <div class="flex-1 border-t border-zinc-600"></div>
+        <span class="text-[10px] text-zinc-500 uppercase tracking-wide shrink-0">Conversation summarized</span>
+        <div class="flex-1 border-t border-zinc-600"></div>
+      </div>
+    `;
+  }
+
   private renderMessage(msg: AgentMessage) {
     switch (msg.role) {
       case "user":
@@ -453,6 +463,8 @@ export class ChatPanel extends LitElement {
         return this.renderAssistantMessage(msg);
       case "toolResult":
         return this.renderToolResultMessage(msg);
+      case "compaction_summary" as any:
+        return this.renderCompactionSummary();
       default:
         return nothing;
     }

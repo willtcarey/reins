@@ -10,7 +10,7 @@ Reins organises work in a three-level hierarchy:
 
 - A **project** points at a local git repository and tracks a base branch (e.g. `main`).
 - A **task** belongs to a project. It has a title, an optional description, and a dedicated git branch.
-- A **session** is a single agent conversation. Sessions can be standalone (project-level) or belong to a task.
+- A **session** is a single agent conversation. Sessions belong to either the project's [assistant](assistant.md) or a task.
 
 Task sessions inherit context from their parent task: the agent's system prompt includes the task title and description so the agent understands what it's working on without being told each time.
 

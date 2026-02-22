@@ -205,38 +205,38 @@ export class SessionSidebar extends LitElement {
           </button>
         </div>
 
-        <!-- New Task button -->
-        <div class="p-2 border-b border-zinc-700">
-          <button
-            class="w-full py-1.5 px-3 text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600 rounded cursor-pointer transition-colors"
-            @click=${() => { this.taskForm?.open(); }}
-          >
-            + New Task
-          </button>
-        </div>
-
         <!-- Task dialogs -->
         <task-form .projectId=${projectId}></task-form>
         <task-detail></task-detail>
 
-        <!-- Scrollable content -->
+        <!-- Assistant (pinned above tasks) -->
+        <session-list
+          .sessions=${sessions}
+          .activeSessionId=${activeSessionId}
+          .activityMap=${this.activityMap}
+        ></session-list>
+
+        <!-- Scrollable content: tasks -->
         <div class="flex-1 overflow-y-auto">
           ${loading && tasks.length === 0 && sessions.length === 0 ? html`
             <div class="p-3 text-xs text-zinc-500">Loading...</div>
           ` : html`
+            <!-- New Task button -->
+            <div class="p-2 border-b border-zinc-700">
+              <button
+                class="w-full py-1.5 px-3 text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600 rounded cursor-pointer transition-colors"
+                @click=${() => { this.taskForm?.open(); }}
+              >
+                + New Task
+              </button>
+            </div>
+
             <task-list
               .projectId=${projectId}
               .tasks=${tasks}
               .activeSessionId=${activeSessionId}
               .activityMap=${this.activityMap}
             ></task-list>
-
-            <session-list
-              .sessions=${sessions}
-              .activeSessionId=${activeSessionId}
-              .hasTasks=${tasks.length > 0}
-              .activityMap=${this.activityMap}
-            ></session-list>
           `}
         </div>
       </div>
