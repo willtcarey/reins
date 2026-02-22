@@ -3,9 +3,7 @@
   "productName": "REINS",
   "version": "0.1.0",
   "identifier": "net.reins.app",
-  "build": {
-    "frontendDist": "../dist"
-  },
+  "build": {},
   "app": {
     "security": {
       "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' http: https: ws: wss: data: blob:"
