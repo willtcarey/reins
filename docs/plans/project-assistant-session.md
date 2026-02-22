@@ -62,6 +62,12 @@ Two loading modes:
 
 - Render compaction summary messages as a visual divider/separator (e.g. a horizontal rule with "Conversation summarized" label), not as a regular chat bubble.
 
+### Pruning old tool results
+
+After inserting the compaction summary, prune tool result content from messages before the summary boundary. Tool results (bash output, file contents) are the bulk of stored data and are no longer needed — they won't be sent to the LLM, and the user only needs to see that a tool was called when scrolling through old history.
+
+Specifically: for `toolResult` messages before the compaction summary, replace their content with a minimal placeholder (e.g. `[pruned]`) while keeping the role, tool name, and error status intact. This preserves the conversation structure for display without the storage cost.
+
 ### Note
 
 This compaction change applies to **all sessions**, not just the assistant. It's harmless for short-lived sessions (compaction rarely triggers) and beneficial for any session that happens to run long. No need to scope it to a specific session type.
