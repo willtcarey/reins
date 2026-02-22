@@ -52,8 +52,12 @@ environment variable still takes priority.
 ## Building a .app Bundle
 
 ```sh
-xcodebuild -project packages/macos/Reins.xcodeproj -scheme Reins -configuration Release build
+xcodebuild -project packages/macos/Reins.xcodeproj -scheme Reins \
+  -configuration Release SYMROOT=$(pwd)/packages/macos/dist build
 ```
+
+The built `Reins.app` ends up in `packages/macos/dist/Release/` (or
+`Debug/` for debug builds).
 
 ## Key Features
 

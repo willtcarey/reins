@@ -14,5 +14,5 @@ jobs:
           xcodebuild -project packages/macos/Reins.xcodeproj \
             -scheme Reins \
             -configuration Debug \
-            -derivedDataPath build \
+            SYMROOT=$(pwd)/packages/macos/dist \
             build
