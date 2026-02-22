@@ -4,6 +4,7 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "build": "bun run --filter '@reins/frontend' build",
-    "dev": "bun run --filter '@reins/frontend' dev & bun packages/backend/dev.ts"
+    "dev": "bun run --filter '@reins/frontend' dev & bun packages/backend/dev.ts",
+    "tauri": "bun run --filter tauri dev"
   }
 }
