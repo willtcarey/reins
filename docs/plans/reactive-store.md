@@ -189,7 +189,7 @@ WS events stay lean — no rich payloads like including the updated task list in
 
 This is a refactor, not a rewrite. The stores already hold the right state and do the right fetches — they just need to be consolidated and the trigger points moved inward.
 
-1. **Create AppStore, move WS event handling in** — AppStore wraps ProjectStore's state and methods, takes the AppClient, and handles events internally. ActivityTracker merges into AppStore. Remove the `client.onEvent` and `client.onConnection` handlers from app.ts.
+1. ✅ **Create AppStore, move WS event handling in** — AppStore wraps ProjectStore's state and methods, takes the AppClient, and handles events internally. ActivityTracker merges into AppStore. Remove the `client.onEvent` and `client.onConnection` handlers from app.ts.
 2. **AppStore owns DiffStore** — AppStore creates and owns the DiffStore instance. Cross-cutting logic (agent_end → diff refresh, session change → branch update, project change → diff project) moves from app.ts into AppStore.
 3. **Absorb project list** — AppStore owns the project list. project-sidebar reads from the store instead of fetching directly.
 4. **Absorb task session sublists** — AppStore tracks expanded task sessions. task-list reads from the store instead of fetching directly.

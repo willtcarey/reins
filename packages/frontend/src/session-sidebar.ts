@@ -7,14 +7,14 @@
  *  - task-list        — task listing with expandable sessions
  *  - session-list     — scratch session listing
  *
- * Reads project-level data (tasks, sessions) from the shared ProjectStore
+ * Reads project-level data (tasks, sessions) from the shared AppStore
  * and calls store actions for mutations (create session, create task session).
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { navigateToSession, navigateToProject } from "./router.js";
-import type { ProjectStore } from "./project-store.js";
+import type { AppStore } from "./app-store.js";
 import type { ActivityState } from "./activity-tracker.js";
 import type { TaskList } from "./task-list.js";
 import type { TaskForm } from "./task-form.js";
@@ -32,7 +32,7 @@ export class SessionSidebar extends LitElement {
   }
 
   @property({ attribute: false })
-  store: ProjectStore | null = null;
+  store: AppStore | null = null;
 
   /** Activity states for all sessions (running/finished indicators). */
   @property({ attribute: false })

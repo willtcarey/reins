@@ -2,8 +2,9 @@
  * App Shell
  *
  * Root component with session sidebar, chat panel, and diff panel.
- * Initializes shared stores, the WebSocket client, and wires everything
- * together. Uses light DOM for Tailwind compatibility.
+ * Creates the AppStore (which owns WS event handling and activity
+ * tracking) and passes it to views. Uses light DOM for Tailwind
+ * compatibility.
  *
  * Routing: hash-based
  *  - `#/project/:id`                    — view project, resolves to most recent session
@@ -18,8 +19,7 @@ import { AppClient } from "./ws-client.js";
 import type { DiffPanel } from "./changes/diff-panel.js";
 import { DiffStore } from "./changes/diff-store.js";
 import { FileTreeState } from "./changes/file-tree-state.js";
-import { ActivityTracker } from "./activity-tracker.js";
-import { ProjectStore } from "./project-store.js";
+import { AppStore } from "./app-store.js";
 import { parseHash, navigateToSession } from "./router.js";
 import type { Route } from "./router.js";
 
@@ -30,9 +30,6 @@ import "./changes/diff-file-tree.js";
 import "./session-sidebar.js";
 import "./branch-indicator.js";
 
-// Tools that modify files and should trigger a diff refresh
-const FILE_MODIFYING_TOOLS = new Set(["write", "edit", "bash"]);
-
 @customElement("app-shell")
 export class AppShell extends LitElement {
   override createRenderRoot() {
@@ -40,25 +37,28 @@ export class AppShell extends LitElement {
   }
 
   private client = new AppClient();
-  private projectStore = new ProjectStore();
+  private appStore = new AppStore(this.client);
   private diffStore = new DiffStore();
   private fileTreeState = new FileTreeState();
-  private activityTracker = new ActivityTracker();
   private _unsubscribeStore: (() => void) | null = null;
 
-  @state() private connected = false;
   @state() private activeTab: "chat" | "changes" = "chat";
-  @state() private activityMap = new Map<string, import("./activity-tracker.js").ActivityState>();
   /** Bumped on every store notification to trigger a re-render. */
   @state() private _storeVersion = 0;
 
   override connectedCallback() {
     super.connectedCallback();
 
-    // Subscribe to project store changes
-    this._unsubscribeStore = this.projectStore.subscribe(() => {
+    // Subscribe to app store changes (covers project store + activity)
+    this._unsubscribeStore = this.appStore.subscribe(() => {
       this._storeVersion++;
+      this.updateTitleAndFavicon();
     });
+
+    // Bridge: AppStore triggers diff refresh until step 2 absorbs DiffStore
+    this.appStore.onDiffRefreshNeeded = () => {
+      this.diffStore.refresh();
+    };
 
     // Apply initial route
     const route = parseHash();
@@ -67,50 +67,6 @@ export class AppShell extends LitElement {
 
     // Listen for hash changes
     window.addEventListener("hashchange", this.onHashChange);
-
-    this.client.onConnection((connected) => {
-      this.connected = connected;
-      // On reconnect, re-fetch the active session to catch up on missed events
-      if (connected && this.projectStore.sessionId) {
-        this.projectStore.refreshSession();
-      }
-    });
-
-    // Track session activity and refresh diff panel
-    this.client.onEvent((sessionId, event) => {
-      const store = this.projectStore;
-
-      // Handle task_updated broadcast (not tagged with a sessionId)
-      if (event.type === "task_updated" && event.projectId === store.projectId) {
-        store.refreshLists();
-        return;
-      }
-
-      // Track activity for all sessions
-      if (sessionId && event.type === "agent_start") {
-        this.activityTracker.setRunning(sessionId);
-      } else if (sessionId && event.type === "agent_end") {
-        this.activityTracker.setFinished(sessionId, store.sessionId);
-        setTimeout(() => store.refreshLists(), 500);
-      }
-
-      // Only refresh diff for the session we're viewing
-      if (sessionId !== store.sessionId) return;
-
-      const refreshDiff =
-        (event.type === "tool_execution_end" && FILE_MODIFYING_TOOLS.has(event.toolName)) ||
-        event.type === "agent_end";
-
-      if (refreshDiff) {
-        setTimeout(() => this.diffStore.refresh(), 500);
-      }
-    });
-
-    // React to activity state changes (favicon, title)
-    this.activityTracker.onChange(() => {
-      this.activityMap = this.activityTracker.getAll();
-      this.updateTitleAndFavicon();
-    });
 
     this.client.connect();
   }
@@ -121,11 +77,12 @@ export class AppShell extends LitElement {
     window.removeEventListener("hashchange", this.onHashChange);
     this.client.disconnect();
     this.diffStore.dispose();
+    this.appStore.dispose();
   }
 
   private onHashChange = () => {
     const route = parseHash();
-    if (route.projectId !== this.projectStore.projectId) {
+    if (route.projectId !== this.appStore.projectId) {
       this.diffStore.setProject(route.projectId);
       this.fileTreeState.reset();
     }
@@ -133,13 +90,14 @@ export class AppShell extends LitElement {
   };
 
   private async applyRoute(route: Route) {
-    const result = await this.projectStore.setRoute(route.projectId, route.sessionId);
+    const store = this.appStore;
+    const result = await store.setRoute(route.projectId, route.sessionId);
     if (result?.navigateTo && route.projectId != null) {
       navigateToSession(route.projectId, result.navigateTo, true);
     }
     // Clear activity notification when viewing a session
-    if (this.projectStore.sessionData) {
-      this.activityTracker.clear(this.projectStore.sessionData.id);
+    if (store.sessionData) {
+      store.clearActivity(store.sessionData.id);
     }
     // Wire the viewed session's branch into the diff store
     this.updateDiffBranch();
@@ -150,17 +108,17 @@ export class AppShell extends LitElement {
    * Task sessions → task's branch_name; scratch sessions → null (HEAD).
    */
   private updateDiffBranch() {
-    const session = this.projectStore.sessionData;
+    const session = this.appStore.sessionData;
     if (!session?.task_id) {
       this.diffStore.setBranch(null);
       return;
     }
-    const task = this.projectStore.tasks.find((t) => t.id === session.task_id);
+    const task = this.appStore.tasks.find((t) => t.id === session.task_id);
     this.diffStore.setBranch(task?.branch_name ?? null);
   }
 
   private updateTitleAndFavicon(): void {
-    const { running, finished } = this.activityTracker.summary;
+    const { running, finished } = this.appStore.activitySummary;
 
     if (running > 0) {
       document.title = `(${running} running) REINS`;
@@ -213,13 +171,13 @@ export class AppShell extends LitElement {
   override render() {
     // Read from store (the _storeVersion state ensures re-renders on changes)
     void this._storeVersion;
-    const store = this.projectStore;
+    const store = this.appStore;
     const hasProject = store.projectId != null;
 
     return html`
       <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden">
         <!-- Connection status bar -->
-        ${!this.connected ? html`
+        ${!store.connected ? html`
           <div class="bg-yellow-800 text-yellow-200 text-xs text-center py-1">
             Connecting to server...
           </div>
@@ -230,7 +188,7 @@ export class AppShell extends LitElement {
           <!-- Session sidebar -->
           <session-sidebar
             .store=${store}
-            .activityMap=${this.activityMap}
+            .activityMap=${store.activityMap}
           ></session-sidebar>
 
           ${hasProject ? html`
@@ -263,7 +221,7 @@ export class AppShell extends LitElement {
                       Refresh
                     </button>
                   ` : ""}
-                  ${this.connected
+                  ${store.connected
                     ? html`<span class="w-2 h-2 rounded-full bg-green-500" title="Connected"></span>`
                     : html`<span class="w-2 h-2 rounded-full bg-red-500" title="Disconnected"></span>`
                   }
