@@ -9,9 +9,9 @@
  * diff-panel and diff-file-tree components, eliminating duplicate fetches.
  */
 
-import type { DiffFile, DiffFileSummary } from "./types.js";
-import { sortDiffFiles, sortFileSummaries } from "./diff-sort.js";
-import { Highlighter } from "./highlighter.js";
+import type { DiffFile, DiffFileSummary } from "../changes/types.js";
+import { sortDiffFiles, sortFileSummaries } from "../changes/diff-sort.js";
+import { Highlighter } from "../changes/highlighter.js";
 
 const DEFAULT_CONTEXT = 3;
 const POLL_INTERVAL = 5000;

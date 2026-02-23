@@ -11,7 +11,7 @@
  * update state.
  */
 
-import type { SessionData, SessionListItem, TaskListItem } from "./ws-client.js";
+import type { SessionData, SessionListItem, TaskListItem } from "../ws-client.js";
 
 export type ProjectStoreListener = () => void;
 

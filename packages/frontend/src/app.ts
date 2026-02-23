@@ -17,9 +17,8 @@ import { keyed } from "lit/directives/keyed.js";
 import { customElement, state } from "lit/decorators.js";
 import { AppClient } from "./ws-client.js";
 import type { DiffPanel } from "./changes/diff-panel.js";
-import { DiffStore } from "./changes/diff-store.js";
 import { FileTreeState } from "./changes/file-tree-state.js";
-import { AppStore } from "./app-store.js";
+import { AppStore } from "./stores/app-store.js";
 import { parseHash, navigateToSession } from "./router.js";
 import type { Route } from "./router.js";
 
@@ -38,7 +37,6 @@ export class AppShell extends LitElement {
 
   private client = new AppClient();
   private appStore = new AppStore(this.client);
-  private diffStore = new DiffStore();
   private fileTreeState = new FileTreeState();
   private _unsubscribeStore: (() => void) | null = null;
 
@@ -55,14 +53,8 @@ export class AppShell extends LitElement {
       this.updateTitleAndFavicon();
     });
 
-    // Bridge: AppStore triggers diff refresh until step 2 absorbs DiffStore
-    this.appStore.onDiffRefreshNeeded = () => {
-      this.diffStore.refresh();
-    };
-
     // Apply initial route
     const route = parseHash();
-    this.diffStore.setProject(route.projectId);
     this.applyRoute(route);
 
     // Listen for hash changes
@@ -76,14 +68,12 @@ export class AppShell extends LitElement {
     this._unsubscribeStore?.();
     window.removeEventListener("hashchange", this.onHashChange);
     this.client.disconnect();
-    this.diffStore.dispose();
     this.appStore.dispose();
   }
 
   private onHashChange = () => {
     const route = parseHash();
     if (route.projectId !== this.appStore.projectId) {
-      this.diffStore.setProject(route.projectId);
       this.fileTreeState.reset();
     }
     this.applyRoute(route);
@@ -99,22 +89,6 @@ export class AppShell extends LitElement {
     if (store.sessionData) {
       store.clearActivity(store.sessionData.id);
     }
-    // Wire the viewed session's branch into the diff store
-    this.updateDiffBranch();
-  }
-
-  /**
-   * Resolve the viewed session's task branch and update the diff store.
-   * Task sessions → task's branch_name; scratch sessions → null (HEAD).
-   */
-  private updateDiffBranch() {
-    const session = this.appStore.sessionData;
-    if (!session?.task_id) {
-      this.diffStore.setBranch(null);
-      return;
-    }
-    const task = this.appStore.tasks.find((t) => t.id === session.task_id);
-    this.diffStore.setBranch(task?.branch_name ?? null);
   }
 
   private updateTitleAndFavicon(): void {
@@ -130,8 +104,8 @@ export class AppShell extends LitElement {
   }
 
   private handleRefreshDiff() {
-    this.diffStore.refresh();
-    this.diffStore.fetchFullDiff();
+    this.appStore.diffStore.refresh();
+    this.appStore.diffStore.fetchFullDiff();
   }
 
   private getDiffPanel(): DiffPanel | null {
@@ -196,7 +170,7 @@ export class AppShell extends LitElement {
               <!-- Tab bar -->
               <div class="flex items-center border-b border-zinc-700 bg-zinc-800/50">
                 <branch-indicator
-                  .currentBranch=${this.diffStore.branch ?? this.diffStore.fileData.branch}
+                  .currentBranch=${this.appStore.diffStore.branch ?? this.appStore.diffStore.fileData.branch}
                 ></branch-indicator>
                 <button
                   class="px-4 py-2 text-sm font-semibold transition-colors cursor-pointer ${this.activeTab === "chat" ? "text-zinc-100 border-b-2 border-blue-500" : "text-zinc-500 hover:text-zinc-300"}"
@@ -239,7 +213,7 @@ export class AppShell extends LitElement {
                 <!-- File tree sidebar (chat tab, wide screens only) -->
                 <div class="w-60 border-l border-zinc-700 shrink-0 hidden lg:block">
                   <diff-file-tree
-                    .store=${this.diffStore}
+                    .store=${this.appStore.diffStore}
                     .treeState=${this.fileTreeState}
                     @file-select=${this.handleChatFileSelect}
                   ></diff-file-tree>
@@ -247,7 +221,7 @@ export class AppShell extends LitElement {
               </div>
               ${keyed(store.projectId, html`<diff-panel
                 class="flex-1 min-h-0 ${this.activeTab === "changes" ? "" : "hidden"}"
-                .store=${this.diffStore}
+                .store=${this.appStore.diffStore}
                 .treeState=${this.fileTreeState}
                 .visible=${this.activeTab === "changes"}
               ></diff-panel>`)}

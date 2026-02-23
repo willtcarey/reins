@@ -15,7 +15,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked } from "marked";
 import type { DiffFile, DiffHunk, DiffLine } from "./types.js";
-import type { DiffStore, SpreadData } from "./diff-store.js";
+import type { DiffStore, SpreadData } from "../stores/diff-store.js";
 import type { FileTreeState } from "./file-tree-state.js";
 import { ScrollSpy } from "./scroll-spy.js";
 import "./diff-file-tree.js";

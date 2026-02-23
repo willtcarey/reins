@@ -3,16 +3,19 @@
  *
  * Centralized reactive store that owns all server communication and
  * internal event handling. Wraps ProjectStore for project/session state,
- * absorbs ActivityTracker for session activity, and handles WebSocket
- * events internally — views never participate in fetch/event decisions.
+ * owns DiffStore for diff/sync state, absorbs ActivityTracker for
+ * session activity, and handles WebSocket events internally — views
+ * never participate in fetch/event decisions.
  *
- * Migration step 1: WS event handling + ActivityTracker merged in.
+ * Migration steps 1–2: WS event handling + ActivityTracker merged in,
+ * DiffStore owned and coordinated.
  * See docs/plans/reactive-store.md for the full plan.
  */
 
-import { AppClient } from "./ws-client.js";
+import { AppClient } from "../ws-client.js";
 import { ProjectStore } from "./project-store.js";
-import type { SessionData, SessionListItem, TaskListItem } from "./ws-client.js";
+import { DiffStore } from "./diff-store.js";
+import type { SessionData, SessionListItem, TaskListItem } from "../ws-client.js";
 import type { ActivityState } from "./activity-tracker.js";
 
 // Tools that modify files and should trigger a diff refresh
@@ -26,6 +29,11 @@ export class AppStore {
   private _projectStore = new ProjectStore();
   private _client: AppClient;
 
+  // ---- Sub-stores -----------------------------------------------------------
+
+  /** Diff/sync sub-store — owned and coordinated by AppStore. */
+  readonly diffStore = new DiffStore();
+
   // ---- Activity state (absorbed from ActivityTracker) -----------------------
 
   private _activityStates = new Map<string, ActivityState>();
@@ -38,18 +46,18 @@ export class AppStore {
 
   private _listeners = new Set<AppStoreListener>();
   private _unsubProjectStore: (() => void) | null = null;
-
-  /**
-   * Callback invoked when a diff refresh is needed.
-   * Temporary bridge until step 2 (AppStore owns DiffStore).
-   */
-  onDiffRefreshNeeded: (() => void) | null = null;
+  private _unsubDiffStore: (() => void) | null = null;
 
   constructor(client: AppClient) {
     this._client = client;
 
     // Forward ProjectStore notifications to our subscribers
     this._unsubProjectStore = this._projectStore.subscribe(() => {
+      this.notify();
+    });
+
+    // Forward DiffStore notifications to our subscribers
+    this._unsubDiffStore = this.diffStore.subscribe(() => {
       this.notify();
     });
 
@@ -89,7 +97,7 @@ export class AppStore {
         event.type === "agent_end";
 
       if (refreshDiff) {
-        setTimeout(() => this.onDiffRefreshNeeded?.(), 500);
+        setTimeout(() => this.diffStore.refresh(), 500);
       }
     });
   }
@@ -161,7 +169,17 @@ export class AppStore {
     projectId: number | null,
     sessionId: string | null,
   ): Promise<{ navigateTo: string } | null> {
-    return this._projectStore.setRoute(projectId, sessionId);
+    // Update diff store project when it changes
+    if (projectId !== this._projectStore.projectId) {
+      this.diffStore.setProject(projectId);
+    }
+
+    const result = await this._projectStore.setRoute(projectId, sessionId);
+
+    // After route is applied, resolve the branch for the diff store
+    this._updateDiffBranch();
+
+    return result;
   }
 
   async refreshLists() {
@@ -193,6 +211,22 @@ export class AppStore {
     return this._projectStore.deleteTask(taskId);
   }
 
+  // ---- Diff branch resolution (internal) ------------------------------------
+
+  /**
+   * Resolve the viewed session's task branch and update the diff store.
+   * Task sessions → task's branch_name; scratch sessions → null (HEAD).
+   */
+  private _updateDiffBranch() {
+    const session = this._projectStore.sessionData;
+    if (!session?.task_id) {
+      this.diffStore.setBranch(null);
+      return;
+    }
+    const task = this._projectStore.tasks.find((t) => t.id === session.task_id);
+    this.diffStore.setBranch(task?.branch_name ?? null);
+  }
+
   // ---- Subscription ---------------------------------------------------------
 
   subscribe(fn: AppStoreListener): () => void {
@@ -216,6 +250,9 @@ export class AppStore {
   dispose() {
     this._unsubProjectStore?.();
     this._unsubProjectStore = null;
+    this._unsubDiffStore?.();
+    this._unsubDiffStore = null;
+    this.diffStore.dispose();
     this._listeners.clear();
   }
 }
