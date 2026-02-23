@@ -77,16 +77,19 @@ Problems:
                            │  - owns all fetching   │
                            │  - owns polling/timers  │
                            │  - owns activity state  │
+                           │  - owns DiffStore       │
                            │                        │
                            │  State:                │
                            │  - projects            │
                            │  - tasks + taskSessions│
                            │  - sessions            │
                            │  - sessionData         │
-                           │  - diff (files, full)  │
-                           │  - spread              │
                            │  - activity            │
                            │  - connection status   │
+                           │                        │
+                           │  Sub-store:            │
+                           │  - diffStore (diff,    │
+                           │    spread, sync)       │
                            └───────────┬────────────┘
                                        │ subscribe()
                     ┌──────────┬───────┴───────┬──────────┐
@@ -99,9 +102,20 @@ Problems:
 
 ## Design
 
-### Single store, internal WS handling
+### AppStore owns DiffStore as a sub-store
 
-The `AppStore` takes the `AppClient` at construction and subscribes to events internally. When a `task_updated` event arrives, the store refetches the task list — no involvement from app.ts or views.
+AppStore is the merger of ProjectStore and ActivityTracker, with DiffStore kept as a separate class that AppStore owns and coordinates. DiffStore has substantial self-contained complexity (polling timers, spread polling, sync actions, syntax highlighting, context lines, diff modes — 426 lines) that doesn't belong in a monolith. ActivityTracker is small (85 lines) and is pure derived state from WS events, so it merges directly into AppStore.
+
+AppStore handles the cross-cutting concerns that currently live in app.ts:
+- `agent_end` → call `diffStore.refresh()`
+- Session/task changes → recompute branch → call `diffStore.setBranch()`
+- Project changes → call `diffStore.setProject()`
+
+Views access DiffStore through AppStore (e.g., `store.diffStore`) but only as a read-only surface. All mutation triggers flow through AppStore internally.
+
+### Internal WS handling
+
+AppStore takes the `AppClient` at construction and subscribes to events internally. When a `task_updated` event arrives, the store refetches the task list — no involvement from app.ts or views.
 
 ```ts
 class AppStore {
@@ -126,9 +140,24 @@ Views don't call `store.createSession()` or `store.refreshLists()`. They dispatc
 - **task-list** stops fetching `/api/projects/:id/tasks/:id/sessions` directly. Task session sublists live in the store.
 - **task-form** stops fetching `/api/projects/:id/tasks/generate` directly. Task creation goes through the store.
 
-### Absorb DiffStore and ActivityTracker
+### Absorb ActivityTracker
 
-DiffStore and ActivityTracker become internal subsystems of AppStore (or remain separate classes that AppStore owns and coordinates). Views see a single subscription surface.
+Activity state (running/finished per session) becomes internal state in AppStore. The `setRunning` / `setFinished` / `clear` logic moves into the WS event handler. Views read activity state from the same subscription surface as everything else.
+
+### Diff branch resolution
+
+Currently app.ts bridges session data to DiffStore via `updateDiffBranch()`. In AppStore this becomes an internal dependency — a private method called after `fetchSession()` and `fetchLists()` complete:
+
+```ts
+private updateDiffBranch() {
+  const session = this.sessionData;
+  if (!session?.task_id) { this.diffStore.setBranch(null); return; }
+  const task = this.tasks.find((t) => t.id === session.task_id);
+  this.diffStore.setBranch(task?.branch_name ?? null);
+}
+```
+
+No external wiring needed — the dependency is fully internal to AppStore.
 
 ### Invalidation rules (internal to store)
 
@@ -141,25 +170,29 @@ DiffStore and ActivityTracker become internal subsystems of AppStore (or remain 
 
 No `setTimeout` guessing — the backend should ensure data is committed before broadcasting events, so fetches can happen immediately.
 
+### Subscription model
+
+Simple notify-all, same as the current stores. Both ProjectStore and DiffStore already use the `Set<listener>` + `notify()` pattern, and Lit components have efficient dirty-checking in their render cycle. Fine-grained subscriptions (e.g., subscribe to just `tasks`) would add complexity for no measurable benefit with the current component count.
+
 ### Polling
 
-Spread and diff file polling stay as-is (timer-based), but the timers live inside the store. Views don't start or stop polling — the store starts polling when a project is set and stops when it's cleared.
+Spread and diff file polling stay as-is (timer-based), but the timers live inside DiffStore, which is owned by AppStore. Views don't start or stop polling — DiffStore starts polling when a project is set and stops when it's cleared, same as today.
+
+### No backend event enrichment
+
+WS events stay lean — no rich payloads like including the updated task list in `task_updated`. Reasons:
+- Refetch payloads are small JSON over localhost — latency is negligible.
+- Enriched events couple the backend event shape to the frontend's view needs.
+- The latency concern was the `setTimeout` delays, which are fixed by ensuring the backend commits data before broadcasting events.
 
 ## Migration path
 
 This is a refactor, not a rewrite. The stores already hold the right state and do the right fetches — they just need to be consolidated and the trigger points moved inward.
 
-1. **Move WS event handling into ProjectStore** — Remove the `client.onEvent` handler from app.ts. ProjectStore takes the AppClient and handles events internally. ActivityTracker moves into ProjectStore.
-2. **Absorb project list** — ProjectStore owns the project list. project-sidebar reads from the store instead of fetching directly.
-3. **Absorb task session sublists** — ProjectStore tracks expanded task sessions. task-list reads from the store instead of fetching directly.
-4. **Absorb DiffStore** — Either merge into ProjectStore or keep as a sub-store that ProjectStore owns. The key change: diff invalidation on agent_end is triggered internally, not from app.ts.
+1. **Create AppStore, move WS event handling in** — AppStore wraps ProjectStore's state and methods, takes the AppClient, and handles events internally. ActivityTracker merges into AppStore. Remove the `client.onEvent` and `client.onConnection` handlers from app.ts.
+2. **AppStore owns DiffStore** — AppStore creates and owns the DiffStore instance. Cross-cutting logic (agent_end → diff refresh, session change → branch update, project change → diff project) moves from app.ts into AppStore.
+3. **Absorb project list** — AppStore owns the project list. project-sidebar reads from the store instead of fetching directly.
+4. **Absorb task session sublists** — AppStore tracks expanded task sessions. task-list reads from the store instead of fetching directly.
 5. **Clean up app.ts** — app.ts becomes a thin shell: create store, create client, wire client into store, apply routes, render.
 
 Each step can be done independently and tested in isolation.
-
-## Open questions
-
-1. **One store or a coordinated set?** A single `AppStore` is simpler conceptually, but the diff state is complex enough that it may want to stay in its own class, just owned and coordinated by AppStore rather than app.ts.
-2. **Subscription granularity** — Currently stores notify on any change and views re-render everything. Fine-grained subscriptions (e.g., subscribe to just `tasks`) would reduce unnecessary renders but add complexity. Worth doing only if performance becomes an issue.
-3. **Backend event enrichment** — Should WS events carry richer payloads (e.g., `task_updated` includes the updated task list) to avoid the refetch round-trip? Reduces latency but couples the event shape to the view's needs.
-4. **DiffStore coupling** — DiffStore needs the active branch name, which comes from the task list. Currently app.ts bridges this via `updateDiffBranch()`. In the unified store this becomes an internal dependency — when sessionData or tasks change, the diff branch is recomputed automatically.
