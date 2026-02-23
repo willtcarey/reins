@@ -9,6 +9,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { SessionListItem, TaskListItem } from "./ws-client.js";
+import type { AppStore } from "./stores/app-store.js";
 import type { ActivityState } from "./stores/activity-tracker.js";
 import { formatRelativeDate } from "./format.js";
 import "./popover-menu.js";
@@ -23,6 +24,9 @@ export class TaskList extends LitElement {
   projectId: number | null = null;
 
   @property({ attribute: false })
+  store: AppStore | null = null;
+
+  @property({ attribute: false })
   tasks: TaskListItem[] = [];
 
   @property({ type: String })
@@ -33,13 +37,16 @@ export class TaskList extends LitElement {
   activityMap = new Map<string, ActivityState>();
 
   @state() private expandedTaskId: number | null = null;
-  @state() private taskSessions = new Map<number, SessionListItem[]>();
   @state() private deleteConfirmTask: TaskListItem | null = null;
+
+  /** Task session sublists from the store. */
+  private get taskSessions(): Map<number, SessionListItem[]> {
+    return this.store?.taskSessions ?? new Map();
+  }
 
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has("projectId")) {
       this.expandedTaskId = null;
-      this.taskSessions = new Map();
     }
     if (changed.has("activeSessionId") || changed.has("tasks")) {
       this.autoExpandForActiveSession();
@@ -47,48 +54,31 @@ export class TaskList extends LitElement {
   }
 
   /**
-   * If the active session belongs to a task, expand that task.
+   * If the active session belongs to a task, expand that task and fetch its sessions.
    */
   private autoExpandForActiveSession() {
     if (!this.activeSessionId) return;
     const task = this.tasks.find(t => t.session_ids.includes(this.activeSessionId));
     if (task && task.id !== this.expandedTaskId) {
       this.expandedTaskId = task.id;
-      this.fetchTaskSessions(task.id);
+      this.store?.fetchTaskSessions(task.id);
     }
   }
 
   /** Re-fetch sessions for the currently expanded task. */
-  async refreshExpanded() {
+  refreshExpanded() {
     if (this.expandedTaskId != null) {
-      await this.fetchTaskSessions(this.expandedTaskId);
+      this.store?.fetchTaskSessions(this.expandedTaskId);
     }
   }
 
-  private async handleExpandTask(taskId: number) {
+  private handleExpandTask(taskId: number) {
     if (this.expandedTaskId === taskId) {
       this.expandedTaskId = null;
       return;
     }
     this.expandedTaskId = taskId;
-    await this.fetchTaskSessions(taskId);
-  }
-
-  private async fetchTaskSessions(taskId: number) {
-    if (this.projectId == null) return;
-    try {
-      const resp = await fetch(
-        `/api/projects/${this.projectId}/tasks/${taskId}/sessions`
-      );
-      if (resp.ok) {
-        const sessions: SessionListItem[] = await resp.json();
-        const next = new Map(this.taskSessions);
-        next.set(taskId, sessions);
-        this.taskSessions = next;
-      }
-    } catch {
-      // silent
-    }
+    this.store?.fetchTaskSessions(taskId);
   }
 
   private handleNewTaskSession(taskId: number, e: Event) {

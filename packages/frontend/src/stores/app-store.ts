@@ -42,6 +42,10 @@ export class AppStore {
 
   private _projects: ProjectInfo[] = [];
 
+  // ---- Task session sublists --------------------------------------------------
+
+  private _taskSessions = new Map<number, SessionListItem[]>();
+
   // ---- Connection state -----------------------------------------------------
 
   connected = false;
@@ -175,6 +179,32 @@ export class AppStore {
     this.notify();
   }
 
+  // ---- Task session sublist accessors ----------------------------------------
+
+  get taskSessions(): Map<number, SessionListItem[]> { return this._taskSessions; }
+
+  // ---- Task session sublist actions -----------------------------------------
+
+  /** Fetch sessions for a specific task and update the cache. */
+  async fetchTaskSessions(taskId: number): Promise<void> {
+    const projectId = this._projectStore.projectId;
+    if (projectId == null) return;
+    try {
+      const resp = await fetch(
+        `/api/projects/${projectId}/tasks/${taskId}/sessions`,
+      );
+      if (resp.ok) {
+        const sessions: SessionListItem[] = await resp.json();
+        const next = new Map(this._taskSessions);
+        next.set(taskId, sessions);
+        this._taskSessions = next;
+        this.notify();
+      }
+    } catch {
+      // silent
+    }
+  }
+
   // ---- ProjectStore delegate methods ----------------------------------------
 
   async setRoute(
@@ -184,6 +214,8 @@ export class AppStore {
     // Update diff store project when it changes
     if (projectId !== this._projectStore.projectId) {
       this.diffStore.setProject(projectId);
+      // Clear cached task sessions on project change
+      this._taskSessions = new Map();
     }
 
     const result = await this._projectStore.setRoute(projectId, sessionId);

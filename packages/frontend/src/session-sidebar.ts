@@ -16,9 +16,9 @@ import { customElement, property, state, query } from "lit/decorators.js";
 import { navigateToSession, navigateToProject } from "./router.js";
 import type { AppStore } from "./stores/app-store.js";
 import type { ActivityState } from "./stores/activity-tracker.js";
-import type { TaskList } from "./task-list.js";
 import type { TaskForm } from "./task-form.js";
 import type { TaskDetail } from "./task-detail.js";
+import type { TaskList } from "./task-list.js";
 import "./project-sidebar.js";
 import "./task-form.js";
 import "./task-detail.js";
@@ -233,6 +233,7 @@ export class SessionSidebar extends LitElement {
             </div>
 
             <task-list
+              .store=${store}
               .projectId=${projectId}
               .tasks=${tasks}
               .activeSessionId=${activeSessionId}
