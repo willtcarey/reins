@@ -197,4 +197,4 @@ This is a refactor, not a rewrite. The stores already hold the right state and d
 
 Each step can be done independently and tested in isolation.
 
-6. **Add frontend architecture dev doc** — Add `docs/dev/frontend-architecture.md` covering the store layer, WS event flow, and how views consume state. Include the proposed data flow diagram.
+6. ✅ **Add frontend architecture dev doc** — Add `docs/dev/frontend-architecture.md` covering the store layer, WS event flow, and how views consume state. Include the proposed data flow diagram.
