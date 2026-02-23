@@ -4,11 +4,14 @@
  * Displays at the top of the sidebar. Shows a project switcher dropdown
  * and buttons to add/edit projects. Project creation and editing happen
  * in a modal dialog (project-form).
+ *
+ * Reads the project list from AppStore — does not fetch directly.
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type { ProjectInfo } from "./ws-client.js";
+import type { AppStore } from "./stores/app-store.js";
 import type { ProjectForm } from "./project-form.js";
 import "./project-form.js";
 
@@ -18,19 +21,20 @@ export class ProjectSidebar extends LitElement {
     return this;
   }
 
+  /** The app store — provides the project list and mutation methods. */
+  @property({ attribute: false })
+  store: AppStore | null = null;
+
   /** Current project ID from the URL route. Null = no project selected. */
   @property({ type: Number })
   activeProjectId: number | null = null;
 
-  @state() private projects: ProjectInfo[] = [];
-  @state() private loading = false;
   @state() private dropdownOpen = false;
 
   @query("project-form") private projectForm!: ProjectForm;
 
   override connectedCallback() {
     super.connectedCallback();
-    this.refresh();
 
     this._onDocClick = this._onDocClick.bind(this);
     document.addEventListener("click", this._onDocClick);
@@ -50,17 +54,8 @@ export class ProjectSidebar extends LitElement {
     }
   }
 
-  async refresh() {
-    this.loading = true;
-    try {
-      const resp = await fetch("/api/projects");
-      if (resp.ok) {
-        this.projects = await resp.json();
-      }
-    } catch {
-      // silent
-    }
-    this.loading = false;
+  private get projects(): ProjectInfo[] {
+    return this.store?.projects ?? [];
   }
 
   private get activeProject(): ProjectInfo | null {
@@ -97,26 +92,23 @@ export class ProjectSidebar extends LitElement {
   }
 
   private async handleProjectCreated(e: CustomEvent<{ project: ProjectInfo }>) {
-    await this.refresh();
+    await this.store?.fetchProjects();
     location.hash = `#/project/${e.detail.project.id}`;
   }
 
   private async handleProjectUpdated() {
-    await this.refresh();
+    await this.store?.fetchProjects();
   }
 
   private async handleDeleteProject(e: Event, project: ProjectInfo) {
     e.stopPropagation();
     if (!confirm(`Remove "${project.name}" from REINS?\n\nThis won't delete any files on disk.`)) return;
 
-    try {
-      await fetch(`/api/projects/${project.id}`, { method: "DELETE" });
-      // If we deleted the active project, go back to default
-      if (project.id === this.activeProjectId) {
-        location.hash = "";
-      }
-      await this.refresh();
-    } catch {}
+    // If we deleted the active project, go back to default
+    if (project.id === this.activeProjectId) {
+      location.hash = "";
+    }
+    await this.store?.deleteProject(project.id);
   }
 
   override render() {

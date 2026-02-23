@@ -15,7 +15,7 @@
 import { AppClient } from "../ws-client.js";
 import { ProjectStore } from "./project-store.js";
 import { DiffStore } from "./diff-store.js";
-import type { SessionData, SessionListItem, TaskListItem } from "../ws-client.js";
+import type { ProjectInfo, SessionData, SessionListItem, TaskListItem } from "../ws-client.js";
 import type { ActivityState } from "./activity-tracker.js";
 
 // Tools that modify files and should trigger a diff refresh
@@ -37,6 +37,10 @@ export class AppStore {
   // ---- Activity state (absorbed from ActivityTracker) -----------------------
 
   private _activityStates = new Map<string, ActivityState>();
+
+  // ---- Project list state ----------------------------------------------------
+
+  private _projects: ProjectInfo[] = [];
 
   // ---- Connection state -----------------------------------------------------
 
@@ -66,9 +70,13 @@ export class AppStore {
     client.onConnection((connected) => {
       this.connected = connected;
       this.notify();
-      // On reconnect, re-fetch the active session to catch up on missed events
-      if (connected && this._projectStore.sessionId) {
-        this._projectStore.refreshSession();
+      if (connected) {
+        // Always refresh the project list on (re)connect
+        this.fetchProjects();
+        // On reconnect, re-fetch the active session to catch up on missed events
+        if (this._projectStore.sessionId) {
+          this._projectStore.refreshSession();
+        }
       }
     });
 
@@ -101,6 +109,10 @@ export class AppStore {
       }
     });
   }
+
+  // ---- Project list accessors ------------------------------------------------
+
+  get projects(): ProjectInfo[] { return this._projects; }
 
   // ---- ProjectStore delegate accessors --------------------------------------
 
@@ -209,6 +221,31 @@ export class AppStore {
 
   async deleteTask(taskId: number): Promise<{ ok: true } | { error: string }> {
     return this._projectStore.deleteTask(taskId);
+  }
+
+  // ---- Project list actions ---------------------------------------------------
+
+  /** Fetch the project list from the server. */
+  async fetchProjects(): Promise<void> {
+    try {
+      const resp = await fetch("/api/projects");
+      if (resp.ok) {
+        this._projects = await resp.json();
+        this.notify();
+      }
+    } catch {
+      // silent
+    }
+  }
+
+  /** Delete a project and refresh the list. */
+  async deleteProject(projectId: number): Promise<void> {
+    try {
+      await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
+      await this.fetchProjects();
+    } catch {
+      // silent
+    }
   }
 
   // ---- Diff branch resolution (internal) ------------------------------------

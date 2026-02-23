@@ -193,6 +193,7 @@ export class SessionSidebar extends LitElement {
         <div class="flex items-center border-b border-zinc-700">
           <div class="flex-1 min-w-0">
             <project-sidebar
+              .store=${store}
               .activeProjectId=${projectId}
             ></project-sidebar>
           </div>
