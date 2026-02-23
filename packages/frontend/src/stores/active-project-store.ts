@@ -1,9 +1,9 @@
 /**
- * Project Store
+ * Active Project Store
  *
- * Centralized data store for the active project's state: task lists,
+ * Reactive store for the currently-selected project's state: task lists,
  * session lists, and the active session's full data. A single instance
- * is created by the app shell and shared with all components that need
+ * is created by AppStore and shared with all components that need
  * project-level data.
  *
  * Components subscribe via `subscribe()` and read public state directly.
@@ -11,11 +11,11 @@
  * update state.
  */
 
-import type { SessionData, SessionListItem, TaskListItem } from "./ws-client.js";
+import type { SessionData, SessionListItem, TaskListItem } from "../ws-client.js";
 
-export type ProjectStoreListener = () => void;
+export type ActiveProjectStoreListener = () => void;
 
-export class ProjectStore {
+export class ActiveProjectStore {
   // ---- Public reactive state ------------------------------------------------
 
   projectId: number | null = null;
@@ -29,12 +29,12 @@ export class ProjectStore {
 
   // ---- Private state --------------------------------------------------------
 
-  private _listeners = new Set<ProjectStoreListener>();
+  private _listeners = new Set<ActiveProjectStoreListener>();
   private _fetchId = 0; // guards against stale session fetches
 
   // ---- Subscription ---------------------------------------------------------
 
-  subscribe(fn: ProjectStoreListener): () => void {
+  subscribe(fn: ActiveProjectStoreListener): () => void {
     this._listeners.add(fn);
     return () => this._listeners.delete(fn);
   }
@@ -205,6 +205,33 @@ export class ProjectStore {
       if (this.sessionData?.task_id === taskId) {
         this.sessionId = "";
         this.sessionData = null;
+      }
+      await this.fetchLists();
+      return { ok: true };
+    } catch {
+      return { error: "Network error" };
+    }
+  }
+
+  /**
+   * Generate a task from a freeform prompt. Returns success or error.
+   */
+  async generateTask(
+    prompt: string,
+  ): Promise<{ ok: true } | { error: string }> {
+    if (this.projectId == null) return { error: "No project" };
+    try {
+      const resp = await fetch(
+        `/api/projects/${this.projectId}/tasks/generate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
+        },
+      );
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        return { error: body.error || `Error creating task (HTTP ${resp.status})` };
       }
       await this.fetchLists();
       return { ok: true };

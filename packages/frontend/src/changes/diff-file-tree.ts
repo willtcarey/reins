@@ -13,8 +13,8 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { styleMap } from "lit/directives/style-map.js";
 import type { DiffFileSummary } from "./types.js";
-import type { DiffStore } from "./diff-store.js";
-import type { DiffMode } from "./diff-store.js";
+import type { DiffStore } from "../stores/diff-store.js";
+import type { DiffMode } from "../stores/diff-store.js";
 import type { FileTreeState } from "./file-tree-state.js";
 
 interface TreeNode {

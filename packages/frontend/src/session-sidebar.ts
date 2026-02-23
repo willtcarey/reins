@@ -7,18 +7,18 @@
  *  - task-list        — task listing with expandable sessions
  *  - session-list     — scratch session listing
  *
- * Reads project-level data (tasks, sessions) from the shared ProjectStore
+ * Reads project-level data (tasks, sessions) from the shared AppStore
  * and calls store actions for mutations (create session, create task session).
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { navigateToSession, navigateToProject } from "./router.js";
-import type { ProjectStore } from "./project-store.js";
-import type { ActivityState } from "./activity-tracker.js";
-import type { TaskList } from "./task-list.js";
+import type { AppStore } from "./stores/app-store.js";
+import type { ActivityState } from "./stores/app-store.js";
 import type { TaskForm } from "./task-form.js";
 import type { TaskDetail } from "./task-detail.js";
+import type { TaskList } from "./task-list.js";
 import "./project-sidebar.js";
 import "./task-form.js";
 import "./task-detail.js";
@@ -32,7 +32,7 @@ export class SessionSidebar extends LitElement {
   }
 
   @property({ attribute: false })
-  store: ProjectStore | null = null;
+  store: AppStore | null = null;
 
   /** Activity states for all sessions (running/finished indicators). */
   @property({ attribute: false })
@@ -115,10 +115,6 @@ export class SessionSidebar extends LitElement {
     }
   }
 
-  private async handleTaskCreated() {
-    await this.store?.refreshLists();
-  }
-
   private async handleDeleteTask(e: CustomEvent<{ taskId: number }>) {
     const store = this.store;
     if (!store) return;
@@ -183,7 +179,6 @@ export class SessionSidebar extends LitElement {
         @select-session=${this.handleSelectSession}
         @new-session=${this.handleNewSession}
         @new-task-session=${this.handleNewTaskSession}
-        @task-created=${this.handleTaskCreated}
         @save-task=${this.handleSaveTask}
         @edit-task=${this.handleEditTask}
         @delete-task=${this.handleDeleteTask}
@@ -193,6 +188,7 @@ export class SessionSidebar extends LitElement {
         <div class="flex items-center border-b border-zinc-700">
           <div class="flex-1 min-w-0">
             <project-sidebar
+              .store=${store}
               .activeProjectId=${projectId}
             ></project-sidebar>
           </div>
@@ -206,7 +202,7 @@ export class SessionSidebar extends LitElement {
         </div>
 
         <!-- Task dialogs -->
-        <task-form .projectId=${projectId}></task-form>
+        <task-form .store=${store} .projectId=${projectId}></task-form>
         <task-detail></task-detail>
 
         <!-- Assistant (pinned above tasks) -->
@@ -232,6 +228,7 @@ export class SessionSidebar extends LitElement {
             </div>
 
             <task-list
+              .store=${store}
               .projectId=${projectId}
               .tasks=${tasks}
               .activeSessionId=${activeSessionId}
