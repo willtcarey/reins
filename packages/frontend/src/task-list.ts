@@ -10,7 +10,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { SessionListItem, TaskListItem } from "./ws-client.js";
 import type { AppStore } from "./stores/app-store.js";
-import type { ActivityState } from "./stores/activity-tracker.js";
+import type { ActivityState } from "./stores/app-store.js";
 import { formatRelativeDate } from "./format.js";
 import "./popover-menu.js";
 

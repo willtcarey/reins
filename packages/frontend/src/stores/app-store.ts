@@ -13,10 +13,13 @@
  */
 
 import { AppClient } from "../ws-client.js";
+import { ActiveProjectStore } from "./active-project-store.js";
 import { ProjectStore } from "./project-store.js";
 import { DiffStore } from "./diff-store.js";
 import type { ProjectInfo, SessionData, SessionListItem, TaskListItem } from "../ws-client.js";
-import type { ActivityState } from "./activity-tracker.js";
+
+/** Activity state for a session: running, finished, or absent (no entry). */
+export type ActivityState = "running" | "finished";
 
 // Tools that modify files and should trigger a diff refresh
 const FILE_MODIFYING_TOOLS = new Set(["write", "edit", "bash"]);
@@ -26,10 +29,13 @@ export type AppStoreListener = () => void;
 export class AppStore {
   // ---- Delegates ------------------------------------------------------------
 
-  private _projectStore = new ProjectStore();
+  private _activeProject = new ActiveProjectStore();
   private _client: AppClient;
 
   // ---- Sub-stores -----------------------------------------------------------
+
+  /** Project list sub-store. */
+  readonly projectStore = new ProjectStore();
 
   /** Diff/sync sub-store — owned and coordinated by AppStore. */
   readonly diffStore = new DiffStore();
@@ -37,10 +43,6 @@ export class AppStore {
   // ---- Activity state (absorbed from ActivityTracker) -----------------------
 
   private _activityStates = new Map<string, ActivityState>();
-
-  // ---- Project list state ----------------------------------------------------
-
-  private _projects: ProjectInfo[] = [];
 
   // ---- Task session sublists --------------------------------------------------
 
@@ -53,21 +55,18 @@ export class AppStore {
   // ---- Subscription ---------------------------------------------------------
 
   private _listeners = new Set<AppStoreListener>();
-  private _unsubProjectStore: (() => void) | null = null;
-  private _unsubDiffStore: (() => void) | null = null;
+  private _unsubChildren: (() => void)[] = [];
+
+  /** Sub-stores whose notifications bubble up through AppStore. */
+  private get _children(): { subscribe(fn: () => void): () => void }[] {
+    return [this._activeProject, this.projectStore, this.diffStore];
+  }
 
   constructor(client: AppClient) {
     this._client = client;
 
-    // Forward ProjectStore notifications to our subscribers
-    this._unsubProjectStore = this._projectStore.subscribe(() => {
-      this.notify();
-    });
-
-    // Forward DiffStore notifications to our subscribers
-    this._unsubDiffStore = this.diffStore.subscribe(() => {
-      this.notify();
-    });
+    // Forward sub-store notifications to our subscribers
+    this._unsubChildren = this._children.map((s) => s.subscribe(() => this.notify()));
 
     // ---- WS event handling (moved from app.ts) ------------------------------
 
@@ -76,16 +75,16 @@ export class AppStore {
       this.notify();
       if (connected) {
         // Always refresh the project list on (re)connect
-        this.fetchProjects();
+        this.projectStore.fetchProjects();
         // On reconnect, re-fetch the active session to catch up on missed events
-        if (this._projectStore.sessionId) {
-          this._projectStore.refreshSession();
+        if (this._activeProject.sessionId) {
+          this._activeProject.refreshSession();
         }
       }
     });
 
     client.onEvent((sessionId, event) => {
-      const store = this._projectStore;
+      const store = this._activeProject;
 
       // Handle task_updated broadcast (not tagged with a sessionId)
       if (event.type === "task_updated" && event.projectId === store.projectId) {
@@ -116,16 +115,16 @@ export class AppStore {
 
   // ---- Project list accessors ------------------------------------------------
 
-  get projects(): ProjectInfo[] { return this._projects; }
+  get projects(): ProjectInfo[] { return this.projectStore.projects; }
 
-  // ---- ProjectStore delegate accessors --------------------------------------
+  // ---- ActiveProjectStore delegate accessors --------------------------------
 
-  get projectId() { return this._projectStore.projectId; }
-  get sessionId() { return this._projectStore.sessionId; }
-  get tasks(): TaskListItem[] { return this._projectStore.tasks; }
-  get sessions(): SessionListItem[] { return this._projectStore.sessions; }
-  get sessionData(): SessionData | null { return this._projectStore.sessionData; }
-  get loading() { return this._projectStore.loading; }
+  get projectId() { return this._activeProject.projectId; }
+  get sessionId() { return this._activeProject.sessionId; }
+  get tasks(): TaskListItem[] { return this._activeProject.tasks; }
+  get sessions(): SessionListItem[] { return this._activeProject.sessions; }
+  get sessionData(): SessionData | null { return this._activeProject.sessionData; }
+  get loading() { return this._activeProject.loading; }
 
   // ---- Activity state accessors ---------------------------------------------
 
@@ -187,7 +186,7 @@ export class AppStore {
 
   /** Fetch sessions for a specific task and update the cache. */
   async fetchTaskSessions(taskId: number): Promise<void> {
-    const projectId = this._projectStore.projectId;
+    const projectId = this._activeProject.projectId;
     if (projectId == null) return;
     try {
       const resp = await fetch(
@@ -205,20 +204,20 @@ export class AppStore {
     }
   }
 
-  // ---- ProjectStore delegate methods ----------------------------------------
+  // ---- ActiveProjectStore delegate methods ----------------------------------
 
   async setRoute(
     projectId: number | null,
     sessionId: string | null,
   ): Promise<{ navigateTo: string } | null> {
     // Update diff store project when it changes
-    if (projectId !== this._projectStore.projectId) {
+    if (projectId !== this._activeProject.projectId) {
       this.diffStore.setProject(projectId);
       // Clear cached task sessions on project change
       this._taskSessions = new Map();
     }
 
-    const result = await this._projectStore.setRoute(projectId, sessionId);
+    const result = await this._activeProject.setRoute(projectId, sessionId);
 
     // After route is applied, resolve the branch for the diff store
     this._updateDiffBranch();
@@ -227,60 +226,38 @@ export class AppStore {
   }
 
   async refreshLists() {
-    return this._projectStore.refreshLists();
+    return this._activeProject.refreshLists();
   }
 
   async refreshSession() {
-    return this._projectStore.refreshSession();
+    return this._activeProject.refreshSession();
   }
 
   async createSession(): Promise<string | null> {
-    return this._projectStore.createSession();
+    return this._activeProject.createSession();
   }
 
   async createTaskSession(
     taskId: number,
   ): Promise<{ sessionId: string } | { error: string }> {
-    return this._projectStore.createTaskSession(taskId);
+    return this._activeProject.createTaskSession(taskId);
   }
 
   async updateTask(
     taskId: number,
     updates: { title?: string; description?: string | null },
   ): Promise<{ ok: true } | { error: string }> {
-    return this._projectStore.updateTask(taskId, updates);
+    return this._activeProject.updateTask(taskId, updates);
   }
 
   async deleteTask(taskId: number): Promise<{ ok: true } | { error: string }> {
-    return this._projectStore.deleteTask(taskId);
+    return this._activeProject.deleteTask(taskId);
   }
 
-  // ---- Project list actions ---------------------------------------------------
-
-  /** Fetch the project list from the server. */
-  async fetchProjects(): Promise<void> {
-    try {
-      const resp = await fetch("/api/projects");
-      if (resp.ok) {
-        this._projects = await resp.json();
-        this.notify();
-      }
-    } catch {
-      // silent
-    }
-  }
-
-  /** Delete a project and refresh the list. */
+  /** Delete a project — delegates to ProjectStore and handles navigation. */
   async deleteProject(projectId: number): Promise<void> {
-    try {
-      await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
-      await this.fetchProjects();
-    } catch {
-      // silent
-    }
+    return this.projectStore.deleteProject(projectId);
   }
-
-  // ---- Project mutation actions ----------------------------------------------
 
   /** Create a new project. Returns the created project on success. */
   async createProject(data: {
@@ -288,22 +265,7 @@ export class AppStore {
     path: string;
     base_branch: string;
   }): Promise<ProjectInfo | { error: string }> {
-    try {
-      const resp = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        return { error: body.error || "Failed to create project" };
-      }
-      const project: ProjectInfo = await resp.json();
-      await this.fetchProjects();
-      return project;
-    } catch {
-      return { error: "Network error" };
-    }
+    return this.projectStore.createProject(data);
   }
 
   /** Update a project's properties. */
@@ -311,49 +273,16 @@ export class AppStore {
     projectId: number,
     data: { name: string; path: string; base_branch: string },
   ): Promise<{ ok: true } | { error: string }> {
-    try {
-      const resp = await fetch(`/api/projects/${projectId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        return { error: body.error || "Failed to update project" };
-      }
-      await this.fetchProjects();
-      return { ok: true };
-    } catch {
-      return { error: "Network error" };
-    }
+    return this.projectStore.updateProject(projectId, data);
   }
 
   // ---- Task generation -------------------------------------------------------
 
-  /** Generate a task from a freeform prompt. Returns success or error. */
   async generateTask(
     projectId: number,
     prompt: string,
   ): Promise<{ ok: true } | { error: string }> {
-    try {
-      const resp = await fetch(
-        `/api/projects/${projectId}/tasks/generate`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt }),
-        },
-      );
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        return { error: body.error || `Error creating task (HTTP ${resp.status})` };
-      }
-      // Auto-refresh task list after creation
-      await this._projectStore.refreshLists();
-      return { ok: true };
-    } catch {
-      return { error: "Network error" };
-    }
+    return this._activeProject.generateTask(prompt);
   }
 
   // ---- Diff branch resolution (internal) ------------------------------------
@@ -363,12 +292,12 @@ export class AppStore {
    * Task sessions → task's branch_name; scratch sessions → null (HEAD).
    */
   private _updateDiffBranch() {
-    const session = this._projectStore.sessionData;
+    const session = this._activeProject.sessionData;
     if (!session?.task_id) {
       this.diffStore.setBranch(null);
       return;
     }
-    const task = this._projectStore.tasks.find((t) => t.id === session.task_id);
+    const task = this._activeProject.tasks.find((t) => t.id === session.task_id);
     this.diffStore.setBranch(task?.branch_name ?? null);
   }
 
@@ -403,10 +332,8 @@ export class AppStore {
   }
 
   dispose() {
-    this._unsubProjectStore?.();
-    this._unsubProjectStore = null;
-    this._unsubDiffStore?.();
-    this._unsubDiffStore = null;
+    for (const unsub of this._unsubChildren) unsub();
+    this._unsubChildren = [];
     this.diffStore.dispose();
     this._listeners.clear();
   }
