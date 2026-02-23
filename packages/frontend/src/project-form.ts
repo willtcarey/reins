@@ -3,11 +3,14 @@
  *
  * Modal dialog for creating or editing a project.
  * Supports both modes via open({ mode, project? }).
+ * Project mutations go through AppStore, which handles the fetch
+ * and auto-refreshes the project list.
  */
 
 import { LitElement, html, nothing } from "lit";
-import { customElement, state, query } from "lit/decorators.js";
+import { customElement, property, state, query } from "lit/decorators.js";
 import type { ProjectInfo } from "./ws-client.js";
+import type { AppStore } from "./stores/app-store.js";
 
 interface OpenCreateOptions {
   mode: "create";
@@ -23,6 +26,9 @@ export class ProjectForm extends LitElement {
   override createRenderRoot() {
     return this;
   }
+
+  @property({ attribute: false })
+  store: AppStore | null = null;
 
   @state() private mode: "create" | "edit" = "create";
   @state() private editProjectId: number | null = null;
@@ -86,41 +92,32 @@ export class ProjectForm extends LitElement {
   }
 
   private async createProject() {
-    const resp = await fetch("/api/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: this.name.trim(),
-        path: this.path.trim(),
-        base_branch: this.baseBranch.trim() || "main",
-      }),
+    if (!this.store) return;
+    const result = await this.store.createProject({
+      name: this.name.trim(),
+      path: this.path.trim(),
+      base_branch: this.baseBranch.trim() || "main",
     });
-    if (!resp.ok) {
-      const data = await resp.json().catch(() => ({}));
-      this.error = data.error || "Failed to create project";
+    if ("error" in result) {
+      this.error = result.error;
       return;
     }
-    const project: ProjectInfo = await resp.json();
     this.close();
     this.dispatchEvent(new CustomEvent("project-created", {
       bubbles: true, composed: true,
-      detail: { project },
+      detail: { project: result },
     }));
   }
 
   private async updateProject() {
-    const resp = await fetch(`/api/projects/${this.editProjectId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: this.name.trim(),
-        path: this.path.trim(),
-        base_branch: this.baseBranch.trim() || "main",
-      }),
+    if (!this.store || this.editProjectId == null) return;
+    const result = await this.store.updateProject(this.editProjectId, {
+      name: this.name.trim(),
+      path: this.path.trim(),
+      base_branch: this.baseBranch.trim() || "main",
     });
-    if (!resp.ok) {
-      const data = await resp.json().catch(() => ({}));
-      this.error = data.error || "Failed to update project";
+    if ("error" in result) {
+      this.error = result.error;
       return;
     }
     this.close();

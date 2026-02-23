@@ -1,12 +1,12 @@
 /**
- * App Shell
+ * App Shell — thin root component.
  *
- * Root component with session sidebar, chat panel, and diff panel.
- * Creates the AppStore (which owns WS event handling and activity
- * tracking) and passes it to views. Uses light DOM for Tailwind
- * compatibility.
+ * Creates the AppStore and WebSocket client, applies hash-based routes,
+ * and renders views. All server communication and event handling lives
+ * in AppStore — this component only owns UI-local concerns (active tab,
+ * file tree state, document title).
  *
- * Routing: hash-based
+ * Routes:
  *  - `#/project/:id`                    — view project, resolves to most recent session
  *  - `#/project/:id/session/:sessionId` — view a specific session
  *  - (empty hash)                       — no project selected, show empty state
@@ -35,8 +35,7 @@ export class AppShell extends LitElement {
     return this;
   }
 
-  private client = new AppClient();
-  private appStore = new AppStore(this.client);
+  private appStore = new AppStore(new AppClient());
   private fileTreeState = new FileTreeState();
   private _unsubscribeStore: (() => void) | null = null;
 
@@ -60,14 +59,14 @@ export class AppShell extends LitElement {
     // Listen for hash changes
     window.addEventListener("hashchange", this.onHashChange);
 
-    this.client.connect();
+    this.appStore.connect();
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     this._unsubscribeStore?.();
     window.removeEventListener("hashchange", this.onHashChange);
-    this.client.disconnect();
+    this.appStore.disconnect();
     this.appStore.dispose();
   }
 
@@ -206,7 +205,7 @@ export class AppShell extends LitElement {
               <div class="flex-1 flex min-h-0 ${this.activeTab === "chat" ? "" : "hidden"}">
                 <chat-panel
                   class="flex-1 min-h-0 min-w-0"
-                  .client=${this.client}
+                  .client=${this.appStore.client}
                   .sessionId=${store.sessionId}
                   .sessionData=${store.sessionData}
                 ></chat-panel>

@@ -2,18 +2,22 @@
  * Task Form Dialog
  *
  * Modal dialog for creating a new task within a project.
- * Single text input — the backend generates title, description, and branch name
- * from the user's freeform intent.
+ * Single text input — task generation goes through AppStore, which
+ * calls the backend and auto-refreshes the task list on success.
  */
 
 import { LitElement, html } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
+import type { AppStore } from "./stores/app-store.js";
 
 @customElement("task-form")
 export class TaskForm extends LitElement {
   override createRenderRoot() {
     return this;
   }
+
+  @property({ attribute: false })
+  store: AppStore | null = null;
 
   @property({ type: Number })
   projectId: number | null = null;
@@ -38,24 +42,14 @@ export class TaskForm extends LitElement {
   }
 
   private async handleCreate() {
-    if (this.projectId == null || !this.prompt.trim()) return;
+    if (this.projectId == null || !this.prompt.trim() || !this.store) return;
     this.creating = true;
-    try {
-      const resp = await fetch(`/api/projects/${this.projectId}/tasks/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: this.prompt.trim() }),
-      });
-      if (resp.ok) {
-        this.prompt = "";
-        this.close();
-        this.dispatchEvent(new CustomEvent("task-created", { bubbles: true, composed: true }));
-      } else {
-        const data = await resp.json().catch(() => ({}));
-        alert(data.error || `Error creating task (HTTP ${resp.status})`);
-      }
-    } catch {
-      // silent
+    const result = await this.store.generateTask(this.projectId, this.prompt.trim());
+    if ("ok" in result) {
+      this.prompt = "";
+      this.close();
+    } else {
+      alert(result.error);
     }
     this.creating = false;
   }

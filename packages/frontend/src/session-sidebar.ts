@@ -115,10 +115,6 @@ export class SessionSidebar extends LitElement {
     }
   }
 
-  private async handleTaskCreated() {
-    await this.store?.refreshLists();
-  }
-
   private async handleDeleteTask(e: CustomEvent<{ taskId: number }>) {
     const store = this.store;
     if (!store) return;
@@ -183,7 +179,6 @@ export class SessionSidebar extends LitElement {
         @select-session=${this.handleSelectSession}
         @new-session=${this.handleNewSession}
         @new-task-session=${this.handleNewTaskSession}
-        @task-created=${this.handleTaskCreated}
         @save-task=${this.handleSaveTask}
         @edit-task=${this.handleEditTask}
         @delete-task=${this.handleDeleteTask}
@@ -207,7 +202,7 @@ export class SessionSidebar extends LitElement {
         </div>
 
         <!-- Task dialogs -->
-        <task-form .projectId=${projectId}></task-form>
+        <task-form .store=${store} .projectId=${projectId}></task-form>
         <task-detail></task-detail>
 
         <!-- Assistant (pinned above tasks) -->

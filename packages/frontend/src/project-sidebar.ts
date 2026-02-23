@@ -91,13 +91,13 @@ export class ProjectSidebar extends LitElement {
     this.projectForm.open({ mode: "edit", project });
   }
 
-  private async handleProjectCreated(e: CustomEvent<{ project: ProjectInfo }>) {
-    await this.store?.fetchProjects();
+  private handleProjectCreated(e: CustomEvent<{ project: ProjectInfo }>) {
+    // Store already refreshed the project list during createProject()
     location.hash = `#/project/${e.detail.project.id}`;
   }
 
-  private async handleProjectUpdated() {
-    await this.store?.fetchProjects();
+  private handleProjectUpdated() {
+    // Store already refreshed the project list during updateProject()
   }
 
   private async handleDeleteProject(e: Event, project: ProjectInfo) {
@@ -191,7 +191,7 @@ export class ProjectSidebar extends LitElement {
         </div>
 
         <!-- Project form modal (shared for create and edit) -->
-        <project-form></project-form>
+        <project-form .store=${this.store}></project-form>
       </div>
     `;
   }

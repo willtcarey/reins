@@ -280,6 +280,82 @@ export class AppStore {
     }
   }
 
+  // ---- Project mutation actions ----------------------------------------------
+
+  /** Create a new project. Returns the created project on success. */
+  async createProject(data: {
+    name: string;
+    path: string;
+    base_branch: string;
+  }): Promise<ProjectInfo | { error: string }> {
+    try {
+      const resp = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        return { error: body.error || "Failed to create project" };
+      }
+      const project: ProjectInfo = await resp.json();
+      await this.fetchProjects();
+      return project;
+    } catch {
+      return { error: "Network error" };
+    }
+  }
+
+  /** Update a project's properties. */
+  async updateProject(
+    projectId: number,
+    data: { name: string; path: string; base_branch: string },
+  ): Promise<{ ok: true } | { error: string }> {
+    try {
+      const resp = await fetch(`/api/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        return { error: body.error || "Failed to update project" };
+      }
+      await this.fetchProjects();
+      return { ok: true };
+    } catch {
+      return { error: "Network error" };
+    }
+  }
+
+  // ---- Task generation -------------------------------------------------------
+
+  /** Generate a task from a freeform prompt. Returns success or error. */
+  async generateTask(
+    projectId: number,
+    prompt: string,
+  ): Promise<{ ok: true } | { error: string }> {
+    try {
+      const resp = await fetch(
+        `/api/projects/${projectId}/tasks/generate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
+        },
+      );
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        return { error: body.error || `Error creating task (HTTP ${resp.status})` };
+      }
+      // Auto-refresh task list after creation
+      await this._projectStore.refreshLists();
+      return { ok: true };
+    } catch {
+      return { error: "Network error" };
+    }
+  }
+
   // ---- Diff branch resolution (internal) ------------------------------------
 
   /**
@@ -315,6 +391,16 @@ export class AppStore {
   }
 
   // ---- Lifecycle ------------------------------------------------------------
+
+  /** Open the WebSocket connection. */
+  connect() {
+    this._client.connect();
+  }
+
+  /** Close the WebSocket connection. */
+  disconnect() {
+    this._client.disconnect();
+  }
 
   dispose() {
     this._unsubProjectStore?.();
