@@ -21,7 +21,7 @@ The backend has zero tests. The codebase is ~3200 lines across stores, git utili
 
 These are minimal, surgical changes to make the code testable without altering behavior.
 
-### 1. `db.ts` — add `setDb()` and `resetDb()`
+### 1. ✅ `db.ts` — add `setDb()` and `resetDb()`
 
 The DB is a module-level singleton initialized from `process.cwd()/.reins/reins.db`. Tests need to inject an in-memory database.
 
@@ -41,13 +41,13 @@ export function resetDb(): void {
 
 No change to `getDb()` behavior — these are only called from test helpers.
 
-### 2. `git.ts` — export `parseUnifiedDiff()` and `parseNumstat()`
+### 2. ✅ `git.ts` — export `parseUnifiedDiff()` and `parseNumstat()`
 
 These are pure parsers with non-trivial logic (hunk parsing, line numbering, file merging). Currently internal. Exporting them enables direct unit tests without needing a git repo.
 
 ## Test Infrastructure
 
-### Directory structure
+### ✅ Directory structure
 
 ```
 packages/backend/src/
@@ -80,7 +80,7 @@ packages/backend/src/
     ws.test.ts
 ```
 
-### `helpers/test-db.ts`
+### ✅ `helpers/test-db.ts`
 
 Creates an in-memory SQLite database with migrations applied. Every test file that touches the DB calls `setupTestDb()` in `beforeEach` and `teardownTestDb()` in `afterEach` for full isolation.
 
@@ -103,7 +103,7 @@ export function teardownTestDb(): void {
 }
 ```
 
-### `helpers/test-repo.ts`
+### ✅ `helpers/test-repo.ts`
 
 Creates a temporary git repository with an initial commit. Returns the path and a cleanup function. Some tests need a remote, so there's an option to set one up (a bare repo as "origin").
 
@@ -125,7 +125,7 @@ export async function createTestRepo(opts?: { withRemote?: boolean }): Promise<T
 }
 ```
 
-### `helpers/test-state.ts`
+### ✅ `helpers/test-state.ts`
 
 Minimal `ServerState` factory for route/WS tests. No real sessions or clients.
 
@@ -143,7 +143,7 @@ export function createTestState(overrides?: Partial<ServerState>): ServerState {
 }
 ```
 
-### `package.json` scripts
+### ✅ `package.json` scripts
 
 ```json
 {
@@ -373,8 +373,8 @@ Add entries for the new docs:
 
 The phases above are ordered by dependency. Within each phase, individual test files are independent and can be done in any order. The recommended sequence:
 
-1. Production code changes (db.ts, git.ts exports) — 2 small edits
-2. Test helpers (test-db, test-repo, test-state) + package.json scripts
+1. ✅ Production code changes (db.ts, git.ts exports) — 2 small edits
+2. ✅ Test helpers (test-db, test-repo, test-state) + package.json scripts
 3. Phase 1: Pure functions (errors, branch-namer, git-parsers, router)
 4. Phase 2: Stores (project, task, session)
 5. Phase 3: Git utilities
