@@ -110,13 +110,13 @@ The sub-session is a regular task session: it gets the task system prompt ("You 
 
 ### Autonomous execution
 
-The delegate tool prepends a short preamble to the user's prompt instructing the sub-agent to work autonomously: make reasonable decisions when uncertain, do not ask clarifying questions, and if it truly cannot proceed, explain why in its final message. This keeps the interaction model simple — the parent sends a prompt, the sub-session does a full turn, and the parent gets a summary. No back-and-forth relay between parent and child.
+The delegate tool prepends a short preamble to the user's prompt instructing the sub-agent not to ask clarifying questions. If it gets stuck or needs more context, it should say so in its final message — the orchestrator can then re-delegate with additional context. This keeps the interaction model simple (no back-and-forth relay) while still letting the orchestrator course-correct.
 
 ## Implementation
 
 ### File changes
 
-#### 1. New file: `packages/backend/src/tools/delegate.ts`
+#### 1. New file: `packages/backend/src/tools/delegate.ts` ✅
 
 Tool factory module. Contains:
 
@@ -127,13 +127,13 @@ Tool factory module. Contains:
 
 Add an optional `prompt` parameter to `create_task`. When provided, after creating the task, kick off a session on it (fire-and-forget) — create the session and call `session.prompt()` without awaiting completion. The tool returns the task info immediately. The user watches the session's progress via WS broadcast.
 
-#### 3. `packages/backend/src/tools/index.ts`
+#### 3. `packages/backend/src/tools/index.ts` ✅
 
 - Import `createDelegateTool`
 - Add `runSubSession` and `delegateDepth` parameters to `createCustomTools`
 - Include the delegate tool in the returned array (only when in a task session)
 
-#### 4. New migration: `012_add_parent_session_id`
+#### 4. New migration: `012_add_parent_session_id` ✅
 
 ```sql
 ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL
@@ -141,19 +141,19 @@ ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id) O
 
 `ON DELETE SET NULL` so that if a parent session is ever cleaned up, the sub-session doesn't vanish — it just loses its lineage link.
 
-#### 5. `packages/backend/src/session-store.ts`
+#### 5. `packages/backend/src/session-store.ts` ✅
 
 - Add `parent_session_id` to `SessionRow` and `SessionListItem`.
 - Update `createSession` to accept and insert `parentSessionId`.
 - Update list queries to include `parent_session_id` so the frontend can identify sub-sessions.
 
-#### 6. `packages/backend/src/sessions.ts`
+#### 6. `packages/backend/src/sessions.ts` ✅
 
 - Build a `RunSubSession` closure that captures `state` and `delegateDepth`. At call time, it looks up the parent session's project ID, project dir, and task ID from the parent session ID. It calls `createNewSession` with the incremented depth and parent session ID, prompts the sub-session, extracts the summary, cleans up the sub-session from `state.sessions`, and returns it.
 - Pass the closure and `delegateDepth` through to `createCustomTools`.
 - `createNewSession` accepts new options: `delegateDepth?: number`, `parentSessionId?: string`.
 
-#### 7. Frontend: session list display
+#### 7. Frontend: session list display ✅
 
 Sub-sessions (those with a `parent_session_id`) get a visual indicator in the task's session list — a subtle badge or label. The full session is viewable by clicking in like any other session. No structural changes to the session view itself.
 

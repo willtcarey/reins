@@ -166,6 +166,7 @@ export class TaskList extends LitElement {
     const label = s.name || s.first_message || "Empty session";
     const truncated = label.length > 60 ? label.slice(0, 60) + "..." : label;
     const date = formatRelativeDate(s.updated_at);
+    const isDelegated = !!s.parent_session_id;
 
     return html`
       <button
@@ -175,6 +176,7 @@ export class TaskList extends LitElement {
       >
         <div class="flex items-center gap-1.5">
           ${this.renderActivityDot(s.id)}
+          ${isDelegated ? html`<span class="text-[9px] px-1 py-0.5 rounded bg-zinc-700 text-zinc-400 shrink-0">sub</span>` : nothing}
           <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
         </div>
         <div class="text-[10px] text-zinc-500 mt-0.5">${date} · ${s.message_count} messages</div>

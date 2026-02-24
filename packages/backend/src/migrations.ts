@@ -94,6 +94,10 @@ const MIGRATIONS: [name: string, sql: string][] = [
     "011_add_task_base_commit",
     `ALTER TABLE tasks ADD COLUMN base_commit TEXT`,
   ],
+  [
+    "012_add_parent_session_id",
+    `ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

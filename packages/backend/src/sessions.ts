@@ -25,6 +25,29 @@ import { getProject } from "./project-store.js";
 import { checkoutBranch } from "./git.js";
 import { createCustomTools } from "./tools/index.js";
 import { createBroadcast } from "./models/broadcast.js";
+import type { RunSubSession } from "./tools/delegate.js";
+
+// ---------------------------------------------------------------------------
+// Per-project mutex for delegation
+// ---------------------------------------------------------------------------
+
+const projectMutexes = new Map<number, Promise<void>>();
+
+/**
+ * Serialize async work per project. Returns a release function.
+ * Prevents concurrent delegate calls from conflicting on the working tree.
+ */
+function acquireProjectMutex(projectId: number): Promise<() => void> {
+  const prev = projectMutexes.get(projectId) ?? Promise.resolve();
+  let release!: () => void;
+  const next = new Promise<void>((resolve) => { release = resolve; });
+  projectMutexes.set(projectId, next);
+  return prev.then(() => release);
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 /**
  * Build a task system prompt prefix for injection.
@@ -60,16 +83,24 @@ async function resolveTask(
  * Always creates a DefaultResourceLoader with the project's cwd so that
  * skills, extensions, and context files are discovered correctly.
  */
-async function buildSessionOpts(
-  state: ServerState,
-  projectId: number,
-  projectDir: string,
-  task: TaskRow | null,
-) {
+async function buildSessionOpts(params: {
+  state: ServerState;
+  projectId: number;
+  projectDir: string;
+  task: TaskRow | null;
+  runSubSession?: RunSubSession;
+  delegateDepth?: number;
+}) {
+  const { state, projectId, projectDir, task, runSubSession, delegateDepth } = params;
   const sessionManager = SessionManager.inMemory();
   const tools = createCodingTools(projectDir);
   const broadcast = createBroadcast(state.clients);
-  const customTools = createCustomTools(projectId, broadcast);
+  const customTools = createCustomTools({
+    projectId,
+    broadcast,
+    runSubSession,
+    delegateDepth,
+  });
 
   const resourceLoader = new DefaultResourceLoader({
     cwd: projectDir,
@@ -95,6 +126,91 @@ async function buildSessionOpts(
   };
 }
 
+// ---------------------------------------------------------------------------
+// RunSubSession closure builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a RunSubSession closure for a given parent session.
+ * Uses a mutable ref for the parent session ID since it's not known
+ * until after createAgentSession returns.
+ */
+function buildRunSubSession(
+  state: ServerState,
+  parentSessionIdRef: { current: string },
+  projectId: number,
+  projectDir: string,
+  taskId: number,
+  delegateDepth: number,
+): RunSubSession {
+  return async (prompt: string, signal?: AbortSignal) => {
+    const release = await acquireProjectMutex(projectId);
+
+    try {
+      if (signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+
+      const managed = await createNewSession(state, projectId, projectDir, {
+        taskId,
+        delegateDepth: delegateDepth + 1,
+        parentSessionId: parentSessionIdRef.current,
+      });
+
+      const subSession = managed.session;
+      const subSessionId = managed.id;
+
+      // Wire up abort propagation
+      const onAbort = () => {
+        subSession.abort().catch(() => {});
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+
+      try {
+        await subSession.prompt(prompt);
+
+        // Extract the final assistant message
+        const messages = subSession.messages;
+        let summary = "(No response from sub-session)";
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const msg = messages[i];
+          if (msg.role === "assistant") {
+            const textParts = (msg.content || [])
+              .filter((c: any) => c.type === "text")
+              .map((c: any) => c.text);
+            if (textParts.length > 0) {
+              summary = textParts.join("\n");
+              break;
+            }
+          }
+        }
+
+        const messageCount = messages.length;
+
+        // Clean up: remove from in-memory state (persisted to SQLite already)
+        state.sessions.delete(subSessionId);
+
+        console.log(`  Delegate sub-session ${subSessionId} completed (${messageCount} messages)`);
+        return { sessionId: subSessionId, summary, messageCount };
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
+      }
+    } finally {
+      release();
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Session lifecycle
+// ---------------------------------------------------------------------------
+
+interface CreateSessionOpts {
+  taskId?: number;
+  delegateDepth?: number;
+  parentSessionId?: string;
+}
+
 /**
  * Create a brand-new session for a project.
  * If opts.taskId is provided, the session is linked to that task and
@@ -104,15 +220,44 @@ export async function createNewSession(
   state: ServerState,
   projectId: number,
   projectDir: string,
-  opts?: { taskId?: number },
+  opts?: CreateSessionOpts,
 ): Promise<ManagedSession> {
   const project = getProject(projectId);
   if (!project) throw new Error(`Project not found: ${projectId}`);
   const task = await resolveTask(opts?.taskId, projectDir);
-  const sessionOpts = await buildSessionOpts(state, projectId, projectDir, task);
+  const delegateDepth = opts?.delegateDepth ?? 0;
+
+  // Build RunSubSession closure for task sessions.
+  // Uses a mutable ref since the session ID isn't known yet.
+  let runSubSession: RunSubSession | undefined;
+  const sessionIdRef = { current: "" };
+
+  if (opts?.taskId) {
+    runSubSession = buildRunSubSession(
+      state,
+      sessionIdRef,
+      projectId,
+      projectDir,
+      opts.taskId,
+      delegateDepth,
+    );
+  }
+
+  const sessionOpts = await buildSessionOpts({
+    state,
+    projectId,
+    projectDir,
+    task,
+    runSubSession,
+    delegateDepth,
+  });
+
   const result = await createAgentSession(sessionOpts);
   const agentSession = result.session;
   const id = agentSession.sessionId;
+
+  // Fill in the session ID ref now that we have it
+  sessionIdRef.current = id;
 
   if (result.modelFallbackMessage) {
     console.warn(`  Model fallback: ${result.modelFallbackMessage}`);
@@ -125,6 +270,7 @@ export async function createNewSession(
     modelId: model?.id,
     thinkingLevel: agentSession.thinkingLevel,
     taskId: opts?.taskId,
+    parentSessionId: opts?.parentSessionId,
   });
 
   // Touch task's updated_at
@@ -159,7 +305,29 @@ export async function resumeSession(
   const project = getProject(row.project_id);
   if (!project) throw new Error(`Project not found: ${row.project_id}`);
   const task = await resolveTask(row.task_id, projectDir);
-  const sessionOpts = await buildSessionOpts(state, row.project_id, projectDir, task);
+
+  // Build RunSubSession for resumed task sessions
+  const sessionIdRef = { current: sessionId };
+  let runSubSession: RunSubSession | undefined;
+  if (row.task_id) {
+    runSubSession = buildRunSubSession(
+      state,
+      sessionIdRef,
+      row.project_id,
+      project.path,
+      row.task_id,
+      0, // resumed sessions are top-level
+    );
+  }
+
+  const sessionOpts = await buildSessionOpts({
+    state,
+    projectId: row.project_id,
+    projectDir,
+    task,
+    runSubSession,
+    delegateDepth: 0,
+  });
   const result = await createAgentSession(sessionOpts);
 
   const agentSession = result.session;

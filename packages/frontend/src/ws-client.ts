@@ -32,6 +32,7 @@ export interface SessionListItem {
   updated_at: string;
   message_count: number;
   first_message: string | null;
+  parent_session_id: string | null;
 }
 
 export interface TaskListItem {

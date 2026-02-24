@@ -22,6 +22,7 @@ export interface SessionRow {
   model_id: string | null;
   thinking_level: string;
   task_id: number | null;
+  parent_session_id: string | null;
 }
 
 export interface SessionListItem {
@@ -31,6 +32,7 @@ export interface SessionListItem {
   updated_at: string;
   message_count: number;
   first_message: string | null;
+  parent_session_id: string | null;
 }
 
 export interface SessionMessageRow {
@@ -47,13 +49,13 @@ export interface SessionMessageRow {
 export function createSession(
   id: string,
   projectId: number,
-  opts?: { modelProvider?: string; modelId?: string; thinkingLevel?: string; taskId?: number },
+  opts?: { modelProvider?: string; modelId?: string; thinkingLevel?: string; taskId?: number; parentSessionId?: string },
 ): SessionRow {
   const db = getDb();
   return db
     .query(
-      `INSERT INTO sessions (id, project_id, model_provider, model_id, thinking_level, task_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      `INSERT INTO sessions (id, project_id, model_provider, model_id, thinking_level, task_id, parent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
     )
     .get(
@@ -63,6 +65,7 @@ export function createSession(
       opts?.modelId ?? null,
       opts?.thinkingLevel ?? "off",
       opts?.taskId ?? null,
+      opts?.parentSessionId ?? null,
     ) as SessionRow;
 }
 
@@ -81,7 +84,8 @@ export function listSessions(projectId: number): SessionListItem[] {
          s.created_at,
          s.updated_at,
          COALESCE(mc.cnt, 0) AS message_count,
-         fm.first_message
+         fm.first_message,
+         s.parent_session_id
        FROM sessions s
        LEFT JOIN (
          SELECT session_id, COUNT(*) AS cnt FROM session_messages GROUP BY session_id
@@ -109,7 +113,8 @@ export function listTaskSessions(taskId: number): SessionListItem[] {
          s.created_at,
          s.updated_at,
          COALESCE(mc.cnt, 0) AS message_count,
-         fm.first_message
+         fm.first_message,
+         s.parent_session_id
        FROM sessions s
        LEFT JOIN (
          SELECT session_id, COUNT(*) AS cnt FROM session_messages GROUP BY session_id
