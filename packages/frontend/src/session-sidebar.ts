@@ -238,6 +238,7 @@ export class SessionSidebar extends LitElement {
               .store=${store}
               .projectId=${projectId}
               .tasks=${tasks}
+              .taskSessions=${store?.taskSessions ?? new Map()}
               .activeSessionId=${activeSessionId}
               .activityMap=${this.activityMap}
             ></task-list>

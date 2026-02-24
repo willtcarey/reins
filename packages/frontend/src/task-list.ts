@@ -36,13 +36,11 @@ export class TaskList extends LitElement {
   @property({ attribute: false })
   activityMap = new Map<string, ActivityState>();
 
+  @property({ attribute: false })
+  taskSessions = new Map<number, SessionListItem[]>();
+
   @state() private expandedTaskId: number | null = null;
   @state() private deleteConfirmTask: TaskListItem | null = null;
-
-  /** Task session sublists from the store. */
-  private get taskSessions(): Map<number, SessionListItem[]> {
-    return this.store?.taskSessions ?? new Map();
-  }
 
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has("projectId")) {
