@@ -426,19 +426,19 @@ export interface DiffFile {
 
 // ---- Diff parser -----------------------------------------------------------
 
-interface ParsedHunk {
+export interface ParsedHunk {
   header: string;
   oldStart: number;
   newStart: number;
   lines: { prefix: "+" | "-" | " "; text: string }[];
 }
 
-interface ParsedFile {
+export interface ParsedFile {
   path: string;
   hunks: ParsedHunk[];
 }
 
-function parseUnifiedDiff(raw: string): ParsedFile[] {
+export function parseUnifiedDiff(raw: string): ParsedFile[] {
   if (!raw?.trim()) return [];
 
   const files: ParsedFile[] = [];
@@ -501,7 +501,7 @@ export interface DiffFileSummary {
 /**
  * Parse `git diff --numstat` output into file summaries.
  */
-function parseNumstat(raw: string): DiffFileSummary[] {
+export function parseNumstat(raw: string): DiffFileSummary[] {
   if (!raw?.trim()) return [];
   return raw.trim().split("\n").filter(Boolean).map((line) => {
     const [add, rem, ...pathParts] = line.split("\t");

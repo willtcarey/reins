@@ -30,3 +30,20 @@ export function getDb(): Database {
 
   return db;
 }
+
+/**
+ * Replace the shared DB instance. Used by tests to inject an in-memory database.
+ */
+export function setDb(newDb: Database): void {
+  db = newDb;
+}
+
+/**
+ * Close and clear the shared DB instance. Used by test teardown.
+ */
+export function resetDb(): void {
+  if (db) {
+    db.close();
+    db = null;
+  }
+}
