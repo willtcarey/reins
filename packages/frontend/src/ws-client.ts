@@ -62,6 +62,7 @@ export interface ProjectInfo {
 export type ServerMessage =
   | { type: "event"; sessionId: string; event: any }
   | { type: "task_updated"; projectId: number }
+  | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null }
   | { type: "ack"; command: string }
   | { type: "error"; error: string };
 
@@ -172,6 +173,17 @@ export class AppClient {
         // Forward as a synthetic event so app-level listeners can react
         for (const listener of this.eventListeners) {
           listener("", { type: "task_updated", projectId: msg.projectId });
+        }
+        break;
+
+      case "session_created":
+        for (const listener of this.eventListeners) {
+          listener("", {
+            type: "session_created",
+            projectId: msg.projectId,
+            sessionId: msg.sessionId,
+            taskId: msg.taskId,
+          });
         }
         break;
 

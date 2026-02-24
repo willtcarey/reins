@@ -175,6 +175,16 @@ export async function createNewSession(
 
   const managed = wireSession(state, agentSession, sessionId);
   console.log(`  Session created: ${sessionId}${task ? ` (task: ${task.title})` : ""} (total: ${state.sessions.size})`);
+
+  // Notify frontend clients about the new session
+  const broadcast = createBroadcast(state.clients);
+  broadcast({
+    type: "session_created",
+    projectId,
+    sessionId,
+    taskId: opts?.taskId ?? null,
+  });
+
   return managed;
 }
 

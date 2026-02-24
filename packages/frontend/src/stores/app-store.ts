@@ -93,6 +93,15 @@ export class AppStore {
         return;
       }
 
+      // Handle session_created broadcast (server-side session creation, e.g. delegate)
+      if (event.type === "session_created" && event.projectId === store.projectId) {
+        store.refreshLists();
+        if (event.taskId) {
+          this.fetchTaskSessions(event.taskId);
+        }
+        return;
+      }
+
       // Track activity for all sessions
       if (sessionId && event.type === "agent_start") {
         this._setRunning(sessionId);

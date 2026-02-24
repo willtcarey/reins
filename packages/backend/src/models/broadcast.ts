@@ -20,7 +20,8 @@ import type { WsClient } from "../state.js";
 
 export type ServerMessage =
   | { type: "event"; sessionId: string; event: AgentSessionEvent }
-  | { type: "task_updated"; projectId: number };
+  | { type: "task_updated"; projectId: number }
+  | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null };
 
 // ---------------------------------------------------------------------------
 // Broadcast function
