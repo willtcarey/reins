@@ -4,14 +4,26 @@
  * Custom agent tool that lets the agent create new tasks from within
  * a conversation. Uses the task model layer for branch creation and
  * WS broadcast.
+ *
+ * Optionally accepts a `prompt` parameter to kick off an initial session
+ * on the newly created task (fire-and-forget). The tool returns the task
+ * info immediately; the session runs in the background. The user watches
+ * progress via WS broadcast.
  */
 
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { TaskRow } from "../task-store.js";
 import type { Broadcast } from "../models/broadcast.js";
+import type { CreateSessionFn } from "./delegate.js";
 import { createTaskWithBranch } from "../models/tasks.js";
 import { getProject } from "../project-store.js";
+
+const AUTONOMY_PREAMBLE = `You are an agent working autonomously on a task. Do not ask clarifying questions — work with what you have, and if you get stuck or need more context, say so in your final message.
+
+---
+
+`;
 
 const parameters = Type.Object({
   title: Type.String({ description: "Concise task title (imperative mood, e.g. \"Add dark mode support\")" }),
@@ -19,17 +31,31 @@ const parameters = Type.Object({
   branch_name: Type.Optional(
     Type.String({ description: "Git branch name in task/<slug> format. If omitted, derived from the title." }),
   ),
+  prompt: Type.Optional(
+    Type.String({
+      description:
+        "Optional initial prompt to kick off a session on the new task. " +
+        "The session starts in the background (fire-and-forget) — the tool returns immediately. " +
+        "Use this to start work on the task right away.",
+    }),
+  ),
 });
+
+export interface CreateTaskToolOpts {
+  projectId: number;
+  broadcast: Broadcast;
+  /** When set, the tool can kick off sessions on newly created tasks. */
+  createSession?: CreateSessionFn;
+}
 
 /**
  * Factory that creates the create_task tool definition.
  * Loads the project record at execution time so that changes to the
  * project path or base branch are picked up mid-conversation.
  */
-export function createTaskTool(
-  projectId: number,
-  broadcast: Broadcast,
-): ToolDefinition {
+export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition {
+  const { projectId, broadcast, createSession } = opts;
+
   return {
     name: "create_task",
     label: "Create Task",
@@ -55,8 +81,29 @@ export function createTaskTool(
           broadcast,
         );
 
+        // Fire-and-forget: kick off a session on the new task if a prompt was provided
+        if (params.prompt && createSession) {
+          const fullPrompt = AUTONOMY_PREAMBLE + params.prompt;
+          createSession(projectId, project.path, { taskId: task.id })
+            .then((managed) => {
+              managed.session.prompt(fullPrompt).catch((err: any) => {
+                console.error(`  Failed to prompt task session ${managed.id}:`, err);
+              });
+            })
+            .catch((err: any) => {
+              console.error(`  Failed to create session for task ${task.id}:`, err);
+            });
+        }
+
+        const result: any = { ...task };
+        if (params.prompt) {
+          result._note = params.prompt && createSession
+            ? "Session started in background — watch for progress via WebSocket events."
+            : "Prompt was provided but session creation is not available in this context.";
+        }
+
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }],
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
           details: task,
         };
       } catch (err: any) {

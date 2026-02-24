@@ -52,6 +52,18 @@ Deleting a task removes:
 
 A task cannot be deleted while any of its sessions are actively running. Stop the running session first, then delete.
 
+## Delegation
+
+Task sessions can **delegate** work to sub-sessions. When an agent calls the `delegate` tool, a new session is spawned on the same task with a fresh context window. The sub-session does a focused piece of work and returns a summary to the parent. This enables work decomposition — an orchestrating session can break a large task into steps, delegating each one to keep context windows lean.
+
+Sub-sessions appear in the task's session list with a visual indicator showing they were delegated. They're full sessions you can click into and review.
+
+Delegation is depth-limited (max 3 levels) to prevent runaway nesting, and serialized per project to avoid branch conflicts.
+
+## Starting work on creation
+
+When creating a task (via the `create_task` tool), you can include a prompt to immediately kick off a session. The task is created and the session starts in the background — the tool returns right away. This lets a project assistant create a task and start work on it in one step.
+
 ## Lifecycle
 
 Tasks are persistent — they survive server restarts. The `updated_at` timestamp is bumped whenever a new session is created under a task, keeping the most active tasks sorted to the top of the list.

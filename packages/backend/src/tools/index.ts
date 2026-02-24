@@ -13,22 +13,27 @@ import { createDelegateTool, type CreateSessionFn } from "./delegate.js";
 export interface CustomToolsOpts {
   projectId: number;
   broadcast: Broadcast;
+  /** Session creation function — used by create_task (prompt) and delegate. */
+  createSession: CreateSessionFn;
   /** When set, delegation is available for this session. */
   delegate?: {
     sessionId: string;
-    createSession: CreateSessionFn;
     deleteSession: (id: string) => void;
   };
 }
 
 export function createCustomTools(opts: CustomToolsOpts): ToolDefinition[] {
   const tools: ToolDefinition[] = [
-    createTaskTool(opts.projectId, opts.broadcast),
+    createTaskTool({
+      projectId: opts.projectId,
+      broadcast: opts.broadcast,
+      createSession: opts.createSession,
+    }),
   ];
 
   // Delegate tool is only available in task sessions
   if (opts.delegate) {
-    tools.push(createDelegateTool(opts.delegate.sessionId, opts.delegate.createSession, opts.delegate.deleteSession));
+    tools.push(createDelegateTool(opts.delegate.sessionId, opts.createSession, opts.delegate.deleteSession));
   }
 
   return tools;

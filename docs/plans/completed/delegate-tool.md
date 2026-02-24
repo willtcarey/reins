@@ -127,7 +127,7 @@ Tool factory module. Contains:
 - `createDelegateTool(runSubSession, depth)` — returns a `ToolDefinition`
 - `execute` calls `runSubSession(prompt)` which creates a sub-session, prompts it, awaits completion, cleans up, and returns the summary
 
-#### 2. `create_task` tool: optional `prompt` parameter
+#### 2. `create_task` tool: optional `prompt` parameter ✅
 
 Add an optional `prompt` parameter to `create_task`. When provided, after creating the task, kick off a session on it (fire-and-forget) — create the session and call `session.prompt()` without awaiting completion. The tool returns the task info immediately. The user watches the session's progress via WS broadcast.
 

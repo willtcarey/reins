@@ -76,14 +76,16 @@ async function buildSessionOpts(params: {
   const sessionManager = SessionManager.inMemory();
   const tools = createCodingTools(projectDir);
   const broadcast = createBroadcast(state.clients);
+  const createSessionFn = (projectId: number, projectDir: string, opts?: any) =>
+    createNewSession(state, projectId, projectDir, opts);
+
   const customTools = createCustomTools({
     projectId,
     broadcast,
+    createSession: createSessionFn,
     delegate: includeDelegateTool
       ? {
           sessionId,
-          createSession: (projectId, projectDir, opts) =>
-            createNewSession(state, projectId, projectDir, opts),
           deleteSession: (id) => state.sessions.delete(id),
         }
       : undefined,
