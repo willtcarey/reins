@@ -20,7 +20,7 @@ Thin HTTP adapters. Parse requests, call model functions, format responses. Erro
 
 Agent tool definitions using the pi SDK `customTools` mechanism. Each tool file exports a factory that returns a `ToolDefinition`. The barrel `tools/index.ts` exports `createCustomTools()` which is the single integration point for `sessions.ts`.
 
-Tool factories receive project context (projectId, projectDir, baseBranch) and server state via closure at session-creation time.
+Tool factories receive stable references (server state, session ID) at factory time and look up project context from the DB at execution time.
 
 ### WebSocket handlers (`src/ws.ts`)
 

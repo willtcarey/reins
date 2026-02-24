@@ -8,15 +8,17 @@
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { Broadcast } from "../models/broadcast.js";
 import { createTaskTool } from "./create-task.js";
-import { createDelegateTool, type RunSubSession } from "./delegate.js";
+import { createDelegateTool, type CreateSessionFn } from "./delegate.js";
 
 export interface CustomToolsOpts {
   projectId: number;
   broadcast: Broadcast;
-  /** When set, the session is a task session and delegation is available. */
-  runSubSession?: RunSubSession;
-  /** Current delegation depth (default 0). */
-  delegateDepth?: number;
+  /** When set, delegation is available for this session. */
+  delegate?: {
+    sessionId: string;
+    createSession: CreateSessionFn;
+    deleteSession: (id: string) => void;
+  };
 }
 
 export function createCustomTools(opts: CustomToolsOpts): ToolDefinition[] {
@@ -25,8 +27,8 @@ export function createCustomTools(opts: CustomToolsOpts): ToolDefinition[] {
   ];
 
   // Delegate tool is only available in task sessions
-  if (opts.runSubSession) {
-    tools.push(createDelegateTool(opts.runSubSession, opts.delegateDepth ?? 0));
+  if (opts.delegate) {
+    tools.push(createDelegateTool(opts.delegate.sessionId, opts.delegate.createSession, opts.delegate.deleteSession));
   }
 
   return tools;

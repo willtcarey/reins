@@ -52,13 +52,17 @@ The tool is only available in task sessions. It always delegates to the current 
 
 ### Threading state
 
-The tool needs to create and run sub-sessions, but `ServerState` shouldn't leak into tools. Instead, follow the same pattern as `broadcast` — pass a narrowed closure:
+The delegate tool is stateless at definition time. Its factory signature is:
 
 ```ts
-type RunSubSession = (prompt: string, parentSessionId: string) => Promise<{ sessionId: string; summary: string }>
+createDelegateTool(state: ServerState, sessionId: string, createSession: CreateSessionFn)
 ```
 
-This closure is built in `sessions.ts` (where `state` already lives) and captures `state` and `delegateDepth`. At call time, it looks up the parent session's project ID, project dir, and task ID from the parent session ID. The delegate tool passes its own session ID when calling it.
+- **`state`** and **`sessionId`** are stable references passed at factory time (session creation).
+- At execution time, the tool looks up everything it needs from the DB: the session row gives `project_id` and `task_id`, the project row gives the working directory, and delegation depth is derived by walking the `parent_session_id` chain.
+- **`createSession`** is a function injected to avoid circular imports (`sessions.ts` → `tools/index.ts` → `delegate.ts` → `sessions.ts`). It wraps `createNewSession` from `sessions.ts`.
+
+Session IDs are generated upfront via `crypto.randomUUID()` before calling `createAgentSession`, so they can be passed to tool factories before the pi session exists. This replaces the earlier `sessionIdRef` mutable-ref hack.
 
 ### Multi-step plans: orchestrator loop
 
@@ -130,7 +134,7 @@ Add an optional `prompt` parameter to `create_task`. When provided, after creati
 #### 3. `packages/backend/src/tools/index.ts` ✅
 
 - Import `createDelegateTool`
-- Add `runSubSession` and `delegateDepth` parameters to `createCustomTools`
+- `CustomToolsOpts` accepts an optional `delegate` object: `{ state, sessionId, createSession }`
 - Include the delegate tool in the returned array (only when in a task session)
 
 #### 4. New migration: `012_add_parent_session_id` ✅
@@ -149,9 +153,11 @@ ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id) O
 
 #### 6. `packages/backend/src/sessions.ts` ✅
 
-- Build a `RunSubSession` closure that captures `state` and `delegateDepth`. At call time, it looks up the parent session's project ID, project dir, and task ID from the parent session ID. It calls `createNewSession` with the incremented depth and parent session ID, prompts the sub-session, extracts the summary, cleans up the sub-session from `state.sessions`, and returns it.
-- Pass the closure and `delegateDepth` through to `createCustomTools`.
-- `createNewSession` accepts new options: `delegateDepth?: number`, `parentSessionId?: string`.
+- Generate session IDs upfront via `crypto.randomUUID()` before calling `createAgentSession`, so the ID can be passed to tool factories.
+- Pass `{ state, sessionId, createSession }` through to `createCustomTools` as the `delegate` option.
+- Export a `createSession` wrapper for injection into the delegate tool (avoids circular imports).
+- `createNewSession` accepts new options: `parentSessionId?: string`.
+- The per-project mutex moved from here into `delegate.ts` (it's only used by delegation).
 
 #### 7. Frontend: session list display ✅
 
