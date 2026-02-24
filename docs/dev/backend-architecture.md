@@ -22,6 +22,11 @@ Agent tool definitions using the pi SDK `customTools` mechanism. Each tool file 
 
 Tool factories receive stable references (server state, session ID) at factory time and look up project context from the DB at execution time.
 
+**Current tools:**
+
+- **`create_task`** — creates a task with a git branch. Available in all sessions. Optional `prompt` parameter kicks off a fire-and-forget session on the new task.
+- **`delegate`** — spawns a sub-session on the same task with a fresh context window, awaits completion, returns a summary. Only available in task sessions. Depth-limited (max 3), serialized per project via an in-memory mutex. See [ADR-005](../adr/005-orchestrator-loop-not-relay-chain.md) for the orchestrator-loop design choice.
+
 ### WebSocket handlers (`src/ws.ts`)
 
 Command dispatch for `prompt`, `steer`, `abort`. Resolves project context from the session's DB row.
