@@ -43,6 +43,7 @@ export class AppStore {
   // ---- Activity state (absorbed from ActivityTracker) -----------------------
 
   private _activityStates = new Map<string, ActivityState>();
+  private _activityMapCache: Map<string, ActivityState> | null = null;
 
   // ---- Task session sublists --------------------------------------------------
 
@@ -135,7 +136,10 @@ export class AppStore {
 
   /** Get a snapshot of all activity states (for passing as a property). */
   get activityMap(): Map<string, ActivityState> {
-    return new Map(this._activityStates);
+    if (!this._activityMapCache) {
+      this._activityMapCache = new Map(this._activityStates);
+    }
+    return this._activityMapCache;
   }
 
   /** Summary counts for favicon/title. */
@@ -159,6 +163,7 @@ export class AppStore {
   private _setRunning(sessionId: string): void {
     if (this._activityStates.get(sessionId) === "running") return;
     this._activityStates.set(sessionId, "running");
+    this._activityMapCache = null;
     this.notify();
   }
 
@@ -168,6 +173,7 @@ export class AppStore {
       return;
     }
     this._activityStates.set(sessionId, "finished");
+    this._activityMapCache = null;
     this.notify();
   }
 
@@ -175,6 +181,7 @@ export class AppStore {
   clearActivity(sessionId: string): void {
     if (!this._activityStates.has(sessionId)) return;
     this._activityStates.delete(sessionId);
+    this._activityMapCache = null;
     this.notify();
   }
 
@@ -194,6 +201,11 @@ export class AppStore {
       );
       if (resp.ok) {
         const sessions: SessionListItem[] = await resp.json();
+        // Skip update if data hasn't changed
+        const existing = this._taskSessions.get(taskId);
+        if (existing && JSON.stringify(existing) === JSON.stringify(sessions)) {
+          return;
+        }
         const next = new Map(this._taskSessions);
         next.set(taskId, sessions);
         this._taskSessions = next;

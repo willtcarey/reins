@@ -63,11 +63,18 @@ export class SessionSidebar extends LitElement {
     }
   }
 
+  private _lastTasks: unknown = null;
+
   private _subscribe() {
     this._unsubscribe?.();
     this._unsubscribe = this.store?.subscribe(() => {
       this.requestUpdate();
-      this.taskList?.refreshExpanded();
+      // Only refresh expanded task sessions when the task list itself changed
+      const tasks = this.store?.tasks;
+      if (tasks !== this._lastTasks) {
+        this._lastTasks = tasks;
+        this.taskList?.refreshExpanded();
+      }
     }) ?? null;
   }
 
