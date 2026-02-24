@@ -24,6 +24,7 @@ import { getTask, touchTask, type TaskRow } from "./task-store.js";
 import { getProject } from "./project-store.js";
 import { checkoutBranch } from "./git.js";
 import { createCustomTools } from "./tools/index.js";
+import type { CreateSessionOpts } from "./tools/delegate.js";
 import { createBroadcast } from "./models/broadcast.js";
 
 // ---------------------------------------------------------------------------
@@ -76,7 +77,7 @@ async function buildSessionOpts(params: {
   const sessionManager = SessionManager.inMemory();
   const tools = createCodingTools(projectDir);
   const broadcast = createBroadcast(state.clients);
-  const createSessionFn = (projectId: number, projectDir: string, opts?: any) =>
+  const createSessionFn = (projectId: number, projectDir: string, opts?: CreateSessionOpts) =>
     createNewSession(state, projectId, projectDir, opts);
 
   const customTools = createCustomTools({
@@ -118,12 +119,6 @@ async function buildSessionOpts(params: {
 // ---------------------------------------------------------------------------
 // Session lifecycle
 // ---------------------------------------------------------------------------
-
-interface CreateSessionOpts {
-  taskId?: number;
-  delegateDepth?: number;
-  parentSessionId?: string;
-}
 
 /**
  * Create a brand-new session for a project.

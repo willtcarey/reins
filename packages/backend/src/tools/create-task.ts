@@ -19,12 +19,6 @@ import type { CreateSessionFn } from "./delegate.js";
 import { createTaskWithBranch } from "../models/tasks.js";
 import { getProject } from "../project-store.js";
 
-const AUTONOMY_PREAMBLE = `You are an agent working autonomously on a task. Do not ask clarifying questions — work with what you have, and if you get stuck or need more context, say so in your final message.
-
----
-
-`;
-
 const parameters = Type.Object({
   title: Type.String({ description: "Concise task title (imperative mood, e.g. \"Add dark mode support\")" }),
   description: Type.String({ description: "Brief description with actionable detail (1-3 sentences)" }),
@@ -81,12 +75,12 @@ export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition {
           broadcast,
         );
 
-        // Fire-and-forget: kick off a session on the new task if a prompt was provided
+        // Fire-and-forget: kick off a session on the new task if a prompt was provided.
+        // Intentionally not awaited — the tool returns task info immediately.
         if (params.prompt && createSession) {
-          const fullPrompt = AUTONOMY_PREAMBLE + params.prompt;
           createSession(projectId, project.path, { taskId: task.id })
             .then((managed) => {
-              managed.session.prompt(fullPrompt).catch((err: any) => {
+              managed.session.prompt(params.prompt).catch((err: any) => {
                 console.error(`  Failed to prompt task session ${managed.id}:`, err);
               });
             })
@@ -95,9 +89,9 @@ export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition {
             });
         }
 
-        const result: any = { ...task };
+        const result: TaskRow & { _note?: string } = { ...task };
         if (params.prompt) {
-          result._note = params.prompt && createSession
+          result._note = createSession
             ? "Session started in background — watch for progress via WebSocket events."
             : "Prompt was provided but session creation is not available in this context.";
         }
