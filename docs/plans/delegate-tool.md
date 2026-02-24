@@ -6,35 +6,32 @@
 
 Long tasks burn through context windows. Today the only option is to manually start a new session and re-explain the state of things. A `delegate` tool lets the agent itself split work into focused sub-sessions, keeping each one's context lean.
 
-Two use cases:
+The use case is **task session → task session**: a session working on a task spawns a sub-session on the *same* task (same branch). The sub-session gets a fresh context window, does a scoped piece of work, and returns a summary. The parent continues with a small context footprint for that chunk.
 
-1. **Task session → task session.** A session working on a task spawns a sub-session on the *same* task (same branch). The sub-session gets a fresh context window, does a scoped piece of work, and returns a summary. The parent continues with a small context footprint for that chunk.
-
-2. **Scratch session → task session.** A scratch/orchestrator session creates tasks (via `create_task`) and then delegates work to each one. The sub-session checks out the task's branch, does the work, and returns. The scratch session never touches a branch itself — it stays in orchestrator mode.
+Separately, the `create_task` tool gains an optional `prompt` parameter to kick off an initial session on a newly created task (fire-and-forget). That covers the "start work on a task from scratch" use case without needing delegation.
 
 ## Design
 
 ### Tool definition: `delegate`
 
 **Name:** `delegate`
-**Description:** Start a sub-session to do a focused unit of work, then return the result. The sub-session gets a fresh context window and full access to coding tools. Use this to break large tasks into smaller pieces or to delegate work to a task from a scratch session.
+**Description:** Start a sub-session to do a focused unit of work, then return the result. The sub-session gets a fresh context window and full access to coding tools. Use this to break large tasks into smaller pieces, keeping each sub-session's context lean.
 
 **Parameters:**
 
 | Param | Type | Required | Description |
 |---|---|---|---|
-| `task_id` | number | yes* | The task to work on. Required when calling from a scratch session. When calling from a task session, defaults to the current task. |
 | `prompt` | string | yes | Instructions for the sub-session. Be specific — the sub-session has no prior context. |
 
-\* Required from scratch sessions; optional from task sessions (defaults to current task).
+The tool is only available in task sessions. It always delegates to the current task.
 
 **Behaviour:**
 
-1. Resolve the target task. If `task_id` is provided, use it. If omitted, use the current session's task. Error if neither exists (scratch session without `task_id`).
-2. Validate that the target task is the same as the current task, OR the current session is a scratch session. Cross-task delegation from a task session is not supported (branch checkout conflicts).
-3. Create a new session on the target task via `createNewSession()` — this checks out the task branch and sets up the task system prompt.
-4. Send the prompt to the sub-session via `session.prompt()` and await completion.
-5. Extract the final assistant message from the sub-session's messages.
+1. Error if the current session is not a task session (no task ID).
+2. Create a new session on the current task via `createNewSession()` — already on the right branch, sets up the task system prompt.
+3. Prepend the autonomy preamble to the prompt and send it to the sub-session via `session.prompt()`. Await completion.
+4. Extract the final assistant message from the sub-session's messages.
+5. Remove the sub-session from `state.sessions` (already persisted to SQLite).
 6. Return the final assistant text as the tool result.
 
 **Tool result format:**
@@ -58,10 +55,10 @@ Two use cases:
 The tool needs to create and run sub-sessions, but `ServerState` shouldn't leak into tools. Instead, follow the same pattern as `broadcast` — pass a narrowed closure:
 
 ```ts
-type RunSubSession = (taskId: number, prompt: string) => Promise<{ sessionId: string; summary: string }>
+type RunSubSession = (prompt: string, parentSessionId: string) => Promise<{ sessionId: string; summary: string }>
 ```
 
-This closure is built in `sessions.ts` (where `state` already lives) and captures `createNewSession`, `state`, `projectId`, `projectDir`, and `delegateDepth`. The tool factory receives it as a parameter alongside `projectId`, `broadcast`, and `currentTaskId`. The tool itself just calls `runSubSession(taskId, prompt)` — no knowledge of server internals.
+This closure is built in `sessions.ts` (where `state` already lives) and captures `state` and `delegateDepth`. At call time, it looks up the parent session's project ID, project dir, and task ID from the parent session ID. The delegate tool passes its own session ID when calling it.
 
 ### Multi-step plans: orchestrator loop
 
@@ -79,20 +76,29 @@ Sub-sessions get the delegate tool so they can split their own work, but recursi
 
 This is a recursion guard, not a chain limiter — sequential plan progression is the orchestrator's job, and each delegation is depth 1 from its perspective.
 
+### Concurrency protection
+
+A per-project in-memory mutex ensures only one delegate call runs at a time per project. This prevents branch checkout conflicts if the model issues parallel tool calls or multiple sessions delegate concurrently. Implemented as a simple promise chain keyed by project ID (~15 lines). The second call awaits the first's completion before starting.
+
+No SQLite-based lock — the lock protects the single working tree within one server process, and in-memory state is inherently clean on restart. If persistent locks are needed later (e.g., for task queues surviving restarts), that's a separate scope.
+
 ### Abort propagation
 
 The tool's `execute` receives an `AbortSignal` from pi. If the parent session is aborted mid-delegation, the signal fires. The tool should call `subSession.abort()` and return an error result.
 
 ### Branch checkout coordination
 
-- **Task → same task:** No branch change needed — already on the right branch.
-- **Scratch → task:** The sub-session calls `createNewSession` with `taskId`, which checks out the task branch. When the sub-session completes, the working tree is left on the task branch. This is fine — the scratch session doesn't depend on any particular branch state.
+No branch change needed — the parent and sub-session are on the same task branch.
 
 ### Parent tracking
 
 Sub-sessions get a `parent_session_id` column in the sessions table (nullable FK to `sessions.id`). This gives us lineage tracking — you can trace a sub-session back to its parent, and query all sub-sessions spawned by a given session.
 
 The `createNewSession` options grow to include `parentSessionId?: string`. The delegate tool passes its own session ID.
+
+### Session cleanup
+
+After the delegate tool extracts the summary, it removes the sub-session from `state.sessions` immediately. The session is already persisted to SQLite (messages saved on `turn_end`/`agent_end`), so nothing is lost. If the user later clicks into the sub-session in the UI, it resumes from SQLite like any other session. This keeps memory bounded when an orchestrator spawns many sub-sessions.
 
 ### Visibility
 
@@ -102,6 +108,10 @@ Sub-sessions are normal sessions in the DB, linked to the task, with a `parent_s
 
 The sub-session is a regular task session: it gets the task system prompt ("You are working on this task"), the project's AGENTS.md context, and full coding tools. It has no knowledge of the parent session. The prompt should be self-contained.
 
+### Autonomous execution
+
+The delegate tool prepends a short preamble to the user's prompt instructing the sub-agent to work autonomously: make reasonable decisions when uncertain, do not ask clarifying questions, and if it truly cannot proceed, explain why in its final message. This keeps the interaction model simple — the parent sends a prompt, the sub-session does a full turn, and the parent gets a summary. No back-and-forth relay between parent and child.
+
 ## Implementation
 
 ### File changes
@@ -110,28 +120,20 @@ The sub-session is a regular task session: it gets the task system prompt ("You 
 
 Tool factory module. Contains:
 
-- `createDelegateTool(state, projectId, currentTaskId, broadcast, depth)` — returns a `ToolDefinition`
-- `execute` creates a sub-session, prompts it, awaits completion, returns summary
+- `createDelegateTool(runSubSession, depth)` — returns a `ToolDefinition`
+- `execute` calls `runSubSession(prompt)` which creates a sub-session, prompts it, awaits completion, cleans up, and returns the summary
 
-The tricky part is awaiting completion. `session.prompt()` returns a promise that resolves when the agent finishes its turn (including all tool calls). That's exactly what we need.
+#### 2. `create_task` tool: optional `prompt` parameter
 
-```ts
-const managed = await createNewSession(state, projectId, projectDir, { taskId: targetTaskId });
-await managed.session.prompt(params.prompt);
+Add an optional `prompt` parameter to `create_task`. When provided, after creating the task, kick off a session on it (fire-and-forget) — create the session and call `session.prompt()` without awaiting completion. The tool returns the task info immediately. The user watches the session's progress via WS broadcast.
 
-// Extract final assistant message
-const messages = managed.session.messages;
-const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
-const summary = extractText(lastAssistant);
-```
-
-#### 2. `packages/backend/src/tools/index.ts`
+#### 3. `packages/backend/src/tools/index.ts`
 
 - Import `createDelegateTool`
-- Add `currentTaskId`, `delegateDepth`, and `runSubSession` parameters to `createCustomTools`
-- Include the delegate tool in the returned array
+- Add `runSubSession` and `delegateDepth` parameters to `createCustomTools`
+- Include the delegate tool in the returned array (only when in a task session)
 
-#### 3. New migration: `012_add_parent_session_id`
+#### 4. New migration: `012_add_parent_session_id`
 
 ```sql
 ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL
@@ -139,33 +141,32 @@ ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id) O
 
 `ON DELETE SET NULL` so that if a parent session is ever cleaned up, the sub-session doesn't vanish — it just loses its lineage link.
 
-#### 4. `packages/backend/src/session-store.ts`
+#### 5. `packages/backend/src/session-store.ts`
 
 - Add `parent_session_id` to `SessionRow` and `SessionListItem`.
 - Update `createSession` to accept and insert `parentSessionId`.
 - Update list queries to include `parent_session_id` so the frontend can identify sub-sessions.
 
-#### 5. `packages/backend/src/sessions.ts`
+#### 6. `packages/backend/src/sessions.ts`
 
-- Build a `RunSubSession` closure in `buildSessionOpts` that captures `state`, `projectId`, `projectDir`, and `delegateDepth`. The closure calls `createNewSession` with the incremented depth and parent session ID, prompts the sub-session, extracts the summary, and returns it.
-- Pass the closure (along with `currentTaskId` and `delegateDepth`) through to `createCustomTools`.
+- Build a `RunSubSession` closure that captures `state` and `delegateDepth`. At call time, it looks up the parent session's project ID, project dir, and task ID from the parent session ID. It calls `createNewSession` with the incremented depth and parent session ID, prompts the sub-session, extracts the summary, cleans up the sub-session from `state.sessions`, and returns it.
+- Pass the closure and `delegateDepth` through to `createCustomTools`.
 - `createNewSession` accepts new options: `delegateDepth?: number`, `parentSessionId?: string`.
 
-#### 6. Frontend: session list display
+#### 7. Frontend: session list display
 
 Sub-sessions (those with a `parent_session_id`) get a visual indicator in the task's session list — a subtle badge or label. The full session is viewable by clicking in like any other session. No structural changes to the session view itself.
 
 ### What we're NOT doing
 
-- **Cross-task delegation from task sessions.** Would require branch checkout coordination. Out of scope.
-- **Parallel delegation.** Single working tree means sequential only.
+- **Cross-task delegation.** Delegate only works within the current task. Starting work on a different task is handled by `create_task` with a `prompt` parameter (fire-and-forget).
+- **Scratch session orchestration.** No orchestrator-loop from scratch sessions. Scratch can create tasks and kick off sessions, but doesn't await their completion.
+- **Parallel delegation.** Single working tree means sequential only. Per-project mutex enforces this.
 - **Custom sub-session model/thinking level.** Sub-sessions inherit the server's model config. Could be added later.
 - **Streaming sub-session output to parent.** The parent just gets the final summary. The user sees real-time output via WS broadcast, but the parent agent doesn't.
 
 ## Open questions
 
-1. **Should the parent session's branch be restored after a scratch → task delegation?** Currently it won't be, since `createNewSession` checks out the task branch. The scratch session doesn't care, but if the user was looking at files before delegating, the working tree has changed. Probably fine — scratch sessions are orchestration-mode, not file-editing-mode.
+1. **What if the sub-session hits an error or gets stuck in a loop?** The depth limit prevents infinite recursion. For stuck sessions, the abort signal propagation handles user-initiated cancellation. We could add a turn limit or token budget later.
 
-2. **What if the sub-session hits an error or gets stuck in a loop?** The depth limit prevents infinite recursion. For stuck sessions, the abort signal propagation handles user-initiated cancellation. We could add a turn limit or token budget later.
-
-3. **Should the tool accept an optional `context` parameter for injecting extra files/docs into the sub-session?** Not for v1 — the prompt can tell the sub-agent to read specific files. Task-pinned documents (a separate TODO item) would solve this more broadly.
+2. **Should the tool accept an optional `context` parameter for injecting extra files/docs into the sub-session?** Not for v1 — the prompt can tell the sub-agent to read specific files. Task-pinned documents (a separate TODO item) would solve this more broadly.
