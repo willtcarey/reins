@@ -33,16 +33,33 @@ export class ProjectSidebar extends LitElement {
 
   @query("project-form") private projectForm!: ProjectForm;
 
+  private _unsubscribe: (() => void) | null = null;
+
   override connectedCallback() {
     super.connectedCallback();
-
+    this._subscribe();
     this._onDocClick = this._onDocClick.bind(this);
     document.addEventListener("click", this._onDocClick);
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
+    this._unsubscribe?.();
+    this._unsubscribe = null;
     document.removeEventListener("click", this._onDocClick);
+  }
+
+  override willUpdate(changed: Map<string, unknown>) {
+    if (changed.has("store")) {
+      this._subscribe();
+    }
+  }
+
+  private _subscribe() {
+    this._unsubscribe?.();
+    this._unsubscribe = this.store?.subscribe(() => {
+      this.requestUpdate();
+    }) ?? null;
   }
 
   private _onDocClick(e: MouseEvent) {
@@ -55,7 +72,9 @@ export class ProjectSidebar extends LitElement {
   }
 
   private get projects(): ProjectInfo[] {
-    return this.store?.projects ?? [];
+    return [...(this.store?.projects ?? [])].sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+    );
   }
 
   private get activeProject(): ProjectInfo | null {
@@ -143,18 +162,14 @@ export class ProjectSidebar extends LitElement {
           ${this.dropdownOpen ? html`
             <div class="absolute left-0 right-0 top-full z-50 bg-zinc-800 border border-zinc-600 rounded-b shadow-xl max-h-72 overflow-y-auto">
               ${this.projects.map(p => html`
-                <button
-                  class="w-full flex items-center justify-between px-3 py-2 text-left cursor-pointer
+                <div
+                  class="w-full flex items-center justify-between px-3 py-1.5 text-left cursor-pointer
                          transition-colors group
                          ${p.id === this.activeProjectId ? "bg-zinc-700/60" : "hover:bg-zinc-700/30"}"
                   @click=${() => this.handleSelectProject(p)}
                 >
-                  <div class="min-w-0">
-                    <div class="text-xs text-zinc-200 truncate">${p.name}</div>
-                    <div class="text-[10px] text-zinc-500 truncate">${p.path}</div>
-                    <div class="text-[10px] text-zinc-600 truncate">base: ${p.base_branch}</div>
-                  </div>
-                  <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <span class="text-xs text-zinc-200 truncate">${p.name}</span>
+                  <div class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
                       class="p-1 text-zinc-600 hover:text-zinc-200 cursor-pointer"
                       @click=${(e: Event) => this.openEditForm(e, p)}
@@ -176,7 +191,7 @@ export class ProjectSidebar extends LitElement {
                       </svg>
                     </button>
                   </div>
-                </button>
+                </div>
               `)}
 
               <button
