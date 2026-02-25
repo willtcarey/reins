@@ -54,6 +54,10 @@ Roadmap and open items live in [`docs/TODO.md`](docs/TODO.md).
 
 User-facing feature docs live in [`docs/features/`](docs/features/). When adding or changing a feature, update the relevant doc (or create a new one). These describe *how the user interacts with the feature* — not UI affordances or implementation details like what resets when, what labels appear, or how the system responds internally.
 
+## Development Workflow
+
+When implementing code changes, follow the workflow in [docs/dev/workflow.md](docs/dev/workflow.md). Read it before starting implementation work.
+
 ## Notes
 
 - Use `bun` for all package management and script execution (not npm/yarn/pnpm).
