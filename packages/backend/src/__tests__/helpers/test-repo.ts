@@ -8,6 +8,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { beforeEach, afterEach } from "bun:test";
 
 export interface TestRepo {
   dir: string;
@@ -93,4 +94,35 @@ export async function commitFile(
   writeFileSync(join(repoDir, filePath), content);
   await git(repoDir, ["add", filePath]);
   await git(repoDir, ["commit", "-m", message]);
+}
+
+// ---------------------------------------------------------------------------
+// useTestRepo — register beforeEach/afterEach hooks, return a live ref
+// ---------------------------------------------------------------------------
+
+interface TestRepoRef {
+  dir: string;
+  remoteDir: string;
+}
+
+/**
+ * Registers `beforeEach`/`afterEach` hooks that create and tear down a
+ * temporary git repo. Returns a ref object whose `dir` (and optionally
+ * `remoteDir`) fields are updated before each test.
+ */
+export function useTestRepo(opts?: { withRemote?: boolean }): TestRepoRef {
+  const ref: TestRepoRef & { _cleanup?: () => void } = { dir: "", remoteDir: "" };
+
+  beforeEach(async () => {
+    const repo = opts?.withRemote
+      ? await createTestRepoWithRemote()
+      : await createTestRepo();
+    ref.dir = repo.dir;
+    if ("remoteDir" in repo) ref.remoteDir = (repo as any).remoteDir;
+    ref._cleanup = repo.cleanup;
+  });
+
+  afterEach(() => ref._cleanup?.());
+
+  return ref;
 }

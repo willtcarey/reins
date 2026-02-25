@@ -2,10 +2,11 @@
  * Test Database Helper
  *
  * Creates an in-memory SQLite database with all migrations applied.
- * Call setupTestDb() in beforeEach and teardownTestDb() in afterEach
- * for full isolation between tests.
+ * Use useTestDb() for automatic beforeEach/afterEach hooks,
+ * or call setupTestDb()/teardownTestDb() individually.
  */
 
+import { beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { runMigrations } from "../../migrations.js";
 import { setDb, resetDb } from "../../db.js";
@@ -21,4 +22,9 @@ export function setupTestDb(): Database {
 
 export function teardownTestDb(): void {
   resetDb();
+}
+
+export function useTestDb() {
+  beforeEach(() => setupTestDb());
+  afterEach(() => teardownTestDb());
 }
