@@ -7,10 +7,10 @@ import type { RouterGroup, RouteContext } from "../router.js";
 import { API } from "../api-paths.js";
 import { badRequest, notFound, conflict } from "../errors.js";
 import {
-  listProjects, getProject, createProject,
+  listProjects, getProject,
   updateProject, deleteProject,
 } from "../project-store.js";
-import { detectDefaultBranch } from "../git.js";
+import { createProject } from "../models/projects.js";
 
 export function registerProjectRoutes(router: RouterGroup) {
   // List all projects
@@ -27,14 +27,17 @@ export function registerProjectRoutes(router: RouterGroup) {
     if (!existsSync(body.path!)) {
       badRequest(`Directory does not exist: ${body.path}`);
     }
-    const baseBranch = body.base_branch || await detectDefaultBranch(body.path!);
 
     try {
-      const project = createProject(body.name!, body.path!, baseBranch);
+      const project = await createProject({
+        name: body.name!,
+        path: body.path!,
+        base_branch: body.base_branch,
+      });
       return Response.json(project, { status: 201 });
     } catch (err: any) {
-      if (err.message?.includes("UNIQUE constraint")) {
-        conflict("A project with that path already exists");
+      if (err.status === 409) {
+        conflict(err.message);
       }
       throw err;
     }

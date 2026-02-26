@@ -6,24 +6,21 @@
 
 import type { RouterGroup, RouteContext } from "../router.js";
 import { notFound, badRequest } from "../errors.js";
-import { getProject } from "../project-store.js";
-import {
-  getTask,
-  listTasks,
-  updateTask,
-  deleteTask,
-  getTaskSessionIds,
-} from "../task-store.js";
+import { getProject, touchProject } from "../project-store.js";
+import { getTask } from "../task-store.js";
 import { generateTask } from "../task-generator.js";
-import { deleteBranch, getCurrentBranch, checkoutBranch, getDiffStats } from "../git.js";
-import { createTaskWithBranch } from "../models/tasks.js";
+import {
+  createTaskWithBranch,
+  listTasksWithDiffStats,
+  updateTaskAndBroadcast,
+  deleteTaskWithBranch,
+} from "../models/tasks.js";
 import { createBroadcast } from "../models/broadcast.js";
 import {
   createNewSession,
   serializeSession,
   serializeTaskSessionList,
 } from "../sessions.js";
-import { touchProject } from "../project-store.js";
 
 export function registerTaskRoutes(router: RouterGroup) {
   // ---- Tasks ---------------------------------------------------------------
@@ -33,22 +30,8 @@ export function registerTaskRoutes(router: RouterGroup) {
     const projectId = parseInt(ctx.params.id, 10);
     const projectDir = (ctx as any).projectDir as string;
     const project = getProject(projectId)!;
-    const tasks = listTasks(projectId);
 
-    const enriched = await Promise.all(
-      tasks.map(async (task) => {
-        if (task.status !== "open") {
-          return { ...task, diffStats: null };
-        }
-        try {
-          const diffStats = await getDiffStats(projectDir, task.branch_name, project.base_branch);
-          return { ...task, diffStats };
-        } catch {
-          return { ...task, diffStats: null };
-        }
-      }),
-    );
-
+    const enriched = await listTasksWithDiffStats(projectId, projectDir, project.base_branch);
     return Response.json(enriched);
   });
 
@@ -101,9 +84,8 @@ export function registerTaskRoutes(router: RouterGroup) {
     const projectId = parseInt(ctx.params.id, 10);
     const taskId = parseInt(ctx.params.taskId, 10);
     const body = (await ctx.req.json()) as { title?: string; description?: string };
-    const updated = updateTask(taskId, body);
+    const updated = updateTaskAndBroadcast(taskId, projectId, body, createBroadcast(ctx.state.clients));
     if (!updated) notFound("Task not found");
-    createBroadcast(ctx.state.clients)({ type: "task_updated", projectId });
     return Response.json(updated);
   });
 
@@ -112,51 +94,22 @@ export function registerTaskRoutes(router: RouterGroup) {
     const projectId = parseInt(ctx.params.id, 10);
     const taskId = parseInt(ctx.params.taskId, 10);
     const projectDir = (ctx as any).projectDir as string;
+    const project = getProject(projectId)!;
 
-    const task = getTask(taskId);
-    if (!task) notFound("Task not found");
-    if (task!.project_id !== projectId) notFound("Task not found");
-
-    // Check for active (in-memory, streaming) sessions
-    const sessionIds = getTaskSessionIds(taskId);
-    const activeSessions: string[] = [];
-    for (const sid of sessionIds) {
-      const managed = ctx.state.sessions.get(sid);
-      if (managed && managed.session.isStreaming) {
-        activeSessions.push(sid);
-      }
-    }
-    if (activeSessions.length > 0) {
-      return Response.json(
-        { error: `Cannot delete task: ${activeSessions.length} session(s) are currently running` },
-        { status: 409 },
-      );
-    }
-
-    // Remove in-memory sessions for this task
-    for (const sid of sessionIds) {
-      ctx.state.sessions.delete(sid);
-    }
-
-    // Delete task (cascades sessions + messages in DB)
-    deleteTask(taskId);
-    createBroadcast(ctx.state.clients)({ type: "task_updated", projectId });
-
-    // Delete the git branch (best-effort — may fail if checked out)
     try {
-      const currentBranch = await getCurrentBranch(projectDir);
-      if (currentBranch === task!.branch_name) {
-        // Switch away first
-        const project = getProject(projectId)!;
-        await checkoutBranch(projectDir, project.base_branch);
-      }
-      await deleteBranch(projectDir, task!.branch_name);
+      await deleteTaskWithBranch(
+        taskId,
+        projectId,
+        projectDir,
+        project.base_branch,
+        ctx.state.sessions,
+        createBroadcast(ctx.state.clients),
+      );
+      return Response.json({ ok: true });
     } catch (err: any) {
-      // Branch may already be gone — log but don't fail
-      console.warn(`  Could not delete branch ${task!.branch_name}: ${err.message}`);
+      const status = err.status || 500;
+      return Response.json({ error: err.message }, { status });
     }
-
-    return Response.json({ ok: true });
   });
 
   // ---- Task Sessions -------------------------------------------------------

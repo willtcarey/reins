@@ -1,16 +1,36 @@
 /**
  * Task Model
  *
- * Business logic for task creation: orchestrates store calls, git operations,
- * branch-name derivation, and WebSocket broadcasts.
+ * Business logic for task lifecycle: creation, listing, update, and deletion.
+ * Orchestrates store calls, git operations, branch-name derivation, and
+ * WebSocket broadcasts.
  *
  * Routes and tools call into this layer rather than duplicating the sequence.
  */
 
-import { createTask, type TaskRow } from "../task-store.js";
+import {
+  createTask,
+  listTasks,
+  getTask,
+  updateTask as storeUpdateTask,
+  deleteTask as storeDeleteTask,
+  getTaskSessionIds,
+  type TaskRow,
+  type TaskListItem,
+} from "../task-store.js";
 import { slugifyBranchName } from "../branch-namer.js";
-import { branchExists, createBranch, revParse } from "../git.js";
+import {
+  branchExists,
+  createBranch,
+  revParse,
+  getDiffStats,
+  getCurrentBranch,
+  checkoutBranch,
+  deleteBranch,
+  type DiffStats,
+} from "../git.js";
 import type { Broadcast } from "./broadcast.js";
+import type { ManagedSession } from "../state.js";
 
 export interface CreateTaskParams {
   title: string;
@@ -61,4 +81,123 @@ export async function createTaskWithBranch(
   broadcast({ type: "task_updated", projectId });
 
   return task;
+}
+
+// ---------------------------------------------------------------------------
+// List tasks with diff stats (#2)
+// ---------------------------------------------------------------------------
+
+export interface TaskWithDiffStats extends TaskListItem {
+  diffStats: DiffStats | null;
+}
+
+/**
+ * List all tasks for a project, enriching open ones with diff stats.
+ *
+ * Per-task errors (e.g. missing branch) are swallowed — the task is
+ * returned with `diffStats: null`.
+ */
+export async function listTasksWithDiffStats(
+  projectId: number,
+  projectDir: string,
+  baseBranch: string,
+): Promise<TaskWithDiffStats[]> {
+  const tasks = listTasks(projectId);
+
+  return Promise.all(
+    tasks.map(async (task) => {
+      if (task.status !== "open") {
+        return { ...task, diffStats: null };
+      }
+      try {
+        const diffStats = await getDiffStats(projectDir, task.branch_name, baseBranch);
+        return { ...task, diffStats };
+      } catch {
+        return { ...task, diffStats: null };
+      }
+    }),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Update task + broadcast (#3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Update a task's title/description and broadcast the change.
+ *
+ * Returns the updated row, or null if the task doesn't exist.
+ */
+export function updateTaskAndBroadcast(
+  taskId: number,
+  projectId: number,
+  updates: { title?: string; description?: string },
+  broadcast: Broadcast,
+): TaskRow | null {
+  const updated = storeUpdateTask(taskId, updates);
+  if (updated) {
+    broadcast({ type: "task_updated", projectId });
+  }
+  return updated;
+}
+
+// ---------------------------------------------------------------------------
+// Delete task with branch cleanup (#4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Delete a task, its sessions/messages, clean up in-memory sessions,
+ * and remove the git branch. The counterpart to `createTaskWithBranch`.
+ *
+ * Throws if the task doesn't exist, doesn't belong to the project,
+ * or has active streaming sessions.
+ */
+export async function deleteTaskWithBranch(
+  taskId: number,
+  projectId: number,
+  projectDir: string,
+  baseBranch: string,
+  sessions: Map<string, ManagedSession>,
+  broadcast: Broadcast,
+): Promise<void> {
+  const task = getTask(taskId);
+  if (!task || task.project_id !== projectId) {
+    throw Object.assign(new Error("Task not found"), { status: 404 });
+  }
+
+  // Check for active (in-memory, streaming) sessions
+  const sessionIds = getTaskSessionIds(taskId);
+  const activeSessions: string[] = [];
+  for (const sid of sessionIds) {
+    const managed = sessions.get(sid);
+    if (managed && managed.session.isStreaming) {
+      activeSessions.push(sid);
+    }
+  }
+  if (activeSessions.length > 0) {
+    throw Object.assign(
+      new Error(`Cannot delete task: ${activeSessions.length} session(s) are currently running`),
+      { status: 409 },
+    );
+  }
+
+  // Remove in-memory sessions for this task
+  for (const sid of sessionIds) {
+    sessions.delete(sid);
+  }
+
+  // Delete task (cascades sessions + messages in DB)
+  storeDeleteTask(taskId);
+  broadcast({ type: "task_updated", projectId });
+
+  // Delete the git branch (best-effort — may fail if checked out)
+  try {
+    const currentBranch = await getCurrentBranch(projectDir);
+    if (currentBranch === task.branch_name) {
+      await checkoutBranch(projectDir, baseBranch);
+    }
+    await deleteBranch(projectDir, task.branch_name);
+  } catch (err: any) {
+    console.warn(`  Could not delete branch ${task.branch_name}: ${err.message}`);
+  }
 }
