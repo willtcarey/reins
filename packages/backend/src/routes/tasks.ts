@@ -5,7 +5,7 @@
  */
 
 import type { RouterGroup, RouteContext } from "../router.js";
-import { notFound, badRequest } from "../errors.js";
+import { notFound, badRequest, conflict } from "../errors.js";
 import { getProject, touchProject } from "../project-store.js";
 import { getTask } from "../task-store.js";
 import { generateTask } from "../task-generator.js";
@@ -14,6 +14,8 @@ import {
   listTasksWithDiffStats,
   updateTaskAndBroadcast,
   deleteTaskWithBranch,
+  TaskNotFoundError,
+  TaskHasActiveSessionsError,
 } from "../models/tasks.js";
 import { createBroadcast } from "../models/broadcast.js";
 import {
@@ -107,8 +109,9 @@ export function registerTaskRoutes(router: RouterGroup) {
       );
       return Response.json({ ok: true });
     } catch (err: any) {
-      const status = err.status || 500;
-      return Response.json({ error: err.message }, { status });
+      if (err instanceof TaskNotFoundError) notFound(err.message);
+      if (err instanceof TaskHasActiveSessionsError) conflict(err.message);
+      throw err;
     }
   });
 

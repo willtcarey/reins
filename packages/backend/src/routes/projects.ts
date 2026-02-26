@@ -10,7 +10,7 @@ import {
   listProjects, getProject,
   updateProject, deleteProject,
 } from "../project-store.js";
-import { createProject } from "../models/projects.js";
+import { createProject, DuplicateProjectError } from "../models/projects.js";
 
 export function registerProjectRoutes(router: RouterGroup) {
   // List all projects
@@ -36,9 +36,7 @@ export function registerProjectRoutes(router: RouterGroup) {
       });
       return Response.json(project, { status: 201 });
     } catch (err: any) {
-      if (err.status === 409) {
-        conflict(err.message);
-      }
+      if (err instanceof DuplicateProjectError) conflict(err.message);
       throw err;
     }
   });

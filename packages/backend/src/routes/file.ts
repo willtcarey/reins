@@ -10,7 +10,7 @@
 
 import type { RouterGroup, RouteContext } from "../router.js";
 import { badRequest, notFound } from "../errors.js";
-import { readFileContent } from "../models/projects.js";
+import { readFileContent, PathTraversalError, FileNotFoundError } from "../models/projects.js";
 
 export function registerFileRoutes(router: RouterGroup) {
   router.get("/file", async (ctx: RouteContext) => {
@@ -26,8 +26,8 @@ export function registerFileRoutes(router: RouterGroup) {
         headers: { "Content-Type": "text/plain; charset=utf-8" },
       });
     } catch (err: any) {
-      if (err.status === 400) badRequest(err.message);
-      if (err.status === 404) notFound(err.message);
+      if (err instanceof PathTraversalError) badRequest(err.message);
+      if (err instanceof FileNotFoundError) notFound(err.message);
       throw err;
     }
   });

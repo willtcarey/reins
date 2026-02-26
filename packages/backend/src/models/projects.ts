@@ -30,6 +30,22 @@ import {
 import type { Broadcast } from "./broadcast.js";
 
 // ---------------------------------------------------------------------------
+// Domain errors
+// ---------------------------------------------------------------------------
+
+export class DuplicateProjectError extends Error {
+  constructor(message = "A project with that path already exists") { super(message); }
+}
+
+export class PathTraversalError extends Error {
+  constructor(message = "Path traversal not allowed") { super(message); }
+}
+
+export class FileNotFoundError extends Error {
+  constructor(message = "File not found") { super(message); }
+}
+
+// ---------------------------------------------------------------------------
 // Create project (#1)
 // ---------------------------------------------------------------------------
 
@@ -53,7 +69,7 @@ export async function createProject(params: CreateProjectParams): Promise<Projec
     return storeCreateProject(params.name, params.path, baseBranch);
   } catch (err: any) {
     if (err.message?.includes("UNIQUE constraint")) {
-      throw Object.assign(new Error("A project with that path already exists"), { status: 409 });
+      throw new DuplicateProjectError();
     }
     throw err;
   }
@@ -166,8 +182,8 @@ async function reconcileClosedTasks(
  *
  * Validates that the path doesn't escape the project directory.
  *
- * Throws with `status: 400` for path traversal, `status: 404` when
- * the file doesn't exist.
+ * Throws `PathTraversalError` for path traversal, `FileNotFoundError`
+ * when the file doesn't exist.
  */
 export async function readFileContent(
   projectDir: string,
@@ -178,7 +194,7 @@ export async function readFileContent(
   const resolved = resolve(projectDir, filePath);
   const normalizedProject = normalize(projectDir);
   if (!resolved.startsWith(normalizedProject + "/") && resolved !== normalizedProject) {
-    throw Object.assign(new Error("Path traversal not allowed"), { status: 400 });
+    throw new PathTraversalError();
   }
 
   // Decide whether to read from git or the working tree.
@@ -194,7 +210,7 @@ export async function readFileContent(
     try {
       return await showFile(projectDir, ref!, filePath);
     } catch {
-      throw Object.assign(new Error("File not found in ref"), { status: 404 });
+      throw new FileNotFoundError("File not found in ref");
     }
   }
 
@@ -203,6 +219,6 @@ export async function readFileContent(
     const file = Bun.file(resolved);
     return await file.text();
   } catch {
-    throw Object.assign(new Error("File not found"), { status: 404 });
+    throw new FileNotFoundError();
   }
 }

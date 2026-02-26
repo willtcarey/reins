@@ -32,6 +32,22 @@ import {
 import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
 
+// ---------------------------------------------------------------------------
+// Domain errors
+// ---------------------------------------------------------------------------
+
+export class TaskNotFoundError extends Error {
+  constructor(message = "Task not found") { super(message); }
+}
+
+export class TaskHasActiveSessionsError extends Error {
+  readonly activeCount: number;
+  constructor(count: number) {
+    super(`Cannot delete task: ${count} session(s) are currently running`);
+    this.activeCount = count;
+  }
+}
+
 export interface CreateTaskParams {
   title: string;
   description: string;
@@ -162,7 +178,7 @@ export async function deleteTaskWithBranch(
 ): Promise<void> {
   const task = getTask(taskId);
   if (!task || task.project_id !== projectId) {
-    throw Object.assign(new Error("Task not found"), { status: 404 });
+    throw new TaskNotFoundError();
   }
 
   // Check for active (in-memory, streaming) sessions
@@ -175,10 +191,7 @@ export async function deleteTaskWithBranch(
     }
   }
   if (activeSessions.length > 0) {
-    throw Object.assign(
-      new Error(`Cannot delete task: ${activeSessions.length} session(s) are currently running`),
-      { status: 409 },
-    );
+    throw new TaskHasActiveSessionsError(activeSessions.length);
   }
 
   // Remove in-memory sessions for this task
