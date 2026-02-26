@@ -45,6 +45,12 @@ async function handleWsCommand(
     return;
   }
 
+  // Heartbeat ping — no sessionId required
+  if (cmd.type === "ping") {
+    sendToWs(client.ws, { type: "pong" });
+    return;
+  }
+
   if (!cmd.sessionId) {
     sendToWs(client.ws, { type: "error", error: "Missing sessionId" });
     return;

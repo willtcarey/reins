@@ -170,6 +170,33 @@ describe("WebSocket handlers", () => {
     });
   });
 
+  describe("handleWsMessage — ping/pong heartbeat", () => {
+    test("ping message receives pong response", async () => {
+      const mock = createMockWs();
+      handleWsOpen(state, mock.ws);
+
+      handleWsMessage(state, mock.ws, JSON.stringify({ type: "ping" }));
+
+      await Bun.sleep(10);
+
+      expect(mock.lastMessage()).toEqual({ type: "pong" });
+    });
+
+    test("ping does not require sessionId", async () => {
+      const mock = createMockWs();
+      handleWsOpen(state, mock.ws);
+
+      handleWsMessage(state, mock.ws, JSON.stringify({ type: "ping" }));
+
+      await Bun.sleep(10);
+
+      const messages = mock.allMessages();
+      // Should get pong, not an error about missing sessionId
+      expect(messages).toHaveLength(1);
+      expect(messages[0].type).toBe("pong");
+    });
+  });
+
   describe("handleWsMessage — prompt/steer missing message field", () => {
     test("prompt without message field sends error", async () => {
       const mock = createMockWs();

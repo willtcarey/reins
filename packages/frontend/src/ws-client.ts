@@ -81,6 +81,16 @@ export class AppClient {
   private connectionListeners = new Set<ConnectionListener>();
   private connected = false;
 
+  // Heartbeat — detect stale connections before the user sends a message
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimeout: ReturnType<typeof setTimeout> | null = null;
+  private static readonly HEARTBEAT_INTERVAL_MS = 30_000;
+  private static readonly HEARTBEAT_TIMEOUT_MS = 5_000;
+
+  // Outbound buffer — replay last command on reconnect if connection drops after send
+  private lastOutboundMessage: string | null = null;
+  private pendingReplay = false;
+
   constructor(url?: string) {
     if (url) {
       this.url = url;
@@ -102,12 +112,14 @@ export class AppClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    this.stopHeartbeat();
     if (this.ws) {
       this.ws.onclose = null;
       this.ws.close();
       this.ws = null;
     }
     this.setConnected(false);
+    this.clearReplayBuffer();
   }
 
   private createSocket(): void {
@@ -116,11 +128,13 @@ export class AppClient {
     ws.onopen = () => {
       this.reconnectDelay = 1000;
       this.setConnected(true);
+      this.startHeartbeat();
+      this.replayIfPending();
     };
 
     ws.onmessage = (evt) => {
       try {
-        const msg: ServerMessage = JSON.parse(evt.data);
+        const msg = JSON.parse(evt.data);
         this.handleMessage(msg);
       } catch {
         // Ignore malformed messages
@@ -129,6 +143,7 @@ export class AppClient {
 
     ws.onclose = () => {
       this.ws = null;
+      this.stopHeartbeat();
       this.setConnected(false);
       this.scheduleReconnect();
     };
@@ -136,6 +151,50 @@ export class AppClient {
     ws.onerror = () => {};
 
     this.ws = ws;
+  }
+
+  // ---- Heartbeat -----------------------------------------------------------
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.heartbeatInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: "ping" }));
+        this.heartbeatTimeout = setTimeout(() => {
+          // No pong received — connection is dead, force close
+          if (this.ws) {
+            this.ws.close();
+          }
+        }, AppClient.HEARTBEAT_TIMEOUT_MS);
+      }
+    }, AppClient.HEARTBEAT_INTERVAL_MS);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+    this.clearHeartbeatTimeout();
+  }
+
+  private clearHeartbeatTimeout(): void {
+    if (this.heartbeatTimeout) {
+      clearTimeout(this.heartbeatTimeout);
+      this.heartbeatTimeout = null;
+    }
+  }
+
+  // ---- Outbound replay -----------------------------------------------------
+
+  private replayIfPending(): void {
+    if (this.pendingReplay && this.lastOutboundMessage) {
+      const msg = this.lastOutboundMessage;
+      this.clearReplayBuffer();
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(msg);
+      }
+    }
   }
 
   private scheduleReconnect(): void {
@@ -161,8 +220,12 @@ export class AppClient {
 
   // ---- Message handling ----------------------------------------------------
 
-  private handleMessage(msg: ServerMessage): void {
+  private handleMessage(msg: ServerMessage | { type: "pong" }): void {
     switch (msg.type) {
+      case "pong":
+        this.clearHeartbeatTimeout();
+        break;
+
       case "event":
         for (const listener of this.eventListeners) {
           listener(msg.sessionId, msg.event);
@@ -188,8 +251,14 @@ export class AppClient {
         break;
 
       case "ack":
+        this.clearReplayBuffer();
+        for (const listener of this.eventListeners) {
+          listener("", { type: `ws_${msg.type}`, ...msg });
+        }
+        break;
+
       case "error":
-        // Forward as synthetic events for general listeners
+        this.clearReplayBuffer();
         for (const listener of this.eventListeners) {
           listener("", { type: `ws_${msg.type}`, ...msg });
         }
@@ -212,9 +281,21 @@ export class AppClient {
   }
 
   private send(data: unknown): void {
+    const json = JSON.stringify(data);
+    this.lastOutboundMessage = json;
+    this.pendingReplay = true;
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(data));
+      this.ws.send(json);
     }
+  }
+
+  /**
+   * Called when the server acks a command — clear the replay buffer
+   * since the message was delivered successfully.
+   */
+  private clearReplayBuffer(): void {
+    this.pendingReplay = false;
+    this.lastOutboundMessage = null;
   }
 
   // ---- Subscriptions -------------------------------------------------------
