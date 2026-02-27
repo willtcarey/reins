@@ -25,22 +25,34 @@ export interface RouteContext {
   state: ServerState;
 }
 
-export type RouteHandler = (ctx: RouteContext) => Promise<Response> | Response;
-export type Middleware = (ctx: RouteContext) => Promise<void> | void;
+export type RouteHandler<Ctx extends RouteContext = RouteContext> = (ctx: Ctx) => Promise<Response> | Response;
+export interface Middleware<Ext extends object = {}> {
+  (ctx: any): Promise<void> | void;
+  readonly _contextExtension?: Ext;
+}
 
 interface Route {
   method: string;
   pattern: URLPattern;
-  handler: RouteHandler;
+  handler: RouteHandler<any>;
   middlewares: Middleware[];
 }
 
-export interface RouterGroup {
-  get(path: string, handler: RouteHandler): void;
-  post(path: string, handler: RouteHandler): void;
-  patch(path: string, handler: RouteHandler): void;
-  delete(path: string, handler: RouteHandler): void;
-  group(prefix: string, ...args: [...Middleware[], (r: RouterGroup) => void]): void;
+export interface RouterGroup<Ctx extends RouteContext = RouteContext> {
+  get(path: string, handler: RouteHandler<Ctx>): void;
+  post(path: string, handler: RouteHandler<Ctx>): void;
+  patch(path: string, handler: RouteHandler<Ctx>): void;
+  delete(path: string, handler: RouteHandler<Ctx>): void;
+  group(prefix: string, cb: (r: RouterGroup<Ctx>) => void): void;
+  group<Ext extends object>(
+    prefix: string,
+    middleware: Middleware<Ext>,
+    cb: (r: RouterGroup<Ctx & Ext>) => void,
+  ): void;
+  group<Ext extends object>(
+    prefix: string,
+    ...args: [...Middleware<Ext>[], (r: RouterGroup<Ctx & Ext>) => void]
+  ): void;
 }
 
 // ---- Router ----------------------------------------------------------------
@@ -53,15 +65,15 @@ export function createRouter(): RouterGroup & { handle: (req: Request, state: Se
     routes.push({ method, pattern, handler, middlewares });
   }
 
-  function createGroup(prefix: string, parentMiddlewares: Middleware[]): RouterGroup {
-    const group: RouterGroup = {
+  function createGroup(prefix: string, parentMiddlewares: Middleware[]): RouterGroup<any> {
+    const group: RouterGroup<any> = {
       get(path, handler)    { addRoute("GET",    prefix + path, handler, parentMiddlewares); },
       post(path, handler)   { addRoute("POST",   prefix + path, handler, parentMiddlewares); },
       patch(path, handler)  { addRoute("PATCH",  prefix + path, handler, parentMiddlewares); },
       delete(path, handler) { addRoute("DELETE", prefix + path, handler, parentMiddlewares); },
 
       group(subPrefix, ...args) {
-        const registerFn = args.pop() as (r: RouterGroup) => void;
+        const registerFn = args.pop() as (r: RouterGroup<any>) => void;
         const middlewares = args as Middleware[];
         const sub = createGroup(prefix + subPrefix, [...parentMiddlewares, ...middlewares]);
         registerFn(sub);

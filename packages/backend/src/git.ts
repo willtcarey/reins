@@ -347,6 +347,20 @@ export async function revParse(
   return sha.trim();
 }
 
+// ---- File content from git ref ---------------------------------------------
+
+/**
+ * Read a file's content from a git ref (branch, tag, or commit SHA)
+ * via `git show ref:path`. Throws if the file doesn't exist at that ref.
+ */
+export async function showFile(
+  projectDir: string,
+  ref: string,
+  filePath: string,
+): Promise<string> {
+  return await runChecked(projectDir, ["show", `${ref}:${filePath}`]);
+}
+
 // ---- Working-tree diff -----------------------------------------------------
 
 /**

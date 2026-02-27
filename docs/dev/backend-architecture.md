@@ -58,4 +58,8 @@ Stateless helpers that don't depend on other layers.
 
 ## Current state
 
-Only `models/tasks.ts` exists so far. Other model files should be extracted as those areas are touched — no big-bang refactor. See [tech debt](../tech-debt.md) for the tracking item.
+The models layer covers all route handlers:
+
+- `models/tasks.ts` — task create/update/delete with branch orchestration, list with diff stats
+- `models/projects.ts` — project creation, remote sync + task reconciliation, file content reads
+- `models/broadcast.ts` — typed broadcast abstraction over WS clients

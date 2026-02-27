@@ -4,59 +4,33 @@
  * CRUD for tasks and task sessions. Registered under /api/projects/:id.
  */
 
-import type { RouterGroup, RouteContext } from "../router.js";
-import { notFound, badRequest } from "../errors.js";
-import { getProject } from "../project-store.js";
-import {
-  getTask,
-  listTasks,
-  updateTask,
-  deleteTask,
-  getTaskSessionIds,
-} from "../task-store.js";
+import type { RouterGroup } from "../router.js";
+import type { ProjectRouteContext } from "./index.js";
+import { notFound, badRequest, conflict } from "../errors.js";
+import { touchProject } from "../project-store.js";
+import { getTask } from "../task-store.js";
 import { generateTask } from "../task-generator.js";
-import { deleteBranch, getCurrentBranch, checkoutBranch, getDiffStats } from "../git.js";
-import { createTaskWithBranch } from "../models/tasks.js";
-import { createBroadcast } from "../models/broadcast.js";
+import {
+  TaskNotFoundError,
+  TaskHasActiveSessionsError,
+} from "../models/tasks.js";
 import {
   createNewSession,
   serializeSession,
   serializeTaskSessionList,
 } from "../sessions.js";
-import { touchProject } from "../project-store.js";
 
-export function registerTaskRoutes(router: RouterGroup) {
+export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
   // ---- Tasks ---------------------------------------------------------------
 
   // List tasks for a project (enriched with diff stats for open tasks)
-  router.get("/tasks", async (ctx: RouteContext) => {
-    const projectId = parseInt(ctx.params.id, 10);
-    const projectDir = (ctx as any).projectDir as string;
-    const project = getProject(projectId)!;
-    const tasks = listTasks(projectId);
-
-    const enriched = await Promise.all(
-      tasks.map(async (task) => {
-        if (task.status !== "open") {
-          return { ...task, diffStats: null };
-        }
-        try {
-          const diffStats = await getDiffStats(projectDir, task.branch_name, project.base_branch);
-          return { ...task, diffStats };
-        } catch {
-          return { ...task, diffStats: null };
-        }
-      }),
-    );
-
+  router.get("/tasks", async (ctx) => {
+    const enriched = await ctx.project.tasks().list();
     return Response.json(enriched);
   });
 
   // Generate a task from freeform input, then create it
-  router.post("/tasks/generate", async (ctx: RouteContext) => {
-    const projectId = parseInt(ctx.params.id, 10);
-    const projectDir = (ctx as any).projectDir as string;
-    const project = getProject(projectId)!;
+  router.post("/tasks/generate", async (ctx) => {
     const body = (await ctx.req.json()) as { prompt?: string };
 
     if (!body.prompt?.trim()) {
@@ -66,17 +40,11 @@ export function registerTaskRoutes(router: RouterGroup) {
     const generated = await generateTask(body.prompt!.trim());
 
     try {
-      const task = await createTaskWithBranch(
-        projectId,
-        projectDir,
-        project.base_branch,
-        {
-          title: generated.title,
-          description: generated.description,
-          branch_name: generated.branch_name,
-        },
-        createBroadcast(ctx.state.clients),
-      );
+      const task = await ctx.project.tasks().create({
+        title: generated.title,
+        description: generated.description,
+        branch_name: generated.branch_name,
+      });
       return Response.json(task, { status: 201 });
     } catch (err: any) {
       return Response.json(
@@ -87,7 +55,7 @@ export function registerTaskRoutes(router: RouterGroup) {
   });
 
   // Get a single task with its sessions
-  router.get("/tasks/:taskId", async (ctx: RouteContext) => {
+  router.get("/tasks/:taskId", async (ctx) => {
     const taskId = parseInt(ctx.params.taskId, 10);
     const task = getTask(taskId);
     if (!task) notFound("Task not found");
@@ -97,72 +65,32 @@ export function registerTaskRoutes(router: RouterGroup) {
   });
 
   // Update a task
-  router.patch("/tasks/:taskId", async (ctx: RouteContext) => {
-    const projectId = parseInt(ctx.params.id, 10);
+  router.patch("/tasks/:taskId", async (ctx) => {
     const taskId = parseInt(ctx.params.taskId, 10);
     const body = (await ctx.req.json()) as { title?: string; description?: string };
-    const updated = updateTask(taskId, body);
+    const updated = ctx.project.tasks().update(taskId, body);
     if (!updated) notFound("Task not found");
-    createBroadcast(ctx.state.clients)({ type: "task_updated", projectId });
     return Response.json(updated);
   });
 
   // Delete a task (with sessions, messages, and git branch)
-  router.delete("/tasks/:taskId", async (ctx: RouteContext) => {
-    const projectId = parseInt(ctx.params.id, 10);
+  router.delete("/tasks/:taskId", async (ctx) => {
     const taskId = parseInt(ctx.params.taskId, 10);
-    const projectDir = (ctx as any).projectDir as string;
 
-    const task = getTask(taskId);
-    if (!task) notFound("Task not found");
-    if (task!.project_id !== projectId) notFound("Task not found");
-
-    // Check for active (in-memory, streaming) sessions
-    const sessionIds = getTaskSessionIds(taskId);
-    const activeSessions: string[] = [];
-    for (const sid of sessionIds) {
-      const managed = ctx.state.sessions.get(sid);
-      if (managed && managed.session.isStreaming) {
-        activeSessions.push(sid);
-      }
-    }
-    if (activeSessions.length > 0) {
-      return Response.json(
-        { error: `Cannot delete task: ${activeSessions.length} session(s) are currently running` },
-        { status: 409 },
-      );
-    }
-
-    // Remove in-memory sessions for this task
-    for (const sid of sessionIds) {
-      ctx.state.sessions.delete(sid);
-    }
-
-    // Delete task (cascades sessions + messages in DB)
-    deleteTask(taskId);
-    createBroadcast(ctx.state.clients)({ type: "task_updated", projectId });
-
-    // Delete the git branch (best-effort — may fail if checked out)
     try {
-      const currentBranch = await getCurrentBranch(projectDir);
-      if (currentBranch === task!.branch_name) {
-        // Switch away first
-        const project = getProject(projectId)!;
-        await checkoutBranch(projectDir, project.base_branch);
-      }
-      await deleteBranch(projectDir, task!.branch_name);
+      await ctx.project.tasks().delete(taskId);
+      return Response.json({ ok: true });
     } catch (err: any) {
-      // Branch may already be gone — log but don't fail
-      console.warn(`  Could not delete branch ${task!.branch_name}: ${err.message}`);
+      if (err instanceof TaskNotFoundError) notFound(err.message);
+      if (err instanceof TaskHasActiveSessionsError) conflict(err.message);
+      throw err;
     }
-
-    return Response.json({ ok: true });
   });
 
   // ---- Task Sessions -------------------------------------------------------
 
   // List sessions for a task
-  router.get("/tasks/:taskId/sessions", async (ctx: RouteContext) => {
+  router.get("/tasks/:taskId/sessions", async (ctx) => {
     const taskId = parseInt(ctx.params.taskId, 10);
     const task = getTask(taskId);
     if (!task) notFound("Task not found");
@@ -171,17 +99,15 @@ export function registerTaskRoutes(router: RouterGroup) {
   });
 
   // Create a session under a task
-  router.post("/tasks/:taskId/sessions", async (ctx: RouteContext) => {
-    const projectId = parseInt(ctx.params.id, 10);
+  router.post("/tasks/:taskId/sessions", async (ctx) => {
     const taskId = parseInt(ctx.params.taskId, 10);
-    const projectDir = (ctx as any).projectDir as string;
 
     const task = getTask(taskId);
     if (!task) notFound("Task not found");
-    if (task!.project_id !== projectId) notFound("Task not found");
+    if (task!.project_id !== ctx.project.projectId) notFound("Task not found");
 
-    touchProject(projectId);
-    const managed = await createNewSession(ctx.state, projectId, projectDir, { taskId });
+    touchProject(ctx.project.projectId);
+    const managed = await createNewSession(ctx.state, ctx.project.projectId, ctx.project.projectDir, { taskId });
     return Response.json(serializeSession(managed), { status: 201 });
   });
 }

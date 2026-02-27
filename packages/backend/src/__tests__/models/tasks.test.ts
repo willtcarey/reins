@@ -4,13 +4,16 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import { createProject } from "../../project-store.js";
 import { getTask } from "../../task-store.js";
 import { branchExists, getCurrentBranch, revParse } from "../../git.js";
-import { createTaskWithBranch, type CreateTaskParams } from "../../models/tasks.js";
+import { ProjectTasks, type CreateTaskParams } from "../../models/tasks.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
+import type { ManagedSession } from "../../state.js";
 
 describe("createTaskWithBranch", () => {
   let projectId: number;
   let broadcastSpy: ReturnType<typeof mock>;
   let broadcast: Broadcast;
+  let sessions: Map<string, ManagedSession>;
+  let tasks: ProjectTasks;
 
   useTestDb();
   const repo = useTestRepo();
@@ -20,6 +23,8 @@ describe("createTaskWithBranch", () => {
     projectId = project.id;
     broadcastSpy = mock();
     broadcast = broadcastSpy as unknown as Broadcast;
+    sessions = new Map();
+    tasks = new ProjectTasks(projectId, repo.dir, "main", sessions, broadcast);
   });
 
   test("creates a git branch and a DB row", async () => {
@@ -28,7 +33,7 @@ describe("createTaskWithBranch", () => {
       description: "Build the login UI",
     };
 
-    const task = await createTaskWithBranch(projectId, repo.dir, "main", params, broadcast);
+    const task = await tasks.create(params);
 
     // DB row exists and has correct fields
     expect(task.id).toBeGreaterThan(0);
@@ -50,47 +55,23 @@ describe("createTaskWithBranch", () => {
   });
 
   test("derives branch name from title when not provided", async () => {
-    const task = await createTaskWithBranch(
-      projectId,
-      repo.dir,
-      "main",
-      { title: "Fix broken tests", description: "" },
-      broadcast,
-    );
+    const task = await tasks.create({ title: "Fix broken tests", description: "" });
 
     expect(task.branch_name).toBe("task/fix-broken-tests");
   });
 
   test("uses provided branch name when given", async () => {
-    const task = await createTaskWithBranch(
-      projectId,
-      repo.dir,
-      "main",
-      { title: "Some task", description: "", branch_name: "task/custom-name" },
-      broadcast,
-    );
+    const task = await tasks.create({ title: "Some task", description: "", branch_name: "task/custom-name" });
 
     expect(task.branch_name).toBe("task/custom-name");
   });
 
   test("appends suffix on branch collision", async () => {
     // Create the first task to occupy the branch name
-    await createTaskWithBranch(
-      projectId,
-      repo.dir,
-      "main",
-      { title: "My Feature", description: "" },
-      broadcast,
-    );
+    await tasks.create({ title: "My Feature", description: "" });
 
     // Create a second task with the same title — should get a suffixed branch
-    const task2 = await createTaskWithBranch(
-      projectId,
-      repo.dir,
-      "main",
-      { title: "My Feature", description: "" },
-      broadcast,
-    );
+    const task2 = await tasks.create({ title: "My Feature", description: "" });
 
     expect(task2.branch_name).toStartWith("task/my-feature-");
     expect(task2.branch_name).not.toBe("task/my-feature");
@@ -100,25 +81,13 @@ describe("createTaskWithBranch", () => {
   test("captures base commit SHA", async () => {
     const expectedSha = await revParse(repo.dir, "main");
 
-    const task = await createTaskWithBranch(
-      projectId,
-      repo.dir,
-      "main",
-      { title: "Capture SHA", description: "" },
-      broadcast,
-    );
+    const task = await tasks.create({ title: "Capture SHA", description: "" });
 
     expect(task.base_commit).toBe(expectedSha);
   });
 
   test("calls broadcast with task_updated", async () => {
-    await createTaskWithBranch(
-      projectId,
-      repo.dir,
-      "main",
-      { title: "Broadcast test", description: "" },
-      broadcast,
-    );
+    await tasks.create({ title: "Broadcast test", description: "" });
 
     expect(broadcastSpy).toHaveBeenCalledTimes(1);
     expect(broadcastSpy).toHaveBeenCalledWith({
@@ -128,15 +97,10 @@ describe("createTaskWithBranch", () => {
   });
 
   test("throws on git failure and does not create DB row", async () => {
-    // Use a nonexistent base branch to trigger a git error
+    const badTasks = new ProjectTasks(projectId, repo.dir, "nonexistent-branch", sessions, broadcast);
+
     await expect(
-      createTaskWithBranch(
-        projectId,
-        repo.dir,
-        "nonexistent-branch",
-        { title: "Should fail", description: "" },
-        broadcast,
-      ),
+      badTasks.create({ title: "Should fail", description: "" }),
     ).rejects.toThrow();
 
     // Broadcast should not have been called
@@ -144,13 +108,7 @@ describe("createTaskWithBranch", () => {
   });
 
   test("trims title and description", async () => {
-    const task = await createTaskWithBranch(
-      projectId,
-      repo.dir,
-      "main",
-      { title: "  Trimmed Title  ", description: "  Trimmed Desc  " },
-      broadcast,
-    );
+    const task = await tasks.create({ title: "  Trimmed Title  ", description: "  Trimmed Desc  " });
 
     expect(task.title).toBe("Trimmed Title");
     expect(task.description).toBe("Trimmed Desc");
