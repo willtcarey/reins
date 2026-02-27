@@ -10,10 +10,10 @@ import { getProject, touchProject } from "../project-store.js";
 import { getTask } from "../task-store.js";
 import { generateTask } from "../task-generator.js";
 import {
-  TaskModel,
   TaskNotFoundError,
   TaskHasActiveSessionsError,
 } from "../models/tasks.js";
+import { ProjectModel } from "../models/projects.js";
 import { createBroadcast } from "../models/broadcast.js";
 import {
   createNewSession,
@@ -30,8 +30,8 @@ export function registerTaskRoutes(router: RouterGroup) {
     const projectDir = (ctx as any).projectDir as string;
     const project = getProject(projectId)!;
 
-    const tasks = new TaskModel(projectId, projectDir, project.base_branch, ctx.state.sessions, createBroadcast(ctx.state.clients));
-    const enriched = await tasks.list();
+    const projectModel = new ProjectModel(projectId, projectDir, project.base_branch, ctx.state.sessions, createBroadcast(ctx.state.clients));
+    const enriched = await projectModel.tasks().list();
     return Response.json(enriched);
   });
 
@@ -49,8 +49,8 @@ export function registerTaskRoutes(router: RouterGroup) {
     const generated = await generateTask(body.prompt!.trim());
 
     try {
-      const tasks = new TaskModel(projectId, projectDir, project.base_branch, ctx.state.sessions, createBroadcast(ctx.state.clients));
-      const task = await tasks.create({
+      const projectModel = new ProjectModel(projectId, projectDir, project.base_branch, ctx.state.sessions, createBroadcast(ctx.state.clients));
+      const task = await projectModel.tasks().create({
         title: generated.title,
         description: generated.description,
         branch_name: generated.branch_name,
@@ -79,8 +79,8 @@ export function registerTaskRoutes(router: RouterGroup) {
     const projectId = parseInt(ctx.params.id, 10);
     const taskId = parseInt(ctx.params.taskId, 10);
     const body = (await ctx.req.json()) as { title?: string; description?: string };
-    const tasks = new TaskModel(projectId, "", "", ctx.state.sessions, createBroadcast(ctx.state.clients));
-    const updated = tasks.update(taskId, body);
+    const projectModel = new ProjectModel(projectId, "", "", ctx.state.sessions, createBroadcast(ctx.state.clients));
+    const updated = projectModel.tasks().update(taskId, body);
     if (!updated) notFound("Task not found");
     return Response.json(updated);
   });
@@ -93,8 +93,8 @@ export function registerTaskRoutes(router: RouterGroup) {
     const project = getProject(projectId)!;
 
     try {
-      const tasks = new TaskModel(projectId, projectDir, project.base_branch, ctx.state.sessions, createBroadcast(ctx.state.clients));
-      await tasks.delete(taskId);
+      const projectModel = new ProjectModel(projectId, projectDir, project.base_branch, ctx.state.sessions, createBroadcast(ctx.state.clients));
+      await projectModel.tasks().delete(taskId);
       return Response.json({ ok: true });
     } catch (err: any) {
       if (err instanceof TaskNotFoundError) notFound(err.message);

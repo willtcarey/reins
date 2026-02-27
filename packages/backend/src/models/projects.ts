@@ -29,6 +29,8 @@ import {
   showFile,
 } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
+import type { ManagedSession } from "../state.js";
+import { ProjectTasks } from "./tasks.js";
 
 // ---------------------------------------------------------------------------
 // Domain errors
@@ -85,8 +87,16 @@ export class ProjectModel {
     private projectId: number,
     private projectDir: string,
     private baseBranch: string,
+    private sessions: Map<string, ManagedSession>,
     private broadcast: Broadcast,
   ) {}
+
+  /**
+   * Return a ProjectTasks instance for task lifecycle operations.
+   */
+  tasks(): ProjectTasks {
+    return new ProjectTasks(this.projectId, this.projectDir, this.baseBranch, this.sessions, this.broadcast);
+  }
 
   /**
    * Fetch from origin, fast-forward the base branch, and reconcile

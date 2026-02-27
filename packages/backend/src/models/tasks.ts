@@ -1,12 +1,11 @@
 /**
- * Task Model
+ * Project Tasks
  *
  * Business logic for task lifecycle: creation, listing, update, and deletion.
  * Orchestrates store calls, git operations, branch-name derivation, and
  * WebSocket broadcasts.
  *
- * Routes and tools construct a `TaskModel` with project-scoped context,
- * then call methods on it.
+ * Accessed via `ProjectModel.tasks()` — not constructed directly by callers.
  */
 
 import {
@@ -60,10 +59,10 @@ export interface TaskWithDiffStats extends TaskListItem {
 }
 
 // ---------------------------------------------------------------------------
-// TaskModel
+// ProjectTasks
 // ---------------------------------------------------------------------------
 
-export class TaskModel {
+export class ProjectTasks {
   constructor(
     private projectId: number,
     private projectDir: string,

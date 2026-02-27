@@ -16,7 +16,7 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { TaskRow } from "../task-store.js";
 import type { Broadcast } from "../models/broadcast.js";
 import type { CreateSessionFn } from "./delegate.js";
-import { TaskModel } from "../models/tasks.js";
+import { ProjectModel } from "../models/projects.js";
 import { getProject } from "../project-store.js";
 import type { ManagedSession } from "../state.js";
 
@@ -65,8 +65,8 @@ export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition {
         const project = getProject(projectId);
         if (!project) throw new Error(`Project ${projectId} not found`);
 
-        const tasks = new TaskModel(projectId, project.path, project.base_branch, sessions, broadcast);
-        const task: TaskRow = await tasks.create({
+        const projectModel = new ProjectModel(projectId, project.path, project.base_branch, sessions, broadcast);
+        const task: TaskRow = await projectModel.tasks().create({
           title: params.title,
           description: params.description,
           branch_name: params.branch_name,

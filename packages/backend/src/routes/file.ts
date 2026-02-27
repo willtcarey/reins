@@ -25,7 +25,7 @@ export function registerFileRoutes(router: RouterGroup) {
     if (!filePath) badRequest("Missing ?path= parameter");
 
     try {
-      const projectModel = new ProjectModel(projectId, projectDir, project.base_branch, createBroadcast(ctx.state.clients));
+      const projectModel = new ProjectModel(projectId, projectDir, project.base_branch, ctx.state.sessions, createBroadcast(ctx.state.clients));
       const content = await projectModel.readFile(filePath!, ref);
       return new Response(content, {
         headers: { "Content-Type": "text/plain; charset=utf-8" },

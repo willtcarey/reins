@@ -38,7 +38,7 @@ export function registerGitRoutes(router: RouterGroup) {
     const shouldFetch = ctx.url.searchParams.get("fetch") === "true";
 
     if (shouldFetch) {
-      const projectModel = new ProjectModel(projectId, projectDir, project.base_branch, createBroadcast(ctx.state.clients));
+      const projectModel = new ProjectModel(projectId, projectDir, project.base_branch, ctx.state.sessions, createBroadcast(ctx.state.clients));
       await projectModel.sync();
     }
 

@@ -4,7 +4,7 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import { createProject } from "../../project-store.js";
 import { getTask } from "../../task-store.js";
 import { branchExists, getCurrentBranch, revParse } from "../../git.js";
-import { TaskModel, type CreateTaskParams } from "../../models/tasks.js";
+import { ProjectTasks, type CreateTaskParams } from "../../models/tasks.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 
@@ -13,7 +13,7 @@ describe("createTaskWithBranch", () => {
   let broadcastSpy: ReturnType<typeof mock>;
   let broadcast: Broadcast;
   let sessions: Map<string, ManagedSession>;
-  let tasks: TaskModel;
+  let tasks: ProjectTasks;
 
   useTestDb();
   const repo = useTestRepo();
@@ -24,7 +24,7 @@ describe("createTaskWithBranch", () => {
     broadcastSpy = mock();
     broadcast = broadcastSpy as unknown as Broadcast;
     sessions = new Map();
-    tasks = new TaskModel(projectId, repo.dir, "main", sessions, broadcast);
+    tasks = new ProjectTasks(projectId, repo.dir, "main", sessions, broadcast);
   });
 
   test("creates a git branch and a DB row", async () => {
@@ -97,7 +97,7 @@ describe("createTaskWithBranch", () => {
   });
 
   test("throws on git failure and does not create DB row", async () => {
-    const badTasks = new TaskModel(projectId, repo.dir, "nonexistent-branch", sessions, broadcast);
+    const badTasks = new ProjectTasks(projectId, repo.dir, "nonexistent-branch", sessions, broadcast);
 
     await expect(
       badTasks.create({ title: "Should fail", description: "" }),
