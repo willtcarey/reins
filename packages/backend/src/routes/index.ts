@@ -30,17 +30,19 @@ export type ProjectRouteContext = RouteContext & { project: ProjectModel };
  * Resolves the :id param to a project, validates the directory exists,
  * and attaches a ProjectModel to the context for downstream handlers.
  */
-const projectMiddleware: Middleware = (ctx: RouteContext) => {
+const projectMiddleware: Middleware<{ project: ProjectModel }> = (ctx) => {
   const projectId = parseInt(ctx.params.id, 10);
   const project = getProject(projectId);
   if (!project) notFound("Project not found");
   if (!existsSync(project!.path)) {
     badRequest(`Directory does not exist: ${project!.path}`);
   }
-  ctx.project = new ProjectModel(
-    project!.id, project!.path, project!.base_branch,
-    ctx.state.sessions, createBroadcast(ctx.state.clients),
-  );
+  Object.assign(ctx, {
+    project: new ProjectModel(
+      project!.id, project!.path, project!.base_branch,
+      ctx.state.sessions, createBroadcast(ctx.state.clients),
+    ),
+  });
 };
 
 // ---- Build router ----------------------------------------------------------
@@ -51,7 +53,7 @@ export function buildRouter() {
   registerHealthRoutes(router);
   registerProjectRoutes(router);
 
-  router.group<{ project: ProjectModel }>(API.project, projectMiddleware, (r) => {
+  router.group(API.project, projectMiddleware, (r) => {
     registerSessionRoutes(r);
     registerDiffRoutes(r);
     registerFileRoutes(r);

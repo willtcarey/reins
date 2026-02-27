@@ -26,7 +26,10 @@ export interface RouteContext {
 }
 
 export type RouteHandler<Ctx extends RouteContext = RouteContext> = (ctx: Ctx) => Promise<Response> | Response;
-export type Middleware = (ctx: any) => Promise<void> | void;
+export interface Middleware<Ext extends object = {}> {
+  (ctx: any): Promise<void> | void;
+  readonly _contextExtension?: Ext;
+}
 
 interface Route {
   method: string;
@@ -40,9 +43,15 @@ export interface RouterGroup<Ctx extends RouteContext = RouteContext> {
   post(path: string, handler: RouteHandler<Ctx>): void;
   patch(path: string, handler: RouteHandler<Ctx>): void;
   delete(path: string, handler: RouteHandler<Ctx>): void;
-  group<Added extends object = {}>(
+  group(prefix: string, cb: (r: RouterGroup<Ctx>) => void): void;
+  group<Ext extends object>(
     prefix: string,
-    ...args: [...Middleware[], (r: RouterGroup<Ctx & Added>) => void]
+    middleware: Middleware<Ext>,
+    cb: (r: RouterGroup<Ctx & Ext>) => void,
+  ): void;
+  group<Ext extends object>(
+    prefix: string,
+    ...args: [...Middleware<Ext>[], (r: RouterGroup<Ctx & Ext>) => void]
   ): void;
 }
 
