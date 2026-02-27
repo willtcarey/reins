@@ -108,6 +108,32 @@ class MessageHandler: NSObject, WKScriptMessageHandler {
 }
 
 class WebViewNavigationDelegate: NSObject, WKNavigationDelegate {
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.allow)
+            return
+        }
+
+        // Allow same-origin navigations (the backend) to stay in the web view
+        if let currentHost = webView.url?.host, url.host == currentHost {
+            decisionHandler(.allow)
+            return
+        }
+
+        // Open everything else in the default browser
+        if url.scheme == "http" || url.scheme == "https" {
+            NSWorkspace.shared.open(url)
+            decisionHandler(.cancel)
+            return
+        }
+
+        decisionHandler(.allow)
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         print("[Reins] Page loaded: \(webView.url?.absoluteString ?? "unknown")")
     }
