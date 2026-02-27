@@ -8,19 +8,20 @@
  * Used by the frontend to render markdown previews of changed files.
  */
 
-import type { RouterGroup, RouteContext } from "../router.js";
+import type { RouterGroup } from "../router.js";
+import type { ProjectRouteContext } from "./index.js";
 import { badRequest, notFound } from "../errors.js";
 import { PathTraversalError, FileNotFoundError } from "../models/projects.js";
 
-export function registerFileRoutes(router: RouterGroup) {
-  router.get("/file", async (ctx: RouteContext) => {
+export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
+  router.get("/file", async (ctx) => {
     const filePath = ctx.url.searchParams.get("path");
     const ref = ctx.url.searchParams.get("ref");
 
     if (!filePath) badRequest("Missing ?path= parameter");
 
     try {
-      const content = await ctx.project!.readFile(filePath!, ref);
+      const content = await ctx.project.readFile(filePath!, ref);
       return new Response(content, {
         headers: { "Content-Type": "text/plain; charset=utf-8" },
       });

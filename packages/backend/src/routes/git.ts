@@ -8,7 +8,8 @@
  *   POST /git/rebase  — rebase a branch onto the base branch
  */
 
-import type { RouterGroup, RouteContext } from "../router.js";
+import type { RouterGroup } from "../router.js";
+import type { ProjectRouteContext } from "./index.js";
 import { badRequest } from "../errors.js";
 import {
   getSpread,
@@ -16,7 +17,7 @@ import {
   rebaseBranch,
 } from "../git.js";
 
-export function registerGitRoutes(router: RouterGroup) {
+export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
   /**
    * GET /git/spread?branch=feature/foo&fetch=false
    *
@@ -24,17 +25,17 @@ export function registerGitRoutes(router: RouterGroup) {
    * and its remote tracking branch. When fetch=true, runs fetchAll +
    * pullBaseBranch first to refresh remote refs.
    */
-  router.get("/git/spread", async (ctx: RouteContext) => {
+  router.get("/git/spread", async (ctx) => {
     const branch = ctx.url.searchParams.get("branch");
     if (!branch) badRequest("branch query parameter is required");
 
     const shouldFetch = ctx.url.searchParams.get("fetch") === "true";
 
     if (shouldFetch) {
-      await ctx.project!.sync();
+      await ctx.project.sync();
     }
 
-    const spread = await getSpread(ctx.project!.projectDir, branch!, ctx.project!.baseBranch);
+    const spread = await getSpread(ctx.project.projectDir, branch!, ctx.project.baseBranch);
 
     return Response.json({ branch, ...spread });
   });
@@ -45,13 +46,13 @@ export function registerGitRoutes(router: RouterGroup) {
    * Pushes a branch to origin.
    * Request body: { "branch": "feature/foo" }
    */
-  router.post("/git/push", async (ctx: RouteContext) => {
+  router.post("/git/push", async (ctx) => {
     const body = (await ctx.req.json()) as { branch?: string };
 
     if (!body.branch?.trim()) badRequest("branch is required");
 
     try {
-      await pushBranch(ctx.project!.projectDir, body.branch!.trim());
+      await pushBranch(ctx.project.projectDir, body.branch!.trim());
       return Response.json({ ok: true });
     } catch (err: any) {
       return Response.json({ error: err.message }, { status: 500 });
@@ -64,13 +65,13 @@ export function registerGitRoutes(router: RouterGroup) {
    * Rebases a branch onto the project's base branch.
    * Request body: { "branch": "feature/foo" }
    */
-  router.post("/git/rebase", async (ctx: RouteContext) => {
+  router.post("/git/rebase", async (ctx) => {
     const body = (await ctx.req.json()) as { branch?: string };
 
     if (!body.branch?.trim()) badRequest("branch is required");
 
     try {
-      await rebaseBranch(ctx.project!.projectDir, body.branch!.trim(), ctx.project!.baseBranch);
+      await rebaseBranch(ctx.project.projectDir, body.branch!.trim(), ctx.project.baseBranch);
       return Response.json({ ok: true });
     } catch (err: any) {
       return Response.json({ error: err.message }, { status: 500 });

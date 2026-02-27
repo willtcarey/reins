@@ -21,6 +21,9 @@ import { registerFileRoutes } from "./file.js";
 import { registerTaskRoutes } from "./tasks.js";
 import { registerGitRoutes } from "./git.js";
 
+/** Context available to handlers inside the project group (after project middleware). */
+export type ProjectRouteContext = RouteContext & { project: ProjectModel };
+
 // ---- Project middleware ----------------------------------------------------
 
 /**
@@ -48,7 +51,7 @@ export function buildRouter() {
   registerHealthRoutes(router);
   registerProjectRoutes(router);
 
-  router.group(API.project, projectMiddleware, (r) => {
+  router.group<{ project: ProjectModel }>(API.project, projectMiddleware, (r) => {
     registerSessionRoutes(r);
     registerDiffRoutes(r);
     registerFileRoutes(r);

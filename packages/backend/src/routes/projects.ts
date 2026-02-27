@@ -3,7 +3,7 @@
  */
 
 import { existsSync } from "fs";
-import type { RouterGroup, RouteContext } from "../router.js";
+import type { RouterGroup } from "../router.js";
 import { API } from "../api-paths.js";
 import { badRequest, notFound, conflict } from "../errors.js";
 import {
@@ -19,7 +19,7 @@ export function registerProjectRoutes(router: RouterGroup) {
   });
 
   // Create a project
-  router.post(API.projects, async (ctx: RouteContext) => {
+  router.post(API.projects, async (ctx) => {
     const body = await ctx.req.json() as { name?: string; path?: string; base_branch?: string };
     if (!body.name || !body.path) {
       badRequest("name and path are required");
@@ -42,7 +42,7 @@ export function registerProjectRoutes(router: RouterGroup) {
   });
 
   // Update a project
-  router.patch(API.project, async (ctx: RouteContext) => {
+  router.patch(API.project, async (ctx) => {
     const id = parseInt(ctx.params.id, 10);
     const body = await ctx.req.json() as { name?: string; path?: string; base_branch?: string };
 
@@ -65,7 +65,7 @@ export function registerProjectRoutes(router: RouterGroup) {
   });
 
   // Delete a project
-  router.delete(API.project, async (ctx: RouteContext) => {
+  router.delete(API.project, async (ctx) => {
     const id = parseInt(ctx.params.id, 10);
     const deleted = deleteProject(id);
     if (!deleted) notFound("Project not found");

@@ -12,26 +12,27 @@
  * previous default behavior).
  */
 
-import type { RouterGroup, RouteContext } from "../router.js";
+import type { RouterGroup } from "../router.js";
+import type { ProjectRouteContext } from "./index.js";
 import { getDiff, getChangedFiles, getCurrentBranch } from "../git.js";
 
-export function registerDiffRoutes(router: RouterGroup) {
+export function registerDiffRoutes(router: RouterGroup<ProjectRouteContext>) {
   /**
    * Lightweight file listing — cheap enough to poll every few seconds.
    * Returns file paths and +/− counts but no hunk/line data.
    */
-  router.get("/diff/files", async (ctx: RouteContext) => {
+  router.get("/diff/files", async (ctx) => {
     const mode = ctx.url.searchParams.get("mode") === "uncommitted" ? "uncommitted" : "branch";
     const branch = ctx.url.searchParams.get("branch") ?? undefined;
 
     const [files, currentBranch] = await Promise.all([
-      getChangedFiles(ctx.project!.projectDir, ctx.project!.baseBranch, mode, branch),
-      getCurrentBranch(ctx.project!.projectDir),
+      getChangedFiles(ctx.project.projectDir, ctx.project.baseBranch, mode, branch),
+      getCurrentBranch(ctx.project.projectDir),
     ]);
     return Response.json({
       files,
       branch: branch ?? currentBranch,
-      baseBranch: ctx.project!.baseBranch,
+      baseBranch: ctx.project.baseBranch,
     });
   });
 
@@ -39,7 +40,7 @@ export function registerDiffRoutes(router: RouterGroup) {
    * Full diff with parsed hunks — raw text, no syntax highlighting.
    * Highlighting is performed client-side using Shiki in a web worker.
    */
-  router.get("/diff", async (ctx: RouteContext) => {
+  router.get("/diff", async (ctx) => {
     const contextLines = Math.min(
       Math.max(parseInt(ctx.url.searchParams.get("context") ?? "3", 10) || 3, 0),
       500,
@@ -48,13 +49,13 @@ export function registerDiffRoutes(router: RouterGroup) {
     const branch = ctx.url.searchParams.get("branch") ?? undefined;
 
     const [files, currentBranch] = await Promise.all([
-      getDiff(ctx.project!.projectDir, contextLines, ctx.project!.baseBranch, mode, branch),
-      getCurrentBranch(ctx.project!.projectDir),
+      getDiff(ctx.project.projectDir, contextLines, ctx.project.baseBranch, mode, branch),
+      getCurrentBranch(ctx.project.projectDir),
     ]);
     return Response.json({
       files,
       branch: branch ?? currentBranch,
-      baseBranch: ctx.project!.baseBranch,
+      baseBranch: ctx.project.baseBranch,
     });
   });
 }

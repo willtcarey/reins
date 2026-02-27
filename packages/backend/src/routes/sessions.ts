@@ -5,7 +5,8 @@
  * the project context via the project middleware.
  */
 
-import type { RouterGroup, RouteContext } from "../router.js";
+import type { RouterGroup } from "../router.js";
+import type { ProjectRouteContext } from "./index.js";
 import {
   createNewSession, serializeSession,
   serializeSessionFromDb, serializeSessionList,
@@ -13,21 +14,21 @@ import {
 } from "../sessions.js";
 import { touchProject } from "../project-store.js";
 
-export function registerSessionRoutes(router: RouterGroup) {
+export function registerSessionRoutes(router: RouterGroup<ProjectRouteContext>) {
   // List sessions for a project
-  router.get("/sessions", async (ctx: RouteContext) => {
-    return Response.json(serializeSessionList(ctx.project!.projectId));
+  router.get("/sessions", async (ctx) => {
+    return Response.json(serializeSessionList(ctx.project.projectId));
   });
 
   // Create a new session
-  router.post("/sessions", async (ctx: RouteContext) => {
-    touchProject(ctx.project!.projectId);
-    const managed = await createNewSession(ctx.state, ctx.project!.projectId, ctx.project!.projectDir);
+  router.post("/sessions", async (ctx) => {
+    touchProject(ctx.project.projectId);
+    const managed = await createNewSession(ctx.state, ctx.project.projectId, ctx.project.projectDir);
     return Response.json(serializeSession(managed), { status: 201 });
   });
 
   // Get a specific session by ID
-  router.get("/sessions/:sessionId", async (ctx: RouteContext) => {
+  router.get("/sessions/:sessionId", async (ctx) => {
     const sessionId = ctx.params.sessionId;
 
     // If already open in memory, use that (includes isStreaming state)
