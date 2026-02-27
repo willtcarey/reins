@@ -10,10 +10,7 @@ import { getProject, touchProject } from "../project-store.js";
 import { getTask } from "../task-store.js";
 import { generateTask } from "../task-generator.js";
 import {
-  createTaskWithBranch,
-  listTasksWithDiffStats,
-  updateTaskAndBroadcast,
-  deleteTaskWithBranch,
+  TaskModel,
   TaskNotFoundError,
   TaskHasActiveSessionsError,
 } from "../models/tasks.js";
@@ -33,7 +30,8 @@ export function registerTaskRoutes(router: RouterGroup) {
     const projectDir = (ctx as any).projectDir as string;
     const project = getProject(projectId)!;
 
-    const enriched = await listTasksWithDiffStats(projectId, projectDir, project.base_branch);
+    const tasks = new TaskModel(projectId, projectDir, project.base_branch, ctx.state.sessions, createBroadcast(ctx.state.clients));
+    const enriched = await tasks.list();
     return Response.json(enriched);
   });
 
@@ -51,17 +49,12 @@ export function registerTaskRoutes(router: RouterGroup) {
     const generated = await generateTask(body.prompt!.trim());
 
     try {
-      const task = await createTaskWithBranch(
-        projectId,
-        projectDir,
-        project.base_branch,
-        {
-          title: generated.title,
-          description: generated.description,
-          branch_name: generated.branch_name,
-        },
-        createBroadcast(ctx.state.clients),
-      );
+      const tasks = new TaskModel(projectId, projectDir, project.base_branch, ctx.state.sessions, createBroadcast(ctx.state.clients));
+      const task = await tasks.create({
+        title: generated.title,
+        description: generated.description,
+        branch_name: generated.branch_name,
+      });
       return Response.json(task, { status: 201 });
     } catch (err: any) {
       return Response.json(
@@ -86,7 +79,8 @@ export function registerTaskRoutes(router: RouterGroup) {
     const projectId = parseInt(ctx.params.id, 10);
     const taskId = parseInt(ctx.params.taskId, 10);
     const body = (await ctx.req.json()) as { title?: string; description?: string };
-    const updated = updateTaskAndBroadcast(taskId, projectId, body, createBroadcast(ctx.state.clients));
+    const tasks = new TaskModel(projectId, "", "", ctx.state.sessions, createBroadcast(ctx.state.clients));
+    const updated = tasks.update(taskId, body);
     if (!updated) notFound("Task not found");
     return Response.json(updated);
   });
@@ -99,14 +93,8 @@ export function registerTaskRoutes(router: RouterGroup) {
     const project = getProject(projectId)!;
 
     try {
-      await deleteTaskWithBranch(
-        taskId,
-        projectId,
-        projectDir,
-        project.base_branch,
-        ctx.state.sessions,
-        createBroadcast(ctx.state.clients),
-      );
+      const tasks = new TaskModel(projectId, projectDir, project.base_branch, ctx.state.sessions, createBroadcast(ctx.state.clients));
+      await tasks.delete(taskId);
       return Response.json({ ok: true });
     } catch (err: any) {
       if (err instanceof TaskNotFoundError) notFound(err.message);

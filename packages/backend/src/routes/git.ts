@@ -17,7 +17,7 @@ import {
   rebaseBranch,
 } from "../git.js";
 import { createBroadcast } from "../models/broadcast.js";
-import { syncWithRemote } from "../models/projects.js";
+import { ProjectModel } from "../models/projects.js";
 
 export function registerGitRoutes(router: RouterGroup) {
   /**
@@ -38,7 +38,8 @@ export function registerGitRoutes(router: RouterGroup) {
     const shouldFetch = ctx.url.searchParams.get("fetch") === "true";
 
     if (shouldFetch) {
-      await syncWithRemote(projectId, projectDir, project.base_branch, createBroadcast(ctx.state.clients));
+      const projectModel = new ProjectModel(projectId, projectDir, project.base_branch, createBroadcast(ctx.state.clients));
+      await projectModel.sync();
     }
 
     const spread = await getSpread(projectDir, branch!, project.base_branch);

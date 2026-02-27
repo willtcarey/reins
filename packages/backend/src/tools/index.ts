@@ -7,12 +7,14 @@
 
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { Broadcast } from "../models/broadcast.js";
+import type { ManagedSession } from "../state.js";
 import { createTaskTool } from "./create-task.js";
 import { createDelegateTool, type CreateSessionFn } from "./delegate.js";
 
 export interface CustomToolsOpts {
   projectId: number;
   broadcast: Broadcast;
+  sessions: Map<string, ManagedSession>;
   /** Session creation function — used by create_task (prompt) and delegate. */
   createSession: CreateSessionFn;
   /** When set, delegation is available for this session. */
@@ -27,6 +29,7 @@ export function createCustomTools(opts: CustomToolsOpts): ToolDefinition[] {
     createTaskTool({
       projectId: opts.projectId,
       broadcast: opts.broadcast,
+      sessions: opts.sessions,
       createSession: opts.createSession,
     }),
   ];

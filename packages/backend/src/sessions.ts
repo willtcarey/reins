@@ -83,6 +83,7 @@ async function buildSessionOpts(params: {
   const customTools = createCustomTools({
     projectId,
     broadcast,
+    sessions: state.sessions,
     createSession: createSessionFn,
     delegate: includeDelegateTool
       ? {

@@ -16,8 +16,9 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { TaskRow } from "../task-store.js";
 import type { Broadcast } from "../models/broadcast.js";
 import type { CreateSessionFn } from "./delegate.js";
-import { createTaskWithBranch } from "../models/tasks.js";
+import { TaskModel } from "../models/tasks.js";
 import { getProject } from "../project-store.js";
+import type { ManagedSession } from "../state.js";
 
 const parameters = Type.Object({
   title: Type.String({ description: "Concise task title (imperative mood, e.g. \"Add dark mode support\")" }),
@@ -38,6 +39,7 @@ const parameters = Type.Object({
 export interface CreateTaskToolOpts {
   projectId: number;
   broadcast: Broadcast;
+  sessions: Map<string, ManagedSession>;
   /** When set, the tool can kick off sessions on newly created tasks. */
   createSession?: CreateSessionFn;
 }
@@ -48,7 +50,7 @@ export interface CreateTaskToolOpts {
  * project path or base branch are picked up mid-conversation.
  */
 export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition {
-  const { projectId, broadcast, createSession } = opts;
+  const { projectId, broadcast, sessions, createSession } = opts;
 
   return {
     name: "create_task",
@@ -63,17 +65,12 @@ export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition {
         const project = getProject(projectId);
         if (!project) throw new Error(`Project ${projectId} not found`);
 
-        const task: TaskRow = await createTaskWithBranch(
-          projectId,
-          project.path,
-          project.base_branch,
-          {
-            title: params.title,
-            description: params.description,
-            branch_name: params.branch_name,
-          },
-          broadcast,
-        );
+        const tasks = new TaskModel(projectId, project.path, project.base_branch, sessions, broadcast);
+        const task: TaskRow = await tasks.create({
+          title: params.title,
+          description: params.description,
+          branch_name: params.branch_name,
+        });
 
         // Fire-and-forget: kick off a session on the new task if a prompt was provided.
         // Intentionally not awaited — the tool returns task info immediately.
