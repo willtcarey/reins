@@ -414,10 +414,60 @@ export class DiffPanel extends LitElement {
     `;
   }
 
+  /** Paths currently showing a "copied" confirmation. */
+  @state() private copiedPaths = new Set<string>();
+
+  private async copyPath(path: string, e: Event) {
+    e.stopPropagation();
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(path);
+      } else {
+        this.copyFallback(path);
+      }
+      const next = new Set(this.copiedPaths);
+      next.add(path);
+      this.copiedPaths = next;
+      setTimeout(() => {
+        const after = new Set(this.copiedPaths);
+        after.delete(path);
+        this.copiedPaths = after;
+      }, 1500);
+    } catch {
+      // clipboard.writeText can fail in non-secure contexts (e.g. WKWebView);
+      // fall back to execCommand
+      try {
+        this.copyFallback(path);
+        const next = new Set(this.copiedPaths);
+        next.add(path);
+        this.copiedPaths = next;
+        setTimeout(() => {
+          const after = new Set(this.copiedPaths);
+          after.delete(path);
+          this.copiedPaths = after;
+        }, 1500);
+      } catch (err) {
+        console.error("Failed to copy path to clipboard:", err);
+      }
+    }
+  }
+
+  private copyFallback(text: string) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  }
+
   private renderFile(file: DiffFile) {
     const collapsed = this.collapsedFiles.has(file.path);
     const isMd = isMarkdown(file.path);
     const isRendered = isMd && this.renderedFiles.has(file.path);
+    const copied = this.copiedPaths.has(file.path);
 
     return html`
       <div class="mb-3 border border-zinc-700 rounded-lg" id=${fileCardId(file.path)} data-file-path=${file.path}>
@@ -427,6 +477,16 @@ export class DiffPanel extends LitElement {
         >
           <span class="text-zinc-500 font-mono text-xs">${collapsed ? "▶" : "▼"}</span>
           <span class="font-mono text-zinc-200 flex-1 text-left truncate">${file.path}</span>
+          <span
+            class="inline-flex items-center text-zinc-500 hover:text-zinc-300 transition-colors p-0.5 rounded hover:bg-zinc-700/50"
+            title="Copy path"
+            @click=${(e: Event) => this.copyPath(file.path, e)}
+          >
+            ${copied
+              ? html`<svg class="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>`
+              : html`<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>`
+            }
+          </span>
           ${isMd ? html`<span class="text-blue-400 text-xs font-mono px-1.5 py-0.5 bg-blue-400/10 rounded">MD</span>` : nothing}
           ${file.additions > 0 ? html`<span class="text-green-400 text-xs font-mono">+${file.additions}</span>` : nothing}
           ${file.removals > 0 ? html`<span class="text-red-400 text-xs font-mono">-${file.removals}</span>` : nothing}
