@@ -16,16 +16,13 @@ import { touchProject } from "../project-store.js";
 export function registerSessionRoutes(router: RouterGroup) {
   // List sessions for a project
   router.get("/sessions", async (ctx: RouteContext) => {
-    const projectId = parseInt(ctx.params.id, 10);
-    return Response.json(serializeSessionList(projectId));
+    return Response.json(serializeSessionList(ctx.project!.projectId));
   });
 
   // Create a new session
   router.post("/sessions", async (ctx: RouteContext) => {
-    const projectId = parseInt(ctx.params.id, 10);
-    const projectDir = (ctx as any).projectDir as string;
-    touchProject(projectId);
-    const managed = await createNewSession(ctx.state, projectId, projectDir);
+    touchProject(ctx.project!.projectId);
+    const managed = await createNewSession(ctx.state, ctx.project!.projectId, ctx.project!.projectDir);
     return Response.json(serializeSession(managed), { status: 201 });
   });
 

@@ -84,9 +84,9 @@ export async function createProject(params: CreateProjectParams): Promise<Projec
 
 export class ProjectModel {
   constructor(
-    private projectId: number,
-    private projectDir: string,
-    private baseBranch: string,
+    readonly projectId: number,
+    readonly projectDir: string,
+    readonly baseBranch: string,
     private sessions: Map<string, ManagedSession>,
     private broadcast: Broadcast,
   ) {}

@@ -14,6 +14,7 @@
  */
 
 import type { ServerState } from "./state.js";
+import type { ProjectModel } from "./models/projects.js";
 import { HttpError } from "./errors.js";
 
 // ---- Types -----------------------------------------------------------------
@@ -23,6 +24,7 @@ export interface RouteContext {
   url: URL;
   params: Record<string, string>;
   state: ServerState;
+  project?: ProjectModel;
 }
 
 export type RouteHandler = (ctx: RouteContext) => Promise<Response> | Response;

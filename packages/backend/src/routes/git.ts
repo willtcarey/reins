@@ -10,14 +10,11 @@
 
 import type { RouterGroup, RouteContext } from "../router.js";
 import { badRequest } from "../errors.js";
-import { getProject } from "../project-store.js";
 import {
   getSpread,
   pushBranch,
   rebaseBranch,
 } from "../git.js";
-import { createBroadcast } from "../models/broadcast.js";
-import { ProjectModel } from "../models/projects.js";
 
 export function registerGitRoutes(router: RouterGroup) {
   /**
@@ -28,21 +25,16 @@ export function registerGitRoutes(router: RouterGroup) {
    * pullBaseBranch first to refresh remote refs.
    */
   router.get("/git/spread", async (ctx: RouteContext) => {
-    const projectId = parseInt(ctx.params.id, 10);
-    const projectDir = (ctx as any).projectDir as string;
-    const project = getProject(projectId)!;
-
     const branch = ctx.url.searchParams.get("branch");
     if (!branch) badRequest("branch query parameter is required");
 
     const shouldFetch = ctx.url.searchParams.get("fetch") === "true";
 
     if (shouldFetch) {
-      const projectModel = new ProjectModel(projectId, projectDir, project.base_branch, ctx.state.sessions, createBroadcast(ctx.state.clients));
-      await projectModel.sync();
+      await ctx.project!.sync();
     }
 
-    const spread = await getSpread(projectDir, branch!, project.base_branch);
+    const spread = await getSpread(ctx.project!.projectDir, branch!, ctx.project!.baseBranch);
 
     return Response.json({ branch, ...spread });
   });
@@ -54,13 +46,12 @@ export function registerGitRoutes(router: RouterGroup) {
    * Request body: { "branch": "feature/foo" }
    */
   router.post("/git/push", async (ctx: RouteContext) => {
-    const projectDir = (ctx as any).projectDir as string;
     const body = (await ctx.req.json()) as { branch?: string };
 
     if (!body.branch?.trim()) badRequest("branch is required");
 
     try {
-      await pushBranch(projectDir, body.branch!.trim());
+      await pushBranch(ctx.project!.projectDir, body.branch!.trim());
       return Response.json({ ok: true });
     } catch (err: any) {
       return Response.json({ error: err.message }, { status: 500 });
@@ -74,15 +65,12 @@ export function registerGitRoutes(router: RouterGroup) {
    * Request body: { "branch": "feature/foo" }
    */
   router.post("/git/rebase", async (ctx: RouteContext) => {
-    const projectId = parseInt(ctx.params.id, 10);
-    const projectDir = (ctx as any).projectDir as string;
-    const project = getProject(projectId)!;
     const body = (await ctx.req.json()) as { branch?: string };
 
     if (!body.branch?.trim()) badRequest("branch is required");
 
     try {
-      await rebaseBranch(projectDir, body.branch!.trim(), project.base_branch);
+      await rebaseBranch(ctx.project!.projectDir, body.branch!.trim(), ctx.project!.baseBranch);
       return Response.json({ ok: true });
     } catch (err: any) {
       return Response.json({ error: err.message }, { status: 500 });

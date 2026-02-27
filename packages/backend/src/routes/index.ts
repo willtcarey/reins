@@ -11,6 +11,8 @@ import type { RouteContext, Middleware } from "../router.js";
 import { API } from "../api-paths.js";
 import { notFound, badRequest } from "../errors.js";
 import { getProject } from "../project-store.js";
+import { ProjectModel } from "../models/projects.js";
+import { createBroadcast } from "../models/broadcast.js";
 import { registerHealthRoutes } from "./health.js";
 import { registerProjectRoutes } from "./projects.js";
 import { registerSessionRoutes } from "./sessions.js";
@@ -23,7 +25,7 @@ import { registerGitRoutes } from "./git.js";
 
 /**
  * Resolves the :id param to a project, validates the directory exists,
- * and attaches projectDir to the context for downstream handlers.
+ * and attaches a ProjectModel to the context for downstream handlers.
  */
 const projectMiddleware: Middleware = (ctx: RouteContext) => {
   const projectId = parseInt(ctx.params.id, 10);
@@ -32,7 +34,10 @@ const projectMiddleware: Middleware = (ctx: RouteContext) => {
   if (!existsSync(project!.path)) {
     badRequest(`Directory does not exist: ${project!.path}`);
   }
-  (ctx as any).projectDir = project!.path;
+  ctx.project = new ProjectModel(
+    project!.id, project!.path, project!.base_branch,
+    ctx.state.sessions, createBroadcast(ctx.state.clients),
+  );
 };
 
 // ---- Build router ----------------------------------------------------------
