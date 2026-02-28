@@ -42,7 +42,7 @@ export class AppStore {
 
   // ---- Activity state (absorbed from ActivityTracker) -----------------------
 
-  private _activityStates = new Map<string, ActivityState>();
+  private _activityStates = new Map<string, { state: ActivityState; projectId: number }>();
   private _activityMapCache: Map<string, ActivityState> | null = null;
 
   // ---- Task session sublists --------------------------------------------------
@@ -84,7 +84,7 @@ export class AppStore {
       }
     });
 
-    client.onEvent((sessionId, event) => {
+    client.onEvent((sessionId, projectId, event) => {
       const store = this._activeProject;
 
       // Handle task_updated broadcast (not tagged with a sessionId)
@@ -104,9 +104,9 @@ export class AppStore {
 
       // Track activity for all sessions
       if (sessionId && event.type === "agent_start") {
-        this._setRunning(sessionId);
+        this._setRunning(sessionId, projectId);
       } else if (sessionId && event.type === "agent_end") {
-        this._setFinished(sessionId, store.sessionId);
+        this._setFinished(sessionId, projectId, store.sessionId);
         setTimeout(() => store.refreshLists(), 500);
       }
 
@@ -140,24 +140,49 @@ export class AppStore {
 
   /** Get the activity state for a session (undefined = normal/no activity). */
   getActivity(sessionId: string): ActivityState | undefined {
-    return this._activityStates.get(sessionId);
+    return this._activityStates.get(sessionId)?.state;
+  }
+
+  /** Get the projectId associated with a session's activity. */
+  getActivityProjectId(sessionId: string): number | undefined {
+    return this._activityStates.get(sessionId)?.projectId;
   }
 
   /** Get a snapshot of all activity states (for passing as a property). */
   get activityMap(): Map<string, ActivityState> {
     if (!this._activityMapCache) {
-      this._activityMapCache = new Map(this._activityStates);
+      const map = new Map<string, ActivityState>();
+      for (const [id, entry] of this._activityStates) {
+        map.set(id, entry.state);
+      }
+      this._activityMapCache = map;
     }
     return this._activityMapCache;
+  }
+
+  /**
+   * Aggregate activity by projectId.
+   * If any session in a project is running, the project is "running".
+   * Otherwise if any session is finished, it's "finished".
+   */
+  get activityByProject(): Map<number, ActivityState> {
+    const result = new Map<number, ActivityState>();
+    for (const entry of this._activityStates.values()) {
+      const current = result.get(entry.projectId);
+      if (!current || (current === "finished" && entry.state === "running")) {
+        result.set(entry.projectId, entry.state);
+      }
+    }
+    return result;
   }
 
   /** Summary counts for favicon/title. */
   get activitySummary(): { running: number; finished: number } {
     let running = 0;
     let finished = 0;
-    for (const state of this._activityStates.values()) {
-      if (state === "running") running++;
-      else if (state === "finished") finished++;
+    for (const entry of this._activityStates.values()) {
+      if (entry.state === "running") running++;
+      else if (entry.state === "finished") finished++;
     }
     return { running, finished };
   }
@@ -169,19 +194,19 @@ export class AppStore {
 
   // ---- Activity state mutations (private) -----------------------------------
 
-  private _setRunning(sessionId: string): void {
-    if (this._activityStates.get(sessionId) === "running") return;
-    this._activityStates.set(sessionId, "running");
+  private _setRunning(sessionId: string, projectId: number): void {
+    if (this._activityStates.get(sessionId)?.state === "running") return;
+    this._activityStates.set(sessionId, { state: "running", projectId });
     this._activityMapCache = null;
     this.notify();
   }
 
-  private _setFinished(sessionId: string, activeSessionId: string): void {
+  private _setFinished(sessionId: string, projectId: number, activeSessionId: string): void {
     if (sessionId === activeSessionId) {
       this.clearActivity(sessionId);
       return;
     }
-    this._activityStates.set(sessionId, "finished");
+    this._activityStates.set(sessionId, { state: "finished", projectId });
     this._activityMapCache = null;
     this.notify();
   }

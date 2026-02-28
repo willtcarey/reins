@@ -171,7 +171,7 @@ export async function createNewSession(
     touchTask(opts.taskId);
   }
 
-  const managed = wireSession(state, agentSession, sessionId);
+  const managed = wireSession(state, agentSession, sessionId, projectId);
   console.log(`  Session created: ${sessionId}${task ? ` (task: ${task.title})` : ""} (total: ${state.sessions.size})`);
 
   // Notify frontend clients about the new session
@@ -229,7 +229,7 @@ export async function resumeSession(
     agentSession.agent.replaceMessages(messages);
   }
 
-  const managed = wireSession(state, agentSession, sessionId);
+  const managed = wireSession(state, agentSession, sessionId, row.project_id);
   console.log(`  Session resumed: ${sessionId} (${messages.length} messages for LLM, total: ${state.sessions.size})`);
   return managed;
 }
@@ -242,6 +242,7 @@ function wireSession(
   state: ServerState,
   agentSession: any,
   sessionId: string,
+  projectId: number,
 ): ManagedSession {
   const managed: ManagedSession = {
     session: agentSession,
@@ -253,7 +254,7 @@ function wireSession(
 
   agentSession.subscribe((event: AgentSessionEvent) => {
     // Broadcast to all connected WS clients
-    broadcast({ type: "event", sessionId, event });
+    broadcast({ type: "event", sessionId, projectId, event });
 
     // Persist messages after each turn (assistant message + tool results),
     // not just at agent_end. This way we don't lose data if the server

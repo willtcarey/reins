@@ -60,13 +60,13 @@ export interface ProjectInfo {
 
 /** Inbound message shapes from the backend */
 export type ServerMessage =
-  | { type: "event"; sessionId: string; event: any }
+  | { type: "event"; sessionId: string; projectId: number; event: any }
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null }
   | { type: "ack"; command: string }
   | { type: "error"; error: string };
 
-export type EventListener = (sessionId: string, event: any) => void;
+export type EventListener = (sessionId: string, projectId: number, event: any) => void;
 export type ConnectionListener = (connected: boolean) => void;
 
 // ---- Client ----------------------------------------------------------------
@@ -228,20 +228,20 @@ export class AppClient {
 
       case "event":
         for (const listener of this.eventListeners) {
-          listener(msg.sessionId, msg.event);
+          listener(msg.sessionId, msg.projectId, msg.event);
         }
         break;
 
       case "task_updated":
         // Forward as a synthetic event so app-level listeners can react
         for (const listener of this.eventListeners) {
-          listener("", { type: "task_updated", projectId: msg.projectId });
+          listener("", msg.projectId, { type: "task_updated", projectId: msg.projectId });
         }
         break;
 
       case "session_created":
         for (const listener of this.eventListeners) {
-          listener("", {
+          listener("", msg.projectId, {
             type: "session_created",
             projectId: msg.projectId,
             sessionId: msg.sessionId,
@@ -253,14 +253,14 @@ export class AppClient {
       case "ack":
         this.clearReplayBuffer();
         for (const listener of this.eventListeners) {
-          listener("", { type: `ws_${msg.type}`, ...msg });
+          listener("", 0, { type: `ws_${msg.type}`, ...msg });
         }
         break;
 
       case "error":
         this.clearReplayBuffer();
         for (const listener of this.eventListeners) {
-          listener("", { type: `ws_${msg.type}`, ...msg });
+          listener("", 0, { type: `ws_${msg.type}`, ...msg });
         }
         break;
     }
