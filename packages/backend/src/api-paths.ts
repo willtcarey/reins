@@ -9,4 +9,5 @@ export const API = {
   health:   "/api/health",
   projects: "/api/projects",
   project:  "/api/projects/:id",
+  sessions: "/api/sessions",
 } as const;

@@ -4,52 +4,33 @@
  * Hash-based route parsing and navigation helpers.
  *
  * Routes:
- *  - `#/project/:id`                    — project, no specific session
- *  - `#/project/:id/session/:sessionId` — project + session
- *  - (empty hash)                       — no project selected
+ *  - `#/session/:sessionId` — view a session
+ *  - (empty hash)           — no session selected
  */
 
 export interface Route {
-  projectId: number | null;
   sessionId: string | null;
 }
 
-/** Parse the current hash into project + session IDs. */
+/** Parse the current hash into a session ID. */
 export function parseHash(): Route {
-  // #/project/3/session/abc-123
-  const full = location.hash.match(/^#\/project\/(\d+)\/session\/(.+)$/);
-  if (full) return { projectId: parseInt(full[1], 10), sessionId: decodeURIComponent(full[2]) };
+  // #/session/abc-123
+  const match = location.hash.match(/^#\/session\/(.+)$/);
+  if (match) return { sessionId: decodeURIComponent(match[1]) };
 
-  // #/project/3
-  const proj = location.hash.match(/^#\/project\/(\d+)$/);
-  if (proj) return { projectId: parseInt(proj[1], 10), sessionId: null };
+  // Backward compat: #/project/3/session/abc-123
+  const legacy = location.hash.match(/^#\/project\/\d+\/session\/(.+)$/);
+  if (legacy) return { sessionId: decodeURIComponent(legacy[1]) };
 
-  return { projectId: null, sessionId: null };
-}
-
-/** Build a hash string for a given project + optional session. */
-function buildHash(projectId: number, sessionId?: string): string {
-  if (sessionId) return `#/project/${projectId}/session/${encodeURIComponent(sessionId)}`;
-  return `#/project/${projectId}`;
-}
-
-/**
- * Navigate to a project URL (no specific session).
- * The app shell will resolve to the most recent session.
- */
-export function navigateToProject(projectId: number): void {
-  const hash = buildHash(projectId);
-  if (location.hash === hash) return;
-  location.hash = hash;
+  return { sessionId: null };
 }
 
 /**
  * Navigate to a session URL.
- * Uses replaceState when `replace` is true (e.g. redirecting from a bare
- * project URL to include the resolved session ID).
+ * Uses replaceState when `replace` is true (e.g. redirecting).
  */
-export function navigateToSession(projectId: number, sessionId: string, replace = false): void {
-  const hash = buildHash(projectId, sessionId);
+export function navigateToSession(sessionId: string, replace = false): void {
+  const hash = `#/session/${encodeURIComponent(sessionId)}`;
   if (location.hash === hash) return;
   if (replace) {
     history.replaceState(null, "", hash);

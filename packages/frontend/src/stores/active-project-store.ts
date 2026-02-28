@@ -46,55 +46,41 @@ export class ActiveProjectStore {
   // ---- Route changes --------------------------------------------------------
 
   /**
-   * Called when the URL route changes. Handles project switches,
-   * session switches, and bare project URLs (resolves to most recent).
-   *
-   * Returns a session ID to navigate to if the URL needs updating
-   * (bare project URL resolved to a session), or null otherwise.
+   * Called when the URL route changes. Derives the projectId from the
+   * session data via the top-level session lookup endpoint.
    */
-  async setRoute(
-    projectId: number | null,
-    sessionId: string | null,
-  ): Promise<{ navigateTo: string } | null> {
-    const projectChanged = projectId !== this.projectId;
+  async setRoute(sessionId: string | null): Promise<void> {
     const newSessionId = sessionId ?? "";
-    const sessionChanged = newSessionId !== this.sessionId;
 
-    if (!projectChanged && !sessionChanged) return null;
+    if (newSessionId === this.sessionId) return;
 
-    if (projectChanged) {
-      this.projectId = projectId;
-      this.sessionId = newSessionId;
+    if (!newSessionId) {
+      // No session — clear everything
+      this.projectId = null;
+      this.sessionId = "";
       this.tasks = [];
       this.sessions = [];
       this.sessionData = null;
       this.notify();
-
-      if (projectId == null) return null;
-
-      await this.fetchLists();
-
-      if (newSessionId) {
-        await this.fetchSession(newSessionId);
-        return null;
-      }
-
-      // Bare project URL — resolve to most recent session
-      if (this.sessions.length > 0) {
-        return { navigateTo: this.sessions[0].id };
-      }
-      return null;
+      return;
     }
 
-    // Same project, different session
     this.sessionId = newSessionId;
     this.sessionData = null;
     this.notify();
 
-    if (newSessionId) {
-      await this.fetchSession(newSessionId);
+    // Fetch session via top-level endpoint (includes project_id)
+    const data = await this.fetchSessionTopLevel(newSessionId);
+    if (!data) return;
+
+    const projectChanged = data.project_id !== this.projectId;
+    if (projectChanged) {
+      this.projectId = data.project_id;
+      this.tasks = [];
+      this.sessions = [];
+      this.notify();
+      await this.fetchLists();
     }
-    return null;
   }
 
   // ---- Actions --------------------------------------------------------------
@@ -258,6 +244,27 @@ export class ActiveProjectStore {
     }
     this.loading = false;
     this.notify();
+  }
+
+  /**
+   * Fetch a session via the top-level endpoint (not project-scoped).
+   * Returns the session data including project_id, or null on failure.
+   */
+  private async fetchSessionTopLevel(sessionId: string): Promise<(SessionData & { project_id: number }) | null> {
+    const fetchId = ++this._fetchId;
+    try {
+      const resp = await fetch(
+        `/api/sessions/${encodeURIComponent(sessionId)}`,
+      );
+      if (!resp.ok) return null;
+      if (fetchId !== this._fetchId) return null; // stale
+      const data = await resp.json();
+      this.sessionData = data;
+      this.notify();
+      return data;
+    } catch {
+      return null;
+    }
   }
 
   private async fetchSession(sessionId: string) {

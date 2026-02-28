@@ -7,9 +7,8 @@
  * file tree state, document title).
  *
  * Routes:
- *  - `#/project/:id`                    — view project, resolves to most recent session
- *  - `#/project/:id/session/:sessionId` — view a specific session
- *  - (empty hash)                       — no project selected, show empty state
+ *  - `#/session/:sessionId` — view a specific session
+ *  - (empty hash)           — no project selected, show empty state
  */
 
 import { LitElement, html } from "lit";
@@ -19,7 +18,7 @@ import { AppClient } from "./ws-client.js";
 import type { DiffPanel } from "./changes/diff-panel.js";
 import { FileTreeState } from "./changes/file-tree-state.js";
 import { AppStore } from "./stores/app-store.js";
-import { parseHash, navigateToSession } from "./router.js";
+import { parseHash } from "./router.js";
 import type { Route } from "./router.js";
 
 // Ensure sub-components are registered
@@ -72,18 +71,17 @@ export class AppShell extends LitElement {
   }
 
   private onHashChange = () => {
+    const previousProjectId = this.appStore.projectId;
     const route = parseHash();
-    if (route.projectId !== this.appStore.projectId) {
-      this.fileTreeState.reset();
-    }
-    this.applyRoute(route);
+    this.applyRoute(route, previousProjectId);
   };
 
-  private async applyRoute(route: Route) {
+  private async applyRoute(route: Route, previousProjectId?: number | null) {
     const store = this.appStore;
-    const result = await store.setRoute(route.projectId, route.sessionId);
-    if (result?.navigateTo && route.projectId != null) {
-      navigateToSession(route.projectId, result.navigateTo, true);
+    await store.setRoute(route.sessionId);
+    // Reset file tree when project changes (derived from session)
+    if (previousProjectId !== undefined && store.projectId !== previousProjectId) {
+      this.fileTreeState.reset();
     }
     // Clear activity notification when viewing a session
     if (store.sessionData) {

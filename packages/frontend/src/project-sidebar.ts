@@ -60,8 +60,8 @@ export class ProjectSidebar extends LitElement {
     this.projectForm.open({ mode: "edit", project });
   }
 
-  private handleProjectCreated(e: CustomEvent<{ project: ProjectInfo }>) {
-    location.hash = `#/project/${e.detail.project.id}`;
+  private handleProjectCreated(_e: CustomEvent<{ project: ProjectInfo }>) {
+    // Project created — it will appear in the sidebar. No navigation needed.
   }
 
   private handleProjectUpdated() {

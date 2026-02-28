@@ -104,4 +104,59 @@ describe("session routes", () => {
       expect(res!.status).toBe(404);
     });
   });
+
+  describe("GET /api/sessions/:sessionId (top-level lookup)", () => {
+    test("returns session from memory with project_id", async () => {
+      const sessionId = "lookup-memory";
+      createSession(sessionId, projectId, {});
+
+      state.sessions.set(sessionId, {
+        session: {
+          isStreaming: true,
+          messages: [{ role: "user", content: "hi" }],
+          model: { provider: "test", id: "test-model" },
+          thinkingLevel: "none",
+        } as any,
+        id: sessionId,
+        lastActivity: Date.now(),
+      });
+
+      const res = await router.handle(
+        makeRequest("GET", `/api/sessions/${sessionId}`),
+        state,
+      );
+      expect(res!.status).toBe(200);
+      const body = await res!.json();
+      expect(body.id).toBe(sessionId);
+      expect(body.project_id).toBe(projectId);
+      expect(body.state.isStreaming).toBe(true);
+    });
+
+    test("returns session from DB with project_id", async () => {
+      const sessionId = "lookup-db";
+      createSession(sessionId, projectId, {});
+      persistMessages(sessionId, [
+        { role: "user", content: "test" },
+      ]);
+
+      const res = await router.handle(
+        makeRequest("GET", `/api/sessions/${sessionId}`),
+        state,
+      );
+      expect(res!.status).toBe(200);
+      const body = await res!.json();
+      expect(body.id).toBe(sessionId);
+      expect(body.project_id).toBe(projectId);
+      expect(body.state.isStreaming).toBe(false);
+      expect(body.messages).toBeArray();
+    });
+
+    test("returns 404 for nonexistent session", async () => {
+      const res = await router.handle(
+        makeRequest("GET", `/api/sessions/nonexistent`),
+        state,
+      );
+      expect(res!.status).toBe(404);
+    });
+  });
 });

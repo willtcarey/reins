@@ -16,6 +16,7 @@ import { createBroadcast } from "../models/broadcast.js";
 import { registerHealthRoutes } from "./health.js";
 import { registerProjectRoutes } from "./projects.js";
 import { registerSessionRoutes } from "./sessions.js";
+import { registerSessionLookupRoutes } from "./session-lookup.js";
 import { registerDiffRoutes } from "./diff.js";
 import { registerFileRoutes } from "./file.js";
 import { registerTaskRoutes } from "./tasks.js";
@@ -52,6 +53,9 @@ export function buildRouter() {
 
   registerHealthRoutes(router);
   registerProjectRoutes(router);
+  router.group(API.sessions, (r) => {
+    registerSessionLookupRoutes(r);
+  });
 
   router.group(API.project, projectMiddleware, (r) => {
     registerSessionRoutes(r);

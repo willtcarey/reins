@@ -225,21 +225,18 @@ export class AppStore {
 
   // ---- ActiveProjectStore delegate methods ----------------------------------
 
-  async setRoute(
-    projectId: number | null,
-    sessionId: string | null,
-  ): Promise<{ navigateTo: string } | null> {
-    // Update diff store project when it changes
-    if (projectId !== this._activeProject.projectId) {
-      this.diffStore.setProject(projectId);
-    }
+  async setRoute(sessionId: string | null): Promise<void> {
+    const previousProjectId = this._activeProject.projectId;
 
-    const result = await this._activeProject.setRoute(projectId, sessionId);
+    await this._activeProject.setRoute(sessionId);
+
+    // Update diff store project when it changes
+    if (this._activeProject.projectId !== previousProjectId) {
+      this.diffStore.setProject(this._activeProject.projectId);
+    }
 
     // After route is applied, resolve the branch for the diff store
     this._updateDiffBranch();
-
-    return result;
   }
 
   async refreshSession() {

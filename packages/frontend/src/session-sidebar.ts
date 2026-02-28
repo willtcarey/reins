@@ -16,7 +16,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
-import { navigateToSession, navigateToProject } from "./router.js";
+import { navigateToSession } from "./router.js";
 import type { AppStore } from "./stores/app-store.js";
 import type { ActivityState } from "./stores/app-store.js";
 import type { ProjectInfo } from "./ws-client.js";
@@ -128,9 +128,9 @@ export class SessionSidebar extends LitElement {
   }
 
   private handleSelectSession(e: CustomEvent<{ projectId: number; sessionId: string }>) {
-    const { projectId, sessionId } = e.detail;
-    if (!projectId || !sessionId) return;
-    navigateToSession(projectId, sessionId);
+    const { sessionId } = e.detail;
+    if (!sessionId) return;
+    navigateToSession(sessionId);
     this.collapseOnMobile();
   }
 
@@ -141,7 +141,7 @@ export class SessionSidebar extends LitElement {
       const resp = await fetch(`/api/projects/${projectId}/sessions`, { method: "POST" });
       if (resp.ok) {
         const data = await resp.json();
-        navigateToSession(projectId, data.id);
+        navigateToSession(data.id);
         this.store?.multiProjectStore.refresh(projectId);
         this.collapseOnMobile();
       }
@@ -157,7 +157,7 @@ export class SessionSidebar extends LitElement {
       const resp = await fetch(`/api/projects/${projectId}/tasks/${taskId}/sessions`, { method: "POST" });
       if (resp.ok) {
         const data = await resp.json();
-        navigateToSession(projectId, data.id);
+        navigateToSession(data.id);
         this.store?.multiProjectStore.refresh(projectId);
         this.collapseOnMobile();
       } else {
@@ -201,9 +201,9 @@ export class SessionSidebar extends LitElement {
       store.multiProjectStore.refresh(projectId);
     }
 
-    // If the store cleared the active session, navigate to project root
-    if (!store.sessionId && store.projectId != null) {
-      navigateToProject(store.projectId);
+    // If the store cleared the active session, navigate to empty state
+    if (!store.sessionId) {
+      location.hash = "";
     }
   }
 
