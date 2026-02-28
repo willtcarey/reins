@@ -145,7 +145,7 @@ graph TD
     S6 --> S7
 ```
 
-### Step 1: Add projectId to WS event broadcasts
+### ✅ Step 1: Add projectId to WS event broadcasts
 
 Backend (`packages/backend/src/sessions.ts`):
 - `wireSession()`: add `projectId` param, include it in the broadcast message.
@@ -164,7 +164,7 @@ Frontend (`packages/frontend/src/stores/app-store.ts`):
 
 **App stays functional:** the existing UI reads `activityMap` which keeps its shape. The new `projectId` data is stored but not consumed yet.
 
-### Step 2: ProjectDataStore
+### ✅ Step 2: ProjectDataStore
 
 Create `packages/frontend/src/stores/project-data-store.ts`:
 - Per-project tasks, sessions, loading/loaded state.
