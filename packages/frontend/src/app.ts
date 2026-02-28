@@ -26,6 +26,7 @@ import type { Route } from "./router.js";
 import "./chat-panel.js";
 import "./changes/diff-panel.js";
 import "./changes/diff-file-tree.js";
+import type { SessionSidebar } from "./session-sidebar.js";
 import "./session-sidebar.js";
 import "./branch-indicator.js";
 
@@ -123,9 +124,25 @@ export class AppShell extends LitElement {
     });
   }
 
+  private openSidebar() {
+    const sidebar = this.querySelector("session-sidebar") as SessionSidebar | null;
+    sidebar?.open();
+  }
+
   private renderEmptyState() {
     return html`
-      <div class="flex-1 flex items-center justify-center">
+      <div class="flex-1 flex flex-col">
+        <!-- Mobile hamburger for empty state -->
+        <div class="flex items-center p-2 border-b border-zinc-700 bg-zinc-800/50 md:hidden">
+          <button
+            class="p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer"
+            @click=${this.openSidebar}
+            title="Open sidebar"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="flex-1 flex items-center justify-center">
         <div class="text-center max-w-md px-6">
           <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none"
                stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
@@ -136,6 +153,7 @@ export class AppShell extends LitElement {
           <p class="text-sm text-zinc-500">
             Select a project from the sidebar or add a new one to get started.
           </p>
+        </div>
         </div>
       </div>
     `;
@@ -167,24 +185,32 @@ export class AppShell extends LitElement {
           ${hasProject ? html`
             <div class="flex-1 flex flex-col min-w-0">
               <!-- Tab bar -->
-              <div class="flex items-center border-b border-zinc-700 bg-zinc-800/50">
+              <div class="flex items-center border-b border-zinc-700 bg-zinc-800/50 overflow-x-auto">
+                <!-- Hamburger menu (mobile only) -->
+                <button
+                  class="p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer md:hidden shrink-0"
+                  @click=${this.openSidebar}
+                  title="Open sidebar"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                </button>
                 <branch-indicator
                   .currentBranch=${this.appStore.diffStore.branch ?? this.appStore.diffStore.fileData.branch}
                 ></branch-indicator>
                 <button
-                  class="px-4 py-2 text-sm font-semibold transition-colors cursor-pointer ${this.activeTab === "chat" ? "text-zinc-100 border-b-2 border-blue-500" : "text-zinc-500 hover:text-zinc-300"}"
+                  class="px-4 py-2 text-sm font-semibold transition-colors cursor-pointer shrink-0 ${this.activeTab === "chat" ? "text-zinc-100 border-b-2 border-blue-500" : "text-zinc-500 hover:text-zinc-300"}"
                   @click=${() => this.activeTab = "chat"}
                 >
                   Chat
                 </button>
                 <button
-                  class="px-4 py-2 text-sm font-semibold transition-colors cursor-pointer ${this.activeTab === "changes" ? "text-zinc-100 border-b-2 border-blue-500" : "text-zinc-500 hover:text-zinc-300"}"
+                  class="px-4 py-2 text-sm font-semibold transition-colors cursor-pointer shrink-0 ${this.activeTab === "changes" ? "text-zinc-100 border-b-2 border-blue-500" : "text-zinc-500 hover:text-zinc-300"}"
                   @click=${() => this.activeTab = "changes"}
                 >
                   Changes
                 </button>
                 <div class="flex-1"></div>
-                <div class="flex items-center gap-2 px-4">
+                <div class="flex items-center gap-2 px-4 shrink-0">
                   ${this.activeTab === "changes" ? html`
                     <button
                       class="text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"

@@ -470,7 +470,7 @@ export class DiffPanel extends LitElement {
     const copied = this.copiedPaths.has(file.path);
 
     return html`
-      <div class="mb-3 border border-zinc-700 rounded-lg" id=${fileCardId(file.path)} data-file-path=${file.path}>
+      <div class="mx-4 mb-3 first:mt-4 border border-zinc-700 rounded-lg" id=${fileCardId(file.path)} data-file-path=${file.path}>
         <button
           class="w-full flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-750 text-sm cursor-pointer sticky top-0 z-10 rounded-t-lg border-b border-zinc-700"
           @click=${() => this.toggleFile(file.path)}
@@ -623,9 +623,9 @@ export class DiffPanel extends LitElement {
           ` : nothing}
 
           <!-- Scrollable diff list -->
-          <div class="flex-1 overflow-y-auto p-4" data-diff-scroll>
+          <div class="flex-1 overflow-y-auto" data-diff-scroll>
             ${isInitialLoading ? html`
-              <div class="flex items-center justify-center h-full text-zinc-500 text-sm gap-2">
+              <div class="flex items-center justify-center h-full text-zinc-500 text-sm gap-2 p-4">
                 <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                   <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
@@ -634,7 +634,7 @@ export class DiffPanel extends LitElement {
               </div>
             ` : files.length > 0
               ? files.map((file) => this.renderFile(file))
-              : html`<div class="flex items-center justify-center h-full text-zinc-500 text-sm">No changes yet</div>`
+              : html`<div class="flex items-center justify-center h-full text-zinc-500 text-sm p-4">No changes yet</div>`
             }
           </div>
         </div>
