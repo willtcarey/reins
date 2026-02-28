@@ -2,21 +2,16 @@
  * App Store
  *
  * Centralized reactive store that owns all server communication and
- * internal event handling. Wraps ProjectStore for project/session state,
- * owns DiffStore for diff/sync state, absorbs ActivityTracker for
- * session activity, and handles WebSocket events internally — views
- * never participate in fetch/event decisions.
- *
- * Migration steps 1–2: WS event handling + ActivityTracker merged in,
- * DiffStore owned and coordinated.
- * See docs/plans/reactive-store.md for the full plan.
+ * internal event handling. Wraps ActiveSessionStore for the viewed
+ * session, ProjectStore for the project list and per-project data,
+ * and DiffStore for diff/sync state. Handles WebSocket events
+ * internally — views never participate in fetch/event decisions.
  */
 
 import { AppClient } from "../ws-client.js";
-import { ActiveProjectStore } from "./active-project-store.js";
+import { ActiveSessionStore } from "./active-session-store.js";
 import { ProjectStore } from "./project-store.js";
 import { DiffStore } from "./diff-store.js";
-import { MultiProjectStore } from "./multi-project-store.js";
 import type { ProjectInfo, SessionData } from "../ws-client.js";
 
 /** Activity state for a session: running, finished, or absent (no entry). */
@@ -30,19 +25,16 @@ export type AppStoreListener = () => void;
 export class AppStore {
   // ---- Delegates ------------------------------------------------------------
 
-  private _activeProject = new ActiveProjectStore();
+  private _activeSession = new ActiveSessionStore();
   private _client: AppClient;
 
   // ---- Sub-stores -----------------------------------------------------------
 
-  /** Project list sub-store. */
+  /** Project list, per-project data, and project/task mutations. */
   readonly projectStore = new ProjectStore();
 
   /** Diff/sync sub-store — owned and coordinated by AppStore. */
   readonly diffStore = new DiffStore();
-
-  /** Multi-project sidebar sub-store — lazily holds per-project list data. */
-  readonly multiProjectStore = new MultiProjectStore();
 
   // ---- Activity state (absorbed from ActivityTracker) -----------------------
 
@@ -60,7 +52,7 @@ export class AppStore {
 
   /** Sub-stores whose notifications bubble up through AppStore. */
   private get _children(): { subscribe(fn: () => void): () => void }[] {
-    return [this._activeProject, this.projectStore, this.diffStore, this.multiProjectStore];
+    return [this._activeSession, this.projectStore, this.diffStore];
   }
 
   constructor(client: AppClient) {
@@ -78,32 +70,24 @@ export class AppStore {
         // Always refresh the project list on (re)connect
         this.projectStore.fetchProjects();
         // On reconnect, re-fetch the active session to catch up on missed events
-        if (this._activeProject.sessionId) {
-          this._activeProject.refreshSession();
+        if (this._activeSession.sessionId) {
+          this._activeSession.refreshSession();
         }
       }
     });
 
     client.onEvent((sessionId, projectId, event) => {
-      const store = this._activeProject;
-
       // Handle task_updated broadcast (not tagged with a sessionId)
       if (event.type === "task_updated") {
-        if (event.projectId === store.projectId) {
-          store.refreshLists();
-        }
-        this.multiProjectStore.refresh(event.projectId);
+        this.projectStore.refresh(event.projectId);
         return;
       }
 
       // Handle session_created broadcast (server-side session creation, e.g. delegate)
       if (event.type === "session_created") {
-        if (event.projectId === store.projectId) {
-          store.refreshLists();
-        }
-        this.multiProjectStore.refresh(event.projectId);
+        this.projectStore.refresh(event.projectId);
         if (event.taskId) {
-          this.multiProjectStore.peekStore(event.projectId)?.fetchTaskSessions(event.taskId);
+          this.projectStore.peekStore(event.projectId)?.fetchTaskSessions(event.taskId);
         }
         return;
       }
@@ -112,13 +96,12 @@ export class AppStore {
       if (sessionId && event.type === "agent_start") {
         this._setRunning(sessionId, projectId);
       } else if (sessionId && event.type === "agent_end") {
-        this._setFinished(sessionId, projectId, store.sessionId);
-        setTimeout(() => store.refreshLists(), 500);
-        setTimeout(() => this.multiProjectStore.refresh(projectId), 500);
+        this._setFinished(sessionId, projectId, this._activeSession.sessionId);
+        setTimeout(() => this.projectStore.refresh(projectId), 500);
       }
 
       // Only refresh diff for the session we're viewing
-      if (sessionId !== store.sessionId) return;
+      if (sessionId !== this._activeSession.sessionId) return;
 
       const refreshDiff =
         (event.type === "tool_execution_end" && FILE_MODIFYING_TOOLS.has(event.toolName)) ||
@@ -134,11 +117,11 @@ export class AppStore {
 
   get projects(): ProjectInfo[] { return this.projectStore.projects; }
 
-  // ---- ActiveProjectStore delegate accessors --------------------------------
+  // ---- ActiveSessionStore delegate accessors ---------------------------------
 
-  get projectId() { return this._activeProject.projectId; }
-  get sessionId() { return this._activeProject.sessionId; }
-  get sessionData(): SessionData | null { return this._activeProject.sessionData; }
+  get projectId() { return this._activeSession.projectId; }
+  get sessionId() { return this._activeSession.sessionId; }
+  get sessionData(): SessionData | null { return this._activeSession.sessionData; }
 
   // ---- Activity state accessors ---------------------------------------------
 
@@ -223,16 +206,16 @@ export class AppStore {
     this.notify();
   }
 
-  // ---- ActiveProjectStore delegate methods ----------------------------------
+  // ---- ActiveSessionStore delegate methods -----------------------------------
 
   async setRoute(sessionId: string | null): Promise<void> {
-    const previousProjectId = this._activeProject.projectId;
+    const previousProjectId = this._activeSession.projectId;
 
-    await this._activeProject.setRoute(sessionId);
+    await this._activeSession.setRoute(sessionId);
 
     // Update diff store project when it changes
-    if (this._activeProject.projectId !== previousProjectId) {
-      this.diffStore.setProject(this._activeProject.projectId);
+    if (this._activeSession.projectId !== previousProjectId) {
+      this.diffStore.setProject(this._activeSession.projectId);
     }
 
     // After route is applied, resolve the branch for the diff store
@@ -240,18 +223,31 @@ export class AppStore {
   }
 
   async refreshSession() {
-    return this._activeProject.refreshSession();
+    return this._activeSession.refreshSession();
   }
 
   async updateTask(
     taskId: number,
     updates: { title?: string; description?: string | null },
   ): Promise<{ ok: true } | { error: string }> {
-    return this._activeProject.updateTask(taskId, updates);
+    const projectId = this._activeSession.projectId;
+    if (projectId == null) return { error: "No project" };
+    const store = this.projectStore.peekStore(projectId);
+    if (!store) return { error: "No project data" };
+    return store.updateTask(taskId, updates);
   }
 
   async deleteTask(taskId: number): Promise<{ ok: true } | { error: string }> {
-    return this._activeProject.deleteTask(taskId);
+    const projectId = this._activeSession.projectId;
+    if (projectId == null) return { error: "No project" };
+    const store = this.projectStore.peekStore(projectId);
+    if (!store) return { error: "No project data" };
+    const result = await store.deleteTask(taskId);
+    if ("ok" in result && this._activeSession.sessionData?.task_id === taskId) {
+      // Active session belonged to deleted task — clear it
+      await this._activeSession.setRoute(null);
+    }
+    return result;
   }
 
   /** Delete a project — delegates to ProjectStore and handles navigation. */
@@ -282,7 +278,9 @@ export class AppStore {
     projectId: number,
     prompt: string,
   ): Promise<{ ok: true } | { error: string }> {
-    return this._activeProject.generateTask(prompt);
+    const store = this.projectStore.peekStore(projectId);
+    if (!store) return { error: "No project data" };
+    return store.generateTask(prompt);
   }
 
   // ---- Diff branch resolution (internal) ------------------------------------
@@ -292,12 +290,16 @@ export class AppStore {
    * Task sessions → task's branch_name; scratch sessions → null (HEAD).
    */
   private _updateDiffBranch() {
-    const session = this._activeProject.sessionData;
+    const session = this._activeSession.sessionData;
     if (!session?.task_id) {
       this.diffStore.setBranch(null);
       return;
     }
-    const task = this._activeProject.tasks.find((t) => t.id === session.task_id);
+    const projectId = this._activeSession.projectId;
+    const tasks = projectId != null
+      ? this.projectStore.peekStore(projectId)?.tasks ?? []
+      : [];
+    const task = tasks.find((t) => t.id === session.task_id);
     this.diffStore.setBranch(task?.branch_name ?? null);
   }
 

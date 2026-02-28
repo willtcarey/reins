@@ -2,9 +2,7 @@
  * Project Data Store
  *
  * Holds task/session list data for a single project. One instance per project,
- * lazily created by MultiProjectStore. This is the per-project equivalent of
- * the list-fetching parts of ActiveProjectStore, without session detail data
- * or route handling.
+ * lazily created by ProjectStore.
  *
  * Components subscribe via `subscribe()` and read public state directly.
  */
@@ -67,6 +65,68 @@ export class ProjectDataStore {
 
     this.loading = false;
     this.notify();
+  }
+
+  /** Update a task's title and/or description. */
+  async updateTask(
+    taskId: number,
+    updates: { title?: string; description?: string | null },
+  ): Promise<{ ok: true } | { error: string }> {
+    try {
+      const resp = await fetch(
+        `/api/projects/${this.projectId}/tasks/${taskId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        },
+      );
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        return { error: body.error || `HTTP ${resp.status}` };
+      }
+      return { ok: true };
+    } catch {
+      return { error: "Network error" };
+    }
+  }
+
+  /** Delete a task. */
+  async deleteTask(taskId: number): Promise<{ ok: true } | { error: string }> {
+    try {
+      const resp = await fetch(
+        `/api/projects/${this.projectId}/tasks/${taskId}`,
+        { method: "DELETE" },
+      );
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        return { error: body.error || `HTTP ${resp.status}` };
+      }
+      return { ok: true };
+    } catch {
+      return { error: "Network error" };
+    }
+  }
+
+  /** Generate a task from a freeform prompt. */
+  async generateTask(prompt: string): Promise<{ ok: true } | { error: string }> {
+    try {
+      const resp = await fetch(
+        `/api/projects/${this.projectId}/tasks/generate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
+        },
+      );
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        return { error: body.error || `Error creating task (HTTP ${resp.status})` };
+      }
+      return { ok: true };
+    } catch {
+      return { error: "Network error" };
+    }
   }
 
   /**

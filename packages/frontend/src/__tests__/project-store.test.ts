@@ -1,8 +1,8 @@
 /**
- * Tests for MultiProjectStore — manages ProjectDataStore instances lazily.
+ * Tests for ProjectStore — project list, CRUD, and per-project data stores.
  */
 import { describe, test, expect, beforeEach, mock } from "bun:test";
-import { MultiProjectStore } from "../stores/multi-project-store.js";
+import { ProjectStore } from "../stores/project-store.js";
 import { ProjectDataStore } from "../stores/project-data-store.js";
 
 // Mock fetch globally
@@ -22,11 +22,11 @@ function jsonResponse(data: unknown, ok = true): Response {
   });
 }
 
-describe("MultiProjectStore", () => {
-  let store: MultiProjectStore;
+describe("ProjectStore per-project data", () => {
+  let store: ProjectStore;
 
   beforeEach(() => {
-    store = new MultiProjectStore();
+    store = new ProjectStore();
     globalThis.fetch = originalFetch;
   });
 
@@ -187,7 +187,7 @@ describe("MultiProjectStore", () => {
 
   // ---- Notification bubbling ------------------------------------------------
 
-  test("child store notifications bubble to multi-project store subscribers", async () => {
+  test("child store notifications bubble to project store subscribers", async () => {
     mockFetch(() => jsonResponse([]));
 
     const child = store.getStore(1);

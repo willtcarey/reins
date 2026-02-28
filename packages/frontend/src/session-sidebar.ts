@@ -2,9 +2,8 @@
  * Session Sidebar
  *
  * Multi-project orchestrator. Renders ALL projects as collapsible sections,
- * each with its own sessions and tasks. Reads project-level list data from
- * MultiProjectStore (via ProjectDataStore instances) and project metadata
- * from ProjectStore.
+ * each with its own sessions and tasks. Reads project list and per-project
+ * data from ProjectStore (via ProjectDataStore instances).
  *
  * Child components:
  *  - project-sidebar  — "Add Project" button + project-form modal
@@ -88,7 +87,7 @@ export class SessionSidebar extends LitElement {
     // Auto-expand the active project
     if (store.projectId != null && !this.expandedProjects.has(store.projectId)) {
       this.expandedProjects.add(store.projectId);
-      store.multiProjectStore.ensureLoaded(store.projectId);
+      store.projectStore.ensureLoaded(store.projectId);
       changed = true;
     }
 
@@ -97,7 +96,7 @@ export class SessionSidebar extends LitElement {
     for (const [projectId, state] of activityByProject) {
       if (state === "running" && !this.expandedProjects.has(projectId)) {
         this.expandedProjects.add(projectId);
-        store.multiProjectStore.ensureLoaded(projectId);
+        store.projectStore.ensureLoaded(projectId);
         changed = true;
       }
     }
@@ -115,7 +114,7 @@ export class SessionSidebar extends LitElement {
       next.delete(projectId);
     } else {
       next.add(projectId);
-      this.store?.multiProjectStore.ensureLoaded(projectId);
+      this.store?.projectStore.ensureLoaded(projectId);
     }
     this.expandedProjects = next;
   }
@@ -142,7 +141,7 @@ export class SessionSidebar extends LitElement {
       if (resp.ok) {
         const data = await resp.json();
         navigateToSession(data.id);
-        this.store?.multiProjectStore.refresh(projectId);
+        this.store?.projectStore.refresh(projectId);
         this.collapseOnMobile();
       }
     } catch {
@@ -158,7 +157,7 @@ export class SessionSidebar extends LitElement {
       if (resp.ok) {
         const data = await resp.json();
         navigateToSession(data.id);
-        this.store?.multiProjectStore.refresh(projectId);
+        this.store?.projectStore.refresh(projectId);
         this.collapseOnMobile();
       } else {
         const err = await resp.json().catch(() => null);
@@ -198,7 +197,7 @@ export class SessionSidebar extends LitElement {
 
     // Refresh the project data store
     if (projectId) {
-      store.multiProjectStore.refresh(projectId);
+      store.projectStore.refresh(projectId);
     }
 
     // If the store cleared the active session, navigate to empty state
@@ -227,7 +226,7 @@ export class SessionSidebar extends LitElement {
       location.hash = "";
     }
     await this.store?.deleteProject(project.id);
-    this.store?.multiProjectStore.remove(project.id);
+    this.store?.projectStore.remove(project.id);
   }
 
   // ---- Render helpers -------------------------------------------------------
@@ -266,7 +265,7 @@ export class SessionSidebar extends LitElement {
     const store = this.store!;
     const isExpanded = this.expandedProjects.has(project.id);
     const isActive = project.id === store.projectId;
-    const projectData = store.multiProjectStore.peekStore(project.id);
+    const projectData = store.projectStore.peekStore(project.id);
 
     return html`
       <div class="border-b border-zinc-700">
