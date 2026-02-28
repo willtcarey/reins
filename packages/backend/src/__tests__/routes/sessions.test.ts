@@ -50,61 +50,6 @@ describe("session routes", () => {
     });
   });
 
-  describe("GET /api/projects/:id/sessions/:sessionId", () => {
-    test("returns session from memory when present", async () => {
-      const sessionId = "in-memory-session";
-      createSession(sessionId, projectId, {});
-
-      // Add to in-memory state with mock agent session
-      state.sessions.set(sessionId, {
-        session: {
-          isStreaming: false,
-          messages: [{ role: "user", content: "hello" }],
-          model: { provider: "test", id: "test-model" },
-          thinkingLevel: "none",
-        } as any,
-        id: sessionId,
-        lastActivity: Date.now(),
-      });
-
-      const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/sessions/${sessionId}`),
-        state,
-      );
-      expect(res!.status).toBe(200);
-      const body = await res!.json();
-      expect(body.id).toBe(sessionId);
-      expect(body.state.isStreaming).toBe(false);
-      expect(body.messages).toBeArray();
-    });
-
-    test("returns session from DB when not in memory", async () => {
-      const sessionId = "db-session";
-      createSession(sessionId, projectId, {});
-      persistMessages(sessionId, [
-        { role: "user", content: "test message" },
-      ]);
-
-      const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/sessions/${sessionId}`),
-        state,
-      );
-      expect(res!.status).toBe(200);
-      const body = await res!.json();
-      expect(body.id).toBe(sessionId);
-      expect(body.state.isStreaming).toBe(false);
-      expect(body.messages).toBeArray();
-    });
-
-    test("returns 404 for nonexistent session", async () => {
-      const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/sessions/nonexistent`),
-        state,
-      );
-      expect(res!.status).toBe(404);
-    });
-  });
-
   describe("GET /api/sessions/:sessionId (top-level lookup)", () => {
     test("returns session from memory with project_id", async () => {
       const sessionId = "lookup-memory";

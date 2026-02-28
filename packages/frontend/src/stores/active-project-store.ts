@@ -268,11 +268,10 @@ export class ActiveProjectStore {
   }
 
   private async fetchSession(sessionId: string) {
-    if (this.projectId == null) return;
     const fetchId = ++this._fetchId;
     try {
       const resp = await fetch(
-        `/api/projects/${this.projectId}/sessions/${encodeURIComponent(sessionId)}`,
+        `/api/sessions/${encodeURIComponent(sessionId)}`,
       );
       if (!resp.ok) return;
       if (fetchId !== this._fetchId) return; // stale
