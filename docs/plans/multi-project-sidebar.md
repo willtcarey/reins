@@ -218,7 +218,7 @@ task-form.ts:
 
 **App stays functional:** all UI changes land together — the sidebar switches from single-project to multi-project rendering in one step.
 
-### Step 6: Clean up old single-project sidebar code
+### ✅ Step 6: Clean up old single-project sidebar code
 
 - Remove now-unused `ActiveProjectStore` delegate accessors from `AppStore` that were only used by the old sidebar (`tasks`, `sessions`, `taskSessions`, `loading`).
 - Remove `_taskSessions` from `AppStore` (now in `ProjectDataStore`).
@@ -226,11 +226,12 @@ task-form.ts:
 
 **App stays functional:** only removing code that's no longer referenced.
 
-### Step 7: Tests
+### ✅ Step 7: Tests
 
-- `ProjectDataStore` unit tests: fetch, task sessions.
-- `MultiProjectStore` unit tests: lazy creation, ensureLoaded, refresh, remove.
-- Update any existing sidebar tests if they exist.
+Tests were written alongside Steps 1-3:
+- `app-store-activity.test.ts` — 7 tests: activity with projectId, activityMap shape, activityByProject, clearActivity, activitySummary.
+- `project-data-store.test.ts` — 13 tests: fetchLists, fetchTaskSessions, loading/loaded states, subscribe/notify.
+- `multi-project-store.test.ts` — 17 tests: lazy creation, peekStore, ensureLoaded, refresh, remove, notification bubbling.
 
 ## Non-Goals
 
