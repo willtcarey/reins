@@ -17,7 +17,7 @@ import { ActiveProjectStore } from "./active-project-store.js";
 import { ProjectStore } from "./project-store.js";
 import { DiffStore } from "./diff-store.js";
 import { MultiProjectStore } from "./multi-project-store.js";
-import type { ProjectInfo, SessionData, SessionListItem, TaskListItem } from "../ws-client.js";
+import type { ProjectInfo, SessionData } from "../ws-client.js";
 
 /** Activity state for a session: running, finished, or absent (no entry). */
 export type ActivityState = "running" | "finished";
@@ -48,10 +48,6 @@ export class AppStore {
 
   private _activityStates = new Map<string, { state: ActivityState; projectId: number }>();
   private _activityMapCache: Map<string, ActivityState> | null = null;
-
-  // ---- Task session sublists --------------------------------------------------
-
-  private _taskSessions = new Map<number, SessionListItem[]>();
 
   // ---- Connection state -----------------------------------------------------
 
@@ -104,9 +100,6 @@ export class AppStore {
       if (event.type === "session_created") {
         if (event.projectId === store.projectId) {
           store.refreshLists();
-          if (event.taskId) {
-            this.fetchTaskSessions(event.taskId);
-          }
         }
         this.multiProjectStore.refresh(event.projectId);
         if (event.taskId) {
@@ -145,10 +138,7 @@ export class AppStore {
 
   get projectId() { return this._activeProject.projectId; }
   get sessionId() { return this._activeProject.sessionId; }
-  get tasks(): TaskListItem[] { return this._activeProject.tasks; }
-  get sessions(): SessionListItem[] { return this._activeProject.sessions; }
   get sessionData(): SessionData | null { return this._activeProject.sessionData; }
-  get loading() { return this._activeProject.loading; }
 
   // ---- Activity state accessors ---------------------------------------------
 
@@ -233,37 +223,6 @@ export class AppStore {
     this.notify();
   }
 
-  // ---- Task session sublist accessors ----------------------------------------
-
-  get taskSessions(): Map<number, SessionListItem[]> { return this._taskSessions; }
-
-  // ---- Task session sublist actions -----------------------------------------
-
-  /** Fetch sessions for a specific task and update the cache. */
-  async fetchTaskSessions(taskId: number): Promise<void> {
-    const projectId = this._activeProject.projectId;
-    if (projectId == null) return;
-    try {
-      const resp = await fetch(
-        `/api/projects/${projectId}/tasks/${taskId}/sessions`,
-      );
-      if (resp.ok) {
-        const sessions: SessionListItem[] = await resp.json();
-        // Skip update if data hasn't changed
-        const existing = this._taskSessions.get(taskId);
-        if (existing && JSON.stringify(existing) === JSON.stringify(sessions)) {
-          return;
-        }
-        const next = new Map(this._taskSessions);
-        next.set(taskId, sessions);
-        this._taskSessions = next;
-        this.notify();
-      }
-    } catch {
-      // silent
-    }
-  }
-
   // ---- ActiveProjectStore delegate methods ----------------------------------
 
   async setRoute(
@@ -273,8 +232,6 @@ export class AppStore {
     // Update diff store project when it changes
     if (projectId !== this._activeProject.projectId) {
       this.diffStore.setProject(projectId);
-      // Clear cached task sessions on project change
-      this._taskSessions = new Map();
     }
 
     const result = await this._activeProject.setRoute(projectId, sessionId);
@@ -285,22 +242,8 @@ export class AppStore {
     return result;
   }
 
-  async refreshLists() {
-    return this._activeProject.refreshLists();
-  }
-
   async refreshSession() {
     return this._activeProject.refreshSession();
-  }
-
-  async createSession(): Promise<string | null> {
-    return this._activeProject.createSession();
-  }
-
-  async createTaskSession(
-    taskId: number,
-  ): Promise<{ sessionId: string } | { error: string }> {
-    return this._activeProject.createTaskSession(taskId);
   }
 
   async updateTask(

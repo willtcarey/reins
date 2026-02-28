@@ -193,7 +193,7 @@ Create `packages/frontend/src/stores/multi-project-store.ts`:
 
 **App stays functional:** the old sidebar code path is unchanged. The new stores are wired up but the UI doesn't read from them yet.
 
-### Step 5: Rewrite sidebar to multi-project layout
+### ✅ Step 5: Rewrite sidebar to multi-project layout
 
 This is the big step — changes `session-sidebar.ts`, `project-sidebar.ts`, `task-list.ts`, `session-list.ts`, and `task-form.ts` together since they form a tightly coupled rendering unit.
 
