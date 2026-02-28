@@ -1,28 +1,6 @@
-# REINS
+# Agent Conventions
 
-Bun monorepo with two packages:
-
-- **`packages/backend`** — WebSocket server using `pi-coding-agent` SDK (Bun runtime)
-- **`packages/frontend`** — Lit + Tailwind CSS v4 SPA, bundled with `bun build`
-
-## Setup
-
-```sh
-bun install
-```
-
-## Development
-
-```sh
-bun run dev          # starts backend with --watch
-bun run --filter '@reins/frontend' dev  # starts frontend build watcher
-```
-
-## Build
-
-```sh
-bun run build        # builds frontend to packages/frontend/dist
-```
+See [README.md](README.md) for project overview, setup, and dev commands.
 
 ## Dev Docs
 
@@ -57,9 +35,3 @@ User-facing feature docs live in [`docs/features/`](docs/features/). When adding
 ## Development Workflow
 
 When implementing code changes, follow the workflow in [docs/dev/workflow.md](docs/dev/workflow.md). Read it before starting implementation work.
-
-## Notes
-
-- Use `bun` for all package management and script execution (not npm/yarn/pnpm).
-- Backend runs directly on Bun — no separate build step needed.
-- Frontend uses `bun build` for JS bundling and `@tailwindcss/cli` for CSS.
