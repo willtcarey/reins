@@ -10,7 +10,7 @@ function makeRequest(method: string, path: string): Request {
   return new Request(`http://localhost${path}`, { method });
 }
 
-describe("session routes", () => {
+describe("session routes (top-level)", () => {
   let state: ReturnType<typeof createTestState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
@@ -25,32 +25,7 @@ describe("session routes", () => {
     projectId = p.id;
   });
 
-  describe("GET /api/projects/:id/sessions", () => {
-    test("returns empty list when no sessions", async () => {
-      const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/sessions`),
-        state,
-      );
-      expect(res!.status).toBe(200);
-      expect(await res!.json()).toEqual([]);
-    });
-
-    test("returns scratch sessions (excludes task sessions)", async () => {
-      // Create a scratch session (no taskId)
-      createSession("scratch-1", projectId, {});
-
-      const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/sessions`),
-        state,
-      );
-      expect(res!.status).toBe(200);
-      const body = await res!.json();
-      expect(body).toHaveLength(1);
-      expect(body[0].id).toBe("scratch-1");
-    });
-  });
-
-  describe("GET /api/sessions/:sessionId (top-level lookup)", () => {
+  describe("GET /api/sessions/:sessionId", () => {
     test("returns session from memory with project_id", async () => {
       const sessionId = "lookup-memory";
       createSession(sessionId, projectId, {});
