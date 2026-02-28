@@ -120,32 +120,6 @@ export class ActiveProjectStore {
   }
 
   /**
-   * Create a new session under a task. Returns the new session ID for
-   * navigation, or an error string.
-   */
-  async createTaskSession(
-    taskId: number,
-  ): Promise<{ sessionId: string } | { error: string }> {
-    if (this.projectId == null) return { error: "No project" };
-    try {
-      const resp = await fetch(
-        `/api/projects/${this.projectId}/tasks/${taskId}/sessions`,
-        { method: "POST" },
-      );
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        return { error: body.error || `HTTP ${resp.status}` };
-      }
-      const data: SessionData = await resp.json();
-      // Refresh lists to pick up the new session
-      await this.fetchLists();
-      return { sessionId: data.id };
-    } catch {
-      return { error: "Network error" };
-    }
-  }
-
-  /**
    * Update a task's title and/or description. Returns success or an error string.
    */
   async updateTask(

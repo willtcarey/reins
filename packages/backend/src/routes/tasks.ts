@@ -1,24 +1,19 @@
 /**
  * Task Routes (project-scoped)
  *
- * CRUD for tasks and task sessions. Registered under /api/projects/:id.
+ * CRUD for tasks. Registered under /api/projects/:id.
  */
 
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
 import { notFound, badRequest, conflict } from "../errors.js";
-import { touchProject } from "../project-store.js";
 import { getTask } from "../task-store.js";
 import { generateTask } from "../task-generator.js";
 import {
   TaskNotFoundError,
   TaskHasActiveSessionsError,
 } from "../models/tasks.js";
-import {
-  createNewSession,
-  serializeSession,
-  serializeTaskSessionList,
-} from "../sessions.js";
+import { serializeTaskSessionList } from "../sessions.js";
 
 export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
   // ---- Tasks ---------------------------------------------------------------
@@ -87,27 +82,4 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
     }
   });
 
-  // ---- Task Sessions -------------------------------------------------------
-
-  // List sessions for a task
-  router.get("/tasks/:taskId/sessions", async (ctx) => {
-    const taskId = parseInt(ctx.params.taskId, 10);
-    const task = getTask(taskId);
-    if (!task) notFound("Task not found");
-
-    return Response.json(serializeTaskSessionList(taskId));
-  });
-
-  // Create a session under a task
-  router.post("/tasks/:taskId/sessions", async (ctx) => {
-    const taskId = parseInt(ctx.params.taskId, 10);
-
-    const task = getTask(taskId);
-    if (!task) notFound("Task not found");
-    if (task!.project_id !== ctx.project.projectId) notFound("Task not found");
-
-    touchProject(ctx.project.projectId);
-    const managed = await createNewSession(ctx.state, ctx.project.projectId, ctx.project.projectDir, { taskId });
-    return Response.json(serializeSession(managed), { status: 201 });
-  });
 }

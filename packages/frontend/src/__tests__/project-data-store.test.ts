@@ -179,6 +179,6 @@ describe("ProjectDataStore", () => {
 
     await store.fetchTaskSessions(7);
 
-    expect(urls).toContain("/api/projects/42/tasks/7/sessions");
+    expect(urls).toContain("/api/tasks/7/sessions");
   });
 });

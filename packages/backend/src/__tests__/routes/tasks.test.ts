@@ -225,27 +225,4 @@ describe("task routes", () => {
     });
   });
 
-  describe("GET /api/projects/:id/tasks/:taskId/sessions", () => {
-    test("returns sessions for a task", async () => {
-      const task = createTask(projectId, "With Sessions", null, "task/with-sessions");
-      createSession("s1", projectId, { taskId: task.id });
-
-      const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/tasks/${task.id}/sessions`),
-        state,
-      );
-      expect(res!.status).toBe(200);
-      const body = await res!.json();
-      expect(body).toBeArray();
-      expect(body).toHaveLength(1);
-    });
-
-    test("returns 404 for nonexistent task", async () => {
-      const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/tasks/9999/sessions`),
-        state,
-      );
-      expect(res!.status).toBe(404);
-    });
-  });
 });

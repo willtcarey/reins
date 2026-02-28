@@ -17,6 +17,7 @@ import { registerHealthRoutes } from "./health.js";
 import { registerProjectRoutes } from "./projects.js";
 import { registerSessionRoutes } from "./sessions.js";
 import { registerProjectSessionRoutes } from "./project-sessions.js";
+import { registerTaskSessionRoutes } from "./task-sessions.js";
 import { registerDiffRoutes } from "./diff.js";
 import { registerFileRoutes } from "./file.js";
 import { registerTaskRoutes } from "./tasks.js";
@@ -55,6 +56,10 @@ export function buildRouter() {
   registerProjectRoutes(router);
   router.group(API.sessions, (r) => {
     registerSessionRoutes(r);
+  });
+
+  router.group(API.tasks, (r) => {
+    registerTaskSessionRoutes(r);
   });
 
   router.group(API.project, projectMiddleware, (r) => {

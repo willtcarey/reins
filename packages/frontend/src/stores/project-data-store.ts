@@ -76,7 +76,7 @@ export class ProjectDataStore {
   async fetchTaskSessions(taskId: number): Promise<void> {
     try {
       const resp = await fetch(
-        `/api/projects/${this.projectId}/tasks/${taskId}/sessions`,
+        `/api/tasks/${taskId}/sessions`,
       );
       if (resp.ok) {
         const sessions: SessionListItem[] = await resp.json();

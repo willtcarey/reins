@@ -154,7 +154,7 @@ export class SessionSidebar extends LitElement {
     const { projectId, taskId } = e.detail;
     if (!projectId) return;
     try {
-      const resp = await fetch(`/api/projects/${projectId}/tasks/${taskId}/sessions`, { method: "POST" });
+      const resp = await fetch(`/api/tasks/${taskId}/sessions`, { method: "POST" });
       if (resp.ok) {
         const data = await resp.json();
         navigateToSession(data.id);
