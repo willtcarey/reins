@@ -144,7 +144,7 @@ export class ChatPanel extends LitElement {
     this.unsubscribeEvent?.();
     if (!this.client) return;
 
-    this.unsubscribeEvent = this.client.onEvent((sessionId, event) => {
+    this.unsubscribeEvent = this.client.onEvent((sessionId, _projectId, event) => {
       // Only handle events for our session
       if (sessionId !== this.sessionId) return;
       this.handleAgentEvent(event);
