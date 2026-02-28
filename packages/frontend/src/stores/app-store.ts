@@ -16,6 +16,7 @@ import { AppClient } from "../ws-client.js";
 import { ActiveProjectStore } from "./active-project-store.js";
 import { ProjectStore } from "./project-store.js";
 import { DiffStore } from "./diff-store.js";
+import { MultiProjectStore } from "./multi-project-store.js";
 import type { ProjectInfo, SessionData, SessionListItem, TaskListItem } from "../ws-client.js";
 
 /** Activity state for a session: running, finished, or absent (no entry). */
@@ -40,6 +41,9 @@ export class AppStore {
   /** Diff/sync sub-store — owned and coordinated by AppStore. */
   readonly diffStore = new DiffStore();
 
+  /** Multi-project sidebar sub-store — lazily holds per-project list data. */
+  readonly multiProjectStore = new MultiProjectStore();
+
   // ---- Activity state (absorbed from ActivityTracker) -----------------------
 
   private _activityStates = new Map<string, { state: ActivityState; projectId: number }>();
@@ -60,7 +64,7 @@ export class AppStore {
 
   /** Sub-stores whose notifications bubble up through AppStore. */
   private get _children(): { subscribe(fn: () => void): () => void }[] {
-    return [this._activeProject, this.projectStore, this.diffStore];
+    return [this._activeProject, this.projectStore, this.diffStore, this.multiProjectStore];
   }
 
   constructor(client: AppClient) {
@@ -88,16 +92,25 @@ export class AppStore {
       const store = this._activeProject;
 
       // Handle task_updated broadcast (not tagged with a sessionId)
-      if (event.type === "task_updated" && event.projectId === store.projectId) {
-        store.refreshLists();
+      if (event.type === "task_updated") {
+        if (event.projectId === store.projectId) {
+          store.refreshLists();
+        }
+        this.multiProjectStore.refresh(event.projectId);
         return;
       }
 
       // Handle session_created broadcast (server-side session creation, e.g. delegate)
-      if (event.type === "session_created" && event.projectId === store.projectId) {
-        store.refreshLists();
+      if (event.type === "session_created") {
+        if (event.projectId === store.projectId) {
+          store.refreshLists();
+          if (event.taskId) {
+            this.fetchTaskSessions(event.taskId);
+          }
+        }
+        this.multiProjectStore.refresh(event.projectId);
         if (event.taskId) {
-          this.fetchTaskSessions(event.taskId);
+          this.multiProjectStore.peekStore(event.projectId)?.fetchTaskSessions(event.taskId);
         }
         return;
       }
@@ -108,6 +121,7 @@ export class AppStore {
       } else if (sessionId && event.type === "agent_end") {
         this._setFinished(sessionId, projectId, store.sessionId);
         setTimeout(() => store.refreshLists(), 500);
+        setTimeout(() => this.multiProjectStore.refresh(projectId), 500);
       }
 
       // Only refresh diff for the session we're viewing

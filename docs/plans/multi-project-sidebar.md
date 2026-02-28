@@ -174,7 +174,7 @@ Create `packages/frontend/src/stores/project-data-store.ts`:
 
 **App stays functional:** new file, nothing references it yet.
 
-### Step 3: MultiProjectStore
+### ✅ Step 3: MultiProjectStore
 
 Create `packages/frontend/src/stores/multi-project-store.ts`:
 - Lazy `Map<number, ProjectDataStore>` with `getStore`, `peekStore`, `ensureLoaded`.
