@@ -277,12 +277,12 @@ export class SessionSidebar extends LitElement {
             @click=${() => this.toggleProject(project.id)}
           >
             <span class="text-zinc-500 text-[10px] shrink-0">${isExpanded ? "▼" : "▶"}</span>
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
                  class="text-zinc-500 shrink-0">
               <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>
             </svg>
-            <span class="text-xs ${isActive ? "text-zinc-100 font-medium" : "text-zinc-300"} truncate">${project.name}</span>
+            <span class="text-sm font-medium ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${project.name}</span>
             ${this.renderProjectActivityDot(project.id)}
           </button>
           <popover-menu
@@ -302,7 +302,7 @@ export class SessionSidebar extends LitElement {
 
         <!-- Expanded content -->
         ${isExpanded ? html`
-          <div class="bg-zinc-900/50">
+          <div class="border-l-2 border-zinc-500 ml-3 bg-zinc-900/50">
             ${projectData?.loading && !projectData?.loaded ? html`
               <div class="px-3 py-2 text-[10px] text-zinc-500">Loading...</div>
             ` : html`
@@ -313,16 +313,8 @@ export class SessionSidebar extends LitElement {
                 .activityMap=${this.activityMap}
               ></session-list>
 
-              <div class="p-2 border-b border-zinc-700">
-                <button
-                  class="w-full py-1.5 px-3 text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600 rounded cursor-pointer transition-colors"
-                  @click=${() => { this.taskForm?.open(project.id); }}
-                >
-                  + New Task
-                </button>
-              </div>
-
               <task-list
+                @new-task=${() => { this.taskForm?.open(project.id); }}
                 .projectId=${project.id}
                 .store=${store}
                 .projectDataStore=${projectData ?? null}

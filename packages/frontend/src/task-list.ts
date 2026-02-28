@@ -328,15 +328,30 @@ export class TaskList extends LitElement {
     `;
   }
 
-  override render() {
-    if (this.tasks.length === 0 && !this.deleteConfirmTask) return nothing;
+  private handleNewTask() {
+    this.dispatchEvent(
+      new CustomEvent("new-task", {
+        bubbles: true,
+        composed: true,
+        detail: { projectId: this.projectId },
+      })
+    );
+  }
 
+  override render() {
     const openTasks = this.tasks.filter(t => t.status !== "closed");
     const closedTasks = this.tasks.filter(t => t.status === "closed");
 
     return html`
-      <div class="px-3 py-2 border-b border-zinc-700">
-        <h2 class="text-[10px] font-semibold text-zinc-500 uppercase tracking-wide">Tasks</h2>
+      <div class="flex items-center border-b border-zinc-700">
+        <h2 class="flex-1 px-3 py-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wide">Tasks</h2>
+        <button
+          class="p-1.5 text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors shrink-0"
+          @click=${this.handleNewTask}
+          title="New task"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        </button>
       </div>
       ${openTasks.map(t => this.renderTask(t))}
       ${closedTasks.length > 0 ? html`

@@ -24,6 +24,10 @@ export class PopoverMenu extends LitElement {
   @property({ type: String })
   triggerClass = "";
 
+  /** Extra classes applied to the panel. Overrides default width. */
+  @property({ type: String })
+  panelClass = "";
+
   /** Render function for menu content. Called only when the menu is open. */
   @property({ attribute: false })
   content: (() => TemplateResult) | null = null;
@@ -73,7 +77,7 @@ export class PopoverMenu extends LitElement {
         </button>
         ${this.open && this.content ? html`
           <div
-            class="absolute right-0 top-full z-40 mt-0.5 w-36 bg-zinc-800 border border-zinc-600 rounded-md shadow-xl overflow-hidden"
+            class="absolute right-0 top-full z-40 mt-0.5 ${this.panelClass || "w-36"} bg-zinc-800 border border-zinc-600 rounded-md shadow-xl overflow-hidden"
             @click=${this.onPanelClick}
           >
             ${this.content()}

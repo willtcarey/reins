@@ -122,6 +122,37 @@ app-shell                    — root shell, creates store, applies routes
 └── branch-indicator         — current branch display
 ```
 
+### Sidebar layout
+
+The sidebar shows all projects simultaneously as collapsible sections. Each expanded project contains an assistant row and a tasks section. The visual hierarchy uses indentation and a left accent border to group project contents.
+
+```
+▶ 📁 Acme API
+▶ 📁 Dashboard
+▼ 📁 Mobile App               ⋮
+┃  💬 Assistant                ⋮  ← popover: "New conversation" + previous sessions
+┃  TASKS                       +  ← inline new-task button
+┃  ▶ Refactor auth flow        ⋮
+┃  ▶ COMPLETED TASKS (3)
+▶ 📁 Shared Libs
+▼ 📁 Web Frontend             ⋮
+┃  💬 Assistant                ⋮
+┃  TASKS                       +
+┃  ▶ Add dark mode support
+┃  ▶ Fix pagination bug
+┃  ▶ COMPLETED TASKS (12)
+▶ 📁 Workers
+[+ Add Project]
+```
+
+Key design decisions:
+
+- **Left accent border** (`border-l-2`) on expanded content groups children visually without adding vertical space.
+- **Project headers are `text-sm font-medium`**, larger than child items (`text-xs`), creating natural hierarchy.
+- **Assistant row** is a plain clickable row, not a button. Previous conversations are tucked into its ⋮ popover menu.
+- **"+ New Task"** is an inline icon button on the TASKS header, not a standalone row.
+- **Projects auto-expand** when they're the active project or have running sessions.
+
 ### View conventions
 
 - **Read from store, don't fetch** — Views receive the store (or store state) as Lit properties and render from it. No direct `fetch()` calls.
