@@ -1,47 +1,40 @@
 /**
- * Session Routes (project-scoped)
+ * Session Routes (top-level)
  *
- * These routes are registered under /api/projects/:id and receive
- * the project context via the project middleware.
+ * Resource routes for sessions by globally-unique ID.
+ * Returns session data with `project_id` so the frontend can
+ * derive the active project context from a session URL.
  */
 
 import type { RouterGroup } from "../router.js";
-import type { ProjectRouteContext } from "./index.js";
-import {
-  createNewSession, serializeSession,
-  serializeSessionFromDb, serializeSessionList,
-  ensureSessionOpen,
-} from "../sessions.js";
-import { touchProject } from "../project-store.js";
+import type { RouteContext } from "../router.js";
+import { getSession as dbGetSession } from "../session-store.js";
+import { serializeSession, serializeSessionFromDb } from "../sessions.js";
 
-export function registerSessionRoutes(router: RouterGroup<ProjectRouteContext>) {
-  // List sessions for a project
-  router.get("/sessions", async (ctx) => {
-    return Response.json(serializeSessionList(ctx.project.projectId));
-  });
-
-  // Create a new session
-  router.post("/sessions", async (ctx) => {
-    touchProject(ctx.project.projectId);
-    const managed = await createNewSession(ctx.state, ctx.project.projectId, ctx.project.projectDir);
-    return Response.json(serializeSession(managed), { status: 201 });
-  });
-
-  // Get a specific session by ID
-  router.get("/sessions/:sessionId", async (ctx) => {
+export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
+  // Get a session by its globally-unique ID
+  router.get("/:sessionId", async (ctx) => {
     const sessionId = ctx.params.sessionId;
 
-    // If already open in memory, use that (includes isStreaming state)
+    // Check in-memory sessions first (includes isStreaming state)
     const existing = ctx.state.sessions.get(sessionId);
     if (existing) {
-      return Response.json(serializeSession(existing));
+      const data = serializeSession(existing);
+      const row = dbGetSession(sessionId);
+      return Response.json({ ...data, project_id: row?.project_id ?? null });
     }
 
     // Otherwise read from SQLite
+    const row = dbGetSession(sessionId);
+    if (!row) {
+      return new Response("Session not found", { status: 404 });
+    }
+
     const data = serializeSessionFromDb(sessionId);
     if (!data) {
       return new Response("Session not found", { status: 404 });
     }
-    return Response.json(data);
+
+    return Response.json({ ...data, project_id: row.project_id });
   });
 }
