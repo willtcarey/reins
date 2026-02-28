@@ -380,12 +380,8 @@ export class SessionSidebar extends LitElement {
               ${this.renderRailBadge()}
             </button>
           ` : html`
-            <!-- Expanded: Add Project button + collapse chevron -->
-            <div class="flex-1 min-w-0">
-              <project-sidebar
-                .store=${store}
-              ></project-sidebar>
-            </div>
+            <!-- Expanded: collapse chevron -->
+            <div class="flex-1 min-w-0"></div>
             <button
               class="p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors shrink-0"
               @click=${this.toggleCollapse}
@@ -405,6 +401,9 @@ export class SessionSidebar extends LitElement {
           <!-- Scrollable content: project sections -->
           <div class="flex-1 overflow-y-auto">
             ${this.sortedProjects.map(p => this.renderProjectSection(p))}
+
+            <!-- Add Project at the bottom of the list -->
+            <project-sidebar .store=${store}></project-sidebar>
           </div>
         ` : nothing}
       </div>
