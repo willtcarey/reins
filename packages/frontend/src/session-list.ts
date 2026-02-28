@@ -17,6 +17,9 @@ export class SessionList extends LitElement {
     return this;
   }
 
+  @property({ type: Number })
+  projectId: number | null = null;
+
   @property({ attribute: false })
   sessions: SessionListItem[] = [];
 
@@ -34,14 +37,18 @@ export class SessionList extends LitElement {
       new CustomEvent("select-session", {
         bubbles: true,
         composed: true,
-        detail: { sessionId },
+        detail: { projectId: this.projectId, sessionId },
       })
     );
   }
 
   private handleNewSession() {
     this.dispatchEvent(
-      new CustomEvent("new-session", { bubbles: true, composed: true })
+      new CustomEvent("new-session", {
+        bubbles: true,
+        composed: true,
+        detail: { projectId: this.projectId },
+      })
     );
   }
 

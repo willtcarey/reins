@@ -19,16 +19,16 @@ export class TaskForm extends LitElement {
   @property({ attribute: false })
   store: AppStore | null = null;
 
-  @property({ type: Number })
-  projectId: number | null = null;
+  @state() private _projectId: number | null = null;
 
   @state() private prompt = "";
   @state() private creating = false;
 
   @query("dialog") private dialog!: HTMLDialogElement;
 
-  /** Open the dialog as a modal. */
-  open() {
+  /** Open the dialog as a modal for a specific project. */
+  open(projectId: number) {
+    this._projectId = projectId;
     this.prompt = "";
     this.dialog.showModal();
     requestAnimationFrame(() => {
@@ -42,9 +42,9 @@ export class TaskForm extends LitElement {
   }
 
   private async handleCreate() {
-    if (this.projectId == null || !this.prompt.trim() || !this.store) return;
+    if (this._projectId == null || !this.prompt.trim() || !this.store) return;
     this.creating = true;
-    const result = await this.store.generateTask(this.projectId, this.prompt.trim());
+    const result = await this.store.generateTask(this._projectId, this.prompt.trim());
     if ("ok" in result) {
       this.prompt = "";
       this.close();

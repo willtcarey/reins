@@ -184,7 +184,7 @@ Create `packages/frontend/src/stores/multi-project-store.ts`:
 
 **App stays functional:** new file, nothing references it yet.
 
-### Step 4: Wire into AppStore
+### ✅ Step 4: Wire into AppStore
 
 - AppStore owns `MultiProjectStore`.
 - WS events use `peekStore` to refresh only already-loaded projects (alongside existing `ActiveProjectStore` refresh — both paths run).

@@ -11,6 +11,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { SessionListItem, TaskListItem } from "./ws-client.js";
 import type { AppStore } from "./stores/app-store.js";
 import type { ActivityState } from "./stores/app-store.js";
+import type { ProjectDataStore } from "./stores/project-data-store.js";
 import { formatRelativeDate } from "./format.js";
 import "./popover-menu.js";
 
@@ -25,6 +26,9 @@ export class TaskList extends LitElement {
 
   @property({ attribute: false })
   store: AppStore | null = null;
+
+  @property({ attribute: false })
+  projectDataStore: ProjectDataStore | null = null;
 
   @property({ attribute: false })
   tasks: TaskListItem[] = [];
@@ -60,14 +64,14 @@ export class TaskList extends LitElement {
     const task = this.tasks.find(t => t.session_ids.includes(this.activeSessionId));
     if (task && task.id !== this.expandedTaskId) {
       this.expandedTaskId = task.id;
-      this.store?.fetchTaskSessions(task.id);
+      this.projectDataStore?.fetchTaskSessions(task.id);
     }
   }
 
   /** Re-fetch sessions for the currently expanded task. */
   refreshExpanded() {
     if (this.expandedTaskId != null) {
-      this.store?.fetchTaskSessions(this.expandedTaskId);
+      this.projectDataStore?.fetchTaskSessions(this.expandedTaskId);
     }
   }
 
@@ -77,7 +81,7 @@ export class TaskList extends LitElement {
       return;
     }
     this.expandedTaskId = taskId;
-    this.store?.fetchTaskSessions(taskId);
+    this.projectDataStore?.fetchTaskSessions(taskId);
   }
 
   private handleNewTaskSession(taskId: number, e: Event) {
@@ -86,7 +90,7 @@ export class TaskList extends LitElement {
       new CustomEvent("new-task-session", {
         bubbles: true,
         composed: true,
-        detail: { taskId },
+        detail: { projectId: this.projectId, taskId },
       })
     );
   }
@@ -96,7 +100,7 @@ export class TaskList extends LitElement {
       new CustomEvent("edit-task", {
         bubbles: true,
         composed: true,
-        detail: { task },
+        detail: { projectId: this.projectId, task },
       }),
     );
   }
@@ -125,7 +129,7 @@ export class TaskList extends LitElement {
       new CustomEvent("delete-task", {
         bubbles: true,
         composed: true,
-        detail: { taskId: task.id },
+        detail: { projectId: this.projectId, taskId: task.id },
       }),
     );
   }
@@ -135,7 +139,7 @@ export class TaskList extends LitElement {
       new CustomEvent("select-session", {
         bubbles: true,
         composed: true,
-        detail: { sessionId },
+        detail: { projectId: this.projectId, sessionId },
       })
     );
   }
