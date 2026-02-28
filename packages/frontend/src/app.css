@@ -162,6 +162,9 @@ html, body {
 
 .prose table {
   @apply text-zinc-300 w-full my-3 border-collapse border border-zinc-700;
+  display: block;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .prose th {
