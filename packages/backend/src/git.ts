@@ -364,11 +364,12 @@ export async function showFile(
 // ---- Working-tree diff -----------------------------------------------------
 
 /**
- * Determine whether to include uncommitted/untracked changes.
- * Returns true when `branch` is omitted (HEAD mode) or matches
- * the currently checked-out branch.
+ * Is the working tree accessible for this branch?
+ * True when `branch` is omitted (HEAD mode) or is the currently checked-out
+ * branch. When false, we can only diff committed state — the working tree
+ * belongs to a different branch.
  */
-async function shouldIncludeUncommitted(
+async function isWorkingTreeAvailable(
   projectDir: string,
   branch?: string,
 ): Promise<boolean> {
@@ -377,44 +378,76 @@ async function shouldIncludeUncommitted(
   return branch === head;
 }
 
+/**
+ * Build a raw unified-diff string for a single diff mode.
+ *
+ * - `"branch"` mode: all changes (committed + uncommitted) against the merge
+ *   base. When the branch is checked out, diffs the working tree directly
+ *   against the merge base so committed and uncommitted changes are captured
+ *   in one pass with no overlap. When the branch is not checked out, falls
+ *   back to `baseBranch...ref` (committed only — no working tree access).
+ *
+ * - `"uncommitted"` mode: only uncommitted changes relative to HEAD.
+ *
+ * Untracked files are included in both modes (when the branch is checked out)
+ * by synthesising diffs via `git diff --no-index /dev/null <file>`.
+ */
 async function getGitDiff(
   projectDir: string,
   contextLines = 3,
   baseBranch = "main",
+  mode: "branch" | "uncommitted" = "branch",
   branch?: string,
-): Promise<{ committed: string; uncommitted: string }> {
+): Promise<string> {
   const ctxFlag = `-U${contextLines}`;
   const ref = branch ?? "HEAD";
-  const includeUncommitted = await shouldIncludeUncommitted(projectDir, branch);
+  const hasWorkingTree = await isWorkingTreeAvailable(projectDir, branch);
 
-  const [committed, uncommitted, untrackedList] = await Promise.all([
-    run(projectDir, ["diff", ctxFlag, `${baseBranch}...${ref}`]).catch(() => ""),
-    includeUncommitted
-      ? run(projectDir, ["diff", ctxFlag, "HEAD"]).catch(() => "")
-      : "",
-    includeUncommitted
-      ? run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => "")
-      : "",
-  ]);
-
-  // Generate diffs for untracked files so they appear as new files
-  let untrackedDiffs = "";
-  if (includeUncommitted) {
-    const untrackedFiles = untrackedList.trim().split("\n").filter(Boolean);
-    if (untrackedFiles.length > 0) {
-      const diffs = await Promise.all(
-        untrackedFiles.map((file) =>
-          run(projectDir, ["diff", ctxFlag, "--no-index", "--", "/dev/null", file])
-            .catch(() => ""),
-        ),
-      );
-      untrackedDiffs = diffs.filter(Boolean).join("\n");
-    }
+  // Can't see uncommitted state for a branch that isn't checked out
+  if (!hasWorkingTree) {
+    if (mode === "uncommitted") return "";
+    return await run(projectDir, ["diff", ctxFlag, `${baseBranch}...${ref}`]).catch(() => "");
   }
 
-  const fullUncommitted = [uncommitted, untrackedDiffs].filter(Boolean).join("\n");
+  // Working tree is available — choose the diff base by mode
+  if (mode === "uncommitted") {
+    // Uncommitted only: diff against HEAD
+    const [tracked, untrackedList] = await Promise.all([
+      run(projectDir, ["diff", ctxFlag, "HEAD"]).catch(() => ""),
+      run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
+    ]);
+    const untracked = await diffUntrackedFiles(projectDir, ctxFlag, untrackedList);
+    return [tracked, untracked].filter(Boolean).join("\n");
+  }
 
-  return { committed, uncommitted: fullUncommitted };
+  // Branch mode: diff working tree against merge base (captures committed +
+  // uncommitted in one pass, no overlap)
+  const [mergeBase, untrackedList] = await Promise.all([
+    run(projectDir, ["merge-base", baseBranch, "HEAD"])
+      .then((s) => s.trim()).catch(() => ""),
+    run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
+  ]);
+  const diffBase = mergeBase || baseBranch;
+  const tracked = await run(projectDir, ["diff", ctxFlag, diffBase]).catch(() => "");
+  const untracked = await diffUntrackedFiles(projectDir, ctxFlag, untrackedList);
+  return [tracked, untracked].filter(Boolean).join("\n");
+}
+
+/** Synthesise unified diffs for untracked files so they appear as new files. */
+async function diffUntrackedFiles(
+  projectDir: string,
+  ctxFlag: string,
+  untrackedList: string,
+): Promise<string> {
+  const files = untrackedList.trim().split("\n").filter(Boolean);
+  if (files.length === 0) return "";
+  const diffs = await Promise.all(
+    files.map((file) =>
+      run(projectDir, ["diff", ctxFlag, "--no-index", "--", "/dev/null", file])
+        .catch(() => ""),
+    ),
+  );
+  return diffs.filter(Boolean).join("\n");
 }
 
 // ---- Diff types ------------------------------------------------------------
@@ -543,37 +576,29 @@ export async function getChangedFiles(
   branch?: string,
 ): Promise<DiffFileSummary[]> {
   const ref = branch ?? "HEAD";
-  const includeUncommitted = await shouldIncludeUncommitted(projectDir, branch);
+  const hasWorkingTree = await isWorkingTreeAvailable(projectDir, branch);
 
-  const [committed, uncommitted, untrackedList] = await Promise.all([
-    mode === "branch"
-      ? run(projectDir, ["diff", "--numstat", `${baseBranch}...${ref}`]).catch(() => "")
-      : "",
-    includeUncommitted
-      ? run(projectDir, ["diff", "--numstat", "HEAD"]).catch(() => "")
-      : "",
-    includeUncommitted
-      ? run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => "")
-      : "",
+  // Can't see uncommitted state for a branch that isn't checked out
+  if (!hasWorkingTree) {
+    if (mode === "uncommitted") return [];
+    const committed = await run(projectDir, ["diff", "--numstat", `${baseBranch}...${ref}`]).catch(() => "");
+    return parseNumstat(committed);
+  }
+
+  // Working tree is available — choose the diff base by mode
+  const [numstatBase, untrackedList] = await Promise.all([
+    mode === "uncommitted"
+      ? Promise.resolve("HEAD")
+      : run(projectDir, ["merge-base", baseBranch, "HEAD"])
+          .then((s) => s.trim() || baseBranch).catch(() => baseBranch),
+    run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
   ]);
+  const numstat = await run(projectDir, ["diff", "--numstat", numstatBase]).catch(() => "");
 
   const fileMap = new Map<string, DiffFileSummary>();
-
-  if (mode === "branch") {
-    for (const f of parseNumstat(committed)) {
-      fileMap.set(f.path, f);
-    }
+  for (const f of parseNumstat(numstat)) {
+    fileMap.set(f.path, f);
   }
-  for (const f of parseNumstat(uncommitted)) {
-    const existing = fileMap.get(f.path);
-    if (existing) {
-      existing.additions += f.additions;
-      existing.removals += f.removals;
-    } else {
-      fileMap.set(f.path, f);
-    }
-  }
-
   const untrackedFiles = untrackedList.trim().split("\n").filter(Boolean);
   for (const filePath of untrackedFiles) {
     if (fileMap.has(filePath)) continue;
@@ -585,7 +610,6 @@ export async function getChangedFiles(
       fileMap.set(filePath, { path: filePath, additions: 0, removals: 0 });
     }
   }
-
   return [...fileMap.values()];
 }
 
@@ -608,28 +632,10 @@ export async function getDiff(
   mode: "branch" | "uncommitted" = "branch",
   branch?: string,
 ): Promise<DiffFile[]> {
-  const rawDiff = await getGitDiff(projectDir, contextLines, baseBranch, branch);
-  const parts =
-    mode === "uncommitted"
-      ? [rawDiff.uncommitted]
-      : [rawDiff.committed, rawDiff.uncommitted];
-  const combined = parts.filter(Boolean).join("\n");
-  const rawParsed = parseUnifiedDiff(combined);
+  const raw = await getGitDiff(projectDir, contextLines, baseBranch, mode, branch);
+  const parsed = parseUnifiedDiff(raw);
 
-  if (rawParsed.length === 0) return [];
-
-  // Merge duplicate files — the same path can appear in both committed and
-  // uncommitted diffs. Combine their hunks into a single entry.
-  const mergedMap = new Map<string, ParsedFile>();
-  for (const file of rawParsed) {
-    const existing = mergedMap.get(file.path);
-    if (existing) {
-      existing.hunks.push(...file.hunks);
-    } else {
-      mergedMap.set(file.path, { path: file.path, hunks: [...file.hunks] });
-    }
-  }
-  const parsed = [...mergedMap.values()];
+  if (parsed.length === 0) return [];
 
   return parsed.map((file) => {
     let additions = 0;

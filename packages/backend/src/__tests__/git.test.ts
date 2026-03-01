@@ -329,6 +329,82 @@ describe("getChangedFiles", () => {
 });
 
 // ---------------------------------------------------------------------------
+// getDiff / getChangedFiles — committed + uncommitted overlap
+// ---------------------------------------------------------------------------
+
+describe("getDiff — committed + uncommitted overlap", () => {
+  const repo = useTestRepo();
+
+  test("does not show intermediate state when a line is modified in both committed and uncommitted", async () => {
+    // Base has "line1\nline2\nline3", commit changes line2, uncommitted changes it again
+    await createBranch(repo.dir, "feat", "main");
+    await checkoutBranch(repo.dir, "feat");
+    // Overwrite README.md (base has "# Test Repo\n")
+    await commitFile(repo.dir, "README.md", "# Test Repo\ncommitted\n", "edit readme");
+
+    // Further uncommitted edit: replace committed line
+    writeFileSync(join(repo.dir, "README.md"), "# Test Repo\nfinal\n");
+
+    const diff = await getDiff(repo.dir, 3, "main", "branch");
+
+    const file = diff.find((f) => f.path === "README.md");
+    expect(file).toBeDefined();
+    // Should show working tree vs base: +final, not both +committed/-committed/+final
+    expect(file!.additions).toBe(1);
+    expect(file!.removals).toBe(0);
+
+    // Should have exactly 1 hunk, not 2 overlapping ones
+    expect(file!.hunks).toHaveLength(1);
+
+    // The intermediate "committed" value should not appear at all
+    const allLineTexts = file!.hunks.flatMap((h) => h.lines.map((l) => l.text));
+    expect(allLineTexts).not.toContain("committed");
+  });
+
+  test("shows correct counts when committed adds a file and uncommitted modifies it", async () => {
+    await createBranch(repo.dir, "feat", "main");
+    await checkoutBranch(repo.dir, "feat");
+    await commitFile(repo.dir, "file.txt", "line1\nline2\n", "add file");
+
+    // Uncommitted: modify line2
+    writeFileSync(join(repo.dir, "file.txt"), "line1\nchanged\n");
+
+    const diff = await getDiff(repo.dir, 3, "main", "branch");
+
+    const file = diff.find((f) => f.path === "file.txt");
+    expect(file).toBeDefined();
+    // Working tree vs base: new file with "line1\nchanged\n" → 2 additions, 0 removals
+    expect(file!.additions).toBe(2);
+    expect(file!.removals).toBe(0);
+  });
+
+});
+
+describe("getChangedFiles — committed + uncommitted overlap", () => {
+  const repo = useTestRepo();
+
+  test("does not inflate counts when a file has both committed and uncommitted changes", async () => {
+    await createBranch(repo.dir, "feat", "main");
+    await checkoutBranch(repo.dir, "feat");
+    // Base has "# Test Repo\n" in README.md. Commit replaces content.
+    await commitFile(repo.dir, "README.md", "committed line 1\ncommitted line 2\n", "edit");
+
+    // Uncommitted: modify one of the committed lines
+    writeFileSync(join(repo.dir, "README.md"), "committed line 1\nmodified\n");
+
+    const files = await getChangedFiles(repo.dir, "main", "branch");
+
+    const file = files.find((f) => f.path === "README.md");
+    expect(file).toBeDefined();
+    // Working tree vs base: removed "# Test Repo\n", added "committed line 1\nmodified\n"
+    // = 2 additions, 1 removal. NOT the sum of committed (2 add, 1 rem) + uncommitted (1 add, 1 rem)
+    expect(file!.additions).toBe(2);
+    expect(file!.removals).toBe(1);
+  });
+
+});
+
+// ---------------------------------------------------------------------------
 // rebaseBranch
 // ---------------------------------------------------------------------------
 
