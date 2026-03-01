@@ -7,5 +7,6 @@
 | [router.md](router.md) | backend | Router API, adding routes, error handling |
 | [frontend-architecture.md](frontend-architecture.md) | frontend | Store layer, WS event flow, component structure, how views consume state |
 | [macos.md](macos.md) | macos | Native Mac app shell: setup, dev workflow, building |
+| [docker.md](docker.md) | all | Building and running REINS in a Docker container |
 | [workflow.md](workflow.md) | all | Development workflow: RGR, testing reference, pre/post-implementation checklist |
 

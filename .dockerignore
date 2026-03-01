@@ -1,0 +1,4 @@
+node_modules
+packages/frontend/dist
+packages/macos
+.git
