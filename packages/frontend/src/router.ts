@@ -18,10 +18,6 @@ export function parseHash(): Route {
   const match = location.hash.match(/^#\/session\/(.+)$/);
   if (match) return { sessionId: decodeURIComponent(match[1]) };
 
-  // Backward compat: #/project/3/session/abc-123
-  const legacy = location.hash.match(/^#\/project\/\d+\/session\/(.+)$/);
-  if (legacy) return { sessionId: decodeURIComponent(legacy[1]) };
-
   return { sessionId: null };
 }
 

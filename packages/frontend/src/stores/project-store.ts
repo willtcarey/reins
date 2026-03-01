@@ -1,29 +1,34 @@
 /**
  * Project Store
  *
- * Single entry point for all project-related data: the project list,
- * project CRUD mutations, and lazily-created ProjectDataStore instances
- * that hold per-project task/session lists and task mutations.
+ * Holds task/session list data for a single project. One instance per project,
+ * lazily created by ProjectCollectionStore.
  *
- * Components subscribe via `subscribe()` to get notified when the
- * project list or any child store changes (notifications bubble up).
+ * Components subscribe via `subscribe()` and read public state directly.
  */
 
-import type { ProjectInfo } from "../ws-client.js";
-import { ProjectDataStore } from "./project-data-store.js";
+import type { SessionListItem, TaskListItem } from "../ws-client.js";
 
 export type ProjectStoreListener = () => void;
 
 export class ProjectStore {
+  readonly projectId: number;
+
   // ---- Public reactive state ------------------------------------------------
 
-  projects: ProjectInfo[] = [];
+  tasks: TaskListItem[] = [];
+  sessions: SessionListItem[] = [];
+  taskSessions: Map<number, SessionListItem[]> = new Map();
+  loading = false;
+  loaded = false;
 
   // ---- Private state --------------------------------------------------------
 
-  private _stores = new Map<number, ProjectDataStore>();
-  private _unsubscribes = new Map<number, () => void>();
   private _listeners = new Set<ProjectStoreListener>();
+
+  constructor(projectId: number) {
+    this.projectId = projectId;
+  }
 
   // ---- Subscription ---------------------------------------------------------
 
@@ -36,135 +41,117 @@ export class ProjectStore {
     for (const fn of this._listeners) fn();
   }
 
-  // ---- Project list actions -------------------------------------------------
+  // ---- Actions --------------------------------------------------------------
 
-  /** Fetch the project list from the server. */
-  async fetchProjects(): Promise<void> {
+  /**
+   * Fetch tasks and sessions for this project in parallel.
+   */
+  async fetchLists(): Promise<void> {
+    this.loading = true;
+    this.notify();
+
     try {
-      const resp = await fetch("/api/projects");
-      if (resp.ok) {
-        this.projects = await resp.json();
-        this.notify();
-      }
+      const [tasksResp, sessionsResp] = await Promise.all([
+        fetch(`/api/projects/${this.projectId}/tasks`),
+        fetch(`/api/projects/${this.projectId}/sessions`),
+      ]);
+
+      if (tasksResp.ok) this.tasks = await tasksResp.json();
+      if (sessionsResp.ok) this.sessions = await sessionsResp.json();
+      this.loaded = true;
     } catch {
-      // silent
+      // silent — leave loaded as-is (false if first attempt)
     }
+
+    this.loading = false;
+    this.notify();
   }
 
-  /** Delete a project and refresh the list. */
-  async deleteProject(projectId: number): Promise<void> {
-    try {
-      await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
-      this.remove(projectId);
-      await this.fetchProjects();
-    } catch {
-      // silent
-    }
-  }
-
-  /** Create a new project. Returns the created project on success. */
-  async createProject(data: {
-    name: string;
-    path: string;
-    base_branch: string;
-  }): Promise<ProjectInfo | { error: string }> {
-    try {
-      const resp = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        return { error: body.error || "Failed to create project" };
-      }
-      const project: ProjectInfo = await resp.json();
-      await this.fetchProjects();
-      return project;
-    } catch {
-      return { error: "Network error" };
-    }
-  }
-
-  /** Update a project's properties. */
-  async updateProject(
-    projectId: number,
-    data: { name: string; path: string; base_branch: string },
+  /** Update a task's title and/or description. */
+  async updateTask(
+    taskId: number,
+    updates: { title?: string; description?: string | null },
   ): Promise<{ ok: true } | { error: string }> {
     try {
-      const resp = await fetch(`/api/projects/${projectId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
+      const resp = await fetch(
+        `/api/projects/${this.projectId}/tasks/${taskId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        },
+      );
       if (!resp.ok) {
         const body = await resp.json().catch(() => ({}));
-        return { error: body.error || "Failed to update project" };
+        return { error: body.error || `HTTP ${resp.status}` };
       }
-      await this.fetchProjects();
       return { ok: true };
     } catch {
       return { error: "Network error" };
     }
   }
 
-  // ---- Per-project data stores ----------------------------------------------
-
-  /**
-   * Get or create a ProjectDataStore for a project.
-   * Creating does NOT fetch — call ensureLoaded() to trigger a fetch.
-   */
-  getStore(projectId: number): ProjectDataStore {
-    let child = this._stores.get(projectId);
-    if (child) return child;
-
-    child = new ProjectDataStore(projectId);
-    const unsub = child.subscribe(() => this.notify());
-    this._stores.set(projectId, child);
-    this._unsubscribes.set(projectId, unsub);
-    return child;
+  /** Delete a task. */
+  async deleteTask(taskId: number): Promise<{ ok: true } | { error: string }> {
+    try {
+      const resp = await fetch(
+        `/api/projects/${this.projectId}/tasks/${taskId}`,
+        { method: "DELETE" },
+      );
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        return { error: body.error || `HTTP ${resp.status}` };
+      }
+      return { ok: true };
+    } catch {
+      return { error: "Network error" };
+    }
   }
 
-  /**
-   * Get a store only if it already exists (no creation).
-   */
-  peekStore(projectId: number): ProjectDataStore | undefined {
-    return this._stores.get(projectId);
-  }
-
-  /**
-   * Ensure a project's data is loaded. Creates the store if needed,
-   * then fetches if not yet loaded and not currently loading.
-   */
-  async ensureLoaded(projectId: number): Promise<void> {
-    const child = this.getStore(projectId);
-    if (!child.loaded && !child.loading) {
-      await child.fetchLists();
+  /** Generate a task from a freeform prompt. */
+  async generateTask(prompt: string): Promise<{ ok: true } | { error: string }> {
+    try {
+      const resp = await fetch(
+        `/api/projects/${this.projectId}/tasks/generate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
+        },
+      );
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        return { error: body.error || `Error creating task (HTTP ${resp.status})` };
+      }
+      return { ok: true };
+    } catch {
+      return { error: "Network error" };
     }
   }
 
   /**
-   * Refresh a specific project's data. Re-fetches if the store exists,
-   * no-op if it doesn't.
+   * Fetch sessions for a specific task (for expanded task sublists).
+   * Skips notification if data hasn't changed.
    */
-  async refresh(projectId: number): Promise<void> {
-    const child = this.peekStore(projectId);
-    if (child) {
-      await child.fetchLists();
+  async fetchTaskSessions(taskId: number): Promise<void> {
+    try {
+      const resp = await fetch(
+        `/api/tasks/${taskId}/sessions`,
+      );
+      if (resp.ok) {
+        const sessions: SessionListItem[] = await resp.json();
+        // Skip update if data hasn't changed
+        const existing = this.taskSessions.get(taskId);
+        if (existing && JSON.stringify(existing) === JSON.stringify(sessions)) {
+          return;
+        }
+        const next = new Map(this.taskSessions);
+        next.set(taskId, sessions);
+        this.taskSessions = next;
+        this.notify();
+      }
+    } catch {
+      // silent
     }
-  }
-
-  /**
-   * Drop a project data store (e.g. project deleted). Unsubscribes from
-   * child notifications and removes from the map.
-   */
-  remove(projectId: number): void {
-    const unsub = this._unsubscribes.get(projectId);
-    if (!unsub) return;
-
-    unsub();
-    this._unsubscribes.delete(projectId);
-    this._stores.delete(projectId);
-    this.notify();
   }
 }

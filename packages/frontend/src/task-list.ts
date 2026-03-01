@@ -11,7 +11,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { SessionListItem, TaskListItem } from "./ws-client.js";
 import type { AppStore } from "./stores/app-store.js";
 import type { ActivityState } from "./stores/app-store.js";
-import type { ProjectDataStore } from "./stores/project-data-store.js";
+import type { ProjectStore } from "./stores/project-store.js";
 import { formatRelativeDate } from "./format.js";
 import "./popover-menu.js";
 
@@ -28,7 +28,7 @@ export class TaskList extends LitElement {
   store: AppStore | null = null;
 
   @property({ attribute: false })
-  projectDataStore: ProjectDataStore | null = null;
+  projectStore: ProjectStore | null = null;
 
   @property({ attribute: false })
   tasks: TaskListItem[] = [];
@@ -64,14 +64,14 @@ export class TaskList extends LitElement {
     const task = this.tasks.find(t => t.session_ids.includes(this.activeSessionId));
     if (task && task.id !== this.expandedTaskId) {
       this.expandedTaskId = task.id;
-      this.projectDataStore?.fetchTaskSessions(task.id);
+      this.projectStore?.fetchTaskSessions(task.id);
     }
   }
 
   /** Re-fetch sessions for the currently expanded task. */
   refreshExpanded() {
     if (this.expandedTaskId != null) {
-      this.projectDataStore?.fetchTaskSessions(this.expandedTaskId);
+      this.projectStore?.fetchTaskSessions(this.expandedTaskId);
     }
   }
 
@@ -81,7 +81,7 @@ export class TaskList extends LitElement {
       return;
     }
     this.expandedTaskId = taskId;
-    this.projectDataStore?.fetchTaskSessions(taskId);
+    this.projectStore?.fetchTaskSessions(taskId);
   }
 
   private handleNewTaskSession(taskId: number, e: Event) {

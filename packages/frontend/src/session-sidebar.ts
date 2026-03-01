@@ -3,7 +3,7 @@
  *
  * Multi-project orchestrator. Renders ALL projects as collapsible sections,
  * each with its own sessions and tasks. Reads project list and per-project
- * data from ProjectStore (via ProjectDataStore instances).
+ * data from ProjectCollectionStore (via ProjectStore instances).
  *
  * Child components:
  *  - project-sidebar  — "Add Project" button + project-form modal
@@ -84,21 +84,11 @@ export class SessionSidebar extends LitElement {
 
     let changed = false;
 
-    // Auto-expand the active project
+    // Auto-expand the project containing the visited session
     if (store.projectId != null && !this.expandedProjects.has(store.projectId)) {
       this.expandedProjects.add(store.projectId);
-      store.projectStore.ensureLoaded(store.projectId);
+      store.projectCollectionStore.ensureLoaded(store.projectId);
       changed = true;
-    }
-
-    // Auto-expand projects with running activity
-    const activityByProject = store.activityByProject;
-    for (const [projectId, state] of activityByProject) {
-      if (state === "running" && !this.expandedProjects.has(projectId)) {
-        this.expandedProjects.add(projectId);
-        store.projectStore.ensureLoaded(projectId);
-        changed = true;
-      }
     }
 
     if (changed) {
@@ -114,7 +104,7 @@ export class SessionSidebar extends LitElement {
       next.delete(projectId);
     } else {
       next.add(projectId);
-      this.store?.projectStore.ensureLoaded(projectId);
+      this.store?.projectCollectionStore.ensureLoaded(projectId);
     }
     this.expandedProjects = next;
   }
@@ -136,35 +126,22 @@ export class SessionSidebar extends LitElement {
   private async handleNewSession(e: CustomEvent<{ projectId: number }>) {
     const projectId = e.detail.projectId;
     if (!projectId) return;
-    try {
-      const resp = await fetch(`/api/projects/${projectId}/sessions`, { method: "POST" });
-      if (resp.ok) {
-        const data = await resp.json();
-        navigateToSession(data.id);
-        this.store?.projectStore.refresh(projectId);
-        this.collapseOnMobile();
-      }
-    } catch {
-      // silent
+    const result = await this.store?.createSession(projectId);
+    if (result && "sessionId" in result) {
+      navigateToSession(result.sessionId);
+      this.collapseOnMobile();
     }
   }
 
   private async handleNewTaskSession(e: CustomEvent<{ projectId: number; taskId: number }>) {
     const { projectId, taskId } = e.detail;
     if (!projectId) return;
-    try {
-      const resp = await fetch(`/api/tasks/${taskId}/sessions`, { method: "POST" });
-      if (resp.ok) {
-        const data = await resp.json();
-        navigateToSession(data.id);
-        this.store?.projectStore.refresh(projectId);
-        this.collapseOnMobile();
-      } else {
-        const err = await resp.json().catch(() => null);
-        alert(err?.error ?? "Failed to create session");
-      }
-    } catch {
-      // silent
+    const result = await this.store?.createTaskSession(taskId, projectId);
+    if (result && "sessionId" in result) {
+      navigateToSession(result.sessionId);
+      this.collapseOnMobile();
+    } else if (result && "error" in result) {
+      alert(result.error);
     }
   }
 
@@ -197,7 +174,7 @@ export class SessionSidebar extends LitElement {
 
     // Refresh the project data store
     if (projectId) {
-      store.projectStore.refresh(projectId);
+      store.projectCollectionStore.refresh(projectId);
     }
 
     // If the store cleared the active session, navigate to empty state
@@ -226,7 +203,7 @@ export class SessionSidebar extends LitElement {
       location.hash = "";
     }
     await this.store?.deleteProject(project.id);
-    this.store?.projectStore.remove(project.id);
+    this.store?.projectCollectionStore.remove(project.id);
   }
 
   // ---- Render helpers -------------------------------------------------------
@@ -265,7 +242,7 @@ export class SessionSidebar extends LitElement {
     const store = this.store!;
     const isExpanded = this.expandedProjects.has(project.id);
     const isActive = project.id === store.projectId;
-    const projectData = store.projectStore.peekStore(project.id);
+    const projectData = store.projectCollectionStore.peekStore(project.id);
 
     return html`
       <div class="border-b border-zinc-700">
@@ -316,7 +293,7 @@ export class SessionSidebar extends LitElement {
                 @new-task=${() => { this.taskForm?.open(project.id); }}
                 .projectId=${project.id}
                 .store=${store}
-                .projectDataStore=${projectData ?? null}
+                .projectStore=${projectData ?? null}
                 .tasks=${projectData?.tasks ?? []}
                 .taskSessions=${projectData?.taskSessions ?? new Map()}
                 .activeSessionId=${store.sessionId ?? ""}

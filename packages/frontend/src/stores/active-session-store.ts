@@ -3,7 +3,7 @@
  *
  * Tracks which session is currently being viewed: the session ID, its full
  * data, and the derived project ID (for diff context). Does NOT hold task
- * or session lists — that data lives in ProjectDataStore via ProjectStore.
+ * or session lists — that data lives in ProjectStore via ProjectCollectionStore.
  *
  * Components subscribe via `subscribe()` and read public state directly.
  * Mutations go through action methods which call the backend API.
@@ -61,7 +61,7 @@ export class ActiveSessionStore {
     this.notify();
 
     // Fetch session via top-level endpoint (includes project_id)
-    await this.fetchSessionTopLevel(newSessionId);
+    await this.fetchSession(newSessionId);
   }
 
   // ---- Actions --------------------------------------------------------------
@@ -79,9 +79,9 @@ export class ActiveSessionStore {
 
   /**
    * Fetch a session via the top-level endpoint (not project-scoped).
-   * Updates sessionData and projectId from the response.
+   * Updates sessionData and derives projectId from the response.
    */
-  private async fetchSessionTopLevel(sessionId: string): Promise<void> {
+  private async fetchSession(sessionId: string): Promise<void> {
     const fetchId = ++this._fetchId;
     try {
       const resp = await fetch(
@@ -92,21 +92,6 @@ export class ActiveSessionStore {
       const data = await resp.json();
       this.sessionData = data;
       this.projectId = data.project_id;
-      this.notify();
-    } catch {
-      // silent
-    }
-  }
-
-  private async fetchSession(sessionId: string) {
-    const fetchId = ++this._fetchId;
-    try {
-      const resp = await fetch(
-        `/api/sessions/${encodeURIComponent(sessionId)}`,
-      );
-      if (!resp.ok) return;
-      if (fetchId !== this._fetchId) return; // stale
-      this.sessionData = await resp.json();
       this.notify();
     } catch {
       // silent

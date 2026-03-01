@@ -99,7 +99,7 @@ class MultiProjectStore {
 
 **Collapse behavior:**
 - Default: all collapsed.
-- Auto-expand: the project containing the active session (from the URL route), and projects with running activity.
+- Auto-expand: the project containing the visited session (from the URL route). The session's parent task (if any) is also auto-expanded.
 - User can manually toggle any project open/closed.
 
 **Clicking a session:**
@@ -201,7 +201,7 @@ session-sidebar.ts:
 - Render all projects as collapsible sections using data from `MultiProjectStore`.
 - Manage `expandedProjects: Set<number>` state.
 - On expand, call `multiProjectStore.ensureLoaded(projectId)`.
-- Auto-expand the active project on route change, and projects with running activity (via `getActivityProjectId`).
+- Auto-expand the project containing the visited session on route change.
 - Pass per-project data from `ProjectDataStore` to child components.
 
 project-sidebar.ts:

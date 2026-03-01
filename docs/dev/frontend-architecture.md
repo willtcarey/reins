@@ -48,7 +48,7 @@ The central store. Constructed with an `AppClient` (WebSocket client) and intern
 - **Coordinates sub-stores** — When the session or project changes, AppStore updates DiffStore's branch and project. When an agent completes, AppStore tells DiffStore to refresh.
 - **Tracks activity** — Per-session running/finished state (absorbed from the former ActivityTracker). Used for title badge counts and sidebar indicators.
 
-Internally, AppStore delegates project/session state management to `ProjectStore` (a private implementation detail, not accessed by views).
+Internally, AppStore delegates project/session state management to `ProjectCollectionStore` (a private implementation detail, not accessed by views).
 
 ### DiffStore (`stores/diff-store.ts`)
 
@@ -60,9 +60,13 @@ Owned by AppStore. Manages git diff state: file listings, full syntax-highlighte
 
 Views access DiffStore through `store.diffStore` as a read-only surface.
 
+### ProjectCollectionStore (`stores/project-collection-store.ts`)
+
+Internal to AppStore — not accessed by views directly. Manages the project list, project CRUD, and lazily-created `ProjectStore` instances that hold per-project task/session data.
+
 ### ProjectStore (`stores/project-store.ts`)
 
-Internal to AppStore — not accessed by views directly. Manages the active project's task list, session list, and active session data. Handles route resolution (project ID + session ID → fetch and populate state).
+One instance per project, lazily created by `ProjectCollectionStore`. Holds task list, session list, task session sublists, and task mutations for a single project.
 
 ### Subscription model
 
@@ -98,12 +102,12 @@ The client provides `onConnection(cb)` and `onEvent(cb)` hooks. AppStore is the 
 
 ## Routing (`router.ts`)
 
-Hash-based routing with two patterns:
+Hash-based routing with a single pattern:
 
-- `#/project/:id` — Select project, resolve to most recent session
-- `#/project/:id/session/:sessionId` — Select specific session
+- `#/session/:sessionId` — View a specific session
+- (empty hash) — No session selected, show empty state
 
-`app.ts` listens for `hashchange`, parses the route, and calls `store.setRoute()`. The store handles all fetching and state updates. If the route needs to resolve to a specific session (e.g., bare project URL), the store returns a `navigateTo` hint and `app.ts` updates the hash.
+`app.ts` listens for `hashchange`, parses the route, and calls `store.setRoute()`. The store fetches the session data (which includes `project_id`) and derives the active project from it.
 
 ## Component structure
 

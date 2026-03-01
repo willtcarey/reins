@@ -3,14 +3,14 @@
  *
  * Centralized reactive store that owns all server communication and
  * internal event handling. Wraps ActiveSessionStore for the viewed
- * session, ProjectStore for the project list and per-project data,
+ * session, ProjectCollectionStore for the project list and per-project data,
  * and DiffStore for diff/sync state. Handles WebSocket events
  * internally — views never participate in fetch/event decisions.
  */
 
 import { AppClient } from "../ws-client.js";
 import { ActiveSessionStore } from "./active-session-store.js";
-import { ProjectStore } from "./project-store.js";
+import { ProjectCollectionStore } from "./project-collection-store.js";
 import { DiffStore } from "./diff-store.js";
 import type { ProjectInfo, SessionData } from "../ws-client.js";
 
@@ -31,7 +31,7 @@ export class AppStore {
   // ---- Sub-stores -----------------------------------------------------------
 
   /** Project list, per-project data, and project/task mutations. */
-  readonly projectStore = new ProjectStore();
+  readonly projectCollectionStore = new ProjectCollectionStore();
 
   /** Diff/sync sub-store — owned and coordinated by AppStore. */
   readonly diffStore = new DiffStore();
@@ -52,7 +52,7 @@ export class AppStore {
 
   /** Sub-stores whose notifications bubble up through AppStore. */
   private get _children(): { subscribe(fn: () => void): () => void }[] {
-    return [this._activeSession, this.projectStore, this.diffStore];
+    return [this._activeSession, this.projectCollectionStore, this.diffStore];
   }
 
   constructor(client: AppClient) {
@@ -68,7 +68,7 @@ export class AppStore {
       this.notify();
       if (connected) {
         // Always refresh the project list on (re)connect
-        this.projectStore.fetchProjects();
+        this.projectCollectionStore.fetchProjects();
         // On reconnect, re-fetch the active session to catch up on missed events
         if (this._activeSession.sessionId) {
           this._activeSession.refreshSession();
@@ -79,15 +79,15 @@ export class AppStore {
     client.onEvent((sessionId, projectId, event) => {
       // Handle task_updated broadcast (not tagged with a sessionId)
       if (event.type === "task_updated") {
-        this.projectStore.refresh(event.projectId);
+        this.projectCollectionStore.refresh(event.projectId);
         return;
       }
 
       // Handle session_created broadcast (server-side session creation, e.g. delegate)
       if (event.type === "session_created") {
-        this.projectStore.refresh(event.projectId);
+        this.projectCollectionStore.refresh(event.projectId);
         if (event.taskId) {
-          this.projectStore.peekStore(event.projectId)?.fetchTaskSessions(event.taskId);
+          this.projectCollectionStore.peekStore(event.projectId)?.fetchTaskSessions(event.taskId);
         }
         return;
       }
@@ -97,7 +97,7 @@ export class AppStore {
         this._setRunning(sessionId, projectId);
       } else if (sessionId && event.type === "agent_end") {
         this._setFinished(sessionId, projectId, this._activeSession.sessionId);
-        setTimeout(() => this.projectStore.refresh(projectId), 500);
+        setTimeout(() => this.projectCollectionStore.refresh(projectId), 500);
       }
 
       // Only refresh diff for the session we're viewing
@@ -115,7 +115,7 @@ export class AppStore {
 
   // ---- Project list accessors ------------------------------------------------
 
-  get projects(): ProjectInfo[] { return this.projectStore.projects; }
+  get projects(): ProjectInfo[] { return this.projectCollectionStore.projects; }
 
   // ---- ActiveSessionStore delegate accessors ---------------------------------
 
@@ -232,7 +232,7 @@ export class AppStore {
   ): Promise<{ ok: true } | { error: string }> {
     const projectId = this._activeSession.projectId;
     if (projectId == null) return { error: "No project" };
-    const store = this.projectStore.peekStore(projectId);
+    const store = this.projectCollectionStore.peekStore(projectId);
     if (!store) return { error: "No project data" };
     return store.updateTask(taskId, updates);
   }
@@ -240,7 +240,7 @@ export class AppStore {
   async deleteTask(taskId: number): Promise<{ ok: true } | { error: string }> {
     const projectId = this._activeSession.projectId;
     if (projectId == null) return { error: "No project" };
-    const store = this.projectStore.peekStore(projectId);
+    const store = this.projectCollectionStore.peekStore(projectId);
     if (!store) return { error: "No project data" };
     const result = await store.deleteTask(taskId);
     if ("ok" in result && this._activeSession.sessionData?.task_id === taskId) {
@@ -250,9 +250,9 @@ export class AppStore {
     return result;
   }
 
-  /** Delete a project — delegates to ProjectStore and handles navigation. */
+  /** Delete a project — delegates to ProjectCollectionStore and handles navigation. */
   async deleteProject(projectId: number): Promise<void> {
-    return this.projectStore.deleteProject(projectId);
+    return this.projectCollectionStore.deleteProject(projectId);
   }
 
   /** Create a new project. Returns the created project on success. */
@@ -261,7 +261,7 @@ export class AppStore {
     path: string;
     base_branch: string;
   }): Promise<ProjectInfo | { error: string }> {
-    return this.projectStore.createProject(data);
+    return this.projectCollectionStore.createProject(data);
   }
 
   /** Update a project's properties. */
@@ -269,7 +269,41 @@ export class AppStore {
     projectId: number,
     data: { name: string; path: string; base_branch: string },
   ): Promise<{ ok: true } | { error: string }> {
-    return this.projectStore.updateProject(projectId, data);
+    return this.projectCollectionStore.updateProject(projectId, data);
+  }
+
+  // ---- Session creation ------------------------------------------------------
+
+  /** Create a new scratch session for a project. Returns the session ID on success. */
+  async createSession(projectId: number): Promise<{ sessionId: string } | { error: string }> {
+    try {
+      const resp = await fetch(`/api/projects/${projectId}/sessions`, { method: "POST" });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        return { error: body.error || "Failed to create session" };
+      }
+      const data = await resp.json();
+      this.projectCollectionStore.refresh(projectId);
+      return { sessionId: data.id };
+    } catch {
+      return { error: "Network error" };
+    }
+  }
+
+  /** Create a new session for a task. Returns the session ID on success. */
+  async createTaskSession(taskId: number, projectId: number): Promise<{ sessionId: string } | { error: string }> {
+    try {
+      const resp = await fetch(`/api/tasks/${taskId}/sessions`, { method: "POST" });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        return { error: body.error || "Failed to create session" };
+      }
+      const data = await resp.json();
+      this.projectCollectionStore.refresh(projectId);
+      return { sessionId: data.id };
+    } catch {
+      return { error: "Network error" };
+    }
   }
 
   // ---- Task generation -------------------------------------------------------
@@ -278,7 +312,7 @@ export class AppStore {
     projectId: number,
     prompt: string,
   ): Promise<{ ok: true } | { error: string }> {
-    const store = this.projectStore.peekStore(projectId);
+    const store = this.projectCollectionStore.peekStore(projectId);
     if (!store) return { error: "No project data" };
     return store.generateTask(prompt);
   }
@@ -297,7 +331,7 @@ export class AppStore {
     }
     const projectId = this._activeSession.projectId;
     const tasks = projectId != null
-      ? this.projectStore.peekStore(projectId)?.tasks ?? []
+      ? this.projectCollectionStore.peekStore(projectId)?.tasks ?? []
       : [];
     const task = tasks.find((t) => t.id === session.task_id);
     this.diffStore.setBranch(task?.branch_name ?? null);
