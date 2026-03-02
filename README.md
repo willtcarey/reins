@@ -2,7 +2,7 @@
 
 **Remote Editing Interface for Nurturing Software** — a web-based workspace for managing your repos from anywhere.
 
-Run the server alongside your projects, then connect from any browser or the native macOS app.
+Run the server alongside your projects, then connect from any browser or the native macOS app. Work happens through conversations with AI coding agents that can read, write, and execute code in your repos.
 
 ## Requirements
 
