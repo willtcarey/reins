@@ -43,6 +43,10 @@ For the macOS app, see [docs/dev/macos.md](docs/dev/macos.md).
 
 Open [http://localhost:3100](http://localhost:3100), add a project, and create a task or start a session.
 
+## How It Works
+
+Add your git repos as projects, then use the assistant for general work or create tasks — focused units of work that each get their own branch. See [`docs/features/`](docs/features/) for more.
+
 ## Architecture
 
 | Package | Description | Docs |
