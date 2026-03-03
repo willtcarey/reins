@@ -4,32 +4,44 @@
 
 Run the server alongside your projects, then connect from any browser or the native macOS app. Work happens through conversations with AI coding agents that can read, write, and execute code in your repos.
 
-## Requirements
-
-- [Bun](https://bun.sh) (v1.0+)
-- Git
-- An LLM API key — set `ANTHROPIC_API_KEY` in your environment (other providers work too; see [Configuration](#configuration))
-
 ## Getting Started
 
+You need an LLM API key (e.g. `ANTHROPIC_API_KEY`). See [Configuration](#configuration) for all options.
+
+### Docker
+
 ```sh
-# Install dependencies
+docker build -t reins .
+
+docker run -p 3100:3100 \
+  -e ANTHROPIC_API_KEY=your-key \
+  -v /path/to/your/repos:/repos \
+  reins
+```
+
+Add projects using their paths inside the container (e.g. `/repos/my-project`). See [docs/dev/docker.md](docs/dev/docker.md) for more options.
+
+### Manual
+
+Requires [Bun](https://bun.sh) (v1.0+) and Git.
+
+```sh
 bun install
-
-# Build the frontend
 bun run build
-
-# Start the server
 bun packages/backend/src/index.ts
 ```
 
-Open [http://localhost:3100](http://localhost:3100) in your browser. Add a project by pointing it at a local git repo, then create a task or start a session.
-
-To keep the server running in the background, start it in a tmux session:
+To keep the server running in the background:
 
 ```sh
 tmux new-session -d -s reins 'bun packages/backend/src/index.ts'
 ```
+
+For the macOS app, see [docs/dev/macos.md](docs/dev/macos.md).
+
+### Then
+
+Open [http://localhost:3100](http://localhost:3100), add a project, and create a task or start a session.
 
 ## Configuration
 
