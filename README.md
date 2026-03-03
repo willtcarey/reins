@@ -4,6 +4,10 @@
 
 Run the server alongside your projects, then connect from any browser or the native macOS app. Work happens through conversations with AI coding agents that can read, write, and execute code in your repos.
 
+## How It Works
+
+Add your git repos as projects, then use the assistant for general work or create tasks — focused units of work that each get their own branch. See [`docs/features/`](docs/features/) for more.
+
 ## Getting Started
 
 You need an LLM API key (e.g. `ANTHROPIC_API_KEY`). See [Configuration](#configuration) for all options.
@@ -42,10 +46,6 @@ For the macOS app, see [docs/dev/macos.md](docs/dev/macos.md).
 ### Then
 
 Open [http://localhost:3100](http://localhost:3100), add a project, and create a task or start a session.
-
-## How It Works
-
-Add your git repos as projects, then use the assistant for general work or create tasks — focused units of work that each get their own branch. See [`docs/features/`](docs/features/) for more.
 
 ## Architecture
 
