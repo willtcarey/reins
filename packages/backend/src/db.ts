@@ -7,11 +7,23 @@
 
 import { Database } from "bun:sqlite";
 import { mkdirSync, existsSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { runMigrations } from "./migrations.js";
 
-const WORKSPACE_ROOT = process.cwd();
-const DATA_DIR = join(WORKSPACE_ROOT, ".reins");
+/**
+ * Resolve the data directory from an env-like record.
+ * - If REINS_DATA_DIR is set and non-empty, use it (resolved against cwd if relative).
+ * - Otherwise fall back to .reins/ under cwd.
+ */
+export function resolveDataDir(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const raw = env.REINS_DATA_DIR?.trim();
+  if (raw) return resolve(raw);
+  return join(process.cwd(), ".reins");
+}
+
+const DATA_DIR = resolveDataDir();
 const DB_PATH = join(DATA_DIR, "reins.db");
 
 let db: Database | null = null;

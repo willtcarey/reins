@@ -11,14 +11,20 @@ docker build -t reins .
 ## Run
 
 ```sh
-docker run -p 3100:3100 -e ANTHROPIC_API_KEY=your-key reins
+docker run -p 3100:3100 \
+  -e ANTHROPIC_API_KEY=your-key \
+  -v reins-data:/data \
+  reins
 ```
+
+The `-v reins-data:/data` mount persists the SQLite database across container restarts. Without it, all projects, tasks, and sessions are lost when the container stops.
 
 Mount your project directories so the server can access them:
 
 ```sh
 docker run -p 3100:3100 \
   -e ANTHROPIC_API_KEY=your-key \
+  -v reins-data:/data \
   -v /path/to/your/repos:/repos \
   reins
 ```
@@ -34,6 +40,7 @@ docker run -p 3100:3100 \
   -e GEMINI_API_KEY=your-key \
   -e REINS_PROVIDER=google \
   -e REINS_MODEL=gemini-2.5-pro \
+  -v reins-data:/data \
   reins
 ```
 

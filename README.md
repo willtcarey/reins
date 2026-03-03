@@ -19,11 +19,12 @@ docker build -t reins .
 
 docker run -p 3100:3100 \
   -e ANTHROPIC_API_KEY=your-key \
+  -v reins-data:/data \
   -v /path/to/your/repos:/repos \
   reins
 ```
 
-Add projects using their paths inside the container (e.g. `/repos/my-project`). See [docs/dev/docker.md](docs/dev/docker.md) for more options.
+The `-v reins-data:/data` mount persists the database across container restarts. Add projects using their paths inside the container (e.g. `/repos/my-project`). See [docs/dev/docker.md](docs/dev/docker.md) for more options.
 
 ### Manual
 
@@ -62,6 +63,7 @@ The only required environment variable is an API key for your LLM provider (e.g.
 | Variable | Default | Description |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | API key for Anthropic models (required if using Anthropic) |
+| `REINS_DATA_DIR` | `.reins/` (cwd) | Directory for the SQLite database; set to a mounted volume path in Docker |
 | `REINS_PORT` | `3100` | Server port |
 | `REINS_PROVIDER` | — | Override LLM provider (e.g. `anthropic`, `openai`) |
 | `REINS_MODEL` | — | Override model ID (e.g. `claude-sonnet-4-20250514`) |

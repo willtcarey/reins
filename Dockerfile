@@ -11,5 +11,8 @@ RUN bun install --frozen-lockfile
 COPY . .
 RUN bun run build
 
+ENV REINS_DATA_DIR=/data
+VOLUME /data
+
 EXPOSE 3100
 CMD ["bun", "packages/backend/src/index.ts"]
