@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+Record an ADR when a library/tool/approach is **evaluated and rejected**, a **significant architectural choice** is made, or an existing decision is **revisited or reversed**. Use the format `NNN-slug.md`.
+
 | ADR | Status | Summary |
 |-----|--------|---------|
 | [001](001-pierre-diffs.md) | Rejected | Evaluated `@pierre/diffs` for diff viewer |

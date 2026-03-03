@@ -2,36 +2,19 @@
 
 See [README.md](README.md) for project overview, setup, and dev commands.
 
-## Dev Docs
+Before implementing code changes, read [docs/dev/workflow.md](docs/dev/workflow.md).
 
-Developer-facing guides (architecture, conventions, workflows) live in [`docs/dev/`](docs/dev/). See the [index](docs/dev/INDEX.md) for what's there. When adding a new dev doc, add an entry to the index.
+## Docs
 
-## Architecture Decision Records
+These are your docs — update them as you work. Add new ones, revise stale ones, move completed plans.
 
-We keep ADRs in `docs/adr/` using the format `NNN-slug.md`. Offer to write an ADR when:
+| Location | What goes there |
+|---|---|
+| [`docs/dev/`](docs/dev/) ([index](docs/dev/INDEX.md)) | Developer guides — architecture, conventions, workflows. Add new docs to the index. |
+| [`docs/features/`](docs/features/) | User-facing feature docs — how the user interacts, not implementation details. |
+| [`docs/plans/`](docs/plans/) | Planning docs for features, refactors, architectural changes. Move to `completed/` when done. |
+| [`docs/adr/`](docs/adr/) ([index](docs/adr/INDEX.md)) | Architecture Decision Records (`NNN-slug.md`). See index for when to write one. |
+| [`docs/tech-debt.md`](docs/tech-debt.md) | Tech debt tracker. Suggest items to the user — only add once confirmed. |
+| [`docs/TODO.md`](docs/TODO.md) | Roadmap and open items. |
 
-- A library, tool, or approach is **evaluated and rejected** — capture the findings so we don't repeat the research.
-- A **significant architectural or dependency choice** is made — record the context and trade-offs.
-- An existing decision is **revisited or reversed**.
 
-See the [ADR index](docs/adr/INDEX.md) for existing decisions and the format to follow.
-
-## Plans
-
-Planning docs live in [`docs/plans/`](docs/plans/) — these cover new features, architectural changes, refactorings, or any other work that benefits from a written plan. Once a plan is fully implemented, move it to `docs/plans/completed/`.
-
-## Tech Debt
-
-We track tech debt in [`docs/tech-debt.md`](docs/tech-debt.md). When you identify potential tech debt during a task, suggest it to the user — but only add it to the document once confirmed.
-
-## TODO
-
-Roadmap and open items live in [`docs/TODO.md`](docs/TODO.md).
-
-## Feature Documentation
-
-User-facing feature docs live in [`docs/features/`](docs/features/). When adding or changing a feature, update the relevant doc (or create a new one). These describe *how the user interacts with the feature* — not UI affordances or implementation details like what resets when, what labels appear, or how the system responds internally.
-
-## Development Workflow
-
-When implementing code changes, follow the workflow in [docs/dev/workflow.md](docs/dev/workflow.md). Read it before starting implementation work.
