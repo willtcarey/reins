@@ -43,6 +43,14 @@ For the macOS app, see [docs/dev/macos.md](docs/dev/macos.md).
 
 Open [http://localhost:3100](http://localhost:3100), add a project, and create a task or start a session.
 
+## Architecture
+
+| Package | Description | Docs |
+|---|---|---|
+| `packages/backend` | HTTP + WebSocket server, SQLite storage, git operations, coding agent sessions | [architecture](docs/dev/backend-architecture.md) |
+| `packages/frontend` | Lit + Tailwind CSS v4 SPA | [architecture](docs/dev/frontend-architecture.md) |
+| `packages/macos` | Native macOS app (SwiftUI + WKWebView) | [setup](docs/dev/macos.md) |
+
 ## Configuration
 
 The only required environment variable is an API key for your LLM provider (e.g. `ANTHROPIC_API_KEY`). Everything else is optional.
@@ -61,9 +69,3 @@ The only required environment variable is an API key for your LLM provider (e.g.
 ```sh
 bun run dev          # starts backend + frontend build watcher
 ```
-
-## Packages
-
-- **`packages/backend`** — HTTP + WebSocket server using `pi-coding-agent` SDK (Bun runtime). REST API, SQLite storage, git operations, and coding agent session management.
-- **`packages/frontend`** — Lit + Tailwind CSS v4 SPA, bundled with `bun build`
-- **`packages/macos`** — Native macOS app (SwiftUI + WKWebView) that wraps the frontend. See [docs/dev/macos.md](docs/dev/macos.md).
