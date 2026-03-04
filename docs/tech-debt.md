@@ -18,4 +18,5 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 - Several Lit components use manual `querySelector` instead of the idiomatic `@query` decorator (`app.ts`, `chat-panel.ts`, `task-form.ts`)
 - `diff-panel.ts` is doing too much — extract markdown preview/toggle into a `<diff-markdown-preview>` component and per-file diff card rendering into a `<diff-file-card>` component, leaving `diff-panel` as a thin layout shell
+- No frontend tests. The stores (`DiffStore`, `AppStore`, `ActiveProjectStore`) have coordination logic (polling, re-fetch triggers, session switching) that's entirely untested. At minimum, store-level tests with mocked fetch would catch regressions in when data is refreshed.
 - Sessions are fetched eagerly — scratch sessions load in bulk via `ProjectStore.fetchLists()` when a project expands, and task sessions load via `fetchTaskSessions()` when a task expands. All session lists should be lazy-loaded (paginated or fetched on demand) since they're rarely browsed and will eventually become continuous conversations with lazy loading.
