@@ -9,7 +9,7 @@
  * For project-scoped operations, construct a `ProjectModel` instance.
  */
 
-import { resolve, normalize } from "path";
+import { resolve, normalize, basename } from "path";
 import {
   createProject as storeCreateProject,
   type Project,
@@ -27,6 +27,7 @@ import {
   checkoutBranch,
   deleteBranch,
   showFile,
+  showFileBinary,
 } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
@@ -46,6 +47,19 @@ export class PathTraversalError extends Error {
 
 export class FileNotFoundError extends Error {
   constructor(message = "File not found") { super(message); }
+}
+
+// ---------------------------------------------------------------------------
+// Serve-file result
+// ---------------------------------------------------------------------------
+
+export interface ServeFileResult {
+  /** File content — string for text mode, Uint8Array for binary/download */
+  content: string | Uint8Array;
+  /** Detected MIME type (e.g. "text/plain; charset=utf-8") */
+  mimeType: string;
+  /** Bare filename extracted from the path (e.g. "report.xlsx") */
+  filename: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -120,7 +134,9 @@ export class ProjectModel {
    * Throws `PathTraversalError` for path traversal, `FileNotFoundError`
    * when the file doesn't exist.
    */
-  async readFile(filePath: string, ref?: string | null): Promise<string> {
+  async readFile(filePath: string, ref?: string | null): Promise<string>;
+  async readFile(filePath: string, ref: string | null | undefined, binary: true): Promise<Uint8Array>;
+  async readFile(filePath: string, ref?: string | null, binary?: boolean): Promise<string | Uint8Array> {
     // Prevent path traversal
     const resolved = resolve(this.projectDir, filePath);
     const normalizedProject = normalize(this.projectDir);
@@ -139,7 +155,9 @@ export class ProjectModel {
 
     if (useGit) {
       try {
-        return await showFile(this.projectDir, ref!, filePath);
+        return binary
+          ? await showFileBinary(this.projectDir, ref!, filePath)
+          : await showFile(this.projectDir, ref!, filePath);
       } catch {
         throw new FileNotFoundError("File not found in ref");
       }
@@ -148,10 +166,34 @@ export class ProjectModel {
     // Read from working tree
     try {
       const file = Bun.file(resolved);
-      return await file.text();
+      return binary ? new Uint8Array(await file.arrayBuffer()) : await file.text();
     } catch {
       throw new FileNotFoundError();
     }
+  }
+
+  /**
+   * Serve a file with MIME type detection and filename extraction.
+   *
+   * When `download` is true the content is returned as binary bytes;
+   * otherwise it's returned as a UTF-8 string (suitable for rendering).
+   *
+   * The caller (route handler) uses the returned metadata to build
+   * Content-Type and Content-Disposition headers.
+   */
+  async serveFile(
+    filePath: string,
+    ref?: string | null,
+    download?: boolean,
+  ): Promise<ServeFileResult> {
+    const mimeType = Bun.file(filePath).type || "text/plain; charset=utf-8";
+    const filename = basename(filePath) || filePath;
+
+    const content = download
+      ? await this.readFile(filePath, ref, true)
+      : await this.readFile(filePath, ref);
+
+    return { content, mimeType, filename };
   }
 
   /**

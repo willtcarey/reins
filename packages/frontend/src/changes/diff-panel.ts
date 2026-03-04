@@ -203,18 +203,24 @@ export class DiffPanel extends LitElement {
     }
   }
 
-  private async fetchMarkdown(path: string) {
+  private fileUrl(path: string): string | null {
     const projectId = this.store?.projectId;
-    if (projectId == null) return;
+    if (projectId == null) return null;
+    const branch = this.store?.branch ?? this.store?.fileData.branch;
+    let url = `/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`;
+    if (branch) url += `&ref=${encodeURIComponent(branch)}`;
+    return url;
+  }
+
+  private async fetchMarkdown(path: string) {
+    const url = this.fileUrl(path);
+    if (!url) return;
 
     const loadingNext = new Set(this.markdownLoading);
     loadingNext.add(path);
     this.markdownLoading = loadingNext;
 
     try {
-      const branch = this.store?.branch ?? this.store?.fileData.branch;
-      let url = `/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`;
-      if (branch) url += `&ref=${encodeURIComponent(branch)}`;
       const resp = await fetch(url);
       if (!resp.ok) {
         const cacheNext = new Map(this.markdownCache);
@@ -463,6 +469,18 @@ export class DiffPanel extends LitElement {
     document.body.removeChild(ta);
   }
 
+  private downloadFile(path: string, e: Event) {
+    e.stopPropagation();
+    const url = this.fileUrl(path);
+    if (!url) return;
+    const a = document.createElement("a");
+    a.href = url + "&download=1";
+    a.download = path.split("/").pop() || path;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
   private renderFile(file: DiffFile) {
     const collapsed = this.collapsedFiles.has(file.path);
     const isMd = isMarkdown(file.path);
@@ -486,6 +504,13 @@ export class DiffPanel extends LitElement {
               ? html`<svg class="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>`
               : html`<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>`
             }
+          </span>
+          <span
+            class="inline-flex items-center text-zinc-500 hover:text-zinc-300 transition-colors p-0.5 rounded hover:bg-zinc-700/50"
+            title="Download file"
+            @click=${(e: Event) => this.downloadFile(file.path, e)}
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
           </span>
           ${isMd ? html`<span class="text-blue-400 text-xs font-mono px-1.5 py-0.5 bg-blue-400/10 rounded">MD</span>` : nothing}
           ${file.additions > 0 ? html`<span class="text-green-400 text-xs font-mono">+${file.additions}</span>` : nothing}

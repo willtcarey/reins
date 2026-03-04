@@ -361,6 +361,31 @@ export async function showFile(
   return await runChecked(projectDir, ["show", `${ref}:${filePath}`]);
 }
 
+/**
+ * Read a file's binary content from a git ref via `git show ref:path`.
+ * Returns raw bytes instead of a decoded string.
+ */
+export async function showFileBinary(
+  projectDir: string,
+  ref: string,
+  filePath: string,
+): Promise<Uint8Array> {
+  const proc = Bun.spawn(["git", "show", `${ref}:${filePath}`], {
+    cwd: projectDir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).arrayBuffer(),
+    new Response(proc.stderr).text(),
+  ]);
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    throw new Error(`git show failed (exit ${exitCode}): ${stderr.trim()}`);
+  }
+  return new Uint8Array(stdout);
+}
+
 // ---- Working-tree diff -----------------------------------------------------
 
 /**
