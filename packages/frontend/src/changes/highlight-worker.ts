@@ -11,62 +11,57 @@
 
 import {
   createHighlighter,
+  bundledLanguages,
   type Highlighter,
   type BundledLanguage,
 } from "shiki/bundle/full";
 
-// Map file extensions to Shiki language identifiers
-const EXT_TO_LANG: Record<string, BundledLanguage> = {
+// Override map for extensions that don't match their Shiki language ID
+const EXT_OVERRIDES: Record<string, BundledLanguage> = {
   ts: "typescript",
-  tsx: "tsx",
   js: "javascript",
-  jsx: "jsx",
   mjs: "javascript",
   cjs: "javascript",
   py: "python",
-  java: "java",
-  cpp: "cpp",
   cc: "cpp",
   cxx: "cpp",
-  c: "c",
   h: "c",
   hpp: "cpp",
-  php: "php",
   sh: "shellscript",
-  bash: "shellscript",
   zsh: "shellscript",
-  css: "css",
-  scss: "scss",
-  less: "less",
-  html: "html",
   htm: "html",
-  xml: "xml",
   svg: "xml",
-  json: "json",
-  jsonc: "jsonc",
-  yaml: "yaml",
   yml: "yaml",
   md: "markdown",
-  mdx: "mdx",
-  sql: "sql",
-  graphql: "graphql",
   gql: "graphql",
-  r: "r",
   rb: "ruby",
-  svelte: "svelte",
-  vue: "vue",
-  coffee: "coffee",
-  csv: "csv",
-  sass: "sass",
-  glsl: "glsl",
 };
+
+// Filename-based overrides for files without extensions
+const FILENAME_TO_LANG: Record<string, BundledLanguage> = {
+  dockerfile: "dockerfile",
+  makefile: "makefile",
+  gemfile: "ruby",
+  rakefile: "ruby",
+};
+
+const bundledLangIds = new Set(Object.keys(bundledLanguages));
 
 function langFromPath(filePath: string): BundledLanguage | null {
   const basename = filePath.split("/").pop()?.toLowerCase() ?? "";
-  if (basename === "dockerfile") return "dockerfile";
-  if (basename === "makefile") return "makefile";
+
+  // Check filename matches first
+  const filenameLang = FILENAME_TO_LANG[basename];
+  if (filenameLang) return filenameLang;
+
   const ext = basename.split(".").pop()?.toLowerCase();
-  return ext ? (EXT_TO_LANG[ext] ?? null) : null;
+  if (!ext) return null;
+
+  // Check overrides first, then try the extension directly as a language ID
+  const override = EXT_OVERRIDES[ext];
+  if (override) return override;
+  if (bundledLangIds.has(ext)) return ext as BundledLanguage;
+  return null;
 }
 
 function escapeHtml(text: string): string {
