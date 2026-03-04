@@ -220,13 +220,20 @@ export class DiffStore {
         return;
       }
       const json = await resp.json();
+      const newFiles = sortFileSummaries(json.files ?? []);
+      const changed = JSON.stringify(newFiles) !== JSON.stringify(this.fileData.files);
       this.fileData = {
-        files: sortFileSummaries(json.files ?? []),
+        files: newFiles,
         branch: json.branch ?? null,
         baseBranch: json.baseBranch ?? null,
       };
       this.error = null;
       this.notify();
+
+      // If the file list changed and the full diff is loaded, re-fetch it
+      if (changed && this.fullData) {
+        await this.fetchFullDiff();
+      }
     } catch (err: any) {
       this.error = err.message ?? "Failed to fetch file list";
       this.notify();

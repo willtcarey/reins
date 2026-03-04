@@ -78,10 +78,16 @@ export class AppShell extends LitElement {
 
   private async applyRoute(route: Route, previousProjectId?: number | null) {
     const store = this.appStore;
+    const previousSessionId = store.sessionId;
     await store.setRoute(route.sessionId);
     // Reset file tree when project changes (derived from session)
     if (previousProjectId !== undefined && store.projectId !== previousProjectId) {
       this.fileTreeState.reset();
+    }
+    // When switching sessions, jump to chat and refresh the diff
+    if (store.sessionId && store.sessionId !== previousSessionId) {
+      this.activeTab = "chat";
+      store.diffStore.refresh();
     }
     // Clear activity notification when viewing a session
     if (store.sessionData) {
