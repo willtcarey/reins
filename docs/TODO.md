@@ -17,4 +17,4 @@
 - [ ] *(2026-02-25)* Persist activity state across refresh — session activity indicators (running/finished dots) are lost on page refresh because they're purely in-memory on the client. Include `isStreaming` in session list endpoints so the frontend can seed activity state on load/reconnect.
 - [ ] *(2026-03-03)* Docker DB persistence — the SQLite database is written to `.reins/` inside the container's working directory, which is lost on restart. Need a volume mount or configurable DB path so data survives container restarts.
 - [ ] *(2026-03-03)* Keyboard shortcuts — switch between Chat/Changes tabs, create a new session, create a new task, navigate between sessions, and other common actions without reaching for the mouse.
-- [ ] *(2026-03-01)* Diff view broken when a file is added and removed in the same diffset — if a file is both created and deleted within the changes being diffed, the diff view doesn't handle it correctly.
+
