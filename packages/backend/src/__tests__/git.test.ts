@@ -31,6 +31,8 @@ import {
   fetchAll,
   pullBaseBranch,
   fastForwardBaseBranch,
+  mergeBase,
+  trackBranch,
 } from "../git.js";
 
 // ---------------------------------------------------------------------------
@@ -527,5 +529,63 @@ describe("pullBaseBranch / fastForwardBaseBranch (with remote)", () => {
       const { rmSync } = await import("fs");
       rmSync(cloneDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mergeBase
+// ---------------------------------------------------------------------------
+
+describe("mergeBase", () => {
+  const repo = useTestRepo();
+
+  test("returns the fork-point SHA, not the tip of either branch", async () => {
+    // Record the SHA before any diverging commits — this is the expected merge-base
+    const forkPoint = await revParse(repo.dir, "HEAD");
+
+    // Create a feature branch and add a commit there
+    await createBranch(repo.dir, "feat", "main");
+    await checkoutBranch(repo.dir, "feat");
+    await commitFile(repo.dir, "feat.txt", "feature work", "feat commit");
+
+    // Go back to main and add a commit there too (so branches diverge)
+    await checkoutBranch(repo.dir, "main");
+    await commitFile(repo.dir, "main.txt", "main work", "main commit");
+
+    // mergeBase should return the original fork-point, not tip of either branch
+    const result = await mergeBase(repo.dir, "main", "feat");
+    expect(result).toBe(forkPoint);
+    expect(result).not.toBe(await revParse(repo.dir, "main"));
+    expect(result).not.toBe(await revParse(repo.dir, "feat"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// trackBranch
+// ---------------------------------------------------------------------------
+
+describe("trackBranch", () => {
+  const repo = useTestRepo({ withRemote: true });
+
+  test("creates a local tracking branch from origin/<branch>", async () => {
+    // Create and push a feature branch to origin
+    await createBranch(repo.dir, "feat-remote", "main");
+    await checkoutBranch(repo.dir, "feat-remote");
+    await commitFile(repo.dir, "remote.txt", "remote content", "remote commit");
+    const pushedSha = await revParse(repo.dir, "HEAD");
+
+    // Push to origin, then delete local branch
+    const push = Bun.spawn(["git", "push", "origin", "feat-remote"], {
+      cwd: repo.dir, stdout: "pipe", stderr: "pipe",
+    });
+    await push.exited;
+    await checkoutBranch(repo.dir, "main");
+    await deleteBranch(repo.dir, "feat-remote");
+    expect(await branchExists(repo.dir, "feat-remote")).toBe(false);
+
+    // trackBranch should recreate it locally
+    await trackBranch(repo.dir, "feat-remote");
+    expect(await branchExists(repo.dir, "feat-remote")).toBe(true);
+    expect(await revParse(repo.dir, "feat-remote")).toBe(pushedSha);
   });
 });

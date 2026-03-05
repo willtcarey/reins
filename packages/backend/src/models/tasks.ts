@@ -27,6 +27,10 @@ import {
   getCurrentBranch,
   checkoutBranch,
   deleteBranch,
+  mergeBase,
+  fetchOrigin,
+  remoteBranchExists,
+  trackBranch,
   type DiffStats,
 } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
@@ -74,39 +78,48 @@ export class ProjectTasks {
   /**
    * Create a task with a dedicated git branch and broadcast the result.
    *
-   * 1. Derive branch_name from title if not provided.
-   * 2. Check for branch collision; append suffix if needed.
-   * 3. Create the git branch from baseBranch.
-   * 4. Capture the base branch SHA for merge reconciliation.
-   * 5. Insert the task row.
-   * 6. Broadcast `task_updated` to all WS clients.
-   * 7. Return the created TaskRow.
+   * When `branch_name` is explicitly provided and the branch already exists
+   * (locally or on origin), it is adopted — no new branch is created, and the
+   * `base_commit` is set to the merge-base of the base branch and the
+   * existing branch. This supports the "pull someone else's branch" workflow.
+   *
+   * When `branch_name` is derived from the title, collisions get a suffix
+   * (to avoid silently adopting an unrelated branch).
    *
    * Throws on failure — callers handle errors in their own way.
    */
   async create(params: CreateTaskParams): Promise<TaskRow> {
-    // 1. Derive branch name
+    const explicitBranch = !!params.branch_name?.trim();
     let branchName = params.branch_name?.trim() || slugifyBranchName(params.title);
+    let baseCommit: string;
 
-    // 2. Check for collision; append suffix if needed
-    if (await branchExists(this.projectDir, branchName)) {
-      const suffix = Date.now().toString(36).slice(-4);
-      branchName = `${branchName}-${suffix}`;
+    if (explicitBranch && await branchExists(this.projectDir, branchName)) {
+      // Adopt existing local branch
+      baseCommit = await mergeBase(this.projectDir, this.baseBranch, branchName);
+    } else if (explicitBranch && !await branchExists(this.projectDir, branchName)) {
+      // Try fetching from origin
+      await fetchOrigin(this.projectDir, branchName);
+      if (await remoteBranchExists(this.projectDir, branchName)) {
+        // Adopt remote branch
+        await trackBranch(this.projectDir, branchName);
+        baseCommit = await mergeBase(this.projectDir, this.baseBranch, branchName);
+      } else {
+        // Branch doesn't exist anywhere — create it
+        await createBranch(this.projectDir, branchName, this.baseBranch);
+        baseCommit = await revParse(this.projectDir, this.baseBranch);
+      }
+    } else {
+      // Derived branch name — collision suffix behavior
+      if (await branchExists(this.projectDir, branchName)) {
+        const suffix = Date.now().toString(36).slice(-4);
+        branchName = `${branchName}-${suffix}`;
+      }
+      await createBranch(this.projectDir, branchName, this.baseBranch);
+      baseCommit = await revParse(this.projectDir, this.baseBranch);
     }
 
-    // 3. Create git branch
-    await createBranch(this.projectDir, branchName, this.baseBranch);
-
-    // 4. Capture the base branch SHA so reconciliation can distinguish
-    //    "never committed" from "genuinely merged" later.
-    const baseCommit = await revParse(this.projectDir, this.baseBranch);
-
-    // 5. Insert task row
     const task = createTask(this.projectId, params.title.trim(), params.description?.trim() || null, branchName, baseCommit);
-
-    // 6. Broadcast
     this.broadcast({ type: "task_updated", projectId: this.projectId });
-
     return task;
   }
 

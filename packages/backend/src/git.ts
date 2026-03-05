@@ -347,6 +347,37 @@ export async function revParse(
   return sha.trim();
 }
 
+// ---- Merge base ------------------------------------------------------------
+
+/**
+ * Return the best common ancestor (merge-base) of two refs.
+ */
+export async function mergeBase(
+  projectDir: string,
+  ref1: string,
+  ref2: string,
+): Promise<string> {
+  const sha = await runChecked(projectDir, ["merge-base", ref1, ref2]);
+  return sha.trim();
+}
+
+// ---- Tracking branches -----------------------------------------------------
+
+/**
+ * Create a local branch that tracks `origin/<branchName>`.
+ */
+export async function trackBranch(
+  projectDir: string,
+  branchName: string,
+): Promise<void> {
+  await runChecked(projectDir, [
+    "branch",
+    "--track",
+    branchName,
+    `origin/${branchName}`,
+  ]);
+}
+
 // ---- File content from git ref ---------------------------------------------
 
 /**
@@ -447,12 +478,11 @@ async function getGitDiff(
 
   // Branch mode: diff working tree against merge base (captures committed +
   // uncommitted in one pass, no overlap)
-  const [mergeBase, untrackedList] = await Promise.all([
-    run(projectDir, ["merge-base", baseBranch, "HEAD"])
-      .then((s) => s.trim()).catch(() => ""),
+  const [mergeBaseSha, untrackedList] = await Promise.all([
+    mergeBase(projectDir, baseBranch, "HEAD").catch(() => ""),
     run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
   ]);
-  const diffBase = mergeBase || baseBranch;
+  const diffBase = mergeBaseSha || baseBranch;
   const tracked = await run(projectDir, ["diff", ctxFlag, diffBase]).catch(() => "");
   const untracked = await diffUntrackedFiles(projectDir, ctxFlag, untrackedList);
   return [tracked, untracked].filter(Boolean).join("\n");
@@ -614,8 +644,8 @@ export async function getChangedFiles(
   const [numstatBase, untrackedList] = await Promise.all([
     mode === "uncommitted"
       ? Promise.resolve("HEAD")
-      : run(projectDir, ["merge-base", baseBranch, "HEAD"])
-          .then((s) => s.trim() || baseBranch).catch(() => baseBranch),
+      : mergeBase(projectDir, baseBranch, "HEAD")
+          .then((s) => s || baseBranch).catch(() => baseBranch),
     run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
   ]);
   const numstat = await run(projectDir, ["diff", "--numstat", numstatBase]).catch(() => "");

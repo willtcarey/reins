@@ -26,6 +26,12 @@ When a task session is opened, the task's branch is checked out automatically.
 
 Describe what you want to do in plain language — e.g. "add dark mode support" or "fix the login bug where sessions expire too early". Reins generates the task title, description, and branch name automatically from your input.
 
+### Adopting an existing branch
+
+If you provide an explicit `branch_name` when creating a task and that branch already exists (locally or on origin), Reins **adopts** it instead of creating a new branch. The remote branch is fetched and checked out locally if needed, and the task's base commit is set to the merge-base of the project's base branch and the existing branch — so diffs and reconciliation work correctly even though the branch wasn't created by Reins.
+
+This supports the "pull someone else's branch" workflow: a colleague pushes a branch, and you create a task pointing at it to get the full Reins experience (diff view, sessions, sync) on top of their work.
+
 ## Editing a task
 
 You can view and edit a task's title and description after creation. Open the three-dot menu on a task in the sidebar and choose "Edit" to open the edit dialog. This is useful for refining the AI-generated title or description, or adding more detail as you learn more about the work.

@@ -9,7 +9,6 @@
 - [ ] *(2026-02-19)* Project dashboard — a landing view for a project with pinned files, new session/new task buttons, and an overview of recent activity
 - [ ] *(2026-02-19)* Single-task lock and work queues — accept one active session at a time, deprioritise worktrees, build a queue primitive for sequential work items. See [planning doc](plans/task-queues.md).
 - [ ] *(2026-02-19)* Worktrees/sandboxing code execution (deprioritised — see task queues planning doc)
-- [ ] *(2026-02-20)* Pulling someone else's branch for local work — scratch sessions support this today but it's a loose fit. May need a dedicated workflow (e.g. associating an existing branch with a task) so the diff and sync controls work properly.
 - [ ] *(2026-02-20)* Project assistant session — every project should have a long-lived "assistant" session: an ongoing conversation with the project that doesn't require opening a task or starting a new session. Always available for quick questions, brainstorming, or lightweight interactions.
 - [ ] *(2026-02-21)* Task-pinned documents — let sessions mark repo files (plans, state-tracking docs, decision logs, etc.) as important for the current task. New sessions on the same task automatically ingest those documents, so context carries forward through the repo itself rather than through a separate memory store.
 - [ ] *(2026-02-21)* Surface coding agent errors to the frontend — errors from the coding agent arrive over the WebSocket but are not displayed in the UI. Show them so the user knows when something goes wrong.
