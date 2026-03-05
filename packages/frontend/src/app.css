@@ -175,6 +175,13 @@ html, body {
   @apply border border-zinc-700 px-3 py-1.5 text-sm;
 }
 
+/* Left-truncate file paths: RTL direction makes ellipsis appear on the left */
+.direction-rtl {
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;
