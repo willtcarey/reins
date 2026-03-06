@@ -68,6 +68,14 @@ Internal to AppStore — not accessed by views directly. Manages the project lis
 
 One instance per project, lazily created by `ProjectCollectionStore`. Holds task list, session list, task session sublists, and task mutations for a single project.
 
+### QuickOpenStore (`stores/quick-open-store.ts`)
+
+Standalone store owned by the app shell (not by AppStore — it has no WS event dependencies). Manages data for the quick-open palette (`Cmd+K`):
+
+- **Fetches palette items** — Calls `/api/palette` when the overlay opens.
+- **Fuzzy filtering** — Pure functions for fuzzy match scoring and item filtering.
+- **Recent session tracking** — Persists recently visited session IDs to localStorage for recency-based ordering.
+
 ### Subscription model
 
 Both AppStore and DiffStore use a `Set<listener>` + `notify()` pattern. Components subscribe in `connectedCallback` and bump a `@state()` version counter to trigger Lit's re-render cycle. Fine-grained per-field subscriptions aren't needed — Lit's dirty checking keeps renders efficient.
@@ -123,6 +131,7 @@ app-shell                    — root shell, creates store, applies routes
 │   └── diff-file-tree       — file tree sidebar (wide screens)
 ├── diff-panel               — full diff view with file cards
 │   └── diff-file-tree       — file tree with scroll spy
+├── quick-open               — Cmd+K fuzzy search across all sessions
 └── branch-indicator         — current branch display
 ```
 

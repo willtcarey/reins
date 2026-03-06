@@ -11,4 +11,5 @@ export const API = {
   project:  "/api/projects/:id",
   sessions: "/api/sessions",
   tasks:    "/api/tasks",
+  palette:  "/api/palette",
 } as const;
