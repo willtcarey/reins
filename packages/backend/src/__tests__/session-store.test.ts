@@ -7,6 +7,7 @@ import {
   getSession,
   listSessions,
   listTaskSessions,
+  listPaletteItems,
   updateSessionMeta,
   persistMessages,
   loadMessages,
@@ -340,6 +341,143 @@ describe("session-store", () => {
       const llmMsgs = loadMessagesForLLM("sess-1");
       expect(llmMsgs).toHaveLength(1);
       expect(llmMsgs[0].content).toBe("batch 3");
+    });
+  });
+
+  describe("listPaletteItems", () => {
+    test("returns sessions across multiple projects", () => {
+      const project2 = createProject("Project Two", "/tmp/project-two");
+
+      createSession("sess-p1", projectId);
+      persistMessages("sess-p1", [
+        { role: "user", content: [{ type: "text", text: "Hello from p1" }] },
+      ]);
+
+      createSession("sess-p2", project2.id);
+      persistMessages("sess-p2", [
+        { role: "user", content: [{ type: "text", text: "Hello from p2" }] },
+      ]);
+
+      const items = listPaletteItems();
+      expect(items).toHaveLength(2);
+      const projectNames = items.map((i) => i.projectName);
+      expect(projectNames).toContain("Test Project");
+      expect(projectNames).toContain("Project Two");
+    });
+
+    test("includes project name and task title", () => {
+      const task = createTask(projectId, "Fix the bug", null, "task/fix-bug");
+      createSession("sess-task", projectId, { taskId: task.id });
+      persistMessages("sess-task", [
+        { role: "user", content: [{ type: "text", text: "Working on bug" }] },
+      ]);
+
+      const items = listPaletteItems();
+      expect(items).toHaveLength(1);
+      expect(items[0].projectName).toBe("Test Project");
+      expect(items[0].taskTitle).toBe("Fix the bug");
+      expect(items[0].taskId).toBe(task.id);
+    });
+
+    test("excludes sessions with no messages", () => {
+      createSession("sess-empty", projectId);
+      createSession("sess-with-msgs", projectId);
+      persistMessages("sess-with-msgs", [
+        { role: "user", content: [{ type: "text", text: "Has content" }] },
+      ]);
+
+      const items = listPaletteItems();
+      expect(items).toHaveLength(1);
+      expect(items[0].sessionId).toBe("sess-with-msgs");
+    });
+
+    test("excludes sub-sessions (parent_session_id not null)", () => {
+      createSession("sess-parent", projectId);
+      persistMessages("sess-parent", [
+        { role: "user", content: [{ type: "text", text: "Parent" }] },
+      ]);
+
+      createSession("sess-child", projectId, { parentSessionId: "sess-parent" });
+      persistMessages("sess-child", [
+        { role: "user", content: [{ type: "text", text: "Child" }] },
+      ]);
+
+      const items = listPaletteItems();
+      expect(items).toHaveLength(1);
+      expect(items[0].sessionId).toBe("sess-parent");
+    });
+
+    test("orders by updated_at DESC", () => {
+      const task1 = createTask(projectId, "Task A", null, "task/a");
+      const task2 = createTask(projectId, "Task B", null, "task/b");
+
+      createSession("sess-old", projectId, { taskId: task1.id });
+      persistMessages("sess-old", [
+        { role: "user", content: [{ type: "text", text: "Old" }] },
+      ]);
+
+      createSession("sess-new", projectId, { taskId: task2.id });
+      persistMessages("sess-new", [
+        { role: "user", content: [{ type: "text", text: "New" }] },
+      ]);
+
+      // Manually set updated_at to ensure ordering
+      const { getDb } = require("../db.js");
+      const db = getDb();
+      db.query("UPDATE sessions SET updated_at = '2025-01-01T00:00:00.000Z' WHERE id = 'sess-new'").run();
+      db.query("UPDATE sessions SET updated_at = '2025-01-02T00:00:00.000Z' WHERE id = 'sess-old'").run();
+
+      const items = listPaletteItems();
+      expect(items[0].sessionId).toBe("sess-old");
+      expect(items[1].sessionId).toBe("sess-new");
+    });
+
+    test("only shows most recent assistant session per project", () => {
+      createSession("sess-older", projectId);
+      persistMessages("sess-older", [
+        { role: "user", content: [{ type: "text", text: "Older chat" }] },
+      ]);
+
+      createSession("sess-newer", projectId);
+      persistMessages("sess-newer", [
+        { role: "user", content: [{ type: "text", text: "Newer chat" }] },
+      ]);
+
+      // Ensure sess-newer is clearly more recent
+      const { getDb } = require("../db.js");
+      const db = getDb();
+      db.query("UPDATE sessions SET updated_at = '2025-01-01T00:00:00.000Z' WHERE id = 'sess-older'").run();
+      db.query("UPDATE sessions SET updated_at = '2025-01-02T00:00:00.000Z' WHERE id = 'sess-newer'").run();
+
+      const items = listPaletteItems();
+      const assistantItems = items.filter((i) => i.taskId === null);
+      expect(assistantItems).toHaveLength(1);
+      expect(assistantItems[0].sessionId).toBe("sess-newer");
+    });
+
+    test("returns firstMessage correctly", () => {
+      createSession("sess-msg", projectId);
+      persistMessages("sess-msg", [
+        { role: "user", content: [{ type: "text", text: "My first question" }] },
+        { role: "assistant", content: [{ type: "text", text: "Response" }] },
+        { role: "user", content: [{ type: "text", text: "Follow up" }] },
+      ]);
+
+      const items = listPaletteItems();
+      expect(items).toHaveLength(1);
+      expect(items[0].firstMessage).toBe("My first question");
+    });
+
+    test("returns null taskTitle for non-task sessions", () => {
+      createSession("sess-free", projectId);
+      persistMessages("sess-free", [
+        { role: "user", content: [{ type: "text", text: "Hello" }] },
+      ]);
+
+      const items = listPaletteItems();
+      expect(items).toHaveLength(1);
+      expect(items[0].taskId).toBeNull();
+      expect(items[0].taskTitle).toBeNull();
     });
   });
 });

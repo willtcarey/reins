@@ -129,6 +129,7 @@ export class ChatPanel extends LitElement {
         this.messages = this.sessionData.messages ?? [];
         this.isStreaming = this.sessionData.state.isStreaming;
         this.streamingBlocks = [];
+
       } else {
         // Session cleared (e.g. project switch) — reset everything
         this.messages = [];

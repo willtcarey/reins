@@ -13,7 +13,7 @@
 
 import { LitElement, html } from "lit";
 import { keyed } from "lit/directives/keyed.js";
-import { customElement, state } from "lit/decorators.js";
+import { customElement, state, query } from "lit/decorators.js";
 import { AppClient } from "./ws-client.js";
 import type { DiffPanel } from "./changes/diff-panel.js";
 import { FileTreeState } from "./changes/file-tree-state.js";
@@ -28,6 +28,9 @@ import "./changes/diff-file-tree.js";
 import type { SessionSidebar } from "./session-sidebar.js";
 import "./session-sidebar.js";
 import "./branch-indicator.js";
+import "./quick-open.js";
+import type { QuickOpen } from "./quick-open.js";
+import { QuickOpenStore } from "./stores/quick-open-store.js";
 
 @customElement("app-shell")
 export class AppShell extends LitElement {
@@ -42,6 +45,8 @@ export class AppShell extends LitElement {
   @state() private activeTab: "chat" | "changes" = "chat";
   /** Bumped on every store notification to trigger a re-render. */
   @state() private _storeVersion = 0;
+  private quickOpenStore = new QuickOpenStore();
+  @query("quick-open") private _quickOpen!: QuickOpen;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -93,6 +98,10 @@ export class AppShell extends LitElement {
     if (store.sessionData) {
       store.clearActivity(store.sessionData.id);
     }
+    // Track session visit for quick-open recency ordering
+    if (store.sessionId) {
+      this.quickOpenStore.recordVisit(store.sessionId);
+    }
   }
 
   private updateTitleAndFavicon(): void {
@@ -133,6 +142,10 @@ export class AppShell extends LitElement {
     sidebar?.open();
   }
 
+  private openQuickOpen() {
+    this._quickOpen?.open();
+  }
+
   private renderEmptyState() {
     return html`
       <div class="flex-1 flex flex-col">
@@ -144,6 +157,13 @@ export class AppShell extends LitElement {
             title="Open sidebar"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+          <button
+            class="p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer"
+            @click=${this.openQuickOpen}
+            title="Search sessions (Cmd+K)"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 2h10"/><path d="M5 6h14"/><rect x="3" y="10" width="18" height="12" rx="2"/></svg>
           </button>
         </div>
         <div class="flex-1 flex items-center justify-center">
@@ -197,6 +217,14 @@ export class AppShell extends LitElement {
                   title="Open sidebar"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                </button>
+                <!-- Search button (mobile only) -->
+                <button
+                  class="p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer shrink-0"
+                  @click=${this.openQuickOpen}
+                  title="Search sessions (Cmd+K)"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 2h10"/><path d="M5 6h14"/><rect x="3" y="10" width="18" height="12" rx="2"/></svg>
                 </button>
                 <branch-indicator
                   .currentBranch=${this.appStore.diffStore.branch ?? this.appStore.diffStore.fileData.branch}
@@ -257,6 +285,12 @@ export class AppShell extends LitElement {
             </div>
           ` : this.renderEmptyState()}
         </div>
+
+        <!-- Quick-open overlay -->
+        <quick-open
+          .activityMap=${this.appStore.activityMap}
+          .store=${this.quickOpenStore}
+        ></quick-open>
       </div>
     `;
   }

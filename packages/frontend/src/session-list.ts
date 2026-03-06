@@ -102,6 +102,7 @@ export class SessionList extends LitElement {
         <div class="border-b border-zinc-700 group/assistant">
           <div class="flex items-center">
             <button
+              data-session-id=${assistant.id}
               class="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 cursor-pointer text-left transition-colors hover:bg-zinc-700/30
                 ${isActive ? "bg-zinc-700/60" : ""}"
               @click=${() => this.handleSelectSession(assistant.id)}

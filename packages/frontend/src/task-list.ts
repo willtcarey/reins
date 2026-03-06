@@ -175,6 +175,7 @@ export class TaskList extends LitElement {
 
     return html`
       <button
+        data-session-id=${s.id}
         class="w-full text-left px-3 py-2 border-b border-zinc-700/50 cursor-pointer transition-colors
           ${isActive ? "bg-zinc-700/60" : "hover:bg-zinc-700/30"}"
         @click=${() => this.handleSelectSession(s.id)}

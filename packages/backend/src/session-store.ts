@@ -35,6 +35,16 @@ export interface SessionListItem {
   parent_session_id: string | null;
 }
 
+export interface PaletteItem {
+  sessionId: string;
+  projectId: number;
+  projectName: string;
+  taskId: number | null;
+  taskTitle: string | null;
+  firstMessage: string | null;
+  updatedAt: string;
+}
+
 export interface SessionMessageRow {
   id: number;
   session_id: string;
@@ -130,6 +140,52 @@ export function listTaskSessions(taskId: number): SessionListItem[] {
        ORDER BY s.updated_at DESC`,
     )
     .all(taskId) as SessionListItem[];
+}
+
+export function listPaletteItems(): PaletteItem[] {
+  const db = getDb();
+  const rows = db
+    .query(
+      `SELECT
+         s.id AS sessionId,
+         s.project_id AS projectId,
+         p.name AS projectName,
+         s.task_id AS taskId,
+         t.title AS taskTitle,
+         fm.first_message AS firstMessage,
+         s.updated_at AS updatedAt
+       FROM sessions s
+       JOIN projects p ON p.id = s.project_id
+       LEFT JOIN tasks t ON t.id = s.task_id
+       JOIN (
+         SELECT session_id, COUNT(*) AS cnt FROM session_messages GROUP BY session_id
+       ) mc ON mc.session_id = s.id
+       LEFT JOIN (
+         SELECT session_id,
+           json_extract(message_json, '$.content[0].text') AS first_message
+         FROM session_messages
+         WHERE role = 'user'
+           AND seq = (SELECT MIN(seq) FROM session_messages sm2 WHERE sm2.session_id = session_messages.session_id AND sm2.role = 'user')
+       ) fm ON fm.session_id = s.id
+       WHERE s.parent_session_id IS NULL
+         AND mc.cnt > 0
+         AND (
+           s.task_id IS NOT NULL
+           OR s.id = (
+             SELECT s2.id FROM sessions s2
+             JOIN (SELECT session_id FROM session_messages GROUP BY session_id) mc2
+               ON mc2.session_id = s2.id
+             WHERE s2.project_id = s.project_id
+               AND s2.task_id IS NULL
+               AND s2.parent_session_id IS NULL
+             ORDER BY s2.updated_at DESC
+             LIMIT 1
+           )
+         )
+       ORDER BY s.updated_at DESC`,
+    )
+    .all() as PaletteItem[];
+  return rows;
 }
 
 export function updateSessionMeta(
