@@ -251,7 +251,7 @@ export class DiffPanel extends LitElement {
       .replace(/>/g, "&gt;");
   }
 
-  private renderLine(line: DiffLine) {
+  private renderLine(line: DiffLine, wrap = false) {
     let prefix = " ";
     let classes = "text-zinc-300";
     const lineNo = line.newLine ?? line.oldLine;
@@ -276,14 +276,16 @@ export class DiffPanel extends LitElement {
     // position causes Lit to retain the old text node alongside the directive's
     // nodes, resulting in duplicate lines.
     const content = unsafeHTML(line.html ?? this.escapeHtml(line.text));
+    const divCls = `${classes} px-2 leading-5 font-mono ${wrap ? "flex" : "whitespace-pre"}`;
+    const gutterCls = `select-none text-zinc-600 ${wrap ? "shrink-0" : ""}`;
 
-    return html`<div class="${classes} px-2 leading-5 whitespace-pre font-mono"><span class="select-none text-zinc-600 mr-1 inline-block w-[3.5ch] text-right">${lineNo ?? ""}</span><span class="select-none text-zinc-600 mr-2">${prefix}</span>${content}</div>`;
+    return html`<div class=${divCls}><span class="${gutterCls} mr-1 inline-block w-[3.5ch] text-right">${lineNo ?? ""}</span><span class="${gutterCls} mr-2">${prefix}</span>${wrap ? html`<span class="whitespace-pre-wrap break-words min-w-0">${content}</span>` : content}</div>`;
   }
 
   private renderExpandButton(label: string, onClick: () => void) {
     return html`
       <button
-        class="w-full py-1 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 cursor-pointer flex items-center justify-center gap-1 border-t border-zinc-700/50 transition-colors"
+        class="w-full py-1 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 cursor-pointer flex items-center gap-1 border-t border-zinc-700/50 transition-colors pl-[5.5ch]"
         @click=${onClick}
       >
         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -403,16 +405,17 @@ export class DiffPanel extends LitElement {
   }
 
   private renderDiffContent(file: DiffFile) {
+    const wrap = isMarkdown(file.path);
     return html`
       <div class="text-xs overflow-x-auto">
-        <div class="min-w-full w-fit">
+        <div class="min-w-full ${wrap ? "" : "w-fit"}">
         ${file.hunks.map(
           (hunk, i) => html`
             ${this.renderHunkSeparator(i > 0 ? file.hunks[i - 1] : null, hunk)}
             <div class="bg-zinc-900/50 px-2 py-1 text-zinc-500 text-xs border-t border-zinc-700 font-mono">
               ${hunk.header}
             </div>
-            ${hunk.lines.map((line) => this.renderLine(line))}
+            ${hunk.lines.map((line) => this.renderLine(line, wrap))}
           `
         )}
         </div>
