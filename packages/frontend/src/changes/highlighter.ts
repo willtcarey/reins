@@ -41,13 +41,15 @@ export class Highlighter {
 
     const id = nextId++;
 
-    // Build a flat request: for each file, collect all line texts in hunk order
+    // Build request with hunks separated so each is highlighted independently
     const request: HighlightRequest = {
       id,
       type: "highlight",
       files: files.map((f) => ({
         path: f.path,
-        lines: f.hunks.flatMap((h) => h.lines.map((l) => l.text)),
+        hunks: f.hunks.map((h) => ({
+          lines: h.lines.map((l) => l.text),
+        })),
       })),
     };
 
@@ -66,16 +68,15 @@ export class Highlighter {
     if (!callback) return;
 
     if (fileRef) {
-      // Write highlighted HTML back into the DiffLine objects in-place
+      // Write highlighted HTML back into the DiffLine objects per-hunk
       for (let fi = 0; fi < resp.files.length && fi < fileRef.length; fi++) {
-        const htmlLines = resp.files[fi].htmlLines;
-        let lineIdx = 0;
-        for (const hunk of fileRef[fi].hunks) {
-          for (const line of hunk.lines) {
-            if (lineIdx < htmlLines.length) {
-              line.html = htmlLines[lineIdx];
-            }
-            lineIdx++;
+        const respHunks = resp.files[fi].hunks;
+        const fileHunks = fileRef[fi].hunks;
+        for (let hi = 0; hi < respHunks.length && hi < fileHunks.length; hi++) {
+          const htmlLines = respHunks[hi].htmlLines;
+          const lines = fileHunks[hi].lines;
+          for (let li = 0; li < htmlLines.length && li < lines.length; li++) {
+            lines[li].html = htmlLines[li];
           }
         }
       }

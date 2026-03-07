@@ -135,13 +135,13 @@ async function highlightLines(
 export interface HighlightRequest {
   id: number;
   type: "highlight";
-  files: Array<{ path: string; lines: string[] }>;
+  files: Array<{ path: string; hunks: Array<{ lines: string[] }> }>;
 }
 
 export interface HighlightResponse {
   id: number;
   type: "result";
-  files: Array<{ path: string; htmlLines: string[] }>;
+  files: Array<{ path: string; hunks: Array<{ htmlLines: string[] }> }>;
 }
 
 self.onmessage = async (e: MessageEvent<HighlightRequest>) => {
@@ -151,9 +151,13 @@ self.onmessage = async (e: MessageEvent<HighlightRequest>) => {
     const hl = await getHighlighter();
 
     const results = await Promise.all(
-      files.map(async ({ path, lines }) => ({
+      files.map(async ({ path, hunks }) => ({
         path,
-        htmlLines: await highlightLines(hl, path, lines),
+        hunks: await Promise.all(
+          hunks.map(async ({ lines }) => ({
+            htmlLines: await highlightLines(hl, path, lines),
+          })),
+        ),
       })),
     );
 
@@ -161,9 +165,11 @@ self.onmessage = async (e: MessageEvent<HighlightRequest>) => {
     self.postMessage(response);
   } catch (err: any) {
     // On error, return escaped plain text so the UI still works
-    const results = files.map(({ path, lines }) => ({
+    const results = files.map(({ path, hunks }) => ({
       path,
-      htmlLines: lines.map(escapeHtml),
+      hunks: hunks.map(({ lines }) => ({
+        htmlLines: lines.map(escapeHtml),
+      })),
     }));
     const response: HighlightResponse = { id, type: "result", files: results };
     self.postMessage(response);

@@ -9,7 +9,7 @@
  * diff-panel and diff-file-tree components, eliminating duplicate fetches.
  */
 
-import type { DiffFile, DiffFileSummary, DiffLine } from "../changes/types.js";
+import type { DiffFile, DiffFileSummary, DiffHunk, DiffLine } from "../changes/types.js";
 import { sortDiffFiles, sortFileSummaries } from "../changes/diff-sort.js";
 import { Highlighter } from "../changes/highlighter.js";
 
@@ -60,7 +60,6 @@ export class DiffStore {
   fullLoading = false;
 
   error: string | null = null;
-  loading = false;
   contextLines = DEFAULT_CONTEXT;
 
   /** Which changes to show: all branch changes or only uncommitted. */
@@ -109,10 +108,6 @@ export class DiffStore {
   /** The task branch being viewed (null for scratch sessions using HEAD). */
   get branch(): string | null {
     return this._branch;
-  }
-
-  get defaultContext(): number {
-    return DEFAULT_CONTEXT;
   }
 
   /**
@@ -185,24 +180,6 @@ export class DiffStore {
     await this.fetchFullDiff();
   }
 
-  // ---- Context lines --------------------------------------------------------
-
-  /** Change the number of context lines and re-fetch full diff. */
-  async setContextLines(n: number) {
-    if (n === this.contextLines) return;
-    this.contextLines = n;
-    this.notify();
-    await this.fetchFullDiff();
-  }
-
-  async expandContext(step = 20) {
-    await this.setContextLines(this.contextLines + step);
-  }
-
-  async resetContext() {
-    await this.setContextLines(DEFAULT_CONTEXT);
-  }
-
   // ---- Per-hunk expansion ---------------------------------------------------
 
   /**
@@ -234,26 +211,21 @@ export class DiffStore {
     }
   }
 
-  /** Get the last old/new line numbers from a hunk's lines. */
-  private _hunkEnd(file: DiffFile, hunkIndex: number): { oldLine: number; newLine: number } {
-    const hunk = file.hunks[hunkIndex];
+  /**
+   * Find the first old/new line numbers from a hunk's lines, scanning from
+   * either end. `edge = "start"` scans forward, `edge = "end"` scans backward.
+   */
+  private _hunkEdge(
+    file: DiffFile,
+    hunkIndex: number,
+    edge: "start" | "end",
+  ): { oldLine: number; newLine: number } {
+    const lines = file.hunks[hunkIndex].lines;
     let oldLine = 0;
     let newLine = 0;
-    for (let i = hunk.lines.length - 1; i >= 0; i--) {
-      const line = hunk.lines[i];
-      if (oldLine === 0 && line.oldLine != null) oldLine = line.oldLine;
-      if (newLine === 0 && line.newLine != null) newLine = line.newLine;
-      if (oldLine > 0 && newLine > 0) break;
-    }
-    return { oldLine, newLine };
-  }
-
-  /** Get the first old/new line numbers from a hunk's lines. */
-  private _hunkStart(file: DiffFile, hunkIndex: number): { oldLine: number; newLine: number } {
-    const hunk = file.hunks[hunkIndex];
-    let oldLine = 0;
-    let newLine = 0;
-    for (const line of hunk.lines) {
+    const len = lines.length;
+    for (let step = 0; step < len; step++) {
+      const line = lines[edge === "start" ? step : len - 1 - step];
       if (oldLine === 0 && line.oldLine != null) oldLine = line.oldLine;
       if (newLine === 0 && line.newLine != null) newLine = line.newLine;
       if (oldLine > 0 && newLine > 0) break;
@@ -284,40 +256,63 @@ export class DiffStore {
   }
 
   /**
+   * Resolve the DiffFile and its 1-indexed content lines for expansion.
+   * Returns null if the file isn't found or content can't be fetched.
+   */
+  private async _resolveFileForExpansion(
+    filePath: string,
+  ): Promise<{ file: DiffFile; fileLines: string[] } | null> {
+    if (!this.fullData) return null;
+    const file = this.fullData.files.find((f) => f.path === filePath);
+    if (!file) return null;
+    const fileLines = await this._fetchFileLines(filePath);
+    if (fileLines.length <= 1) return null;
+    return { file, fileLines };
+  }
+
+  /** Insert context lines into a hunk, notify, and re-highlight. */
+  private _insertAndHighlight(
+    file: DiffFile,
+    hunk: DiffHunk,
+    lines: DiffLine[],
+    position: "prepend" | "append",
+  ) {
+    if (position === "prepend") {
+      hunk.lines.unshift(...lines);
+    } else {
+      hunk.lines.push(...lines);
+    }
+    this.notify();
+    this._highlighter.highlight([file], () => this.notify());
+  }
+
+  /**
    * Expand a hunk upward — show more context lines above the given hunk.
    * Returns the number of lines inserted (for scroll adjustment).
    */
   async expandHunkUp(filePath: string, hunkIndex: number, step = EXPAND_STEP): Promise<number> {
-    if (!this.fullData) return 0;
-    const file = this.fullData.files.find((f) => f.path === filePath);
-    if (!file || hunkIndex < 0 || hunkIndex >= file.hunks.length) return 0;
+    const resolved = await this._resolveFileForExpansion(filePath);
+    if (!resolved) return 0;
+    const { file, fileLines } = resolved;
+    if (hunkIndex < 0 || hunkIndex >= file.hunks.length) return 0;
 
-    const fileLines = await this._fetchFileLines(filePath);
-    if (fileLines.length <= 1) return 0;
-
-    const hunk = file.hunks[hunkIndex];
-    const start = this._hunkStart(file, hunkIndex);
+    const start = this._hunkEdge(file, hunkIndex, "start");
     if (start.newLine <= 1) return 0;
 
     // How many lines can we show above?
     let lowerBound = 1;
     if (hunkIndex > 0) {
-      // Don't overlap with previous hunk
-      const prevEnd = this._hunkEnd(file, hunkIndex - 1);
+      const prevEnd = this._hunkEdge(file, hunkIndex - 1, "end");
       lowerBound = prevEnd.newLine + 1;
     }
     const available = start.newLine - lowerBound;
     if (available <= 0) return 0;
 
     const count = Math.min(step, available);
-    const newStart = start.newLine - count;
-    const oldStart = start.oldLine - count;
-
-    const contextLines = this._makeContextLines(fileLines, newStart, oldStart, count);
-    hunk.lines.unshift(...contextLines);
-
-    this.notify();
-    this._rehighlightFile(file);
+    const contextLines = this._makeContextLines(
+      fileLines, start.newLine - count, start.oldLine - count, count,
+    );
+    this._insertAndHighlight(file, file.hunks[hunkIndex], contextLines, "prepend");
     return count;
   }
 
@@ -326,38 +321,29 @@ export class DiffStore {
    * Returns the number of lines inserted.
    */
   async expandHunkDown(filePath: string, hunkIndex: number, step = EXPAND_STEP): Promise<number> {
-    if (!this.fullData) return 0;
-    const file = this.fullData.files.find((f) => f.path === filePath);
-    if (!file || hunkIndex < 0 || hunkIndex >= file.hunks.length) return 0;
+    const resolved = await this._resolveFileForExpansion(filePath);
+    if (!resolved) return 0;
+    const { file, fileLines } = resolved;
+    if (hunkIndex < 0 || hunkIndex >= file.hunks.length) return 0;
 
-    const fileLines = await this._fetchFileLines(filePath);
-    if (fileLines.length <= 1) return 0;
-
-    const hunk = file.hunks[hunkIndex];
-    const end = this._hunkEnd(file, hunkIndex);
+    const end = this._hunkEdge(file, hunkIndex, "end");
     const totalLines = fileLines.length - 1; // 1-indexed
-
     if (end.newLine >= totalLines) return 0;
 
     // How far can we expand down?
     let upperBound = totalLines;
     if (hunkIndex < file.hunks.length - 1) {
-      // Don't overlap with next hunk
-      const nextStart = this._hunkStart(file, hunkIndex + 1);
+      const nextStart = this._hunkEdge(file, hunkIndex + 1, "start");
       upperBound = nextStart.newLine - 1;
     }
     const available = upperBound - end.newLine;
     if (available <= 0) return 0;
 
     const count = Math.min(step, available);
-    const newStart = end.newLine + 1;
-    const oldStart = end.oldLine + 1;
-
-    const contextLines = this._makeContextLines(fileLines, newStart, oldStart, count);
-    hunk.lines.push(...contextLines);
-
-    this.notify();
-    this._rehighlightFile(file);
+    const contextLines = this._makeContextLines(
+      fileLines, end.newLine + 1, end.oldLine + 1, count,
+    );
+    this._insertAndHighlight(file, file.hunks[hunkIndex], contextLines, "append");
     return count;
   }
 
@@ -365,28 +351,25 @@ export class DiffStore {
    * Expand the gap between two adjacent hunks by `step` lines at a time.
    * Appends context lines to the end of the previous hunk. When the gap is
    * fully consumed, merges the two hunks into one.
-   * `nextHunkIndex` is the index of the lower hunk (the one after the gap).
    * Returns the number of lines inserted.
    */
   async expandHunkGap(filePath: string, nextHunkIndex: number, step = EXPAND_STEP): Promise<number> {
-    if (!this.fullData) return 0;
-    const file = this.fullData.files.find((f) => f.path === filePath);
-    if (!file || nextHunkIndex < 1 || nextHunkIndex >= file.hunks.length) return 0;
+    const resolved = await this._resolveFileForExpansion(filePath);
+    if (!resolved) return 0;
+    const { file, fileLines } = resolved;
+    if (nextHunkIndex < 1 || nextHunkIndex >= file.hunks.length) return 0;
 
-    const fileLines = await this._fetchFileLines(filePath);
-    if (fileLines.length <= 1) return 0;
-
-    const prevEnd = this._hunkEnd(file, nextHunkIndex - 1);
-    const nextStart = this._hunkStart(file, nextHunkIndex);
+    const prevEnd = this._hunkEdge(file, nextHunkIndex - 1, "end");
+    const nextStart = this._hunkEdge(file, nextHunkIndex, "start");
 
     const totalGap = nextStart.newLine - prevEnd.newLine - 1;
     if (totalGap <= 0) return 0;
 
     const count = Math.min(step, totalGap);
-    const newStart = prevEnd.newLine + 1;
-    const oldStart = prevEnd.oldLine + 1;
+    const contextLines = this._makeContextLines(
+      fileLines, prevEnd.newLine + 1, prevEnd.oldLine + 1, count,
+    );
 
-    const contextLines = this._makeContextLines(fileLines, newStart, oldStart, count);
     const prevHunk = file.hunks[nextHunkIndex - 1];
     prevHunk.lines.push(...contextLines);
 
@@ -398,15 +381,8 @@ export class DiffStore {
     }
 
     this.notify();
-    this._rehighlightFile(file);
-    return count;
-  }
-
-  /** Re-highlight a single file after expansion. */
-  private _rehighlightFile(file: DiffFile) {
-    // Clear html on lines that don't have it (newly inserted)
-    // then request highlighting for just this file
     this._highlighter.highlight([file], () => this.notify());
+    return count;
   }
 
   // ---- Lightweight file listing (polled) ------------------------------------
