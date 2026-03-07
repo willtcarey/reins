@@ -301,37 +301,27 @@ export class DiffStore {
     const { file, fileLines } = resolved;
     if (hunkIndex < 0 || hunkIndex >= file.hunks.length) return 0;
 
+    const up = direction === "up";
     const totalLines = fileLines.length - 1; // 1-indexed
 
-    if (direction === "up") {
-      const start = this._hunkEdge(file, hunkIndex, "start");
-      if (start.newLine <= 1) return 0;
-      let lowerBound = 1;
-      if (hunkIndex > 0) {
-        lowerBound = this._hunkEdge(file, hunkIndex - 1, "end").newLine + 1;
-      }
-      const count = Math.min(step, start.newLine - lowerBound);
-      if (count <= 0) return 0;
-      const contextLines = this._makeContextLines(
-        fileLines, start.newLine - count, start.oldLine - count, count,
-      );
-      this._insertAndHighlight(file, file.hunks[hunkIndex], contextLines, "prepend");
-      return count;
-    }
+    // Anchor: the edge of this hunk facing the expansion direction
+    const anchor = this._hunkEdge(file, hunkIndex, up ? "start" : "end");
 
-    // direction === "down"
-    const end = this._hunkEdge(file, hunkIndex, "end");
-    if (end.newLine >= totalLines) return 0;
-    let upperBound = totalLines;
-    if (hunkIndex < file.hunks.length - 1) {
-      upperBound = this._hunkEdge(file, hunkIndex + 1, "start").newLine - 1;
-    }
-    const count = Math.min(step, upperBound - end.newLine);
+    // Bound: nearest limit — adjacent hunk edge or file boundary
+    const neighborIdx = hunkIndex + (up ? -1 : 1);
+    const hasNeighbor = neighborIdx >= 0 && neighborIdx < file.hunks.length;
+    const bound = hasNeighbor
+      ? this._hunkEdge(file, neighborIdx, up ? "end" : "start").newLine + (up ? 1 : -1)
+      : (up ? 1 : totalLines);
+
+    const available = up ? anchor.newLine - bound : bound - anchor.newLine;
+    const count = Math.min(step, available);
     if (count <= 0) return 0;
-    const contextLines = this._makeContextLines(
-      fileLines, end.newLine + 1, end.oldLine + 1, count,
-    );
-    this._insertAndHighlight(file, file.hunks[hunkIndex], contextLines, "append");
+
+    const insertNew = up ? anchor.newLine - count : anchor.newLine + 1;
+    const insertOld = up ? anchor.oldLine - count : anchor.oldLine + 1;
+    const contextLines = this._makeContextLines(fileLines, insertNew, insertOld, count);
+    this._insertAndHighlight(file, file.hunks[hunkIndex], contextLines, up ? "prepend" : "append");
     return count;
   }
 
