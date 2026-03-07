@@ -28,7 +28,7 @@ marked.setOptions({
 
 // ---- Constants -------------------------------------------------------------
 
-const EXPAND_STEP = 20;
+const EXPAND_STEP = 15;
 
 function isMarkdown(path: string): boolean {
   return /\.(md|mdx|markdown)$/i.test(path);
@@ -282,45 +282,165 @@ export class DiffPanel extends LitElement {
     return html`<div class=${divCls}><span class="${gutterCls} mr-1 inline-block w-[3.5ch] text-right">${lineNo ?? ""}</span><span class="${gutterCls} mr-2">${prefix}</span>${wrap ? html`<span class="whitespace-pre-wrap break-words min-w-0">${content}</span>` : content}</div>`;
   }
 
-  private renderExpandButton(label: string, onClick: () => void) {
+  /** Tracks which expand buttons are currently loading. */
+  @state() private expandingHunks = new Set<string>();
+
+  private renderExpandButton(label: string, onClick: () => void, loading = false) {
     return html`
       <button
-        class="w-full py-1 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 cursor-pointer flex items-center gap-1 border-t border-zinc-700/50 transition-colors pl-[5.5ch]"
+        class="w-full py-1 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 cursor-pointer flex items-center gap-1 border-t border-zinc-700/50 transition-colors pl-[5.5ch] disabled:opacity-50 disabled:cursor-not-allowed"
+        ?disabled=${loading}
         @click=${onClick}
       >
-        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-        </svg>
+        ${loading
+          ? html`<svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>`
+          : html`<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>`
+        }
         ${label}
       </button>
     `;
   }
 
-  private renderHunkSeparator(prevHunk: DiffHunk | null, nextHunk: DiffHunk) {
-    if (!prevHunk) {
+  /** Get the scroll container element. */
+  private get _scrollContainer(): HTMLElement | null {
+    return this.querySelector("[data-diff-scroll]");
+  }
+
+  /**
+   * Expand a hunk upward with scroll position adjustment.
+   * Preserves the user's eye line by adjusting scrollTop after insertion.
+   */
+  private async _expandUp(filePath: string, hunkIndex: number) {
+    const key = `${filePath}:${hunkIndex}:up`;
+    if (this.expandingHunks.has(key)) return;
+
+    const container = this._scrollContainer;
+    const scrollBefore = container?.scrollTop ?? 0;
+
+    // Find the hunk element to measure its position before expansion
+    const hunkEl = this._findHunkElement(filePath, hunkIndex);
+    const rectBefore = hunkEl?.getBoundingClientRect();
+    const containerRect = container?.getBoundingClientRect();
+
+    this.expandingHunks = new Set(this.expandingHunks).add(key);
+    const linesInserted = await this.store?.expandHunkUp(filePath, hunkIndex) ?? 0;
+    const next = new Set(this.expandingHunks);
+    next.delete(key);
+    this.expandingHunks = next;
+
+    // After DOM updates, adjust scroll to keep the same content in view
+    if (linesInserted > 0 && container && rectBefore && containerRect) {
+      await this.updateComplete;
+      const hunkElAfter = this._findHunkElement(filePath, hunkIndex);
+      const rectAfter = hunkElAfter?.getBoundingClientRect();
+      if (rectAfter) {
+        const shift = rectAfter.top - rectBefore.top;
+        container.scrollTop = scrollBefore + shift;
+      }
+    }
+  }
+
+  /**
+   * Expand a hunk downward.
+   */
+  private async _expandDown(filePath: string, hunkIndex: number) {
+    const key = `${filePath}:${hunkIndex}:down`;
+    if (this.expandingHunks.has(key)) return;
+    this.expandingHunks = new Set(this.expandingHunks).add(key);
+    await this.store?.expandHunkDown(filePath, hunkIndex);
+    const next = new Set(this.expandingHunks);
+    next.delete(key);
+    this.expandingHunks = next;
+  }
+
+  /**
+   * Expand the gap between two hunks by EXPAND_STEP lines.
+   */
+  private async _expandGap(filePath: string, nextHunkIndex: number) {
+    const key = `${filePath}:${nextHunkIndex}:gap`;
+    if (this.expandingHunks.has(key)) return;
+
+    this.expandingHunks = new Set(this.expandingHunks).add(key);
+    await this.store?.expandHunkGap(filePath, nextHunkIndex);
+    const next = new Set(this.expandingHunks);
+    next.delete(key);
+    this.expandingHunks = next;
+  }
+
+  /**
+   * Find the DOM element for a specific hunk within a file card.
+   */
+  private _findHunkElement(filePath: string, hunkIndex: number): HTMLElement | null {
+    const fileCard = this.querySelector(`#${CSS.escape(fileCardId(filePath))}`);
+    if (!fileCard) return null;
+    const hunkEls = fileCard.querySelectorAll("[data-hunk-index]");
+    for (const el of hunkEls) {
+      if ((el as HTMLElement).dataset.hunkIndex === String(hunkIndex)) {
+        return el as HTMLElement;
+      }
+    }
+    return null;
+  }
+
+  private renderHunkSeparator(file: DiffFile, prevHunkIndex: number | null, nextHunkIndex: number) {
+    const nextHunk = file.hunks[nextHunkIndex];
+
+    if (prevHunkIndex === null) {
       // First hunk — check if there are hidden lines above
       const firstLine = nextHunk.lines[0];
       const startLine = firstLine?.newLine ?? firstLine?.oldLine ?? 1;
       if (startLine > 1) {
+        const key = `${file.path}:${nextHunkIndex}:up`;
+        const loading = this.expandingHunks.has(key);
         return this.renderExpandButton(
-          `Show more lines above`,
-          () => this.store?.expandContext(EXPAND_STEP)
+          `Show ${Math.min(EXPAND_STEP, startLine - 1)} more line${startLine - 1 !== 1 ? "s" : ""} above`,
+          () => this._expandUp(file.path, nextHunkIndex),
+          loading,
         );
       }
       return nothing;
     }
+
+    const prevHunk = file.hunks[prevHunkIndex];
 
     // Calculate gap between hunks
     const prevLastLine = this.getHunkEndLine(prevHunk);
     const nextFirstLine = nextHunk.lines[0]?.newLine ?? nextHunk.lines[0]?.oldLine ?? 0;
     const gap = nextFirstLine - prevLastLine - 1;
     if (gap > 0) {
+      const key = `${file.path}:${nextHunkIndex}:gap`;
+      const loading = this.expandingHunks.has(key);
+      const showing = Math.min(EXPAND_STEP, gap);
+      const label = gap <= EXPAND_STEP
+        ? `Expand ${gap} hidden line${gap !== 1 ? "s" : ""}`
+        : `Show ${showing} of ${gap} hidden lines`;
       return this.renderExpandButton(
-        `Expand ${gap} hidden line${gap !== 1 ? "s" : ""}`,
-        () => this.store?.expandContext(EXPAND_STEP)
+        label,
+        () => this._expandGap(file.path, nextHunkIndex),
+        loading,
       );
     }
 
+    return nothing;
+  }
+
+  private renderHunkTrailer(file: DiffFile, hunkIndex: number) {
+    const hunk = file.hunks[hunkIndex];
+    const lastLine = this.getHunkEndLine(hunk);
+    // Only show if this is the last hunk and there might be more lines below
+    if (hunkIndex < file.hunks.length - 1) return nothing;
+    // Show expand-down button if the hunk ends at a known line
+    if (lastLine > 0) {
+      const key = `${file.path}:${hunkIndex}:down`;
+      const loading = this.expandingHunks.has(key);
+      return this.renderExpandButton(
+        `Show more lines below`,
+        () => this._expandDown(file.path, hunkIndex),
+        loading,
+      );
+    }
     return nothing;
   }
 
@@ -411,11 +531,12 @@ export class DiffPanel extends LitElement {
         <div class="min-w-full ${wrap ? "" : "w-fit"}">
         ${file.hunks.map(
           (hunk, i) => html`
-            ${this.renderHunkSeparator(i > 0 ? file.hunks[i - 1] : null, hunk)}
-            <div class="bg-zinc-900/50 px-2 py-1 text-zinc-500 text-xs border-t border-zinc-700 font-mono">
+            ${this.renderHunkSeparator(file, i > 0 ? i - 1 : null, i)}
+            <div class="bg-zinc-900/50 px-2 py-1 text-zinc-500 text-xs border-t border-zinc-700 font-mono" data-hunk-index=${i}>
               ${hunk.header}
             </div>
             ${hunk.lines.map((line) => this.renderLine(line, wrap))}
+            ${this.renderHunkTrailer(file, i)}
           `
         )}
         </div>
@@ -611,7 +732,7 @@ export class DiffPanel extends LitElement {
     const files = fullData?.files ?? [];
     const branch = fullData?.branch ?? this.store.fileData.branch;
     const baseBranch = fullData?.baseBranch ?? this.store.fileData.baseBranch;
-    const { contextLines, defaultContext, diffMode } = this.store;
+    const { diffMode } = this.store;
 
     return html`
       <div class="h-full flex min-h-0">
@@ -637,16 +758,6 @@ export class DiffPanel extends LitElement {
                 ${branch}
               </span>
               ${this.renderBranchSyncStatus()}
-              <div class="flex-1"></div>
-              ${files.length > 0 ? html`
-                <span class="text-xs text-zinc-500">Context: ${contextLines} lines</span>
-                ${contextLines > defaultContext
-                  ? html`<button
-                      class="text-xs text-zinc-500 hover:text-zinc-300 underline cursor-pointer"
-                      @click=${() => this.store?.resetContext()}
-                    >Reset</button>`
-                  : nothing}
-              ` : nothing}
             </div>
           ` : nothing}
 
