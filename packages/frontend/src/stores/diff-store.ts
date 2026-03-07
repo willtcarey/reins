@@ -322,44 +322,17 @@ export class DiffStore {
     const insertOld = up ? anchor.oldLine - count : anchor.oldLine + 1;
     const contextLines = this._makeContextLines(fileLines, insertNew, insertOld, count);
     this._insertAndHighlight(file, file.hunks[hunkIndex], contextLines, up ? "prepend" : "append");
-    return count;
-  }
 
-  /**
-   * Expand the gap between two adjacent hunks by `step` lines at a time.
-   * Appends context lines to the end of the previous hunk. When the gap is
-   * fully consumed, merges the two hunks into one.
-   * Returns the number of lines inserted.
-   */
-  async expandHunkGap(filePath: string, nextHunkIndex: number, step = EXPAND_STEP): Promise<number> {
-    const resolved = await this._resolveFileForExpansion(filePath);
-    if (!resolved) return 0;
-    const { file, fileLines } = resolved;
-    if (nextHunkIndex < 1 || nextHunkIndex >= file.hunks.length) return 0;
-
-    const prevEnd = this._hunkEdge(file, nextHunkIndex - 1, "end");
-    const nextStart = this._hunkEdge(file, nextHunkIndex, "start");
-
-    const totalGap = nextStart.newLine - prevEnd.newLine - 1;
-    if (totalGap <= 0) return 0;
-
-    const count = Math.min(step, totalGap);
-    const contextLines = this._makeContextLines(
-      fileLines, prevEnd.newLine + 1, prevEnd.oldLine + 1, count,
-    );
-
-    const prevHunk = file.hunks[nextHunkIndex - 1];
-    prevHunk.lines.push(...contextLines);
-
-    // If we've filled the entire gap, merge the two hunks
-    if (count >= totalGap) {
-      const nextHunk = file.hunks[nextHunkIndex];
-      prevHunk.lines.push(...nextHunk.lines);
-      file.hunks.splice(nextHunkIndex, 1);
+    // If expansion closed the gap to an adjacent hunk, merge them.
+    // Always merge into the earlier hunk and remove the later one.
+    if (hasNeighbor && count >= available) {
+      const earlierIdx = Math.min(hunkIndex, neighborIdx);
+      const laterIdx = earlierIdx + 1;
+      file.hunks[earlierIdx].lines.push(...file.hunks[laterIdx].lines);
+      file.hunks.splice(laterIdx, 1);
+      this.notify();
     }
 
-    this.notify();
-    this._highlighter.highlight([file], () => this.notify());
     return count;
   }
 

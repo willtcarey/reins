@@ -355,19 +355,7 @@ export class DiffPanel extends LitElement {
     this.expandingHunks = next;
   }
 
-  /**
-   * Expand the gap between two hunks by EXPAND_STEP lines.
-   */
-  private async _expandGap(filePath: string, nextHunkIndex: number) {
-    const key = `${filePath}:${nextHunkIndex}:gap`;
-    if (this.expandingHunks.has(key)) return;
 
-    this.expandingHunks = new Set(this.expandingHunks).add(key);
-    await this.store?.expandHunkGap(filePath, nextHunkIndex);
-    const next = new Set(this.expandingHunks);
-    next.delete(key);
-    this.expandingHunks = next;
-  }
 
   /**
    * Find the DOM element for a specific hunk within a file card.
@@ -410,17 +398,31 @@ export class DiffPanel extends LitElement {
     const nextFirstLine = nextHunk.lines[0]?.newLine ?? nextHunk.lines[0]?.oldLine ?? 0;
     const gap = nextFirstLine - prevLastLine - 1;
     if (gap > 0) {
-      const key = `${file.path}:${nextHunkIndex}:gap`;
-      const loading = this.expandingHunks.has(key);
-      const showing = Math.min(EXPAND_STEP, gap);
-      const label = gap <= EXPAND_STEP
-        ? `Expand ${gap} hidden line${gap !== 1 ? "s" : ""}`
-        : `Show ${showing} of ${gap} hidden lines`;
-      return this.renderExpandButton(
-        label,
-        () => this._expandGap(file.path, nextHunkIndex),
-        loading,
-      );
+      if (gap <= EXPAND_STEP) {
+        // Small gap — single button expands down from prev hunk (will auto-merge)
+        const key = `${file.path}:${prevHunkIndex}:down`;
+        const loading = this.expandingHunks.has(key);
+        return this.renderExpandButton(
+          `Expand ${gap} hidden line${gap !== 1 ? "s" : ""}`,
+          () => this._expandDown(file.path, prevHunkIndex),
+          loading,
+        );
+      }
+      // Large gap — two buttons: expand down from prev, expand up from next
+      const downKey = `${file.path}:${prevHunkIndex}:down`;
+      const upKey = `${file.path}:${nextHunkIndex}:up`;
+      return html`
+        ${this.renderExpandButton(
+          `↓ Show ${EXPAND_STEP} of ${gap} hidden lines`,
+          () => this._expandDown(file.path, prevHunkIndex),
+          this.expandingHunks.has(downKey),
+        )}
+        ${this.renderExpandButton(
+          `↑ Show ${EXPAND_STEP} of ${gap} hidden lines`,
+          () => this._expandUp(file.path, nextHunkIndex),
+          this.expandingHunks.has(upKey),
+        )}
+      `;
     }
 
     return nothing;
