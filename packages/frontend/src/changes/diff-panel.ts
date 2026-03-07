@@ -408,20 +408,37 @@ export class DiffPanel extends LitElement {
           loading,
         );
       }
-      // Large gap — two buttons: expand down from prev, expand up from next
+      // Large gap — side-by-side expand down / expand up
       const downKey = `${file.path}:${prevHunkIndex}:down`;
       const upKey = `${file.path}:${nextHunkIndex}:up`;
+      const downLoading = this.expandingHunks.has(downKey);
+      const upLoading = this.expandingHunks.has(upKey);
       return html`
-        ${this.renderExpandButton(
-          `↓ Show ${EXPAND_STEP} of ${gap} hidden lines`,
-          () => this._expandDown(file.path, prevHunkIndex),
-          this.expandingHunks.has(downKey),
-        )}
-        ${this.renderExpandButton(
-          `↑ Show ${EXPAND_STEP} of ${gap} hidden lines`,
-          () => this._expandUp(file.path, nextHunkIndex),
-          this.expandingHunks.has(upKey),
-        )}
+        <div class="flex border-t border-zinc-700/50">
+          <button
+            class="flex-1 py-1 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 cursor-pointer flex items-center justify-center gap-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            ?disabled=${downLoading}
+            @click=${() => this._expandDown(file.path, prevHunkIndex)}
+          >
+            ${downLoading
+              ? html`<svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>`
+              : html`<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>`
+            }
+            ↓ Show ${EXPAND_STEP}
+          </button>
+          <span class="self-center text-xs text-zinc-600 px-2">${gap} hidden</span>
+          <button
+            class="flex-1 py-1 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 cursor-pointer flex items-center justify-center gap-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            ?disabled=${upLoading}
+            @click=${() => this._expandUp(file.path, nextHunkIndex)}
+          >
+            ${upLoading
+              ? html`<svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>`
+              : html`<svg class="w-3 h-3 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>`
+            }
+            ↑ Show ${EXPAND_STEP}
+          </button>
+        </div>
       `;
     }
 
