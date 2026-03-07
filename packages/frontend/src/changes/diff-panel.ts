@@ -325,7 +325,7 @@ export class DiffPanel extends LitElement {
     const containerRect = container?.getBoundingClientRect();
 
     this.expandingHunks = new Set(this.expandingHunks).add(key);
-    const linesInserted = await this.store?.expandHunkUp(filePath, hunkIndex) ?? 0;
+    const linesInserted = await this.store?.expandHunk(filePath, hunkIndex, "up") ?? 0;
     const next = new Set(this.expandingHunks);
     next.delete(key);
     this.expandingHunks = next;
@@ -349,7 +349,7 @@ export class DiffPanel extends LitElement {
     const key = `${filePath}:${hunkIndex}:down`;
     if (this.expandingHunks.has(key)) return;
     this.expandingHunks = new Set(this.expandingHunks).add(key);
-    await this.store?.expandHunkDown(filePath, hunkIndex);
+    await this.store?.expandHunk(filePath, hunkIndex, "down");
     const next = new Set(this.expandingHunks);
     next.delete(key);
     this.expandingHunks = next;

@@ -287,59 +287,47 @@ export class DiffStore {
   }
 
   /**
-   * Expand a hunk upward — show more context lines above the given hunk.
-   * Returns the number of lines inserted (for scroll adjustment).
+   * Expand a hunk in the given direction — show more context lines above or below.
+   * Returns the number of lines inserted (used for scroll adjustment on "up").
    */
-  async expandHunkUp(filePath: string, hunkIndex: number, step = EXPAND_STEP): Promise<number> {
+  async expandHunk(
+    filePath: string,
+    hunkIndex: number,
+    direction: "up" | "down",
+    step = EXPAND_STEP,
+  ): Promise<number> {
     const resolved = await this._resolveFileForExpansion(filePath);
     if (!resolved) return 0;
     const { file, fileLines } = resolved;
     if (hunkIndex < 0 || hunkIndex >= file.hunks.length) return 0;
 
-    const start = this._hunkEdge(file, hunkIndex, "start");
-    if (start.newLine <= 1) return 0;
-
-    // How many lines can we show above?
-    let lowerBound = 1;
-    if (hunkIndex > 0) {
-      const prevEnd = this._hunkEdge(file, hunkIndex - 1, "end");
-      lowerBound = prevEnd.newLine + 1;
-    }
-    const available = start.newLine - lowerBound;
-    if (available <= 0) return 0;
-
-    const count = Math.min(step, available);
-    const contextLines = this._makeContextLines(
-      fileLines, start.newLine - count, start.oldLine - count, count,
-    );
-    this._insertAndHighlight(file, file.hunks[hunkIndex], contextLines, "prepend");
-    return count;
-  }
-
-  /**
-   * Expand a hunk downward — show more context lines below the given hunk.
-   * Returns the number of lines inserted.
-   */
-  async expandHunkDown(filePath: string, hunkIndex: number, step = EXPAND_STEP): Promise<number> {
-    const resolved = await this._resolveFileForExpansion(filePath);
-    if (!resolved) return 0;
-    const { file, fileLines } = resolved;
-    if (hunkIndex < 0 || hunkIndex >= file.hunks.length) return 0;
-
-    const end = this._hunkEdge(file, hunkIndex, "end");
     const totalLines = fileLines.length - 1; // 1-indexed
-    if (end.newLine >= totalLines) return 0;
 
-    // How far can we expand down?
+    if (direction === "up") {
+      const start = this._hunkEdge(file, hunkIndex, "start");
+      if (start.newLine <= 1) return 0;
+      let lowerBound = 1;
+      if (hunkIndex > 0) {
+        lowerBound = this._hunkEdge(file, hunkIndex - 1, "end").newLine + 1;
+      }
+      const count = Math.min(step, start.newLine - lowerBound);
+      if (count <= 0) return 0;
+      const contextLines = this._makeContextLines(
+        fileLines, start.newLine - count, start.oldLine - count, count,
+      );
+      this._insertAndHighlight(file, file.hunks[hunkIndex], contextLines, "prepend");
+      return count;
+    }
+
+    // direction === "down"
+    const end = this._hunkEdge(file, hunkIndex, "end");
+    if (end.newLine >= totalLines) return 0;
     let upperBound = totalLines;
     if (hunkIndex < file.hunks.length - 1) {
-      const nextStart = this._hunkEdge(file, hunkIndex + 1, "start");
-      upperBound = nextStart.newLine - 1;
+      upperBound = this._hunkEdge(file, hunkIndex + 1, "start").newLine - 1;
     }
-    const available = upperBound - end.newLine;
-    if (available <= 0) return 0;
-
-    const count = Math.min(step, available);
+    const count = Math.min(step, upperBound - end.newLine);
+    if (count <= 0) return 0;
     const contextLines = this._makeContextLines(
       fileLines, end.newLine + 1, end.oldLine + 1, count,
     );
