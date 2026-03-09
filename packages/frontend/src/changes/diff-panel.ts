@@ -251,8 +251,21 @@ export class DiffPanel extends LitElement {
       .replace(/>/g, "&gt;");
   }
 
-  private renderLine(line: DiffLine, wrap = false) {
-    let prefix = " ";
+  /** Compute the character width needed for the line-number gutter in a file. */
+  private gutterWidth(file: DiffFile): number {
+    let max = 0;
+    for (const hunk of file.hunks) {
+      for (const line of hunk.lines) {
+        if (line.newLine != null && line.newLine > max) max = line.newLine;
+        if (line.oldLine != null && line.oldLine > max) max = line.oldLine;
+      }
+    }
+    // Number of digits + 1 extra ch for breathing room
+    return Math.max(3, String(max).length + 1);
+  }
+
+  private renderLine(line: DiffLine, wrap = false, gutterCh = 4) {
+    let prefix = "\u00a0";
     let classes = "text-zinc-300";
     const lineNo = line.newLine ?? line.oldLine;
 
@@ -266,7 +279,7 @@ export class DiffPanel extends LitElement {
         classes = "diff-remove";
         break;
       case "context":
-        prefix = " ";
+        prefix = "\u00a0";
         classes = "text-zinc-400";
         break;
     }
@@ -279,16 +292,19 @@ export class DiffPanel extends LitElement {
     const divCls = `${classes} px-2 leading-5 font-mono ${wrap ? "flex" : "whitespace-pre"}`;
     const gutterCls = `select-none text-zinc-600 ${wrap ? "shrink-0" : ""}`;
 
-    return html`<div class=${divCls}><span class="${gutterCls} mr-1 inline-block w-[3.5ch] text-right">${lineNo ?? ""}</span><span class="${gutterCls} mr-2">${prefix}</span>${wrap ? html`<span class="whitespace-pre-wrap break-words min-w-0">${content}</span>` : content}</div>`;
+    return html`<div class=${divCls}><span class="${gutterCls} mr-1 inline-block text-right" style="width:${gutterCh}ch">${lineNo ?? ""}</span><span class="${gutterCls} mr-2 inline-block text-center" style="width:1ch">${prefix}</span>${wrap ? html`<span class="whitespace-pre-wrap break-words min-w-0">${content}</span>` : content}</div>`;
   }
 
   /** Tracks which expand buttons are currently loading. */
   @state() private expandingHunks = new Set<string>();
 
-  private renderExpandButton(label: string, onClick: () => void, loading = false) {
+  private renderExpandButton(label: string, onClick: () => void, loading = false, gutterCh = 4) {
+    // gutter ch + 1ch prefix + ~0.75ch margins ≈ gutterCh + 2
+    const padCh = gutterCh + 2;
     return html`
       <button
-        class="w-full py-1 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 cursor-pointer flex items-center gap-1 border-t border-zinc-700/50 transition-colors pl-[5.5ch] disabled:opacity-50 disabled:cursor-not-allowed"
+        class="w-full py-1 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 cursor-pointer flex items-center gap-1 border-t border-zinc-700/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        style="padding-left:${padCh}ch"
         ?disabled=${loading}
         @click=${onClick}
       >
@@ -372,7 +388,7 @@ export class DiffPanel extends LitElement {
     return null;
   }
 
-  private renderHunkSeparator(file: DiffFile, prevHunkIndex: number | null, nextHunkIndex: number) {
+  private renderHunkSeparator(file: DiffFile, prevHunkIndex: number | null, nextHunkIndex: number, gutterCh = 4) {
     const nextHunk = file.hunks[nextHunkIndex];
 
     if (prevHunkIndex === null) {
@@ -386,6 +402,7 @@ export class DiffPanel extends LitElement {
           `Show ${Math.min(EXPAND_STEP, startLine - 1)} more line${startLine - 1 !== 1 ? "s" : ""} above`,
           () => this._expandUp(file.path, nextHunkIndex),
           loading,
+          gutterCh,
         );
       }
       return nothing;
@@ -406,6 +423,7 @@ export class DiffPanel extends LitElement {
           `Expand ${gap} hidden line${gap !== 1 ? "s" : ""}`,
           () => this._expandDown(file.path, prevHunkIndex),
           loading,
+          gutterCh,
         );
       }
       // Large gap — single button, expand down from prev hunk
@@ -415,13 +433,14 @@ export class DiffPanel extends LitElement {
         `Show ${EXPAND_STEP} of ${gap} hidden lines`,
         () => this._expandDown(file.path, prevHunkIndex),
         loading,
+        gutterCh,
       );
     }
 
     return nothing;
   }
 
-  private renderHunkTrailer(file: DiffFile, hunkIndex: number) {
+  private renderHunkTrailer(file: DiffFile, hunkIndex: number, gutterCh = 4) {
     const hunk = file.hunks[hunkIndex];
     const lastLine = this.getHunkEndLine(hunk);
     // Only show if this is the last hunk and there might be more lines below
@@ -434,6 +453,7 @@ export class DiffPanel extends LitElement {
         `Show more lines below`,
         () => this._expandDown(file.path, hunkIndex),
         loading,
+        gutterCh,
       );
     }
     return nothing;
@@ -521,17 +541,18 @@ export class DiffPanel extends LitElement {
 
   private renderDiffContent(file: DiffFile) {
     const wrap = isMarkdown(file.path);
+    const gw = this.gutterWidth(file);
     return html`
       <div class="text-xs overflow-x-auto">
         <div class="min-w-full ${wrap ? "" : "w-fit"}">
         ${file.hunks.map(
           (hunk, i) => html`
-            ${this.renderHunkSeparator(file, i > 0 ? i - 1 : null, i)}
+            ${this.renderHunkSeparator(file, i > 0 ? i - 1 : null, i, gw)}
             <div class="bg-zinc-900/50 px-2 py-1 text-zinc-500 text-xs border-t border-zinc-700 font-mono" data-hunk-index=${i}>
               ${hunk.header}
             </div>
-            ${hunk.lines.map((line) => this.renderLine(line, wrap))}
-            ${this.renderHunkTrailer(file, i)}
+            ${hunk.lines.map((line) => this.renderLine(line, wrap, gw))}
+            ${this.renderHunkTrailer(file, i, gw)}
           `
         )}
         </div>
