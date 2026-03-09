@@ -748,7 +748,6 @@ export class DiffPanel extends LitElement {
     const files = fullData?.files ?? [];
     const branch = fullData?.branch ?? this.store.fileData.branch;
     const baseBranch = fullData?.baseBranch ?? this.store.fileData.baseBranch;
-    const { diffMode } = this.store;
 
     return html`
       <div class="h-full flex min-h-0">
