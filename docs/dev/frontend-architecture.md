@@ -56,7 +56,8 @@ Owned by AppStore. Manages git diff state: file listings, full syntax-highlighte
 
 - **File polling** — Polls `/diff/files` every 5 seconds when a project is active.
 - **Spread polling** — Polls `/diff/spread` every 60 seconds (every 6th file poll cycle).
-- **Syntax highlighting** — Uses a Web Worker (`highlight-worker.ts`) for off-main-thread highlighting.
+- **Syntax highlighting** — Uses a Web Worker (`highlight-worker.ts`) for off-main-thread Shiki highlighting. Each hunk is highlighted independently so expanded hunks can be re-highlighted without reprocessing the entire file.
+- **Per-hunk expansion** — `expandHunk(filePath, hunkIndex, direction)` fetches the full file content on demand (cached per fetch cycle), builds context lines, and inserts them into the hunk. When expansion closes the gap between adjacent hunks, they auto-merge. Scroll position is preserved for upward expansion.
 
 Views access DiffStore through `store.diffStore` as a read-only surface.
 

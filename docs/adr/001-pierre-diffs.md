@@ -1,7 +1,7 @@
 # ADR-001: Evaluated `@pierre/diffs` for Diff Viewer
 
-- **Status:** Rejected
-- **Date:** 2026-02-13
+- **Status:** Rejected (twice)
+- **Date:** 2026-02-13 (original), 2026-03-06 (revisited)
 - **Author:** Will (with Claude)
 
 ## Context
@@ -50,7 +50,7 @@ We evaluated [`@pierre/diffs`](https://diffs.com) (v1.0.10) as a potential repla
 
 To get the full feature set, the backend would still need to serve the **full old and new file contents** for every changed file — not just the raw diff. This shifts highlighting work to the client but increases payload size.
 
-## Decision
+## First Decision (2026-02-13)
 
 **Rejected.** The current implementation is working well and is lightweight (~530 lines total across frontend and backend). Adopting `@pierre/diffs` would:
 
@@ -60,3 +60,29 @@ To get the full feature set, the backend would still need to serve the **full ol
 - Introduce a library with a much larger API surface than we need.
 
 The trade-off isn't worth it at this time. If we later need split-view diffs, word-level inline highlighting, or an annotation framework, this decision should be revisited.
+
+## Second Attempt (2026-03-06): Adopted then Reverted
+
+The original rejection reasons had changed — Shiki was already running client-side in a web worker, and the custom diff code had grown to ~950 lines. A migration was attempted. It was reverted after encountering multiple issues:
+
+### Hunk expansion requires full file contents upfront
+
+The library's expansion model assumes all file contents are available at parse time (via `parseDiffFromFile`). REINS streams diffs from `git diff` output and doesn't have full file contents loaded. Attempting lazy one-off loading for expansion (fetching file contents on demand when the user clicks "expand") didn't work well — the library doesn't support injecting file contents after initial parse, so workarounds were fragile and complex.
+
+### Rendering performance was worse
+
+Significant performance regressions on both mobile and desktop. The `FileDiff` component's rendering was noticeably slower than the existing custom Shiki-in-worker implementation, particularly for large diffs. The cause wasn't fully diagnosed, but the custom implementation — which highlights in a web worker pool and renders simple HTML — didn't have these issues.
+
+### Net code increase, not decrease
+
+The migration was supposed to eliminate ~950 lines of custom code. Instead, the workarounds for expansion, render batching, height estimation, and performance mitigations grew `diff-panel.ts` from 685 to 1,031 lines — a 50% increase. The complexity shifted rather than decreased.
+
+### Didn't get to use the features we wanted
+
+The issues above consumed all the migration effort, so the features that motivated the attempt (annotations, word-level inline diffs) were never actually integrated. Those will need to be built into the custom implementation instead.
+
+## Final Decision
+
+**Rejected.** Keep the custom diff implementation. Build desired features (annotations, inline word-level diffs) directly rather than adopting this library. The expansion model and rendering performance are fundamental mismatches with REINS's architecture.
+
+Do not revisit this decision unless `@pierre/diffs` adds support for lazy/on-demand file content loading for hunk expansion.

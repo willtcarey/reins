@@ -9,11 +9,12 @@
  * diff-panel and diff-file-tree components, eliminating duplicate fetches.
  */
 
-import type { DiffFile, DiffFileSummary } from "../changes/types.js";
+import type { DiffFile, DiffFileSummary, DiffHunk, DiffLine } from "../changes/types.js";
 import { sortDiffFiles, sortFileSummaries } from "../changes/diff-sort.js";
 import { Highlighter } from "../changes/highlighter.js";
 
 const DEFAULT_CONTEXT = 3;
+const EXPAND_STEP = 15;
 const POLL_INTERVAL = 5000;
 const SPREAD_INTERVAL = 10_000;
 const SPREAD_FETCH_EVERY = 6;
@@ -59,7 +60,6 @@ export class DiffStore {
   fullLoading = false;
 
   error: string | null = null;
-  loading = false;
   contextLines = DEFAULT_CONTEXT;
 
   /** Which changes to show: all branch changes or only uncommitted. */
@@ -91,6 +91,9 @@ export class DiffStore {
   private _syncResultTimer: ReturnType<typeof setTimeout> | null = null;
   private _highlighter = new Highlighter();
 
+  /** Cache of file content lines (1-indexed: element 0 is unused). */
+  private _fileContentCache = new Map<string, string[]>();
+
   /** Build the `&branch=...` query fragment if a branch is set. */
   private get _branchParam(): string {
     return this._branch ? `&branch=${encodeURIComponent(this._branch)}` : "";
@@ -105,10 +108,6 @@ export class DiffStore {
   /** The task branch being viewed (null for scratch sessions using HEAD). */
   get branch(): string | null {
     return this._branch;
-  }
-
-  get defaultContext(): number {
-    return DEFAULT_CONTEXT;
   }
 
   /**
@@ -181,22 +180,160 @@ export class DiffStore {
     await this.fetchFullDiff();
   }
 
-  // ---- Context lines --------------------------------------------------------
+  // ---- Per-hunk expansion ---------------------------------------------------
 
-  /** Change the number of context lines and re-fetch full diff. */
-  async setContextLines(n: number) {
-    if (n === this.contextLines) return;
-    this.contextLines = n;
+  /**
+   * Fetch file content lines for a given path. Returns a 1-indexed array
+   * (element 0 is empty string) so fileLines[lineNo] gives the line text.
+   */
+  private async _fetchFileLines(filePath: string): Promise<string[]> {
+    const cached = this._fileContentCache.get(filePath);
+    if (cached) return cached;
+
+    const projectId = this._projectId;
+    if (projectId == null) return [""];
+
+    const branch = this._branch ?? undefined;
+    let url = `/api/projects/${projectId}/file?path=${encodeURIComponent(filePath)}`;
+    if (branch) url += `&ref=${encodeURIComponent(branch)}`;
+
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) return [""];
+      const text = await resp.text();
+      const lines = text.split("\n");
+      // Make 1-indexed: prepend empty string at index 0
+      const oneIndexed = ["", ...lines];
+      this._fileContentCache.set(filePath, oneIndexed);
+      return oneIndexed;
+    } catch {
+      return [""];
+    }
+  }
+
+  /**
+   * Find the first old/new line numbers from a hunk's lines, scanning from
+   * either end. `edge = "start"` scans forward, `edge = "end"` scans backward.
+   */
+  private _hunkEdge(
+    file: DiffFile,
+    hunkIndex: number,
+    edge: "start" | "end",
+  ): { oldLine: number; newLine: number } {
+    const lines = file.hunks[hunkIndex].lines;
+    let oldLine = 0;
+    let newLine = 0;
+    const len = lines.length;
+    for (let step = 0; step < len; step++) {
+      const line = lines[edge === "start" ? step : len - 1 - step];
+      if (oldLine === 0 && line.oldLine != null) oldLine = line.oldLine;
+      if (newLine === 0 && line.newLine != null) newLine = line.newLine;
+      if (oldLine > 0 && newLine > 0) break;
+    }
+    return { oldLine, newLine };
+  }
+
+  /** Build context DiffLine objects from file content. */
+  private _makeContextLines(
+    fileLines: string[],
+    newStart: number,
+    oldStart: number,
+    count: number,
+  ): DiffLine[] {
+    const result: DiffLine[] = [];
+    for (let i = 0; i < count; i++) {
+      const newLine = newStart + i;
+      const oldLine = oldStart + i;
+      if (newLine >= fileLines.length) break;
+      result.push({
+        type: "context",
+        text: fileLines[newLine],
+        oldLine,
+        newLine,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Resolve the DiffFile and its 1-indexed content lines for expansion.
+   * Returns null if the file isn't found or content can't be fetched.
+   */
+  private async _resolveFileForExpansion(
+    filePath: string,
+  ): Promise<{ file: DiffFile; fileLines: string[] } | null> {
+    if (!this.fullData) return null;
+    const file = this.fullData.files.find((f) => f.path === filePath);
+    if (!file) return null;
+    const fileLines = await this._fetchFileLines(filePath);
+    if (fileLines.length <= 1) return null;
+    return { file, fileLines };
+  }
+
+  /** Insert context lines into a hunk, notify, and re-highlight. */
+  private _insertAndHighlight(
+    file: DiffFile,
+    hunk: DiffHunk,
+    lines: DiffLine[],
+    position: "prepend" | "append",
+  ) {
+    if (position === "prepend") {
+      hunk.lines.unshift(...lines);
+    } else {
+      hunk.lines.push(...lines);
+    }
     this.notify();
-    await this.fetchFullDiff();
+    this._highlighter.highlight([file], () => this.notify());
   }
 
-  async expandContext(step = 20) {
-    await this.setContextLines(this.contextLines + step);
-  }
+  /**
+   * Expand a hunk in the given direction — show more context lines above or below.
+   * Returns the number of lines inserted (used for scroll adjustment on "up").
+   */
+  async expandHunk(
+    filePath: string,
+    hunkIndex: number,
+    direction: "up" | "down",
+    step = EXPAND_STEP,
+  ): Promise<number> {
+    const resolved = await this._resolveFileForExpansion(filePath);
+    if (!resolved) return 0;
+    const { file, fileLines } = resolved;
+    if (hunkIndex < 0 || hunkIndex >= file.hunks.length) return 0;
 
-  async resetContext() {
-    await this.setContextLines(DEFAULT_CONTEXT);
+    const up = direction === "up";
+    const totalLines = fileLines.length - 1; // 1-indexed
+
+    // Anchor: the edge of this hunk facing the expansion direction
+    const anchor = this._hunkEdge(file, hunkIndex, up ? "start" : "end");
+
+    // Bound: nearest limit — adjacent hunk edge or file boundary
+    const neighborIdx = hunkIndex + (up ? -1 : 1);
+    const hasNeighbor = neighborIdx >= 0 && neighborIdx < file.hunks.length;
+    const bound = hasNeighbor
+      ? this._hunkEdge(file, neighborIdx, up ? "end" : "start").newLine + (up ? 1 : -1)
+      : (up ? 1 : totalLines);
+
+    const available = up ? anchor.newLine - bound : bound - anchor.newLine;
+    const count = Math.min(step, available);
+    if (count <= 0) return 0;
+
+    const insertNew = up ? anchor.newLine - count : anchor.newLine + 1;
+    const insertOld = up ? anchor.oldLine - count : anchor.oldLine + 1;
+    const contextLines = this._makeContextLines(fileLines, insertNew, insertOld, count);
+    this._insertAndHighlight(file, file.hunks[hunkIndex], contextLines, up ? "prepend" : "append");
+
+    // If expansion closed the gap to an adjacent hunk, merge them.
+    // Always merge into the earlier hunk and remove the later one.
+    if (hasNeighbor && count >= available) {
+      const earlierIdx = Math.min(hunkIndex, neighborIdx);
+      const laterIdx = earlierIdx + 1;
+      file.hunks[earlierIdx].lines.push(...file.hunks[laterIdx].lines);
+      file.hunks.splice(laterIdx, 1);
+      this.notify();
+    }
+
+    return count;
   }
 
   // ---- Lightweight file listing (polled) ------------------------------------
@@ -270,6 +407,7 @@ export class DiffStore {
         branch: json.branch ?? null,
         baseBranch: json.baseBranch ?? null,
       };
+      this._fileContentCache.clear();
       this.error = null;
       this.fullLoading = false;
       this.notify();
@@ -290,6 +428,7 @@ export class DiffStore {
   clearFullDiff() {
     this.fullData = null;
     this.contextLines = DEFAULT_CONTEXT;
+    this._fileContentCache.clear();
     this.notify();
   }
 

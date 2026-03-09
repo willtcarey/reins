@@ -16,6 +16,23 @@ Shows **all changes** on the selected session's branch compared to the base bran
 
 Shows **only uncommitted working-tree changes** — edits that haven't been committed yet. Useful when a task has accumulated many commits and you want to see just what's been modified since the last commit.
 
+## Hunk expansion
+
+Each diff shows a few lines of context around changes by default. You can expand to see more of the surrounding file:
+
+- **Above a hunk** — a button appears if there are hidden lines above the first visible line. Click to reveal more context upward.
+- **Below a hunk** — a button at the bottom of the last hunk reveals more lines below.
+- **Between hunks** — when two hunks are separated by hidden lines, a button shows how many lines are hidden. If the gap is small (≤ 15 lines), one click reveals them all. For larger gaps, it reveals 15 lines at a time.
+
+When expanding closes the gap between two adjacent hunks, they automatically merge into a single hunk. Expanded lines are fetched from the full file on demand (not included in the initial diff payload) and syntax-highlighted in the background.
+
+## Markdown files
+
+Markdown files (`.md`, `.mdx`, `.markdown`) get two view modes toggled via tabs above the diff:
+
+- **Diff** (default) — the normal syntax-highlighted diff with word wrapping enabled
+- **Preview** — the rendered markdown content of the current file version
+
 ## Sync status
 
 The diff header shows how the selected session's branch relates to the base branch and the remote.
