@@ -284,7 +284,7 @@ function wireSession(
     // a compaction summary marker + the new compacted messages.
     if (event.type === "auto_compaction_end" && !event.aborted) {
       try {
-        applyCompaction(sessionId, agentSession.messages);
+        applyCompaction(sessionId, agentSession.messages, event.result?.summary);
         console.log(`  Compaction persisted for ${sessionId} (${agentSession.messages.length} post-compaction messages)`);
       } catch (err) {
         console.error(`  Failed to persist compaction for ${sessionId}:`, err);
@@ -314,20 +314,22 @@ export async function ensureSessionOpen(
 
 /**
  * Serialize a live ManagedSession for API responses.
+ * Uses SQLite messages (full history including compaction markers)
+ * rather than pi's in-memory array (which only has post-compaction messages).
  */
 export function serializeSession(managed: ManagedSession) {
   const s = managed.session;
-  // Look up task_id from DB row
   const row = dbGetSession(managed.id);
+  const messages = loadMessages(managed.id);
   return {
     id: managed.id,
     task_id: row?.task_id ?? null,
-    messages: s.messages,
+    messages,
     state: {
       model: s.model ? { provider: s.model.provider, id: s.model.id } : null,
       thinkingLevel: s.thinkingLevel,
       isStreaming: s.isStreaming,
-      messageCount: s.messages.length,
+      messageCount: messages.length,
     },
   };
 }

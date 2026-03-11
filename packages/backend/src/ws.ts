@@ -64,7 +64,15 @@ async function handleWsCommand(
         if (!projectDir) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
         const managed = await ensureSessionOpen(state, cmd.sessionId, projectDir);
         sendToWs(client.ws, { type: "ack", command: "prompt" });
-        await managed.session.prompt(cmd.message);
+
+        // Handle /compact as a slash command
+        const compactMatch = cmd.message.match(/^\/compact\s*(.*)?$/);
+        if (compactMatch) {
+          const instructions = compactMatch[1]?.trim() || undefined;
+          await managed.session.compact(instructions);
+        } else {
+          await managed.session.prompt(cmd.message);
+        }
       } catch (err: any) {
         sendToWs(client.ws, { type: "error", error: `prompt failed: ${err.message}` });
       }
