@@ -226,18 +226,33 @@ export function persistMessages(sessionId: string, messages: any[]): void {
   const maxRow = db
     .query("SELECT COALESCE(MAX(seq), -1) AS max_seq FROM session_messages WHERE session_id = ?")
     .get(sessionId) as { max_seq: number };
-  const startSeq = maxRow.max_seq + 1;
+  const nextSeq = maxRow.max_seq + 1;
 
-  if (startSeq >= messages.length) return; // nothing new
+  // After compaction, pi's in-memory array is re-indexed from 0 while the DB
+  // seq numbers continue from the pre-compaction messages + summary marker.
+  // Count how many post-compaction messages the DB already has, and use that
+  // as the offset into the in-memory array to find genuinely new messages.
+  const lastSummaryRow = db
+    .query(
+      `SELECT MAX(seq) AS last_seq FROM session_messages
+       WHERE session_id = ? AND role = 'compaction_summary'`,
+    )
+    .get(sessionId) as { last_seq: number | null };
+
+  const postCompactionCount = lastSummaryRow?.last_seq != null
+    ? nextSeq - (lastSummaryRow.last_seq + 1)  // messages after the summary marker
+    : nextSeq;                                   // no compaction — same as before
+
+  if (postCompactionCount >= messages.length) return; // nothing new
 
   const insert = db.query(
     `INSERT INTO session_messages (session_id, seq, role, message_json, created_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
   );
 
   const tx = db.transaction(() => {
-    for (let i = startSeq; i < messages.length; i++) {
+    for (let i = postCompactionCount; i < messages.length; i++) {
       const msg = messages[i];
-      insert.run(sessionId, i, msg.role, JSON.stringify(msg));
+      insert.run(sessionId, nextSeq + (i - postCompactionCount), msg.role, JSON.stringify(msg));
     }
   });
   tx();
@@ -251,7 +266,7 @@ export function persistMessages(sessionId: string, messages: any[]): void {
  * summary marker, then append the post-compaction messages. Also prunes
  * tool result content from messages before the compaction boundary.
  */
-export function applyCompaction(sessionId: string, messages: any[]): void {
+export function applyCompaction(sessionId: string, messages: any[], summary?: string): void {
   const db = getDb();
 
   const tx = db.transaction(() => {
@@ -268,7 +283,7 @@ export function applyCompaction(sessionId: string, messages: any[]): void {
     // Insert compaction summary marker
     const summaryMessage = {
       role: "compaction_summary",
-      content: "Conversation summarized",
+      content: summary || "Conversation summarized",
       timestamp: Date.now(),
     };
     insert.run(sessionId, summarySeq, "compaction_summary", JSON.stringify(summaryMessage));

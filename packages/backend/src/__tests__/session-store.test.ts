@@ -304,6 +304,38 @@ describe("session-store", () => {
       expect(all[3].content).toBe("summary context");
     });
 
+    test("stores summary text in compaction marker", () => {
+      createSession("sess-1", projectId);
+      persistMessages("sess-1", [
+        { role: "user", content: "old" },
+      ]);
+
+      const summary = "## Goal\nBuild a widget\n\n## Progress\n- [x] Created skeleton";
+      applyCompaction("sess-1", [
+        { role: "user", content: "new" },
+      ], summary);
+
+      const all = loadMessages("sess-1");
+      const marker = all.find((m: any) => m.role === "compaction_summary");
+      expect(marker).toBeDefined();
+      expect(marker.content).toBe(summary);
+    });
+
+    test("falls back to default content when no summary provided", () => {
+      createSession("sess-1", projectId);
+      persistMessages("sess-1", [
+        { role: "user", content: "old" },
+      ]);
+
+      applyCompaction("sess-1", [
+        { role: "user", content: "new" },
+      ]);
+
+      const all = loadMessages("sess-1");
+      const marker = all.find((m: any) => m.role === "compaction_summary");
+      expect(marker.content).toBe("Conversation summarized");
+    });
+
     test("prunes tool result content from pre-compaction messages", () => {
       createSession("sess-1", projectId);
       persistMessages("sess-1", [
@@ -321,6 +353,47 @@ describe("session-store", () => {
       const toolResult = all.find((m: any) => m.role === "toolResult");
       expect(toolResult).toBeDefined();
       expect(toolResult.content).toEqual([{ type: "text", text: "[pruned]" }]);
+    });
+
+    test("persistMessages saves new messages after compaction", () => {
+      createSession("sess-1", projectId);
+      // Simulate a conversation with several messages before compaction
+      persistMessages("sess-1", [
+        { role: "user", content: "msg 1" },
+        { role: "assistant", content: "reply 1" },
+        { role: "user", content: "msg 2" },
+        { role: "assistant", content: "reply 2" },
+      ]);
+
+      // Compaction fires — pi replaces its in-memory array with a small summary
+      const postCompactionMessages = [
+        { role: "user", content: "compacted context" },
+        { role: "assistant", content: "compacted reply" },
+      ];
+      applyCompaction("sess-1", postCompactionMessages);
+
+      // Now the user sends a new message and the assistant replies.
+      // Pi's in-memory array grows from the post-compaction base:
+      const updatedInMemory = [
+        ...postCompactionMessages,
+        { role: "user", content: "new question after compaction" },
+        { role: "assistant", content: "new answer after compaction" },
+      ];
+
+      // This is what happens on turn_end — persistMessages is called
+      // with pi's in-memory array (which is small, re-indexed from 0)
+      persistMessages("sess-1", updatedInMemory);
+
+      // The new messages should be persisted and visible after reload
+      const llmMsgs = loadMessagesForLLM("sess-1");
+      expect(llmMsgs.map((m: any) => m.content)).toContain("new question after compaction");
+      expect(llmMsgs.map((m: any) => m.content)).toContain("new answer after compaction");
+
+      // Full history should also include them
+      const allMsgs = loadMessages("sess-1");
+      const allContents = allMsgs.map((m: any) => m.content);
+      expect(allContents).toContain("new question after compaction");
+      expect(allContents).toContain("new answer after compaction");
     });
 
     test("handles multiple compactions", () => {
