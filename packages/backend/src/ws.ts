@@ -10,7 +10,7 @@
  */
 
 import type { ServerState, WsClient } from "./state.js";
-import { ensureSessionOpen } from "./sessions.js";
+import { ensureSessionOpen, runManualCompaction } from "./sessions.js";
 import { getSession } from "./session-store.js";
 import { getProject } from "./project-store.js";
 
@@ -64,7 +64,16 @@ async function handleWsCommand(
         if (!projectDir) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
         const managed = await ensureSessionOpen(state, cmd.sessionId, projectDir);
         sendToWs(client.ws, { type: "ack", command: "prompt" });
-        await managed.session.prompt(cmd.message);
+
+        // Handle /compact as a slash command
+        const compactMatch = cmd.message.match(/^\/compact\s*(.*)?$/);
+        if (compactMatch) {
+          const instructions = compactMatch[1]?.trim() || undefined;
+          const row = getSession(cmd.sessionId);
+          await runManualCompaction(state, managed, cmd.sessionId, row!.project_id, instructions);
+        } else {
+          await managed.session.prompt(cmd.message);
+        }
       } catch (err: any) {
         sendToWs(client.ws, { type: "error", error: `prompt failed: ${err.message}` });
       }

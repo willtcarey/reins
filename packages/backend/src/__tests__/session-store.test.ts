@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach } from "bun:test";
+import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "../project-store.js";
 import { createTask } from "../task-store.js";
@@ -12,8 +13,8 @@ import {
   persistMessages,
   loadMessages,
   loadMessagesForLLM,
-  applyCompaction,
 } from "../session-store.js";
+import { hydrateSessionManager } from "../sessions.js";
 
 let projectId: number;
 
@@ -231,14 +232,18 @@ describe("session-store", () => {
       createSession("sess-1", projectId);
       persistMessages("sess-1", [
         { role: "user", content: "before compaction" },
+        { role: "assistant", content: "reply" },
       ]);
-      applyCompaction("sess-1", [
+
+      // Pi compacts and replaces in-memory array
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "discussed things" },
         { role: "user", content: "after compaction" },
       ]);
 
       const msgs = loadMessages("sess-1");
       const roles = msgs.map((m: any) => m.role);
-      expect(roles).toContain("compaction_summary");
+      expect(roles).toContain("compactionSummary");
     });
   });
 
@@ -254,54 +259,84 @@ describe("session-store", () => {
       expect(msgs).toHaveLength(2);
     });
 
-    test("returns only post-compaction messages", () => {
+    test("returns compactionSummary and post-compaction messages", () => {
       createSession("sess-1", projectId);
       persistMessages("sess-1", [
         { role: "user", content: "old message" },
+        { role: "assistant", content: "old reply" },
       ]);
-      applyCompaction("sess-1", [
+
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "summary of old" },
         { role: "user", content: "new message" },
         { role: "assistant", content: "new reply" },
       ]);
 
       const msgs = loadMessagesForLLM("sess-1");
-      expect(msgs).toHaveLength(2);
-      expect(msgs[0].content).toBe("new message");
-      expect(msgs[1].content).toBe("new reply");
+      expect(msgs).toHaveLength(3);
+      expect(msgs[0].role).toBe("compactionSummary");
+      expect(msgs[0].summary).toBe("summary of old");
+      expect(msgs[1].content).toBe("new message");
+      expect(msgs[2].content).toBe("new reply");
     });
 
-    test("excludes compaction_summary markers", () => {
-      createSession("sess-1", projectId);
-      persistMessages("sess-1", [
-        { role: "user", content: "old" },
-      ]);
-      applyCompaction("sess-1", [
-        { role: "user", content: "new" },
-      ]);
-
-      const msgs = loadMessagesForLLM("sess-1");
-      const roles = msgs.map((m: any) => m.role);
-      expect(roles).not.toContain("compaction_summary");
-    });
-  });
-
-  describe("applyCompaction", () => {
-    test("inserts summary marker and post-compaction messages", () => {
+    test("excludes pre-compaction messages from LLM context", () => {
       createSession("sess-1", projectId);
       persistMessages("sess-1", [
         { role: "user", content: "old" },
         { role: "assistant", content: "old reply" },
       ]);
 
-      applyCompaction("sess-1", [
-        { role: "user", content: "summary context" },
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "summary" },
+        { role: "user", content: "new" },
+      ]);
+
+      const msgs = loadMessagesForLLM("sess-1");
+      const contents = msgs.map((m: any) => m.content || m.summary);
+      expect(contents).not.toContain("old");
+      expect(contents).not.toContain("old reply");
+    });
+  });
+
+  describe("compaction", () => {
+    test("persistMessages detects compactionSummary and creates boundary", () => {
+      createSession("sess-1", projectId);
+      persistMessages("sess-1", [
+        { role: "user", content: "old" },
+        { role: "assistant", content: "old reply" },
+      ]);
+
+      // Pi compacts — in-memory array now starts with compactionSummary
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "discussed old topics" },
+        { role: "user", content: "new question" },
       ]);
 
       const all = loadMessages("sess-1");
-      // old(2) + compaction_summary(1) + new(1) = 4
+      // old(2) + compactionSummary(1) + new(1) = 4
       expect(all).toHaveLength(4);
-      expect(all[2].role).toBe("compaction_summary");
-      expect(all[3].content).toBe("summary context");
+      expect(all[2].role).toBe("compactionSummary");
+      expect(all[3].content).toBe("new question");
+    });
+
+    test("preserves summary text from compactionSummary message", () => {
+      createSession("sess-1", projectId);
+      persistMessages("sess-1", [
+        { role: "user", content: "old" },
+        { role: "assistant", content: "old reply" },
+      ]);
+
+      const summary = "## Goal\nBuild a widget\n\n## Progress\n- [x] Created skeleton";
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary },
+        { role: "user", content: "new" },
+      ]);
+
+      const all = loadMessages("sess-1");
+      const marker = all.find((m: any) => m.role === "compactionSummary");
+      expect(marker).toBeDefined();
+      expect(marker.summary).toBe(summary);
     });
 
     test("prunes tool result content from pre-compaction messages", () => {
@@ -312,35 +347,86 @@ describe("session-store", () => {
         { role: "assistant", content: "answer" },
       ]);
 
-      applyCompaction("sess-1", [
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "summary" },
         { role: "user", content: "post-compact msg" },
       ]);
 
       const all = loadMessages("sess-1");
-      // Find the toolResult message (should be at index 1)
       const toolResult = all.find((m: any) => m.role === "toolResult");
       expect(toolResult).toBeDefined();
       expect(toolResult.content).toEqual([{ type: "text", text: "[pruned]" }]);
+    });
+
+    test("new messages persist correctly after compaction", () => {
+      createSession("sess-1", projectId);
+      persistMessages("sess-1", [
+        { role: "user", content: "msg 1" },
+        { role: "assistant", content: "reply 1" },
+        { role: "user", content: "msg 2" },
+        { role: "assistant", content: "reply 2" },
+      ]);
+
+      // Compaction replaces pi's in-memory array
+      const postCompaction = [
+        { role: "compactionSummary", summary: "compacted context" },
+        { role: "user", content: "kept question" },
+        { role: "assistant", content: "kept reply" },
+      ];
+      persistMessages("sess-1", postCompaction);
+
+      // User continues — pi's array grows
+      persistMessages("sess-1", [
+        ...postCompaction,
+        { role: "user", content: "new question" },
+        { role: "assistant", content: "new answer" },
+      ]);
+
+      const llmMsgs = loadMessagesForLLM("sess-1");
+      expect(llmMsgs.map((m: any) => m.content)).toContain("new question");
+      expect(llmMsgs.map((m: any) => m.content)).toContain("new answer");
+
+      const allMsgs = loadMessages("sess-1");
+      const allContents = allMsgs.map((m: any) => m.content || m.summary);
+      expect(allContents).toContain("new question");
+      expect(allContents).toContain("new answer");
     });
 
     test("handles multiple compactions", () => {
       createSession("sess-1", projectId);
       persistMessages("sess-1", [
         { role: "user", content: "batch 1" },
+        { role: "assistant", content: "reply 1" },
       ]);
 
-      applyCompaction("sess-1", [
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "summary of batch 1" },
         { role: "user", content: "batch 2" },
+        { role: "assistant", content: "reply 2" },
       ]);
 
-      applyCompaction("sess-1", [
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "summary of batches 1-2" },
         { role: "user", content: "batch 3" },
       ]);
 
-      // loadMessagesForLLM should only return messages after the LAST compaction
+      // loadMessagesForLLM returns last compactionSummary + post-compaction messages
       const llmMsgs = loadMessagesForLLM("sess-1");
-      expect(llmMsgs).toHaveLength(1);
-      expect(llmMsgs[0].content).toBe("batch 3");
+      expect(llmMsgs).toHaveLength(2);
+      expect(llmMsgs[0].role).toBe("compactionSummary");
+      expect(llmMsgs[0].summary).toBe("summary of batches 1-2");
+      expect(llmMsgs[1].content).toBe("batch 3");
+
+      // Full history is preserved through multiple compactions
+      const allMsgs = loadMessages("sess-1");
+      const allRoles = allMsgs.map((m: any) => m.role);
+      expect(allRoles.filter((r: string) => r === "compactionSummary")).toHaveLength(2);
+      const allContents = allMsgs.map((m: any) => m.content || m.summary);
+      expect(allContents).toContain("batch 1");
+      expect(allContents).toContain("summary of batch 1");
+      expect(allContents).toContain("batch 2");
+      expect(allContents).toContain("summary of batches 1-2");
+      expect(allContents).toContain("batch 3");
     });
   });
 
@@ -478,6 +564,131 @@ describe("session-store", () => {
       expect(items).toHaveLength(1);
       expect(items[0].taskId).toBeNull();
       expect(items[0].taskTitle).toBeNull();
+    });
+  });
+
+  describe("hydrateSessionManager", () => {
+    test("populates entries from regular messages", () => {
+      const sm = SessionManager.inMemory();
+      const messages = [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "hi there" },
+        { role: "user", content: "what is 2+2?" },
+        { role: "assistant", content: "4" },
+      ];
+
+      hydrateSessionManager(sm, messages);
+
+      const entries = sm.getEntries();
+      expect(entries).toHaveLength(4);
+      expect(entries.every((e: any) => e.type === "message")).toBe(true);
+      expect(entries[0].message.role).toBe("user");
+      expect(entries[0].message.content).toBe("hello");
+      expect(entries[3].message.role).toBe("assistant");
+      expect(entries[3].message.content).toBe("4");
+    });
+
+    test("entries form a linear chain via parentId", () => {
+      const sm = SessionManager.inMemory();
+      const messages = [
+        { role: "user", content: "a" },
+        { role: "assistant", content: "b" },
+        { role: "user", content: "c" },
+      ];
+
+      hydrateSessionManager(sm, messages);
+
+      const entries = sm.getEntries();
+      expect(entries[0].parentId).toBeNull();
+      expect(entries[1].parentId).toBe(entries[0].id);
+      expect(entries[2].parentId).toBe(entries[1].id);
+    });
+
+    test("getBranch returns all entries after hydration", () => {
+      const sm = SessionManager.inMemory();
+      const messages = [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "hi" },
+        { role: "user", content: "bye" },
+      ];
+
+      hydrateSessionManager(sm, messages);
+
+      const branch = sm.getBranch();
+      expect(branch).toHaveLength(3);
+    });
+
+    test("handles compactionSummary as compaction entry", () => {
+      const sm = SessionManager.inMemory();
+      const messages = [
+        { role: "compactionSummary", summary: "discussed project setup" },
+        { role: "user", content: "what next?" },
+        { role: "assistant", content: "let's continue" },
+      ];
+
+      hydrateSessionManager(sm, messages);
+
+      const entries = sm.getEntries();
+      expect(entries).toHaveLength(3);
+      expect(entries[0].type).toBe("compaction");
+      expect((entries[0] as any).summary).toBe("discussed project setup");
+      expect(entries[1].type).toBe("message");
+      expect(entries[2].type).toBe("message");
+    });
+
+    test("compaction entry is visible in getBranch", () => {
+      const sm = SessionManager.inMemory();
+      const messages = [
+        { role: "compactionSummary", summary: "old context" },
+        { role: "user", content: "new question" },
+      ];
+
+      hydrateSessionManager(sm, messages);
+
+      const branch = sm.getBranch();
+      expect(branch).toHaveLength(2);
+      expect(branch[0].type).toBe("compaction");
+      expect(branch[1].type).toBe("message");
+    });
+
+    test("handles empty message array", () => {
+      const sm = SessionManager.inMemory();
+
+      hydrateSessionManager(sm, []);
+
+      expect(sm.getEntries()).toHaveLength(0);
+      expect(sm.getBranch()).toHaveLength(0);
+    });
+
+    test("handles compactionSummary with missing summary field", () => {
+      const sm = SessionManager.inMemory();
+      const messages = [
+        { role: "compactionSummary" },
+        { role: "user", content: "hello" },
+      ];
+
+      hydrateSessionManager(sm, messages);
+
+      const entries = sm.getEntries();
+      expect(entries).toHaveLength(2);
+      expect(entries[0].type).toBe("compaction");
+      expect((entries[0] as any).summary).toBe("");
+    });
+
+    test("handles toolResult messages", () => {
+      const sm = SessionManager.inMemory();
+      const messages = [
+        { role: "user", content: "list files" },
+        { role: "assistant", content: "I'll run ls", toolCalls: [{ id: "tc1", name: "bash", args: { command: "ls" } }] },
+        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "file1.ts\nfile2.ts" }] },
+        { role: "assistant", content: "Here are the files" },
+      ];
+
+      hydrateSessionManager(sm, messages);
+
+      const entries = sm.getEntries();
+      expect(entries).toHaveLength(4);
+      expect(entries[2].message.role).toBe("toolResult");
     });
   });
 });

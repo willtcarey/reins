@@ -104,6 +104,9 @@ export class ChatPanel extends LitElement {
   @state() private streamingBlocks: StreamingBlock[] = [];
   @state() private inputText = "";
   @state() private expandedTools = new Set<string>();
+  @state() private isCompacting = false;
+  @state() private errorMessage = "";
+  private errorTimeout?: ReturnType<typeof setTimeout>;
 
   private unsubscribeEvent?: () => void;
   private scrollContainer: HTMLElement | null = null;
@@ -117,6 +120,13 @@ export class ChatPanel extends LitElement {
   override disconnectedCallback() {
     super.disconnectedCallback();
     this.unsubscribeEvent?.();
+    if (this.errorTimeout) clearTimeout(this.errorTimeout);
+  }
+
+  private showError(message: string) {
+    if (this.errorTimeout) clearTimeout(this.errorTimeout);
+    this.errorMessage = message;
+    this.errorTimeout = setTimeout(() => { this.errorMessage = ""; }, 5000);
   }
 
   override updated(changed: Map<string, unknown>) {
@@ -146,7 +156,12 @@ export class ChatPanel extends LitElement {
     if (!this.client) return;
 
     this.unsubscribeEvent = this.client.onEvent((sessionId, _projectId, event) => {
-      // Only handle events for our session
+      // WS-level errors (e.g. command failures) arrive with empty sessionId
+      if ((event as any).type === "ws_error") {
+        this.handleAgentEvent(event);
+        return;
+      }
+      // Only handle session events for our session
       if (sessionId !== this.sessionId) return;
       this.handleAgentEvent(event);
     });
@@ -217,6 +232,30 @@ export class ChatPanel extends LitElement {
         // A single message finished — could be mid-agent-run.
         // We refresh the messages array if the event includes the message.
         break;
+
+      case "compaction_start":
+        this.isCompacting = true;
+        break;
+
+      case "compaction_end":
+        this.isCompacting = false;
+        // Inject a compaction marker into the live message list so
+        // the divider appears immediately (not only after reload).
+        if (!event.aborted) {
+          this.messages = [
+            ...this.messages,
+            {
+              role: "compactionSummary" as any,
+              content: event.result?.summary || "Conversation summarized",
+              timestamp: Date.now(),
+            },
+          ];
+        }
+        break;
+
+      case "ws_error":
+        this.showError((event as any).error || "Something went wrong");
+        break;
     }
   }
 
@@ -224,21 +263,26 @@ export class ChatPanel extends LitElement {
     const text = this.inputText.trim();
     if (!text || !this.client || !this.sessionId) return;
 
+    const isSlashCommand = text.startsWith("/");
+
     if (this.isStreaming) {
       this.client.steer(this.sessionId, text);
     } else {
       this.client.prompt(this.sessionId, text);
     }
 
-    // Optimistically add user message
-    this.messages = [
-      ...this.messages,
-      {
-        role: "user",
-        content: text,
-        timestamp: Date.now(),
-      },
-    ];
+    // Slash commands (e.g. /compact) are handled server-side;
+    // don't show them as user message bubbles.
+    if (!isSlashCommand) {
+      this.messages = [
+        ...this.messages,
+        {
+          role: "user",
+          content: text,
+          timestamp: Date.now(),
+        },
+      ];
+    }
 
     this.inputText = "";
     this.shouldAutoScroll = true;
@@ -446,12 +490,31 @@ export class ChatPanel extends LitElement {
     return nothing;
   }
 
-  private renderCompactionSummary() {
+  private renderCompactionSummary(msg: any) {
+    const rawSummary = msg?.content || msg?.summary;
+    const summary = rawSummary && rawSummary !== "Conversation summarized" ? rawSummary : null;
+    const id = `compaction-${msg?.timestamp || 0}`;
+    const expanded = this.expandedTools.has(id);
+
     return html`
-      <div class="flex items-center gap-3 my-4">
-        <div class="flex-1 border-t border-zinc-600"></div>
-        <span class="text-[10px] text-zinc-500 uppercase tracking-wide shrink-0">Conversation summarized</span>
-        <div class="flex-1 border-t border-zinc-600"></div>
+      <div class="my-4">
+        <div class="flex items-center gap-3">
+          <div class="flex-1 border-t border-zinc-600"></div>
+          <button
+            class="flex items-center gap-1.5 text-[10px] text-zinc-500 uppercase tracking-wide shrink-0 ${summary ? 'hover:text-zinc-300 cursor-pointer' : ''} transition-colors"
+            @click=${() => summary && this.toggleTool(id)}
+            ?disabled=${!summary}
+          >
+            ${summary ? html`<span class="font-mono">${expanded ? '▼' : '▶'}</span>` : nothing}
+            Conversation summarized
+          </button>
+          <div class="flex-1 border-t border-zinc-600"></div>
+        </div>
+        ${expanded && summary ? html`
+          <div class="mt-2 mx-4 bg-zinc-800/50 rounded-lg px-4 py-3 text-sm border border-zinc-700">
+            ${this.renderMarkdown(summary)}
+          </div>
+        ` : nothing}
       </div>
     `;
   }
@@ -464,8 +527,8 @@ export class ChatPanel extends LitElement {
         return this.renderAssistantMessage(msg);
       case "toolResult":
         return this.renderToolResultMessage(msg);
-      case "compaction_summary" as any:
-        return this.renderCompactionSummary();
+      case "compactionSummary" as any:
+        return this.renderCompactionSummary(msg);
       default:
         return nothing;
     }
@@ -497,6 +560,12 @@ export class ChatPanel extends LitElement {
           }
           return this.renderToolBlock(block);
         })}
+        ${this.isCompacting ? html`
+          <div class="flex items-center gap-2 text-xs text-amber-500/70 mt-2 ml-2">
+            <span class="inline-block w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>
+            Summarizing conversation…
+          </div>
+        ` : nothing}
       </div>
     `;
   }
@@ -521,6 +590,12 @@ export class ChatPanel extends LitElement {
 
         <!-- Input area -->
         <div class="border-t border-zinc-700 p-3">
+          ${this.errorMessage ? html`
+            <div class="flex items-center gap-2 mb-2 px-3 py-1.5 bg-red-900/30 border border-red-800/50 rounded-lg text-xs text-red-300">
+              <span class="flex-1">${this.errorMessage}</span>
+              <button class="text-red-400 hover:text-red-200 cursor-pointer" @click=${() => { this.errorMessage = ""; }}>✕</button>
+            </div>
+          ` : nothing}
           <div class="flex gap-2 items-end">
             <textarea
               class="flex-1 bg-zinc-800 text-zinc-100 rounded-lg px-3 py-2 text-base resize-none outline-none focus:ring-1 focus:ring-blue-500 placeholder-zinc-500"

@@ -253,14 +253,14 @@ export class AppClient {
       case "ack":
         this.clearReplayBuffer();
         for (const listener of this.eventListeners) {
-          listener("", 0, { type: `ws_${msg.type}`, ...msg });
+          listener("", 0, { ...msg, type: `ws_${msg.type}` });
         }
         break;
 
       case "error":
         this.clearReplayBuffer();
         for (const listener of this.eventListeners) {
-          listener("", 0, { type: `ws_${msg.type}`, ...msg });
+          listener("", 0, { ...msg, type: `ws_${msg.type}` });
         }
         break;
     }

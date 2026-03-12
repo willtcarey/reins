@@ -98,6 +98,10 @@ const MIGRATIONS: [name: string, sql: string][] = [
     "012_add_parent_session_id",
     `ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL`,
   ],
+  [
+    "013_remove_duplicate_compaction_markers",
+    `DELETE FROM session_messages WHERE role = 'compaction_summary'`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

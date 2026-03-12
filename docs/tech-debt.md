@@ -9,6 +9,8 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 - Widespread `as any` casts (~15 occurrences). Most are for smuggling `projectDir` through `RouteContext` (which doesn't have a typed slot for it) and for SDK type gaps (e.g. `getModel` provider arg, Bun `WebSocket` data). The tsconfig is `strict`, but these casts bypass it at every use site. Should type the route context properly and narrow the remaining casts.
 - `sessions.ts` is too coupled to `ServerState`. It receives the full state object to access `state.sessions`, `state.clients`, and `state.explicitModel`. Ideally it should receive narrow dependencies (e.g. the session map, a `Broadcast` function, model config) rather than the entire server state bag, so it doesn't act as a conduit for threading `ServerState` into the rest of the bundle.
 
+- `session_messages` tool results consume ~68% of DB size (42.5MB of 63MB message data). Currently only pruned on compaction, but most sessions never compact. Add a routine to prune tool result content from closed/merged task sessions where the full output is no longer needed for LLM context.
+
 ## WebSocket
 
 - The frontend `onEvent` listener has the signature `(sessionId: string, event: any) => void`, designed for session events. Non-session broadcasts (e.g. `task_created`) are shoehorned through it with `sessionId: ""`. As more app-level broadcast types are added, this should be split into a separate listener channel (e.g. `onAppEvent`) or a more general message discriminator so the session-event path isn't overloaded.
