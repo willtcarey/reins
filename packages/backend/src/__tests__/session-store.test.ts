@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach } from "bun:test";
+import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "../project-store.js";
 import { createTask } from "../task-store.js";
@@ -13,6 +14,7 @@ import {
   loadMessages,
   loadMessagesForLLM,
 } from "../session-store.js";
+import { hydrateSessionManager } from "../sessions.js";
 
 let projectId: number;
 
@@ -562,6 +564,131 @@ describe("session-store", () => {
       expect(items).toHaveLength(1);
       expect(items[0].taskId).toBeNull();
       expect(items[0].taskTitle).toBeNull();
+    });
+  });
+
+  describe("hydrateSessionManager", () => {
+    test("populates entries from regular messages", () => {
+      const sm = SessionManager.inMemory();
+      const messages = [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "hi there" },
+        { role: "user", content: "what is 2+2?" },
+        { role: "assistant", content: "4" },
+      ];
+
+      hydrateSessionManager(sm, messages);
+
+      const entries = sm.getEntries();
+      expect(entries).toHaveLength(4);
+      expect(entries.every((e: any) => e.type === "message")).toBe(true);
+      expect(entries[0].message.role).toBe("user");
+      expect(entries[0].message.content).toBe("hello");
+      expect(entries[3].message.role).toBe("assistant");
+      expect(entries[3].message.content).toBe("4");
+    });
+
+    test("entries form a linear chain via parentId", () => {
+      const sm = SessionManager.inMemory();
+      const messages = [
+        { role: "user", content: "a" },
+        { role: "assistant", content: "b" },
+        { role: "user", content: "c" },
+      ];
+
+      hydrateSessionManager(sm, messages);
+
+      const entries = sm.getEntries();
+      expect(entries[0].parentId).toBeNull();
+      expect(entries[1].parentId).toBe(entries[0].id);
+      expect(entries[2].parentId).toBe(entries[1].id);
+    });
+
+    test("getBranch returns all entries after hydration", () => {
+      const sm = SessionManager.inMemory();
+      const messages = [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "hi" },
+        { role: "user", content: "bye" },
+      ];
+
+      hydrateSessionManager(sm, messages);
+
+      const branch = sm.getBranch();
+      expect(branch).toHaveLength(3);
+    });
+
+    test("handles compactionSummary as compaction entry", () => {
+      const sm = SessionManager.inMemory();
+      const messages = [
+        { role: "compactionSummary", summary: "discussed project setup" },
+        { role: "user", content: "what next?" },
+        { role: "assistant", content: "let's continue" },
+      ];
+
+      hydrateSessionManager(sm, messages);
+
+      const entries = sm.getEntries();
+      expect(entries).toHaveLength(3);
+      expect(entries[0].type).toBe("compaction");
+      expect((entries[0] as any).summary).toBe("discussed project setup");
+      expect(entries[1].type).toBe("message");
+      expect(entries[2].type).toBe("message");
+    });
+
+    test("compaction entry is visible in getBranch", () => {
+      const sm = SessionManager.inMemory();
+      const messages = [
+        { role: "compactionSummary", summary: "old context" },
+        { role: "user", content: "new question" },
+      ];
+
+      hydrateSessionManager(sm, messages);
+
+      const branch = sm.getBranch();
+      expect(branch).toHaveLength(2);
+      expect(branch[0].type).toBe("compaction");
+      expect(branch[1].type).toBe("message");
+    });
+
+    test("handles empty message array", () => {
+      const sm = SessionManager.inMemory();
+
+      hydrateSessionManager(sm, []);
+
+      expect(sm.getEntries()).toHaveLength(0);
+      expect(sm.getBranch()).toHaveLength(0);
+    });
+
+    test("handles compactionSummary with missing summary field", () => {
+      const sm = SessionManager.inMemory();
+      const messages = [
+        { role: "compactionSummary" },
+        { role: "user", content: "hello" },
+      ];
+
+      hydrateSessionManager(sm, messages);
+
+      const entries = sm.getEntries();
+      expect(entries).toHaveLength(2);
+      expect(entries[0].type).toBe("compaction");
+      expect((entries[0] as any).summary).toBe("");
+    });
+
+    test("handles toolResult messages", () => {
+      const sm = SessionManager.inMemory();
+      const messages = [
+        { role: "user", content: "list files" },
+        { role: "assistant", content: "I'll run ls", toolCalls: [{ id: "tc1", name: "bash", args: { command: "ls" } }] },
+        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "file1.ts\nfile2.ts" }] },
+        { role: "assistant", content: "Here are the files" },
+      ];
+
+      hydrateSessionManager(sm, messages);
+
+      const entries = sm.getEntries();
+      expect(entries).toHaveLength(4);
+      expect(entries[2].message.role).toBe("toolResult");
     });
   });
 });

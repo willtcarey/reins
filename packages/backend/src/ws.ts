@@ -10,7 +10,7 @@
  */
 
 import type { ServerState, WsClient } from "./state.js";
-import { ensureSessionOpen } from "./sessions.js";
+import { ensureSessionOpen, runManualCompaction } from "./sessions.js";
 import { getSession } from "./session-store.js";
 import { getProject } from "./project-store.js";
 
@@ -69,7 +69,8 @@ async function handleWsCommand(
         const compactMatch = cmd.message.match(/^\/compact\s*(.*)?$/);
         if (compactMatch) {
           const instructions = compactMatch[1]?.trim() || undefined;
-          await managed.session.compact(instructions);
+          const row = getSession(cmd.sessionId);
+          await runManualCompaction(state, managed, cmd.sessionId, row!.project_id, instructions);
         } else {
           await managed.session.prompt(cmd.message);
         }

@@ -14,7 +14,6 @@ import {
   listSessions as dbListSessions,
   listTaskSessions as dbListTaskSessions,
   persistMessages,
-  applyCompaction,
   loadMessages,
   loadMessagesForLLM,
   updateSessionMeta,
@@ -25,11 +24,26 @@ import { getProject } from "./project-store.js";
 import { checkoutBranch } from "./git.js";
 import { createCustomTools } from "./tools/index.js";
 import type { CreateSessionOpts } from "./tools/delegate.js";
-import { createBroadcast } from "./models/broadcast.js";
+import { createBroadcast, type Broadcast } from "./models/broadcast.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Populate a SessionManager's entry tree from stored messages.
+ * This is needed on resume so that compaction (which reads from
+ * SessionManager.getBranch()) sees the conversation history.
+ */
+export function hydrateSessionManager(sm: any, messages: any[]): void {
+  for (const msg of messages) {
+    if (msg.role === "compactionSummary") {
+      sm.appendCompaction(msg.summary ?? "", sm.getLeafId() ?? "", 0);
+    } else {
+      sm.appendMessage(msg);
+    }
+  }
+}
 
 /**
  * Build a task system prompt prefix for injection.
@@ -223,9 +237,12 @@ export async function resumeSession(
 
   const agentSession = result.session;
 
-  // Hydrate with stored messages (only post-compaction for LLM context)
+  // Load post-compaction messages (from the last compactionSummary onwards).
+  // We populate both the SessionManager's entry tree (so compaction can read
+  // the conversation via getBranch()) and the agent's LLM context array.
   const messages = loadMessagesForLLM(sessionId);
   if (messages.length > 0) {
+    hydrateSessionManager(agentSession.sessionManager, messages);
     agentSession.agent.replaceMessages(messages);
   }
 
@@ -238,6 +255,66 @@ export async function resumeSession(
  * Wire up event subscriptions and register in server state.
  * Shared between create and resume paths.
  */
+
+/**
+ * Handle a compaction_end event: persist to SQLite and broadcast.
+ * Used for both auto-compaction (from pi events) and manual /compact.
+ */
+function handleCompactionEnd(
+  sessionId: string,
+  agentSession: any,
+  event: { aborted?: boolean; result?: { summary?: string }; [k: string]: any },
+  broadcast: Broadcast,
+  projectId: number,
+): void {
+  if (!event.aborted) {
+    try {
+      persistMessages(sessionId, agentSession.messages);
+      console.log(`  Compaction persisted for ${sessionId} (${agentSession.messages.length} post-compaction messages)`);
+    } catch (err) {
+      console.error(`  Failed to persist compaction for ${sessionId}:`, err);
+    }
+  }
+  broadcast({
+    type: "event",
+    sessionId,
+    projectId,
+    event: { type: "compaction_end", result: event.result, aborted: event.aborted, errorMessage: (event as any).errorMessage },
+  });
+}
+
+/**
+ * Run a manual compaction with proper start/end events broadcast.
+ */
+export async function runManualCompaction(
+  state: ServerState,
+  managed: ManagedSession,
+  sessionId: string,
+  projectId: number,
+  instructions?: string,
+): Promise<void> {
+  const broadcast = createBroadcast(state.clients);
+  broadcast({
+    type: "event",
+    sessionId,
+    projectId,
+    event: { type: "compaction_start", reason: "manual" },
+  });
+  try {
+    const result = await managed.session.compact(instructions);
+    handleCompactionEnd(sessionId, managed.session, { result, aborted: false }, broadcast, projectId);
+  } catch (err: any) {
+    handleCompactionEnd(
+      sessionId,
+      managed.session,
+      { result: undefined, aborted: false, errorMessage: `Manual compaction failed: ${err.message}` },
+      broadcast,
+      projectId,
+    );
+    throw err;
+  }
+}
+
 function wireSession(
   state: ServerState,
   agentSession: any,
@@ -253,6 +330,18 @@ function wireSession(
   const broadcast = createBroadcast(state.clients);
 
   agentSession.subscribe((event: AgentSessionEvent) => {
+    // Intercept pi's auto_compaction_* events and re-emit as our own
+    // compaction_start / compaction_end so the frontend gets a unified
+    // event regardless of whether compaction was manual or automatic.
+    if (event.type === "auto_compaction_start") {
+      broadcast({ type: "event", sessionId, projectId, event: { type: "compaction_start", reason: (event as any).reason ?? "auto" } });
+      return;
+    }
+    if (event.type === "auto_compaction_end") {
+      handleCompactionEnd(sessionId, agentSession, event as any, broadcast, projectId);
+      return;
+    }
+
     // Broadcast to all connected WS clients
     broadcast({ type: "event", sessionId, projectId, event });
 
@@ -276,18 +365,6 @@ function wireSession(
         }
       } catch (err) {
         console.error(`  Failed to persist messages for ${sessionId}:`, err);
-      }
-    }
-
-    // After compaction, pi replaces the message array with a shorter
-    // summarized version. We preserve all existing messages and append
-    // a compaction summary marker + the new compacted messages.
-    if (event.type === "auto_compaction_end" && !event.aborted) {
-      try {
-        applyCompaction(sessionId, agentSession.messages, event.result?.summary);
-        console.log(`  Compaction persisted for ${sessionId} (${agentSession.messages.length} post-compaction messages)`);
-      } catch (err) {
-        console.error(`  Failed to persist compaction for ${sessionId}:`, err);
       }
     }
   });

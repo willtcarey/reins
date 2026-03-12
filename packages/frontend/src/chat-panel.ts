@@ -233,11 +233,11 @@ export class ChatPanel extends LitElement {
         // We refresh the messages array if the event includes the message.
         break;
 
-      case "auto_compaction_start":
+      case "compaction_start":
         this.isCompacting = true;
         break;
 
-      case "auto_compaction_end":
+      case "compaction_end":
         this.isCompacting = false;
         // Inject a compaction marker into the live message list so
         // the divider appears immediately (not only after reload).
@@ -245,7 +245,7 @@ export class ChatPanel extends LitElement {
           this.messages = [
             ...this.messages,
             {
-              role: "compaction_summary" as any,
+              role: "compactionSummary" as any,
               content: event.result?.summary || "Conversation summarized",
               timestamp: Date.now(),
             },
@@ -491,7 +491,8 @@ export class ChatPanel extends LitElement {
   }
 
   private renderCompactionSummary(msg: any) {
-    const summary = msg?.content && msg.content !== "Conversation summarized" ? msg.content : null;
+    const rawSummary = msg?.content || msg?.summary;
+    const summary = rawSummary && rawSummary !== "Conversation summarized" ? rawSummary : null;
     const id = `compaction-${msg?.timestamp || 0}`;
     const expanded = this.expandedTools.has(id);
 
@@ -526,7 +527,7 @@ export class ChatPanel extends LitElement {
         return this.renderAssistantMessage(msg);
       case "toolResult":
         return this.renderToolResultMessage(msg);
-      case "compaction_summary" as any:
+      case "compactionSummary" as any:
         return this.renderCompactionSummary(msg);
       default:
         return nothing;
