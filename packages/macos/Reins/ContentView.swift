@@ -107,7 +107,10 @@ class MessageHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
-class WebViewNavigationDelegate: NSObject, WKNavigationDelegate {
+class WebViewNavigationDelegate: NSObject, WKNavigationDelegate, WKDownloadDelegate {
+
+    // MARK: - Navigation Action Policy
+
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
@@ -134,6 +137,35 @@ class WebViewNavigationDelegate: NSObject, WKNavigationDelegate {
         decisionHandler(.allow)
     }
 
+    // MARK: - Navigation Response Policy (download interception)
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+    ) {
+        if let response = navigationResponse.response as? HTTPURLResponse,
+           let contentDisposition = response.value(forHTTPHeaderField: "Content-Disposition"),
+           contentDisposition.lowercased().contains("attachment") {
+            print("[Reins] Intercepting download: \(response.url?.absoluteString ?? "unknown")")
+            decisionHandler(.download)
+            return
+        }
+        decisionHandler(.allow)
+    }
+
+    // MARK: - Wire up download delegate on download objects
+
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        download.delegate = self
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        download.delegate = self
+    }
+
+    // MARK: - Navigation lifecycle
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         print("[Reins] Page loaded: \(webView.url?.absoluteString ?? "unknown")")
     }
@@ -144,6 +176,38 @@ class WebViewNavigationDelegate: NSObject, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         print("[Reins] Provisional navigation failed: \(error.localizedDescription)")
+    }
+
+    // MARK: - WKDownloadDelegate
+
+    func download(
+        _ download: WKDownload,
+        decideDestinationUsing response: URLResponse,
+        suggestedFilename: String,
+        completionHandler: @escaping (URL?) -> Void
+    ) {
+        DispatchQueue.main.async {
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = suggestedFilename
+            panel.canCreateDirectories = true
+            panel.begin { result in
+                if result == .OK {
+                    print("[Reins] Saving download to: \(panel.url?.path ?? "unknown")")
+                    completionHandler(panel.url)
+                } else {
+                    print("[Reins] Download cancelled by user")
+                    completionHandler(nil)
+                }
+            }
+        }
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        print("[Reins] Download failed: \(error.localizedDescription)")
+    }
+
+    func downloadDidFinish(_ download: WKDownload) {
+        print("[Reins] Download finished")
     }
 }
 
