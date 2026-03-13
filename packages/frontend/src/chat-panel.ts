@@ -589,7 +589,7 @@ export class ChatPanel extends LitElement {
         </div>
 
         <!-- Input area -->
-        <div class="border-t border-zinc-700 p-3">
+        <div class="border-t border-zinc-700 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
           ${this.errorMessage ? html`
             <div class="flex items-center gap-2 mb-2 px-3 py-1.5 bg-red-900/30 border border-red-800/50 rounded-lg text-xs text-red-300">
               <span class="flex-1">${this.errorMessage}</span>

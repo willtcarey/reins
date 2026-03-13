@@ -9,4 +9,5 @@
 | [macos.md](macos.md) | macos | Native Mac app shell: setup, dev workflow, building |
 | [docker.md](docker.md) | all | Building and running REINS in a Docker container |
 | [workflow.md](workflow.md) | all | Development workflow: RGR, testing reference, pre/post-implementation checklist |
+| [pwa.md](pwa.md) | frontend | PWA manifest, service worker, icons |
 

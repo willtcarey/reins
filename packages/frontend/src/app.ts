@@ -45,6 +45,8 @@ export class AppShell extends LitElement {
   @state() private activeTab: "chat" | "changes" = "chat";
   /** Bumped on every store notification to trigger a re-render. */
   @state() private _storeVersion = 0;
+  private isStandalone = window.matchMedia("(display-mode: standalone)").matches
+    || (navigator as any).standalone === true;
   private quickOpenStore = new QuickOpenStore();
   @query("quick-open") private _quickOpen!: QuickOpen;
 
@@ -165,6 +167,16 @@ export class AppShell extends LitElement {
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 2h10"/><path d="M5 6h14"/><rect x="3" y="10" width="18" height="12" rx="2"/></svg>
           </button>
+          ${this.isStandalone ? html`
+            <div class="flex-1"></div>
+            <button
+              class="p-2 text-zinc-500 hover:text-zinc-200 transition-colors cursor-pointer"
+              @click=${() => location.reload()}
+              title="Reload"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+            </button>
+          ` : ""}
         </div>
         <div class="flex-1 flex items-center justify-center">
         <div class="text-center max-w-md px-6">
@@ -250,6 +262,15 @@ export class AppShell extends LitElement {
                       title="Refresh diff"
                     >
                       Refresh
+                    </button>
+                  ` : ""}
+                  ${this.isStandalone ? html`
+                    <button
+                      class="p-1 text-zinc-500 hover:text-zinc-200 transition-colors cursor-pointer"
+                      @click=${() => location.reload()}
+                      title="Reload"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
                     </button>
                   ` : ""}
                   ${store.connected
