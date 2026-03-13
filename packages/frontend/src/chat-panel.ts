@@ -253,6 +253,19 @@ export class ChatPanel extends LitElement {
         }
         break;
 
+      case "user_message":
+        // Another client sent a message — append it to the conversation
+        this.messages = [
+          ...this.messages,
+          {
+            role: "user",
+            content: event.message,
+            timestamp: Date.now(),
+          },
+        ];
+        this.shouldAutoScroll = true;
+        break;
+
       case "ws_error":
         this.showError((event as any).error || "Something went wrong");
         break;

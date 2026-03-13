@@ -69,7 +69,10 @@ export class AppStore {
       if (connected) {
         // Always refresh the project list on (re)connect
         this.projectCollectionStore.fetchProjects();
-        // On reconnect, re-fetch the active session to catch up on missed events
+        // Refresh all loaded project stores (any expanded in the sidebar)
+        // so session/task lists catch up on missed events
+        this.projectCollectionStore.refreshAll();
+        // Re-fetch the active session's messages to catch up
         if (this._activeSession.sessionId) {
           this._activeSession.refreshSession();
         }

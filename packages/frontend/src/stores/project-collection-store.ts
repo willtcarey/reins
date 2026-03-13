@@ -155,6 +155,20 @@ export class ProjectCollectionStore {
   }
 
   /**
+   * Refresh all loaded project stores. Called on WS reconnect to catch up
+   * on missed events across every expanded project, not just the active one.
+   */
+  async refreshAll(): Promise<void> {
+    const refreshes: Promise<void>[] = [];
+    for (const child of this._stores.values()) {
+      if (child.loaded) {
+        refreshes.push(child.fetchLists());
+      }
+    }
+    await Promise.all(refreshes);
+  }
+
+  /**
    * Drop a project data store (e.g. project deleted). Unsubscribes from
    * child notifications and removes from the map.
    */

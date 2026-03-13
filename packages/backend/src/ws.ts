@@ -13,6 +13,7 @@ import type { ServerState, WsClient } from "./state.js";
 import { ensureSessionOpen, runManualCompaction } from "./sessions.js";
 import { getSession } from "./session-store.js";
 import { getProject } from "./project-store.js";
+import { createBroadcastExcluding } from "./models/broadcast.js";
 
 function sendToWs(ws: any, data: unknown): void {
   try {
@@ -60,17 +61,28 @@ async function handleWsCommand(
     case "prompt": {
       if (!cmd.message) { sendToWs(client.ws, { type: "error", error: "Missing message field" }); return; }
       try {
-        const projectDir = resolveProjectDir(cmd.sessionId);
-        if (!projectDir) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
-        const managed = await ensureSessionOpen(state, cmd.sessionId, projectDir);
+        const row = getSession(cmd.sessionId);
+        if (!row) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
+        const project = getProject(row.project_id);
+        if (!project) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
+        const managed = await ensureSessionOpen(state, cmd.sessionId, project.path);
         sendToWs(client.ws, { type: "ack", command: "prompt" });
+
+        // Broadcast user message to other clients so other devices see what was typed
+        // (the sender already appended it optimistically)
+        const broadcast = createBroadcastExcluding(state.clients, client);
+        broadcast({
+          type: "user_message",
+          sessionId: cmd.sessionId,
+          projectId: row.project_id,
+          message: cmd.message,
+        });
 
         // Handle /compact as a slash command
         const compactMatch = cmd.message.match(/^\/compact\s*(.*)?$/);
         if (compactMatch) {
           const instructions = compactMatch[1]?.trim() || undefined;
-          const row = getSession(cmd.sessionId);
-          await runManualCompaction(state, managed, cmd.sessionId, row!.project_id, instructions);
+          await runManualCompaction(state, managed, cmd.sessionId, row.project_id, instructions);
         } else {
           await managed.session.prompt(cmd.message);
         }

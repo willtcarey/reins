@@ -69,6 +69,21 @@ describe("WS client EventListener contract", () => {
     expect(received[0].event.taskId).toBe(3);
   });
 
+  it("passes (sessionId, projectId, event) for 'user_message' messages", () => {
+    const received = simulateMessage({
+      type: "user_message",
+      sessionId: "sess-1",
+      projectId: 42,
+      message: "hello world",
+    });
+
+    expect(received).toHaveLength(1);
+    expect(received[0].sessionId).toBe("sess-1");
+    expect(received[0].projectId).toBe(42);
+    expect(received[0].event.type).toBe("user_message");
+    expect(received[0].event.message).toBe("hello world");
+  });
+
   it("event argument is always an object, never a number", () => {
     const received = simulateMessage({
       type: "event",

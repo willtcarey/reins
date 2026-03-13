@@ -63,6 +63,7 @@ export type ServerMessage =
   | { type: "event"; sessionId: string; projectId: number; event: any }
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null }
+  | { type: "user_message"; sessionId: string; projectId: number; message: string }
   | { type: "ack"; command: string }
   | { type: "error"; error: string };
 
@@ -246,6 +247,15 @@ export class AppClient {
             projectId: msg.projectId,
             sessionId: msg.sessionId,
             taskId: msg.taskId,
+          });
+        }
+        break;
+
+      case "user_message":
+        for (const listener of this.eventListeners) {
+          listener(msg.sessionId, msg.projectId, {
+            type: "user_message",
+            message: msg.message,
           });
         }
         break;

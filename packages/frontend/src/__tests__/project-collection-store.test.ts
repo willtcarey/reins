@@ -135,6 +135,43 @@ describe("ProjectCollectionStore per-project data", () => {
     expect(fetchCount).toBe(0);
   });
 
+  // ---- refreshAll -----------------------------------------------------------
+
+  test("refreshAll re-fetches all loaded stores", async () => {
+    let fetchCount = 0;
+    mockFetch(() => {
+      fetchCount++;
+      return jsonResponse([]);
+    });
+
+    // Load two stores
+    await store.ensureLoaded(1);
+    await store.ensureLoaded(2);
+    const countAfterLoad = fetchCount;
+
+    // Also create a third store but don't load it
+    store.getStore(3);
+
+    await store.refreshAll();
+    // Should have fetched for stores 1 and 2 (2 fetches each: tasks + sessions)
+    // but NOT for store 3 (not loaded)
+    expect(fetchCount).toBe(countAfterLoad + 4);
+  });
+
+  test("refreshAll is a no-op when no stores are loaded", async () => {
+    let fetchCount = 0;
+    mockFetch(() => {
+      fetchCount++;
+      return jsonResponse([]);
+    });
+
+    // Create but don't load
+    store.getStore(1);
+
+    await store.refreshAll();
+    expect(fetchCount).toBe(0);
+  });
+
   // ---- remove ---------------------------------------------------------------
 
   test("remove deletes the store from the map", () => {

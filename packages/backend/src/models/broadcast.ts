@@ -26,7 +26,8 @@ export type CompactionEvent =
 export type ServerMessage =
   | { type: "event"; sessionId: string; projectId: number; event: AgentSessionEvent | CompactionEvent }
   | { type: "task_updated"; projectId: number }
-  | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null };
+  | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null }
+  | { type: "user_message"; sessionId: string; projectId: number; message: string };
 
 // ---------------------------------------------------------------------------
 // Broadcast function
@@ -38,6 +39,19 @@ export function createBroadcast(clients: Set<WsClient>): Broadcast {
   return (message) => {
     const payload = JSON.stringify(message);
     for (const client of clients) {
+      try {
+        client.ws.send(payload);
+      } catch {}
+    }
+  };
+}
+
+/** Like createBroadcast, but skips one client (e.g. the command sender). */
+export function createBroadcastExcluding(clients: Set<WsClient>, exclude: WsClient): Broadcast {
+  return (message) => {
+    const payload = JSON.stringify(message);
+    for (const client of clients) {
+      if (client === exclude) continue;
       try {
         client.ws.send(payload);
       } catch {}
