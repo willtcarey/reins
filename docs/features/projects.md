@@ -37,6 +37,12 @@ Each expanded project contains:
 
 Clicking a session navigates to it and sets that project as the active diff context.
 
+## File Upload
+
+You can upload files directly to a project's workspace directory from the sidebar. Open the **⋮** menu on a project and select **Upload files** to open a file picker (multiple selection supported). Files are written to the project root and appear in the Changes tab immediately.
+
+The upload endpoint supports an optional subdirectory parameter and has a 512 MB size limit. Filenames are sanitized to prevent path traversal.
+
 ## Assistant
 
 Each project has an [assistant](assistant.md) — a long-lived conversation for managing the project, asking questions, and creating tasks.
