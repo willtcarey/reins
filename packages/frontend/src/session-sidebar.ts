@@ -45,6 +45,9 @@ export class SessionSidebar extends LitElement {
   @state() private collapsed = window.matchMedia("(max-width: 768px)").matches;
   @state() private expandedProjects = new Set<number>();
 
+  /** Upload progress per project: 0–100 while uploading, null when idle. */
+  @state() private uploadProgress = new Map<number, number>();
+
   private _unsubscribe: (() => void) | null = null;
 
   @query("task-form") private taskForm!: TaskForm;
@@ -200,7 +203,7 @@ export class SessionSidebar extends LitElement {
     const input = document.createElement("input");
     input.type = "file";
     input.multiple = true;
-    input.addEventListener("change", async () => {
+    input.addEventListener("change", () => {
       const files = input.files;
       if (!files || files.length === 0) return;
 
@@ -209,30 +212,63 @@ export class SessionSidebar extends LitElement {
         formData.append("files", file);
       }
 
-      try {
-        const resp = await fetch(`/api/projects/${project.id}/upload`, {
-          method: "POST",
-          body: formData,
-        });
-        if (!resp.ok) {
-          const text = await resp.text().catch(() => "");
-          let detail: string;
-          try {
-            detail = JSON.parse(text).error ?? text;
-          } catch {
-            detail = text;
-          }
-          alert(`Upload failed (${resp.status}): ${detail || resp.statusText}`);
-          return;
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `/api/projects/${project.id}/upload`);
+
+      const clearProgress = () => {
+        const next = new Map(this.uploadProgress);
+        next.delete(project.id);
+        this.uploadProgress = next;
+      };
+
+      // Track upload progress
+      xhr.upload.addEventListener("progress", (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          this.uploadProgress = new Map(this.uploadProgress).set(project.id, pct);
         }
-        const body = await resp.json();
-        const count = body.uploaded?.length ?? 0;
-        alert(`Uploaded ${count} file${count !== 1 ? "s" : ""} successfully.`);
-        // Refresh the diff view so uploaded files appear in the changes tab
-        this.store?.diffStore.refresh();
-      } catch (err: any) {
-        alert(`Upload failed (network error): ${err.message}`);
-      }
+      });
+
+      xhr.addEventListener("load", () => {
+        // Show 100% briefly so the user sees it, then clear
+        this.uploadProgress = new Map(this.uploadProgress).set(project.id, 100);
+        setTimeout(() => {
+          clearProgress();
+
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const body = JSON.parse(xhr.responseText);
+              const count = body.uploaded?.length ?? 0;
+              alert(`Uploaded ${count} file${count !== 1 ? "s" : ""} successfully.`);
+            } catch {
+              alert("Upload completed.");
+            }
+            // Refresh the diff view so uploaded files appear in the changes tab
+            this.store?.diffStore.refresh();
+          } else {
+            let detail: string;
+            try {
+              detail = JSON.parse(xhr.responseText).error ?? xhr.responseText;
+            } catch {
+              detail = xhr.responseText;
+            }
+            alert(`Upload failed (${xhr.status}): ${detail || xhr.statusText}`);
+          }
+        }, 600);
+      });
+
+      xhr.addEventListener("error", () => {
+        clearProgress();
+        alert("Upload failed (network error).");
+      });
+
+      xhr.addEventListener("abort", () => {
+        clearProgress();
+      });
+
+      // Start at 0%
+      this.uploadProgress = new Map(this.uploadProgress).set(project.id, 0);
+      xhr.send(formData);
     });
     input.click();
   }
@@ -320,6 +356,21 @@ export class SessionSidebar extends LitElement {
             `}
           ></popover-menu>
         </div>
+
+        <!-- Upload progress bar -->
+        ${this.uploadProgress.has(project.id) ? html`
+          <div class="px-3 py-1.5 bg-zinc-800/80 border-b border-zinc-700/50">
+            <div class="flex items-center gap-2 text-xs text-zinc-300">
+              <span>Uploading… ${this.uploadProgress.get(project.id)}%</span>
+            </div>
+            <div class="mt-1 h-1.5 rounded-full bg-zinc-700 overflow-hidden">
+              <div
+                class="h-full rounded-full bg-blue-500 transition-[width] duration-200 ease-out"
+                style="width: ${this.uploadProgress.get(project.id)}%"
+              ></div>
+            </div>
+          </div>
+        ` : nothing}
 
         <!-- Expanded content -->
         ${isExpanded ? html`
