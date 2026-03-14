@@ -9,7 +9,8 @@
  * For project-scoped operations, construct a `ProjectModel` instance.
  */
 
-import { resolve, normalize, basename } from "path";
+import { resolve, normalize, basename, join } from "path";
+import { mkdirSync } from "fs";
 import {
   createProject as storeCreateProject,
   type Project,
@@ -47,6 +48,14 @@ export class PathTraversalError extends Error {
 
 export class FileNotFoundError extends Error {
   constructor(message = "File not found") { super(message); }
+}
+
+export class NoFilesError extends Error {
+  constructor(message = "No files provided") { super(message); }
+}
+
+export class InvalidFilenameError extends Error {
+  constructor(message = "Invalid filename") { super(message); }
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +131,21 @@ export class ProjectModel {
     await this.reconcileClosedTasks();
   }
 
+  // ---- Path safety ----------------------------------------------------------
+
+  /**
+   * Assert that a resolved path stays within the project directory.
+   * Throws `PathTraversalError` if the path escapes.
+   */
+  private assertInsideProject(resolved: string): void {
+    const normalizedProject = normalize(this.projectDir);
+    if (!resolved.startsWith(normalizedProject + "/") && resolved !== normalizedProject) {
+      throw new PathTraversalError();
+    }
+  }
+
+  // ---- File I/O ------------------------------------------------------------
+
   /**
    * Read a file's content, either from a git ref or the working tree.
    *
@@ -137,12 +161,8 @@ export class ProjectModel {
   async readFile(filePath: string, ref?: string | null): Promise<string>;
   async readFile(filePath: string, ref: string | null | undefined, binary: true): Promise<Uint8Array>;
   async readFile(filePath: string, ref?: string | null, binary?: boolean): Promise<string | Uint8Array> {
-    // Prevent path traversal
     const resolved = resolve(this.projectDir, filePath);
-    const normalizedProject = normalize(this.projectDir);
-    if (!resolved.startsWith(normalizedProject + "/") && resolved !== normalizedProject) {
-      throw new PathTraversalError();
-    }
+    this.assertInsideProject(resolved);
 
     // Decide whether to read from git or the working tree.
     // If a ref is given but it matches the currently checked-out branch,
@@ -194,6 +214,53 @@ export class ProjectModel {
       : await this.readFile(filePath, ref);
 
     return { content, mimeType, filename };
+  }
+
+  /**
+   * Write one or more files into the project directory.
+   *
+   * Each file's name is sanitized to its basename to prevent directory
+   * traversal. An optional `subPath` places files in a subdirectory
+   * (intermediate directories are created automatically).
+   *
+   * Throws `NoFilesError` if the array is empty, `InvalidFilenameError`
+   * for degenerate names, and `PathTraversalError` if the resolved
+   * destination escapes the project.
+   *
+   * Returns the list of relative paths (from the project root) that
+   * were written.
+   */
+  async writeFiles(
+    files: { name: string; data: Blob | File }[],
+    subPath = "",
+  ): Promise<{ uploaded: string[] }> {
+    if (files.length === 0) throw new NoFilesError();
+
+    if (subPath) {
+      this.assertInsideProject(resolve(this.projectDir, subPath));
+    }
+
+    const uploaded: string[] = [];
+
+    for (const file of files) {
+      const safeName = basename(file.name);
+      if (!safeName || safeName === "." || safeName === "..") {
+        throw new InvalidFilenameError(`Invalid filename: ${file.name}`);
+      }
+
+      const destDir = subPath
+        ? resolve(this.projectDir, subPath)
+        : this.projectDir;
+      const destPath = resolve(destDir, safeName);
+      this.assertInsideProject(destPath);
+
+      mkdirSync(destDir, { recursive: true });
+      await Bun.write(destPath, file.data);
+
+      uploaded.push(subPath ? join(subPath, safeName) : safeName);
+    }
+
+    return { uploaded };
   }
 
   /**
