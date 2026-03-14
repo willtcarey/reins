@@ -28,6 +28,7 @@ import "./task-detail.js";
 import "./task-list.js";
 import "./session-list.js";
 import "./popover-menu.js";
+import { showToast } from "./toast.js";
 
 @customElement("session-sidebar")
 export class SessionSidebar extends LitElement {
@@ -144,7 +145,7 @@ export class SessionSidebar extends LitElement {
       navigateToSession(result.sessionId);
       this.collapseOnMobile();
     } else if (result && "error" in result) {
-      alert(result.error);
+      showToast(result.error, "error");
     }
   }
 
@@ -171,7 +172,7 @@ export class SessionSidebar extends LitElement {
     const { projectId, taskId } = e.detail;
     const result = await store.deleteTask(taskId);
     if ("error" in result) {
-      alert(result.error);
+      showToast(result.error, "error");
       return;
     }
 
@@ -200,75 +201,45 @@ export class SessionSidebar extends LitElement {
   }
 
   private handleUploadFiles(project: ProjectInfo) {
+    const store = this.store;
+    if (!store) return;
+
     const input = document.createElement("input");
     input.type = "file";
     input.multiple = true;
-    input.addEventListener("change", () => {
+    input.addEventListener("change", async () => {
       const files = input.files;
       if (!files || files.length === 0) return;
 
-      const formData = new FormData();
-      for (const file of files) {
-        formData.append("files", file);
-      }
+      const onProgress = (pct: number) => {
+        this.uploadProgress = new Map(this.uploadProgress).set(project.id, pct);
+      };
 
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", `/api/projects/${project.id}/upload`);
+      const result = await store.projectCollectionStore.uploadFiles(
+        project.id,
+        files,
+        onProgress,
+      );
 
-      const clearProgress = () => {
+      // Show 100% briefly, then clear
+      this.uploadProgress = new Map(this.uploadProgress).set(project.id, 100);
+      setTimeout(() => {
         const next = new Map(this.uploadProgress);
         next.delete(project.id);
         this.uploadProgress = next;
-      };
+      }, 600);
 
-      // Track upload progress
-      xhr.upload.addEventListener("progress", (e) => {
-        if (e.lengthComputable) {
-          const pct = Math.round((e.loaded / e.total) * 100);
-          this.uploadProgress = new Map(this.uploadProgress).set(project.id, pct);
-        }
-      });
-
-      xhr.addEventListener("load", () => {
-        // Show 100% briefly so the user sees it, then clear
-        this.uploadProgress = new Map(this.uploadProgress).set(project.id, 100);
-        setTimeout(() => {
-          clearProgress();
-
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              const body = JSON.parse(xhr.responseText);
-              const count = body.uploaded?.length ?? 0;
-              alert(`Uploaded ${count} file${count !== 1 ? "s" : ""} successfully.`);
-            } catch {
-              alert("Upload completed.");
-            }
-            // Refresh the diff view so uploaded files appear in the changes tab
-            this.store?.diffStore.refresh();
-          } else {
-            let detail: string;
-            try {
-              detail = JSON.parse(xhr.responseText).error ?? xhr.responseText;
-            } catch {
-              detail = xhr.responseText;
-            }
-            alert(`Upload failed (${xhr.status}): ${detail || xhr.statusText}`);
-          }
-        }, 600);
-      });
-
-      xhr.addEventListener("error", () => {
-        clearProgress();
-        alert("Upload failed (network error).");
-      });
-
-      xhr.addEventListener("abort", () => {
-        clearProgress();
-      });
-
-      // Start at 0%
-      this.uploadProgress = new Map(this.uploadProgress).set(project.id, 0);
-      xhr.send(formData);
+      if ("uploaded" in result) {
+        const count = result.uploaded.length;
+        showToast(
+          `Uploaded ${count} file${count !== 1 ? "s" : ""} successfully.`,
+          "success",
+        );
+        // Refresh the diff view so uploaded files appear in the changes tab
+        store.diffStore.refresh();
+      } else {
+        showToast(result.error, "error");
+      }
     });
     input.click();
   }

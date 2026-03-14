@@ -168,6 +168,66 @@ export class ProjectCollectionStore {
     await Promise.all(refreshes);
   }
 
+  // ---- File upload ------------------------------------------------------------
+
+  /**
+   * Upload files to a project directory via multipart form upload.
+   * Uses XHR for progress tracking. Returns a promise that resolves with
+   * the list of uploaded filenames on success or an error message on failure.
+   */
+  uploadFiles(
+    projectId: number,
+    files: FileList,
+    onProgress?: (percent: number) => void,
+  ): Promise<{ uploaded: string[] } | { error: string }> {
+    return new Promise((resolve) => {
+      const formData = new FormData();
+      for (const file of files) {
+        formData.append("files", file);
+      }
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `/api/projects/${projectId}/upload`);
+
+      xhr.upload.addEventListener("progress", (e) => {
+        if (e.lengthComputable) {
+          onProgress?.(Math.round((e.loaded / e.total) * 100));
+        }
+      });
+
+      xhr.addEventListener("load", () => {
+        onProgress?.(100);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const body = JSON.parse(xhr.responseText);
+            resolve({ uploaded: body.uploaded ?? [] });
+          } catch {
+            resolve({ uploaded: [] });
+          }
+        } else {
+          let detail: string;
+          try {
+            detail = JSON.parse(xhr.responseText).error ?? xhr.responseText;
+          } catch {
+            detail = xhr.responseText;
+          }
+          resolve({ error: `Upload failed (${xhr.status}): ${detail || xhr.statusText}` });
+        }
+      });
+
+      xhr.addEventListener("error", () => {
+        resolve({ error: "Upload failed (network error)." });
+      });
+
+      xhr.addEventListener("abort", () => {
+        resolve({ error: "Upload aborted." });
+      });
+
+      onProgress?.(0);
+      xhr.send(formData);
+    });
+  }
+
   /**
    * Drop a project data store (e.g. project deleted). Unsubscribes from
    * child notifications and removes from the map.
