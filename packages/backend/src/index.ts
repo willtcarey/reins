@@ -146,6 +146,7 @@ async function startServer(): Promise<void> {
   Bun.serve({
     port: PORT,
     hostname: "0.0.0.0",
+    maxRequestBodySize: 1024 * 1024 * 512, // 512 MB
 
     async fetch(req, server) {
       // Always go through current handler references

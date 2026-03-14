@@ -57,10 +57,12 @@ class WebViewModel: ObservableObject {
         print("[Reins] Loading \(backendURL)")
         let request = URLRequest(url: backendURL)
         webView.navigationDelegate = navigationDelegate
+        webView.uiDelegate = uiDelegate
         webView.load(request)
     }
 
     private let navigationDelegate = WebViewNavigationDelegate()
+    private let uiDelegate = WebViewUIDelegate()
 
     func reload() {
         webView.reload()
@@ -103,6 +105,29 @@ class MessageHandler: NSObject, WKScriptMessageHandler {
                 trigger: nil
             )
             center.add(request)
+        }
+    }
+}
+
+// MARK: - WKUIDelegate (file upload panels)
+
+class WebViewUIDelegate: NSObject, WKUIDelegate {
+    func webView(
+        _ webView: WKWebView,
+        runOpenPanelWith parameters: WKOpenPanelParameters,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping ([URL]?) -> Void
+    ) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.begin { result in
+            if result == .OK {
+                completionHandler(panel.urls)
+            } else {
+                completionHandler(nil)
+            }
         }
     }
 }

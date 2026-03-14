@@ -23,6 +23,7 @@ import { registerFileRoutes } from "./file.js";
 import { registerTaskRoutes } from "./tasks.js";
 import { registerGitRoutes } from "./git.js";
 import { registerPaletteRoutes } from "./palette.js";
+import { registerUploadRoutes } from "./upload.js";
 
 /** Context available to handlers inside the project group (after project middleware). */
 export type ProjectRouteContext = RouteContext & { project: ProjectModel };
@@ -70,6 +71,7 @@ export function buildRouter() {
     registerFileRoutes(r);
     registerTaskRoutes(r);
     registerGitRoutes(r);
+    registerUploadRoutes(r);
   });
 
   return router;

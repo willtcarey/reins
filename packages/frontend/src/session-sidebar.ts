@@ -196,6 +196,47 @@ export class SessionSidebar extends LitElement {
     this.projectSidebar?.openEdit(project);
   }
 
+  private handleUploadFiles(project: ProjectInfo) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.addEventListener("change", async () => {
+      const files = input.files;
+      if (!files || files.length === 0) return;
+
+      const formData = new FormData();
+      for (const file of files) {
+        formData.append("files", file);
+      }
+
+      try {
+        const resp = await fetch(`/api/projects/${project.id}/upload`, {
+          method: "POST",
+          body: formData,
+        });
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => "");
+          let detail: string;
+          try {
+            detail = JSON.parse(text).error ?? text;
+          } catch {
+            detail = text;
+          }
+          alert(`Upload failed (${resp.status}): ${detail || resp.statusText}`);
+          return;
+        }
+        const body = await resp.json();
+        const count = body.uploaded?.length ?? 0;
+        alert(`Uploaded ${count} file${count !== 1 ? "s" : ""} successfully.`);
+        // Refresh the diff view so uploaded files appear in the changes tab
+        this.store?.diffStore.refresh();
+      } catch (err: any) {
+        alert(`Upload failed (network error): ${err.message}`);
+      }
+    });
+    input.click();
+  }
+
   private async handleDeleteProject(project: ProjectInfo) {
     if (!confirm(`Remove "${project.name}" from REINS?\n\nThis won't delete any files on disk.`)) return;
 
@@ -268,6 +309,10 @@ export class SessionSidebar extends LitElement {
                 class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
                 @click=${() => this.handleEditProject(project)}
               >Edit</button>
+              <button
+                class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
+                @click=${() => this.handleUploadFiles(project)}
+              >Upload files</button>
               <button
                 class="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-zinc-700 cursor-pointer transition-colors"
                 @click=${() => this.handleDeleteProject(project)}
