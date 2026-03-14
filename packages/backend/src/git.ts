@@ -417,6 +417,51 @@ export async function showFileBinary(
   return new Uint8Array(stdout);
 }
 
+// ---- Large / binary file detection -----------------------------------------
+
+/** Default size threshold for skipping diffs (1 MB). */
+const DEFAULT_SIZE_THRESHOLD = 1_048_576;
+
+/**
+ * Check whether a file is too large or binary to diff safely.
+ *
+ * Returns `true` when:
+ * - The file size exceeds `threshold` bytes (default 1 MB), or
+ * - The first 8 KB of the file contains a null byte (binary heuristic).
+ *
+ * Returns `"large" | "binary" | false` detail when needed internally,
+ * but the public API returns a simple boolean.
+ */
+export async function isLargeOrBinary(
+  projectDir: string,
+  filePath: string,
+  threshold = DEFAULT_SIZE_THRESHOLD,
+): Promise<boolean> {
+  const result = await classifyFile(projectDir, filePath, threshold);
+  return result !== false;
+}
+
+/**
+ * Internal: classify a file as "large", "binary", or false (normal text).
+ */
+async function classifyFile(
+  projectDir: string,
+  filePath: string,
+  threshold = DEFAULT_SIZE_THRESHOLD,
+): Promise<"large" | "binary" | false> {
+  const file = Bun.file(`${projectDir}/${filePath}`);
+  const size = file.size;
+  if (size > threshold) return "large";
+
+  // Read first 8 KB to check for null bytes (binary heuristic)
+  const chunk = await file.slice(0, 8192).arrayBuffer();
+  const bytes = new Uint8Array(chunk);
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] === 0) return "binary";
+  }
+  return false;
+}
+
 // ---- Working-tree diff -----------------------------------------------------
 
 /**
@@ -497,12 +542,34 @@ async function diffUntrackedFiles(
   const files = untrackedList.trim().split("\n").filter(Boolean);
   if (files.length === 0) return "";
   const diffs = await Promise.all(
-    files.map((file) =>
-      run(projectDir, ["diff", ctxFlag, "--no-index", "--", "/dev/null", file])
-        .catch(() => ""),
-    ),
+    files.map(async (file) => {
+      const kind = await classifyFile(projectDir, file);
+      if (kind === "large") {
+        return syntheticNewFileDiff(file, "File too large to diff");
+      }
+      if (kind === "binary") {
+        return syntheticNewFileDiff(file, "Binary file");
+      }
+      return run(projectDir, ["diff", ctxFlag, "--no-index", "--", "/dev/null", file])
+        .catch(() => "");
+    }),
   );
   return diffs.filter(Boolean).join("\n");
+}
+
+/**
+ * Build a synthetic unified-diff string for a new file that can't be diffed
+ * (too large or binary). Matches the structure that parseUnifiedDiff expects.
+ */
+function syntheticNewFileDiff(filePath: string, reason: string): string {
+  return [
+    `diff --git a/${filePath} b/${filePath}`,
+    `new file mode 100644`,
+    `--- /dev/null`,
+    `+++ b/${filePath}`,
+    `@@ -0,0 +1 @@`,
+    `+${reason}`,
+  ].join("\n");
 }
 
 // ---- Diff types ------------------------------------------------------------
@@ -658,9 +725,14 @@ export async function getChangedFiles(
   for (const filePath of untrackedFiles) {
     if (fileMap.has(filePath)) continue;
     try {
-      const content = await Bun.file(`${projectDir}/${filePath}`).text();
-      const lineCount = content.split("\n").length;
-      fileMap.set(filePath, { path: filePath, additions: lineCount, removals: 0 });
+      const skip = await isLargeOrBinary(projectDir, filePath);
+      if (skip) {
+        fileMap.set(filePath, { path: filePath, additions: 0, removals: 0 });
+      } else {
+        const content = await Bun.file(`${projectDir}/${filePath}`).text();
+        const lineCount = content.split("\n").filter(Boolean).length;
+        fileMap.set(filePath, { path: filePath, additions: lineCount, removals: 0 });
+      }
     } catch {
       fileMap.set(filePath, { path: filePath, additions: 0, removals: 0 });
     }

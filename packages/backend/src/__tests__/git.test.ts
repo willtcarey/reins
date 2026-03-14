@@ -33,6 +33,7 @@ import {
   fastForwardBaseBranch,
   mergeBase,
   trackBranch,
+  isLargeOrBinary,
 } from "../git.js";
 
 // ---------------------------------------------------------------------------
@@ -587,5 +588,108 @@ describe("trackBranch", () => {
     await trackBranch(repo.dir, "feat-remote");
     expect(await branchExists(repo.dir, "feat-remote")).toBe(true);
     expect(await revParse(repo.dir, "feat-remote")).toBe(pushedSha);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isLargeOrBinary
+// ---------------------------------------------------------------------------
+
+describe("isLargeOrBinary", () => {
+  const repo = useTestRepo();
+
+  test("returns false for a small text file", async () => {
+    writeFileSync(join(repo.dir, "small.txt"), "hello world\n");
+    expect(await isLargeOrBinary(repo.dir, "small.txt")).toBe(false);
+  });
+
+  test("returns true for a file exceeding the size threshold", async () => {
+    // Create a file just over 1MB
+    const content = "x".repeat(1_048_577);
+    writeFileSync(join(repo.dir, "large.txt"), content);
+    expect(await isLargeOrBinary(repo.dir, "large.txt")).toBe(true);
+  });
+
+  test("returns true for a binary file (contains null bytes)", async () => {
+    const buf = Buffer.from([0x48, 0x65, 0x6c, 0x00, 0x6f]); // "Hel\0o"
+    writeFileSync(join(repo.dir, "binary.bin"), buf);
+    expect(await isLargeOrBinary(repo.dir, "binary.bin")).toBe(true);
+  });
+
+  test("respects a custom threshold", async () => {
+    writeFileSync(join(repo.dir, "medium.txt"), "x".repeat(500));
+    expect(await isLargeOrBinary(repo.dir, "medium.txt", 100)).toBe(true);
+    expect(await isLargeOrBinary(repo.dir, "medium.txt", 1000)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getChangedFiles — large/binary untracked files
+// ---------------------------------------------------------------------------
+
+describe("getChangedFiles — large/binary untracked files", () => {
+  const repo = useTestRepo();
+
+  test("reports additions: 0 for a large untracked file", async () => {
+    const content = "x\n".repeat(600_000); // > 1MB
+    writeFileSync(join(repo.dir, "huge.txt"), content);
+
+    const files = await getChangedFiles(repo.dir, "main", "uncommitted");
+    const file = files.find((f) => f.path === "huge.txt");
+    expect(file).toBeDefined();
+    expect(file!.additions).toBe(0);
+    expect(file!.removals).toBe(0);
+  });
+
+  test("reports additions: 0 for a binary untracked file", async () => {
+    const buf = Buffer.alloc(100);
+    buf[50] = 0; // null byte
+    writeFileSync(join(repo.dir, "image.bin"), buf);
+
+    const files = await getChangedFiles(repo.dir, "main", "uncommitted");
+    const file = files.find((f) => f.path === "image.bin");
+    expect(file).toBeDefined();
+    expect(file!.additions).toBe(0);
+    expect(file!.removals).toBe(0);
+  });
+
+  test("still counts lines for small text untracked files", async () => {
+    writeFileSync(join(repo.dir, "small.txt"), "line1\nline2\nline3\n");
+
+    const files = await getChangedFiles(repo.dir, "main", "uncommitted");
+    const file = files.find((f) => f.path === "small.txt");
+    expect(file).toBeDefined();
+    expect(file!.additions).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getDiff — large/binary untracked files
+// ---------------------------------------------------------------------------
+
+describe("getDiff — large/binary untracked files", () => {
+  const repo = useTestRepo();
+
+  test("returns a synthetic diff entry for a large untracked file", async () => {
+    const content = "x\n".repeat(600_000); // > 1MB
+    writeFileSync(join(repo.dir, "huge.txt"), content);
+
+    const diff = await getDiff(repo.dir, 3, "main", "uncommitted");
+    const file = diff.find((f) => f.path === "huge.txt");
+    expect(file).toBeDefined();
+    expect(file!.hunks).toHaveLength(1);
+    expect(file!.hunks[0].lines[0].text).toContain("too large to diff");
+  });
+
+  test("returns a synthetic diff entry for a binary untracked file", async () => {
+    const buf = Buffer.alloc(100);
+    buf[50] = 0;
+    writeFileSync(join(repo.dir, "image.bin"), buf);
+
+    const diff = await getDiff(repo.dir, 3, "main", "uncommitted");
+    const file = diff.find((f) => f.path === "image.bin");
+    expect(file).toBeDefined();
+    expect(file!.hunks).toHaveLength(1);
+    expect(file!.hunks[0].lines[0].text).toContain("Binary file");
   });
 });
