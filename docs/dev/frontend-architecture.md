@@ -167,6 +167,10 @@ Key design decisions:
 - **"+ New Task"** is an inline icon button on the TASKS header, not a standalone row.
 - **Projects auto-expand** when they're the active project or have running sessions.
 
+### Reactive Controllers
+
+Per-component state and behavior (collapse toggles, markdown preview, clipboard confirmation, etc.) should be extracted into [Reactive Controllers](reactive-controllers.md) rather than accumulated as `@state()` properties and private methods on the component. This keeps components thin and makes the logic testable with bun:test using a fake host. See [reactive-controllers.md](reactive-controllers.md) for the full pattern, testing approach, and migration guide.
+
 ### View conventions
 
 - **Read from store, don't fetch** — Views receive the store (or store state) as Lit properties and render from it. No direct `fetch()` calls.
