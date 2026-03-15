@@ -15,4 +15,5 @@
 - [ ] *(2026-02-25)* Persist activity state across refresh — session activity indicators (running/finished dots) are lost on page refresh because they're purely in-memory on the client. Include `isStreaming` in session list endpoints so the frontend can seed activity state on load/reconnect.
 - [ ] *(2026-03-03)* Docker DB persistence — the SQLite database is written to `.reins/` inside the container's working directory, which is lost on restart. Need a volume mount or configurable DB path so data survives container restarts.
 - [ ] *(2026-03-03)* Keyboard shortcuts — switch between Chat/Changes tabs, create a new session, create a new task, navigate between sessions, and other common actions without reaching for the mouse.
+- [ ] *(2026-03-15)* Smarter assistant compaction — explore techniques from losslesscontext.ai and related research for better context preservation during compaction. Current compaction loses important context; investigate structured summaries, hierarchical compaction, or other approaches.
 
