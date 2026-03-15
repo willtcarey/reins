@@ -3,6 +3,7 @@
 See [README.md](README.md) for project overview, setup, and dev commands.
 
 Before implementing code changes, read [docs/dev/workflow.md](docs/dev/workflow.md).
+Base branch: `master`.
 
 ## Docs
 
