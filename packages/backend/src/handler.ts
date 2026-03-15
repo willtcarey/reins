@@ -7,6 +7,7 @@
 
 import type { ServerState } from "./state.js";
 import { buildRouter } from "./routes/index.js";
+import { serveStatic } from "./static.js";
 
 const router = buildRouter();
 
@@ -31,20 +32,5 @@ export async function handleFetch(
   if (response) return response;
 
   // Static file serving (frontend)
-  const frontendDir = state.frontendDir;
-  const filePath = url.pathname === "/" ? "/index.html" : url.pathname;
-  const fullPath = `${frontendDir}${filePath}`;
-
-  const file = Bun.file(fullPath);
-  if (await file.exists()) {
-    return new Response(file);
-  }
-
-  // SPA fallback
-  const indexFile = Bun.file(`${frontendDir}/index.html`);
-  if (await indexFile.exists()) {
-    return new Response(indexFile);
-  }
-
-  return new Response("Not Found", { status: 404 });
+  return serveStatic(state.frontendDir, url.pathname);
 }

@@ -2,7 +2,7 @@
  * Backend Server (entry point)
  *
  * Owns long-lived state (sessions, clients, Bun server) and delegates
- * request handling to routes.ts and ws.ts through mutable references.
+ * request handling to handler.ts and ws.ts through mutable references.
  *
  * In dev mode (REINS_DEV=1), watches src/ for changes and hot-reloads
  * the handler module without restarting the process — agent sessions
@@ -16,7 +16,7 @@ import { mkdirSync, existsSync } from "fs";
 import type { ServerState, ManagedSession, WsClient } from "./state.js";
 
 // We import the handler types but load via dynamic import so we can reload
-import type * as RoutesModule from "./routes.js";
+import type * as RoutesModule from "./handler.js";
 import type * as WsModule from "./ws.js";
 
 const PORT = parseInt(process.env.REINS_PORT || "3100", 10);
@@ -64,7 +64,7 @@ setInterval(() => {
 // ---------------------------------------------------------------------------
 
 const SRC_DIR = resolve(import.meta.dirname!, ".");
-const ROUTES_PATH = resolve(SRC_DIR, "routes.ts");
+const ROUTES_PATH = resolve(SRC_DIR, "handler.ts");
 const WS_PATH = resolve(SRC_DIR, "ws.ts");
 
 let routes: typeof RoutesModule;
@@ -79,7 +79,7 @@ const DEV_BUILD_DIR = resolve(SRC_DIR, "../.dev-build");
 
 async function loadHandlers(): Promise<void> {
   if (IS_DEV) {
-    // Bundle routes.ts and ws.ts (with all transitive src/ deps) into temp
+    // Bundle handler.ts and ws.ts (with all transitive src/ deps) into temp
     // files. Node_modules stay external (cached by Bun's module system).
     // This ensures ANY source file change is picked up on reload.
     if (!existsSync(DEV_BUILD_DIR)) mkdirSync(DEV_BUILD_DIR, { recursive: true });
@@ -100,12 +100,12 @@ async function loadHandlers(): Promise<void> {
     // Cache-bust the bundled output so Bun imports the fresh version
     const t = Date.now();
     [routes, ws] = await Promise.all([
-      import(`${join(DEV_BUILD_DIR, "routes.js")}?t=${t}`) as Promise<typeof RoutesModule>,
+      import(`${join(DEV_BUILD_DIR, "handler.js")}?t=${t}`) as Promise<typeof RoutesModule>,
       import(`${join(DEV_BUILD_DIR, "ws.js")}?t=${t}`) as Promise<typeof WsModule>,
     ]);
   } else {
     [routes, ws] = await Promise.all([
-      import("./routes.js"),
+      import("./handler.js"),
       import("./ws.js"),
     ]);
   }
