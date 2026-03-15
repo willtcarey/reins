@@ -18,6 +18,7 @@ import type { DiffFile, DiffHunk, DiffLine } from "./types.js";
 import type { DiffStore, SpreadData } from "../stores/diff-store.js";
 import type { FileTreeState } from "./file-tree-state.js";
 import { ScrollSpy } from "./scroll-spy.js";
+import { isMarkdown, fileCardId, EXPAND_STEP, escapeHtml, gutterWidth, getHunkEndLine } from "./diff-utils.js";
 import "./diff-file-tree.js";
 
 // Configure marked for markdown rendering
@@ -25,19 +26,6 @@ marked.setOptions({
   breaks: true,
   gfm: true,
 });
-
-// ---- Constants -------------------------------------------------------------
-
-const EXPAND_STEP = 15;
-
-function isMarkdown(path: string): boolean {
-  return /\.(md|mdx|markdown)$/i.test(path);
-}
-
-/** Convert a file path to a valid HTML id for scroll targeting. */
-function fileCardId(path: string): string {
-  return "diff-" + path.replace(/[^a-zA-Z0-9_-]/g, "_");
-}
 
 // ---- Component --------------------------------------------------------------
 
@@ -244,26 +232,6 @@ export class DiffPanel extends LitElement {
     }
   }
 
-  private escapeHtml(text: string): string {
-    return text
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-  }
-
-  /** Compute the character width needed for the line-number gutter in a file. */
-  private gutterWidth(file: DiffFile): number {
-    let max = 0;
-    for (const hunk of file.hunks) {
-      for (const line of hunk.lines) {
-        if (line.newLine != null && line.newLine > max) max = line.newLine;
-        if (line.oldLine != null && line.oldLine > max) max = line.oldLine;
-      }
-    }
-    // Number of digits + 1 extra ch for breathing room
-    return Math.max(3, String(max).length + 1);
-  }
-
   private renderLine(line: DiffLine, wrap = false, gutterCh = 4) {
     let prefix = "\u00a0";
     let classes = "text-zinc-300";
@@ -288,7 +256,7 @@ export class DiffPanel extends LitElement {
     // Switching between a plain text value and unsafeHTML in the same template
     // position causes Lit to retain the old text node alongside the directive's
     // nodes, resulting in duplicate lines.
-    const content = unsafeHTML(line.html ?? this.escapeHtml(line.text));
+    const content = unsafeHTML(line.html ?? escapeHtml(line.text));
     const divCls = `${classes} px-2 leading-5 font-mono ${wrap ? "flex" : "whitespace-pre"}`;
     const gutterCls = `select-none text-zinc-600 ${wrap ? "shrink-0" : ""}`;
 
@@ -411,7 +379,7 @@ export class DiffPanel extends LitElement {
     const prevHunk = file.hunks[prevHunkIndex];
 
     // Calculate gap between hunks
-    const prevLastLine = this.getHunkEndLine(prevHunk);
+    const prevLastLine = getHunkEndLine(prevHunk);
     const nextFirstLine = nextHunk.lines[0]?.newLine ?? nextHunk.lines[0]?.oldLine ?? 0;
     const gap = nextFirstLine - prevLastLine - 1;
     if (gap > 0) {
@@ -442,7 +410,7 @@ export class DiffPanel extends LitElement {
 
   private renderHunkTrailer(file: DiffFile, hunkIndex: number, gutterCh = 4) {
     const hunk = file.hunks[hunkIndex];
-    const lastLine = this.getHunkEndLine(hunk);
+    const lastLine = getHunkEndLine(hunk);
     // Only show if this is the last hunk and there might be more lines below
     if (hunkIndex < file.hunks.length - 1) return nothing;
     // Show expand-down button if the hunk ends at a known line
@@ -457,15 +425,6 @@ export class DiffPanel extends LitElement {
       );
     }
     return nothing;
-  }
-
-  private getHunkEndLine(hunk: DiffHunk): number {
-    for (let i = hunk.lines.length - 1; i >= 0; i--) {
-      const line = hunk.lines[i];
-      if (line.newLine != null) return line.newLine;
-      if (line.oldLine != null) return line.oldLine;
-    }
-    return 0;
   }
 
   private renderMarkdownPreview(file: DiffFile) {
@@ -541,7 +500,7 @@ export class DiffPanel extends LitElement {
 
   private renderDiffContent(file: DiffFile) {
     const wrap = isMarkdown(file.path);
-    const gw = this.gutterWidth(file);
+    const gw = gutterWidth(file);
     return html`
       <div class="text-xs overflow-x-auto">
         <div class="min-w-full ${wrap ? "" : "w-fit"}">

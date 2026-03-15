@@ -10,4 +10,5 @@
 | [docker.md](docker.md) | all | Building and running REINS in a Docker container |
 | [workflow.md](workflow.md) | all | Development workflow: RGR, testing reference, pre/post-implementation checklist |
 | [pwa.md](pwa.md) | frontend | PWA manifest, service worker, icons |
+| [reactive-controllers.md](reactive-controllers.md) | frontend | Using Lit Reactive Controllers to extract testable logic from components |
 
