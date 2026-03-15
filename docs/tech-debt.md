@@ -11,6 +11,8 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 - `session_messages` tool results consume ~68% of DB size (42.5MB of 63MB message data). Currently only pruned on compaction, but most sessions never compact. Add a routine to prune tool result content from closed/merged task sessions where the full output is no longer needed for LLM context.
 
+- WebSocket upgrade in `handler.ts` is an imperative `if` block, while all other routing is declarative via the router. Ideally the router would support `router.upgrade("/ws")` or similar, but `server.upgrade(req)` needs the Bun server object which the router doesn't have access to. Low priority — it's 3 lines and there's only one upgrade endpoint.
+
 ## WebSocket
 
 - The frontend `onEvent` listener has the signature `(sessionId: string, event: any) => void`, designed for session events. Non-session broadcasts (e.g. `task_created`) are shoehorned through it with `sessionId: ""`. As more app-level broadcast types are added, this should be split into a separate listener channel (e.g. `onAppEvent`) or a more general message discriminator so the session-event path isn't overloaded.
@@ -20,7 +22,7 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 - Several Lit components use manual `querySelector` instead of the idiomatic `@query` decorator (`app.ts`, `chat-panel.ts`, `task-form.ts`)
 - `diff-panel.ts` (~815 lines) is doing too much — extract markdown preview/toggle into a `<diff-markdown-preview>` component, per-file diff card rendering into a `<diff-file-card>` component, and hunk expansion UI into a `<diff-hunk>` component, leaving `diff-panel` as a thin layout shell
-- `bun run dev` doesn't reliably rebuild Tailwind CSS when new utility classes are added. The JS watcher and Tailwind watcher run as separate processes, and Tailwind doesn't always pick up changes from the JS output. A full `bun run build` is needed to get new styles. Should investigate consolidating into a single build pipeline or ensuring the Tailwind watcher is triggered by source file changes.
+
 - Scroll active session into view in sidebar on navigation. Session buttons have `data-session-id` attributes ready. Attempted `scrollIntoView`, manual `scrollTo` on the overflow container, and `MutationObserver` for async data loading — none worked. Needs hands-on debugging in the browser to figure out what's blocking the scroll.
 - Auto-focus chat input on session navigation (e.g. from quick-open palette). Attempted in `chat-panel.ts` `updated()` hook with `requestAnimationFrame` and `updateComplete` + `setTimeout` — neither worked. Likely a focus-stealing issue with the palette overlay or Lit render timing. Needs investigation.
 - No frontend tests. The stores (`DiffStore`, `AppStore`, `ActiveProjectStore`) have coordination logic (polling, re-fetch triggers, session switching) that's entirely untested. At minimum, store-level tests with mocked fetch would catch regressions in when data is refreshed.
