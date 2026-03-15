@@ -67,6 +67,19 @@ export class AppShell extends LitElement {
     window.addEventListener("hashchange", this.onHashChange);
 
     this.appStore.connect();
+
+    // Detect virtual keyboard open/close to toggle safe-area bottom padding.
+    // Capture the initial viewport height before any keyboard appears —
+    // on iOS standalone/PWA mode, both visualViewport.height and
+    // window.innerHeight shrink together, so we need a fixed reference.
+    const vv = window.visualViewport;
+    if (vv) {
+      const initialHeight = vv.height;
+      vv.addEventListener("resize", () => {
+        const keyboardOpen = vv.height < initialHeight * 0.75;
+        document.documentElement.classList.toggle("keyboard-open", keyboardOpen);
+      });
+    }
   }
 
   override disconnectedCallback() {

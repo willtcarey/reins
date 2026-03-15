@@ -6,6 +6,16 @@ html, body {
   overflow: hidden;
 }
 
+/* Safe-area-aware bottom padding for the chat input.
+   Collapses the safe-area inset when the virtual keyboard is open. */
+:root {
+  --input-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+}
+
+:root.keyboard-open {
+  --input-bottom: 0.75rem;
+}
+
 
 
 /* Diff line colors — background only so syntax highlighting shows through */
