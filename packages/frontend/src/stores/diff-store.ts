@@ -12,6 +12,7 @@
 import type { DiffFile, DiffFileSummary, DiffHunk, DiffLine } from "../changes/types.js";
 import { sortDiffFiles, sortFileSummaries } from "../changes/diff-sort.js";
 import { Highlighter } from "../changes/highlighter.js";
+import type { IHighlighter } from "../changes/highlighter.js";
 
 const DEFAULT_CONTEXT = 3;
 const EXPAND_STEP = 15;
@@ -48,6 +49,14 @@ export interface DiffFullData {
 export type DiffStoreListener = () => void;
 
 export class DiffStore {
+  /**
+   * Create a DiffStore. Accepts an optional highlighter for testing —
+   * production code omits it to get the real Shiki web-worker highlighter.
+   */
+  constructor(highlighter?: IHighlighter) {
+    if (highlighter) this._highlighter = highlighter;
+  }
+
   // ---- Public reactive state ------------------------------------------------
 
   /** Lightweight file listing — always up to date via polling. */
@@ -89,7 +98,7 @@ export class DiffStore {
   private _spreadTimer: ReturnType<typeof setInterval> | null = null;
   private _spreadTickCount = 0;
   private _syncResultTimer: ReturnType<typeof setTimeout> | null = null;
-  private _highlighter = new Highlighter();
+  private _highlighter: IHighlighter = new Highlighter();
 
   /** Cache of file content lines (1-indexed: element 0 is unused). */
   private _fileContentCache = new Map<string, string[]>();

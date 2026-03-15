@@ -10,9 +10,15 @@ import type { HighlightRequest, HighlightResponse } from "./highlight-worker.js"
 
 export type HighlightCallback = () => void;
 
+/** Minimal interface for highlight providers — allows test fakes. */
+export interface IHighlighter {
+  highlight(files: DiffFile[], onComplete: HighlightCallback): void;
+  dispose(): void;
+}
+
 let nextId = 0;
 
-export class Highlighter {
+export class Highlighter implements IHighlighter {
   private worker: Worker;
   private pending = new Map<number, HighlightCallback>();
   private fileRefs = new Map<number, DiffFile[]>();

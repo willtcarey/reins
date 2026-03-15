@@ -29,6 +29,28 @@ We have two patterns for state management. Use the right one:
 
 **Rule of thumb:** If multiple components need the same state, use a store. If the state is private to one component, use a controller.
 
+## StoreController — Generic Store Subscription
+
+`controllers/store-controller.ts` provides a generic reactive controller that subscribes to any store implementing our `{ subscribe(fn: () => void): () => void }` pattern. It eliminates the need for manual `@state() _storeVersion` counters or prop-drilled version values.
+
+```ts
+import { StoreController } from "../controllers/store-controller.js";
+import type { DiffStore } from "../stores/diff-store.js";
+
+@customElement("my-component")
+export class MyComponent extends LitElement {
+  private _storeCtrl = new StoreController<DiffStore>(this);
+
+  @property({ attribute: false })
+  set store(s: DiffStore | null) { this._storeCtrl.store = s; }
+  get store(): DiffStore | null { return this._storeCtrl.store; }
+}
+```
+
+The `Subscribable` interface is intentionally minimal — it works with `DiffStore`, `AppStore`, `FileTreeState`, or any future store. The controller handles subscribe/unsubscribe on store change, `hostDisconnected`, and `hostConnected` (re-subscribe after move).
+
+**Current usage:** `diff-file-card` and `diff-hunk` use `StoreController<DiffStore>` to re-render when the Shiki highlighter mutates `DiffLine.html` in place on the same object references.
+
 ## Two Kinds of Controllers
 
 ### State controllers

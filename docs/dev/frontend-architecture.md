@@ -79,14 +79,28 @@ Standalone store owned by the app shell (not by AppStore — it has no WS event 
 
 ### Subscription model
 
-Both AppStore and DiffStore use a `Set<listener>` + `notify()` pattern. Components subscribe in `connectedCallback` and bump a `@state()` version counter to trigger Lit's re-render cycle. Fine-grained per-field subscriptions aren't needed — Lit's dirty checking keeps renders efficient.
+Both AppStore and DiffStore use a `Set<listener>` + `notify()` pattern. Components subscribe and trigger Lit re-renders on each notification. Fine-grained per-field subscriptions aren't needed — Lit's dirty checking keeps renders efficient.
+
+The preferred pattern is `StoreController` (see [reactive-controllers.md](reactive-controllers.md)), which handles subscribe/unsubscribe lifecycle automatically:
 
 ```ts
-// Typical component pattern
-@state() private _storeVersion = 0;
+// Preferred — reactive controller handles lifecycle
+private _storeCtrl = new StoreController<DiffStore>(this);
 
+@property({ attribute: false })
+set store(s: DiffStore | null) { this._storeCtrl.store = s; }
+get store(): DiffStore | null { return this._storeCtrl.store; }
+```
+
+For top-level components that manage the store subscription manually (e.g. `diff-panel` which also has custom `_onStoreUpdate` logic), the manual pattern is still fine:
+
+```ts
+// Manual — when you need custom logic on each notification
 connectedCallback() {
-  this._unsub = this.store.subscribe(() => this._storeVersion++);
+  this._unsub = this.store.subscribe(() => {
+    this._onStoreUpdate();
+    this.requestUpdate();
+  });
 }
 ```
 
@@ -181,11 +195,17 @@ Per-component state and behavior (collapse toggles, markdown preview, clipboard 
 
 The diff/changes feature has its own directory with several supporting modules:
 
-- `diff-panel.ts` — Main diff view, renders file cards with highlighted diffs
+- `diff-panel.ts` — Layout shell: branch header, scroll container, file tree sidebar. Owns state coordination (collapsed files, markdown cache, expand-hunk loading keys) and wires child events to the DiffStore.
+- `diff-file-card.ts` — Per-file card: collapsible header with copy/download actions, delegates to `<diff-hunk>` and `<diff-markdown-preview>`.
+- `diff-hunk.ts` — Single hunk: separator/expand-up button, hunk header, diff lines, trailer/expand-down button.
+- `diff-markdown-preview.ts` — Markdown Diff/Preview tab bar and rendered content area.
 - `diff-file-tree.ts` — Collapsible file tree with scroll spy integration
 - `file-tree-state.ts` — UI-local state for tree expansion (not in store — ephemeral)
 - `scroll-spy.ts` — Tracks which diff card is visible for tree highlighting
-- `highlighter.ts` — Manages syntax highlighting via Web Worker
-- `highlight-worker.ts` — Web Worker for off-main-thread highlighting
+- `highlighter.ts` — Manages syntax highlighting via Web Worker. Exports `IHighlighter` interface for test fakes.
+- `highlight-worker.ts` — Web Worker for off-main-thread Shiki highlighting
 - `diff-sort.ts` — Sorting utilities for diff files
+- `diff-utils.ts` — Pure helpers (isMarkdown, fileCardId, escapeHtml, gutterWidth, getHunkEndLine)
 - `types.ts` — Shared types for diff data structures
+
+`diff-file-card` and `diff-hunk` use `StoreController<DiffStore>` to re-render when the highlighter mutates `DiffLine.html` in place (see [reactive-controllers.md](reactive-controllers.md)).

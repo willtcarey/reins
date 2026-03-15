@@ -21,7 +21,7 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 ## Frontend
 
 - Several Lit components use manual `querySelector` instead of the idiomatic `@query` decorator (`app.ts`, `chat-panel.ts`, `task-form.ts`)
-- `diff-panel.ts` (~815 lines) is doing too much — extract markdown preview/toggle into a `<diff-markdown-preview>` component, per-file diff card rendering into a `<diff-file-card>` component, and hunk expansion UI into a `<diff-hunk>` component, leaving `diff-panel` as a thin layout shell
+- ~~`diff-panel.ts` (~815 lines) is doing too much~~ — **Done.** Extracted `<diff-markdown-preview>`, `<diff-file-card>`, and `<diff-hunk>` components. `diff-panel` is now ~460 lines (layout shell + state coordination).
 
 - Scroll active session into view in sidebar on navigation. Session buttons have `data-session-id` attributes ready. Attempted `scrollIntoView`, manual `scrollTo` on the overflow container, and `MutationObserver` for async data loading — none worked. Needs hands-on debugging in the browser to figure out what's blocking the scroll.
 - Auto-focus chat input on session navigation (e.g. from quick-open palette). Attempted in `chat-panel.ts` `updated()` hook with `requestAnimationFrame` and `updateComplete` + `setTimeout` — neither worked. Likely a focus-stealing issue with the palette overlay or Lit render timing. Needs investigation.
