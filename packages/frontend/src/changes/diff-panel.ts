@@ -18,7 +18,6 @@ import type { FileTreeState } from "./file-tree-state.js";
 import type { ExpandDetail } from "./diff-hunk.js";
 import { fileCardId } from "./diff-utils.js";
 import { ScrollSpy } from "./scroll-spy.js";
-import { HighlightController } from "../controllers/highlight-controller.js";
 import "./diff-file-tree.js";
 import "./diff-file-card.js";
 
@@ -64,7 +63,6 @@ export class DiffPanel extends LitElement {
   @state() private expandingHunks = new Set<string>();
 
   private _unsubscribe: (() => void) | null = null;
-  private _highlight = new HighlightController(this);
 
   private scrollSpy = new ScrollSpy({
     containerSelector: "[data-diff-scroll]",
@@ -128,11 +126,6 @@ export class DiffPanel extends LitElement {
     if (!this.store) return;
 
     const files = this.store.fullData?.files ?? [];
-
-    // Pass files to the highlight controller for syntax highlighting.
-    // The store produces a new array reference when files are mutated
-    // (e.g. expandHunk), so the controller detects changes via ref check.
-    this._highlight.files = files;
 
     // Clean up markdown cache for files no longer in the diff
     const cacheNext = new Map(this.markdownCache);
@@ -370,7 +363,6 @@ export class DiffPanel extends LitElement {
     return html`
       <diff-file-card
         .file=${file}
-        .store=${this.store}
         ?collapsed=${this.collapsedFiles.has(file.path)}
         ?rendered=${this.renderedFiles.has(file.path)}
         ?markdown-loading=${this.markdownLoading.has(file.path)}

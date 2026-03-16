@@ -5,7 +5,7 @@
  * syntax highlighting of diff lines.
  */
 
-import type { DiffFile } from "./types.js";
+import type { DiffFile, DiffHunk } from "./types.js";
 import type { HighlightRequest, HighlightResponse } from "./highlight-worker.js";
 
 export type HighlightCallback = () => void;
@@ -13,6 +13,12 @@ export type HighlightCallback = () => void;
 /** Minimal interface for highlight providers — allows test fakes. */
 export interface IHighlighter {
   highlight(files: DiffFile[], onComplete: HighlightCallback): void;
+  /**
+   * Highlight a single hunk without cancelling other pending requests.
+   * Each hunk completes independently and invokes its own callback,
+   * enabling incremental per-hunk rendering.
+   */
+  highlightHunk(path: string, hunk: DiffHunk, onComplete: HighlightCallback): void;
   dispose(): void;
 }
 
@@ -62,6 +68,35 @@ export class Highlighter implements IHighlighter {
     // Store file ref so the response handler can write html back in-place
     this.pending.set(id, onComplete);
     this.fileRefs.set(id, files);
+
+    this.worker.postMessage(request);
+  }
+
+  /**
+   * Highlight a single hunk without cancelling other pending requests.
+   * Each hunk completes independently and invokes its own callback,
+   * enabling incremental per-hunk rendering.
+   */
+  highlightHunk(path: string, hunk: DiffHunk, onComplete: HighlightCallback): void {
+    const id = nextId++;
+
+    // Wrap the hunk in a single-file, single-hunk request — the worker
+    // protocol always operates on files, but we only send one hunk.
+    const request: HighlightRequest = {
+      id,
+      type: "highlight",
+      files: [
+        {
+          path,
+          hunks: [{ lines: hunk.lines.map((l) => l.text) }],
+        },
+      ],
+    };
+
+    // Build a fake single-hunk DiffFile ref so handleResponse can write
+    // the html back into the correct DiffLine objects.
+    this.pending.set(id, onComplete);
+    this.fileRefs.set(id, [{ path, additions: 0, removals: 0, hunks: [hunk] }]);
 
     this.worker.postMessage(request);
   }

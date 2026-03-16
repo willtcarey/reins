@@ -270,9 +270,9 @@ export class DiffStore {
 
   /**
    * Insert context lines into a hunk and notify subscribers.
-   * Creates a new file object reference (shallow copy) for the mutated file
-   * and a new files array, so HighlightController can detect which file
-   * changed via its WeakSet-based dirty tracking.
+   * Creates new object references (shallow copies) for both the mutated hunk
+   * and the parent file, plus a new files array. HighlightController uses
+   * ref-equality to detect which hunks need re-highlighting.
    */
   private _insertLines(
     file: DiffFile,
@@ -280,11 +280,18 @@ export class DiffStore {
     lines: DiffLine[],
     position: "prepend" | "append",
   ) {
-    if (position === "prepend") {
-      hunk.lines.unshift(...lines);
-    } else {
-      hunk.lines.push(...lines);
+    // Build a new lines array so the hunk gets a new object reference.
+    // HighlightController uses ref-equality to detect changes.
+    const newLines = position === "prepend"
+      ? [...lines, ...hunk.lines]
+      : [...hunk.lines, ...lines];
+
+    // Replace the hunk in the file's hunks array with a shallow copy
+    const hunkIndex = file.hunks.indexOf(hunk);
+    if (hunkIndex >= 0) {
+      file.hunks[hunkIndex] = { ...hunk, lines: newLines };
     }
+
     if (this.fullData) {
       const fileIndex = this.fullData.files.indexOf(file);
       if (fileIndex >= 0) {

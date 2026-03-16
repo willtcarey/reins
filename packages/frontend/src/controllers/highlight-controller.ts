@@ -1,24 +1,28 @@
 /**
  * HighlightController
  *
- * Reactive controller that owns the syntax highlighter (Shiki web worker)
- * and triggers re-highlighting when diff files change. This moves
- * highlighting responsibility out of DiffStore (pure data) and into the
- * view layer where it belongs.
+ * Reactive controller that owns syntax highlighting for a **single** DiffHunk.
+ * Each `<diff-hunk>` creates its own instance. The shared static Highlighter
+ * (Shiki web worker) is reused across all instances and survives component
+ * disconnects (e.g. tab switches).
  *
- * Uses a WeakSet<DiffFile> to track which file objects have already been
- * highlighted. When the store produces a new file object (shallow copy)
- * after mutation (e.g. expandHunk), only that file is re-highlighted.
- * Files that haven't changed keep their existing html and are skipped.
+ * When the `hunk` setter receives a new object reference, the hunk is sent
+ * to the highlighter along with the file path (for language detection).
+ * Same-ref assignments are skipped. The store already produces new file
+ * objects (and therefore new hunk refs) on mutation (e.g. expandHunk
+ * shallow-copies), so the reference check is sufficient.
  *
- * Usage:
+ * Usage (inside a Lit component):
  *   private _highlight = new HighlightController(this);
  *
- *   // When the store notifies:
- *   this._highlight.files = store.fullData?.files ?? [];
+ *   willUpdate(changed) {
+ *     if (changed.has('file') || changed.has('hunkIndex')) {
+ *       this._highlight.setHunk(this.file.path, this.file.hunks[this.hunkIndex]);
+ *     }
+ *   }
  */
 import type { ReactiveController, ReactiveControllerHost } from "lit";
-import type { DiffFile } from "../changes/types.js";
+import type { DiffHunk } from "../changes/types.js";
 import type { IHighlighter } from "../changes/highlighter.js";
 import { Highlighter } from "../changes/highlighter.js";
 
@@ -32,9 +36,7 @@ export class HighlightController implements ReactiveController {
 
   private _host: ReactiveControllerHost;
   private _highlighter: IHighlighter;
-  private _files: DiffFile[] = [];
-  private _lastRef: DiffFile[] | null = null;
-  private _highlighted = new WeakSet<DiffFile>();
+  private _lastHunk: DiffHunk | null = null;
 
   /**
    * @param host The Lit component that owns this controller.
@@ -47,31 +49,22 @@ export class HighlightController implements ReactiveController {
   }
 
   /**
-   * Set the files to highlight. Uses a WeakSet to track which file objects
-   * have already been highlighted — only dirty (new) file objects are sent
-   * to the highlighter. The Highlighter writes `line.html` by reference,
-   * so highlighting a subset updates the correct lines in the main array.
+   * Set the hunk to highlight. When the hunk reference changes, it is
+   * sent to the highlighter with the given file path for language detection.
+   * Same-ref assignments are skipped.
    */
-  set files(files: DiffFile[]) {
-    if (files === this._lastRef) return;
-    this._files = files;
-    this._lastRef = files;
+  setHunk(path: string, hunk: DiffHunk | null): void {
+    if (hunk === this._lastHunk) return;
+    this._lastHunk = hunk;
+    if (!hunk) return;
 
-    if (files.length === 0) return;
-
-    const dirtyFiles = files.filter((f) => !this._highlighted.has(f));
-    if (dirtyFiles.length === 0) return;
-
-    this._highlighter.highlight(dirtyFiles, () => {
-      for (const f of dirtyFiles) {
-        this._highlighted.add(f);
-      }
+    this._highlighter.highlightHunk(path, hunk, () => {
       this._host.requestUpdate();
     });
   }
 
-  get files(): DiffFile[] {
-    return this._files;
+  get hunk(): DiffHunk | null {
+    return this._lastHunk;
   }
 
   hostConnected() {}

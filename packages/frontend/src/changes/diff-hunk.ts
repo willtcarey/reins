@@ -16,8 +16,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import type { DiffFile, DiffHunk as DiffHunkType, DiffLine } from "./types.js";
-import type { DiffStore } from "../stores/diff-store.js";
-import { StoreController } from "../controllers/store-controller.js";
+import { HighlightController } from "../controllers/highlight-controller.js";
 import { EXPAND_STEP, escapeHtml, getHunkEndLine } from "./diff-utils.js";
 
 export interface ExpandDetail {
@@ -31,14 +30,10 @@ export class DiffHunk extends LitElement {
     return this;
   }
 
-  /** Subscribes to the DiffStore so in-place highlight mutations trigger re-renders. */
-  private _storeCtrl = new StoreController<DiffStore>(this);
+  /** Highlights this hunk when it receives a new object reference. */
+  private _highlight = new HighlightController(this);
 
-  @property({ attribute: false })
-  set store(s: DiffStore | null) { this._storeCtrl.store = s; }
-  get store(): DiffStore | null { return this._storeCtrl.store; }
-
-  /** The parent file — needed for separator gap calculations. */
+  /** The parent file — needed for separator gap calculations and language detection. */
   @property({ attribute: false })
   file!: DiffFile;
 
@@ -58,6 +53,11 @@ export class DiffHunk extends LitElement {
   @property({ attribute: false })
   expandingHunks: Set<string> = new Set();
 
+  override willUpdate(changed: Map<string, unknown>) {
+    if (changed.has("file") || changed.has("hunkIndex")) {
+      this._highlight.setHunk(this.file.path, this.file.hunks[this.hunkIndex]);
+    }
+  }
 
   // ---- Rendering helpers ----------------------------------------------------
 

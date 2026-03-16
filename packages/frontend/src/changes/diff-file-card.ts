@@ -18,8 +18,6 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { DiffFile } from "./types.js";
-import type { DiffStore } from "../stores/diff-store.js";
-import { StoreController } from "../controllers/store-controller.js";
 import { isMarkdown, fileCardId, gutterWidth } from "./diff-utils.js";
 import "./diff-hunk.js";
 import "./diff-markdown-preview.js";
@@ -29,13 +27,6 @@ export class DiffFileCard extends LitElement {
   override createRenderRoot() {
     return this;
   }
-
-  /** Subscribes to the DiffStore so in-place highlight mutations trigger re-renders. */
-  private _storeCtrl = new StoreController<DiffStore>(this);
-
-  @property({ attribute: false })
-  set store(s: DiffStore | null) { this._storeCtrl.store = s; }
-  get store(): DiffStore | null { return this._storeCtrl.store; }
 
   @property({ attribute: false })
   file!: DiffFile;
@@ -158,7 +149,6 @@ export class DiffFileCard extends LitElement {
               .gutterCh=${gw}
               ?wrap=${wrap}
               .expandingHunks=${this.expandingHunks}
-              .store=${this.store}
             ></diff-hunk>
           `)}
         </div>

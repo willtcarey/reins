@@ -1,15 +1,15 @@
 /**
- * Tests for HighlightController — reactive controller that owns the
- * Highlighter and triggers re-highlighting when files change.
+ * Tests for HighlightController — reactive controller that owns syntax
+ * highlighting for a single DiffHunk.
  *
- * Uses a WeakSet<DiffFile> internally to track which file objects have
- * already been highlighted — only new/dirty file objects are sent to
- * the highlighter.
+ * Each diff-hunk creates its own HighlightController instance.
+ * When `setHunk` receives a new hunk reference, it is sent to the
+ * shared highlighter. Same-ref assignments are skipped.
  */
 import { describe, test, expect } from "bun:test";
 import { HighlightController } from "../controllers/highlight-controller.js";
 import type { IHighlighter, HighlightCallback } from "../changes/highlighter.js";
-import type { DiffFile, DiffLine } from "../changes/types.js";
+import type { DiffFile, DiffHunk, DiffLine } from "../changes/types.js";
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 
 // ---------------------------------------------------------------------------
@@ -18,6 +18,7 @@ import type { ReactiveController, ReactiveControllerHost } from "lit";
 
 class FakeHighlighter implements IHighlighter {
   calls: { files: DiffFile[]; onComplete: HighlightCallback }[] = [];
+  hunkCalls: { path: string; hunk: DiffHunk; onComplete: HighlightCallback }[] = [];
   disposed = false;
 
   highlight(files: DiffFile[], onComplete: HighlightCallback): void {
@@ -32,6 +33,14 @@ class FakeHighlighter implements IHighlighter {
     onComplete();
   }
 
+  highlightHunk(path: string, hunk: DiffHunk, onComplete: HighlightCallback): void {
+    this.hunkCalls.push({ path, hunk, onComplete });
+    for (const line of hunk.lines) {
+      line.html = `<span class="hl">${line.text}</span>`;
+    }
+    onComplete();
+  }
+
   dispose(): void {
     this.disposed = true;
   }
@@ -39,21 +48,22 @@ class FakeHighlighter implements IHighlighter {
 
 class AsyncFakeHighlighter implements IHighlighter {
   pending: { files: DiffFile[]; onComplete: HighlightCallback }[] = [];
+  pendingHunks: { path: string; hunk: DiffHunk; onComplete: HighlightCallback }[] = [];
   disposed = false;
 
   highlight(files: DiffFile[], onComplete: HighlightCallback): void {
     this.pending.push({ files, onComplete });
   }
 
-  complete(index = this.pending.length - 1) {
-    const req = this.pending[index];
+  highlightHunk(path: string, hunk: DiffHunk, onComplete: HighlightCallback): void {
+    this.pendingHunks.push({ path, hunk, onComplete });
+  }
+
+  completeHunk(index = this.pendingHunks.length - 1) {
+    const req = this.pendingHunks[index];
     if (!req) return;
-    for (const file of req.files) {
-      for (const hunk of file.hunks) {
-        for (const line of hunk.lines) {
-          line.html = `<span class="hl">${line.text}</span>`;
-        }
-      }
+    for (const line of req.hunk.lines) {
+      line.html = `<span class="hl">${line.text}</span>`;
     }
     req.onComplete();
   }
@@ -94,8 +104,8 @@ function line(type: DiffLine["type"], text: string, oldLine?: number, newLine?: 
   return { type, text, oldLine, newLine };
 }
 
-function makeFile(path: string, hunks: { header: string; lines: DiffLine[] }[]): DiffFile {
-  return { path, additions: 0, removals: 0, hunks };
+function makeHunk(header: string, lines: DiffLine[]): DiffHunk {
+  return { header, lines };
 }
 
 // ---------------------------------------------------------------------------
@@ -110,41 +120,65 @@ describe("HighlightController", () => {
     expect(host.controllers).toContain(ctrl);
   });
 
-  test("setting files highlights all files (none in WeakSet yet)", () => {
+  test("setHunk triggers highlighting", () => {
     const host = fakeHost();
     const hl = new FakeHighlighter();
     const ctrl = new HighlightController(host, hl);
 
-    const files = [
-      makeFile("a.ts", [{ header: "@@", lines: [line("add", "hello", 1, 1)] }]),
-      makeFile("b.ts", [{ header: "@@", lines: [line("add", "world", 1, 1)] }]),
-    ];
-    ctrl.files = files;
+    const hunk = makeHunk("@@", [line("add", "hello", 1, 1)]);
+    ctrl.setHunk("a.ts", hunk);
 
-    expect(hl.calls.length).toBe(1);
-    expect(hl.calls[0].files).toEqual(files);
-    expect(hl.calls[0].files.length).toBe(2);
+    expect(hl.hunkCalls.length).toBe(1);
+    expect(hl.hunkCalls[0].path).toBe("a.ts");
+    expect(hl.hunkCalls[0].hunk).toBe(hunk);
   });
 
-  test("setting empty files does not trigger highlighting", () => {
+  test("setHunk with null does not trigger highlighting", () => {
     const host = fakeHost();
     const hl = new FakeHighlighter();
     const ctrl = new HighlightController(host, hl);
 
-    ctrl.files = [];
-    expect(hl.calls.length).toBe(0);
+    ctrl.setHunk("a.ts", null);
+    expect(hl.hunkCalls.length).toBe(0);
   });
 
-  test("host.requestUpdate is called when highlighting completes", () => {
+  test("same hunk ref is skipped", () => {
+    const host = fakeHost();
+    const hl = new FakeHighlighter();
+    const ctrl = new HighlightController(host, hl);
+
+    const hunk = makeHunk("@@", [line("add", "hello", 1, 1)]);
+    ctrl.setHunk("a.ts", hunk);
+    ctrl.setHunk("a.ts", hunk); // same ref
+
+    expect(hl.hunkCalls.length).toBe(1);
+  });
+
+  test("new hunk ref triggers highlighting", () => {
+    const host = fakeHost();
+    const hl = new FakeHighlighter();
+    const ctrl = new HighlightController(host, hl);
+
+    const hunk1 = makeHunk("@@", [line("add", "v1", 1, 1)]);
+    ctrl.setHunk("a.ts", hunk1);
+
+    const hunk2 = makeHunk("@@", [line("add", "v2", 1, 1)]);
+    ctrl.setHunk("a.ts", hunk2);
+
+    expect(hl.hunkCalls.length).toBe(2);
+    expect(hl.hunkCalls[1].hunk).toBe(hunk2);
+  });
+
+  test("host.requestUpdate called when highlighting completes", () => {
     const host = fakeHost();
     const hl = new AsyncFakeHighlighter();
     const ctrl = new HighlightController(host, hl);
 
-    const files = [makeFile("a.ts", [{ header: "@@", lines: [line("add", "hello", 1, 1)] }])];
-    ctrl.files = files;
+    const hunk = makeHunk("@@", [line("add", "hello", 1, 1)]);
+    ctrl.setHunk("a.ts", hunk);
 
     expect(host.updateCount).toBe(0);
-    hl.complete();
+    hl.completeHunk(0);
     expect(host.updateCount).toBe(1);
   });
 
@@ -154,99 +188,10 @@ describe("HighlightController", () => {
     const ctrl = new HighlightController(host, hl);
 
     const myLine = line("add", "hello", 1, 1);
-    const files = [makeFile("a.ts", [{ header: "@@", lines: [myLine] }])];
-    ctrl.files = files;
+    const hunk = makeHunk("@@", [myLine]);
+    ctrl.setHunk("a.ts", hunk);
 
     expect(myLine.html).toBe('<span class="hl">hello</span>');
-  });
-
-  test("same array reference is skipped (no redundant highlighting)", () => {
-    const host = fakeHost();
-    const hl = new FakeHighlighter();
-    const ctrl = new HighlightController(host, hl);
-
-    const files = [makeFile("a.ts", [{ header: "@@", lines: [line("add", "hello", 1, 1)] }])];
-    ctrl.files = files;
-    ctrl.files = files; // same ref
-
-    expect(hl.calls.length).toBe(1);
-  });
-
-  test("new array ref with same file objects skips already-highlighted files", () => {
-    const host = fakeHost();
-    const hl = new FakeHighlighter();
-    const ctrl = new HighlightController(host, hl);
-
-    const fileA = makeFile("a.ts", [{ header: "@@", lines: [line("add", "hello", 1, 1)] }]);
-    const fileB = makeFile("b.ts", [{ header: "@@", lines: [line("add", "world", 1, 1)] }]);
-    const files = [fileA, fileB];
-    ctrl.files = files;
-
-    expect(hl.calls.length).toBe(1);
-
-    // New array, same file objects — everything is already highlighted
-    ctrl.files = [fileA, fileB];
-
-    // No additional highlight call — both files are in the WeakSet
-    expect(hl.calls.length).toBe(1);
-  });
-
-  test("new file objects are highlighted even if path is the same (e.g. re-fetch)", () => {
-    const host = fakeHost();
-    const hl = new FakeHighlighter();
-    const ctrl = new HighlightController(host, hl);
-
-    const files1 = [makeFile("a.ts", [{ header: "@@", lines: [line("add", "v1", 1, 1)] }])];
-    ctrl.files = files1;
-
-    // Re-fetch produces entirely new file objects
-    const files2 = [makeFile("a.ts", [{ header: "@@", lines: [line("add", "v2", 1, 1)] }])];
-    ctrl.files = files2;
-
-    expect(hl.calls.length).toBe(2);
-    expect(hl.calls[1].files).toEqual(files2);
-  });
-
-  test("mix of old and new file objects — only new ones are sent to highlighter", () => {
-    const host = fakeHost();
-    const hl = new FakeHighlighter();
-    const ctrl = new HighlightController(host, hl);
-
-    const fileA = makeFile("a.ts", [{ header: "@@", lines: [line("add", "hello", 1, 1)] }]);
-    const fileB = makeFile("b.ts", [{ header: "@@", lines: [line("add", "world", 1, 1)] }]);
-    ctrl.files = [fileA, fileB];
-
-    expect(hl.calls.length).toBe(1);
-
-    // fileA stays the same, fileB is a new object (e.g. after expandHunk)
-    const fileBNew = makeFile("b.ts", [{ header: "@@", lines: [line("add", "world expanded", 1, 1)] }]);
-    ctrl.files = [fileA, fileBNew];
-
-    expect(hl.calls.length).toBe(2);
-    // Only the new file was sent
-    expect(hl.calls[1].files.length).toBe(1);
-    expect(hl.calls[1].files[0]).toBe(fileBNew);
-  });
-
-  test("after expand, store produces new file object — that file gets re-highlighted", () => {
-    const host = fakeHost();
-    const hl = new FakeHighlighter();
-    const ctrl = new HighlightController(host, hl);
-
-    const fileA = makeFile("a.ts", [{ header: "@@", lines: [line("add", "hello", 1, 1)] }]);
-    const fileB = makeFile("b.ts", [{ header: "@@", lines: [line("context", "line1", 1, 1)] }]);
-    ctrl.files = [fileA, fileB];
-
-    expect(hl.calls.length).toBe(1);
-
-    // Simulate what the store does: shallow-copy the mutated file, new array
-    const fileBExpanded = { ...fileB };
-    fileBExpanded.hunks[0].lines.push(line("context", "line2", 2, 2));
-    ctrl.files = [fileA, fileBExpanded];
-
-    expect(hl.calls.length).toBe(2);
-    expect(hl.calls[1].files.length).toBe(1);
-    expect(hl.calls[1].files[0]).toBe(fileBExpanded);
   });
 
   test("hostDisconnected is safe (does not dispose shared highlighter)", () => {
@@ -256,5 +201,80 @@ describe("HighlightController", () => {
 
     expect(() => host.disconnect()).not.toThrow();
     expect(hl.disposed).toBe(false);
+  });
+
+  test("hunk getter returns the last set hunk", () => {
+    const host = fakeHost();
+    const hl = new FakeHighlighter();
+    const ctrl = new HighlightController(host, hl);
+
+    expect(ctrl.hunk).toBeNull();
+
+    const hunk = makeHunk("@@", [line("add", "hello", 1, 1)]);
+    ctrl.setHunk("a.ts", hunk);
+    expect(ctrl.hunk).toBe(hunk);
+  });
+
+  test("setting null after a hunk clears the reference", () => {
+    const host = fakeHost();
+    const hl = new FakeHighlighter();
+    const ctrl = new HighlightController(host, hl);
+
+    const hunk = makeHunk("@@", [line("add", "hello", 1, 1)]);
+    ctrl.setHunk("a.ts", hunk);
+    ctrl.setHunk("a.ts", null);
+
+    expect(ctrl.hunk).toBeNull();
+    // Only one highlight call (for the initial set)
+    expect(hl.hunkCalls.length).toBe(1);
+  });
+
+  test("after expand, store produces new hunk — gets re-highlighted", () => {
+    const host = fakeHost();
+    const hl = new FakeHighlighter();
+    const ctrl = new HighlightController(host, hl);
+
+    const hunk = makeHunk("@@", [line("context", "line1", 1, 1)]);
+    ctrl.setHunk("a.ts", hunk);
+
+    expect(hl.hunkCalls.length).toBe(1);
+
+    // Simulate what the store does: the file is shallow-copied so hunks
+    // array is shared, but the hunk object itself may be new after merge.
+    const hunkExpanded = { ...hunk };
+    hunkExpanded.lines = [...hunk.lines, line("context", "line2", 2, 2)];
+    ctrl.setHunk("a.ts", hunkExpanded);
+
+    expect(hl.hunkCalls.length).toBe(2);
+    expect(hl.hunkCalls[1].hunk).toBe(hunkExpanded);
+  });
+
+  test("two controllers with same highlighter can highlight independently", () => {
+    const hl = new FakeHighlighter();
+    const host1 = fakeHost();
+    const host2 = fakeHost();
+    const ctrl1 = new HighlightController(host1, hl);
+    const ctrl2 = new HighlightController(host2, hl);
+
+    const hunk1 = makeHunk("@@", [line("add", "hello", 1, 1)]);
+    const hunk2 = makeHunk("@@", [line("add", "world", 1, 1)]);
+
+    ctrl1.setHunk("a.ts", hunk1);
+    ctrl2.setHunk("b.ts", hunk2);
+
+    expect(hl.hunkCalls.length).toBe(2);
+    expect(host1.updateCount).toBe(1);
+    expect(host2.updateCount).toBe(1);
+  });
+
+  test("file path is passed through to the highlighter for language detection", () => {
+    const host = fakeHost();
+    const hl = new FakeHighlighter();
+    const ctrl = new HighlightController(host, hl);
+
+    const hunk = makeHunk("@@", [line("add", "x = 1", 1, 1)]);
+    ctrl.setHunk("src/main.py", hunk);
+
+    expect(hl.hunkCalls[0].path).toBe("src/main.py");
   });
 });
