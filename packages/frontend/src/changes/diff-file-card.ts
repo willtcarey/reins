@@ -8,19 +8,25 @@
  * Events emitted:
  *  - `expand-up`        (detail: { filePath, hunkIndex })
  *  - `expand-down`      (detail: { filePath, hunkIndex })
- *  - `toggle-rendered`  (detail: string — the file path)
- *  - `fetch-markdown`   (detail: string — the file path)
  *
- * The parent (`<diff-panel>`) wires these to the DiffStore and manages
- * markdown caching state.
+ * Collapse and markdown preview state are internal — each card manages its
+ * own expanded/collapsed toggle and markdown fetch/cache/render cycle.
+ * The parent (`<diff-panel>`) wires expand events to the DiffStore.
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { marked } from "marked";
 import type { DiffFile } from "./types.js";
 import { isMarkdown, fileCardId, gutterWidth } from "./diff-utils.js";
 import "./diff-hunk.js";
 import "./diff-markdown-preview.js";
+
+// Configure marked for markdown rendering
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+});
 
 @customElement("diff-file-card")
 export class DiffFileCard extends LitElement {
@@ -31,30 +37,30 @@ export class DiffFileCard extends LitElement {
   @property({ attribute: false })
   file!: DiffFile;
 
-  /** Whether this file card is collapsed. */
-  @property({ type: Boolean })
-  collapsed = false;
+  /** Whether this file card is collapsed (internal toggle state). */
+  @state() private collapsed = false;
 
   /** Whether this markdown file is in rendered/preview mode. */
-  @property({ type: Boolean })
-  rendered = false;
+  @state() private rendered = false;
 
   /** Whether markdown content is currently loading. */
-  @property({ type: Boolean, attribute: "markdown-loading" })
-  markdownLoading = false;
+  @state() private markdownLoading = false;
 
-  /** Rendered markdown HTML content. */
-  @property({ attribute: false })
-  markdownContent: string | null = null;
+  /** Cached rendered markdown HTML content. */
+  @state() private markdownContent: string | null = null;
 
   /** Set of expanding-hunk keys currently loading. */
   @property({ attribute: false })
   expandingHunks: Set<string> = new Set();
 
 
-  /** URL builder for file downloads. */
+  /** Project ID for file URL generation. */
+  @property({ type: Number, attribute: false })
+  projectId: number | null = null;
+
+  /** Branch ref for file URL generation. */
   @property({ attribute: false })
-  fileUrl: ((path: string) => string | null) | null = null;
+  branch: string | null = null;
 
   // ---- Internal state -------------------------------------------------------
 
@@ -67,14 +73,20 @@ export class DiffFileCard extends LitElement {
     if (this._copyTimer) clearTimeout(this._copyTimer);
   }
 
+  // ---- URL helpers ----------------------------------------------------------
+
+  /** Build the API URL for this file's raw content. */
+  private _fileUrl(): string | null {
+    if (this.projectId == null) return null;
+    let url = `/api/projects/${this.projectId}/file?path=${encodeURIComponent(this.file.path)}`;
+    if (this.branch) url += `&ref=${encodeURIComponent(this.branch)}`;
+    return url;
+  }
+
   // ---- Actions --------------------------------------------------------------
 
   private _toggleCollapse() {
-    this.dispatchEvent(new CustomEvent<string>("toggle-collapse", {
-      bubbles: true,
-      composed: true,
-      detail: this.file.path,
-    }));
+    this.collapsed = !this.collapsed;
   }
 
   private async _copyPath(e: Event) {
@@ -116,7 +128,7 @@ export class DiffFileCard extends LitElement {
 
   private _downloadFile(e: Event) {
     e.stopPropagation();
-    const url = this.fileUrl?.(this.file.path);
+    const url = this._fileUrl();
     if (!url) return;
     const a = document.createElement("a");
     a.href = url + "&download=1";
@@ -126,12 +138,38 @@ export class DiffFileCard extends LitElement {
     document.body.removeChild(a);
   }
 
-  private _onToggleRendered() {
-    this.dispatchEvent(new CustomEvent<string>("toggle-rendered", {
-      bubbles: true,
-      composed: true,
-      detail: this.file.path,
-    }));
+  private async _toggleRendered() {
+    if (this.rendered) {
+      this.rendered = false;
+      return;
+    }
+
+    this.rendered = true;
+
+    if (!this.markdownContent) {
+      await this._fetchMarkdown();
+    }
+  }
+
+  /** Fetch the raw file content and render it as HTML via marked. */
+  private async _fetchMarkdown() {
+    const url = this._fileUrl();
+    if (!url) return;
+
+    this.markdownLoading = true;
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        this.markdownContent = `<p class="text-red-400">Failed to load file (HTTP ${resp.status})</p>`;
+        return;
+      }
+      const raw = await resp.text();
+      this.markdownContent = marked.parse(raw) as string;
+    } catch (err: any) {
+      this.markdownContent = `<p class="text-red-400">Error: ${err.message}</p>`;
+    } finally {
+      this.markdownLoading = false;
+    }
   }
 
   // ---- Render ---------------------------------------------------------------
@@ -195,7 +233,7 @@ export class DiffFileCard extends LitElement {
               ?rendered=${this.rendered}
               ?loading=${this.markdownLoading}
               .content=${this.markdownContent}
-              @toggle-rendered=${() => this._onToggleRendered()}
+              @toggle-rendered=${() => this._toggleRendered()}
             ></diff-markdown-preview>
           ` : nothing}
           ${!(isMd && this.rendered) ? this.renderDiffContent() : nothing}

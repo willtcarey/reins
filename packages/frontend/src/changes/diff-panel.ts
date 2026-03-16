@@ -11,7 +11,6 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { marked } from "marked";
 import type { DiffFile } from "./types.js";
 import type { DiffStore } from "../stores/diff-store.js";
 import type { FileTreeState } from "./file-tree-state.js";
@@ -20,12 +19,6 @@ import { fileCardId } from "./diff-utils.js";
 import { ScrollSpy } from "./scroll-spy.js";
 import "./diff-file-tree.js";
 import "./diff-file-card.js";
-
-// Configure marked for markdown rendering
-marked.setOptions({
-  breaks: true,
-  gfm: true,
-});
 
 // ---- Component --------------------------------------------------------------
 
@@ -46,15 +39,6 @@ export class DiffPanel extends LitElement {
   /** Whether this panel is currently visible (set by the parent). */
   @property({ type: Boolean })
   visible = false;
-
-  @state() private collapsedFiles = new Set<string>();
-
-  /** Tracks which markdown files are in "rendered" mode vs "raw" (diff) mode */
-  @state() private renderedFiles = new Set<string>();
-  /** Cache of fetched markdown content: path → rendered HTML */
-  @state() private markdownCache = new Map<string, string>();
-  /** Tracks which files are currently being fetched */
-  @state() private markdownLoading = new Set<string>();
 
   /** The file path currently topmost in the scroll viewport. */
   @state() private activeFile: string | null = null;
@@ -102,10 +86,6 @@ export class DiffPanel extends LitElement {
 
   /** Re-fetch the full diff, clearing stale component-level state. */
   private _fetchFresh() {
-    this.collapsedFiles = new Set();
-    this.renderedFiles = new Set();
-    this.markdownCache = new Map();
-    this.markdownLoading = new Set();
     this.expandingHunks = new Set();
     this.store?.fetchFullDiff();
   }
@@ -123,28 +103,7 @@ export class DiffPanel extends LitElement {
 
   /** Called when the store notifies us of new data. */
   private _onStoreUpdate() {
-    if (!this.store) return;
-
-    const files = this.store.fullData?.files ?? [];
-
-    // Clean up markdown cache for files no longer in the diff
-    const cacheNext = new Map(this.markdownCache);
-    let cacheChanged = false;
-    for (const key of cacheNext.keys()) {
-      if (!files.some((f) => f.path === key)) {
-        cacheNext.delete(key);
-        cacheChanged = true;
-      }
-    }
-    if (cacheChanged) this.markdownCache = cacheNext;
-
-    // Re-fetch markdown for files currently in rendered mode
-    const activePaths = [...this.renderedFiles].filter((p) =>
-      files.some((f) => f.path === p)
-    );
-    for (const p of activePaths) {
-      this._fetchMarkdown(p);
-    }
+    // Currently a no-op hook — retained for future cross-card coordination.
   }
 
   // ---- File navigation --------------------------------------------------------
@@ -166,34 +125,6 @@ export class DiffPanel extends LitElement {
   }
 
   // ---- Child event handlers -------------------------------------------------
-
-  private _onToggleCollapse(e: Event) {
-    const path = (e as CustomEvent<string>).detail;
-    const next = new Set(this.collapsedFiles);
-    if (next.has(path)) {
-      next.delete(path);
-    } else {
-      next.add(path);
-    }
-    this.collapsedFiles = next;
-  }
-
-  private async _onToggleRendered(e: Event) {
-    const path = (e as CustomEvent<string>).detail;
-    const next = new Set(this.renderedFiles);
-    if (next.has(path)) {
-      next.delete(path);
-      this.renderedFiles = next;
-      return;
-    }
-
-    next.add(path);
-    this.renderedFiles = next;
-
-    if (!this.markdownCache.has(path)) {
-      await this._fetchMarkdown(path);
-    }
-  }
 
   private async _onExpandUp(e: Event) {
     const { filePath, hunkIndex } = (e as CustomEvent<ExpandDetail>).detail;
@@ -253,49 +184,7 @@ export class DiffPanel extends LitElement {
     return null;
   }
 
-  private _fileUrl(path: string): string | null {
-    const projectId = this.store?.projectId;
-    if (projectId == null) return null;
-    const branch = this.store?.branch ?? this.store?.fileData.branch;
-    let url = `/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`;
-    if (branch) url += `&ref=${encodeURIComponent(branch)}`;
-    return url;
-  }
 
-  /** Bound file URL builder passed to child cards. */
-  private _fileUrlFn = (path: string) => this._fileUrl(path);
-
-  private async _fetchMarkdown(path: string) {
-    const url = this._fileUrl(path);
-    if (!url) return;
-
-    const loadingNext = new Set(this.markdownLoading);
-    loadingNext.add(path);
-    this.markdownLoading = loadingNext;
-
-    try {
-      const resp = await fetch(url);
-      if (!resp.ok) {
-        const cacheNext = new Map(this.markdownCache);
-        cacheNext.set(path, `<p class="text-red-400">Failed to load file (HTTP ${resp.status})</p>`);
-        this.markdownCache = cacheNext;
-        return;
-      }
-      const raw = await resp.text();
-      const rendered = marked.parse(raw) as string;
-      const cacheNext = new Map(this.markdownCache);
-      cacheNext.set(path, rendered);
-      this.markdownCache = cacheNext;
-    } catch (err: any) {
-      const cacheNext = new Map(this.markdownCache);
-      cacheNext.set(path, `<p class="text-red-400">Error: ${err.message}</p>`);
-      this.markdownCache = cacheNext;
-    } finally {
-      const loadingNext = new Set(this.markdownLoading);
-      loadingNext.delete(path);
-      this.markdownLoading = loadingNext;
-    }
-  }
 
   // ---- Render helpers -------------------------------------------------------
 
@@ -363,12 +252,9 @@ export class DiffPanel extends LitElement {
     return html`
       <diff-file-card
         .file=${file}
-        ?collapsed=${this.collapsedFiles.has(file.path)}
-        ?rendered=${this.renderedFiles.has(file.path)}
-        ?markdown-loading=${this.markdownLoading.has(file.path)}
-        .markdownContent=${this.markdownCache.get(file.path) ?? null}
         .expandingHunks=${this.expandingHunks}
-        .fileUrl=${this._fileUrlFn}
+        .projectId=${this.store?.projectId ?? null}
+        .branch=${this.store?.branch ?? this.store?.fileData.branch ?? null}
       ></diff-file-card>
     `;
   }
@@ -421,8 +307,6 @@ export class DiffPanel extends LitElement {
 
           <!-- Scrollable diff list -->
           <div class="flex-1 overflow-y-auto" data-diff-scroll
-            @toggle-collapse=${this._onToggleCollapse}
-            @toggle-rendered=${this._onToggleRendered}
             @expand-up=${this._onExpandUp}
             @expand-down=${this._onExpandDown}
           >
