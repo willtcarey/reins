@@ -52,11 +52,11 @@ Internally, AppStore delegates project/session state management to `ProjectColle
 
 ### DiffStore (`stores/diff-store.ts`)
 
-Owned by AppStore. Manages git diff state: file listings, full syntax-highlighted diffs, commit spread, and diff mode (branch vs. uncommitted). Handles its own polling timers:
+Owned by AppStore. Manages git diff state: file listings, full diffs, commit spread, and diff mode (branch vs. uncommitted). Handles its own polling timers:
 
 - **File polling** — Polls `/diff/files` every 5 seconds when a project is active.
 - **Spread polling** — Polls `/diff/spread` every 60 seconds (every 6th file poll cycle).
-- **Syntax highlighting** — Uses a Web Worker (`highlight-worker.ts`) for off-main-thread Shiki highlighting. Each hunk is highlighted independently so expanded hunks can be re-highlighted without reprocessing the entire file.
+- **Syntax highlighting** — Moved to `HighlightController` (see [reactive-controllers.md](reactive-controllers.md)). The store is pure data; it notifies subscribers after mutations and the controller handles web worker communication.
 - **Per-hunk expansion** — `expandHunk(filePath, hunkIndex, direction)` fetches the full file content on demand (cached per fetch cycle), builds context lines, and inserts them into the hunk. When expansion closes the gap between adjacent hunks, they auto-merge. Scroll position is preserved for upward expansion.
 
 Views access DiffStore through `store.diffStore` as a read-only surface.
@@ -208,4 +208,4 @@ The diff/changes feature has its own directory with several supporting modules:
 - `diff-utils.ts` — Pure helpers (isMarkdown, fileCardId, escapeHtml, gutterWidth, getHunkEndLine)
 - `types.ts` — Shared types for diff data structures
 
-`diff-file-card` and `diff-hunk` use `StoreController<DiffStore>` to re-render when the highlighter mutates `DiffLine.html` in place (see [reactive-controllers.md](reactive-controllers.md)).
+`diff-file-card` and `diff-hunk` use `StoreController<DiffStore>` to re-render on store notifications. `diff-panel` owns a `HighlightController` that sends files to the Shiki web worker for syntax highlighting; when results arrive, it mutates `DiffLine.html` in place and triggers a re-render (see [reactive-controllers.md](reactive-controllers.md)).

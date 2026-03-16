@@ -49,8 +49,6 @@ export class MyComponent extends LitElement {
 
 The `Subscribable` interface is intentionally minimal — it works with `DiffStore`, `AppStore`, `FileTreeState`, or any future store. The controller handles subscribe/unsubscribe on store change, `hostDisconnected`, and `hostConnected` (re-subscribe after move).
 
-**Current usage:** `diff-file-card` and `diff-hunk` use `StoreController<DiffStore>` to re-render when the Shiki highlighter mutates `DiffLine.html` in place on the same object references.
-
 ## Two Kinds of Controllers
 
 ### State controllers
@@ -285,26 +283,6 @@ When refactoring a component to use controllers:
 3. **Write tests first** (per [workflow.md](workflow.md) — red/green/refactor). Define the controller's contract in tests, then implement.
 4. **Replace in the component** — swap `@state()` properties for controller reads, swap method calls for controller method calls.
 5. **Remove the `@state()` declarations** — the controller calls `requestUpdate()` itself.
-
-### Candidates for Extraction
-
-**State controllers:**
-
-| Component | State cluster | Controller name |
-|---|---|---|
-| `diff-panel` | `collapsedFiles` + `toggleFile()` | `CollapseController` |
-| `diff-panel` | `renderedFiles` + `markdownCache` + `markdownLoading` + `toggleRendered()` + `fetchMarkdown()` | `MarkdownPreviewController` |
-| `diff-panel` | `copiedPaths` + `copyPath()` + timer | `ClipboardController` |
-| `diff-panel` | `expandingHunks` + `_expandUp/Down()` | Move to `DiffStore` (shared state) |
-| `quick-open` | Selection index + keyboard navigation | `ListNavigationController` |
-
-**Behavior controllers:**
-
-| Component | Behavior | Controller name |
-|---|---|---|
-| `chat-panel` | Scroll-to-bottom on new messages, pause when user scrolls up | `AutoScrollController` |
-| `diff-panel` | Track topmost visible file card in scroll container | `ScrollSpyController` (refactor existing `ScrollSpy`) |
-| `diff-panel` | Preserve scroll position when expanding hunks upward | `ScrollAnchorController` |
 
 ## What Stays in Components
 

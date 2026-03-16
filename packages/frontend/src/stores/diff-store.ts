@@ -11,8 +11,6 @@
 
 import type { DiffFile, DiffFileSummary, DiffHunk, DiffLine } from "../changes/types.js";
 import { sortDiffFiles, sortFileSummaries } from "../changes/diff-sort.js";
-import { Highlighter } from "../changes/highlighter.js";
-import type { IHighlighter } from "../changes/highlighter.js";
 
 const DEFAULT_CONTEXT = 3;
 const EXPAND_STEP = 15;
@@ -49,13 +47,6 @@ export interface DiffFullData {
 export type DiffStoreListener = () => void;
 
 export class DiffStore {
-  /**
-   * Create a DiffStore. Accepts an optional highlighter for testing —
-   * production code omits it to get the real Shiki web-worker highlighter.
-   */
-  constructor(highlighter?: IHighlighter) {
-    if (highlighter) this._highlighter = highlighter;
-  }
 
   // ---- Public reactive state ------------------------------------------------
 
@@ -98,8 +89,6 @@ export class DiffStore {
   private _spreadTimer: ReturnType<typeof setInterval> | null = null;
   private _spreadTickCount = 0;
   private _syncResultTimer: ReturnType<typeof setTimeout> | null = null;
-  private _highlighter: IHighlighter = new Highlighter();
-
   /** Cache of file content lines (1-indexed: element 0 is unused). */
   private _fileContentCache = new Map<string, string[]>();
 
@@ -279,8 +268,13 @@ export class DiffStore {
     return { file, fileLines };
   }
 
-  /** Insert context lines into a hunk, notify, and re-highlight. */
-  private _insertAndHighlight(
+  /**
+   * Insert context lines into a hunk and notify subscribers.
+   * Creates a new file object reference (shallow copy) for the mutated file
+   * and a new files array, so HighlightController can detect which file
+   * changed via its WeakSet-based dirty tracking.
+   */
+  private _insertLines(
     file: DiffFile,
     hunk: DiffHunk,
     lines: DiffLine[],
@@ -291,8 +285,14 @@ export class DiffStore {
     } else {
       hunk.lines.push(...lines);
     }
+    if (this.fullData) {
+      const fileIndex = this.fullData.files.indexOf(file);
+      if (fileIndex >= 0) {
+        this.fullData.files[fileIndex] = { ...file };
+      }
+      this.fullData = { ...this.fullData, files: [...this.fullData.files] };
+    }
     this.notify();
-    this._highlighter.highlight([file], () => this.notify());
   }
 
   /**
@@ -330,15 +330,18 @@ export class DiffStore {
     const insertNew = up ? anchor.newLine - count : anchor.newLine + 1;
     const insertOld = up ? anchor.oldLine - count : anchor.oldLine + 1;
     const contextLines = this._makeContextLines(fileLines, insertNew, insertOld, count);
-    this._insertAndHighlight(file, file.hunks[hunkIndex], contextLines, up ? "prepend" : "append");
+    this._insertLines(file, file.hunks[hunkIndex], contextLines, up ? "prepend" : "append");
 
     // If expansion closed the gap to an adjacent hunk, merge them.
     // Always merge into the earlier hunk and remove the later one.
+    // After _insertLines, the file object in fullData.files is a new shallow copy,
+    // so we re-read it to mutate the correct reference.
     if (hasNeighbor && count >= available) {
+      const updatedFile = this.fullData!.files.find((f) => f.path === filePath)!;
       const earlierIdx = Math.min(hunkIndex, neighborIdx);
       const laterIdx = earlierIdx + 1;
-      file.hunks[earlierIdx].lines.push(...file.hunks[laterIdx].lines);
-      file.hunks.splice(laterIdx, 1);
+      updatedFile.hunks[earlierIdx].lines.push(...updatedFile.hunks[laterIdx].lines);
+      updatedFile.hunks.splice(laterIdx, 1);
       this.notify();
     }
 
@@ -420,11 +423,6 @@ export class DiffStore {
       this.error = null;
       this.fullLoading = false;
       this.notify();
-
-      // Request syntax highlighting from the web worker
-      if (files.length > 0) {
-        this._highlighter.highlight(files, () => this.notify());
-      }
       return;
     } catch (err: any) {
       this.error = err.message ?? "Failed to fetch diff";
@@ -576,6 +574,5 @@ export class DiffStore {
     this._stopSpreadPolling();
     if (this._syncResultTimer) clearTimeout(this._syncResultTimer);
     this._listeners.clear();
-    this._highlighter.dispose();
   }
 }

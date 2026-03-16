@@ -1,46 +1,16 @@
 /**
- * Tests that in-place highlight mutations are visible to store subscribers.
+ * Tests for DiffStore's expand-hunk behavior after highlighting was moved
+ * to HighlightController.
  *
- * The Highlighter mutates DiffLine.html in place on the same object references,
- * then calls a callback which triggers store.notify(). This test uses a fake
- * highlighter to verify that:
- *   1. Subscribers are notified after highlighting completes.
- *   2. The mutated html values are visible on the original DiffLine objects.
- *
- * This is the store-level contract behind the renderVersion fix — without the
- * second notification, components holding stale object references would never
- * re-render the highlighted content.
+ * The store now just inserts context lines and notifies — no highlighting.
+ * These tests verify that:
+ *   1. expandHunk inserts new lines into the hunk.
+ *   2. Subscribers are notified after line insertion.
+ *   3. New lines don't have html set (highlighting is the controller's job).
  */
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { DiffStore } from "../stores/diff-store.js";
 import type { DiffFile, DiffLine } from "../changes/types.js";
-import type { IHighlighter } from "../changes/highlighter.js";
-import type { HighlightCallback } from "../changes/highlighter.js";
-
-// ---------------------------------------------------------------------------
-// Fake highlighter that simulates in-place mutation
-// ---------------------------------------------------------------------------
-
-class FakeHighlighter implements IHighlighter {
-  /** Captured calls for assertions. */
-  calls: { files: DiffFile[]; onComplete: HighlightCallback }[] = [];
-
-  highlight(files: DiffFile[], onComplete: HighlightCallback): void {
-    this.calls.push({ files, onComplete });
-    // Simulate what the real Shiki worker does: mutate line.html in place
-    for (const file of files) {
-      for (const hunk of file.hunks) {
-        for (const line of hunk.lines) {
-          line.html = `<span class="hl">${line.text}</span>`;
-        }
-      }
-    }
-    // Call back synchronously (real worker is async, but the contract is the same)
-    onComplete();
-  }
-
-  dispose(): void {}
-}
 
 // ---------------------------------------------------------------------------
 // Fetch mock helpers
@@ -90,13 +60,11 @@ function makeFile(path: string, hunks: { header: string; lines: DiffLine[] }[]):
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("in-place highlight mutation", () => {
-  let highlighter: FakeHighlighter;
+describe("DiffStore expandHunk (no highlighting)", () => {
   let store: DiffStore;
 
   beforeEach(() => {
-    highlighter = new FakeHighlighter();
-    store = new DiffStore(highlighter);
+    store = new DiffStore();
     mockFetchNoop();
   });
 
@@ -105,7 +73,7 @@ describe("in-place highlight mutation", () => {
     globalThis.fetch = originalFetch;
   });
 
-  test("expandHunk triggers highlighter and subscribers see mutated html", async () => {
+  test("expandHunk inserts lines and notifies subscribers", async () => {
     store.setProject(1);
     store.fullData = {
       files: [
@@ -135,31 +103,24 @@ describe("in-place highlight mutation", () => {
     let notifyCount = 0;
     store.subscribe(() => { notifyCount++; });
 
-    await store.expandHunk("src/foo.ts", 0, "down", 2);
+    const inserted = await store.expandHunk("src/foo.ts", 0, "down", 2);
 
-    // Highlighter was called
-    expect(highlighter.calls.length).toBe(1);
-
-    // Subscriber was notified (once for the line insertion + once for highlight callback)
-    expect(notifyCount).toBeGreaterThanOrEqual(2);
-
-    // The original DiffLine objects have html set in place
+    // Lines were inserted
+    expect(inserted).toBe(2);
     const hunk = store.fullData!.files[0].hunks[0];
-    for (const l of hunk.lines) {
-      expect(l.html).toBe(`<span class="hl">${l.text}</span>`);
-    }
+    expect(hunk.lines.length).toBe(4); // 2 original + 2 new
+
+    // Subscriber was notified at least once for line insertion
+    expect(notifyCount).toBeGreaterThanOrEqual(1);
   });
 
-  test("lines without html before highlighting get html after", async () => {
+  test("newly inserted lines have no html (highlighting is the controller's job)", async () => {
     store.setProject(1);
-    const originalLine = line("context", "hello world", 5, 5);
-    expect(originalLine.html).toBeUndefined();
-
     store.fullData = {
       files: [
         makeFile("a.ts", [{
           header: "@@ -5,1 +5,1 @@",
-          lines: [originalLine],
+          lines: [line("context", "hello world", 5, 5)],
         }]),
       ],
       branch: "feat",
@@ -175,15 +136,47 @@ describe("in-place highlight mutation", () => {
 
     await store.expandHunk("a.ts", 0, "down", 1);
 
-    // The original line object (same reference) now has html set
-    expect(originalLine.html).toBe('<span class="hl">hello world</span>');
-
-    // The newly inserted line also has html
+    // The newly inserted line should NOT have html — that's the controller's job
     const newLine = store.fullData!.files[0].hunks[0].lines[1];
-    expect(newLine.html).toBe(`<span class="hl">${newLine.text}</span>`);
+    expect(newLine.html).toBeUndefined();
+    expect(newLine.text).toBe("l6");
   });
 
-  test("highlight callback fires a second notify so components re-render", async () => {
+  test("expandHunk produces a new file object reference for the mutated file", async () => {
+    store.setProject(1);
+    const originalFile = makeFile("src/foo.ts", [
+      {
+        header: "@@ -3,2 +3,2 @@",
+        lines: [
+          line("context", "line3", 3, 3),
+          line("context", "line4", 4, 4),
+        ],
+      },
+    ]);
+    store.fullData = {
+      files: [originalFile],
+      branch: "feat",
+      baseBranch: "main",
+    };
+
+    mockFetch((url) => {
+      if (url.includes("/file?")) return textResponse("line1\nline2\nline3\nline4\nline5\nline6");
+      if (url.includes("/diff/files")) return jsonResponse({ files: [] });
+      if (url.includes("/git/spread")) return jsonResponse({});
+      return jsonResponse({});
+    });
+
+    await store.expandHunk("src/foo.ts", 0, "down", 2);
+
+    // The file in fullData should be a different object from the original
+    const updatedFile = store.fullData!.files[0];
+    expect(updatedFile).not.toBe(originalFile);
+    // But should still have the same path and expanded content
+    expect(updatedFile.path).toBe("src/foo.ts");
+    expect(updatedFile.hunks[0].lines.length).toBe(4);
+  });
+
+  test("subscribers are notified so the highlight controller can react", async () => {
     store.setProject(1);
     store.fullData = {
       files: [
@@ -203,25 +196,16 @@ describe("in-place highlight mutation", () => {
       return jsonResponse({});
     });
 
-    // Collect the sequence of notification states — specifically whether
-    // html is set on the lines at each notification
-    const htmlStates: (string | undefined)[] = [];
+    const notifications: number[] = [];
     store.subscribe(() => {
       const lines = store.fullData?.files[0]?.hunks[0]?.lines;
-      if (lines && lines.length > 0) {
-        htmlStates.push(lines[0].html);
-      }
+      notifications.push(lines?.length ?? 0);
     });
 
     await store.expandHunk("b.ts", 0, "down", 1);
 
-    // There should be at least 2 notifications:
-    // 1st: line insertion (html may not be set yet depending on timing)
-    // 2nd: highlight callback (html IS set)
-    expect(htmlStates.length).toBeGreaterThanOrEqual(2);
-
-    // The last notification should have html set
-    const lastState = htmlStates[htmlStates.length - 1];
-    expect(lastState).toContain("<span");
+    // At least one notification with the expanded line count
+    expect(notifications.length).toBeGreaterThanOrEqual(1);
+    expect(notifications).toContain(2); // 1 original + 1 new
   });
 });
