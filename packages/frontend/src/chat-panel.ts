@@ -11,75 +11,23 @@ import { customElement, property, state, query } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked } from "marked";
 import type { AppClient, SessionData } from "./ws-client.js";
+import {
+  applyChatEvent,
+  type AgentMessage,
+  type AssistantMessage,
+  type UserMessage,
+  type ToolResultMessage,
+  type TextContent,
+  type ToolCall,
+  type ToolBlockData,
+  type StreamingBlock,
+} from "./chat-state.js";
 
 // Configure marked for safe defaults
 marked.setOptions({
   breaks: true,
   gfm: true,
 });
-
-// ---- Types (matching pi-ai / pi-agent-core shapes) -------------------------
-
-interface TextContent {
-  type: "text";
-  text: string;
-}
-
-interface ThinkingContent {
-  type: "thinking";
-  thinking: string;
-}
-
-interface ToolCall {
-  type: "toolCall";
-  id: string;
-  name: string;
-  arguments: Record<string, any>;
-}
-
-interface AssistantMessage {
-  role: "assistant";
-  content: (TextContent | ThinkingContent | ToolCall)[];
-  timestamp: number;
-}
-
-interface UserMessage {
-  role: "user";
-  content: string | (TextContent | { type: "image"; data: string; mimeType: string })[];
-  timestamp: number;
-}
-
-interface ToolResultMessage {
-  role: "toolResult";
-  toolCallId: string;
-  toolName: string;
-  content: (TextContent | { type: "image"; data: string; mimeType: string })[];
-  isError: boolean;
-  timestamp: number;
-}
-
-type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage;
-
-interface StreamingTextBlock {
-  type: "text";
-  text: string;
-}
-
-/** Normalized shape for rendering a tool call in both streaming and finalized states. */
-interface ToolBlockData {
-  id: string;
-  name: string;
-  args: Record<string, any>;
-  status: "running" | "done";
-  result?: { content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] };
-  isError?: boolean;
-}
-
-interface StreamingToolBlock extends ToolBlockData {
-  type: "tool";
-}
-
-type StreamingBlock = StreamingTextBlock | StreamingToolBlock;
 
 // ---- Component --------------------------------------------------------------
 
@@ -168,108 +116,30 @@ export class ChatPanel extends LitElement {
   }
 
   private handleAgentEvent(event: any) {
-    switch (event.type) {
-      case "agent_start":
-        this.isStreaming = true;
-        this.streamingBlocks = [];
-        break;
-
-      case "message_update": {
-        const ame = event.assistantMessageEvent;
-        if (ame?.type === "text_delta") {
-          const blocks = [...this.streamingBlocks];
-          const last = blocks[blocks.length - 1];
-          if (last && last.type === "text") {
-            // Append to existing text block
-            blocks[blocks.length - 1] = { ...last, text: last.text + ame.delta };
-          } else {
-            // Start a new text block (either first block, or after a tool)
-            blocks.push({ type: "text", text: ame.delta });
-          }
-          this.streamingBlocks = blocks;
-        }
-        break;
-      }
-
-      case "tool_execution_start": {
-        this.streamingBlocks = [
-          ...this.streamingBlocks,
-          {
-            type: "tool",
-            id: event.toolCallId,
-            name: event.toolName,
-            args: event.args,
-            status: "running",
-          },
-        ];
-        break;
-      }
-
-      case "tool_execution_end": {
-        const blocks = this.streamingBlocks.map((b) =>
-          b.type === "tool" && b.id === event.toolCallId
-            ? { ...b, status: "done" as const, result: event.result, isError: event.isError }
-            : b
-        );
-        this.streamingBlocks = blocks;
-        break;
-      }
-
-      case "agent_end":
-        this.isStreaming = false;
-        this.streamingBlocks = [];
-        // Append new assistant/toolResult messages from the run.
-        // User messages are already added optimistically in handleSend().
-        if (event.messages) {
-          const newMessages = event.messages.filter(
-            (m: AgentMessage) => m.role !== "user"
-          );
-          this.messages = [...this.messages, ...newMessages];
-        }
-        break;
-
-      case "message_end":
-        // A single message finished — could be mid-agent-run.
-        // We refresh the messages array if the event includes the message.
-        break;
-
-      case "compaction_start":
-        this.isCompacting = true;
-        break;
-
-      case "compaction_end":
-        this.isCompacting = false;
-        // Inject a compaction marker into the live message list so
-        // the divider appears immediately (not only after reload).
-        if (!event.aborted) {
-          this.messages = [
-            ...this.messages,
-            {
-              role: "compactionSummary" as any,
-              content: event.result?.summary || "Conversation summarized",
-              timestamp: Date.now(),
-            },
-          ];
-        }
-        break;
-
-      case "user_message":
-        // Another client sent a message — append it to the conversation
-        this.messages = [
-          ...this.messages,
-          {
-            role: "user",
-            content: event.message,
-            timestamp: Date.now(),
-          },
-        ];
-        this.shouldAutoScroll = true;
-        break;
-
-      case "ws_error":
-        this.showError((event as any).error || "Something went wrong");
-        break;
+    // ws_error is handled locally (needs DOM method); everything else
+    // goes through the pure state reducer.
+    if (event.type === "ws_error") {
+      this.showError((event as any).error || "Something went wrong");
+      return;
     }
+
+    const prev = {
+      messages: this.messages,
+      isStreaming: this.isStreaming,
+      streamingBlocks: this.streamingBlocks,
+      isCompacting: this.isCompacting,
+      shouldAutoScroll: this.shouldAutoScroll,
+      errorMessage: this.errorMessage,
+    };
+    const next = applyChatEvent(prev, event);
+
+    // Apply only changed fields to trigger minimal Lit reactivity.
+    if (next.messages !== prev.messages) this.messages = next.messages;
+    if (next.isStreaming !== prev.isStreaming) this.isStreaming = next.isStreaming;
+    if (next.streamingBlocks !== prev.streamingBlocks) this.streamingBlocks = next.streamingBlocks;
+    if (next.isCompacting !== prev.isCompacting) this.isCompacting = next.isCompacting;
+    if (next.shouldAutoScroll !== prev.shouldAutoScroll) this.shouldAutoScroll = next.shouldAutoScroll;
+    if (next.errorMessage !== prev.errorMessage) this.errorMessage = next.errorMessage;
   }
 
   private handleSend() {
