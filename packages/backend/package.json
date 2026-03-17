@@ -9,8 +9,8 @@
     "test:watch": "bun test --watch"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.52.9",
-    "@mariozechner/pi-coding-agent": "^0.52.9",
+    "@mariozechner/pi-ai": "^0.58.3",
+    "@mariozechner/pi-coding-agent": "^0.58.3",
     "@sinclair/typebox": "^0.34.48"
   }
 }
