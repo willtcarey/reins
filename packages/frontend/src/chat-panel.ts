@@ -11,6 +11,7 @@ import { customElement, property, state, query } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked } from "marked";
 import type { AppClient, SessionData } from "./ws-client.js";
+import { getToolRenderer } from "./tool-renderers/index.js";
 import {
   applyChatEvent,
   type AgentMessage,
@@ -204,27 +205,6 @@ export class ChatPanel extends LitElement {
     });
   }
 
-  /** Return a short contextual summary for a tool call based on its name & args. */
-  private toolSummary(name: string, args: Record<string, any> | undefined): string {
-    if (!args) return "";
-    switch (name.toLowerCase()) {
-      case "bash":
-        return args.command ?? "";
-      case "read":
-        return args.path ?? "";
-      case "edit":
-        return args.path ?? "";
-      case "write":
-        return args.path ?? "";
-      default:
-        // Generic: show first string-valued arg as context
-        for (const v of Object.values(args)) {
-          if (typeof v === "string" && v.length > 0) return v.length > 120 ? v.slice(0, 117) + "…" : v;
-        }
-        return "";
-    }
-  }
-
   private toggleTool(id: string) {
     const next = new Set(this.expandedTools);
     if (next.has(id)) {
@@ -295,76 +275,17 @@ export class ChatPanel extends LitElement {
       name: tc.name,
       args: tc.arguments,
       status: "done",
-      result: result ? { content: result.content } : undefined,
+      result: result ? { content: result.content, details: result.details } : undefined,
       isError: result?.isError,
     });
   }
 
   private renderToolBlock(block: ToolBlockData) {
-    const expanded = this.expandedTools.has(block.id);
-    const summary = this.toolSummary(block.name, block.args);
-    const running = block.status === "running";
-
-    const images = block.result?.content?.filter(
-      (c): c is { type: "image"; data: string; mimeType: string } => c.type === "image"
-    ) ?? [];
-
-    const resultText = block.result?.content
-      ?.filter((c): c is { type: "text"; text: string } => c.type === "text")
-      .map((c) => c.text)
-      .join("\n")
-      .slice(0, 5000) ?? "";
-
-    // Running tools: show spinner, no expand/collapse
-    if (running) {
-      return html`
-        <div class="mt-1 mb-1 ml-2 border-l-2 border-yellow-500 pl-3">
-          <div class="flex items-center gap-2 text-xs text-zinc-400 truncate" title="${summary || block.name}">
-            <span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>
-            <span class="font-mono font-semibold flex-shrink-0">${block.name}</span>
-            ${summary ? html`<span class="font-mono text-zinc-500 truncate">${summary}</span>` : nothing}
-          </div>
-        </div>
-      `;
-    }
-
-    // Done: expand/collapse with args + result
-    return html`
-      <div class="mt-1 ml-2 border-l-2 border-zinc-600 pl-3">
-        <button
-          class="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer truncate max-w-full"
-          title="${summary || block.name}"
-          @click=${() => this.toggleTool(block.id)}
-        >
-          <span class="font-mono flex-shrink-0">${expanded ? "▼" : "▶"}</span>
-          <span class="font-semibold flex-shrink-0">${block.name}</span>
-          ${block.isError ? html`<span class="text-red-400 ml-1 flex-shrink-0">error</span>` : nothing}
-          ${summary ? html`<span class="font-mono text-zinc-500 truncate">${summary}</span>` : nothing}
-        </button>
-        ${!expanded && images.length > 0 ? html`
-          <div class="mt-1">
-            ${images.map(
-              (img) => html`<img src="data:${img.mimeType};base64,${img.data}" class="max-w-full max-h-96 rounded mt-1" alt="Tool result image" />`
-            )}
-          </div>
-        ` : nothing}
-        ${expanded ? html`
-          <div class="mt-1 text-xs">
-            <div class="text-zinc-500 mb-1">Arguments:</div>
-            <pre class="bg-zinc-900 rounded p-2 overflow-x-auto text-zinc-300 max-h-48 overflow-y-auto">${JSON.stringify(block.args, null, 2)}</pre>
-            ${block.result ? html`
-              <div class="text-zinc-500 mt-2 mb-1">Result${block.isError ? " (error)" : ""}:</div>
-              ${images.map(
-                (img) => html`<img src="data:${img.mimeType};base64,${img.data}" class="max-w-full max-h-96 rounded mt-1 mb-1" alt="Tool result image" />`
-              )}
-              ${resultText ? html`
-                <pre class="bg-zinc-900 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto ${block.isError ? "text-red-400" : "text-zinc-300"}">${resultText}</pre>
-              ` : nothing}
-            ` : nothing}
-          </div>
-        ` : nothing}
-      </div>
-    `;
+    const renderer = getToolRenderer(block.name);
+    const content = block.status === "running"
+      ? renderer.renderRunning(block)
+      : renderer.renderDone(block, this.expandedTools.has(block.id), () => this.toggleTool(block.id));
+    return html`<div class="max-w-[90%]">${content}</div>`;
   }
 
   private renderToolResultMessage(_msg: ToolResultMessage) {
