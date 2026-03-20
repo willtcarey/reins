@@ -104,7 +104,7 @@ html, body {
 }
 
 .prose code {
-  @apply bg-zinc-800 text-zinc-200 px-1 py-0.5 rounded text-xs;
+  @apply bg-zinc-800/80 text-orange-300 px-1 py-0.5 rounded text-xs border border-zinc-700/50;
 }
 
 .prose pre code {
