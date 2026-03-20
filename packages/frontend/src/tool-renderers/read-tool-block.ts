@@ -147,10 +147,15 @@ export class ReadToolBlock extends LitElement {
 
     const hasContent = !!fullContent?.trim();
     const hasPreview = !!preview?.trim();
-    const clickable =
+    const canInteract =
       !this.showSpinner && (hasContent || images.length > 0);
     const previewLines = preview?.split("\n").length ?? 0;
     const hasMore = totalLines > previewLines;
+
+    // When collapsed, the entire card is clickable to expand.
+    // When expanded, only the header is clickable to collapse.
+    const cardClickable = canInteract && !this.expanded;
+    const headerClickable = canInteract && this.expanded;
 
     // Build content lines arrays for highlighting
     const previewLineTexts = preview ? preview.split("\n") : [];
@@ -165,10 +170,14 @@ export class ReadToolBlock extends LitElement {
 
     return html`
       <div
-        class="mt-1 mb-1 ml-2 rounded-md bg-zinc-950 border ${borderColor} overflow-hidden"
+        class="mt-1 mb-1 ml-2 rounded-md bg-zinc-950 border ${borderColor} overflow-hidden ${cardClickable ? "cursor-pointer" : ""}"
+        @click=${cardClickable ? this.onToggle : nothing}
       >
-        <!-- Header: file path (clickable to toggle) -->
-        <div class="px-3 py-2 flex items-center gap-2 ${clickable ? "cursor-pointer" : ""}" @click=${clickable ? this.onToggle : nothing}>
+        <!-- Header: file path -->
+        <div
+          class="px-3 py-2 flex items-center gap-2 ${headerClickable ? "cursor-pointer" : ""}"
+          @click=${headerClickable ? (e: Event) => { e.stopPropagation(); this.onToggle?.(); } : nothing}
+        >
           ${this.showSpinner
             ? html`<span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>`
             : html`<span class="flex-shrink-0 text-xs">📄</span>`}
