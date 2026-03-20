@@ -10,7 +10,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { HighlightController } from "../controllers/highlight-controller.js";
-import { escapeHtml } from "../changes/diff-utils.js";
+import { escapeHtml, shouldWrapLines } from "../changes/diff-utils.js";
 import type { ToolBlockData } from "../chat-state.js";
 import type { DiffHunk, DiffLine } from "../changes/types.js";
 import { getWriteSummary, getWriteInfo } from "./write.js";
@@ -111,8 +111,10 @@ export class WriteToolBlock extends LitElement {
     return highlighted ? unsafeHTML(highlighted) : escapeHtml(text);
   }
 
-  private _renderContentLine(index: number, text: string, colorCls: string) {
-    return html`<div class="flex bg-green-950/50 leading-4"><span class="select-none text-zinc-700 shrink-0 text-right mr-2 inline-block w-8">${index + 1}</span><span class="select-none text-zinc-600 mr-1 shrink-0">+</span><span class="${colorCls} whitespace-pre overflow-x-auto min-w-0">${this._renderHighlightedLine(index, text)}</span></div>`;
+  private _renderContentLine(index: number, text: string, colorCls: string, wrap: boolean) {
+    const content = this._renderHighlightedLine(index, text);
+    const divCls = `bg-green-950/50 leading-4 ${wrap ? "flex" : "whitespace-pre"}`;
+    return html`<div class="${divCls}"><span class="select-none text-zinc-700 shrink-0 text-right mr-2 inline-block w-8">${index + 1}</span><span class="select-none text-zinc-600 mr-1 shrink-0">+</span>${wrap ? html`<span class="${colorCls} whitespace-pre-wrap break-words min-w-0">${content}</span>` : html`<span class="${colorCls}">${content}</span>`}</div>`;
   }
 
   override render() {
@@ -140,6 +142,7 @@ export class WriteToolBlock extends LitElement {
 
     const contentColorCls = isError ? "text-red-400" : "text-green-300";
     const previewColorCls = isError ? "text-red-400" : "text-green-400/70";
+    const wrap = shouldWrapLines(path || "");
 
     return html`
       <div
@@ -167,11 +170,13 @@ export class WriteToolBlock extends LitElement {
         <!-- Preview (collapsed, first few lines) -->
         ${!this.expanded && hasContent
           ? html`
-              <div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono">
-                ${previewLines.map((line, i) => this._renderContentLine(i, line, previewColorCls))}
+              <div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono overflow-x-auto">
+                <div class="${wrap ? "" : "w-fit min-w-full"}">
+                ${previewLines.map((line, i) => this._renderContentLine(i, line, previewColorCls, wrap))}
                 ${hasMore
                   ? html`<div class="flex leading-4"><span class="select-none text-zinc-700 shrink-0 text-right mr-2 inline-block w-8"></span><span class="text-zinc-700 ml-1">…</span></div>`
                   : nothing}
+                </div>
               </div>
             `
           : nothing}
@@ -180,7 +185,9 @@ export class WriteToolBlock extends LitElement {
         ${this.expanded && hasContent
           ? html`
               <div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono max-h-64 overflow-y-auto overflow-x-auto">
-                ${contentLines.map((line, i) => this._renderContentLine(i, line, contentColorCls))}
+                <div class="${wrap ? "" : "w-fit min-w-full"}">
+                ${contentLines.map((line, i) => this._renderContentLine(i, line, contentColorCls, wrap))}
+                </div>
               </div>
             `
           : nothing}

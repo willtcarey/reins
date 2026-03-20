@@ -191,7 +191,9 @@ export class EditToolBlock extends LitElement {
         ${hasDiff
           ? html`
               <div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono max-h-96 overflow-y-auto overflow-x-auto">
-                ${diffLines.map((line, i) => this._renderDiffLine(line, i))}
+                <div class="${wrap ? "" : "w-fit min-w-full"}">
+                ${diffLines.map((line, i) => this._renderDiffLine(line, i, wrap))}
+                </div>
               </div>
             `
           : nothing}

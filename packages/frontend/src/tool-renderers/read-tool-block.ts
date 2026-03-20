@@ -11,7 +11,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { HighlightController } from "../controllers/highlight-controller.js";
-import { escapeHtml } from "../changes/diff-utils.js";
+import { escapeHtml, shouldWrapLines } from "../changes/diff-utils.js";
 import type { ToolBlockData } from "../chat-state.js";
 import type { DiffHunk, DiffLine } from "../changes/types.js";
 import {
@@ -121,8 +121,10 @@ export class ReadToolBlock extends LitElement {
   }
 
   /** Render a line with a gutter line number. */
-  private _renderGutteredLine(index: number, text: string, lineNo: number, gutterCh: number, colorCls: string) {
-    return html`<div class="flex"><span class="select-none text-zinc-700 shrink-0 text-right mr-3 inline-block" style="width:${gutterCh}ch">${lineNo}</span><span class="${colorCls} whitespace-pre-wrap break-words min-w-0">${this._renderHighlightedLine(index, text)}</span></div>`;
+  private _renderGutteredLine(index: number, text: string, lineNo: number, gutterCh: number, colorCls: string, wrap: boolean) {
+    const content = this._renderHighlightedLine(index, text);
+    const divCls = wrap ? "flex" : "whitespace-pre";
+    return html`<div class="${divCls}"><span class="select-none text-zinc-700 shrink-0 text-right mr-3 inline-block" style="width:${gutterCh}ch">${lineNo}</span>${wrap ? html`<span class="${colorCls} whitespace-pre-wrap break-words min-w-0">${content}</span>` : html`<span class="${colorCls}">${content}</span>`}</div>`;
   }
 
   override render() {
@@ -167,6 +169,7 @@ export class ReadToolBlock extends LitElement {
     const gutterCh = Math.max(String(lastLine).length, 3);
     const contentColorCls = isError ? "text-red-400" : "text-zinc-400";
     const previewColorCls = isError ? "text-red-400" : "text-zinc-500";
+    const wrap = shouldWrapLines(path || "");
 
     return html`
       <div
@@ -197,12 +200,14 @@ export class ReadToolBlock extends LitElement {
         <!-- Preview area (shown when collapsed and content exists) -->
         ${!this.expanded && hasPreview
           ? html`
-              <div class="border-t border-zinc-800 px-3 py-2 text-xs font-mono">
+              <div class="border-t border-zinc-800 px-3 py-2 text-xs font-mono overflow-x-auto">
+                <div class="${wrap ? "" : "w-fit min-w-full"}">
                 ${previewLineTexts.map(
-                  (line, i) => this._renderGutteredLine(i, line, startLine + i, gutterCh, previewColorCls),
+                  (line, i) => this._renderGutteredLine(i, line, startLine + i, gutterCh, previewColorCls, wrap),
                 )}
                 ${hasMore ? html`<div class="flex"><span class="select-none text-zinc-700 shrink-0 text-right mr-3 inline-block" style="width:${gutterCh}ch"></span><span class="text-zinc-700">…</span></div>` : nothing}
                 ${trailer ? html`<div class="mt-1 text-[10px] text-zinc-600 italic">${trailer}</div>` : nothing}
+                </div>
               </div>
             `
           : nothing}
@@ -210,11 +215,13 @@ export class ReadToolBlock extends LitElement {
         <!-- Full content area (shown when expanded) -->
         ${this.expanded && hasContent
           ? html`
-              <div class="border-t border-zinc-800 px-3 py-2 text-xs font-mono max-h-64 overflow-y-auto">
+              <div class="border-t border-zinc-800 px-3 py-2 text-xs font-mono max-h-64 overflow-y-auto overflow-x-auto">
+                <div class="${wrap ? "" : "w-fit min-w-full"}">
                 ${fullLineTexts.map(
-                  (line, i) => this._renderGutteredLine(i, line, startLine + i, gutterCh, contentColorCls),
+                  (line, i) => this._renderGutteredLine(i, line, startLine + i, gutterCh, contentColorCls, wrap),
                 )}
                 ${trailer ? html`<div class="mt-1 text-[10px] text-zinc-600 italic">${trailer}</div>` : nothing}
+                </div>
               </div>
             `
           : nothing}
