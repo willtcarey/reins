@@ -15,6 +15,8 @@ import type { ToolBlockData } from "../chat-state.js";
 import type { DiffHunk, DiffLine } from "../changes/types.js";
 import { getWriteSummary, getWriteInfo } from "./write.js";
 
+const PREVIEW_LINES = 4;
+
 @customElement("write-tool-block")
 export class WriteToolBlock extends LitElement {
   override createRenderRoot() {
@@ -109,11 +111,14 @@ export class WriteToolBlock extends LitElement {
     return highlighted ? unsafeHTML(highlighted) : escapeHtml(text);
   }
 
+  private _renderContentLine(index: number, text: string, colorCls: string) {
+    return html`<div class="flex bg-green-950/50 leading-4"><span class="select-none text-zinc-700 shrink-0 text-right mr-2 inline-block w-8">${index + 1}</span><span class="select-none text-zinc-600 mr-1 shrink-0">+</span><span class="${colorCls} whitespace-pre overflow-x-auto min-w-0">${this._renderHighlightedLine(index, text)}</span></div>`;
+  }
+
   override render() {
     const path = getWriteSummary(this.block);
     const isError = !!this.block.isError;
     const { lines: lineCount } = getWriteInfo(this.block);
-    const lineLabel = lineCount === 1 ? "1 line" : `${lineCount} lines`;
 
     const borderColor = this.showSpinner
       ? "border-yellow-500/60"
@@ -123,14 +128,29 @@ export class WriteToolBlock extends LitElement {
 
     const content = this._getContent();
     const hasContent = !!content.trim();
-    const clickable = !this.showSpinner && hasContent;
     const contentLines = content ? content.split("\n") : [];
-    const gutterCh = Math.max(String(contentLines.length).length, 3);
+    const hasMore = contentLines.length > PREVIEW_LINES;
+    const previewLines = contentLines.slice(0, PREVIEW_LINES);
+    const canInteract = !this.showSpinner && hasContent;
+
+    // When collapsed, the entire card is clickable to expand.
+    // When expanded, only the header is clickable to collapse.
+    const cardClickable = canInteract && !this.expanded;
+    const headerClickable = canInteract && this.expanded;
+
+    const contentColorCls = isError ? "text-red-400" : "text-green-300";
+    const previewColorCls = isError ? "text-red-400" : "text-green-400/70";
 
     return html`
-      <div class="mt-1 mb-1 ml-2 rounded-md bg-zinc-950 border ${borderColor} overflow-hidden">
+      <div
+        class="mt-1 mb-1 ml-2 rounded-md bg-zinc-950 border ${borderColor} overflow-hidden ${cardClickable ? "cursor-pointer" : ""}"
+        @click=${cardClickable ? this.onToggle : nothing}
+      >
         <!-- Header -->
-        <div class="px-3 py-2 flex items-center gap-2 ${clickable ? "cursor-pointer" : ""}" @click=${clickable ? this.onToggle : nothing}>
+        <div
+          class="px-3 py-2 flex items-center gap-2 ${headerClickable ? "cursor-pointer" : ""}"
+          @click=${headerClickable ? (e: Event) => { e.stopPropagation(); this.onToggle?.(); } : nothing}
+        >
           ${this.showSpinner
             ? html`<span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>`
             : html`<span class="flex-shrink-0 text-xs">📝</span>`}
@@ -139,18 +159,28 @@ export class WriteToolBlock extends LitElement {
           ${isError
             ? html`<span class="text-[10px] font-semibold text-red-400 bg-red-400/10 px-1.5 py-0.5 rounded flex-shrink-0">error</span>`
             : nothing}
-          ${lineCount > 0
-            ? html`<span class="text-[10px] font-mono text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded flex-shrink-0">${lineLabel}</span>`
+          ${!this.showSpinner && hasMore && !this.expanded
+            ? html`<span class="text-[10px] text-zinc-600 flex-shrink-0 ml-auto">${lineCount} lines</span>`
             : nothing}
         </div>
 
-        <!-- Content (expanded) -->
+        <!-- Preview (collapsed, first few lines) -->
+        ${!this.expanded && hasContent
+          ? html`
+              <div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono">
+                ${previewLines.map((line, i) => this._renderContentLine(i, line, previewColorCls))}
+                ${hasMore
+                  ? html`<div class="flex leading-4"><span class="select-none text-zinc-700 shrink-0 text-right mr-2 inline-block w-8"></span><span class="text-zinc-700 ml-1">…</span></div>`
+                  : nothing}
+              </div>
+            `
+          : nothing}
+
+        <!-- Full content (expanded) -->
         ${this.expanded && hasContent
           ? html`
               <div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono max-h-64 overflow-y-auto overflow-x-auto">
-                ${contentLines.map(
-                  (line, i) => html`<div class="flex bg-green-950/50 leading-4"><span class="select-none text-zinc-700 shrink-0 text-right mr-2 inline-block w-8">${i + 1}</span><span class="select-none text-zinc-600 mr-1 shrink-0">+</span><span class="text-green-300 whitespace-pre overflow-x-auto min-w-0">${this._renderHighlightedLine(i, line)}</span></div>`,
-                )}
+                ${contentLines.map((line, i) => this._renderContentLine(i, line, contentColorCls))}
               </div>
             `
           : nothing}
