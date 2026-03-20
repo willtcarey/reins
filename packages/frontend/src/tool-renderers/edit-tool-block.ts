@@ -11,7 +11,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { HighlightController } from "../controllers/highlight-controller.js";
-import { escapeHtml } from "../changes/diff-utils.js";
+import { escapeHtml, shouldWrapLines } from "../changes/diff-utils.js";
 import type { ToolBlockData } from "../chat-state.js";
 import type { DiffHunk, DiffLine } from "../changes/types.js";
 import { getEditSummary, getEditStats, getEditDiffLines, shouldShowEditDiff, AUTO_EXPAND_THRESHOLD } from "./edit.js";
@@ -115,7 +115,7 @@ export class EditToolBlock extends LitElement {
     return highlighted ? unsafeHTML(highlighted) : escapeHtml(text);
   }
 
-  private _renderDiffLine(line: DiffLine, index: number) {
+  private _renderDiffLine(line: DiffLine, index: number, wrap: boolean) {
     if (line.text === "⋯") {
       return html`<div class="px-3 py-0.5 text-zinc-600 text-center">⋯</div>`;
     }
@@ -136,8 +136,10 @@ export class EditToolBlock extends LitElement {
 
     const prefix = line.type === "remove" ? "−" : line.type === "add" ? "+" : " ";
     const lineNo = line.type === "remove" ? line.oldLine : line.newLine;
+    const content = this._renderHighlightedLine(index, line.text);
+    const divCls = `${bgCls} leading-4 ${wrap ? "flex" : "whitespace-pre"}`;
 
-    return html`<div class="flex ${bgCls} leading-4"><span class="select-none text-zinc-700 shrink-0 text-right mr-2 inline-block w-8">${lineNo ?? ""}</span><span class="select-none text-zinc-600 mr-1 shrink-0">${prefix}</span><span class="${textCls} whitespace-pre-wrap break-words min-w-0">${this._renderHighlightedLine(index, line.text)}</span></div>`;
+    return html`<div class="${divCls}"><span class="select-none text-zinc-700 shrink-0 text-right mr-2 inline-block w-8">${lineNo ?? ""}</span><span class="select-none text-zinc-600 mr-1 shrink-0">${prefix}</span>${wrap ? html`<span class="${textCls} whitespace-pre-wrap break-words min-w-0">${content}</span>` : html`<span class="${textCls}">${content}</span>`}</div>`;
   }
 
   override render() {
@@ -156,6 +158,8 @@ export class EditToolBlock extends LitElement {
       : isError
         ? "border-red-500/60"
         : "border-zinc-700";
+
+    const wrap = shouldWrapLines(path || "");
 
     const showDiff = shouldShowEditDiff({
       block: this.block,
@@ -186,7 +190,7 @@ export class EditToolBlock extends LitElement {
         <!-- Diff content (shown when expanded or auto-expanded for small diffs) -->
         ${hasDiff
           ? html`
-              <div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono max-h-64 overflow-y-auto overflow-x-auto">
+              <div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono max-h-96 overflow-y-auto overflow-x-auto">
                 ${diffLines.map((line, i) => this._renderDiffLine(line, i))}
               </div>
             `
