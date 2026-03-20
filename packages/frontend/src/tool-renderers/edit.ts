@@ -127,6 +127,32 @@ export function getEditDiffLines(block: ToolBlockData): DiffLine[] {
   return computeEditDiff(block.args?.oldText ?? "", block.args?.newText ?? "");
 }
 
+/** Threshold for auto-expanding small diffs inline (line count). */
+export const AUTO_EXPAND_THRESHOLD = 20;
+
+/**
+ * Determine whether the diff should be shown for an edit tool block.
+ *
+ * Small diffs (≤ threshold lines) are auto-expanded by default and only
+ * hidden when the user manually collapses them. Large diffs require an
+ * explicit expand.
+ */
+export function shouldShowEditDiff(opts: {
+  block: ToolBlockData;
+  expanded: boolean;
+  manuallyCollapsed: boolean;
+  showSpinner?: boolean;
+}): boolean {
+  const { block, expanded, manuallyCollapsed, showSpinner } = opts;
+  if (showSpinner || block.isError) return false;
+
+  const diffLines = getEditDiffLines(block);
+  if (diffLines.length === 0) return false;
+
+  const isSmallDiff = diffLines.length <= AUTO_EXPAND_THRESHOLD;
+  return isSmallDiff ? !manuallyCollapsed : expanded;
+}
+
 // ---------------------------------------------------------------------------
 // Renderer — delegates visual output to <edit-tool-block> component
 // ---------------------------------------------------------------------------

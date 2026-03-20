@@ -4,7 +4,7 @@ import { getToolSummary } from "../tool-renderers/base.js";
 import { genericRenderer } from "../tool-renderers/generic.js";
 import { readRenderer, getReadSummary, getReadPreview, getReadContent, getReadLineCount, getReadRange, getReadTrailer } from "../tool-renderers/read.js";
 import { bashRenderer, getBashCommand, getBashPreview, getBashOutput, getBashExitInfo } from "../tool-renderers/bash.js";
-import { editRenderer, getEditSummary, getEditStats, computeEditDiff, parseDiffString, getEditDiffLines } from "../tool-renderers/edit.js";
+import { editRenderer, getEditSummary, getEditStats, computeEditDiff, parseDiffString, getEditDiffLines, shouldShowEditDiff, AUTO_EXPAND_THRESHOLD } from "../tool-renderers/edit.js";
 import { writeRenderer, getWriteSummary, getWriteInfo } from "../tool-renderers/write.js";
 import { createTaskRenderer, getTaskSummary, getTaskDetail } from "../tool-renderers/create-task.js";
 import { delegateRenderer, getDelegateSummary, getDelegateDetail } from "../tool-renderers/delegate.js";
@@ -687,6 +687,56 @@ describe("getEditDiffLines", () => {
       { type: "remove", text: "a", oldLine: 1 },
       { type: "add", text: "b", newLine: 1 },
     ]);
+  });
+});
+
+describe("shouldShowEditDiff", () => {
+  /** Build an edit block whose diff has exactly `n` lines. */
+  function blockWithDiffLines(n: number): ToolBlockData {
+    const oldLines = Array.from({ length: n }, (_, i) => `old${i}`).join("\n");
+    return makeEditBlock({
+      args: { path: "f.ts", oldText: oldLines, newText: "" },
+    });
+  }
+
+  test("auto-expands small diffs (≤ threshold) without user action", () => {
+    const block = blockWithDiffLines(5);
+    expect(shouldShowEditDiff({ block, expanded: false, manuallyCollapsed: false })).toBe(true);
+  });
+
+  test("respects manual collapse for small diffs", () => {
+    const block = blockWithDiffLines(5);
+    expect(shouldShowEditDiff({ block, expanded: false, manuallyCollapsed: true })).toBe(false);
+  });
+
+  test("does not auto-expand large diffs (> threshold)", () => {
+    const block = blockWithDiffLines(AUTO_EXPAND_THRESHOLD + 1);
+    expect(shouldShowEditDiff({ block, expanded: false, manuallyCollapsed: false })).toBe(false);
+  });
+
+  test("shows large diffs when explicitly expanded", () => {
+    const block = blockWithDiffLines(AUTO_EXPAND_THRESHOLD + 1);
+    expect(shouldShowEditDiff({ block, expanded: true, manuallyCollapsed: false })).toBe(true);
+  });
+
+  test("exact threshold count is auto-expanded", () => {
+    const block = blockWithDiffLines(AUTO_EXPAND_THRESHOLD);
+    expect(shouldShowEditDiff({ block, expanded: false, manuallyCollapsed: false })).toBe(true);
+  });
+
+  test("returns false when spinner is showing", () => {
+    const block = blockWithDiffLines(3);
+    expect(shouldShowEditDiff({ block, expanded: false, manuallyCollapsed: false, showSpinner: true })).toBe(false);
+  });
+
+  test("returns false on error blocks", () => {
+    const block = { ...blockWithDiffLines(3), isError: true };
+    expect(shouldShowEditDiff({ block, expanded: false, manuallyCollapsed: false })).toBe(false);
+  });
+
+  test("returns false when diff is empty", () => {
+    const block = makeEditBlock({ args: { path: "f.ts", oldText: "", newText: "" } });
+    expect(shouldShowEditDiff({ block, expanded: false, manuallyCollapsed: false })).toBe(false);
   });
 });
 

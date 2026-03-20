@@ -14,7 +14,7 @@ import { HighlightController } from "../controllers/highlight-controller.js";
 import { escapeHtml } from "../changes/diff-utils.js";
 import type { ToolBlockData } from "../chat-state.js";
 import type { DiffHunk, DiffLine } from "../changes/types.js";
-import { getEditSummary, getEditStats, getEditDiffLines } from "./edit.js";
+import { getEditSummary, getEditStats, getEditDiffLines, shouldShowEditDiff, AUTO_EXPAND_THRESHOLD } from "./edit.js";
 
 @customElement("edit-tool-block")
 export class EditToolBlock extends LitElement {
@@ -26,9 +26,6 @@ export class EditToolBlock extends LitElement {
   private _observer: IntersectionObserver | null = null;
   private _hasBeenVisible = false;
   private _lastDiffLines: DiffLine[] | null = null;
-
-  /** Auto-expand threshold: diffs with this many lines or fewer are shown inline by default. */
-  static readonly AUTO_EXPAND_THRESHOLD = 20;
 
   @property({ attribute: false })
   block!: ToolBlockData;
@@ -96,7 +93,7 @@ export class EditToolBlock extends LitElement {
 
   private _handleToggle = () => {
     const allDiffLines = getEditDiffLines(this.block);
-    const isSmallDiff = allDiffLines.length > 0 && allDiffLines.length <= EditToolBlock.AUTO_EXPAND_THRESHOLD;
+    const isSmallDiff = allDiffLines.length > 0 && allDiffLines.length <= AUTO_EXPAND_THRESHOLD;
     if (isSmallDiff) {
       // Toggle internal collapsed state for auto-expanded diffs
       this._manuallyCollapsed = !this._manuallyCollapsed;
@@ -160,12 +157,13 @@ export class EditToolBlock extends LitElement {
         ? "border-red-500/60"
         : "border-zinc-700";
 
-    const allDiffLines = (!this.showSpinner && !isError) ? getEditDiffLines(this.block) : [];
-    const isSmallDiff = allDiffLines.length > 0 && allDiffLines.length <= EditToolBlock.AUTO_EXPAND_THRESHOLD;
-    const showDiff = isSmallDiff
-      ? !this._manuallyCollapsed   // auto-expanded: shown unless user collapsed
-      : this.expanded;             // large diff: shown only when user expanded
-    const diffLines = showDiff ? allDiffLines : [];
+    const showDiff = shouldShowEditDiff({
+      block: this.block,
+      expanded: this.expanded,
+      manuallyCollapsed: this._manuallyCollapsed,
+      showSpinner: this.showSpinner,
+    });
+    const diffLines = showDiff ? getEditDiffLines(this.block) : [];
     const hasDiff = diffLines.length > 0;
 
     return html`
