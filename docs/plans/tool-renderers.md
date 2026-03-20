@@ -154,7 +154,7 @@ The `edit` renderer uses server-computed diffs when available:
 
 ## Remaining Work
 
-- **Edit: auto-expand small diffs** — If the diff is ≤20 lines, show it fully inline without requiring expand/collapse
+- ✅ **Edit: auto-expand small diffs** — Diffs ≤20 lines are shown inline by default; user can still click to collapse (tracked via internal `_manuallyCollapsed` flag in `EditToolBlock`)
 - **Bash: command display refinement** — Full commands can be visually overwhelming; explore truncation, collapsing, or de-emphasis for long commands
 - **Read: remove word wrapping** — Content lines use `whitespace-pre-wrap` / `break-words` which wraps long lines. Should use horizontal scroll (`whitespace-pre`, `overflow-x-auto`) to match the changes tab diff viewer.
 - **Split test file** — `tool-renderers.test.ts` is a single file covering all renderers. Split into per-renderer test files (e.g., `tool-renderer-bash.test.ts`, `tool-renderer-edit.test.ts`, etc.) with a separate file for the registry

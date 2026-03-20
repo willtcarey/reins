@@ -27,6 +27,9 @@ export class EditToolBlock extends LitElement {
   private _hasBeenVisible = false;
   private _lastDiffLines: DiffLine[] | null = null;
 
+  /** Auto-expand threshold: diffs with this many lines or fewer are shown inline by default. */
+  static readonly AUTO_EXPAND_THRESHOLD = 20;
+
   @property({ attribute: false })
   block!: ToolBlockData;
 
@@ -38,6 +41,9 @@ export class EditToolBlock extends LitElement {
 
   @property({ attribute: false })
   onToggle: (() => void) | undefined;
+
+  /** Tracks whether the user has manually collapsed an auto-expanded diff. */
+  private _manuallyCollapsed = false;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -87,6 +93,19 @@ export class EditToolBlock extends LitElement {
   private _buildHunk(lines: DiffLine[]): DiffHunk {
     return { header: "", lines };
   }
+
+  private _handleToggle = () => {
+    const allDiffLines = getEditDiffLines(this.block);
+    const isSmallDiff = allDiffLines.length > 0 && allDiffLines.length <= EditToolBlock.AUTO_EXPAND_THRESHOLD;
+    if (isSmallDiff) {
+      // Toggle internal collapsed state for auto-expanded diffs
+      this._manuallyCollapsed = !this._manuallyCollapsed;
+      this.requestUpdate();
+    } else {
+      // Delegate to external toggle for large diffs
+      this.onToggle?.();
+    }
+  };
 
   override willUpdate(changed: Map<string, unknown>) {
     if (this._hasBeenVisible && (changed.has("block") || changed.has("expanded"))) {
@@ -141,13 +160,18 @@ export class EditToolBlock extends LitElement {
         ? "border-red-500/60"
         : "border-zinc-700";
 
-    const diffLines = this.expanded ? getEditDiffLines(this.block) : [];
+    const allDiffLines = (!this.showSpinner && !isError) ? getEditDiffLines(this.block) : [];
+    const isSmallDiff = allDiffLines.length > 0 && allDiffLines.length <= EditToolBlock.AUTO_EXPAND_THRESHOLD;
+    const showDiff = isSmallDiff
+      ? !this._manuallyCollapsed   // auto-expanded: shown unless user collapsed
+      : this.expanded;             // large diff: shown only when user expanded
+    const diffLines = showDiff ? allDiffLines : [];
     const hasDiff = diffLines.length > 0;
 
     return html`
       <div class="mt-1 mb-1 ml-2 rounded-md bg-zinc-950 border ${borderColor} overflow-hidden">
         <!-- Header -->
-        <div class="px-3 py-2 flex items-center gap-2 ${!this.showSpinner ? "cursor-pointer" : ""}" @click=${!this.showSpinner ? this.onToggle : nothing}>
+        <div class="px-3 py-2 flex items-center gap-2 ${!this.showSpinner ? "cursor-pointer" : ""}" @click=${!this.showSpinner ? this._handleToggle : nothing}>
           ${this.showSpinner
             ? html`<span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>`
             : html`<span class="flex-shrink-0 text-xs">✏️</span>`}
@@ -161,8 +185,8 @@ export class EditToolBlock extends LitElement {
             : nothing}
         </div>
 
-        <!-- Diff content (expanded) -->
-        ${this.expanded && hasDiff
+        <!-- Diff content (shown when expanded or auto-expanded for small diffs) -->
+        ${hasDiff
           ? html`
               <div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono max-h-64 overflow-y-auto overflow-x-auto">
                 ${diffLines.map((line, i) => this._renderDiffLine(line, i))}
