@@ -202,10 +202,10 @@ The diff/changes feature has its own directory with several supporting modules:
 - `diff-file-tree.ts` — Collapsible file tree with scroll spy integration
 - `file-tree-state.ts` — UI-local state for tree expansion (not in store — ephemeral)
 - `scroll-spy.ts` — Tracks which diff card is visible for tree highlighting
-- `highlighter.ts` — Manages syntax highlighting via Web Worker. Exports `IHighlighter` interface for test fakes.
+- `highlighter.ts` — Pure-function interface to the Shiki Web Worker: text lines in, HTML lines out via callback. Exports `IHighlighter` for test fakes.
 - `highlight-worker.ts` — Web Worker for off-main-thread Shiki highlighting
 - `diff-sort.ts` — Sorting utilities for diff files
 - `diff-utils.ts` — Pure helpers (isMarkdown, fileCardId, escapeHtml, gutterWidth, getHunkEndLine)
 - `types.ts` — Shared types for diff data structures
 
-`diff-file-card` and `diff-hunk` use `StoreController<DiffStore>` to re-render on store notifications. `diff-panel` owns a `HighlightController` that sends files to the Shiki web worker for syntax highlighting; when results arrive, it mutates `DiffLine.html` in place and triggers a re-render (see [reactive-controllers.md](reactive-controllers.md)).
+`diff-file-card` and `diff-hunk` use `StoreController<DiffStore>` to re-render on store notifications. Each `<diff-hunk>` owns a `HighlightController` that sends the hunk's text lines to the Shiki web worker for syntax highlighting. The controller stores the resulting HTML strings — the highlighter never mutates `DiffLine` objects. During render, `diff-hunk` reads `controller.getLineHtml(index)` and falls back to escaped plain text if highlighting hasn't completed yet (see [reactive-controllers.md](reactive-controllers.md)).

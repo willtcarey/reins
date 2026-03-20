@@ -65,7 +65,7 @@ export class DiffHunk extends LitElement {
     return this.file.hunks[this.hunkIndex];
   }
 
-  private renderLine(line: DiffLine) {
+  private renderLine(line: DiffLine, index: number) {
     let prefix = "\u00a0";
     let classes = "text-zinc-300";
     const lineNo = line.newLine ?? line.oldLine;
@@ -85,7 +85,7 @@ export class DiffHunk extends LitElement {
         break;
     }
 
-    const content = unsafeHTML(line.html ?? escapeHtml(line.text));
+    const content = unsafeHTML(this._highlight.getLineHtml(index) ?? escapeHtml(line.text));
     const divCls = `${classes} px-2 leading-5 font-mono ${this.wrap ? "flex" : "whitespace-pre"}`;
     const gutterCls = `select-none text-zinc-600 ${this.wrap ? "shrink-0" : ""}`;
 
@@ -199,7 +199,7 @@ export class DiffHunk extends LitElement {
       <div class="bg-zinc-900/50 px-2 py-1 text-zinc-500 text-xs border-t border-zinc-700 font-mono" data-hunk-index=${this.hunkIndex}>
         ${hunk.header}
       </div>
-      ${hunk.lines.map((line) => this.renderLine(line))}
+      ${hunk.lines.map((line, i) => this.renderLine(line, i))}
       ${this.renderTrailer()}
     `;
   }

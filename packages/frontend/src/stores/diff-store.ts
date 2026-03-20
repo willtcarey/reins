@@ -347,7 +347,17 @@ export class DiffStore {
       const updatedFile = this.fullData!.files.find((f) => f.path === filePath)!;
       const earlierIdx = Math.min(hunkIndex, neighborIdx);
       const laterIdx = earlierIdx + 1;
-      updatedFile.hunks[earlierIdx].lines.push(...updatedFile.hunks[laterIdx].lines);
+      // Create a new hunk object so HighlightController detects the change
+      // via ref-equality. Without this, the earlier hunk is mutated in-place
+      // and the controller skips re-highlighting.
+      const mergedLines = [
+        ...updatedFile.hunks[earlierIdx].lines,
+        ...updatedFile.hunks[laterIdx].lines,
+      ];
+      updatedFile.hunks[earlierIdx] = {
+        ...updatedFile.hunks[earlierIdx],
+        lines: mergedLines,
+      };
       updatedFile.hunks.splice(laterIdx, 1);
       this.notify();
     }

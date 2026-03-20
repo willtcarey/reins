@@ -488,6 +488,64 @@ describe("DiffStore", () => {
       expect(file.hunks[0].lines.length).toBe(5);
     });
 
+    test("hunk merge produces new hunk ref (expand down)", async () => {
+      // After merge, the surviving hunk must be a new object reference
+      // so HighlightController detects the change via ref-equality.
+      setupFileAndStore([
+        {
+          header: "@@ -3,2 +3,2 @@",
+          lines: [
+            line("context", "line3", 3, 3),
+            line("context", "line4", 4, 4),
+          ],
+        },
+        {
+          header: "@@ -6,2 +6,2 @@",
+          lines: [
+            line("context", "line6", 6, 6),
+            line("context", "line7", 7, 7),
+          ],
+        },
+      ]);
+
+      const hunk0Before = store.fullData!.files[0].hunks[0];
+      await store.expandHunk(FILE_PATH, 0, "down", 15);
+
+      const file = store.fullData!.files[0];
+      expect(file.hunks.length).toBe(1);
+      expect(file.hunks[0]).not.toBe(hunk0Before);
+      expect(file.hunks[0].lines.map(l => l.newLine)).toEqual([3, 4, 5, 6, 7]);
+    });
+
+    test("hunk merge produces new hunk ref (expand up)", async () => {
+      // When expanding hunk1 up, the merge puts all lines into hunk0
+      // (the earlier hunk). hunk0 must get a new ref, not be mutated in-place.
+      setupFileAndStore([
+        {
+          header: "@@ -3,2 +3,2 @@",
+          lines: [
+            line("context", "line3", 3, 3),
+            line("context", "line4", 4, 4),
+          ],
+        },
+        {
+          header: "@@ -6,2 +6,2 @@",
+          lines: [
+            line("context", "line6", 6, 6),
+            line("context", "line7", 7, 7),
+          ],
+        },
+      ]);
+
+      const hunk0Before = store.fullData!.files[0].hunks[0];
+      await store.expandHunk(FILE_PATH, 1, "up", 15);
+
+      const file = store.fullData!.files[0];
+      expect(file.hunks.length).toBe(1);
+      expect(file.hunks[0]).not.toBe(hunk0Before);
+      expect(file.hunks[0].lines.map(l => l.newLine)).toEqual([3, 4, 5, 6, 7]);
+    });
+
     test("expand with add/remove lines finds correct anchor", async () => {
       // Hunk with mixed line types — oldLine and newLine are on different lines
       setupFileAndStore([{

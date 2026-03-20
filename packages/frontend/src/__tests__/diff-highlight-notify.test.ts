@@ -136,10 +136,11 @@ describe("DiffStore expandHunk (no highlighting)", () => {
 
     await store.expandHunk("a.ts", 0, "down", 1);
 
-    // The newly inserted line should NOT have html — that's the controller's job
+    // The store only produces DiffLine objects with text — highlighting
+    // is the controller's job (stored on HighlightController, not DiffLine).
     const newLine = store.fullData!.files[0].hunks[0].lines[1];
-    expect(newLine.html).toBeUndefined();
     expect(newLine.text).toBe("l6");
+    expect(newLine).toEqual({ type: "context", text: "l6", oldLine: 6, newLine: 6 });
   });
 
   test("expandHunk produces a new file object reference for the mutated file", async () => {

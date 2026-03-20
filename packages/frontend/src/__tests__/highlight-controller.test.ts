@@ -3,13 +3,14 @@
  * highlighting for a single DiffHunk.
  *
  * Each diff-hunk creates its own HighlightController instance.
- * When `setHunk` receives a new hunk reference, it is sent to the
- * shared highlighter. Same-ref assignments are skipped.
+ * When `setHunk` receives a new hunk reference, text lines are sent to
+ * the highlighter. The resulting HTML is stored on the controller (not
+ * mutated onto DiffLine objects). Same-ref assignments are skipped.
  */
 import { describe, test, expect } from "bun:test";
 import { HighlightController } from "../controllers/highlight-controller.js";
-import type { IHighlighter, HighlightCallback } from "../changes/highlighter.js";
-import type { DiffFile, DiffHunk, DiffLine } from "../changes/types.js";
+import type { IHighlighter, HighlightHunkCallback } from "../changes/highlighter.js";
+import type { DiffHunk, DiffLine } from "../changes/types.js";
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 
 // ---------------------------------------------------------------------------
@@ -17,28 +18,12 @@ import type { ReactiveController, ReactiveControllerHost } from "lit";
 // ---------------------------------------------------------------------------
 
 class FakeHighlighter implements IHighlighter {
-  calls: { files: DiffFile[]; onComplete: HighlightCallback }[] = [];
-  hunkCalls: { path: string; hunk: DiffHunk; onComplete: HighlightCallback }[] = [];
+  hunkCalls: { path: string; lines: string[]; onComplete: HighlightHunkCallback }[] = [];
   disposed = false;
 
-  highlight(files: DiffFile[], onComplete: HighlightCallback): void {
-    this.calls.push({ files, onComplete });
-    for (const file of files) {
-      for (const hunk of file.hunks) {
-        for (const line of hunk.lines) {
-          line.html = `<span class="hl">${line.text}</span>`;
-        }
-      }
-    }
-    onComplete();
-  }
-
-  highlightHunk(path: string, hunk: DiffHunk, onComplete: HighlightCallback): void {
-    this.hunkCalls.push({ path, hunk, onComplete });
-    for (const line of hunk.lines) {
-      line.html = `<span class="hl">${line.text}</span>`;
-    }
-    onComplete();
+  highlightHunk(path: string, lines: string[], onComplete: HighlightHunkCallback): void {
+    this.hunkCalls.push({ path, lines, onComplete });
+    onComplete(lines.map((t) => `<span class="hl">${t}</span>`));
   }
 
   dispose(): void {
@@ -47,25 +32,17 @@ class FakeHighlighter implements IHighlighter {
 }
 
 class AsyncFakeHighlighter implements IHighlighter {
-  pending: { files: DiffFile[]; onComplete: HighlightCallback }[] = [];
-  pendingHunks: { path: string; hunk: DiffHunk; onComplete: HighlightCallback }[] = [];
+  pendingHunks: { path: string; lines: string[]; onComplete: HighlightHunkCallback }[] = [];
   disposed = false;
 
-  highlight(files: DiffFile[], onComplete: HighlightCallback): void {
-    this.pending.push({ files, onComplete });
-  }
-
-  highlightHunk(path: string, hunk: DiffHunk, onComplete: HighlightCallback): void {
-    this.pendingHunks.push({ path, hunk, onComplete });
+  highlightHunk(path: string, lines: string[], onComplete: HighlightHunkCallback): void {
+    this.pendingHunks.push({ path, lines, onComplete });
   }
 
   completeHunk(index = this.pendingHunks.length - 1) {
     const req = this.pendingHunks[index];
     if (!req) return;
-    for (const line of req.hunk.lines) {
-      line.html = `<span class="hl">${line.text}</span>`;
-    }
-    req.onComplete();
+    req.onComplete(req.lines.map((t) => `<span class="hl">${t}</span>`));
   }
 
   dispose(): void {
@@ -130,7 +107,7 @@ describe("HighlightController", () => {
 
     expect(hl.hunkCalls.length).toBe(1);
     expect(hl.hunkCalls[0].path).toBe("a.ts");
-    expect(hl.hunkCalls[0].hunk).toBe(hunk);
+    expect(hl.hunkCalls[0].lines).toEqual(["hello"]);
   });
 
   test("setHunk with null does not trigger highlighting", () => {
@@ -166,7 +143,7 @@ describe("HighlightController", () => {
     ctrl.setHunk("a.ts", hunk2);
 
     expect(hl.hunkCalls.length).toBe(2);
-    expect(hl.hunkCalls[1].hunk).toBe(hunk2);
+    expect(hl.hunkCalls[1].lines).toEqual(["v2"]);
   });
 
   test("host.requestUpdate called when highlighting completes", () => {
@@ -182,16 +159,84 @@ describe("HighlightController", () => {
     expect(host.updateCount).toBe(1);
   });
 
-  test("line.html is populated after highlighting completes", () => {
+  test("getLineHtml returns highlighted HTML after completion", () => {
     const host = fakeHost();
     const hl = new FakeHighlighter();
     const ctrl = new HighlightController(host, hl);
 
-    const myLine = line("add", "hello", 1, 1);
-    const hunk = makeHunk("@@", [myLine]);
+    const hunk = makeHunk("@@", [line("add", "hello", 1, 1)]);
     ctrl.setHunk("a.ts", hunk);
 
-    expect(myLine.html).toBe('<span class="hl">hello</span>');
+    expect(ctrl.getLineHtml(0)).toBe('<span class="hl">hello</span>');
+  });
+
+  test("getLineHtml returns undefined before completion", () => {
+    const host = fakeHost();
+    const hl = new AsyncFakeHighlighter();
+    const ctrl = new HighlightController(host, hl);
+
+    const hunk = makeHunk("@@", [line("add", "hello", 1, 1)]);
+    ctrl.setHunk("a.ts", hunk);
+
+    expect(ctrl.getLineHtml(0)).toBeUndefined();
+
+    hl.completeHunk(0);
+    expect(ctrl.getLineHtml(0)).toBe('<span class="hl">hello</span>');
+  });
+
+  test("getLineHtml returns undefined for out-of-range index", () => {
+    const host = fakeHost();
+    const hl = new FakeHighlighter();
+    const ctrl = new HighlightController(host, hl);
+
+    const hunk = makeHunk("@@", [line("add", "hello", 1, 1)]);
+    ctrl.setHunk("a.ts", hunk);
+
+    expect(ctrl.getLineHtml(99)).toBeUndefined();
+  });
+
+  test("new hunk clears stale HTML from previous hunk", () => {
+    const host = fakeHost();
+    const hl = new FakeHighlighter();
+    const ctrl = new HighlightController(host, hl);
+
+    const hunk1 = makeHunk("@@", [line("add", "v1", 1, 1)]);
+    ctrl.setHunk("a.ts", hunk1);
+    expect(ctrl.getLineHtml(0)).toBe('<span class="hl">v1</span>');
+
+    // Switch to async highlighter to control timing
+    const hl2 = new AsyncFakeHighlighter();
+    const ctrl2 = new HighlightController(fakeHost(), hl2);
+
+    const hunkA = makeHunk("@@", [line("add", "old", 1, 1)]);
+    ctrl2.setHunk("a.ts", hunkA);
+    hl2.completeHunk(0);
+    expect(ctrl2.getLineHtml(0)).toBe('<span class="hl">old</span>');
+
+    // New hunk — html should be cleared immediately (before callback)
+    const hunkB = makeHunk("@@", [line("add", "new", 1, 1)]);
+    ctrl2.setHunk("a.ts", hunkB);
+    expect(ctrl2.getLineHtml(0)).toBeUndefined();
+  });
+
+  test("stale callback does not set HTML for newer hunk", () => {
+    const host = fakeHost();
+    const hl = new AsyncFakeHighlighter();
+    const ctrl = new HighlightController(host, hl);
+
+    const hunk1 = makeHunk("@@", [line("add", "v1", 1, 1)]);
+    ctrl.setHunk("a.ts", hunk1);
+
+    const hunk2 = makeHunk("@@", [line("add", "v2", 1, 1)]);
+    ctrl.setHunk("a.ts", hunk2);
+
+    // Complete the FIRST (stale) callback — should NOT set htmlLines
+    hl.completeHunk(0);
+    expect(ctrl.getLineHtml(0)).toBeUndefined();
+
+    // Complete the second — should set htmlLines
+    hl.completeHunk(1);
+    expect(ctrl.getLineHtml(0)).toBe('<span class="hl">v2</span>');
   });
 
   test("hostDisconnected is safe (does not dispose shared highlighter)", () => {
@@ -215,17 +260,18 @@ describe("HighlightController", () => {
     expect(ctrl.hunk).toBe(hunk);
   });
 
-  test("setting null after a hunk clears the reference", () => {
+  test("setting null after a hunk clears the reference and html", () => {
     const host = fakeHost();
     const hl = new FakeHighlighter();
     const ctrl = new HighlightController(host, hl);
 
     const hunk = makeHunk("@@", [line("add", "hello", 1, 1)]);
     ctrl.setHunk("a.ts", hunk);
-    ctrl.setHunk("a.ts", null);
+    expect(ctrl.getLineHtml(0)).toBe('<span class="hl">hello</span>');
 
+    ctrl.setHunk("a.ts", null);
     expect(ctrl.hunk).toBeNull();
-    // Only one highlight call (for the initial set)
+    expect(ctrl.getLineHtml(0)).toBeUndefined();
     expect(hl.hunkCalls.length).toBe(1);
   });
 
@@ -239,14 +285,14 @@ describe("HighlightController", () => {
 
     expect(hl.hunkCalls.length).toBe(1);
 
-    // Simulate what the store does: the file is shallow-copied so hunks
-    // array is shared, but the hunk object itself may be new after merge.
     const hunkExpanded = { ...hunk };
     hunkExpanded.lines = [...hunk.lines, line("context", "line2", 2, 2)];
     ctrl.setHunk("a.ts", hunkExpanded);
 
     expect(hl.hunkCalls.length).toBe(2);
-    expect(hl.hunkCalls[1].hunk).toBe(hunkExpanded);
+    expect(hl.hunkCalls[1].lines).toEqual(["line1", "line2"]);
+    expect(ctrl.getLineHtml(0)).toBe('<span class="hl">line1</span>');
+    expect(ctrl.getLineHtml(1)).toBe('<span class="hl">line2</span>');
   });
 
   test("two controllers with same highlighter can highlight independently", () => {
@@ -265,6 +311,8 @@ describe("HighlightController", () => {
     expect(hl.hunkCalls.length).toBe(2);
     expect(host1.updateCount).toBe(1);
     expect(host2.updateCount).toBe(1);
+    expect(ctrl1.getLineHtml(0)).toBe('<span class="hl">hello</span>');
+    expect(ctrl2.getLineHtml(0)).toBe('<span class="hl">world</span>');
   });
 
   test("file path is passed through to the highlighter for language detection", () => {
@@ -276,5 +324,24 @@ describe("HighlightController", () => {
     ctrl.setHunk("src/main.py", hunk);
 
     expect(hl.hunkCalls[0].path).toBe("src/main.py");
+  });
+
+  test("htmlLines getter returns the full array", () => {
+    const host = fakeHost();
+    const hl = new FakeHighlighter();
+    const ctrl = new HighlightController(host, hl);
+
+    expect(ctrl.htmlLines).toBeNull();
+
+    const hunk = makeHunk("@@", [
+      line("add", "a", 1, 1),
+      line("add", "b", 2, 2),
+    ]);
+    ctrl.setHunk("a.ts", hunk);
+
+    expect(ctrl.htmlLines).toEqual([
+      '<span class="hl">a</span>',
+      '<span class="hl">b</span>',
+    ]);
   });
 });

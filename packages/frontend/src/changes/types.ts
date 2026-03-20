@@ -14,8 +14,6 @@ export interface DiffLine {
   type: "context" | "add" | "remove";
   /** Raw source text (no HTML). Highlighting is done client-side via Shiki. */
   text: string;
-  /** Shiki-highlighted HTML, set asynchronously by the highlight worker. */
-  html?: string;
   oldLine?: number;
   newLine?: number;
 }
