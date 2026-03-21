@@ -9,7 +9,7 @@
  * Mutations go through action methods which call the backend API.
  */
 
-import type { SessionData } from "../ws-client.js";
+import type { SessionData } from "../../ws-client.js";
 
 export type ActiveSessionStoreListener = () => void;
 

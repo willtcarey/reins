@@ -2,7 +2,7 @@
  * Tests for ProjectStore — per-project task/session data cache.
  */
 import { describe, test, expect, beforeEach, mock } from "bun:test";
-import { ProjectStore } from "../stores/project-store.js";
+import { ProjectStore } from "../models/stores/project-store.js";
 
 // Mock fetch globally
 const originalFetch = globalThis.fetch;

@@ -9,7 +9,7 @@
  * project list or any child store changes (notifications bubble up).
  */
 
-import type { ProjectInfo } from "../ws-client.js";
+import type { ProjectInfo } from "../../ws-client.js";
 import { ProjectStore } from "./project-store.js";
 
 export type ProjectCollectionStoreListener = () => void;

@@ -17,7 +17,7 @@ import { customElement, state, query } from "lit/decorators.js";
 import { AppClient } from "./ws-client.js";
 import type { DiffPanel } from "./changes/diff-panel.js";
 import { FileTreeState } from "./changes/file-tree-state.js";
-import { AppStore } from "./stores/app-store.js";
+import { AppStore } from "./models/stores/app-store.js";
 import { parseHash } from "./router.js";
 import type { Route } from "./router.js";
 
@@ -30,7 +30,7 @@ import "./session-sidebar.js";
 import "./branch-indicator.js";
 import "./quick-open.js";
 import type { QuickOpen } from "./quick-open.js";
-import { QuickOpenStore } from "./stores/quick-open-store.js";
+import { QuickOpenStore } from "./models/stores/quick-open-store.js";
 
 @customElement("app-shell")
 export class AppShell extends LitElement {

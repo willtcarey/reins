@@ -16,8 +16,8 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { navigateToSession } from "./router.js";
-import type { AppStore } from "./stores/app-store.js";
-import type { ActivityState } from "./stores/app-store.js";
+import type { AppStore } from "./models/stores/app-store.js";
+import type { ActivityState } from "./models/stores/app-store.js";
 import type { ProjectInfo } from "./ws-client.js";
 import type { TaskForm } from "./task-form.js";
 import type { TaskDetail } from "./task-detail.js";

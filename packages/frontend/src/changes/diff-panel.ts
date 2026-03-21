@@ -12,7 +12,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { DiffFile } from "./types.js";
-import type { DiffStore } from "../stores/diff-store.js";
+import type { DiffStore } from "../models/stores/diff-store.js";
 import type { FileTreeState } from "./file-tree-state.js";
 import type { ExpandDetail } from "./diff-hunk.js";
 import { fileCardId } from "./diff-utils.js";

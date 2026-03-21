@@ -9,7 +9,7 @@
  *   3. New lines don't have html set (highlighting is the controller's job).
  */
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
-import { DiffStore } from "../stores/diff-store.js";
+import { DiffStore } from "../models/stores/diff-store.js";
 import type { DiffFile, DiffLine } from "../changes/types.js";
 
 // ---------------------------------------------------------------------------

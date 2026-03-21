@@ -10,7 +10,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type { ProjectInfo } from "./ws-client.js";
-import type { AppStore } from "./stores/app-store.js";
+import type { AppStore } from "./models/stores/app-store.js";
 
 interface OpenCreateOptions {
   mode: "create";

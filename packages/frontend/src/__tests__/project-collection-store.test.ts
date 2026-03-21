@@ -2,8 +2,8 @@
  * Tests for ProjectCollectionStore — project list, CRUD, and per-project data stores.
  */
 import { describe, test, expect, beforeEach, mock } from "bun:test";
-import { ProjectCollectionStore } from "../stores/project-collection-store.js";
-import { ProjectStore } from "../stores/project-store.js";
+import { ProjectCollectionStore } from "../models/stores/project-collection-store.js";
+import { ProjectStore } from "../models/stores/project-store.js";
 
 // Mock fetch globally
 const originalFetch = globalThis.fetch;
