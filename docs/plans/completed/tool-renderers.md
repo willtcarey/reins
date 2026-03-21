@@ -11,11 +11,11 @@ Replace the generic expand-to-see-JSON tool call display in `chat-panel.ts` with
 ```ts
 interface ToolRenderer {
   renderRunning(block: ToolBlockData): TemplateResult;
-  renderDone(block: ToolBlockData, expanded: boolean, onToggle: () => void): TemplateResult;
+  renderDone(block: ToolBlockData): TemplateResult;
 }
 ```
 
-Renderers own the **entire visual output** for a tool block — layout, chrome, expand/collapse behavior (if any). This avoids locking all tools into one interaction pattern.
+Renderers own the **entire visual output** for a tool block — layout, chrome, expand/collapse behavior and state (if any). The chat panel has no knowledge of tool expansion. This avoids locking all tools into one interaction pattern and allows tools to not expand at all.
 
 ### Base Helpers ✅
 
@@ -154,5 +154,4 @@ The `edit` renderer uses server-computed diffs when available:
 
 ## Remaining Work
 
-- **Bash: command display refinement** — Full commands can be visually overwhelming; explore truncation, collapsing, or de-emphasis for long commands
-- ✅ **Split test file** — Split `tool-renderers.test.ts` into per-renderer test files: `tool-renderer-registry.test.ts`, `tool-renderer-read.test.ts`, `tool-renderer-bash.test.ts`, `tool-renderer-edit.test.ts`, `tool-renderer-write.test.ts`, `tool-renderer-create-task.test.ts`, `tool-renderer-delegate.test.ts`
+All items complete. See [docs/dev/tool-renderers.md](../../dev/tool-renderers.md) for the developer guide.

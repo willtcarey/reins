@@ -131,26 +131,34 @@ export function getEditDiffLines(block: ToolBlockData): DiffLine[] {
 export const AUTO_EXPAND_THRESHOLD = 20;
 
 /**
+ * Determine whether a diff should start expanded (auto-expand).
+ *
+ * Small diffs (≤ threshold lines) auto-expand; large diffs start collapsed.
+ */
+export function shouldAutoExpand(block: ToolBlockData): boolean {
+  const diffLines = getEditDiffLines(block);
+  if (diffLines.length === 0) return false;
+  return diffLines.length <= AUTO_EXPAND_THRESHOLD;
+}
+
+/**
  * Determine whether the diff should be shown for an edit tool block.
  *
- * Small diffs (≤ threshold lines) are auto-expanded by default and only
- * hidden when the user manually collapses them. Large diffs require an
- * explicit expand.
+ * Uses the component's own `expanded` state (which may have been
+ * initialised via `shouldAutoExpand`).
  */
 export function shouldShowEditDiff(opts: {
   block: ToolBlockData;
   expanded: boolean;
-  manuallyCollapsed: boolean;
   showSpinner?: boolean;
 }): boolean {
-  const { block, expanded, manuallyCollapsed, showSpinner } = opts;
+  const { block, expanded, showSpinner } = opts;
   if (showSpinner || block.isError) return false;
 
   const diffLines = getEditDiffLines(block);
   if (diffLines.length === 0) return false;
 
-  const isSmallDiff = diffLines.length <= AUTO_EXPAND_THRESHOLD;
-  return isSmallDiff ? !manuallyCollapsed : expanded;
+  return expanded;
 }
 
 // ---------------------------------------------------------------------------
@@ -160,12 +168,30 @@ export function shouldShowEditDiff(opts: {
 // Side-effect import: registers <edit-tool-block> custom element
 import "./edit-tool-block.js";
 
+function renderEditBlock(block: ToolBlockData, showSpinner: boolean) {
+  const path = getEditSummary(block);
+  const isError = !!block.isError;
+  const { additions, removals } = getEditStats(block);
+  const diffLines = getEditDiffLines(block);
+  const autoExpand = !showSpinner && block.status === "done" && shouldAutoExpand(block);
+
+  return html`<edit-tool-block
+    .path=${path}
+    .isError=${isError}
+    .additions=${additions}
+    .removals=${removals}
+    .diffLines=${diffLines}
+    .autoExpand=${autoExpand}
+    .showSpinner=${showSpinner}
+  ></edit-tool-block>`;
+}
+
 export const editRenderer: ToolRenderer = {
   renderRunning(block: ToolBlockData) {
-    return html`<edit-tool-block .block=${block} .showSpinner=${true}></edit-tool-block>`;
+    return renderEditBlock(block, true);
   },
 
-  renderDone(block: ToolBlockData, expanded: boolean, onToggle: () => void) {
-    return html`<edit-tool-block .block=${block} .expanded=${expanded} .onToggle=${onToggle}></edit-tool-block>`;
+  renderDone(block: ToolBlockData) {
+    return renderEditBlock(block, false);
   },
 };

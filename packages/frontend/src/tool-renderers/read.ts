@@ -14,6 +14,7 @@
 import { html } from "lit";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../chat-state.js";
+import type { ToolResultImage } from "./types.js";
 // Side-effect import: registers <read-tool-block> custom element
 import "./read-tool-block.js";
 
@@ -86,16 +87,67 @@ export function getReadLineCount(block: ToolBlockData): number {
   return cleaned.split("\n").length;
 }
 
+/** Extract image content blocks from a Read tool block's result. */
+function getReadImages(block: ToolBlockData): ToolResultImage[] {
+  return (
+    block.result?.content
+      ?.filter(
+        (c): c is { type: "image"; data: string; mimeType: string } =>
+          c.type === "image",
+      )
+      .map((c) => ({ data: c.data, mimeType: c.mimeType })) ?? []
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Preview line count — must match the component constant
+// ---------------------------------------------------------------------------
+const PREVIEW_LINES = 4;
+
 // ---------------------------------------------------------------------------
 // Renderer — delegates visual output to <read-tool-block> component
 // ---------------------------------------------------------------------------
 
 export const readRenderer: ToolRenderer = {
   renderRunning(block: ToolBlockData) {
-    return html`<read-tool-block .block=${block} .showSpinner=${true}></read-tool-block>`;
+    const path = getReadSummary(block);
+    const range = getReadRange(block);
+    return html`<read-tool-block
+      .path=${path}
+      .range=${range}
+      .trailer=${""}
+      .preview=${""}
+      .content=${""}
+      .totalLines=${0}
+      .startLine=${(block.args?.offset as number | undefined) ?? 1}
+      .isError=${false}
+      .images=${[]}
+      .showSpinner=${true}
+    ></read-tool-block>`;
   },
 
-  renderDone(block: ToolBlockData, expanded: boolean, onToggle: () => void) {
-    return html`<read-tool-block .block=${block} .expanded=${expanded} .onToggle=${onToggle}></read-tool-block>`;
+  renderDone(block: ToolBlockData) {
+    const path = getReadSummary(block);
+    const range = getReadRange(block);
+    const trailer = getReadTrailer(block);
+    const preview = getReadPreview(block, PREVIEW_LINES);
+    const content = getReadContent(block);
+    const totalLines = getReadLineCount(block);
+    const startLine = (block.args?.offset as number | undefined) ?? 1;
+    const isError = !!block.isError;
+    const images = getReadImages(block);
+
+    return html`<read-tool-block
+      .path=${path}
+      .range=${range}
+      .trailer=${trailer}
+      .preview=${preview}
+      .content=${content}
+      .totalLines=${totalLines}
+      .startLine=${startLine}
+      .isError=${isError}
+      .images=${images}
+      .showSpinner=${false}
+    ></read-tool-block>`;
   },
 };

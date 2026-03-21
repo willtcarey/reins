@@ -52,7 +52,7 @@ export class ChatPanel extends LitElement {
   @state() private isStreaming = false;
   @state() private streamingBlocks: StreamingBlock[] = [];
   @state() private inputText = "";
-  @state() private expandedTools = new Set<string>();
+  @state() private expandedSections = new Set<string>();
   @state() private isCompacting = false;
   @state() private errorMessage = "";
   private errorTimeout?: ReturnType<typeof setTimeout>;
@@ -205,14 +205,14 @@ export class ChatPanel extends LitElement {
     });
   }
 
-  private toggleTool(id: string) {
-    const next = new Set(this.expandedTools);
+  private toggleSection(id: string) {
+    const next = new Set(this.expandedSections);
     if (next.has(id)) {
       next.delete(id);
     } else {
       next.add(id);
     }
-    this.expandedTools = next;
+    this.expandedSections = next;
   }
 
   private renderMarkdown(text: string): ReturnType<typeof html> {
@@ -284,7 +284,7 @@ export class ChatPanel extends LitElement {
     const renderer = getToolRenderer(block.name);
     const content = block.status === "running"
       ? renderer.renderRunning(block)
-      : renderer.renderDone(block, this.expandedTools.has(block.id), () => this.toggleTool(block.id));
+      : renderer.renderDone(block);
     return html`<div class="max-w-[90%]">${content}</div>`;
   }
 
@@ -298,7 +298,7 @@ export class ChatPanel extends LitElement {
     const rawSummary = msg?.content || msg?.summary;
     const summary = rawSummary && rawSummary !== "Conversation summarized" ? rawSummary : null;
     const id = `compaction-${msg?.timestamp || 0}`;
-    const expanded = this.expandedTools.has(id);
+    const expanded = this.expandedSections.has(id);
 
     return html`
       <div class="my-4">
@@ -306,7 +306,7 @@ export class ChatPanel extends LitElement {
           <div class="flex-1 border-t border-zinc-600"></div>
           <button
             class="flex items-center gap-1.5 text-[10px] text-zinc-500 uppercase tracking-wide shrink-0 ${summary ? 'hover:text-zinc-300 cursor-pointer' : ''} transition-colors"
-            @click=${() => summary && this.toggleTool(id)}
+            @click=${() => summary && this.toggleSection(id)}
             ?disabled=${!summary}
           >
             ${summary ? html`<span class="font-mono">${expanded ? '▼' : '▶'}</span>` : nothing}

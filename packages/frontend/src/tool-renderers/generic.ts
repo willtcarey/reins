@@ -1,56 +1,93 @@
 /**
  * Generic fallback tool renderer.
  *
- * Reproduces the current behavior: JSON args dump + raw result text.
+ * Used for any tool that doesn't have a dedicated renderer.
+ * Displays JSON args dump + raw result text in a collapsible block.
+ * Rendering is handled by the `<generic-tool-block>` Lit component
+ * (./generic-tool-block.ts).
  */
 
-import { html, nothing } from "lit";
+import { html } from "lit";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../chat-state.js";
-import { getToolSummary, renderRunningTool, renderCollapsibleTool } from "./base.js";
+import type { ToolResultImage } from "./types.js";
+
+// Side-effect import: registers <generic-tool-block> custom element
+import "./generic-tool-block.js";
+
+// ---------------------------------------------------------------------------
+// Pure logic helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Return a short contextual summary for a tool call based on its args.
+ *
+ * Shows the first non-empty string arg value, truncated to 120 chars.
+ */
+export function getToolSummary(_name: string, args: Record<string, any> | undefined): string {
+  if (!args) return "";
+  for (const v of Object.values(args)) {
+    if (typeof v === "string" && v.length > 0) {
+      return v.length > 120 ? v.slice(0, 117) + "…" : v;
+    }
+  }
+  return "";
+}
+
+// ---------------------------------------------------------------------------
+// Extraction helpers
+// ---------------------------------------------------------------------------
+
+function extractImages(block: ToolBlockData): ToolResultImage[] {
+  return (
+    block.result?.content?.filter(
+      (c): c is { type: "image"; data: string; mimeType: string } => c.type === "image",
+    ) ?? []
+  );
+}
+
+function extractResultText(block: ToolBlockData): string {
+  return (
+    block.result?.content
+      ?.filter((c): c is { type: "text"; text: string } => c.type === "text")
+      .map((c) => c.text)
+      .join("\n")
+      .slice(0, 5000) ?? ""
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Generic renderer — delegates visual output to <generic-tool-block> component
+// ---------------------------------------------------------------------------
 
 export const genericRenderer: ToolRenderer = {
   renderRunning(block: ToolBlockData) {
     const summary = getToolSummary(block.name, block.args);
-    return renderRunningTool({ name: block.name, summary });
+    return html`<generic-tool-block
+      .name=${block.name}
+      .summary=${summary}
+      .isError=${false}
+      .argsJson=${""}
+      .resultText=${""}
+      .images=${[]}
+      .hasResult=${false}
+      .showSpinner=${true}
+    ></generic-tool-block>`;
   },
 
-  renderDone(block: ToolBlockData, expanded: boolean, onToggle: () => void) {
+  renderDone(block: ToolBlockData) {
     const summary = getToolSummary(block.name, block.args);
-
-    const images = block.result?.content?.filter(
-      (c): c is { type: "image"; data: string; mimeType: string } => c.type === "image",
-    ) ?? [];
-
-    const resultText = block.result?.content
-      ?.filter((c): c is { type: "text"; text: string } => c.type === "text")
-      .map((c) => c.text)
-      .join("\n")
-      .slice(0, 5000) ?? "";
-
-    const detail = html`
-      <div class="mt-1 text-xs">
-        <div class="text-zinc-500 mb-1">Arguments:</div>
-        <pre class="bg-zinc-900 rounded p-2 overflow-x-auto text-zinc-300 max-h-48 overflow-y-auto">${JSON.stringify(block.args, null, 2)}</pre>
-        ${block.result ? html`
-          <div class="text-zinc-500 mt-2 mb-1">Result${block.isError ? " (error)" : ""}:</div>
-          ${images.map(
-            (img) => html`<img src="data:${img.mimeType};base64,${img.data}" class="max-w-full max-h-96 rounded mt-1 mb-1" alt="Tool result image" />`,
-          )}
-          ${resultText ? html`
-            <pre class="bg-zinc-900 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto ${block.isError ? "text-red-400" : "text-zinc-300"}">${resultText}</pre>
-          ` : nothing}
-        ` : nothing}
-      </div>
-    `;
-
-    return renderCollapsibleTool({
-      block,
-      expanded,
-      onToggle,
-      summary,
-      detail,
-      isError: block.isError,
-    });
+    const images = extractImages(block);
+    const resultText = extractResultText(block);
+    return html`<generic-tool-block
+      .name=${block.name}
+      .summary=${summary}
+      .isError=${!!block.isError}
+      .argsJson=${JSON.stringify(block.args, null, 2)}
+      .resultText=${resultText}
+      .images=${images}
+      .hasResult=${!!block.result}
+      .showSpinner=${false}
+    ></generic-tool-block>`;
   },
 };

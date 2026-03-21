@@ -16,4 +16,7 @@
 - [ ] *(2026-03-03)* Docker DB persistence — the SQLite database is written to `.reins/` inside the container's working directory, which is lost on restart. Need a volume mount or configurable DB path so data survives container restarts.
 - [ ] *(2026-03-03)* Keyboard shortcuts — switch between Chat/Changes tabs, create a new session, create a new task, navigate between sessions, and other common actions without reaching for the mouse.
 - [ ] *(2026-03-15)* Smarter assistant compaction — explore techniques from losslesscontext.ai and related research for better context preservation during compaction. Current compaction loses important context; investigate structured summaries, hierarchical compaction, or other approaches.
+- [ ] *(2026-03-21)* Delegate tool call expansion while running — the delegate tool call inline rendering doesn't support expanding to see live output while the sub-session is still in progress. Need to allow expansion/streaming of delegate results before the call completes.
+- [ ] *(2026-03-21)* Delegate sub-session badge — show a "+N" badge on sessions that have spawned delegate sub-sessions. The badge should be clickable to reveal the list of sub-sessions.
+- [ ] *(2026-03-21)* Missing user message on mid-turn refresh — refreshing the page while an agent turn is in progress can cause the preceding user message to disappear. Likely a regression from the message display refactor.
 

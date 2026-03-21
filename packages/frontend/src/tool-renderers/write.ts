@@ -26,6 +26,13 @@ export function getWriteInfo(block: ToolBlockData): { lines: number } {
   return { lines: content.split("\n").length };
 }
 
+/** Extract and optionally truncate the content from a Write tool block. */
+export function getWriteContent(block: ToolBlockData): string {
+  const content = block.args?.content;
+  if (!content || typeof content !== "string") return "";
+  return content.length > 5000 ? content.slice(0, 5000) + "\n…(truncated)" : content;
+}
+
 // ---------------------------------------------------------------------------
 // Renderer — delegates visual output to <write-tool-block> component
 // ---------------------------------------------------------------------------
@@ -35,10 +42,29 @@ import "./write-tool-block.js";
 
 export const writeRenderer: ToolRenderer = {
   renderRunning(block: ToolBlockData) {
-    return html`<write-tool-block .block=${block} .showSpinner=${true}></write-tool-block>`;
+    const path = getWriteSummary(block);
+    const content = getWriteContent(block);
+    const { lines: lineCount } = getWriteInfo(block);
+    const isError = !!block.isError;
+    return html`<write-tool-block
+      .path=${path}
+      .content=${content}
+      .lineCount=${lineCount}
+      .isError=${isError}
+      .showSpinner=${true}
+    ></write-tool-block>`;
   },
 
-  renderDone(block: ToolBlockData, expanded: boolean, onToggle: () => void) {
-    return html`<write-tool-block .block=${block} .expanded=${expanded} .onToggle=${onToggle}></write-tool-block>`;
+  renderDone(block: ToolBlockData) {
+    const path = getWriteSummary(block);
+    const content = getWriteContent(block);
+    const { lines: lineCount } = getWriteInfo(block);
+    const isError = !!block.isError;
+    return html`<write-tool-block
+      .path=${path}
+      .content=${content}
+      .lineCount=${lineCount}
+      .isError=${isError}
+    ></write-tool-block>`;
   },
 };

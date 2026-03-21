@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { getToolRenderer } from "../tool-renderers/index.js";
-import { getToolSummary } from "../tool-renderers/base.js";
+import { getToolSummary } from "../tool-renderers/generic.js";
 import { genericRenderer } from "../tool-renderers/generic.js";
 import { readRenderer } from "../tool-renderers/read.js";
 import { bashRenderer } from "../tool-renderers/bash.js";
@@ -50,57 +50,34 @@ describe("getToolRenderer", () => {
 });
 
 // ---------------------------------------------------------------------------
-// getToolSummary — pure logic extracted from chat-panel.ts toolSummary()
+// getToolSummary — generic fallback summary (tool-specific renderers have
+// their own logic so only unknown/generic tools go through this)
 // ---------------------------------------------------------------------------
 
 describe("getToolSummary", () => {
   test("returns empty string when args is undefined", () => {
-    expect(getToolSummary("bash", undefined)).toBe("");
+    expect(getToolSummary("some_tool", undefined)).toBe("");
   });
 
   test("returns empty string when args is empty object", () => {
-    expect(getToolSummary("bash", {})).toBe("");
+    expect(getToolSummary("some_tool", {})).toBe("");
   });
 
-  test("bash: returns command", () => {
-    expect(getToolSummary("bash", { command: "ls -la" })).toBe("ls -la");
-  });
-
-  test("Bash: case-insensitive match", () => {
-    expect(getToolSummary("Bash", { command: "echo hello" })).toBe("echo hello");
-  });
-
-  test("read: returns path", () => {
-    expect(getToolSummary("read", { path: "/etc/hosts" })).toBe("/etc/hosts");
-  });
-
-  test("Read: case-insensitive match", () => {
-    expect(getToolSummary("Read", { path: "src/index.ts" })).toBe("src/index.ts");
-  });
-
-  test("edit: returns path", () => {
-    expect(getToolSummary("Edit", { path: "foo.ts", oldText: "a", newText: "b" })).toBe("foo.ts");
-  });
-
-  test("write: returns path", () => {
-    expect(getToolSummary("Write", { path: "bar.ts", content: "stuff" })).toBe("bar.ts");
-  });
-
-  test("generic: returns first string arg, truncated to 120 chars", () => {
+  test("returns first string arg, truncated to 120 chars", () => {
     const longVal = "x".repeat(200);
     const result = getToolSummary("some_tool", { key: longVal });
     expect(result).toBe("x".repeat(117) + "…");
   });
 
-  test("generic: returns first non-empty string arg", () => {
+  test("returns first non-empty string arg", () => {
     expect(getToolSummary("some_tool", { a: 42, b: "", c: "hello" })).toBe("hello");
   });
 
-  test("generic: returns empty string when no string args", () => {
+  test("returns empty string when no string args", () => {
     expect(getToolSummary("some_tool", { a: 42, b: true })).toBe("");
   });
 
-  test("generic: short string is not truncated", () => {
+  test("short string is not truncated", () => {
     expect(getToolSummary("some_tool", { title: "My Task" })).toBe("My Task");
   });
 });

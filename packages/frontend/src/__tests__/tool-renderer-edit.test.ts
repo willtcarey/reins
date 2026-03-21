@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { getEditSummary, getEditStats, computeEditDiff, parseDiffString, getEditDiffLines, shouldShowEditDiff, AUTO_EXPAND_THRESHOLD } from "../tool-renderers/edit.js";
+import { getEditSummary, getEditStats, computeEditDiff, parseDiffString, getEditDiffLines, shouldShowEditDiff, shouldAutoExpand, AUTO_EXPAND_THRESHOLD } from "../tool-renderers/edit.js";
 import type { ToolBlockData } from "../chat-state.js";
 
 function makeEditBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockData {
@@ -251,6 +251,33 @@ describe("getEditDiffLines", () => {
   });
 });
 
+describe("shouldAutoExpand", () => {
+  /** Build an edit block whose diff has exactly `n` lines. */
+  function blockWithDiffLines(n: number): ToolBlockData {
+    const oldLines = Array.from({ length: n }, (_, i) => `old${i}`).join("\n");
+    return makeEditBlock({
+      args: { path: "f.ts", oldText: oldLines, newText: "" },
+    });
+  }
+
+  test("returns true for small diffs (≤ threshold)", () => {
+    expect(shouldAutoExpand(blockWithDiffLines(5))).toBe(true);
+  });
+
+  test("returns false for large diffs (> threshold)", () => {
+    expect(shouldAutoExpand(blockWithDiffLines(AUTO_EXPAND_THRESHOLD + 1))).toBe(false);
+  });
+
+  test("returns true at exact threshold", () => {
+    expect(shouldAutoExpand(blockWithDiffLines(AUTO_EXPAND_THRESHOLD))).toBe(true);
+  });
+
+  test("returns false when diff is empty", () => {
+    const block = makeEditBlock({ args: { path: "f.ts", oldText: "", newText: "" } });
+    expect(shouldAutoExpand(block)).toBe(false);
+  });
+});
+
 describe("shouldShowEditDiff", () => {
   /** Build an edit block whose diff has exactly `n` lines. */
   function blockWithDiffLines(n: number): ToolBlockData {
@@ -260,43 +287,28 @@ describe("shouldShowEditDiff", () => {
     });
   }
 
-  test("auto-expands small diffs (≤ threshold) without user action", () => {
-    const block = blockWithDiffLines(5);
-    expect(shouldShowEditDiff({ block, expanded: false, manuallyCollapsed: false })).toBe(true);
-  });
-
-  test("respects manual collapse for small diffs", () => {
-    const block = blockWithDiffLines(5);
-    expect(shouldShowEditDiff({ block, expanded: false, manuallyCollapsed: true })).toBe(false);
-  });
-
-  test("does not auto-expand large diffs (> threshold)", () => {
+  test("shows diff when expanded is true", () => {
     const block = blockWithDiffLines(AUTO_EXPAND_THRESHOLD + 1);
-    expect(shouldShowEditDiff({ block, expanded: false, manuallyCollapsed: false })).toBe(false);
+    expect(shouldShowEditDiff({ block, expanded: true })).toBe(true);
   });
 
-  test("shows large diffs when explicitly expanded", () => {
+  test("hides diff when expanded is false", () => {
     const block = blockWithDiffLines(AUTO_EXPAND_THRESHOLD + 1);
-    expect(shouldShowEditDiff({ block, expanded: true, manuallyCollapsed: false })).toBe(true);
-  });
-
-  test("exact threshold count is auto-expanded", () => {
-    const block = blockWithDiffLines(AUTO_EXPAND_THRESHOLD);
-    expect(shouldShowEditDiff({ block, expanded: false, manuallyCollapsed: false })).toBe(true);
+    expect(shouldShowEditDiff({ block, expanded: false })).toBe(false);
   });
 
   test("returns false when spinner is showing", () => {
     const block = blockWithDiffLines(3);
-    expect(shouldShowEditDiff({ block, expanded: false, manuallyCollapsed: false, showSpinner: true })).toBe(false);
+    expect(shouldShowEditDiff({ block, expanded: true, showSpinner: true })).toBe(false);
   });
 
   test("returns false on error blocks", () => {
     const block = { ...blockWithDiffLines(3), isError: true };
-    expect(shouldShowEditDiff({ block, expanded: false, manuallyCollapsed: false })).toBe(false);
+    expect(shouldShowEditDiff({ block, expanded: true })).toBe(false);
   });
 
   test("returns false when diff is empty", () => {
     const block = makeEditBlock({ args: { path: "f.ts", oldText: "", newText: "" } });
-    expect(shouldShowEditDiff({ block, expanded: false, manuallyCollapsed: false })).toBe(false);
+    expect(shouldShowEditDiff({ block, expanded: true })).toBe(false);
   });
 });

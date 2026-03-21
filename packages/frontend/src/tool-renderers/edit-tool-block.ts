@@ -5,16 +5,19 @@
  * Highlighting is triggered only when the element scrolls into view
  * (IntersectionObserver), so old tool calls don't get highlighted on
  * chat load. Uses the shared HighlightController / Shiki web worker.
+ *
+ * This is a pure presentational component — all data is passed as
+ * primitive props by the renderer in edit.ts.
  */
 
 import { LitElement, html, nothing } from "lit";
-import { customElement, property } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { LazyHighlightController } from "../controllers/lazy-highlight-controller.js";
 import { escapeHtml, shouldWrapLines } from "../changes/diff-utils.js";
-import type { ToolBlockData } from "../chat-state.js";
 import type { DiffLine } from "../changes/types.js";
-import { getEditSummary, getEditStats, getEditDiffLines, shouldShowEditDiff, AUTO_EXPAND_THRESHOLD } from "./edit.js";
+/** Small diffs at or below this line count get no max-height cap. */
+const SMALL_DIFF_THRESHOLD = 20;
 
 @customElement("edit-tool-block")
 export class EditToolBlock extends LitElement {
@@ -23,27 +26,37 @@ export class EditToolBlock extends LitElement {
   }
 
   private _hl = new LazyHighlightController(this, () => {
-    const path = getEditSummary(this.block);
-    if (!path || this.block.isError) return null;
-    const diffLines = getEditDiffLines(this.block);
-    if (diffLines.length === 0) return null;
-    return { path, hunk: { header: "", lines: diffLines } };
+    if (!this.path || this.isError) return null;
+    if (this.diffLines.length === 0) return null;
+    return { path: this.path, hunk: { header: "", lines: this.diffLines } };
   });
 
   @property({ attribute: false })
-  block!: ToolBlockData;
+  path = "";
 
   @property({ type: Boolean })
-  expanded = false;
+  isError = false;
+
+  @property({ type: Number })
+  additions = 0;
+
+  @property({ type: Number })
+  removals = 0;
+
+  @property({ attribute: false })
+  diffLines: DiffLine[] = [];
+
+  @property({ type: Boolean })
+  autoExpand = false;
 
   @property({ type: Boolean })
   showSpinner = false;
 
-  @property({ attribute: false })
-  onToggle: (() => void) | undefined;
+  @state()
+  private expanded = false;
 
-  /** Tracks whether the user has manually collapsed an auto-expanded diff. */
-  private _manuallyCollapsed = false;
+  /** Whether auto-expand initial state has been applied for this block. */
+  private _autoExpandApplied = false;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -56,20 +69,20 @@ export class EditToolBlock extends LitElement {
   }
 
   private _handleToggle = () => {
-    const allDiffLines = getEditDiffLines(this.block);
-    const isSmallDiff = allDiffLines.length > 0 && allDiffLines.length <= AUTO_EXPAND_THRESHOLD;
-    if (isSmallDiff) {
-      // Toggle internal collapsed state for auto-expanded diffs
-      this._manuallyCollapsed = !this._manuallyCollapsed;
-      this.requestUpdate();
-    } else {
-      // Delegate to external toggle for large diffs
-      this.onToggle?.();
-    }
+    this.expanded = !this.expanded;
   };
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("block") || changed.has("expanded")) {
+    if (changed.has("diffLines") || changed.has("path")) {
+      this._hl.update();
+    }
+    if (changed.has("autoExpand")) {
+      if (!this._autoExpandApplied && this.autoExpand) {
+        this._autoExpandApplied = true;
+        this.expanded = true;
+      }
+    }
+    if (changed.has("expanded")) {
       this._hl.update();
     }
   }
@@ -107,9 +120,7 @@ export class EditToolBlock extends LitElement {
   }
 
   override render() {
-    const path = getEditSummary(this.block);
-    const isError = !!this.block.isError;
-    const { additions, removals } = getEditStats(this.block);
+    const { path, isError, additions, removals, showSpinner, diffLines } = this;
 
     // Build stats badge
     const statsParts: string[] = [];
@@ -117,7 +128,7 @@ export class EditToolBlock extends LitElement {
     if (removals > 0) statsParts.push(`−${removals}`);
     const statsText = statsParts.join(" ");
 
-    const borderColor = this.showSpinner
+    const borderColor = showSpinner
       ? "border-yellow-500/60"
       : isError
         ? "border-red-500/60"
@@ -125,22 +136,16 @@ export class EditToolBlock extends LitElement {
 
     const wrap = shouldWrapLines(path || "");
 
-    const showDiff = shouldShowEditDiff({
-      block: this.block,
-      expanded: this.expanded,
-      manuallyCollapsed: this._manuallyCollapsed,
-      showSpinner: this.showSpinner,
-    });
-    const diffLines = showDiff ? getEditDiffLines(this.block) : [];
-    const hasDiff = diffLines.length > 0;
+    const showDiff = this.expanded && !showSpinner && !isError && diffLines.length > 0;
+    const hasDiff = showDiff && diffLines.length > 0;
     // Auto-expanded small diffs get no height cap so wrapping doesn't cause nested scroll
-    const isAutoExpanded = hasDiff && diffLines.length <= AUTO_EXPAND_THRESHOLD && !this.expanded;
+    const isAutoExpanded = hasDiff && diffLines.length <= SMALL_DIFF_THRESHOLD;
 
     return html`
       <div class="mt-1 mb-1 ml-2 rounded-md bg-zinc-950 border ${borderColor} overflow-hidden">
         <!-- Header -->
-        <div class="px-3 py-2 flex items-center gap-2 ${!this.showSpinner ? "cursor-pointer" : ""}" @click=${!this.showSpinner ? this._handleToggle : nothing}>
-          ${this.showSpinner
+        <div class="px-3 py-2 flex items-center gap-2 ${!showSpinner ? "cursor-pointer" : ""}" @click=${!showSpinner ? this._handleToggle : nothing}>
+          ${showSpinner
             ? html`<span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>`
             : html`<span class="flex-shrink-0 text-xs">✏️</span>`}
           <span class="text-[10px] font-semibold text-zinc-500 uppercase tracking-wide flex-shrink-0">Edit</span>

@@ -4,23 +4,17 @@
  *
  * Card-style block matching edit-tool-block: file path + line count badge.
  * When expanded, shows syntax-highlighted content preview.
+ *
+ * Pure presentational component — receives all data as primitive props.
  */
 
 import { LitElement, html, nothing } from "lit";
-import { customElement, property } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { LazyHighlightController } from "../controllers/lazy-highlight-controller.js";
 import { escapeHtml, shouldWrapLines } from "../changes/diff-utils.js";
-import type { ToolBlockData } from "../chat-state.js";
-import { getWriteSummary, getWriteInfo } from "./write.js";
 
 const PREVIEW_LINES = 4;
-
-function getContent(block: ToolBlockData): string {
-  const content = block.args?.content;
-  if (!content || typeof content !== "string") return "";
-  return content.length > 5000 ? content.slice(0, 5000) + "\n…(truncated)" : content;
-}
 
 @customElement("write-tool-block")
 export class WriteToolBlock extends LitElement {
@@ -29,12 +23,10 @@ export class WriteToolBlock extends LitElement {
   }
 
   private _hl = new LazyHighlightController(this, () => {
-    const path = getWriteSummary(this.block);
-    const content = getContent(this.block);
-    if (!path || !content || this.block.isError) return null;
-    const lines = content.split("\n");
+    if (!this.path || !this.content || this.isError) return null;
+    const lines = this.content.split("\n");
     return {
-      path,
+      path: this.path,
       hunk: {
         header: "",
         lines: lines.map((text, i) => ({
@@ -47,16 +39,22 @@ export class WriteToolBlock extends LitElement {
   });
 
   @property({ attribute: false })
-  block!: ToolBlockData;
+  path = "";
+
+  @property({ attribute: false })
+  content = "";
+
+  @property({ type: Number })
+  lineCount = 0;
 
   @property({ type: Boolean })
-  expanded = false;
+  isError = false;
+
+  @state()
+  private expanded = false;
 
   @property({ type: Boolean })
   showSpinner = false;
-
-  @property({ attribute: false })
-  onToggle: (() => void) | undefined;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -69,10 +67,14 @@ export class WriteToolBlock extends LitElement {
   }
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("block")) {
+    if (changed.has("content") || changed.has("path") || changed.has("isError")) {
       this._hl.update();
     }
   }
+
+  private _toggle = () => {
+    this.expanded = !this.expanded;
+  };
 
   private _renderHighlightedLine(index: number, text: string) {
     const highlighted = this._hl.getLineHtml(index);
@@ -86,19 +88,14 @@ export class WriteToolBlock extends LitElement {
   }
 
   override render() {
-    const path = getWriteSummary(this.block);
-    const isError = !!this.block.isError;
-    const { lines: lineCount } = getWriteInfo(this.block);
-
     const borderColor = this.showSpinner
       ? "border-yellow-500/60"
-      : isError
+      : this.isError
         ? "border-red-500/60"
         : "border-zinc-700";
 
-    const content = getContent(this.block);
-    const hasContent = !!content.trim();
-    const contentLines = content ? content.split("\n") : [];
+    const hasContent = !!this.content.trim();
+    const contentLines = this.content ? this.content.split("\n") : [];
     const hasMore = contentLines.length > PREVIEW_LINES;
     const previewLines = contentLines.slice(0, PREVIEW_LINES);
     const canInteract = !this.showSpinner && hasContent;
@@ -108,30 +105,30 @@ export class WriteToolBlock extends LitElement {
     const cardClickable = canInteract && !this.expanded;
     const headerClickable = canInteract && this.expanded;
 
-    const contentColorCls = isError ? "text-red-400" : "text-green-300";
-    const previewColorCls = isError ? "text-red-400" : "text-green-400/70";
-    const wrap = shouldWrapLines(path || "");
+    const contentColorCls = this.isError ? "text-red-400" : "text-green-300";
+    const previewColorCls = this.isError ? "text-red-400" : "text-green-400/70";
+    const wrap = shouldWrapLines(this.path || "");
 
     return html`
       <div
         class="mt-1 mb-1 ml-2 rounded-md bg-zinc-950 border ${borderColor} overflow-hidden ${cardClickable ? "cursor-pointer" : ""}"
-        @click=${cardClickable ? this.onToggle : nothing}
+        @click=${cardClickable ? this._toggle : nothing}
       >
         <!-- Header -->
         <div
           class="px-3 py-2 flex items-center gap-2 ${headerClickable ? "cursor-pointer" : ""}"
-          @click=${headerClickable ? (e: Event) => { e.stopPropagation(); this.onToggle?.(); } : nothing}
+          @click=${headerClickable ? (e: Event) => { e.stopPropagation(); this._toggle(); } : nothing}
         >
           ${this.showSpinner
             ? html`<span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>`
             : html`<span class="flex-shrink-0 text-xs">📝</span>`}
           <span class="text-[10px] font-semibold text-zinc-500 uppercase tracking-wide flex-shrink-0">Write</span>
-          <span class="text-xs font-mono ${isError ? "text-red-400" : "text-zinc-300"} truncate">${path || "…"}</span>
-          ${isError
+          <span class="text-xs font-mono ${this.isError ? "text-red-400" : "text-zinc-300"} truncate">${this.path || "…"}</span>
+          ${this.isError
             ? html`<span class="text-[10px] font-semibold text-red-400 bg-red-400/10 px-1.5 py-0.5 rounded flex-shrink-0">error</span>`
             : nothing}
           ${!this.showSpinner && hasMore && !this.expanded
-            ? html`<span class="text-[10px] text-zinc-600 flex-shrink-0 ml-auto">${lineCount} lines</span>`
+            ? html`<span class="text-[10px] text-zinc-600 flex-shrink-0 ml-auto">${this.lineCount} lines</span>`
             : nothing}
         </div>
 

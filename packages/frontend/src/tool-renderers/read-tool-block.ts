@@ -2,27 +2,20 @@
  * ReadToolBlock — Lit component for rendering Read tool calls with
  * lazy syntax highlighting.
  *
+ * Pure presentational component — receives all data as primitive props
+ * from the renderer (read.ts). Has no knowledge of ToolBlockData.
+ *
  * Highlighting is triggered only when the element scrolls into view
  * (IntersectionObserver), so old tool calls don't get highlighted on
  * chat load. Uses the shared HighlightController / Shiki web worker.
  */
 
 import { LitElement, html, nothing } from "lit";
-import { customElement, property } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { LazyHighlightController } from "../controllers/lazy-highlight-controller.js";
 import { escapeHtml, shouldWrapLines } from "../changes/diff-utils.js";
-import type { ToolBlockData } from "../chat-state.js";
-import {
-  getReadSummary,
-  getReadPreview,
-  getReadContent,
-  getReadLineCount,
-  getReadRange,
-  getReadTrailer,
-} from "./read.js";
-
-const PREVIEW_LINES = 4;
+import type { ToolResultImage } from "./types.js";
 
 @customElement("read-tool-block")
 export class ReadToolBlock extends LitElement {
@@ -31,12 +24,10 @@ export class ReadToolBlock extends LitElement {
   }
 
   private _hl = new LazyHighlightController(this, () => {
-    const path = getReadSummary(this.block);
-    const content = getReadContent(this.block);
-    if (!path || !content || this.block.isError) return null;
-    const lines = content.split("\n");
+    if (!this.path || !this.content || this.isError) return null;
+    const lines = this.content.split("\n");
     return {
-      path,
+      path: this.path,
       hunk: {
         header: "",
         lines: lines.map((text, i) => ({
@@ -49,16 +40,37 @@ export class ReadToolBlock extends LitElement {
   });
 
   @property({ attribute: false })
-  block!: ToolBlockData;
+  path = "";
+
+  @property({ attribute: false })
+  range = "";
+
+  @property({ attribute: false })
+  trailer = "";
+
+  @property({ attribute: false })
+  preview = "";
+
+  @property({ attribute: false })
+  content = "";
+
+  @property({ type: Number })
+  totalLines = 0;
+
+  @property({ type: Number })
+  startLine = 1;
 
   @property({ type: Boolean })
-  expanded = false;
+  isError = false;
+
+  @property({ attribute: false })
+  images: ToolResultImage[] = [];
 
   @property({ type: Boolean })
   showSpinner = false;
 
-  @property({ attribute: false })
-  onToggle: (() => void) | undefined;
+  @state()
+  private expanded = false;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -71,10 +83,14 @@ export class ReadToolBlock extends LitElement {
   }
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("block")) {
+    if (changed.has("content") || changed.has("path")) {
       this._hl.update();
     }
   }
+
+  private _toggle = () => {
+    this.expanded = !this.expanded;
+  };
 
   private _renderHighlightedLine(index: number, text: string) {
     const highlighted = this._hl.getLineHtml(index);
@@ -89,18 +105,7 @@ export class ReadToolBlock extends LitElement {
   }
 
   override render() {
-    const path = getReadSummary(this.block);
-    const range = getReadRange(this.block);
-    const trailer = getReadTrailer(this.block);
-    const isError = !!this.block.isError;
-    const preview = getReadPreview(this.block, PREVIEW_LINES);
-    const fullContent = getReadContent(this.block);
-    const totalLines = getReadLineCount(this.block);
-    const images =
-      this.block.result?.content?.filter(
-        (c): c is { type: "image"; data: string; mimeType: string } =>
-          c.type === "image",
-      ) ?? [];
+    const { path, range, trailer, isError, preview, content: fullContent, totalLines, images, startLine } = this;
 
     const borderColor = isError
       ? "border-red-500/60"
@@ -124,8 +129,7 @@ export class ReadToolBlock extends LitElement {
     const previewLineTexts = preview ? preview.split("\n") : [];
     const fullLineTexts = fullContent ? fullContent.split("\n") : [];
 
-    // Line numbering: start from offset arg (1-indexed) or 1
-    const startLine = (this.block.args?.offset as number | undefined) ?? 1;
+    // Line numbering
     const lastLine = startLine + totalLines - 1;
     const gutterCh = Math.max(String(lastLine).length, 3);
     const contentColorCls = isError ? "text-red-400" : "text-zinc-400";
@@ -135,12 +139,12 @@ export class ReadToolBlock extends LitElement {
     return html`
       <div
         class="mt-1 mb-1 ml-2 rounded-md bg-zinc-950 border ${borderColor} overflow-hidden ${cardClickable ? "cursor-pointer" : ""}"
-        @click=${cardClickable ? this.onToggle : nothing}
+        @click=${cardClickable ? this._toggle : nothing}
       >
         <!-- Header: file path -->
         <div
           class="px-3 py-2 flex items-center gap-2 ${headerClickable ? "cursor-pointer" : ""}"
-          @click=${headerClickable ? (e: Event) => { e.stopPropagation(); this.onToggle?.(); } : nothing}
+          @click=${headerClickable ? (e: Event) => { e.stopPropagation(); this._toggle(); } : nothing}
         >
           ${this.showSpinner
             ? html`<span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>`

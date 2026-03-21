@@ -49,6 +49,25 @@ export class MyComponent extends LitElement {
 
 The `Subscribable` interface is intentionally minimal — it works with `DiffStore`, `AppStore`, `FileTreeState`, or any future store. The controller handles subscribe/unsubscribe on store change, `hostDisconnected`, and `hostConnected` (re-subscribe after move).
 
+## LazyHighlightController — Deferred Syntax Highlighting
+
+`controllers/lazy-highlight-controller.ts` combines IntersectionObserver-based lazy activation with `HighlightController` and cache-key deduplication. It's used by the tool block components (`read-tool-block`, `edit-tool-block`, `write-tool-block`) to defer Shiki web worker highlighting until the element scrolls into view.
+
+```ts
+private _hl = new LazyHighlightController(this, () => {
+  const path = getPath(this.block);
+  if (!path || this.block.isError) return null;
+  return { path, hunk: { header: "", lines: buildLines(this.block) } };
+});
+
+// In connectedCallback: this._hl.connect();
+// In disconnectedCallback: this._hl.disconnect();
+// In willUpdate (when block changes): this._hl.update();
+// In render: this._hl.getLineHtml(index) ?? fallbackEscapedText
+```
+
+The host provides a `getData()` callback returning the path and hunk to highlight (or `null` to skip). The controller derives a cache key from the data to avoid redundant highlighting, and calls `host.requestUpdate()` when results arrive. See [tool-renderers.md](tool-renderers.md) for usage context.
+
 ## Two Kinds of Controllers
 
 ### State controllers
