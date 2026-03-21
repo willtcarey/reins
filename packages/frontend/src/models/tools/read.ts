@@ -1,29 +1,15 @@
 /**
- * Read tool renderer.
- *
- * File-viewer style block: file path is always visible with a 📄 icon,
- * and a short content preview (first few lines) is shown inline.
- * Expanding reveals the full content below. Does NOT use the generic
- * `renderCollapsibleTool` helper — owns its full rendering surface.
- *
- * The visual rendering is handled by the `<read-tool-block>` Lit component
- * (./read-tool-block.ts) which adds lazy syntax highlighting via
- * IntersectionObserver + HighlightController.
+ * Pure logic helpers for Read tool blocks (tested without DOM).
  */
 
-import { html } from "lit";
-import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../chat-state.js";
 import type { ToolResultImage } from "./types.js";
-// Side-effect import: registers <read-tool-block> custom element
-import "./read-tool-block.js";
-
-// ---------------------------------------------------------------------------
-// Pure logic helpers (tested without DOM)
-// ---------------------------------------------------------------------------
 
 /** Regex matching the trailing "[N more lines..." metadata line from the Read tool. */
 const TRAILER_RE = /\n*\[(\d+ more lines in file\. Use offset=\d+ to continue.*)\]\s*$/;
+
+/** Number of preview lines to show when collapsed. */
+export const PREVIEW_LINES = 4;
 
 /** Get the raw joined text from a Read tool block's result. */
 function getRawText(block: ToolBlockData): string {
@@ -88,7 +74,7 @@ export function getReadLineCount(block: ToolBlockData): number {
 }
 
 /** Extract image content blocks from a Read tool block's result. */
-function getReadImages(block: ToolBlockData): ToolResultImage[] {
+export function getReadImages(block: ToolBlockData): ToolResultImage[] {
   return (
     block.result?.content
       ?.filter(
@@ -98,40 +84,3 @@ function getReadImages(block: ToolBlockData): ToolResultImage[] {
       .map((c) => ({ data: c.data, mimeType: c.mimeType })) ?? []
   );
 }
-
-// ---------------------------------------------------------------------------
-// Preview line count — must match the component constant
-// ---------------------------------------------------------------------------
-const PREVIEW_LINES = 4;
-
-// ---------------------------------------------------------------------------
-// Renderer — delegates visual output to <read-tool-block> component
-// ---------------------------------------------------------------------------
-
-export const readRenderer: ToolRenderer = {
-  render(block: ToolBlockData) {
-    const isRunning = block.status === "running";
-    const path = getReadSummary(block);
-    const range = getReadRange(block);
-    const trailer = isRunning ? "" : getReadTrailer(block);
-    const preview = isRunning ? "" : getReadPreview(block, PREVIEW_LINES);
-    const content = isRunning ? "" : getReadContent(block);
-    const totalLines = isRunning ? 0 : getReadLineCount(block);
-    const startLine = (block.args?.offset as number | undefined) ?? 1;
-    const isError = !isRunning && !!block.isError;
-    const images = isRunning ? [] : getReadImages(block);
-
-    return html`<read-tool-block
-      .path=${path}
-      .range=${range}
-      .trailer=${trailer}
-      .preview=${preview}
-      .content=${content}
-      .totalLines=${totalLines}
-      .startLine=${startLine}
-      .isError=${isError}
-      .images=${images}
-      .showSpinner=${isRunning}
-    ></read-tool-block>`;
-  },
-};

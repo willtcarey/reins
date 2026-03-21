@@ -11,7 +11,7 @@ import { customElement, property, state, query } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked } from "marked";
 import type { AppClient, SessionData } from "./ws-client.js";
-import { getToolRenderer } from "./tool-renderers/index.js";
+import { getToolRenderer } from "./components/tools/index.js";
 import {
   applyChatEvent,
   type AgentMessage,

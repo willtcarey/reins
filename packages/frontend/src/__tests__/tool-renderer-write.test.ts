@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { getWriteSummary, getWriteInfo } from "../tool-renderers/write.js";
+import { getWriteSummary, getWriteInfo } from "../models/tools/write.js";
 import type { ToolBlockData } from "../chat-state.js";
 
 function makeWriteBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockData {

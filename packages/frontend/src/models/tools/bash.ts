@@ -1,24 +1,13 @@
 /**
- * Bash tool renderer.
- *
- * Terminal-style block: command is always visible with a `$` prompt.
- * Expanding reveals the output below. Rendering is handled by the
- * `<bash-tool-block>` Lit component (./bash-tool-block.ts).
+ * Pure logic helpers for Bash tool blocks (tested without DOM).
  */
 
-import { html } from "lit";
-import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../chat-state.js";
-export type { CommandSegment } from "./bash-command-parser.js";
-export { parseCommandSegments } from "./bash-command-parser.js";
-
-// Side-effect import: registers <bash-tool-block> custom element
-import "./bash-tool-block.js";
 import type { ToolResultImage } from "./types.js";
 
-// ---------------------------------------------------------------------------
-// Pure logic helpers (tested without DOM)
-// ---------------------------------------------------------------------------
+// Re-export from bash-command-parser for convenience
+export type { CommandSegment } from "./bash-command-parser.js";
+export { parseCommandSegments } from "./bash-command-parser.js";
 
 /** Extract the full command string from a Bash tool block. */
 export function getBashCommand(block: ToolBlockData): string {
@@ -66,24 +55,3 @@ export function getBashImages(block: ToolBlockData): ToolResultImage[] {
     (c): c is ToolResultImage => c.type === "image",
   ) ?? [];
 }
-
-// ---------------------------------------------------------------------------
-// Renderer — extracts all data and passes primitives to <bash-tool-block>
-// ---------------------------------------------------------------------------
-
-export const bashRenderer: ToolRenderer = {
-  render(block: ToolBlockData) {
-    const isRunning = block.status === "running";
-    const command = getBashCommand(block);
-    const { isError } = getBashExitInfo(block);
-    const output = isRunning ? "" : getBashOutput(block);
-    const images = isRunning ? [] : getBashImages(block);
-    return html`<bash-tool-block
-      .command=${command}
-      .isError=${isError}
-      .output=${output}
-      .images=${images}
-      .showSpinner=${isRunning}
-    ></bash-tool-block>`;
-  },
-};

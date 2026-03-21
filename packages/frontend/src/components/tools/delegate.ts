@@ -9,6 +9,9 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import type { ToolRenderer } from "./types.js";
+import type { ToolBlockData } from "../../models/chat-state.js";
+import { getDelegateSummary, getDelegateDetail } from "../../models/tools/delegate.js";
 
 @customElement("delegate-tool-block")
 export class DelegateToolBlock extends LitElement {
@@ -100,3 +103,35 @@ declare global {
     "delegate-tool-block": DelegateToolBlock;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+function extractResultText(block: ToolBlockData): string {
+  return block.result?.content
+    ?.filter((c): c is { type: "text"; text: string } => c.type === "text")
+    .map((c) => c.text)
+    .join("\n") ?? "";
+}
+
+// ---------------------------------------------------------------------------
+// Renderer — extracts all data and passes primitives to <delegate-tool-block>
+// ---------------------------------------------------------------------------
+
+export const delegateRenderer: ToolRenderer = {
+  render(block: ToolBlockData) {
+    const isRunning = block.status === "running";
+    const summary = getDelegateSummary(block);
+    const { prompt } = getDelegateDetail(block);
+    const isError = !isRunning && !!block.isError;
+    const resultText = isRunning ? "" : extractResultText(block);
+    return html`<delegate-tool-block
+      .summary=${summary}
+      .prompt=${prompt}
+      .isError=${isError}
+      .resultText=${resultText}
+      .showSpinner=${isRunning}
+    ></delegate-tool-block>`;
+  },
+};

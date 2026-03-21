@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { parseCommandSegments, type CommandSegment } from "../tool-renderers/bash-command-parser.js";
+import { parseCommandSegments, type CommandSegment } from "../models/tools/bash-command-parser.js";
 
 /** Helper: format segments into a readable string for snapshot-style assertions. */
 function fmt(segments: CommandSegment[]): string {

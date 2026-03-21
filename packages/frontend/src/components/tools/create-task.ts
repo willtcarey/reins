@@ -10,6 +10,9 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import type { ToolRenderer } from "./types.js";
+import type { ToolBlockData } from "../../models/chat-state.js";
+import { getTaskSummary, getTaskDetail, getResultText } from "../../models/tools/create-task.js";
 
 @customElement("create-task-tool-block")
 export class CreateTaskToolBlock extends LitElement {
@@ -105,3 +108,25 @@ declare global {
     "create-task-tool-block": CreateTaskToolBlock;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Renderer — extracts all data and passes primitives to <create-task-tool-block>
+// ---------------------------------------------------------------------------
+
+export const createTaskRenderer: ToolRenderer = {
+  render(block: ToolBlockData) {
+    const isRunning = block.status === "running";
+    const title = getTaskSummary(block);
+    const { description, branch } = getTaskDetail(block);
+    const isError = !isRunning && !!block.isError;
+    const resultText = isRunning ? "" : getResultText(block);
+    return html`<create-task-tool-block
+      .title=${title}
+      .description=${description}
+      .branch=${branch}
+      .isError=${isError}
+      .resultText=${resultText}
+      .showSpinner=${isRunning}
+    ></create-task-tool-block>`;
+  },
+};

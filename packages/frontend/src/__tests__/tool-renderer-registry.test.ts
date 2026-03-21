@@ -1,13 +1,13 @@
 import { describe, test, expect } from "bun:test";
-import { getToolRenderer } from "../tool-renderers/index.js";
-import { getToolSummary } from "../tool-renderers/generic.js";
-import { genericRenderer } from "../tool-renderers/generic.js";
-import { readRenderer } from "../tool-renderers/read.js";
-import { bashRenderer } from "../tool-renderers/bash.js";
-import { editRenderer } from "../tool-renderers/edit.js";
-import { writeRenderer } from "../tool-renderers/write.js";
-import { createTaskRenderer } from "../tool-renderers/create-task.js";
-import { delegateRenderer } from "../tool-renderers/delegate.js";
+import { getToolRenderer } from "../components/tools/index.js";
+import { getToolSummary } from "../models/tools/generic.js";
+import { genericRenderer } from "../components/tools/generic.js";
+import { readRenderer } from "../components/tools/read.js";
+import { bashRenderer } from "../components/tools/bash.js";
+import { editRenderer } from "../components/tools/edit.js";
+import { writeRenderer } from "../components/tools/write.js";
+import { createTaskRenderer } from "../components/tools/create-task.js";
+import { delegateRenderer } from "../components/tools/delegate.js";
 
 // ---------------------------------------------------------------------------
 // Registry

@@ -1,20 +1,9 @@
 /**
- * Edit tool renderer.
- *
- * Card-style block (matching read-tool-block) with file path + stats badge.
- * When expanded, shows an inline diff using the server-computed unified diff
- * from details.diff (with context lines), falling back to a naive
- * oldText→newText diff when details aren't available.
+ * Pure logic helpers for Edit tool blocks (tested without DOM).
  */
 
-import { html } from "lit";
-import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../chat-state.js";
-import type { DiffLine } from "../models/changes/types.js";
-
-// ---------------------------------------------------------------------------
-// Pure logic helpers (tested without DOM)
-// ---------------------------------------------------------------------------
+import type { DiffLine } from "../changes/types.js";
 
 /** Extract the file path from an Edit tool block's args. */
 export function getEditSummary(block: ToolBlockData): string {
@@ -160,34 +149,3 @@ export function shouldShowEditDiff(opts: {
 
   return expanded;
 }
-
-// ---------------------------------------------------------------------------
-// Renderer — delegates visual output to <edit-tool-block> component
-// ---------------------------------------------------------------------------
-
-// Side-effect import: registers <edit-tool-block> custom element
-import "./edit-tool-block.js";
-
-function renderEditBlock(block: ToolBlockData, showSpinner: boolean) {
-  const path = getEditSummary(block);
-  const isError = !!block.isError;
-  const { additions, removals } = getEditStats(block);
-  const diffLines = getEditDiffLines(block);
-  const autoExpand = !showSpinner && block.status === "done" && shouldAutoExpand(block);
-
-  return html`<edit-tool-block
-    .path=${path}
-    .isError=${isError}
-    .additions=${additions}
-    .removals=${removals}
-    .diffLines=${diffLines}
-    .autoExpand=${autoExpand}
-    .showSpinner=${showSpinner}
-  ></edit-tool-block>`;
-}
-
-export const editRenderer: ToolRenderer = {
-  render(block: ToolBlockData) {
-    return renderEditBlock(block, block.status === "running");
-  },
-};

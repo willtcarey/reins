@@ -13,9 +13,14 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import { LazyHighlightController } from "../controllers/lazy-highlight-controller.js";
-import { escapeHtml, shouldWrapLines } from "../models/changes/diff-utils.js";
-import type { DiffLine } from "../models/changes/types.js";
+import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
+import { escapeHtml, shouldWrapLines } from "../../models/changes/diff-utils.js";
+import type { DiffLine } from "../../models/changes/types.js";
+import type { ToolRenderer } from "./types.js";
+import type { ToolBlockData } from "../../models/chat-state.js";
+import {
+  getEditSummary, getEditStats, getEditDiffLines, shouldAutoExpand,
+} from "../../models/tools/edit.js";
 /** Small diffs at or below this line count get no max-height cap. */
 const SMALL_DIFF_THRESHOLD = 20;
 
@@ -178,3 +183,31 @@ declare global {
     "edit-tool-block": EditToolBlock;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Renderer — extracts all data and passes primitives to <edit-tool-block>
+// ---------------------------------------------------------------------------
+
+function renderEditBlock(block: ToolBlockData, showSpinner: boolean) {
+  const path = getEditSummary(block);
+  const isError = !!block.isError;
+  const { additions, removals } = getEditStats(block);
+  const diffLines = getEditDiffLines(block);
+  const autoExpand = !showSpinner && block.status === "done" && shouldAutoExpand(block);
+
+  return html`<edit-tool-block
+    .path=${path}
+    .isError=${isError}
+    .additions=${additions}
+    .removals=${removals}
+    .diffLines=${diffLines}
+    .autoExpand=${autoExpand}
+    .showSpinner=${showSpinner}
+  ></edit-tool-block>`;
+}
+
+export const editRenderer: ToolRenderer = {
+  render(block: ToolBlockData) {
+    return renderEditBlock(block, block.status === "running");
+  },
+};

@@ -11,6 +11,9 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ToolResultImage } from "./types.js";
+import type { ToolRenderer } from "./types.js";
+import type { ToolBlockData } from "../../models/chat-state.js";
+import { getToolSummary } from "../../models/tools/generic.js";
 
 @customElement("generic-tool-block")
 export class GenericToolBlock extends LitElement {
@@ -117,3 +120,48 @@ declare global {
     "generic-tool-block": GenericToolBlock;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Extraction helpers
+// ---------------------------------------------------------------------------
+
+function extractImages(block: ToolBlockData): ToolResultImage[] {
+  return (
+    block.result?.content?.filter(
+      (c): c is { type: "image"; data: string; mimeType: string } => c.type === "image",
+    ) ?? []
+  );
+}
+
+function extractResultText(block: ToolBlockData): string {
+  return (
+    block.result?.content
+      ?.filter((c): c is { type: "text"; text: string } => c.type === "text")
+      .map((c) => c.text)
+      .join("\n")
+      .slice(0, 5000) ?? ""
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Generic renderer — delegates visual output to <generic-tool-block> component
+// ---------------------------------------------------------------------------
+
+export const genericRenderer: ToolRenderer = {
+  render(block: ToolBlockData) {
+    const isRunning = block.status === "running";
+    const summary = getToolSummary(block.name, block.args);
+    const images = isRunning ? [] : extractImages(block);
+    const resultText = isRunning ? "" : extractResultText(block);
+    return html`<generic-tool-block
+      .name=${block.name}
+      .summary=${summary}
+      .isError=${!isRunning && !!block.isError}
+      .argsJson=${isRunning ? "" : JSON.stringify(block.args, null, 2)}
+      .resultText=${resultText}
+      .images=${images}
+      .hasResult=${!isRunning && !!block.result}
+      .showSpinner=${isRunning}
+    ></generic-tool-block>`;
+  },
+};

@@ -13,9 +13,15 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import { LazyHighlightController } from "../controllers/lazy-highlight-controller.js";
-import { escapeHtml, shouldWrapLines } from "../models/changes/diff-utils.js";
+import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
+import { escapeHtml, shouldWrapLines } from "../../models/changes/diff-utils.js";
 import type { ToolResultImage } from "./types.js";
+import type { ToolRenderer } from "./types.js";
+import type { ToolBlockData } from "../../models/chat-state.js";
+import {
+  getReadSummary, getReadRange, getReadTrailer, getReadPreview,
+  getReadContent, getReadLineCount, getReadImages, PREVIEW_LINES,
+} from "../../models/tools/read.js";
 
 @customElement("read-tool-block")
 export class ReadToolBlock extends LitElement {
@@ -225,3 +231,35 @@ declare global {
     "read-tool-block": ReadToolBlock;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Renderer — extracts all data and passes primitives to <read-tool-block>
+// ---------------------------------------------------------------------------
+
+export const readRenderer: ToolRenderer = {
+  render(block: ToolBlockData) {
+    const isRunning = block.status === "running";
+    const path = getReadSummary(block);
+    const range = getReadRange(block);
+    const trailer = isRunning ? "" : getReadTrailer(block);
+    const preview = isRunning ? "" : getReadPreview(block, PREVIEW_LINES);
+    const content = isRunning ? "" : getReadContent(block);
+    const totalLines = isRunning ? 0 : getReadLineCount(block);
+    const startLine = (block.args?.offset as number | undefined) ?? 1;
+    const isError = !isRunning && !!block.isError;
+    const images = isRunning ? [] : getReadImages(block);
+
+    return html`<read-tool-block
+      .path=${path}
+      .range=${range}
+      .trailer=${trailer}
+      .preview=${preview}
+      .content=${content}
+      .totalLines=${totalLines}
+      .startLine=${startLine}
+      .isError=${isError}
+      .images=${images}
+      .showSpinner=${isRunning}
+    ></read-tool-block>`;
+  },
+};

@@ -6,7 +6,7 @@
  */
 
 export type { ToolRenderer } from "./types.js";
-export { getToolSummary } from "./generic.js";
+export { getToolSummary } from "../../models/tools/generic.js";
 export { genericRenderer } from "./generic.js";
 export { readRenderer } from "./read.js";
 export { bashRenderer } from "./bash.js";

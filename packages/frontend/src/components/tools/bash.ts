@@ -11,7 +11,10 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ToolResultImage } from "./types.js";
-import { parseCommandSegments } from "./bash-command-parser.js";
+import type { ToolRenderer } from "./types.js";
+import type { ToolBlockData } from "../../models/chat-state.js";
+import { parseCommandSegments } from "../../models/tools/bash-command-parser.js";
+import { getBashCommand, getBashExitInfo, getBashOutput, getBashImages } from "../../models/tools/bash.js";
 
 function renderCommandSegments(command: string) {
   const segments = parseCommandSegments(command);
@@ -108,3 +111,24 @@ declare global {
     "bash-tool-block": BashToolBlock;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Renderer — extracts all data and passes primitives to <bash-tool-block>
+// ---------------------------------------------------------------------------
+
+export const bashRenderer: ToolRenderer = {
+  render(block: ToolBlockData) {
+    const isRunning = block.status === "running";
+    const command = getBashCommand(block);
+    const { isError } = getBashExitInfo(block);
+    const output = isRunning ? "" : getBashOutput(block);
+    const images = isRunning ? [] : getBashImages(block);
+    return html`<bash-tool-block
+      .command=${command}
+      .isError=${isError}
+      .output=${output}
+      .images=${images}
+      .showSpinner=${isRunning}
+    ></bash-tool-block>`;
+  },
+};

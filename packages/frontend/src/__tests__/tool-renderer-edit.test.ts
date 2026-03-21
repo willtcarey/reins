@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { getEditSummary, getEditStats, computeEditDiff, parseDiffString, getEditDiffLines, shouldShowEditDiff, shouldAutoExpand, AUTO_EXPAND_THRESHOLD } from "../tool-renderers/edit.js";
+import { getEditSummary, getEditStats, computeEditDiff, parseDiffString, getEditDiffLines, shouldShowEditDiff, shouldAutoExpand, AUTO_EXPAND_THRESHOLD } from "../models/tools/edit.js";
 import type { ToolBlockData } from "../chat-state.js";
 
 function makeEditBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockData {

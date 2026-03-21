@@ -11,8 +11,11 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import { LazyHighlightController } from "../controllers/lazy-highlight-controller.js";
-import { escapeHtml, shouldWrapLines } from "../models/changes/diff-utils.js";
+import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
+import { escapeHtml, shouldWrapLines } from "../../models/changes/diff-utils.js";
+import type { ToolRenderer } from "./types.js";
+import type { ToolBlockData } from "../../models/chat-state.js";
+import { getWriteSummary, getWriteInfo, getWriteContent } from "../../models/tools/write.js";
 
 const PREVIEW_LINES = 4;
 
@@ -166,3 +169,23 @@ declare global {
     "write-tool-block": WriteToolBlock;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Renderer — extracts all data and passes primitives to <write-tool-block>
+// ---------------------------------------------------------------------------
+
+export const writeRenderer: ToolRenderer = {
+  render(block: ToolBlockData) {
+    const path = getWriteSummary(block);
+    const content = getWriteContent(block);
+    const { lines: lineCount } = getWriteInfo(block);
+    const isError = !!block.isError;
+    return html`<write-tool-block
+      .path=${path}
+      .content=${content}
+      .lineCount=${lineCount}
+      .isError=${isError}
+      .showSpinner=${block.status === "running"}
+    ></write-tool-block>`;
+  },
+};
