@@ -11,7 +11,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { HighlightController } from "../controllers/highlight-controller.js";
-import { escapeHtml, shouldWrapLines } from "../changes/diff-utils.js";
+import { escapeHtml } from "../changes/diff-utils.js";
 import type { ToolBlockData } from "../chat-state.js";
 import type { DiffHunk, DiffLine } from "../changes/types.js";
 import { getEditSummary, getEditStats, getEditDiffLines, shouldShowEditDiff, AUTO_EXPAND_THRESHOLD } from "./edit.js";
@@ -159,7 +159,10 @@ export class EditToolBlock extends LitElement {
         ? "border-red-500/60"
         : "border-zinc-700";
 
-    const wrap = shouldWrapLines(path || "");
+    // Never wrap in inline tool blocks — use horizontal scroll instead.
+    // The changes-tab diff viewer may wrap markdown, but in the chat panel
+    // wrapping inflates height and causes nested scrollbars.
+    const wrap = false;
 
     const showDiff = shouldShowEditDiff({
       block: this.block,
