@@ -10,10 +10,10 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import { HighlightController } from "../controllers/highlight-controller.js";
+import { LazyHighlightController } from "../controllers/lazy-highlight-controller.js";
 import { escapeHtml, shouldWrapLines } from "../changes/diff-utils.js";
 import type { ToolBlockData } from "../chat-state.js";
-import type { DiffHunk, DiffLine } from "../changes/types.js";
+import type { DiffLine } from "../changes/types.js";
 import { getEditSummary, getEditStats, getEditDiffLines, shouldShowEditDiff, AUTO_EXPAND_THRESHOLD } from "./edit.js";
 
 @customElement("edit-tool-block")
@@ -22,10 +22,13 @@ export class EditToolBlock extends LitElement {
     return this;
   }
 
-  private _highlight = new HighlightController(this);
-  private _observer: IntersectionObserver | null = null;
-  private _hasBeenVisible = false;
-  private _lastDiffLines: DiffLine[] | null = null;
+  private _hl = new LazyHighlightController(this, () => {
+    const path = getEditSummary(this.block);
+    if (!path || this.block.isError) return null;
+    const diffLines = getEditDiffLines(this.block);
+    if (diffLines.length === 0) return null;
+    return { path, hunk: { header: "", lines: diffLines } };
+  });
 
   @property({ attribute: false })
   block!: ToolBlockData;
@@ -44,51 +47,12 @@ export class EditToolBlock extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
-    this._setupObserver();
+    this._hl.connect();
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    this._observer?.disconnect();
-    this._observer = null;
-  }
-
-  private _setupObserver() {
-    if (this._hasBeenVisible) return;
-    this._observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            this._hasBeenVisible = true;
-            this._observer?.disconnect();
-            this._observer = null;
-            this._triggerHighlight();
-            break;
-          }
-        }
-      },
-      { threshold: 0 },
-    );
-    this._observer.observe(this);
-  }
-
-  private _triggerHighlight() {
-    const path = getEditSummary(this.block);
-    if (!path || this.block.isError) return;
-
-    const diffLines = getEditDiffLines(this.block);
-    if (diffLines.length === 0) return;
-
-    // Skip if diff hasn't changed
-    if (this._lastDiffLines === diffLines) return;
-    this._lastDiffLines = diffLines;
-
-    const hunk = this._buildHunk(diffLines);
-    this._highlight.setHunk(path, hunk);
-  }
-
-  private _buildHunk(lines: DiffLine[]): DiffHunk {
-    return { header: "", lines };
+    this._hl.disconnect();
   }
 
   private _handleToggle = () => {
@@ -105,13 +69,13 @@ export class EditToolBlock extends LitElement {
   };
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (this._hasBeenVisible && (changed.has("block") || changed.has("expanded"))) {
-      this._triggerHighlight();
+    if (changed.has("block") || changed.has("expanded")) {
+      this._hl.update();
     }
   }
 
   private _renderHighlightedLine(index: number, text: string) {
-    const highlighted = this._highlight.getLineHtml(index);
+    const highlighted = this._hl.getLineHtml(index);
     return highlighted ? unsafeHTML(highlighted) : escapeHtml(text);
   }
 

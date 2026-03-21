@@ -9,13 +9,18 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import { HighlightController } from "../controllers/highlight-controller.js";
+import { LazyHighlightController } from "../controllers/lazy-highlight-controller.js";
 import { escapeHtml, shouldWrapLines } from "../changes/diff-utils.js";
 import type { ToolBlockData } from "../chat-state.js";
-import type { DiffHunk, DiffLine } from "../changes/types.js";
 import { getWriteSummary, getWriteInfo } from "./write.js";
 
 const PREVIEW_LINES = 4;
+
+function getContent(block: ToolBlockData): string {
+  const content = block.args?.content;
+  if (!content || typeof content !== "string") return "";
+  return content.length > 5000 ? content.slice(0, 5000) + "\n…(truncated)" : content;
+}
 
 @customElement("write-tool-block")
 export class WriteToolBlock extends LitElement {
@@ -23,11 +28,23 @@ export class WriteToolBlock extends LitElement {
     return this;
   }
 
-  private _highlight = new HighlightController(this);
-  private _observer: IntersectionObserver | null = null;
-  private _hasBeenVisible = false;
-  private _lastContent = "";
-  private _lastPath = "";
+  private _hl = new LazyHighlightController(this, () => {
+    const path = getWriteSummary(this.block);
+    const content = getContent(this.block);
+    if (!path || !content || this.block.isError) return null;
+    const lines = content.split("\n");
+    return {
+      path,
+      hunk: {
+        header: "",
+        lines: lines.map((text, i) => ({
+          type: "add" as const,
+          text,
+          newLine: i + 1,
+        })),
+      },
+    };
+  });
 
   @property({ attribute: false })
   block!: ToolBlockData;
@@ -43,71 +60,22 @@ export class WriteToolBlock extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
-    this._setupObserver();
+    this._hl.connect();
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    this._observer?.disconnect();
-    this._observer = null;
-  }
-
-  private _setupObserver() {
-    if (this._hasBeenVisible) return;
-    this._observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            this._hasBeenVisible = true;
-            this._observer?.disconnect();
-            this._observer = null;
-            this._triggerHighlight();
-            break;
-          }
-        }
-      },
-      { threshold: 0 },
-    );
-    this._observer.observe(this);
-  }
-
-  private _triggerHighlight() {
-    const path = getWriteSummary(this.block);
-    const content = this._getContent();
-    if (!path || !content || this.block.isError) return;
-
-    if (path === this._lastPath && content === this._lastContent) return;
-    this._lastPath = path;
-    this._lastContent = content;
-
-    const lines = content.split("\n");
-    const hunk: DiffHunk = {
-      header: "",
-      lines: lines.map(
-        (text, i): DiffLine => ({
-          type: "add",
-          text,
-          newLine: i + 1,
-        }),
-      ),
-    };
-    this._highlight.setHunk(path, hunk);
-  }
-
-  private _getContent(): string {
-    const content = this.block.args?.content;
-    if (!content || typeof content !== "string") return "";
-    return content.length > 5000 ? content.slice(0, 5000) + "\n…(truncated)" : content;
+    this._hl.disconnect();
   }
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (this._hasBeenVisible && changed.has("block")) {
-      this._triggerHighlight();
+    if (changed.has("block")) {
+      this._hl.update();
     }
   }
 
   private _renderHighlightedLine(index: number, text: string) {
-    const highlighted = this._highlight.getLineHtml(index);
+    const highlighted = this._hl.getLineHtml(index);
     return highlighted ? unsafeHTML(highlighted) : escapeHtml(text);
   }
 
@@ -128,7 +96,7 @@ export class WriteToolBlock extends LitElement {
         ? "border-red-500/60"
         : "border-zinc-700";
 
-    const content = this._getContent();
+    const content = getContent(this.block);
     const hasContent = !!content.trim();
     const contentLines = content ? content.split("\n") : [];
     const hasMore = contentLines.length > PREVIEW_LINES;

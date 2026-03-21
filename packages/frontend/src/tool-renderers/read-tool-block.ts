@@ -10,10 +10,9 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import { HighlightController } from "../controllers/highlight-controller.js";
+import { LazyHighlightController } from "../controllers/lazy-highlight-controller.js";
 import { escapeHtml, shouldWrapLines } from "../changes/diff-utils.js";
 import type { ToolBlockData } from "../chat-state.js";
-import type { DiffHunk, DiffLine } from "../changes/types.js";
 import {
   getReadSummary,
   getReadPreview,
@@ -31,11 +30,23 @@ export class ReadToolBlock extends LitElement {
     return this;
   }
 
-  private _highlight = new HighlightController(this);
-  private _observer: IntersectionObserver | null = null;
-  private _hasBeenVisible = false;
-  private _lastContent = "";
-  private _lastPath = "";
+  private _hl = new LazyHighlightController(this, () => {
+    const path = getReadSummary(this.block);
+    const content = getReadContent(this.block);
+    if (!path || !content || this.block.isError) return null;
+    const lines = content.split("\n");
+    return {
+      path,
+      hunk: {
+        header: "",
+        lines: lines.map((text, i) => ({
+          type: "context" as const,
+          text,
+          newLine: i + 1,
+        })),
+      },
+    };
+  });
 
   @property({ attribute: false })
   block!: ToolBlockData;
@@ -51,72 +62,22 @@ export class ReadToolBlock extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
-    this._setupObserver();
+    this._hl.connect();
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    this._observer?.disconnect();
-    this._observer = null;
-  }
-
-  private _setupObserver() {
-    if (this._hasBeenVisible) return;
-    this._observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            this._hasBeenVisible = true;
-            this._observer?.disconnect();
-            this._observer = null;
-            this._triggerHighlight();
-            break;
-          }
-        }
-      },
-      { threshold: 0 },
-    );
-    this._observer.observe(this);
-  }
-
-  private _triggerHighlight() {
-    const path = getReadSummary(this.block);
-    const content = getReadContent(this.block);
-    if (!path || !content || this.block.isError) return;
-
-    // Skip if content hasn't changed — avoids clearing highlighted HTML
-    // and re-requesting from the worker, which causes a flash in Safari.
-    if (path === this._lastPath && content === this._lastContent) return;
-    this._lastPath = path;
-    this._lastContent = content;
-
-    const lines = content.split("\n");
-    const hunk = this._buildHunk(lines);
-    this._highlight.setHunk(path, hunk);
-  }
-
-  private _buildHunk(lines: string[]): DiffHunk {
-    return {
-      header: "",
-      lines: lines.map(
-        (text, i): DiffLine => ({
-          type: "context",
-          text,
-          newLine: i + 1,
-        }),
-      ),
-    };
+    this._hl.disconnect();
   }
 
   override willUpdate(changed: Map<string, unknown>) {
-    // Re-trigger highlighting if block changes while already visible
-    if (this._hasBeenVisible && changed.has("block")) {
-      this._triggerHighlight();
+    if (changed.has("block")) {
+      this._hl.update();
     }
   }
 
   private _renderHighlightedLine(index: number, text: string) {
-    const highlighted = this._highlight.getLineHtml(index);
+    const highlighted = this._hl.getLineHtml(index);
     return highlighted ? unsafeHTML(highlighted) : escapeHtml(text);
   }
 
