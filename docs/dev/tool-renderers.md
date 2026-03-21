@@ -6,14 +6,15 @@ The `tool-renderers/` directory in the frontend provides tool-specific inline re
 
 ### ToolRenderer Interface
 
-Every renderer implements two methods:
+Every renderer implements a single method:
 
 ```ts
 interface ToolRenderer {
-  renderRunning(block: ToolBlockData): TemplateResult;
-  renderDone(block: ToolBlockData): TemplateResult;
+  render(block: ToolBlockData): TemplateResult;
 }
 ```
+
+The renderer receives the full `ToolBlockData` (including `status`) and decides how to present running vs done states internally — typically by computing a `showSpinner` flag and conditionally extracting result data. This ensures the same Lit component instance persists across the running→done transition, preserving local state like expand/collapse.
 
 Renderers own the **entire visual surface** for a tool block — layout, chrome, expand/collapse behavior (including expansion state), syntax highlighting. The chat panel is not involved in tool expansion state. This avoids locking all tools into one interaction pattern.
 
@@ -36,15 +37,12 @@ export function getToolRenderer(name: string): ToolRenderer {
 }
 ```
 
-`chat-panel.ts` dispatches in ~5 lines:
+`chat-panel.ts` dispatches in ~3 lines:
 
 ```ts
 private renderToolBlock(block: ToolBlockData) {
   const renderer = getToolRenderer(block.name);
-  const content = block.status === "running"
-    ? renderer.renderRunning(block)
-    : renderer.renderDone(block);
-  return html`<div class="max-w-[90%]">${content}</div>`;
+  return html`<div class="max-w-[90%]">${renderer.render(block)}</div>`;
 }
 ```
 
@@ -81,25 +79,40 @@ Every renderer follows the same two-file pattern:
 The renderer extracts all data and passes it as primitive props:
 
 ```ts
-// read.ts
+// read.ts (simplified)
 export const readRenderer: ToolRenderer = {
-  renderRunning(block) {
+  render(block) {
+    const isRunning = block.status === "running";
     const path = getReadSummary(block);
-    return html`<read-tool-block .path=${path} .showSpinner=${true}></read-tool-block>`;
-  },
-  renderDone(block) {
-    const path = getReadSummary(block);
-    const content = getReadContent(block);
-    const preview = getReadPreview(block);
+    const content = isRunning ? "" : getReadContent(block);
+    const preview = isRunning ? "" : getReadPreview(block, PREVIEW_LINES);
     // ... extract all data, pass as props
-    return html`<read-tool-block .path=${path} .content=${content} .preview=${preview} ...></read-tool-block>`;
+    return html`<read-tool-block
+      .path=${path}
+      .content=${content}
+      .preview=${preview}
+      .showSpinner=${isRunning}
+      ...
+    ></read-tool-block>`;
   },
 };
 ```
 
 This gives a clean one-way data flow: `ToolBlockData → renderer (extracts) → component (renders)`. Components are pure presentational and have no imports from their renderer files — no circular dependencies.
 
-Each tool block component manages its own `@state() expanded` property — the chat panel has no knowledge of tool expansion state. This means a tool renderer can choose not to expand at all, auto-expand based on content size, or implement any interaction pattern it wants.
+Each tool block component manages its own `@state() expanded` property — the chat panel has no knowledge of tool expansion state. Because the renderer always produces the same component tag regardless of status, the Lit component instance is reused across the running→done transition and expansion state is preserved.
+
+## Visual Tiers
+
+Tool blocks use three visual tiers based on their role:
+
+| Tier | Tools | Style | Purpose |
+|------|-------|-------|---------|
+| **File/system** | read, bash, edit, write | `rounded-lg bg-zinc-950 border` card | Most common tools, operate on files/directories |
+| **App** | create_task, delegate | `rounded-lg border bg-zinc-950/80` accent card (emerald/purple) | REINS app operations |
+| **Generic fallback** | unknown tools | `border-l-2` left-border line | Minimal fallback for unrecognized tools |
+
+Within each tier, border radius and container patterns are consistent. The tiers are intentionally distinct — app tools use colored accents to visually separate them from file operations.
 
 ## Data Flow & Testing
 
@@ -139,9 +152,9 @@ The pattern in each tool block component:
 
 ```ts
 private _hl = new LazyHighlightController(this, () => {
-  const path = getPath(this.block);
-  if (!path || this.block.isError) return null;
-  return { path, hunk: { header: "", lines: buildLines(this.block) } };
+  if (!this.path || this.isError) return null;
+  const lines = this.content.split("\n");
+  return { path: this.path, hunk: { header: "", lines: buildLines() } };
 });
 ```
 
@@ -167,6 +180,6 @@ When available, the edit renderer uses `details.diff` from the tool result (serv
 
 1. Create `tool-renderers/<name>.ts` with pure helper functions for extracting data from `ToolBlockData`
 2. Create `tool-renderers/<name>-tool-block.ts` as a `LitElement` custom element that receives **primitive props only** — no `ToolBlockData` import
-3. Export a `ToolRenderer` in `<name>.ts` that extracts all data via helpers and passes primitives to the custom element
+3. Export a `ToolRenderer` with a single `render(block)` method that extracts all data via helpers and passes primitives to the custom element
 4. Register in `tool-renderers/index.ts` — add to the `toolRenderers` map and exports
 5. Add tests in `__tests__/tool-renderer-<name>.test.ts` covering the pure helpers
