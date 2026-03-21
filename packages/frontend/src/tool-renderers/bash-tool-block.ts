@@ -69,7 +69,7 @@ export class BashToolBlock extends LitElement {
 
     return html`
       <div
-        class="mt-1 mb-1 ml-2 rounded-md bg-zinc-950 border ${borderColor} overflow-hidden ${clickable ? "cursor-pointer" : ""}"
+        class="mt-1 mb-1 ml-2 rounded-lg bg-zinc-950 border ${borderColor} overflow-hidden ${clickable ? "cursor-pointer" : ""}"
         @click=${clickable ? this._toggle : nothing}
       >
         <!-- Command area -->

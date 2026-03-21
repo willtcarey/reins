@@ -142,7 +142,7 @@ export class EditToolBlock extends LitElement {
     const isAutoExpanded = hasDiff && diffLines.length <= SMALL_DIFF_THRESHOLD;
 
     return html`
-      <div class="mt-1 mb-1 ml-2 rounded-md bg-zinc-950 border ${borderColor} overflow-hidden">
+      <div class="mt-1 mb-1 ml-2 rounded-lg bg-zinc-950 border ${borderColor} overflow-hidden">
         <!-- Header -->
         <div class="px-3 py-2 flex items-center gap-2 ${!showSpinner ? "cursor-pointer" : ""}" @click=${!showSpinner ? this._handleToggle : nothing}>
           ${showSpinner

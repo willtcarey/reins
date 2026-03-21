@@ -111,7 +111,7 @@ export class WriteToolBlock extends LitElement {
 
     return html`
       <div
-        class="mt-1 mb-1 ml-2 rounded-md bg-zinc-950 border ${borderColor} overflow-hidden ${cardClickable ? "cursor-pointer" : ""}"
+        class="mt-1 mb-1 ml-2 rounded-lg bg-zinc-950 border ${borderColor} overflow-hidden ${cardClickable ? "cursor-pointer" : ""}"
         @click=${cardClickable ? this._toggle : nothing}
       >
         <!-- Header -->
