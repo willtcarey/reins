@@ -17,6 +17,15 @@ export function isMarkdown(path: string): boolean {
   return /\.(md|mdx|markdown)$/i.test(path);
 }
 
+/**
+ * Whether lines for this file should word-wrap instead of horizontal-scroll.
+ * Currently wraps markdown files; extend this to add more prose-oriented
+ * file types (e.g. .txt, .rst) in the future.
+ */
+export function shouldWrapLines(path: string): boolean {
+  return isMarkdown(path);
+}
+
 /** Convert a file path to a valid HTML id for scroll targeting. */
 export function fileCardId(path: string): string {
   return "diff-" + path.replace(/[^a-zA-Z0-9_-]/g, "_");

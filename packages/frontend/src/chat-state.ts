@@ -41,6 +41,7 @@ export interface ToolResultMessage {
   toolCallId: string;
   toolName: string;
   content: (TextContent | { type: "image"; data: string; mimeType: string })[];
+  details?: Record<string, any>;
   isError: boolean;
   timestamp: number;
 }
@@ -58,7 +59,7 @@ export interface StreamingToolBlock {
   name: string;
   args: Record<string, any>;
   status: "running" | "done";
-  result?: { content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] };
+  result?: { content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[]; details?: Record<string, any> };
   isError?: boolean;
 }
 

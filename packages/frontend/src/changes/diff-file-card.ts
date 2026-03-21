@@ -18,7 +18,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { marked } from "marked";
 import type { DiffFile } from "./types.js";
-import { isMarkdown, fileCardId, gutterWidth } from "./diff-utils.js";
+import { isMarkdown, shouldWrapLines, fileCardId, gutterWidth } from "./diff-utils.js";
 import "./diff-hunk.js";
 import "./diff-markdown-preview.js";
 
@@ -175,7 +175,7 @@ export class DiffFileCard extends LitElement {
   // ---- Render ---------------------------------------------------------------
 
   private renderDiffContent() {
-    const wrap = isMarkdown(this.file.path);
+    const wrap = shouldWrapLines(this.file.path);
     const gw = gutterWidth(this.file);
     return html`
       <div class="text-xs overflow-x-auto">

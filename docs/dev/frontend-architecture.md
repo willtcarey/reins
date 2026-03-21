@@ -191,6 +191,16 @@ Per-component state and behavior (collapse toggles, markdown preview, clipboard 
 - **Dispatch intents via events** — Views emit custom events (`new-session`, `delete-task`, etc.) for actions. The parent component or store handles the intent.
 - **No WS event handling** — Views never listen to WebSocket events. All event→refetch logic is internal to AppStore.
 
+## Tool renderers (`tool-renderers/`)
+
+Tool calls in the chat panel are rendered by tool-specific renderers rather than a generic JSON dump. Each tool (read, bash, edit, write, create_task, delegate) has a dedicated renderer that owns its full visual output. A registry in `tool-renderers/index.ts` maps tool names to renderers, falling back to a generic renderer for unknown tools.
+
+`chat-panel.ts`'s `renderToolBlock()` is a thin 5-line dispatcher that looks up the renderer and calls `renderRunning()` or `renderDone()`.
+
+Simple tools (bash, create-task, delegate) use inline `html` templates. Tools needing syntax highlighting (read, edit, write) delegate to custom Lit elements (`<read-tool-block>`, `<edit-tool-block>`, `<write-tool-block>`) that use `LazyHighlightController` for IntersectionObserver-gated Shiki highlighting.
+
+See [tool-renderers.md](tool-renderers.md) for the full architecture, rendering tiers, and how to add new renderers.
+
 ## Changes subsystem (`changes/`)
 
 The diff/changes feature has its own directory with several supporting modules:
