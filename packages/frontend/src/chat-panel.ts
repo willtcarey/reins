@@ -282,10 +282,7 @@ export class ChatPanel extends LitElement {
 
   private renderToolBlock(block: ToolBlockData) {
     const renderer = getToolRenderer(block.name);
-    const content = block.status === "running"
-      ? renderer.renderRunning(block)
-      : renderer.renderDone(block);
-    return html`<div class="max-w-[90%]">${content}</div>`;
+    return html`<div class="max-w-[90%]">${renderer.render(block)}</div>`;
   }
 
   private renderToolResultMessage(_msg: ToolResultMessage) {

@@ -49,29 +49,18 @@ function extractResultText(block: ToolBlockData): string {
 // ---------------------------------------------------------------------------
 
 export const delegateRenderer: ToolRenderer = {
-  renderRunning(block: ToolBlockData) {
+  render(block: ToolBlockData) {
+    const isRunning = block.status === "running";
     const summary = getDelegateSummary(block);
     const { prompt } = getDelegateDetail(block);
-    return html`<delegate-tool-block
-      .summary=${summary}
-      .prompt=${prompt}
-      .isError=${false}
-      .resultText=${""}
-      .showSpinner=${true}
-    ></delegate-tool-block>`;
-  },
-
-  renderDone(block: ToolBlockData) {
-    const summary = getDelegateSummary(block);
-    const { prompt } = getDelegateDetail(block);
-    const isError = !!block.isError;
-    const resultText = extractResultText(block);
+    const isError = !isRunning && !!block.isError;
+    const resultText = isRunning ? "" : extractResultText(block);
     return html`<delegate-tool-block
       .summary=${summary}
       .prompt=${prompt}
       .isError=${isError}
       .resultText=${resultText}
-      .showSpinner=${false}
+      .showSpinner=${isRunning}
     ></delegate-tool-block>`;
   },
 };

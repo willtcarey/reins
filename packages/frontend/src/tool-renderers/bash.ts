@@ -72,28 +72,18 @@ export function getBashImages(block: ToolBlockData): ToolResultImage[] {
 // ---------------------------------------------------------------------------
 
 export const bashRenderer: ToolRenderer = {
-  renderRunning(block: ToolBlockData) {
-    const command = getBashCommand(block);
-    return html`<bash-tool-block
-      .command=${command}
-      .isError=${false}
-      .output=${""}
-      .images=${[]}
-      .showSpinner=${true}
-    ></bash-tool-block>`;
-  },
-
-  renderDone(block: ToolBlockData) {
+  render(block: ToolBlockData) {
+    const isRunning = block.status === "running";
     const command = getBashCommand(block);
     const { isError } = getBashExitInfo(block);
-    const output = getBashOutput(block);
-    const images = getBashImages(block);
+    const output = isRunning ? "" : getBashOutput(block);
+    const images = isRunning ? [] : getBashImages(block);
     return html`<bash-tool-block
       .command=${command}
       .isError=${isError}
       .output=${output}
       .images=${images}
-      .showSpinner=${false}
+      .showSpinner=${isRunning}
     ></bash-tool-block>`;
   },
 };

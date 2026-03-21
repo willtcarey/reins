@@ -44,31 +44,19 @@ export function getResultText(block: ToolBlockData): string {
 // ---------------------------------------------------------------------------
 
 export const createTaskRenderer: ToolRenderer = {
-  renderRunning(block: ToolBlockData) {
+  render(block: ToolBlockData) {
+    const isRunning = block.status === "running";
     const title = getTaskSummary(block);
     const { description, branch } = getTaskDetail(block);
-    return html`<create-task-tool-block
-      .title=${title}
-      .description=${description}
-      .branch=${branch}
-      .isError=${false}
-      .resultText=${""}
-      .showSpinner=${true}
-    ></create-task-tool-block>`;
-  },
-
-  renderDone(block: ToolBlockData) {
-    const title = getTaskSummary(block);
-    const { description, branch } = getTaskDetail(block);
-    const isError = !!block.isError;
-    const resultText = getResultText(block);
+    const isError = !isRunning && !!block.isError;
+    const resultText = isRunning ? "" : getResultText(block);
     return html`<create-task-tool-block
       .title=${title}
       .description=${description}
       .branch=${branch}
       .isError=${isError}
       .resultText=${resultText}
-      .showSpinner=${false}
+      .showSpinner=${isRunning}
     ></create-task-tool-block>`;
   },
 };

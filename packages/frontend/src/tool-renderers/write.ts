@@ -41,7 +41,7 @@ export function getWriteContent(block: ToolBlockData): string {
 import "./write-tool-block.js";
 
 export const writeRenderer: ToolRenderer = {
-  renderRunning(block: ToolBlockData) {
+  render(block: ToolBlockData) {
     const path = getWriteSummary(block);
     const content = getWriteContent(block);
     const { lines: lineCount } = getWriteInfo(block);
@@ -51,20 +51,7 @@ export const writeRenderer: ToolRenderer = {
       .content=${content}
       .lineCount=${lineCount}
       .isError=${isError}
-      .showSpinner=${true}
-    ></write-tool-block>`;
-  },
-
-  renderDone(block: ToolBlockData) {
-    const path = getWriteSummary(block);
-    const content = getWriteContent(block);
-    const { lines: lineCount } = getWriteInfo(block);
-    const isError = !!block.isError;
-    return html`<write-tool-block
-      .path=${path}
-      .content=${content}
-      .lineCount=${lineCount}
-      .isError=${isError}
+      .showSpinner=${block.status === "running"}
     ></write-tool-block>`;
   },
 };

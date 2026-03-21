@@ -109,33 +109,17 @@ const PREVIEW_LINES = 4;
 // ---------------------------------------------------------------------------
 
 export const readRenderer: ToolRenderer = {
-  renderRunning(block: ToolBlockData) {
+  render(block: ToolBlockData) {
+    const isRunning = block.status === "running";
     const path = getReadSummary(block);
     const range = getReadRange(block);
-    return html`<read-tool-block
-      .path=${path}
-      .range=${range}
-      .trailer=${""}
-      .preview=${""}
-      .content=${""}
-      .totalLines=${0}
-      .startLine=${(block.args?.offset as number | undefined) ?? 1}
-      .isError=${false}
-      .images=${[]}
-      .showSpinner=${true}
-    ></read-tool-block>`;
-  },
-
-  renderDone(block: ToolBlockData) {
-    const path = getReadSummary(block);
-    const range = getReadRange(block);
-    const trailer = getReadTrailer(block);
-    const preview = getReadPreview(block, PREVIEW_LINES);
-    const content = getReadContent(block);
-    const totalLines = getReadLineCount(block);
+    const trailer = isRunning ? "" : getReadTrailer(block);
+    const preview = isRunning ? "" : getReadPreview(block, PREVIEW_LINES);
+    const content = isRunning ? "" : getReadContent(block);
+    const totalLines = isRunning ? 0 : getReadLineCount(block);
     const startLine = (block.args?.offset as number | undefined) ?? 1;
-    const isError = !!block.isError;
-    const images = getReadImages(block);
+    const isError = !isRunning && !!block.isError;
+    const images = isRunning ? [] : getReadImages(block);
 
     return html`<read-tool-block
       .path=${path}
@@ -147,7 +131,7 @@ export const readRenderer: ToolRenderer = {
       .startLine=${startLine}
       .isError=${isError}
       .images=${images}
-      .showSpinner=${false}
+      .showSpinner=${isRunning}
     ></read-tool-block>`;
   },
 };

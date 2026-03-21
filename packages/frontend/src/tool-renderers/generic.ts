@@ -61,33 +61,20 @@ function extractResultText(block: ToolBlockData): string {
 // ---------------------------------------------------------------------------
 
 export const genericRenderer: ToolRenderer = {
-  renderRunning(block: ToolBlockData) {
+  render(block: ToolBlockData) {
+    const isRunning = block.status === "running";
     const summary = getToolSummary(block.name, block.args);
+    const images = isRunning ? [] : extractImages(block);
+    const resultText = isRunning ? "" : extractResultText(block);
     return html`<generic-tool-block
       .name=${block.name}
       .summary=${summary}
-      .isError=${false}
-      .argsJson=${""}
-      .resultText=${""}
-      .images=${[]}
-      .hasResult=${false}
-      .showSpinner=${true}
-    ></generic-tool-block>`;
-  },
-
-  renderDone(block: ToolBlockData) {
-    const summary = getToolSummary(block.name, block.args);
-    const images = extractImages(block);
-    const resultText = extractResultText(block);
-    return html`<generic-tool-block
-      .name=${block.name}
-      .summary=${summary}
-      .isError=${!!block.isError}
-      .argsJson=${JSON.stringify(block.args, null, 2)}
+      .isError=${!isRunning && !!block.isError}
+      .argsJson=${isRunning ? "" : JSON.stringify(block.args, null, 2)}
       .resultText=${resultText}
       .images=${images}
-      .hasResult=${!!block.result}
-      .showSpinner=${false}
+      .hasResult=${!isRunning && !!block.result}
+      .showSpinner=${isRunning}
     ></generic-tool-block>`;
   },
 };

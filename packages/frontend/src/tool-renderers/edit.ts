@@ -187,11 +187,7 @@ function renderEditBlock(block: ToolBlockData, showSpinner: boolean) {
 }
 
 export const editRenderer: ToolRenderer = {
-  renderRunning(block: ToolBlockData) {
-    return renderEditBlock(block, true);
-  },
-
-  renderDone(block: ToolBlockData) {
-    return renderEditBlock(block, false);
+  render(block: ToolBlockData) {
+    return renderEditBlock(block, block.status === "running");
   },
 };
