@@ -1,8 +1,31 @@
 # Tool Renderers
 
-The `tool-renderers/` directory in the frontend provides tool-specific inline renderings for agent tool calls in the chat panel. Each tool (read, bash, edit, write, create_task, delegate) has a dedicated renderer that owns its full visual output, replacing the old generic JSON-dump display.
+Tool-specific inline renderings for agent tool calls in the chat panel. Each tool (read, bash, edit, write, create_task, delegate) has a dedicated renderer that owns its full visual output, replacing the old generic JSON-dump display.
 
 ## Architecture
+
+Tool rendering is split across two directories following the [frontend architecture](frontend-architecture.md) dependency rule:
+
+- **`models/tools/`** — Pure data-extraction helpers. Tested without DOM.
+- **`components/tools/`** — Lit components + renderer objects. Import from `models/tools/`.
+
+```
+models/tools/                      components/tools/
+├── read.ts    (getReadSummary,    ├── read.ts    (ReadToolBlock +
+│               getReadPreview,    │               readRenderer)
+│               getReadContent)    │
+├── edit.ts    (getEditStats,      ├── edit.ts    (EditToolBlock +
+│               parseDiffString)   │               editRenderer)
+├── bash.ts    (getBashCommand,    ├── bash.ts    (BashToolBlock +
+│               getBashOutput)     │               bashRenderer)
+├── write.ts   (getWriteSummary)   ├── write.ts   (WriteToolBlock +
+├── create-task.ts                 │               writeRenderer)
+├── delegate.ts                    ├── create-task.ts
+├── generic.ts (getToolSummary)    ├── delegate.ts
+├── bash-command-parser.ts         ├── generic.ts
+└── types.ts   (ToolResultImage)   ├── index.ts   (registry)
+                                   └── types.ts   (ToolRenderer)
+```
 
 ### ToolRenderer Interface
 
@@ -20,7 +43,7 @@ Renderers own the **entire visual surface** for a tool block — layout, chrome,
 
 ### Registry & Dispatch
 
-`tool-renderers/index.ts` maps tool names to renderers with a generic fallback:
+`components/tools/index.ts` maps tool names to renderers with a generic fallback:
 
 ```ts
 const toolRenderers: Record<string, ToolRenderer> = {
@@ -37,7 +60,7 @@ export function getToolRenderer(name: string): ToolRenderer {
 }
 ```
 
-`chat-panel.ts` dispatches in ~3 lines:
+`components/chat-panel.ts` dispatches in ~3 lines:
 
 ```ts
 private renderToolBlock(block: ToolBlockData) {
@@ -46,59 +69,50 @@ private renderToolBlock(block: ToolBlockData) {
 }
 ```
 
-### File Layout
-
-```
-src/tool-renderers/
-  index.ts                  — registry + getToolRenderer()
-  types.ts                  — ToolRenderer interface
-  generic.ts                — fallback pure helpers + renderer entry
-  generic-tool-block.ts     — Lit component: JSON args + raw result
-  read.ts                   — pure helpers for read tool
-  read-tool-block.ts        — Lit component with lazy syntax highlighting
-  bash.ts                   — pure helpers for bash tool
-  bash-tool-block.ts        — Lit component: terminal-style block
-  bash-command-parser.ts    — shell command tokenizer for syntax coloring
-  edit.ts                   — pure helpers, diff parsing, auto-expand logic
-  edit-tool-block.ts        — Lit component with inline diff + lazy highlighting
-  write.ts                  — pure helpers for write tool
-  write-tool-block.ts       — Lit component with syntax highlighting
-  create-task.ts            — pure helpers for create_task tool
-  create-task-tool-block.ts — Lit component: card-style with emerald accent
-  delegate.ts               — pure helpers for delegate tool
-  delegate-tool-block.ts    — Lit component: card-style with purple accent
-```
-
 ## Rendering Pattern
 
-Every renderer follows the same two-file pattern:
+Each tool follows a single-file-per-side pattern:
 
-1. **`<tool>.ts`** — Pure helper functions (data extraction from `ToolBlockData`) + the `ToolRenderer` entry point that extracts data and passes primitives to a custom element.
-2. **`<tool>-tool-block.ts`** — A `LitElement` custom element that receives primitive props and owns all rendering, interaction, and expansion state. Has no knowledge of `ToolBlockData`.
+1. **`models/tools/<name>.ts`** — Pure helper functions that extract data from `ToolBlockData`. No Lit imports.
+2. **`components/tools/<name>.ts`** — A `LitElement` custom element that receives primitive props + a `ToolRenderer` object that bridges the two by extracting data via helpers and passing primitives to the component.
 
-The renderer extracts all data and passes it as primitive props:
+The renderer and component live in the same file since the renderer is thin glue (~15 lines):
 
 ```ts
-// read.ts (simplified)
+// components/tools/read.ts (simplified)
+
+// The component — receives primitives, owns all rendering
+@customElement("read-tool-block")
+export class ReadToolBlock extends LitElement {
+  @property() path = "";
+  @property() content = "";
+  @property() preview = "";
+  @property({ type: Boolean }) showSpinner = false;
+  // ... render()
+}
+
+// The renderer — extracts data from ToolBlockData, passes to component
 export const readRenderer: ToolRenderer = {
   render(block) {
     const isRunning = block.status === "running";
-    const path = getReadSummary(block);
+    const path = getReadSummary(block);       // from models/tools/read
     const content = isRunning ? "" : getReadContent(block);
     const preview = isRunning ? "" : getReadPreview(block, PREVIEW_LINES);
-    // ... extract all data, pass as props
     return html`<read-tool-block
-      .path=${path}
-      .content=${content}
-      .preview=${preview}
+      .path=${path} .content=${content} .preview=${preview}
       .showSpinner=${isRunning}
-      ...
     ></read-tool-block>`;
   },
 };
 ```
 
-This gives a clean one-way data flow: `ToolBlockData → renderer (extracts) → component (renders)`. Components are pure presentational and have no imports from their renderer files — no circular dependencies.
+This gives a clean one-way data flow:
+
+```
+ToolBlockData → renderer (extracts via models/tools/) → component (renders)
+```
+
+Components are pure presentational — they have no knowledge of `ToolBlockData` and receive only strings, numbers, booleans, and simple typed arrays.
 
 Each tool block component manages its own `@state() expanded` property — the chat panel has no knowledge of tool expansion state. Because the renderer always produces the same component tag regardless of status, the Lit component instance is reused across the running→done transition and expansion state is preserved.
 
@@ -116,20 +130,19 @@ Within each tier, border radius and container patterns are consistent. The tiers
 
 ## Data Flow & Testing
 
-Each renderer file has **pure helper functions** that extract data from `ToolBlockData`. These are the primary test surface — tested without any DOM in `__tests__/tool-renderer-<name>.test.ts`:
+Pure helper functions in `models/tools/` are the primary test surface — tested without any DOM in `__tests__/tool-renderer-<name>.test.ts`:
 
 ```
-read.ts       → getReadSummary(), getReadPreview(), getReadContent(), getReadLineCount(), ...
-bash.ts       → getBashCommand(), getBashPreview(), getBashOutput(), getBashExitInfo()
-edit.ts       → getEditSummary(), getEditStats(), getEditDiffLines(), parseDiffString(), ...
-write.ts      → getWriteSummary(), getWriteInfo(), getWriteContent()
-create-task.ts → getTaskSummary(), getTaskDetail()
-delegate.ts   → getDelegateSummary(), getDelegateDetail()
+models/tools/read.ts       → getReadSummary(), getReadPreview(), getReadContent(), getReadLineCount()
+models/tools/bash.ts       → getBashCommand(), getBashPreview(), getBashOutput(), getBashExitInfo()
+models/tools/edit.ts       → getEditSummary(), getEditStats(), getEditDiffLines(), parseDiffString()
+models/tools/write.ts      → getWriteSummary(), getWriteInfo(), getWriteContent()
+models/tools/create-task.ts → getTaskSummary(), getTaskDetail()
+models/tools/delegate.ts   → getDelegateSummary(), getDelegateDetail()
+models/tools/generic.ts    → getToolSummary()
 ```
 
-The renderer calls these helpers, then passes the results as primitive props to the component. The component never touches `ToolBlockData` — it only receives strings, numbers, booleans, and simple typed arrays.
-
-Shared types like `ToolResultImage` live in `types.ts` alongside the `ToolRenderer` interface.
+`ToolResultImage` (`{ data: string; mimeType: string }`) lives in `models/tools/types.ts` as a pure data type. The `ToolRenderer` interface (which depends on Lit's `TemplateResult`) lives in `components/tools/types.ts`.
 
 ## Interaction Patterns
 
@@ -146,9 +159,9 @@ Each tool chooses its own expand/collapse UX:
 
 ## Lazy Syntax Highlighting
 
-The `read`, `edit`, and `write` tool blocks use `LazyHighlightController` (see [reactive-controllers.md](reactive-controllers.md)) to defer Shiki syntax highlighting until the element scrolls into view. This prevents old tool calls from triggering expensive highlighting on chat load.
+The `read`, `edit`, and `write` tool components use `LazyHighlightController` (see [reactive-controllers.md](reactive-controllers.md)) to defer Shiki syntax highlighting until the element scrolls into view. This prevents old tool calls from triggering expensive highlighting on chat load.
 
-The pattern in each tool block component:
+The pattern in each tool component:
 
 ```ts
 private _hl = new LazyHighlightController(this, () => {
@@ -174,12 +187,13 @@ When available, the edit renderer uses `details.diff` from the tool result (serv
 
 ## Bash Command Parser
 
-`bash-command-parser.ts` tokenizes shell commands for syntax highlighting. It splits on operators (`|`, `&&`, `||`, `;`) with quote awareness, identifies the command word (skipping prefixes like `sudo`, `env`, and env-var assignments), and tags segments as `command`, `args`, or `operator` for color-coding in the terminal block.
+`models/tools/bash-command-parser.ts` tokenizes shell commands for syntax highlighting. It splits on operators (`|`, `&&`, `||`, `;`) with quote awareness, identifies the command word (skipping prefixes like `sudo`, `env`, and env-var assignments), and tags segments as `command`, `args`, or `operator` for color-coding in the terminal block.
 
 ## Adding a New Tool Renderer
 
-1. Create `tool-renderers/<name>.ts` with pure helper functions for extracting data from `ToolBlockData`
-2. Create `tool-renderers/<name>-tool-block.ts` as a `LitElement` custom element that receives **primitive props only** — no `ToolBlockData` import
-3. Export a `ToolRenderer` with a single `render(block)` method that extracts all data via helpers and passes primitives to the custom element
-4. Register in `tool-renderers/index.ts` — add to the `toolRenderers` map and exports
-5. Add tests in `__tests__/tool-renderer-<name>.test.ts` covering the pure helpers
+1. Create `models/tools/<name>.ts` with pure helper functions for extracting data from `ToolBlockData`. No Lit imports.
+2. Create `components/tools/<name>.ts` with:
+   - A `LitElement` custom element that receives **primitive props only** — no `ToolBlockData` import
+   - A `ToolRenderer` object that extracts data via the pure helpers and passes primitives to the component
+3. Register in `components/tools/index.ts` — add to the `toolRenderers` map and exports
+4. Add tests in `__tests__/tool-renderer-<name>.test.ts` covering the pure helpers

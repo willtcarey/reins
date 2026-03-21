@@ -6,7 +6,7 @@ How and when to use Lit [Reactive Controllers](https://lit.dev/docs/composition/
 
 Our components accumulate `@state()` properties and private methods that mix business logic with rendering. This logic can't be tested without instantiating the full web component in a browser.
 
-Example — `diff-panel.ts` has 7 `@state()` properties and ~20 private methods managing:
+Example - `components/changes/diff-panel.ts` has 7 `@state()` properties and ~20 private methods managing:
 - File collapse/expand state
 - Markdown preview toggle + cache + fetch
 - Copy-to-clipboard with timed confirmation
@@ -29,13 +29,13 @@ We have two patterns for state management. Use the right one:
 
 **Rule of thumb:** If multiple components need the same state, use a store. If the state is private to one component, use a controller.
 
-## StoreController — Generic Store Subscription
+## StoreController - Generic Store Subscription
 
 `controllers/store-controller.ts` provides a generic reactive controller that subscribes to any store implementing our `{ subscribe(fn: () => void): () => void }` pattern. It eliminates the need for manual `@state() _storeVersion` counters or prop-drilled version values.
 
 ```ts
 import { StoreController } from "../controllers/store-controller.js";
-import type { DiffStore } from "../stores/diff-store.js";
+import type { DiffStore } from "../models/stores/diff-store.js";
 
 @customElement("my-component")
 export class MyComponent extends LitElement {
@@ -47,11 +47,11 @@ export class MyComponent extends LitElement {
 }
 ```
 
-The `Subscribable` interface is intentionally minimal — it works with `DiffStore`, `AppStore`, `FileTreeState`, or any future store. The controller handles subscribe/unsubscribe on store change, `hostDisconnected`, and `hostConnected` (re-subscribe after move).
+The `Subscribable` interface is intentionally minimal - it works with `DiffStore`, `AppStore`, `FileTreeState`, or any future store. The controller handles subscribe/unsubscribe on store change, `hostDisconnected`, and `hostConnected` (re-subscribe after move).
 
-## LazyHighlightController — Deferred Syntax Highlighting
+## LazyHighlightController - Deferred Syntax Highlighting
 
-`controllers/lazy-highlight-controller.ts` combines IntersectionObserver-based lazy activation with `HighlightController` and cache-key deduplication. It's used by the tool block components (`read-tool-block`, `edit-tool-block`, `write-tool-block`) to defer Shiki web worker highlighting until the element scrolls into view.
+`controllers/lazy-highlight-controller.ts` combines IntersectionObserver-based lazy activation with `HighlightController` and cache-key deduplication. It's used by the tool components (`components/tools/read.ts`, `edit.ts`, `write.ts`) to defer Shiki web worker highlighting until the element scrolls into view.
 
 ```ts
 private _hl = new LazyHighlightController(this, () => {
@@ -76,12 +76,12 @@ Extract a cluster of `@state()` properties and the methods that mutate them. No 
 **Examples:** `CollapseController`, `MarkdownPreviewController`, `ClipboardController`
 
 ### Behavior controllers
-Encapsulate a pattern of state + DOM interaction + lifecycle management. They use `hostConnected`, `hostDisconnected`, and `hostUpdated` to wire up event listeners, observers, and timers — the same boilerplate that currently litters component lifecycle methods.
+Encapsulate a pattern of state + DOM interaction + lifecycle management. They use `hostConnected`, `hostDisconnected`, and `hostUpdated` to wire up event listeners, observers, and timers - the same boilerplate that currently litters component lifecycle methods.
 
 **Examples:** `AutoScrollController` (scroll-to-bottom on new messages), `ScrollSpyController` (track which element is in view), `AsyncActionController` (loading key tracking with automatic cleanup)
 
 ```ts
-// Behavior controller example — auto-scroll to bottom of a container
+// Behavior controller example - auto-scroll to bottom of a container
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 
 export class AutoScrollController implements ReactiveController {
@@ -138,7 +138,7 @@ Testing behavior controllers follows the same fake-host pattern. For DOM-interac
 - Pass a minimal fake element (a plain object with `addEventListener`, `scrollTop`, etc.)
 - Accept that some DOM wiring is only tested via manual/integration testing
 
-The goal isn't 100% unit coverage of DOM code — it's to get the **state machine and decision logic** out of the component and into a testable place.
+The goal isn't 100% unit coverage of DOM code - it's to get the **state machine and decision logic** out of the component and into a testable place.
 
 ## Writing a Controller
 
@@ -216,7 +216,7 @@ The component becomes a thin wiring layer: it owns controllers, passes data from
 
 ## Testing a Controller
 
-Controllers are tested with a **fake host** — no DOM, no browser, just bun:test:
+Controllers are tested with a **fake host** - no DOM, no browser, just bun:test:
 
 ```ts
 // __tests__/markdown-preview-controller.test.ts
@@ -298,21 +298,21 @@ test("fetch caches rendered markdown", async () => {
 When refactoring a component to use controllers:
 
 1. **Identify clusters** of `@state()` + methods that form a coherent behavior (toggle, fetch+cache, timed confirmation, etc.).
-2. **Extract to a controller class** — move the state and methods, replace `this.requestUpdate()` with `this.host.requestUpdate()`.
-3. **Write tests first** (per [workflow.md](workflow.md) — red/green/refactor). Define the controller's contract in tests, then implement.
-4. **Replace in the component** — swap `@state()` properties for controller reads, swap method calls for controller method calls.
-5. **Remove the `@state()` declarations** — the controller calls `requestUpdate()` itself.
+2. **Extract to a controller class** - move the state and methods, replace `this.requestUpdate()` with `this.host.requestUpdate()`.
+3. **Write tests first** (per [workflow.md](workflow.md) - red/green/refactor). Define the controller's contract in tests, then implement.
+4. **Replace in the component** - swap `@state()` properties for controller reads, swap method calls for controller method calls.
+5. **Remove the `@state()` declarations** - the controller calls `requestUpdate()` itself.
 
 ## What Stays in Components
 
-- **Rendering** — `render()`, template helpers, CSS classes
-- **DOM interaction** — `querySelector`, `scrollIntoView`, `scrollTop` adjustment
-- **Event wiring** — `@click`, `@keydown` handlers that delegate to controllers/stores
-- **Store subscriptions** — `connectedCallback` / `disconnectedCallback` subscribe/unsubscribe
-- **ScrollSpy** — inherently DOM-coupled, stays on the component
+- **Rendering** - `render()`, template helpers, CSS classes
+- **DOM interaction** - `querySelector`, `scrollIntoView`, `scrollTop` adjustment
+- **Event wiring** - `@click`, `@keydown` handlers that delegate to controllers/stores
+- **Store subscriptions** - `connectedCallback` / `disconnectedCallback` subscribe/unsubscribe
+- **ScrollSpy** - inherently DOM-coupled, stays on the component
 
 ## What Stays in Stores
 
-- **Shared data** — anything multiple components read (`DiffStore`, `AppStore`, `FileTreeState`)
-- **Server communication** — fetch, polling, WebSocket event handling
-- **Cross-component coordination** — e.g., AppStore telling DiffStore to refresh after agent_end
+- **Shared data** - anything multiple components read (`DiffStore`, `AppStore`, `FileTreeState`)
+- **Server communication** - fetch, polling, WebSocket event handling
+- **Cross-component coordination** - e.g., AppStore telling DiffStore to refresh after agent_end
