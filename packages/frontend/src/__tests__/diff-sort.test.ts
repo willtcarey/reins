@@ -2,8 +2,8 @@
  * Tests for diff-sort — directory-first, alphabetical file path sorting.
  */
 import { describe, test, expect } from "bun:test";
-import { sortDiffFiles, sortFileSummaries } from "../changes/diff-sort.js";
-import type { DiffFile, DiffFileSummary } from "../changes/types.js";
+import { sortDiffFiles, sortFileSummaries } from "../models/changes/diff-sort.js";
+import type { DiffFile, DiffFileSummary } from "../models/changes/types.js";
 
 /** Minimal DiffFile with only the path field populated. */
 function diffFile(path: string): DiffFile {

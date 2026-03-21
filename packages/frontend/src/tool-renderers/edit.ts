@@ -10,7 +10,7 @@
 import { html } from "lit";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../chat-state.js";
-import type { DiffLine } from "../changes/types.js";
+import type { DiffLine } from "../models/changes/types.js";
 
 // ---------------------------------------------------------------------------
 // Pure logic helpers (tested without DOM)

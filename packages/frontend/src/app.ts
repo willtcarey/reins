@@ -15,16 +15,16 @@ import { LitElement, html } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { customElement, state, query } from "lit/decorators.js";
 import { AppClient } from "./ws-client.js";
-import type { DiffPanel } from "./changes/diff-panel.js";
-import { FileTreeState } from "./changes/file-tree-state.js";
+import type { DiffPanel } from "./components/changes/diff-panel.js";
+import { FileTreeState } from "./models/changes/file-tree-state.js";
 import { AppStore } from "./models/stores/app-store.js";
 import { parseHash } from "./router.js";
 import type { Route } from "./router.js";
 
 // Ensure sub-components are registered
 import "./chat-panel.js";
-import "./changes/diff-panel.js";
-import "./changes/diff-file-tree.js";
+import "./components/changes/diff-panel.js";
+import "./components/changes/diff-file-tree.js";
 import type { SessionSidebar } from "./session-sidebar.js";
 import "./session-sidebar.js";
 import "./branch-indicator.js";

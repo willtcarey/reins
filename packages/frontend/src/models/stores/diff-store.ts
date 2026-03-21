@@ -9,8 +9,8 @@
  * diff-panel and diff-file-tree components, eliminating duplicate fetches.
  */
 
-import type { DiffFile, DiffFileSummary, DiffHunk, DiffLine } from "../../changes/types.js";
-import { sortDiffFiles, sortFileSummaries } from "../../changes/diff-sort.js";
+import type { DiffFile, DiffFileSummary, DiffHunk, DiffLine } from "../changes/types.js";
+import { sortDiffFiles, sortFileSummaries } from "../changes/diff-sort.js";
 
 const DEFAULT_CONTEXT = 3;
 const EXPAND_STEP = 15;

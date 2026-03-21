@@ -17,8 +17,8 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { marked } from "marked";
-import type { DiffFile } from "./types.js";
-import { isMarkdown, shouldWrapLines, fileCardId, gutterWidth } from "./diff-utils.js";
+import type { DiffFile } from "../../models/changes/types.js";
+import { isMarkdown, shouldWrapLines, fileCardId, gutterWidth } from "../../models/changes/diff-utils.js";
 import "./diff-hunk.js";
 import "./diff-markdown-preview.js";
 

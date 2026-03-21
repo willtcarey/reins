@@ -15,9 +15,9 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import type { DiffFile, DiffHunk as DiffHunkType, DiffLine } from "./types.js";
-import { HighlightController } from "../controllers/highlight-controller.js";
-import { EXPAND_STEP, escapeHtml, getHunkEndLine } from "./diff-utils.js";
+import type { DiffFile, DiffHunk as DiffHunkType, DiffLine } from "../../models/changes/types.js";
+import { HighlightController } from "../../controllers/highlight-controller.js";
+import { EXPAND_STEP, escapeHtml, getHunkEndLine } from "../../models/changes/diff-utils.js";
 
 export interface ExpandDetail {
   filePath: string;

@@ -12,7 +12,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { LazyHighlightController } from "../controllers/lazy-highlight-controller.js";
-import { escapeHtml, shouldWrapLines } from "../changes/diff-utils.js";
+import { escapeHtml, shouldWrapLines } from "../models/changes/diff-utils.js";
 
 const PREVIEW_LINES = 4;
 

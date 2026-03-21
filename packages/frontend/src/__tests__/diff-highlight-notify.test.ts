@@ -10,7 +10,7 @@
  */
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { DiffStore } from "../models/stores/diff-store.js";
-import type { DiffFile, DiffLine } from "../changes/types.js";
+import type { DiffFile, DiffLine } from "../models/changes/types.js";
 
 // ---------------------------------------------------------------------------
 // Fetch mock helpers

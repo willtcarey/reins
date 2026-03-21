@@ -10,8 +10,8 @@
  * No `toggle-rendered` event is emitted to the parent.
  */
 import { describe, test, expect, mock, afterEach } from "bun:test";
-import { DiffFileCard } from "../changes/diff-file-card.js";
-import type { DiffFile } from "../changes/types.js";
+import { DiffFileCard } from "../components/changes/diff-file-card.js";
+import type { DiffFile } from "../models/changes/types.js";
 
 // ---------------------------------------------------------------------------
 // Fetch mock helpers
