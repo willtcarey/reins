@@ -169,6 +169,8 @@ export class EditToolBlock extends LitElement {
     });
     const diffLines = showDiff ? getEditDiffLines(this.block) : [];
     const hasDiff = diffLines.length > 0;
+    // Auto-expanded small diffs get no height cap so wrapping doesn't cause nested scroll
+    const isAutoExpanded = hasDiff && diffLines.length <= AUTO_EXPAND_THRESHOLD && !this.expanded;
 
     return html`
       <div class="mt-1 mb-1 ml-2 rounded-md bg-zinc-950 border ${borderColor} overflow-hidden">
@@ -190,7 +192,7 @@ export class EditToolBlock extends LitElement {
         <!-- Diff content (shown when expanded or auto-expanded for small diffs) -->
         ${hasDiff
           ? html`
-              <div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono max-h-96 overflow-y-auto overflow-x-auto">
+              <div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono ${isAutoExpanded ? "" : "max-h-96 overflow-y-auto"} overflow-x-auto">
                 <div class="${wrap ? "" : "w-fit min-w-full"}">
                 ${diffLines.map((line, i) => this._renderDiffLine(line, i, wrap))}
                 </div>
