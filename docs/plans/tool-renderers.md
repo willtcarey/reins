@@ -155,4 +155,4 @@ The `edit` renderer uses server-computed diffs when available:
 ## Remaining Work
 
 - **Bash: command display refinement** — Full commands can be visually overwhelming; explore truncation, collapsing, or de-emphasis for long commands
-- **Split test file** — `tool-renderers.test.ts` is a single file covering all renderers. Split into per-renderer test files (e.g., `tool-renderer-bash.test.ts`, `tool-renderer-edit.test.ts`, etc.) with a separate file for the registry
+- ✅ **Split test file** — Split `tool-renderers.test.ts` into per-renderer test files: `tool-renderer-registry.test.ts`, `tool-renderer-read.test.ts`, `tool-renderer-bash.test.ts`, `tool-renderer-edit.test.ts`, `tool-renderer-write.test.ts`, `tool-renderer-create-task.test.ts`, `tool-renderer-delegate.test.ts`
