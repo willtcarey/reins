@@ -9,6 +9,9 @@
 import { html, nothing } from "lit";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../chat-state.js";
+import { parseCommandSegments } from "./bash-command-parser.js";
+export type { CommandSegment } from "./bash-command-parser.js";
+export { parseCommandSegments } from "./bash-command-parser.js";
 
 // ---------------------------------------------------------------------------
 // Pure logic helpers (tested without DOM)
@@ -55,6 +58,24 @@ export function getBashExitInfo(block: ToolBlockData): { isError: boolean; label
 }
 
 // ---------------------------------------------------------------------------
+// Command syntax highlighting — renders parsed segments with visual emphasis
+// ---------------------------------------------------------------------------
+
+function renderCommandSegments(command: string) {
+  const segments = parseCommandSegments(command);
+  return segments.map((seg) => {
+    switch (seg.type) {
+      case "command":
+        return html`<span class="text-zinc-200 font-semibold">${seg.text}</span>`;
+      case "operator":
+        return html`<span class="text-blue-400">${seg.text}</span>`;
+      case "args":
+        return html`<span class="text-zinc-300">${seg.text}</span>`;
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Shared terminal block rendering
 // ---------------------------------------------------------------------------
 
@@ -86,7 +107,7 @@ function renderTerminalBlock(opts: {
         ${opts.showSpinner
           ? html`<span class="inline-block w-3 h-3 mt-0.5 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>`
           : nothing}
-        <pre class="text-xs font-mono text-zinc-300 whitespace-pre-wrap break-words m-0 flex-1 min-w-0"><span class="text-green-500 select-none">$ </span>${opts.command || "…"}</pre>
+        <pre class="text-xs font-mono whitespace-pre-wrap break-words m-0 flex-1 min-w-0"><span class="text-green-500 select-none">$ </span>${renderCommandSegments(opts.command)}</pre>
         ${opts.isError
           ? html`<span class="text-[10px] font-semibold text-red-400 bg-red-400/10 px-1.5 py-0.5 rounded flex-shrink-0 self-start">error</span>`
           : nothing}
