@@ -4,4 +4,4 @@
  * Imports the app shell component which registers all sub-components.
  */
 
-import "./app.js";
+import "./components/app.js";

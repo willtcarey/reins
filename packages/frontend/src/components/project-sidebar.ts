@@ -8,8 +8,8 @@
 
 import { LitElement, html } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
-import type { ProjectInfo } from "./ws-client.js";
-import type { AppStore } from "./models/stores/app-store.js";
+import type { ProjectInfo } from "../models/ws-client.js";
+import type { AppStore } from "../models/stores/app-store.js";
 import type { ProjectForm } from "./project-form.js";
 import "./project-form.js";
 

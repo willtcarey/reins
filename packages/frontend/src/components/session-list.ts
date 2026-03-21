@@ -7,9 +7,9 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { SessionListItem } from "./ws-client.js";
-import type { ActivityState } from "./models/stores/app-store.js";
-import { formatRelativeDate } from "./format.js";
+import type { SessionListItem } from "../models/ws-client.js";
+import type { ActivityState } from "../models/stores/app-store.js";
+import { formatRelativeDate } from "../models/format.js";
 import "./popover-menu.js";
 
 @customElement("session-list")

@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { getBashCommand, getBashPreview, getBashOutput, getBashExitInfo } from "../models/tools/bash.js";
-import type { ToolBlockData } from "../chat-state.js";
+import type { ToolBlockData } from "../models/chat-state.js";
 
 function makeBashBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockData {
   return {

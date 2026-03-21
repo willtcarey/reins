@@ -10,8 +10,8 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked } from "marked";
-import type { AppClient, SessionData } from "./ws-client.js";
-import { getToolRenderer } from "./components/tools/index.js";
+import type { AppClient, SessionData } from "../models/ws-client.js";
+import { getToolRenderer } from "./tools/index.js";
 import {
   applyChatEvent,
   type AgentMessage,
@@ -22,7 +22,7 @@ import {
   type ToolCall,
   type ToolBlockData,
   type StreamingBlock,
-} from "./chat-state.js";
+} from "../models/chat-state.js";
 
 // Configure marked for safe defaults
 marked.setOptions({

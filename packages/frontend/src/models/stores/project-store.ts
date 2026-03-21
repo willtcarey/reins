@@ -7,7 +7,7 @@
  * Components subscribe via `subscribe()` and read public state directly.
  */
 
-import type { SessionListItem, TaskListItem } from "../../ws-client.js";
+import type { SessionListItem, TaskListItem } from "../ws-client.js";
 
 export type ProjectStoreListener = () => void;
 

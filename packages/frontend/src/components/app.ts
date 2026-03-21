@@ -14,12 +14,12 @@
 import { LitElement, html } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { customElement, state, query } from "lit/decorators.js";
-import { AppClient } from "./ws-client.js";
-import type { DiffPanel } from "./components/changes/diff-panel.js";
-import { FileTreeState } from "./models/changes/file-tree-state.js";
-import { AppStore } from "./models/stores/app-store.js";
-import { parseHash } from "./router.js";
-import type { Route } from "./router.js";
+import { AppClient } from "../models/ws-client.js";
+import type { DiffPanel } from "./changes/diff-panel.js";
+import { FileTreeState } from "../models/changes/file-tree-state.js";
+import { AppStore } from "../models/stores/app-store.js";
+import { parseHash } from "../models/router.js";
+import type { Route } from "../models/router.js";
 
 // Ensure sub-components are registered
 import "./chat-panel.js";
@@ -30,7 +30,7 @@ import "./session-sidebar.js";
 import "./branch-indicator.js";
 import "./quick-open.js";
 import type { QuickOpen } from "./quick-open.js";
-import { QuickOpenStore } from "./models/stores/quick-open-store.js";
+import { QuickOpenStore } from "../models/stores/quick-open-store.js";
 
 @customElement("app-shell")
 export class AppShell extends LitElement {

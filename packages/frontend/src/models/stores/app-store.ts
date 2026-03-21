@@ -8,11 +8,11 @@
  * internally — views never participate in fetch/event decisions.
  */
 
-import { AppClient } from "../../ws-client.js";
+import { AppClient } from "../ws-client.js";
 import { ActiveSessionStore } from "./active-session-store.js";
 import { ProjectCollectionStore } from "./project-collection-store.js";
 import { DiffStore } from "./diff-store.js";
-import type { ProjectInfo, SessionData } from "../../ws-client.js";
+import type { ProjectInfo, SessionData } from "../ws-client.js";
 
 /** Activity state for a session: running, finished, or absent (no entry). */
 export type ActivityState = "running" | "finished";

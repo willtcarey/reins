@@ -7,7 +7,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
-import type { TaskListItem } from "./ws-client.js";
+import type { TaskListItem } from "../models/ws-client.js";
 
 @customElement("task-detail")
 export class TaskDetail extends LitElement {

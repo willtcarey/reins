@@ -4,7 +4,7 @@
  * Tests the pure applyChatEvent reducer directly, no mocks needed.
  */
 import { describe, test, expect } from "bun:test";
-import { applyChatEvent, initialChatState, type ChatState } from "../chat-state.js";
+import { applyChatEvent, initialChatState, type ChatState } from "../models/chat-state.js";
 
 function makeUserMsg(text: string, ts = 1000) {
   return { role: "user" as const, content: text, timestamp: ts };

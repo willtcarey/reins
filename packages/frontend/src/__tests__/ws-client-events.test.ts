@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { AppClient } from "../ws-client.js";
+import { AppClient } from "../models/ws-client.js";
 
 /**
  * Create an AppClient and invoke its private handleMessage method
