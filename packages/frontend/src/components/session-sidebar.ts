@@ -260,9 +260,9 @@ export class SessionSidebar extends LitElement {
   private renderRailBadge() {
     let hasRunning = false;
     let hasFinished = false;
-    for (const state of this.activityMap.values()) {
-      if (state === "running") hasRunning = true;
-      else if (state === "finished") hasFinished = true;
+    for (const activity of this.activityMap.values()) {
+      if (activity === "running") hasRunning = true;
+      else if (activity === "finished") hasFinished = true;
     }
     if (!hasRunning && !hasFinished) return nothing;
     const colorClass = hasRunning
@@ -272,16 +272,16 @@ export class SessionSidebar extends LitElement {
   }
 
   private renderProjectActivityDot(projectId: number) {
-    const state = this.store?.activityByProject.get(projectId);
-    if (!state) return nothing;
-    const classes = state === "running"
+    const activity = this.store?.activityByProject.get(projectId);
+    if (!activity) return nothing;
+    const classes = activity === "running"
       ? "w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"
       : "w-2 h-2 rounded-full bg-amber-500 shrink-0";
     return html`<span class="${classes}"></span>`;
   }
 
   private get sortedProjects(): ProjectInfo[] {
-    return [...(this.store?.projects ?? [])].sort((a, b) =>
+    return (this.store?.projects ?? []).toSorted((a, b) =>
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
     );
   }

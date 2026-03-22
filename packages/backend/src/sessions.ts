@@ -91,8 +91,8 @@ async function buildSessionOpts(params: {
   const sessionManager = SessionManager.inMemory();
   const tools = createCodingTools(projectDir);
   const broadcast = createBroadcast(state.clients);
-  const createSessionFn = (projectId: number, projectDir: string, opts?: CreateSessionOpts) =>
-    createNewSession(state, projectId, projectDir, opts);
+  const createSessionFn = (projId: number, projDir: string, opts?: CreateSessionOpts) =>
+    createNewSession(state, projId, projDir, opts);
 
   const customTools = createCustomTools({
     projectId,

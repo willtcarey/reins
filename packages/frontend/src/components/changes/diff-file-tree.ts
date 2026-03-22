@@ -29,6 +29,17 @@ interface TreeNode {
 
 // ---- Helpers ---------------------------------------------------------------
 
+/** Sort tree nodes: directories first, then files, each group alphabetical. */
+function sortChildren(node: TreeNode) {
+  node.children.sort((a, b) => {
+    if (a.isFile !== b.isFile) return a.isFile ? 1 : -1;
+    return a.name.localeCompare(b.name);
+  });
+  for (const child of node.children) {
+    if (!child.isFile) sortChildren(child);
+  }
+}
+
 /**
  * Build a nested tree structure from a flat list of file paths.
  * Directories are sorted before files; each group is sorted alphabetically.
@@ -76,16 +87,6 @@ function buildTree(files: DiffFileSummary[]): TreeNode[] {
     }
   }
 
-  // Sort: directories first, then files, each group alphabetical
-  function sortChildren(node: TreeNode) {
-    node.children.sort((a, b) => {
-      if (a.isFile !== b.isFile) return a.isFile ? 1 : -1;
-      return a.name.localeCompare(b.name);
-    });
-    for (const child of node.children) {
-      if (!child.isFile) sortChildren(child);
-    }
-  }
   sortChildren(root);
 
   return root.children;

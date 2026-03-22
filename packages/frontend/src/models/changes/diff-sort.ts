@@ -37,10 +37,10 @@ function compareFilePaths(a: string, b: string): number {
 
 /** Sort diff files in directory-first, alphabetical order (matching the file tree). */
 export function sortDiffFiles(files: DiffFile[]): DiffFile[] {
-  return [...files].sort((a, b) => compareFilePaths(a.path, b.path));
+  return files.toSorted((a, b) => compareFilePaths(a.path, b.path));
 }
 
 /** Sort file summaries in directory-first, alphabetical order. */
 export function sortFileSummaries(files: DiffFileSummary[]): DiffFileSummary[] {
-  return [...files].sort((a, b) => compareFilePaths(a.path, b.path));
+  return files.toSorted((a, b) => compareFilePaths(a.path, b.path));
 }

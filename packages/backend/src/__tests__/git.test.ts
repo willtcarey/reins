@@ -494,7 +494,6 @@ describe("pullBaseBranch / fastForwardBaseBranch (with remote)", () => {
     // cloning, committing, pushing from a separate clone
     const { mkdtempSync } = await import("fs");
     const { tmpdir } = await import("os");
-    const { join } = await import("path");
     const cloneDir = mkdtempSync(join(tmpdir(), "reins-test-clone-"));
     try {
       const proc1 = Bun.spawn(["git", "clone", repo.remoteDir, cloneDir], {

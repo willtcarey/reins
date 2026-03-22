@@ -28,6 +28,7 @@ When changing existing behavior, update the test first to reflect the new contra
 
 - Run `bun test` and confirm the full suite passes.
 - Run `bun run typecheck` and confirm there are no type errors.
+- Run `bun run lint` and confirm there are no lint warnings.
 - Update or create docs:
   - [`docs/features/`](../features/) if user-facing behavior changed — update an existing doc before creating a new one.
   - [`docs/dev/`](./) if internal conventions or architecture changed.
