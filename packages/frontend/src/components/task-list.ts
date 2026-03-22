@@ -181,6 +181,11 @@ export class TaskList extends LitElement {
     return hasFinished ? "finished" : undefined;
   }
 
+  /** Check if any child delegate session is currently running. */
+  private hasRunningChild(children: SessionListItem[]): boolean {
+    return children.some(c => this.activityMap.get(c.id) === "running");
+  }
+
   private renderDelegatePopoverContent(children: SessionListItem[]) {
     return html`
       <div class="px-3 py-1 text-[10px] text-zinc-500 uppercase tracking-wide font-semibold">Delegate sub-sessions</div>
@@ -241,8 +246,13 @@ export class TaskList extends LitElement {
             .content=${() => this.renderDelegatePopoverContent(children)}
             .triggerTemplate=${html`
               <span
-                class="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 shrink-0 transition-colors"
-                title="Show ${childCount} delegate sub-session${childCount !== 1 ? "s" : ""}"
+                class="text-[9px] px-1.5 py-0.5 rounded-full shrink-0 transition-colors
+                  ${this.hasRunningChild(children)
+                    ? "bg-blue-500/30 text-blue-300 animate-pulse"
+                    : "bg-blue-500/20 text-blue-400 hover:bg-blue-500/30"}"
+                title="${this.hasRunningChild(children)
+                  ? `${childCount} delegate sub-session${childCount !== 1 ? "s" : ""} (running)`
+                  : `Show ${childCount} delegate sub-session${childCount !== 1 ? "s" : ""}`}"
               >+${childCount}</span>
             `}
           ></popover-menu>
