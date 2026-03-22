@@ -105,7 +105,7 @@ export class ChatPanel extends LitElement {
     this.unsubscribeEvent?.();
     if (!this.client) return;
 
-    this.unsubscribeEvent = this.client.onEvent((sessionId, _projectId, event: Record<string, unknown>) => {
+    this.unsubscribeEvent = this.client.onEvent((sessionId, _projectId, event) => {
       // WS-level errors (e.g. command failures) arrive with empty sessionId
       if (event.type === "ws_error") {
         this.handleAgentEvent(event);
@@ -117,7 +117,7 @@ export class ChatPanel extends LitElement {
     });
   }
 
-  private handleAgentEvent(event: Record<string, unknown>) {
+  private handleAgentEvent(event: any) {
     // ws_error is handled locally (needs DOM method); everything else
     // goes through the pure state reducer.
     if (event.type === "ws_error") {
