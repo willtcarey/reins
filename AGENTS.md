@@ -12,7 +12,7 @@ These are your docs — update them as you work. Add new ones, revise stale ones
 | Location | What goes there |
 |---|---|
 | [`docs/dev/`](docs/dev/) ([index](docs/dev/INDEX.md)) | Developer guides — architecture, conventions, workflows. Add new docs to the index. |
-| [`docs/features/`](docs/features/) | User-facing feature docs — how the user interacts, not implementation details. |
+| [`docs/features/`](docs/features/) | Significant user-facing feature docs — how the user interacts, not implementation details. |
 | [`docs/plans/`](docs/plans/) | Planning docs for features, refactors, architectural changes. Move to `completed/` when done. |
 | [`docs/adr/`](docs/adr/) ([index](docs/adr/INDEX.md)) | Architecture Decision Records (`NNN-slug.md`). See index for when to write one. |
 | [`docs/tech-debt.md`](docs/tech-debt.md) | Tech debt tracker. Suggest items to the user — only add once confirmed. |
