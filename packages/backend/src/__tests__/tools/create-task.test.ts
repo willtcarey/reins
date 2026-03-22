@@ -7,6 +7,9 @@ import { branchExists } from "../../git.js";
 import { createTaskTool, type CreateTaskToolOpts } from "../../tools/create-task.js";
 import type { Broadcast } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
+import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
+
+const dummyCtx = {} as ExtensionContext;
 
 describe("createTaskTool", () => {
   let projectId: number;
@@ -49,7 +52,7 @@ describe("createTaskTool", () => {
       const result = await tool.execute("call-1", {
         title: "Implement dark mode",
         description: "Add dark mode toggle to the settings page",
-      });
+      }, undefined, undefined, dummyCtx);
 
       // Result has the expected shape
       expect(result.content).toBeArray();
@@ -58,7 +61,7 @@ describe("createTaskTool", () => {
       expect(result.details).not.toBeNull();
 
       // The text content is parseable JSON with task data
-      const taskData = JSON.parse(result.content[0].text);
+      const taskData = JSON.parse(((result.content[0] as any).text));
       expect(taskData.title).toBe("Implement dark mode");
       expect(taskData.description).toBe("Add dark mode toggle to the settings page");
       expect(taskData.branch_name).toStartWith("task/");
@@ -84,9 +87,9 @@ describe("createTaskTool", () => {
         title: "Custom branch",
         description: "Test custom branch name",
         branch_name: "task/my-custom-branch",
-      });
+      }, undefined, undefined, dummyCtx);
 
-      const taskData = JSON.parse(result.content[0].text);
+      const taskData = JSON.parse(((result.content[0] as any).text));
       expect(taskData.branch_name).toBe("task/my-custom-branch");
     });
 
@@ -97,9 +100,9 @@ describe("createTaskTool", () => {
         title: "With prompt",
         description: "Test prompt without session",
         prompt: "Start working on this",
-      });
+      }, undefined, undefined, dummyCtx);
 
-      const taskData = JSON.parse(result.content[0].text);
+      const taskData = JSON.parse(((result.content[0] as any).text));
       expect(taskData._note).toContain("not available");
     });
   });
@@ -111,10 +114,10 @@ describe("createTaskTool", () => {
       const result = await tool.execute("call-err-1", {
         title: "Should fail",
         description: "No project",
-      });
+      }, undefined, undefined, dummyCtx);
 
-      expect(result.content[0].text).toStartWith("Error:");
-      expect(result.content[0].text).toContain("not found");
+      expect(((result.content[0] as any).text)).toStartWith("Error:");
+      expect(((result.content[0] as any).text)).toContain("not found");
       expect(result.details).toBeNull();
     });
 
@@ -126,9 +129,9 @@ describe("createTaskTool", () => {
       const result = await tool.execute("call-err-2", {
         title: "Should fail",
         description: "Bad git path",
-      });
+      }, undefined, undefined, dummyCtx);
 
-      expect(result.content[0].text).toStartWith("Error:");
+      expect(((result.content[0] as any).text)).toStartWith("Error:");
       expect(result.details).toBeNull();
     });
   });

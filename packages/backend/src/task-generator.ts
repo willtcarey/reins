@@ -47,7 +47,7 @@ export async function generateTask(prompt: string): Promise<GeneratedTask> {
     });
 
     const result = await Promise.race([
-      session.prompt(prompt, { expandTemplates: false }),
+      session.prompt(prompt, { expandPromptTemplates: false }),
       new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), TIMEOUT_MS)),
     ]);
 

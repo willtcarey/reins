@@ -582,10 +582,10 @@ describe("session-store", () => {
       const entries = sm.getEntries();
       expect(entries).toHaveLength(4);
       expect(entries.every((e: any) => e.type === "message")).toBe(true);
-      expect(entries[0].message.role).toBe("user");
-      expect(entries[0].message.content).toBe("hello");
-      expect(entries[3].message.role).toBe("assistant");
-      expect(entries[3].message.content).toBe("4");
+      expect((entries[0] as any).message.role).toBe("user");
+      expect((entries[0] as any).message.content).toBe("hello");
+      expect((entries[3] as any).message.role).toBe("assistant");
+      expect((entries[3] as any).message.content).toBe("4");
     });
 
     test("entries form a linear chain via parentId", () => {
@@ -688,7 +688,7 @@ describe("session-store", () => {
 
       const entries = sm.getEntries();
       expect(entries).toHaveLength(4);
-      expect(entries[2].message.role).toBe("toolResult");
+      expect((entries[2] as any).message.role).toBe("toolResult");
     });
   });
 });

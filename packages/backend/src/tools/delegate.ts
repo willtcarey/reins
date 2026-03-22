@@ -7,7 +7,7 @@
  * focused sub-sessions, keeping each one's context lean.
  */
 
-import { Type } from "@sinclair/typebox";
+import { type Static, Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { ManagedSession } from "../state.js";
 import { getSession } from "../session-store.js";
@@ -117,7 +117,8 @@ export function createDelegateTool(
       "— do not proactively delegate.",
     parameters,
 
-    async execute(_toolCallId, params, signal) {
+    async execute(_toolCallId, _params, signal) {
+      const params = _params as Static<typeof parameters>;
       try {
         // Look up session and project from DB
         const sessionRow = getSession(sessionId);

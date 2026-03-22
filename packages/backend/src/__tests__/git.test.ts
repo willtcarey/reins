@@ -245,7 +245,7 @@ describe("getBranchTip / revParse", () => {
   test("revParse returns same SHA as getBranchTip for same ref", async () => {
     const tip = await getBranchTip(repo.dir, "main");
     const parsed = await revParse(repo.dir, "main");
-    expect(parsed).toBe(tip);
+    expect(parsed).toBe(tip!);
   });
 
   test("revParse works with HEAD", async () => {

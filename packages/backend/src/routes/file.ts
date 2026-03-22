@@ -27,7 +27,8 @@ export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
         headers["Content-Disposition"] = `attachment; filename="${filename}"`;
       }
 
-      return new Response(content, { headers });
+      const body = content instanceof Uint8Array ? content as unknown as BodyInit : content;
+      return new Response(body, { headers });
     } catch (err: any) {
       if (err instanceof PathTraversalError) badRequest(err.message);
       if (err instanceof FileNotFoundError) notFound(err.message);

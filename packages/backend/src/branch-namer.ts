@@ -41,7 +41,7 @@ export async function generateBranchName(title: string): Promise<string> {
 
     // prompt() returns when the agent turn is done
     const result = await Promise.race([
-      session.prompt(title, { expandTemplates: false }),
+      session.prompt(title, { expandPromptTemplates: false }),
       new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), TIMEOUT_MS)),
     ]);
 

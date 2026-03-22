@@ -12,5 +12,9 @@
     "@mariozechner/pi-ai": "^0.58.3",
     "@mariozechner/pi-coding-agent": "^0.58.3",
     "@sinclair/typebox": "^0.34.48"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.11",
+    "typescript": "^5.9.3"
   }
 }

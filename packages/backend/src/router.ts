@@ -72,7 +72,7 @@ export function createRouter(): RouterGroup & { handle: (req: Request, state: Se
       patch(path, handler)  { addRoute("PATCH",  prefix + path, handler, parentMiddlewares); },
       delete(path, handler) { addRoute("DELETE", prefix + path, handler, parentMiddlewares); },
 
-      group(subPrefix, ...args) {
+      group(subPrefix: string, ...args: any[]) {
         const registerFn = args.pop() as (r: RouterGroup<any>) => void;
         const middlewares = args as Middleware[];
         const sub = createGroup(prefix + subPrefix, [...parentMiddlewares, ...middlewares]);
