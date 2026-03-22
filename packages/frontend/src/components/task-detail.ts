@@ -16,7 +16,7 @@ export class TaskDetail extends LitElement {
   }
 
   @state() private task: TaskListItem | null = null;
-  @state() private title = "";
+  @state() private taskTitle = "";
   @state() private description = "";
   @state() private saving = false;
   @state() private dirty = false;
@@ -26,7 +26,7 @@ export class TaskDetail extends LitElement {
   /** Open the dialog for a given task. */
   open(task: TaskListItem) {
     this.task = task;
-    this.title = task.title;
+    this.taskTitle = task.title;
     this.description = task.description ?? "";
     this.dirty = false;
     this.saving = false;
@@ -44,13 +44,13 @@ export class TaskDetail extends LitElement {
   private handleInput() {
     if (!this.task) return;
     this.dirty =
-      this.title !== this.task.title ||
+      this.taskTitle !== this.task.title ||
       this.description !== (this.task.description ?? "");
   }
 
   private handleSave() {
     if (!this.task || !this.dirty) return;
-    if (!this.title.trim()) return;
+    if (!this.taskTitle.trim()) return;
 
     this.saving = true;
     this.dispatchEvent(
@@ -59,7 +59,7 @@ export class TaskDetail extends LitElement {
         composed: true,
         detail: {
           taskId: this.task.id,
-          title: this.title.trim(),
+          title: this.taskTitle.trim(),
           description: this.description.trim() || null,
         },
       }),
@@ -111,8 +111,8 @@ export class TaskDetail extends LitElement {
             type="text"
             class="w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors"
             placeholder="Task title"
-            .value=${this.title}
-            @input=${(e: Event) => { this.title = (e.target as HTMLInputElement).value; this.handleInput(); }}
+            .value=${this.taskTitle}
+            @input=${(e: Event) => { this.taskTitle = (e.target as HTMLInputElement).value; this.handleInput(); }}
           />
 
           <label class="block text-[10px] font-medium text-zinc-400 uppercase tracking-wide mb-1 mt-3">Description</label>
@@ -141,7 +141,7 @@ export class TaskDetail extends LitElement {
             <button
               class="px-3 py-1.5 text-xs text-zinc-100 bg-blue-600 hover:bg-blue-500 rounded cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               @click=${this.handleSave}
-              ?disabled=${this.saving || !this.dirty || !this.title.trim()}
+              ?disabled=${this.saving || !this.dirty || !this.taskTitle.trim()}
             >
               ${this.saving ? "Saving..." : "Save"}
             </button>

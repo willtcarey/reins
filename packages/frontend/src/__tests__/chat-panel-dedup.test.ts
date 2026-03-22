@@ -4,13 +4,13 @@
  * Tests the pure applyChatEvent reducer directly, no mocks needed.
  */
 import { describe, test, expect } from "bun:test";
-import { applyChatEvent, initialChatState, type ChatState } from "../models/chat-state.js";
+import { applyChatEvent, initialChatState, type ChatState, type AgentMessage, type UserMessage, type AssistantMessage, type ToolResultMessage } from "../models/chat-state.js";
 
-function makeUserMsg(text: string, ts = 1000) {
+function makeUserMsg(text: string, ts = 1000): UserMessage {
   return { role: "user" as const, content: text, timestamp: ts };
 }
 
-function makeAssistantMsg(text: string, ts = 2000) {
+function makeAssistantMsg(text: string, ts = 2000): AssistantMessage {
   return {
     role: "assistant" as const,
     content: [{ type: "text" as const, text }],
@@ -18,7 +18,7 @@ function makeAssistantMsg(text: string, ts = 2000) {
   };
 }
 
-function makeToolResultMsg(id: string, text: string, ts = 3000) {
+function makeToolResultMsg(id: string, text: string, ts = 3000): ToolResultMessage {
   return {
     role: "toolResult" as const,
     toolCallId: id,
@@ -27,6 +27,11 @@ function makeToolResultMsg(id: string, text: string, ts = 3000) {
     isError: false,
     timestamp: ts,
   };
+}
+
+/** Helper: create state with given messages. */
+function stateWith(messages: AgentMessage[]): ChatState {
+  return { ...initialChatState(), messages };
 }
 
 /** Helper: apply a sequence of events to a state. */
@@ -51,16 +56,16 @@ describe("applyChatEvent — agent_end deduplication", () => {
     const newAssistant = makeAssistantMsg("hi there", 2000);
     const newTool = makeToolResultMsg("tc1", "output", 3000);
 
-    let state = {
+    let state: ChatState = {
       ...initialChatState(),
-      messages: [oldUser, oldAssistant, newUser],
+      messages: [oldUser, oldAssistant, newUser] as AgentMessage[],
     };
     state = applyChatEvent(state, { type: "agent_start" });
 
     // agent_end with this run's messages
     state = applyChatEvent(state, {
       type: "agent_end",
-      messages: [newUser, newAssistant, newTool],
+      messages: [newUser, newAssistant, newTool] as AgentMessage[],
     });
 
     // Should have old history + new messages, no duplicates
@@ -80,9 +85,9 @@ describe("applyChatEvent — agent_end deduplication", () => {
     const tool = makeToolResultMsg("tc1", "output", 3000);
 
     // Start with optimistic user message
-    let state = {
+    let state: ChatState = {
       ...initialChatState(),
-      messages: [oldUser, newUser],
+      messages: [oldUser, newUser] as AgentMessage[],
     };
     state = applyChatEvent(state, { type: "agent_start" });
 
@@ -91,14 +96,14 @@ describe("applyChatEvent — agent_end deduplication", () => {
     // has already produced.
     state = {
       ...state,
-      messages: [oldUser, newUser, assistant, tool],
+      messages: [oldUser, newUser, assistant, tool] as AgentMessage[],
     };
 
     // agent_end arrives — event.messages has this run's messages,
     // which overlap with what sessionData already populated.
     state = applyChatEvent(state, {
       type: "agent_end",
-      messages: [newUser, assistant, tool],
+      messages: [newUser, assistant, tool] as AgentMessage[],
     });
 
     // No duplicates
@@ -109,7 +114,7 @@ describe("applyChatEvent — agent_end deduplication", () => {
 
   test("agent_end with undefined messages preserves existing messages", () => {
     const user = makeUserMsg("hello");
-    let state = { ...initialChatState(), messages: [user] };
+    let state = { ...initialChatState(), messages: [user] as AgentMessage[] };
     state = applyChatEvent(state, { type: "agent_start" });
     state = applyChatEvent(state, { type: "agent_end" });
 
@@ -123,19 +128,19 @@ describe("applyChatEvent — agent_end deduplication", () => {
     const tool1 = makeToolResultMsg("t1", "result 1", 3000);
     const asst2 = makeAssistantMsg("step 2", 4000);
 
-    let state = { ...initialChatState(), messages: [user] };
+    let state = { ...initialChatState(), messages: [user] as AgentMessage[] };
     state = applyChatEvent(state, { type: "agent_start" });
 
     // First reconnect refresh — partial results already in messages
-    state = { ...state, messages: [user, asst1, tool1] };
+    state = { ...state, messages: [user, asst1, tool1] as AgentMessage[] };
 
     // Second reconnect refresh — even more results
-    state = { ...state, messages: [user, asst1, tool1, asst2] };
+    state = { ...state, messages: [user, asst1, tool1, asst2] as AgentMessage[] };
 
     // agent_end with all run messages
     state = applyChatEvent(state, {
       type: "agent_end",
-      messages: [user, asst1, tool1, asst2],
+      messages: [user, asst1, tool1, asst2] as AgentMessage[],
     });
 
     expect(state.messages).toHaveLength(4);
@@ -152,14 +157,14 @@ describe("applyChatEvent — agent_end deduplication", () => {
     const newUser = makeUserMsg("third question", 1000);
     const newAssistant = makeAssistantMsg("third answer", 2000);
 
-    let state = {
+    let state: ChatState = {
       ...initialChatState(),
-      messages: [hist1, hist2, hist3, hist4, newUser],
+      messages: [hist1, hist2, hist3, hist4, newUser] as AgentMessage[],
     };
     state = applyChatEvent(state, { type: "agent_start" });
     state = applyChatEvent(state, {
       type: "agent_end",
-      messages: [newUser, newAssistant],
+      messages: [newUser, newAssistant] as AgentMessage[],
     });
 
     // All history preserved + new assistant appended

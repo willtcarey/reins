@@ -37,11 +37,9 @@ function mdFile(path = "README.md"): DiffFile {
     removals: 0,
     hunks: [{
       header: "@@ -1,3 +1,4 @@",
-      startLineBefore: 1,
-      startLineAfter: 1,
       lines: [
-        { type: "context", text: "# Hello", lineBefore: 1, lineAfter: 1 },
-        { type: "add", text: "world", lineAfter: 2 },
+        { type: "context", text: "# Hello", oldLine: 1, newLine: 1 },
+        { type: "add", text: "world", newLine: 2 },
       ],
     }],
   };

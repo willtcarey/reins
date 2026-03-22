@@ -132,7 +132,7 @@ export class ProjectForm extends LitElement {
     }
   }
 
-  private get title() {
+  private get dialogTitle() {
     return this.mode === "create" ? "Add Project" : "Edit Project";
   }
 

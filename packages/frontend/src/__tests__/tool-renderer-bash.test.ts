@@ -4,7 +4,6 @@ import type { ToolBlockData } from "../models/chat-state.js";
 
 function makeBashBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockData {
   return {
-    type: "tool",
     id: "bash-test-id",
     name: "Bash",
     args: { command: "ls -la" },

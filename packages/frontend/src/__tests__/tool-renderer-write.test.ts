@@ -4,7 +4,6 @@ import type { ToolBlockData } from "../models/chat-state.js";
 
 function makeWriteBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockData {
   return {
-    type: "tool",
     id: "write-test-id",
     name: "Write",
     args: { path: "src/new-file.ts", content: "line1\nline2\nline3" },

@@ -66,7 +66,7 @@ export interface StreamingToolBlock {
 export type StreamingBlock = StreamingTextBlock | StreamingToolBlock;
 
 /** Normalized shape for rendering a tool call in both streaming and finalized states. */
-export type ToolBlockData = StreamingToolBlock;
+export type ToolBlockData = Omit<StreamingToolBlock, "type">;
 
 // ---- State ------------------------------------------------------------------
 

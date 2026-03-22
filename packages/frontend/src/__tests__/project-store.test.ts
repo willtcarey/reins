@@ -39,8 +39,8 @@ describe("ProjectStore", () => {
   });
 
   test("fetchLists fetches tasks and sessions in parallel", async () => {
-    const tasks = [{ id: 1, title: "Task 1", session_count: 0, branch_name: null, created_at: "" }];
-    const sessions = [{ id: "s1", title: "Session 1", task_id: null, created_at: "", model: "test" }];
+    const tasks = [{ id: 1, project_id: 42, title: "Task 1", description: null, branch_name: "", status: "open" as const, created_at: "", updated_at: "", session_count: 0, session_ids: [] as string[], diffStats: null }];
+    const sessions = [{ id: "s1", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null }];
 
     mockFetch((url) => {
       if (url.includes("/tasks")) return jsonResponse(tasks);
@@ -95,7 +95,7 @@ describe("ProjectStore", () => {
   });
 
   test("fetchTaskSessions fetches and caches task sessions", async () => {
-    const taskSessions = [{ id: "s2", title: "Task Session", task_id: 1, created_at: "", model: "test" }];
+    const taskSessions = [{ id: "s2", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null }];
 
     mockFetch((url) => {
       if (url.includes("/tasks/1/sessions")) return jsonResponse(taskSessions);
@@ -108,7 +108,7 @@ describe("ProjectStore", () => {
   });
 
   test("fetchTaskSessions skips update if data unchanged", async () => {
-    const taskSessions = [{ id: "s2", title: "Task Session", task_id: 1, created_at: "", model: "test" }];
+    const taskSessions = [{ id: "s2", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null }];
     let notifyCount = 0;
 
     mockFetch(() => jsonResponse(taskSessions));
@@ -127,11 +127,11 @@ describe("ProjectStore", () => {
     let notifyCount = 0;
     store.subscribe(() => { notifyCount++; });
 
-    mockFetch(() => jsonResponse([{ id: "s1", title: "V1", task_id: 1, created_at: "", model: "test" }]));
+    mockFetch(() => jsonResponse([{ id: "s1", name: "V1", created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null }]));
     await store.fetchTaskSessions(1);
     const countAfterFirst = notifyCount;
 
-    mockFetch(() => jsonResponse([{ id: "s1", title: "V2", task_id: 1, created_at: "", model: "test" }]));
+    mockFetch(() => jsonResponse([{ id: "s1", name: "V2", created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null }]));
     await store.fetchTaskSessions(1);
     expect(notifyCount).toBeGreaterThan(countAfterFirst);
   });
