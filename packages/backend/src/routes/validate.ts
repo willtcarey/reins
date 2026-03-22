@@ -26,9 +26,8 @@ export async function parseBody<T extends TSchema>(
   try {
     return Value.Parse(schema, raw);
   } catch (err: unknown) {
-    const message =
-      err instanceof Error ? err.message : "Request body validation failed";
-    throw new HttpError(400, `Invalid request body: ${message}`);
+    const detail = formatValidationError(err);
+    throw new HttpError(400, `Invalid request body: ${detail}`);
   }
 }
 
@@ -49,4 +48,19 @@ export function parseIntParam(
     throw new HttpError(400, `URL parameter '${name}' must be an integer, got: ${raw}`);
   }
   return n;
+}
+
+/** Format a TypeBox AssertError into a human-readable message including field paths. */
+function formatValidationError(err: unknown): string {
+  // TypeBox AssertError has an `error` property with path and message fields
+  if (err instanceof Object && "error" in err) {
+    const first: unknown = err.error;
+    if (first && typeof first === "object" && "path" in first && "message" in first) {
+      const path = typeof first.path === "string" ? first.path : "";
+      const message = typeof first.message === "string" ? first.message : "Validation failed";
+      const field = path.replace(/^\//, "") || "(root)";
+      return `${field}: ${message}`;
+    }
+  }
+  return err instanceof Error ? err.message : "Validation failed";
 }

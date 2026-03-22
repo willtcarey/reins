@@ -205,7 +205,7 @@ describe("task routes", () => {
       );
       expect(res!.status).toBe(400);
       const body = await res!.json();
-      expect(body.error).toContain("Prompt");
+      expect(body.error).toContain("prompt");
     });
 
     test("returns 400 when prompt is whitespace only", async () => {

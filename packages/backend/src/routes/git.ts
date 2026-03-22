@@ -20,7 +20,7 @@ import {
 import { parseBody } from "./validate.js";
 
 const GitBranchBody = Type.Object({
-  branch: Type.Optional(Type.String()),
+  branch: Type.String({ minLength: 1, pattern: "\\S" }),
 });
 
 export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
@@ -41,7 +41,7 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
       await ctx.project.sync();
     }
 
-    const spread = await getSpread(ctx.project.projectDir, branch!, ctx.project.baseBranch);
+    const spread = await getSpread(ctx.project.projectDir, branch, ctx.project.baseBranch);
 
     return Response.json({ branch, ...spread });
   });
@@ -54,8 +54,6 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
    */
   router.post("/git/push", async (ctx) => {
     const body = await parseBody(GitBranchBody, ctx.req);
-
-    if (!body.branch?.trim()) badRequest("branch is required");
 
     try {
       await pushBranch(ctx.project.projectDir, body.branch.trim());
@@ -74,8 +72,6 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
    */
   router.post("/git/rebase", async (ctx) => {
     const body = await parseBody(GitBranchBody, ctx.req);
-
-    if (!body.branch?.trim()) badRequest("branch is required");
 
     try {
       await rebaseBranch(ctx.project.projectDir, body.branch.trim(), ctx.project.baseBranch);

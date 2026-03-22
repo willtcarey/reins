@@ -14,7 +14,13 @@ import {
 import { createProject, DuplicateProjectError } from "../models/projects.js";
 import { parseBody, parseIntParam } from "./validate.js";
 
-const ProjectBody = Type.Object({
+const CreateProjectBody = Type.Object({
+  name: Type.String({ minLength: 1 }),
+  path: Type.String({ minLength: 1 }),
+  base_branch: Type.Optional(Type.String()),
+});
+
+const UpdateProjectBody = Type.Object({
   name: Type.Optional(Type.String()),
   path: Type.Optional(Type.String()),
   base_branch: Type.Optional(Type.String()),
@@ -28,10 +34,7 @@ export function registerProjectRoutes(router: RouterGroup) {
 
   // Create a project
   router.post(API.projects, async (ctx) => {
-    const body = await parseBody(ProjectBody, ctx.req);
-    if (!body.name || !body.path) {
-      badRequest("name and path are required");
-    }
+    const body = await parseBody(CreateProjectBody, ctx.req);
     if (!existsSync(body.path)) {
       badRequest(`Directory does not exist: ${body.path}`);
     }
@@ -52,7 +55,7 @@ export function registerProjectRoutes(router: RouterGroup) {
   // Update a project
   router.patch(API.project, async (ctx) => {
     const id = parseIntParam(ctx.params, "id");
-    const body = await parseBody(ProjectBody, ctx.req);
+    const body = await parseBody(UpdateProjectBody, ctx.req);
 
     if (body.name !== undefined && !body.name.trim()) {
       badRequest("name cannot be empty");

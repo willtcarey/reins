@@ -7,7 +7,7 @@
 import { Type } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
-import { notFound, badRequest, conflict } from "../errors.js";
+import { notFound, conflict } from "../errors.js";
 import { getTask } from "../task-store.js";
 import { generateTask } from "../task-generator.js";
 import {
@@ -18,7 +18,7 @@ import { serializeTaskSessionList } from "../sessions.js";
 import { parseBody, parseIntParam } from "./validate.js";
 
 const GenerateTaskBody = Type.Object({
-  prompt: Type.Optional(Type.String()),
+  prompt: Type.String({ minLength: 1, pattern: "\\S" }),
 });
 
 const UpdateTaskBody = Type.Object({
@@ -38,10 +38,6 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
   // Generate a task from freeform input, then create it
   router.post("/tasks/generate", async (ctx) => {
     const body = await parseBody(GenerateTaskBody, ctx.req);
-
-    if (!body.prompt?.trim()) {
-      badRequest("Prompt is required");
-    }
 
     const generated = await generateTask(body.prompt.trim());
 
