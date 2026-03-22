@@ -10,7 +10,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked } from "marked";
-import type { AppClient, SessionData } from "../models/ws-client.js";
+import type { AppClient, FrontendEvent, SessionData } from "../models/ws-client.js";
 import { getToolRenderer } from "./tools/index.js";
 import {
   applyChatEvent,
@@ -117,12 +117,14 @@ export class ChatPanel extends LitElement {
     });
   }
 
-  private handleAgentEvent(event: any) {
-    // ws_error is handled locally (needs DOM method); everything else
-    // goes through the pure state reducer.
+  private handleAgentEvent(event: FrontendEvent) {
+    // ws_error is handled locally (needs DOM method); non-chat events
+    // (task_updated, session_created, ws_ack) are ignored by this component.
     if (event.type === "ws_error") {
-      const errorMsg = typeof event.error === "string" ? event.error : "Something went wrong";
-      this.showError(errorMsg);
+      this.showError(event.error || "Something went wrong");
+      return;
+    }
+    if (event.type === "task_updated" || event.type === "session_created" || event.type === "ws_ack") {
       return;
     }
 

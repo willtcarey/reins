@@ -218,6 +218,7 @@ describe("applyChatEvent — other event types", () => {
     state = applyChatEvent(state, {
       type: "tool_execution_end",
       toolCallId: "tc1",
+      toolName: "bash",
       result: { content: [{ type: "text", text: "output" }] },
       isError: false,
     });
@@ -259,9 +260,9 @@ describe("applyChatEvent — other event types", () => {
     expect(state.shouldAutoScroll).toBe(true);
   });
 
-  test("unknown event type returns state unchanged", () => {
+  test("no-op event type returns state unchanged", () => {
     const state = initialChatState();
-    const next = applyChatEvent(state, { type: "unknown_thing" });
+    const next = applyChatEvent(state, { type: "message_end" });
     expect(next).toBe(state);
   });
 });

@@ -58,16 +58,30 @@ export interface ProjectInfo {
   last_opened_at: string;
 }
 
+import type { ChatEvent } from "./chat-state.js";
+
 /** Inbound message shapes from the backend */
 export type ServerMessage =
-  | { type: "event"; sessionId: string; projectId: number; event: any }
+  | { type: "event"; sessionId: string; projectId: number; event: ChatEvent }
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null }
   | { type: "user_message"; sessionId: string; projectId: number; message: string }
   | { type: "ack"; command: string }
   | { type: "error"; error: string };
 
-export type EventListener = (sessionId: string, projectId: number, event: any) => void;
+/**
+ * All event shapes dispatched to `EventListener` subscribers.
+ * Includes ChatEvent (agent/compaction/user_message), synthetic app events,
+ * and WebSocket-level ack/error events.
+ */
+export type FrontendEvent =
+  | ChatEvent
+  | { type: "task_updated"; projectId: number }
+  | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null }
+  | { type: "ws_ack"; command: string }
+  | { type: "ws_error"; error: string };
+
+export type EventListener = (sessionId: string, projectId: number, event: FrontendEvent) => void;
 export type ConnectionListener = (connected: boolean) => void;
 
 // ---- Client ----------------------------------------------------------------

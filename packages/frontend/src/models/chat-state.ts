@@ -75,6 +75,24 @@ export type StreamingBlock = StreamingTextBlock | StreamingToolBlock;
 /** Normalized shape for rendering a tool call in both streaming and finalized states. */
 export type ToolBlockData = Omit<StreamingToolBlock, "type">;
 
+// ---- Events (local mirrors of backend/SDK shapes) --------------------------
+
+/**
+ * Discriminated union of every event type that `applyChatEvent` handles.
+ * Covers AgentEvent variants we care about, CompactionEvent, and the
+ * synthetic `user_message` forwarded by ws-client.
+ */
+export type ChatEvent =
+  | { type: "agent_start" }
+  | { type: "message_update"; assistantMessageEvent?: { type: string; delta?: string } }
+  | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
+  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: StreamingToolBlock["result"]; isError?: boolean }
+  | { type: "agent_end"; messages?: AgentMessage[] }
+  | { type: "message_end" }
+  | { type: "compaction_start"; reason?: string }
+  | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean }
+  | { type: "user_message"; message: string };
+
 // ---- State ------------------------------------------------------------------
 
 export interface ChatState {
@@ -103,20 +121,21 @@ export function initialChatState(): ChatState {
  * Apply an agent event to the chat state, returning a new state.
  * Pure function — no side effects.
  */
-export function applyChatEvent(state: ChatState, event: any): ChatState {
+export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
   switch (event.type) {
     case "agent_start":
       return { ...state, isStreaming: true, streamingBlocks: [] };
 
     case "message_update": {
       const ame = event.assistantMessageEvent;
-      if (ame?.type === "text_delta") {
+      if (ame?.type === "text_delta" && ame.delta) {
+        const delta = ame.delta;
         const blocks = [...state.streamingBlocks];
         const last = blocks[blocks.length - 1];
         if (last && last.type === "text") {
-          blocks[blocks.length - 1] = { ...last, text: last.text + ame.delta };
+          blocks[blocks.length - 1] = { ...last, text: last.text + delta };
         } else {
-          blocks.push({ type: "text", text: ame.delta });
+          blocks.push({ type: "text", text: delta });
         }
         return { ...state, streamingBlocks: blocks };
       }
