@@ -6,7 +6,7 @@
  */
 
 import { LitElement, html, nothing } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
+import { customElement, property } from "lit/decorators.js";
 import type { SessionListItem } from "../models/ws-client.js";
 import type { ActivityState } from "../models/stores/app-store.js";
 import { formatRelativeDate } from "../models/format.js";
@@ -31,9 +31,6 @@ export class SessionList extends LitElement {
   @property({ attribute: false })
   activityMap = new Map<string, ActivityState>();
 
-  /** Set of parent session IDs whose sub-sessions are expanded in the popover. */
-  @state() private expandedDelegates = new Set<string>();
-
   /** Build a map of parent session ID → child sessions. */
   private getChildMap(): Map<string, SessionListItem[]> {
     const map = new Map<string, SessionListItem[]>();
@@ -45,17 +42,6 @@ export class SessionList extends LitElement {
       }
     }
     return map;
-  }
-
-  private toggleDelegates(parentId: string, e: Event) {
-    e.stopPropagation();
-    const next = new Set(this.expandedDelegates);
-    if (next.has(parentId)) {
-      next.delete(parentId);
-    } else {
-      next.add(parentId);
-    }
-    this.expandedDelegates = next;
   }
 
   private handleSelectSession(sessionId: string) {
@@ -87,25 +73,24 @@ export class SessionList extends LitElement {
     return html`<span class="${classes}" title="${state === "running" ? "Running" : "New activity"}"></span>`;
   }
 
-  private renderDelegateSubSessions(parentId: string) {
-    if (!this.expandedDelegates.has(parentId)) return nothing;
-
+  private renderDelegatePopoverContent(parentId: string) {
     const childMap = this.getChildMap();
     const children = childMap.get(parentId) ?? [];
     if (children.length === 0) return nothing;
 
     return html`
-      <div class="pl-7 bg-zinc-800/40 border-t border-zinc-700/50">
+      <div class="px-3 py-1 text-[10px] text-zinc-500 uppercase tracking-wide font-semibold">Delegate sub-sessions</div>
+      <div class="max-h-48 overflow-y-auto">
         ${children.map(child => {
           const label = child.name || child.first_message || "Sub-session";
-          const truncated = label.length > 50 ? label.slice(0, 50) + "…" : label;
+          const truncated = label.length > 40 ? label.slice(0, 40) + "…" : label;
           const isActive = child.id === this.activeSessionId;
           const date = formatRelativeDate(child.updated_at);
           return html`
             <button
               data-session-id=${child.id}
               class="w-full text-left px-3 py-1.5 cursor-pointer transition-colors flex items-center gap-1.5
-                ${isActive ? "bg-zinc-700/60" : "hover:bg-zinc-700/30"}"
+                ${isActive ? "bg-zinc-700/60" : "hover:bg-zinc-700"}"
               @click=${() => this.handleSelectSession(child.id)}
             >
               ${this.renderActivityDot(child.id)}
@@ -181,21 +166,26 @@ export class SessionList extends LitElement {
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-zinc-500"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
               ${this.renderActivityDot(assistant.id)}
               <span class="text-xs ${isActive ? "text-zinc-100 font-medium" : "text-zinc-300"} truncate">Assistant</span>
-              ${childCount > 0 ? html`
-                <button
-                  class="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 shrink-0 cursor-pointer transition-colors"
-                  title="Show ${childCount} delegate sub-session${childCount !== 1 ? "s" : ""}"
-                  @click=${(e: Event) => this.toggleDelegates(assistant.id, e)}
-                >+${childCount}</button>
-              ` : nothing}
             </button>
+            ${childCount > 0 ? html`
+              <popover-menu
+                triggerClass="!p-0 !px-1 !py-1.5 !opacity-100"
+                panelClass="w-64"
+                .content=${() => this.renderDelegatePopoverContent(assistant.id)}
+                .triggerTemplate=${html`
+                  <span
+                    class="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 shrink-0 transition-colors"
+                    title="Show ${childCount} delegate sub-session${childCount !== 1 ? "s" : ""}"
+                  >+${childCount}</span>
+                `}
+              ></popover-menu>
+            ` : nothing}
             <popover-menu
               triggerClass="md:opacity-0 md:group-hover/assistant:opacity-100"
               panelClass="w-60"
               .content=${() => this.renderSessionMenuContent()}
             ></popover-menu>
           </div>
-          ${this.renderDelegateSubSessions(assistant.id)}
         </div>
       `;
     }

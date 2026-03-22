@@ -32,6 +32,10 @@ export class PopoverMenu extends LitElement {
   @property({ attribute: false })
   content: (() => TemplateResult) | null = null;
 
+  /** Optional custom trigger template. When set, replaces the default three-dot icon. */
+  @property({ attribute: false })
+  triggerTemplate: TemplateResult | null = null;
+
   @state() private open = false;
 
   private _onDocClick = (e: MouseEvent) => {
@@ -68,12 +72,15 @@ export class PopoverMenu extends LitElement {
     return html`
       <div class="relative shrink-0">
         <button
-          class="px-2 py-2.5 text-zinc-600 hover:text-zinc-300 transition-all cursor-pointer
-            ${this.open ? "!opacity-100 text-zinc-300" : ""} ${this.triggerClass}"
-          title="Actions"
+          class="${this.triggerTemplate
+            ? `cursor-pointer ${this.triggerClass}`
+            : `px-2 py-2.5 text-zinc-600 hover:text-zinc-300 transition-all cursor-pointer ${this.open ? "!opacity-100 text-zinc-300" : ""} ${this.triggerClass}`}"
+          title="${this.triggerTemplate ? "" : "Actions"}"
           @click=${this.toggle}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+          ${this.triggerTemplate ?? html`
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+          `}
         </button>
         ${this.open && this.content ? html`
           <div
