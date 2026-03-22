@@ -12,6 +12,7 @@
  */
 
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import type { Model, Api } from "@mariozechner/pi-ai";
 
 export interface ManagedSession {
   session: AgentSession;
@@ -19,13 +20,18 @@ export interface ManagedSession {
   lastActivity: number;
 }
 
+/** Minimal interface for WebSocket objects — matches Bun's ServerWebSocket. */
+export interface WebSocketLike {
+  send(data: string, compress?: boolean): number;
+}
+
 export interface WsClient {
-  ws: any; // Bun ServerWebSocket
+  ws: WebSocketLike;
 }
 
 export interface ServerState {
   sessions: Map<string, ManagedSession>;
   clients: Set<WsClient>;
   frontendDir: string;
-  explicitModel: any | undefined;
+  explicitModel: Model<Api> | undefined;
 }

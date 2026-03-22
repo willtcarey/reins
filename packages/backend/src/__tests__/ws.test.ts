@@ -12,6 +12,7 @@ function createMockWs() {
     ws: {
       send(data: string) {
         sent.push(data);
+        return data.length;
       },
     },
     sent,

@@ -12,7 +12,7 @@ import type { WsClient } from "../../state.js";
 function createMockClient(): { client: WsClient; sent: string[] } {
   const sent: string[] = [];
   const client: WsClient = {
-    ws: { send(data: string) { sent.push(data); } },
+    ws: { send(data: string) { sent.push(data); return data.length; } },
   };
   return { client, sent };
 }

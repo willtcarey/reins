@@ -9,20 +9,18 @@
  * (tools need a cwd), so it's resolved from the project the session belongs to.
  */
 
-import type { ServerState, WsClient } from "./state.js";
+import type { ServerState, WsClient, WebSocketLike } from "./state.js";
 import { ensureSessionOpen, runManualCompaction } from "./sessions.js";
 import { getSession } from "./session-store.js";
 import { getProject } from "./project-store.js";
 import { createBroadcastExcluding } from "./models/broadcast.js";
 
 /** Maps raw WebSocket objects to their WsClient wrappers. */
-const wsClientMap = new WeakMap<object, WsClient>();
+const wsClientMap = new WeakMap<WebSocketLike, WsClient>();
 
-function sendToWs(ws: unknown, data: unknown): void {
+function sendToWs(ws: WebSocketLike, data: unknown): void {
   try {
-    if (typeof ws === "object" && ws !== null && "send" in ws && typeof ws.send === "function") {
-      ws.send(JSON.stringify(data));
-    }
+    ws.send(JSON.stringify(data));
   } catch {
     // ignore send errors on closed sockets
   }
@@ -133,18 +131,15 @@ async function handleWsCommand(
   }
 }
 
-export function handleWsOpen(state: ServerState, ws: unknown): void {
+export function handleWsOpen(state: ServerState, ws: WebSocketLike): void {
   const client: WsClient = { ws };
   state.clients.add(client);
-  if (typeof ws === "object" && ws !== null) {
-    wsClientMap.set(ws, client);
-  }
-
+  wsClientMap.set(ws, client);
   console.log(`WebSocket client connected (total: ${state.clients.size})`);
 }
 
-export function handleWsMessage(state: ServerState, ws: unknown, message: string | Buffer): void {
-  const client = typeof ws === "object" && ws !== null ? wsClientMap.get(ws) : undefined;
+export function handleWsMessage(state: ServerState, ws: WebSocketLike, message: string | Buffer): void {
+  const client = wsClientMap.get(ws);
   if (!client) return;
   const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
   handleWsCommand(state, client, raw).catch((err) => {
@@ -153,8 +148,8 @@ export function handleWsMessage(state: ServerState, ws: unknown, message: string
   });
 }
 
-export function handleWsClose(state: ServerState, ws: unknown): void {
-  const client = typeof ws === "object" && ws !== null ? wsClientMap.get(ws) : undefined;
+export function handleWsClose(state: ServerState, ws: WebSocketLike): void {
+  const client = wsClientMap.get(ws);
   if (client) {
     state.clients.delete(client);
   }
