@@ -5,6 +5,7 @@
   "scripts": {
     "build": "bun run --filter '@reins/frontend' build",
     "dev": "bun run --filter '@reins/frontend' dev & bun packages/backend/dev.ts",
-    "test": "bun run --filter '@reins/backend' test"
+    "test": "bun run --filter '@reins/backend' test",
+    "typecheck": "bun run --filter '@reins/*' typecheck"
   }
 }
