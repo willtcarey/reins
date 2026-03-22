@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build src/index.ts src/changes/highlight-worker.ts --outdir dist --splitting --minify && bunx @tailwindcss/cli -i src/app.css -o dist/app.css --minify",
-    "dev": "bun build src/index.ts src/changes/highlight-worker.ts --outdir dist --splitting --watch & bunx @tailwindcss/cli -i src/app.css -o dist/app.css --watch=always"
+    "build": "bun build src/index.ts src/models/changes/highlight-worker.ts --outdir dist --splitting --minify && bunx @tailwindcss/cli -i src/components/app.css -o dist/app.css --minify",
+    "dev": "bun build src/index.ts src/models/changes/highlight-worker.ts --outdir dist --splitting --watch & bunx @tailwindcss/cli -i src/components/app.css -o dist/app.css --watch=always"
   },
   "dependencies": {
     "lit": "^3.3.1",
