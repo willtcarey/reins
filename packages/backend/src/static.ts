@@ -79,9 +79,15 @@ async function replaceAsync(
   replacer: (match: string, ...args: string[]) => Promise<string>,
 ): Promise<string> {
   const matches: { match: string; groups: string[]; index: number }[] = [];
-  str.replace(regex, (match, ...args) => {
-    // Last two args from replace are offset and full string
-    matches.push({ match, groups: args.slice(0, -2), index: args.at(-2) as unknown as number });
+  // The replace callback signature is (match, ...captures, offset, fullString).
+  // TypeScript types the rest as string[], but offset is actually a number.
+  str.replace(regex, (match: string, ...args: Array<string | number>) => {
+    const offset = args.at(-2);
+    matches.push({
+      match,
+      groups: args.slice(0, -2).map(String),
+      index: typeof offset === "number" ? offset : Number(offset),
+    });
     return match;
   });
 

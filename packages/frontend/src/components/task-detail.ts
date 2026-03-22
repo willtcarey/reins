@@ -112,7 +112,7 @@ export class TaskDetail extends LitElement {
             class="w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors"
             placeholder="Task title"
             .value=${this.taskTitle}
-            @input=${(e: Event) => { this.taskTitle = (e.target as HTMLInputElement).value; this.handleInput(); }}
+            @input=${(e: Event) => { if (e.target instanceof HTMLInputElement) { this.taskTitle = e.target.value; this.handleInput(); } }}
           />
 
           <label class="block text-[10px] font-medium text-zinc-400 uppercase tracking-wide mb-1 mt-3">Description</label>
@@ -121,7 +121,7 @@ export class TaskDetail extends LitElement {
             rows="5"
             placeholder="Task description (optional)"
             .value=${this.description}
-            @input=${(e: Event) => { this.description = (e.target as HTMLTextAreaElement).value; this.handleInput(); }}
+            @input=${(e: Event) => { if (e.target instanceof HTMLTextAreaElement) { this.description = e.target.value; this.handleInput(); } }}
           ></textarea>
 
           ${task ? html`

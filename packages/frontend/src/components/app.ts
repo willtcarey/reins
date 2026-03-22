@@ -25,7 +25,6 @@ import type { Route } from "../models/router.js";
 import "./chat-panel.js";
 import "./changes/diff-panel.js";
 import "./changes/diff-file-tree.js";
-import type { SessionSidebar } from "./session-sidebar.js";
 import "./session-sidebar.js";
 import "./branch-indicator.js";
 import "./quick-open.js";
@@ -46,7 +45,7 @@ export class AppShell extends LitElement {
   /** Bumped on every store notification to trigger a re-render. */
   @state() private _storeVersion = 0;
   private isStandalone = window.matchMedia("(display-mode: standalone)").matches
-    || (navigator as any).standalone === true;
+    || ("standalone" in navigator && navigator.standalone === true);
   private quickOpenStore = new QuickOpenStore();
   @query("quick-open") private _quickOpen!: QuickOpen;
 
@@ -137,15 +136,15 @@ export class AppShell extends LitElement {
   }
 
   private getDiffPanel(): DiffPanel | null {
-    return this.querySelector("diff-panel") as DiffPanel | null;
+    return this.querySelector("diff-panel");
   }
 
   /**
    * Handle file-select from the chat-tab file tree:
    * switch to the Changes tab, then scroll to that file's diff card.
    */
-  private handleChatFileSelect(e: Event) {
-    const path = (e as CustomEvent<string>).detail;
+  private handleChatFileSelect(e: CustomEvent<string>) {
+    const path = e.detail;
     this.activeTab = "changes";
     requestAnimationFrame(() => {
       this.getDiffPanel()?.scrollToFile(path);
@@ -153,8 +152,7 @@ export class AppShell extends LitElement {
   }
 
   private openSidebar() {
-    const sidebar = this.querySelector("session-sidebar") as SessionSidebar | null;
-    sidebar?.open();
+    this.querySelector("session-sidebar")?.open();
   }
 
   private openQuickOpen() {

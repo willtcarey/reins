@@ -15,9 +15,14 @@ import { getSession } from "./session-store.js";
 import { getProject } from "./project-store.js";
 import { createBroadcastExcluding } from "./models/broadcast.js";
 
-function sendToWs(ws: any, data: unknown): void {
+/** Maps raw WebSocket objects to their WsClient wrappers. */
+const wsClientMap = new WeakMap<object, WsClient>();
+
+function sendToWs(ws: unknown, data: unknown): void {
   try {
-    ws.send(JSON.stringify(data));
+    if (typeof ws === "object" && ws !== null && "send" in ws && typeof ws.send === "function") {
+      ws.send(JSON.stringify(data));
+    }
   } catch {
     // ignore send errors on closed sockets
   }
@@ -86,8 +91,9 @@ async function handleWsCommand(
         } else {
           await managed.session.prompt(cmd.message);
         }
-      } catch (err: any) {
-        sendToWs(client.ws, { type: "error", error: `prompt failed: ${err.message}` });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        sendToWs(client.ws, { type: "error", error: `prompt failed: ${message}` });
       }
       break;
     }
@@ -100,21 +106,23 @@ async function handleWsCommand(
         const managed = await ensureSessionOpen(state, cmd.sessionId, projectDir);
         sendToWs(client.ws, { type: "ack", command: "steer" });
         await managed.session.steer(cmd.message);
-      } catch (err: any) {
-        sendToWs(client.ws, { type: "error", error: `steer failed: ${err.message}` });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        sendToWs(client.ws, { type: "error", error: `steer failed: ${message}` });
       }
       break;
     }
 
     case "abort": {
-      const managed = state.sessions.get(cmd.sessionId!);
+      const managed = state.sessions.get(cmd.sessionId);
       if (!managed) { sendToWs(client.ws, { type: "error", error: "Session not active" }); return; }
       managed.lastActivity = Date.now();
       sendToWs(client.ws, { type: "ack", command: "abort" });
       try {
         await managed.session.abort();
-      } catch (err: any) {
-        sendToWs(client.ws, { type: "error", error: `abort failed: ${err.message}` });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        sendToWs(client.ws, { type: "error", error: `abort failed: ${message}` });
       }
       break;
     }
@@ -125,16 +133,19 @@ async function handleWsCommand(
   }
 }
 
-export function handleWsOpen(state: ServerState, ws: any): void {
+export function handleWsOpen(state: ServerState, ws: unknown): void {
   const client: WsClient = { ws };
   state.clients.add(client);
-  (ws as any)._wsClient = client;
+  if (typeof ws === "object" && ws !== null) {
+    wsClientMap.set(ws, client);
+  }
 
   console.log(`WebSocket client connected (total: ${state.clients.size})`);
 }
 
-export function handleWsMessage(state: ServerState, ws: any, message: string | Buffer): void {
-  const client = (ws as any)._wsClient as WsClient;
+export function handleWsMessage(state: ServerState, ws: unknown, message: string | Buffer): void {
+  const client = typeof ws === "object" && ws !== null ? wsClientMap.get(ws) : undefined;
+  if (!client) return;
   const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
   handleWsCommand(state, client, raw).catch((err) => {
     console.error("WebSocket command error:", err);
@@ -142,8 +153,8 @@ export function handleWsMessage(state: ServerState, ws: any, message: string | B
   });
 }
 
-export function handleWsClose(state: ServerState, ws: any): void {
-  const client = (ws as any)._wsClient as WsClient | undefined;
+export function handleWsClose(state: ServerState, ws: unknown): void {
+  const client = typeof ws === "object" && ws !== null ? wsClientMap.get(ws) : undefined;
   if (client) {
     state.clients.delete(client);
   }

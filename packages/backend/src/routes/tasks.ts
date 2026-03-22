@@ -26,7 +26,7 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
 
   // Generate a task from freeform input, then create it
   router.post("/tasks/generate", async (ctx) => {
-    const body = (await ctx.req.json()) as { prompt?: string };
+    const body: { prompt?: string } = await ctx.req.json();
 
     if (!body.prompt?.trim()) {
       badRequest("Prompt is required");
@@ -62,7 +62,7 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
   // Update a task
   router.patch("/tasks/:taskId", async (ctx) => {
     const taskId = parseInt(ctx.params.taskId, 10);
-    const body = (await ctx.req.json()) as { title?: string; description?: string };
+    const body: { title?: string; description?: string } = await ctx.req.json();
     const updated = ctx.project.tasks().update(taskId, body);
     if (!updated) notFound("Task not found");
     return Response.json(updated);

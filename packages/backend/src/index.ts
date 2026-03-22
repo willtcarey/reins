@@ -9,7 +9,8 @@
  * stay alive mid-turn.
  */
 
-import { getModel } from "@mariozechner/pi-ai";
+import { getModels, getProviders } from "@mariozechner/pi-ai";
+import type { KnownProvider } from "@mariozechner/pi-ai";
 import { watch } from "fs";
 import { resolve, join } from "path";
 import { mkdirSync, existsSync } from "fs";
@@ -34,9 +35,19 @@ if (IS_DEV) console.log(`  Hot reload: enabled`);
 
 const explicitProvider = process.env.REINS_PROVIDER;
 const explicitModelId = process.env.REINS_MODEL;
+
+function isKnownProvider(value: string): value is KnownProvider {
+  const providers: readonly string[] = getProviders();
+  return providers.includes(value);
+}
+
+function findModel(provider: KnownProvider, modelId: string) {
+  return getModels(provider).find((m) => m.id === modelId);
+}
+
 const explicitModel =
-  explicitProvider && explicitModelId
-    ? getModel(explicitProvider as any, explicitModelId)
+  explicitProvider && explicitModelId && isKnownProvider(explicitProvider)
+    ? findModel(explicitProvider, explicitModelId)
     : undefined;
 
 const state: ServerState = {
@@ -99,10 +110,10 @@ async function loadHandlers(): Promise<void> {
 
     // Cache-bust the bundled output so Bun imports the fresh version
     const t = Date.now();
-    [routes, ws] = await Promise.all([
-      import(`${join(DEV_BUILD_DIR, "handler.js")}?t=${t}`) as Promise<typeof RoutesModule>,
-      import(`${join(DEV_BUILD_DIR, "ws.js")}?t=${t}`) as Promise<typeof WsModule>,
-    ]);
+    const routesMod: typeof RoutesModule = await import(`${join(DEV_BUILD_DIR, "handler.js")}?t=${t}`);
+    const wsMod: typeof WsModule = await import(`${join(DEV_BUILD_DIR, "ws.js")}?t=${t}`);
+    routes = routesMod;
+    ws = wsMod;
   } else {
     [routes, ws] = await Promise.all([
       import("./handler.js"),
@@ -150,7 +161,8 @@ async function startServer(): Promise<void> {
 
     async fetch(req, server) {
       // Always go through current handler references
-      return routes.handleFetch(state, req, server) as any;
+      const response = await routes.handleFetch(state, req, server);
+      return response ?? new Response("Not Found", { status: 404 });
     },
 
     websocket: {

@@ -11,7 +11,7 @@
  * progress via WS broadcast.
  */
 
-import { type Static, Type } from "@sinclair/typebox";
+import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { TaskRow } from "../task-store.js";
 import type { Broadcast } from "../models/broadcast.js";
@@ -49,7 +49,7 @@ export interface CreateTaskToolOpts {
  * Loads the project record at execution time so that changes to the
  * project path or base branch are picked up mid-conversation.
  */
-export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition {
+export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition<typeof parameters> {
   const { projectId, broadcast, sessions, createSession } = opts;
 
   return {
@@ -60,8 +60,7 @@ export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition {
       "Only use this when the user explicitly asks you to create a task — do not proactively create tasks.",
     parameters,
 
-    async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
-      const params = _params as Static<typeof parameters>;
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       try {
         const project = getProject(projectId);
         if (!project) throw new Error(`Project ${projectId} not found`);

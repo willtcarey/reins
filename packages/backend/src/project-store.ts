@@ -23,17 +23,18 @@ export interface Project {
 
 export function listProjects(): Project[] {
   const d = getDb();
-  return d.query("SELECT * FROM projects ORDER BY last_opened_at DESC").all() as Project[];
+  return d.query<Project, []>("SELECT * FROM projects ORDER BY last_opened_at DESC").all();
 }
 
 export function getProject(id: number): Project | null {
   const d = getDb();
-  return (d.query("SELECT * FROM projects WHERE id = ?").get(id) as Project) ?? null;
+  return d.query<Project, [number]>("SELECT * FROM projects WHERE id = ?").get(id) ?? null;
 }
 
 export function createProject(name: string, path: string, baseBranch = "main"): Project {
   const d = getDb();
-  const result = d.query("INSERT INTO projects (name, path, base_branch, created_at, last_opened_at) VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) RETURNING *").get(name, path, baseBranch) as Project;
+  const result = d.query<Project, [string, string, string]>("INSERT INTO projects (name, path, base_branch, created_at, last_opened_at) VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) RETURNING *").get(name, path, baseBranch);
+  if (!result) throw new Error("Failed to create project");
   return result;
 }
 

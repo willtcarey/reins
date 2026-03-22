@@ -72,11 +72,11 @@ export function createRouter(): RouterGroup & { handle: (req: Request, state: Se
       patch(path, handler)  { addRoute("PATCH",  prefix + path, handler, parentMiddlewares); },
       delete(path, handler) { addRoute("DELETE", prefix + path, handler, parentMiddlewares); },
 
-      group(subPrefix: string, ...args: any[]) {
-        const registerFn = args.pop() as (r: RouterGroup<any>) => void;
-        const middlewares = args as Middleware[];
+      group(subPrefix: string, ...args: [...Middleware[], (r: RouterGroup<RouteContext>) => void]) {
+        const registerFn = args.pop();
+        const middlewares: Middleware[] = args;
         const sub = createGroup(prefix + subPrefix, [...parentMiddlewares, ...middlewares]);
-        registerFn(sub);
+        if (typeof registerFn === "function") registerFn(sub);
       },
     };
     return group;
@@ -94,7 +94,7 @@ export function createRouter(): RouterGroup & { handle: (req: Request, state: Se
 
       const params: Record<string, string> = {};
       for (const [key, value] of Object.entries(match.pathname.groups)) {
-        if (value !== undefined) params[key] = decodeURIComponent(value as string);
+        if (value !== undefined) params[key] = decodeURIComponent(value);
       }
 
       const ctx: RouteContext = { req, url, params, state };

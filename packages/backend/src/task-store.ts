@@ -39,23 +39,23 @@ export function createTask(
 ): TaskRow {
   const db = getDb();
   return db
-    .query(
+    .query<TaskRow, [number, string, string | null, string, string | null]>(
       `INSERT INTO tasks (project_id, title, description, branch_name, base_commit, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
     )
-    .get(projectId, title, description, branchName, baseCommit) as TaskRow;
+    .get(projectId, title, description, branchName, baseCommit)!;
 }
 
 export function getTask(id: number): TaskRow | null {
   const db = getDb();
-  return (db.query("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow) ?? null;
+  return db.query<TaskRow, [number]>("SELECT * FROM tasks WHERE id = ?").get(id) ?? null;
 }
 
 export function listTasks(projectId: number): TaskListItem[] {
   const db = getDb();
   const rows = db
-    .query(
+    .query<TaskRow & { session_count: number; session_ids_json: string }, [number]>(
       `SELECT
          t.*,
          COALESCE(sc.cnt, 0) AS session_count,
@@ -71,7 +71,7 @@ export function listTasks(projectId: number): TaskListItem[] {
        WHERE t.project_id = ?
        ORDER BY CASE t.status WHEN 'closed' THEN 1 ELSE 0 END, t.updated_at DESC`,
     )
-    .all(projectId) as (TaskRow & { session_count: number; session_ids_json: string })[];
+    .all(projectId);
 
   return rows.map(({ session_ids_json, ...rest }) => ({
     ...rest,
@@ -146,8 +146,8 @@ export function markTasksClosed(taskIds: number[]): void {
 export function listOpenTasks(projectId: number): TaskRow[] {
   const db = getDb();
   return db
-    .query("SELECT * FROM tasks WHERE project_id = ? AND status = 'open'")
-    .all(projectId) as TaskRow[];
+    .query<TaskRow, [number]>("SELECT * FROM tasks WHERE project_id = ? AND status = 'open'")
+    .all(projectId);
 }
 
 /**
@@ -156,7 +156,7 @@ export function listOpenTasks(projectId: number): TaskRow[] {
 export function getTaskSessionIds(taskId: number): string[] {
   const db = getDb();
   const rows = db
-    .query("SELECT id FROM sessions WHERE task_id = ?")
-    .all(taskId) as { id: string }[];
+    .query<{ id: string }, [number]>("SELECT id FROM sessions WHERE task_id = ?")
+    .all(taskId);
   return rows.map((r) => r.id);
 }

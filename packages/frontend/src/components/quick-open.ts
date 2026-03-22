@@ -85,7 +85,8 @@ export class QuickOpen extends LitElement {
   }
 
   private handleInput(e: Event) {
-    this._query = (e.target as HTMLInputElement).value;
+    if (!(e.target instanceof HTMLInputElement)) return;
+    this._query = e.target.value;
     this._selectedIndex = 0;
   }
 
@@ -129,7 +130,7 @@ export class QuickOpen extends LitElement {
   }
 
   private handleBackdropClick(e: MouseEvent) {
-    if ((e.target as HTMLElement)?.id === "palette-backdrop") {
+    if (e.target instanceof HTMLElement && e.target.id === "palette-backdrop") {
       this.close();
     }
   }

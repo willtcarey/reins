@@ -14,7 +14,6 @@ import { customElement, property } from "lit/decorators.js";
 import { styleMap } from "lit/directives/style-map.js";
 import type { DiffFileSummary } from "../../models/changes/types.js";
 import type { DiffStore } from "../../models/stores/diff-store.js";
-import type { DiffMode } from "../../models/stores/diff-store.js";
 import type { FileTreeState } from "../../models/changes/file-tree-state.js";
 
 interface TreeNode {
@@ -156,8 +155,9 @@ export class DiffFileTree extends LitElement {
   }
 
   private handleModeChange(e: Event) {
-    const select = e.target as HTMLSelectElement;
-    const mode = select.value as DiffMode;
+    if (!(e.target instanceof HTMLSelectElement)) return;
+    const mode = e.target.value;
+    if (mode !== "branch" && mode !== "uncommitted") return;
     this.store?.setDiffMode(mode);
   }
 

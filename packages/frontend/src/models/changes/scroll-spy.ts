@@ -86,8 +86,8 @@ export class ScrollSpy {
 
     for (const entry of entries) {
       if (!entry.isIntersecting) continue;
-      const el = entry.target as HTMLElement;
-      const id = el.dataset[this.opts.dataAttribute];
+      if (!(entry.target instanceof HTMLElement)) continue;
+      const id = entry.target.dataset[this.opts.dataAttribute];
       if (!id) continue;
       const top = entry.boundingClientRect.top;
       if (!topmost || top < topmost.top) {

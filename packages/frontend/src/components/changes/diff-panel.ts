@@ -120,14 +120,16 @@ export class DiffPanel extends LitElement {
   }
 
   private handleFileSelect(e: Event) {
-    const path = (e as CustomEvent<string>).detail;
+    if (!(e instanceof CustomEvent)) return;
+    const path: string = e.detail;
     this.scrollToFile(path);
   }
 
   // ---- Child event handlers -------------------------------------------------
 
   private async _onExpandUp(e: Event) {
-    const { filePath, hunkIndex } = (e as CustomEvent<ExpandDetail>).detail;
+    if (!(e instanceof CustomEvent)) return;
+    const { filePath, hunkIndex }: ExpandDetail = e.detail;
     const key = `${filePath}:${hunkIndex}:up`;
     if (this.expandingHunks.has(key)) return;
 
@@ -156,7 +158,8 @@ export class DiffPanel extends LitElement {
   }
 
   private async _onExpandDown(e: Event) {
-    const { filePath, hunkIndex } = (e as CustomEvent<ExpandDetail>).detail;
+    if (!(e instanceof CustomEvent)) return;
+    const { filePath, hunkIndex }: ExpandDetail = e.detail;
     const key = `${filePath}:${hunkIndex}:down`;
     if (this.expandingHunks.has(key)) return;
     this.expandingHunks = new Set(this.expandingHunks).add(key);
@@ -177,8 +180,8 @@ export class DiffPanel extends LitElement {
     if (!fileCard) return null;
     const hunkEls = fileCard.querySelectorAll("[data-hunk-index]");
     for (const el of hunkEls) {
-      if ((el as HTMLElement).dataset.hunkIndex === String(hunkIndex)) {
-        return el as HTMLElement;
+      if (el instanceof HTMLElement && el.dataset.hunkIndex === String(hunkIndex)) {
+        return el;
       }
     }
     return null;

@@ -63,7 +63,7 @@ export function createSession(
 ): SessionRow {
   const db = getDb();
   return db
-    .query(
+    .query<SessionRow, [string, number, string | null, string | null, string, number | null, string | null]>(
       `INSERT INTO sessions (id, project_id, model_provider, model_id, thinking_level, task_id, parent_session_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
@@ -76,18 +76,18 @@ export function createSession(
       opts?.thinkingLevel ?? "off",
       opts?.taskId ?? null,
       opts?.parentSessionId ?? null,
-    ) as SessionRow;
+    )!;
 }
 
 export function getSession(id: string): SessionRow | null {
   const db = getDb();
-  return (db.query("SELECT * FROM sessions WHERE id = ?").get(id) as SessionRow) ?? null;
+  return db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(id) ?? null;
 }
 
 export function listSessions(projectId: number): SessionListItem[] {
   const db = getDb();
   return db
-    .query(
+    .query<SessionListItem, [number]>(
       `SELECT
          s.id,
          s.name,
@@ -110,13 +110,13 @@ export function listSessions(projectId: number): SessionListItem[] {
        WHERE s.project_id = ? AND s.task_id IS NULL
        ORDER BY s.updated_at DESC`,
     )
-    .all(projectId) as SessionListItem[];
+    .all(projectId);
 }
 
 export function listTaskSessions(taskId: number): SessionListItem[] {
   const db = getDb();
   return db
-    .query(
+    .query<SessionListItem, [number]>(
       `SELECT
          s.id,
          s.name,
@@ -139,13 +139,13 @@ export function listTaskSessions(taskId: number): SessionListItem[] {
        WHERE s.task_id = ?
        ORDER BY s.updated_at DESC`,
     )
-    .all(taskId) as SessionListItem[];
+    .all(taskId);
 }
 
 export function listPaletteItems(): PaletteItem[] {
   const db = getDb();
   const rows = db
-    .query(
+    .query<PaletteItem, []>(
       `SELECT
          s.id AS sessionId,
          s.project_id AS projectId,
@@ -184,7 +184,7 @@ export function listPaletteItems(): PaletteItem[] {
          )
        ORDER BY s.updated_at DESC`,
     )
-    .all() as PaletteItem[];
+    .all();
   return rows;
 }
 
@@ -229,18 +229,18 @@ export function persistMessages(sessionId: string, messages: any[]): void {
   const db = getDb();
 
   const maxRow = db
-    .query("SELECT COALESCE(MAX(seq), -1) AS max_seq FROM session_messages WHERE session_id = ?")
-    .get(sessionId) as { max_seq: number };
+    .query<{ max_seq: number }, [string]>("SELECT COALESCE(MAX(seq), -1) AS max_seq FROM session_messages WHERE session_id = ?")
+    .get(sessionId)!;
   const nextSeq = maxRow.max_seq + 1;
 
   const compactionIdx = messages.findIndex((m: any) => m.role === "compactionSummary");
 
   const lastSummaryRow = db
-    .query(
+    .query<{ last_seq: number | null }, [string]>(
       `SELECT MAX(seq) AS last_seq FROM session_messages
        WHERE session_id = ? AND role = 'compactionSummary'`,
     )
-    .get(sessionId) as { last_seq: number | null };
+    .get(sessionId);
 
   const insert = db.query(
     `INSERT INTO session_messages (session_id, seq, role, message_json, created_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
@@ -266,11 +266,11 @@ export function persistMessages(sessionId: string, messages: any[]): void {
         // Prune tool result content from pre-compaction messages
         const compactionSeq = nextSeq;
         const preCompactionResults = db
-          .query(
+          .query<{ id: number; message_json: string }, [string, number]>(
             `SELECT id, message_json FROM session_messages
              WHERE session_id = ? AND seq < ? AND role = 'toolResult'`,
           )
-          .all(sessionId, compactionSeq) as { id: number; message_json: string }[];
+          .all(sessionId, compactionSeq);
 
         const update = db.query(
           `UPDATE session_messages SET message_json = ? WHERE id = ?`,
@@ -312,8 +312,8 @@ export function persistMessages(sessionId: string, messages: any[]): void {
 export function loadMessages(sessionId: string): any[] {
   const db = getDb();
   const rows = db
-    .query("SELECT message_json FROM session_messages WHERE session_id = ? ORDER BY seq")
-    .all(sessionId) as { message_json: string }[];
+    .query<{ message_json: string }, [string]>("SELECT message_json FROM session_messages WHERE session_id = ? ORDER BY seq")
+    .all(sessionId);
   return rows.map((r) => JSON.parse(r.message_json));
 }
 
@@ -327,21 +327,21 @@ export function loadMessagesForLLM(sessionId: string): any[] {
 
   // Find the seq of the last compaction summary
   const summaryRow = db
-    .query(
+    .query<{ last_seq: number | null }, [string]>(
       `SELECT MAX(seq) AS last_seq FROM session_messages
        WHERE session_id = ? AND role = 'compactionSummary'`,
     )
-    .get(sessionId) as { last_seq: number | null };
+    .get(sessionId);
 
   const minSeq = summaryRow?.last_seq != null ? summaryRow.last_seq : 0;
 
   const rows = db
-    .query(
+    .query<{ message_json: string }, [string, number]>(
       `SELECT message_json FROM session_messages
        WHERE session_id = ? AND seq >= ?
        ORDER BY seq`,
     )
-    .all(sessionId, minSeq) as { message_json: string }[];
+    .all(sessionId, minSeq);
 
   return rows.map((r) => JSON.parse(r.message_json));
 }

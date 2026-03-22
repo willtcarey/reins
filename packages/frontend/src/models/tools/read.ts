@@ -31,8 +31,8 @@ export function getReadSummary(block: ToolBlockData): string {
 
 /** Extract the offset/limit range label, if offset or limit were specified. */
 export function getReadRange(block: ToolBlockData): string {
-  const offset = block.args?.offset as number | undefined;
-  const limit = block.args?.limit as number | undefined;
+  const offset: number | undefined = typeof block.args?.offset === "number" ? block.args.offset : undefined;
+  const limit: number | undefined = typeof block.args?.limit === "number" ? block.args.limit : undefined;
   if (!offset && !limit) return "";
   if (offset && limit) return `L${offset}–${offset + limit - 1}`;
   if (offset) return `L${offset}+`;

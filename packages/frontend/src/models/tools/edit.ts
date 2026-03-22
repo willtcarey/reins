@@ -12,9 +12,9 @@ export function getEditSummary(block: ToolBlockData): string {
 
 /** Compute addition/removal line counts. Prefers details.diff when available, falls back to oldText/newText. */
 export function getEditStats(block: ToolBlockData): { additions: number; removals: number } {
-  const diffStr = block.result?.details?.diff as string | undefined;
-  if (diffStr) {
-    const diffLines = parseDiffString(diffStr);
+  const rawDiff = block.result?.details?.diff;
+  if (typeof rawDiff === "string" && rawDiff) {
+    const diffLines = parseDiffString(rawDiff);
     return {
       additions: diffLines.filter((l) => l.type === "add").length,
       removals: diffLines.filter((l) => l.type === "remove").length,
@@ -109,9 +109,9 @@ export function parseDiffString(diff: string): DiffLine[] {
  * context lines), falls back to naive oldText→newText diff.
  */
 export function getEditDiffLines(block: ToolBlockData): DiffLine[] {
-  const diffStr = block.result?.details?.diff as string | undefined;
-  if (diffStr) {
-    return parseDiffString(diffStr);
+  const rawDiff = block.result?.details?.diff;
+  if (typeof rawDiff === "string" && rawDiff) {
+    return parseDiffString(rawDiff);
   }
   return computeEditDiff(block.args?.oldText ?? "", block.args?.newText ?? "");
 }

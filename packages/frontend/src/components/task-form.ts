@@ -74,7 +74,7 @@ export class TaskForm extends LitElement {
             rows="3"
             placeholder="What do you want to do?"
             .value=${this.prompt}
-            @input=${(e: Event) => this.prompt = (e.target as HTMLTextAreaElement).value}
+            @input=${(e: Event) => { if (e.target instanceof HTMLTextAreaElement) this.prompt = e.target.value; }}
             @keydown=${(e: KeyboardEvent) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); this.handleCreate(); }
               if (e.key === "Escape") { this.close(); }

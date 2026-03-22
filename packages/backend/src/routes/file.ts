@@ -27,8 +27,14 @@ export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
         headers["Content-Disposition"] = `attachment; filename="${filename}"`;
       }
 
-      const body = content instanceof Uint8Array ? content as unknown as BodyInit : content;
-      return new Response(body, { headers });
+      if (content instanceof Uint8Array) {
+        // Copy to a fresh ArrayBuffer to satisfy TS 5.7's stricter
+        // ArrayBufferView<ArrayBuffer> constraint in BodyInit/BlobPart.
+        const buf = new ArrayBuffer(content.byteLength);
+        new Uint8Array(buf).set(content);
+        return new Response(buf, { headers });
+      }
+      return new Response(content, { headers });
     } catch (err: any) {
       if (err instanceof PathTraversalError) badRequest(err.message);
       if (err instanceof FileNotFoundError) notFound(err.message);

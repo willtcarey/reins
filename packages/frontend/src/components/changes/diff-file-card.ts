@@ -164,7 +164,7 @@ export class DiffFileCard extends LitElement {
         return;
       }
       const raw = await resp.text();
-      this.markdownContent = marked.parse(raw) as string;
+      this.markdownContent = await marked.parse(raw);
     } catch (err: any) {
       this.markdownContent = `<p class="text-red-400">Error: ${err.message}</p>`;
     } finally {

@@ -16,6 +16,7 @@ import {
   applyChatEvent,
   type AgentMessage,
   type AssistantMessage,
+  type CompactionSummaryMessage,
   type UserMessage,
   type ToolResultMessage,
   type TextContent,
@@ -104,9 +105,9 @@ export class ChatPanel extends LitElement {
     this.unsubscribeEvent?.();
     if (!this.client) return;
 
-    this.unsubscribeEvent = this.client.onEvent((sessionId, _projectId, event) => {
+    this.unsubscribeEvent = this.client.onEvent((sessionId, _projectId, event: Record<string, unknown>) => {
       // WS-level errors (e.g. command failures) arrive with empty sessionId
-      if ((event as any).type === "ws_error") {
+      if (event.type === "ws_error") {
         this.handleAgentEvent(event);
         return;
       }
@@ -116,11 +117,12 @@ export class ChatPanel extends LitElement {
     });
   }
 
-  private handleAgentEvent(event: any) {
+  private handleAgentEvent(event: Record<string, unknown>) {
     // ws_error is handled locally (needs DOM method); everything else
     // goes through the pure state reducer.
     if (event.type === "ws_error") {
-      this.showError((event as any).error || "Something went wrong");
+      const errorMsg = typeof event.error === "string" ? event.error : "Something went wrong";
+      this.showError(errorMsg);
       return;
     }
 
@@ -186,12 +188,14 @@ export class ChatPanel extends LitElement {
   }
 
   private handleInput(e: Event) {
-    this.inputText = (e.target as HTMLTextAreaElement).value;
+    if (e.target instanceof HTMLTextAreaElement) {
+      this.inputText = e.target.value;
+    }
   }
 
   private handleScroll(e: Event) {
-    const el = e.target as HTMLElement;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+    if (!(e.target instanceof HTMLElement)) return;
+    const atBottom = e.target.scrollHeight - e.target.scrollTop - e.target.clientHeight < 50;
     this.shouldAutoScroll = atBottom;
   }
 
@@ -217,7 +221,7 @@ export class ChatPanel extends LitElement {
 
   private renderMarkdown(text: string): ReturnType<typeof html> {
     try {
-      const rendered = marked.parse(text) as string;
+      const rendered = marked.parse(text, { async: false });
       return html`<div class="prose prose-invert prose-sm max-w-none break-words leading-relaxed">${unsafeHTML(rendered)}</div>`;
     } catch {
       return html`<pre class="whitespace-pre-wrap text-sm">${text}</pre>`;
@@ -291,10 +295,10 @@ export class ChatPanel extends LitElement {
     return nothing;
   }
 
-  private renderCompactionSummary(msg: any) {
-    const rawSummary = msg?.content || msg?.summary;
+  private renderCompactionSummary(msg: CompactionSummaryMessage) {
+    const rawSummary = msg.content || msg.summary;
     const summary = rawSummary && rawSummary !== "Conversation summarized" ? rawSummary : null;
-    const id = `compaction-${msg?.timestamp || 0}`;
+    const id = `compaction-${msg.timestamp || 0}`;
     const expanded = this.expandedSections.has(id);
 
     return html`
@@ -328,7 +332,7 @@ export class ChatPanel extends LitElement {
         return this.renderAssistantMessage(msg);
       case "toolResult":
         return this.renderToolResultMessage(msg);
-      case "compactionSummary" as any:
+      case "compactionSummary":
         return this.renderCompactionSummary(msg);
       default:
         return nothing;

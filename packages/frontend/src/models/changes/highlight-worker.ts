@@ -47,6 +47,10 @@ const FILENAME_TO_LANG: Record<string, BundledLanguage> = {
 
 const bundledLangIds = new Set(Object.keys(bundledLanguages));
 
+function isBundledLanguage(id: string): id is BundledLanguage {
+  return bundledLangIds.has(id);
+}
+
 function langFromPath(filePath: string): BundledLanguage | null {
   const basename = filePath.split("/").pop()?.toLowerCase() ?? "";
 
@@ -60,7 +64,7 @@ function langFromPath(filePath: string): BundledLanguage | null {
   // Check overrides first, then try the extension directly as a language ID
   const override = EXT_OVERRIDES[ext];
   if (override) return override;
-  if (bundledLangIds.has(ext)) return ext as BundledLanguage;
+  if (isBundledLanguage(ext)) return ext;
   return null;
 }
 

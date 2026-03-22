@@ -46,7 +46,14 @@ export interface ToolResultMessage {
   timestamp: number;
 }
 
-export type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage;
+export interface CompactionSummaryMessage {
+  role: "compactionSummary";
+  content: string;
+  summary?: string;
+  timestamp: number;
+}
+
+export type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | CompactionSummaryMessage;
 
 export interface StreamingTextBlock {
   type: "text";
@@ -153,7 +160,8 @@ export function applyChatEvent(state: ChatState, event: any): ChatState {
         const existing = new Set(
           state.messages.map((m: AgentMessage) => `${m.role}:${m.timestamp}`)
         );
-        const fresh = (event.messages as AgentMessage[]).filter(
+        const eventMessages: AgentMessage[] = event.messages;
+        const fresh = eventMessages.filter(
           (m) => m.role !== "user" && !existing.has(`${m.role}:${m.timestamp}`)
         );
         if (fresh.length > 0) {
@@ -184,7 +192,7 @@ export function applyChatEvent(state: ChatState, event: any): ChatState {
         messages: [
           ...state.messages,
           {
-            role: "compactionSummary" as any,
+            role: "compactionSummary",
             content: event.result?.summary || "Conversation summarized",
             timestamp: Date.now(),
           },

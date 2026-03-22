@@ -263,7 +263,7 @@ export async function resumeSession(
 function handleCompactionEnd(
   sessionId: string,
   agentSession: any,
-  event: { aborted?: boolean; result?: { summary?: string }; [k: string]: any },
+  event: { aborted?: boolean; result?: { summary?: string }; errorMessage?: string },
   broadcast: Broadcast,
   projectId: number,
 ): void {
@@ -279,7 +279,7 @@ function handleCompactionEnd(
     type: "event",
     sessionId,
     projectId,
-    event: { type: "compaction_end", result: event.result, aborted: event.aborted, errorMessage: (event as any).errorMessage },
+    event: { type: "compaction_end", result: event.result, aborted: event.aborted, errorMessage: event.errorMessage },
   });
 }
 
@@ -334,11 +334,11 @@ function wireSession(
     // compaction_start / compaction_end so the frontend gets a unified
     // event regardless of whether compaction was manual or automatic.
     if (event.type === "auto_compaction_start") {
-      broadcast({ type: "event", sessionId, projectId, event: { type: "compaction_start", reason: (event as any).reason ?? "auto" } });
+      broadcast({ type: "event", sessionId, projectId, event: { type: "compaction_start", reason: event.reason ?? "auto" } });
       return;
     }
     if (event.type === "auto_compaction_end") {
-      handleCompactionEnd(sessionId, agentSession, event as any, broadcast, projectId);
+      handleCompactionEnd(sessionId, agentSession, event, broadcast, projectId);
       return;
     }
 

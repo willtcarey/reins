@@ -245,7 +245,7 @@ export const readRenderer: ToolRenderer = {
     const preview = isRunning ? "" : getReadPreview(block, PREVIEW_LINES);
     const content = isRunning ? "" : getReadContent(block);
     const totalLines = isRunning ? 0 : getReadLineCount(block);
-    const startLine = (block.args?.offset as number | undefined) ?? 1;
+    const startLine = (typeof block.args?.offset === "number" ? block.args.offset : undefined) ?? 1;
     const isError = !isRunning && !!block.isError;
     const images = isRunning ? [] : getReadImages(block);
 

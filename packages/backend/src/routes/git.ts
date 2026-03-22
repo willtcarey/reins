@@ -47,7 +47,7 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
    * Request body: { "branch": "feature/foo" }
    */
   router.post("/git/push", async (ctx) => {
-    const body = (await ctx.req.json()) as { branch?: string };
+    const body: { branch?: string } = await ctx.req.json();
 
     if (!body.branch?.trim()) badRequest("branch is required");
 
@@ -66,7 +66,7 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
    * Request body: { "branch": "feature/foo" }
    */
   router.post("/git/rebase", async (ctx) => {
-    const body = (await ctx.req.json()) as { branch?: string };
+    const body: { branch?: string } = await ctx.req.json();
 
     if (!body.branch?.trim()) badRequest("branch is required");
 

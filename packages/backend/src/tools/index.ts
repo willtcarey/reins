@@ -24,8 +24,9 @@ export interface CustomToolsOpts {
   };
 }
 
-export function createCustomTools(opts: CustomToolsOpts): ToolDefinition[] {
-  const tools: ToolDefinition[] = [
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolDefinition is invariant in TParams; any is needed for heterogeneous arrays
+export function createCustomTools(opts: CustomToolsOpts): ToolDefinition<any>[] {
+  const tools: ToolDefinition<any>[] = [
     createTaskTool({
       projectId: opts.projectId,
       broadcast: opts.broadcast,

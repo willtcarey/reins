@@ -159,7 +159,7 @@ export class ProjectForm extends LitElement {
                 class="w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100
                        placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors"
                 .value=${this.name}
-                @input=${(e: InputEvent) => this.name = (e.target as HTMLInputElement).value}
+                @input=${(e: InputEvent) => { if (e.target instanceof HTMLInputElement) this.name = e.target.value; }}
               />
             </div>
 
@@ -171,7 +171,7 @@ export class ProjectForm extends LitElement {
                 class="w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100
                        placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors font-mono"
                 .value=${this.path}
-                @input=${(e: InputEvent) => this.path = (e.target as HTMLInputElement).value}
+                @input=${(e: InputEvent) => { if (e.target instanceof HTMLInputElement) this.path = e.target.value; }}
               />
             </div>
 
@@ -183,7 +183,7 @@ export class ProjectForm extends LitElement {
                 class="w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100
                        placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors font-mono"
                 .value=${this.baseBranch}
-                @input=${(e: InputEvent) => this.baseBranch = (e.target as HTMLInputElement).value}
+                @input=${(e: InputEvent) => { if (e.target instanceof HTMLInputElement) this.baseBranch = e.target.value; }}
               />
             </div>
 

@@ -52,7 +52,7 @@ export class PopoverMenu extends LitElement {
 
   private _onDocClick = (e: MouseEvent) => {
     if (!this.open) return;
-    if (!this.contains(e.target as Node)) {
+    if (!(e.target instanceof Node) || !this.contains(e.target)) {
       this.open = false;
     }
   };

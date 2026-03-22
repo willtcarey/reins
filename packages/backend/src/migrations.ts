@@ -113,7 +113,7 @@ export function runMigrations(db: Database): void {
   `);
 
   const applied = new Set(
-    (db.query("SELECT name FROM migrations").all() as { name: string }[])
+    db.query<{ name: string }, []>("SELECT name FROM migrations").all()
       .map((r) => r.name),
   );
 

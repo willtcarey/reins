@@ -32,7 +32,7 @@ let container: ToastContainer | null = null;
 /** Show a toast notification. */
 export function showToast(message: string, level: ToastLevel = "info"): void {
   if (!container) {
-    container = document.createElement("toast-container") as ToastContainer;
+    container = document.createElement("toast-container");
     document.body.appendChild(container);
   }
   container.add(message, level);
