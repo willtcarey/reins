@@ -198,7 +198,6 @@ export class TaskList extends LitElement {
               @click=${() => this.handleSelectSession(child.id)}
             >
               ${this.renderActivityDot(child.id)}
-              <span class="text-[9px] px-1 py-0.5 rounded bg-zinc-700 text-zinc-400 shrink-0">sub</span>
               <div class="min-w-0 flex-1">
                 <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
                 <div class="text-[10px] text-zinc-500">${date} · ${child.message_count} msg</div>
