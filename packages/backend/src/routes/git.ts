@@ -8,6 +8,7 @@
  *   POST /git/rebase  — rebase a branch onto the base branch
  */
 
+import { Type } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
 import { badRequest } from "../errors.js";
@@ -16,6 +17,11 @@ import {
   pushBranch,
   rebaseBranch,
 } from "../git.js";
+import { parseBody } from "./validate.js";
+
+const GitBranchBody = Type.Object({
+  branch: Type.Optional(Type.String()),
+});
 
 export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
   /**
@@ -47,15 +53,16 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
    * Request body: { "branch": "feature/foo" }
    */
   router.post("/git/push", async (ctx) => {
-    const body: { branch?: string } = await ctx.req.json();
+    const body = await parseBody(GitBranchBody, ctx.req);
 
     if (!body.branch?.trim()) badRequest("branch is required");
 
     try {
-      await pushBranch(ctx.project.projectDir, body.branch!.trim());
+      await pushBranch(ctx.project.projectDir, body.branch.trim());
       return Response.json({ ok: true });
-    } catch (err: any) {
-      return Response.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return Response.json({ error: message }, { status: 500 });
     }
   });
 
@@ -66,15 +73,16 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
    * Request body: { "branch": "feature/foo" }
    */
   router.post("/git/rebase", async (ctx) => {
-    const body: { branch?: string } = await ctx.req.json();
+    const body = await parseBody(GitBranchBody, ctx.req);
 
     if (!body.branch?.trim()) badRequest("branch is required");
 
     try {
-      await rebaseBranch(ctx.project.projectDir, body.branch!.trim(), ctx.project.baseBranch);
+      await rebaseBranch(ctx.project.projectDir, body.branch.trim(), ctx.project.baseBranch);
       return Response.json({ ok: true });
-    } catch (err: any) {
-      return Response.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return Response.json({ error: message }, { status: 500 });
     }
   });
 }

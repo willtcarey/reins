@@ -11,6 +11,7 @@ import type { RouteContext, Middleware } from "../router.js";
 import { API } from "../api-paths.js";
 import { notFound, badRequest } from "../errors.js";
 import { getProject } from "../project-store.js";
+import { parseIntParam } from "./validate.js";
 import { ProjectModel } from "../models/projects.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { registerHealthRoutes } from "./health.js";
@@ -35,15 +36,15 @@ export type ProjectRouteContext = RouteContext & { project: ProjectModel };
  * and attaches a ProjectModel to the context for downstream handlers.
  */
 const projectMiddleware: Middleware<{ project: ProjectModel }> = (ctx) => {
-  const projectId = parseInt(ctx.params.id, 10);
+  const projectId = parseIntParam(ctx.params, "id");
   const project = getProject(projectId);
   if (!project) notFound("Project not found");
-  if (!existsSync(project!.path)) {
-    badRequest(`Directory does not exist: ${project!.path}`);
+  if (!existsSync(project.path)) {
+    badRequest(`Directory does not exist: ${project.path}`);
   }
   Object.assign(ctx, {
     project: new ProjectModel(
-      project!.id, project!.path, project!.base_branch,
+      project.id, project.path, project.base_branch,
       ctx.state.sessions, createBroadcast(ctx.state.clients),
     ),
   });

@@ -12,11 +12,12 @@ import { getTask } from "../task-store.js";
 import { getProject } from "../project-store.js";
 import { touchProject } from "../project-store.js";
 import { serializeTaskSessionList, createNewSession, serializeSession } from "../sessions.js";
+import { parseIntParam } from "./validate.js";
 
 export function registerTaskSessionRoutes(router: RouterGroup<RouteContext>) {
   // List sessions for a task
   router.get("/:taskId/sessions", async (ctx) => {
-    const taskId = parseInt(ctx.params.taskId, 10);
+    const taskId = parseIntParam(ctx.params, "taskId");
     const task = getTask(taskId);
     if (!task) notFound("Task not found");
 
@@ -25,15 +26,15 @@ export function registerTaskSessionRoutes(router: RouterGroup<RouteContext>) {
 
   // Create a session under a task
   router.post("/:taskId/sessions", async (ctx) => {
-    const taskId = parseInt(ctx.params.taskId, 10);
+    const taskId = parseIntParam(ctx.params, "taskId");
     const task = getTask(taskId);
     if (!task) notFound("Task not found");
 
-    const project = getProject(task!.project_id);
+    const project = getProject(task.project_id);
     if (!project) notFound("Project not found");
 
-    touchProject(project!.id);
-    const managed = await createNewSession(ctx.state, project!.id, project!.path, { taskId });
+    touchProject(project.id);
+    const managed = await createNewSession(ctx.state, project.id, project.path, { taskId });
     return Response.json(serializeSession(managed), { status: 201 });
   });
 }

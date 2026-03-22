@@ -4,6 +4,7 @@
  * CRUD for tasks. Registered under /api/projects/:id.
  */
 
+import { Type } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
 import { notFound, badRequest, conflict } from "../errors.js";
@@ -14,6 +15,16 @@ import {
   TaskHasActiveSessionsError,
 } from "../models/tasks.js";
 import { serializeTaskSessionList } from "../sessions.js";
+import { parseBody, parseIntParam } from "./validate.js";
+
+const GenerateTaskBody = Type.Object({
+  prompt: Type.Optional(Type.String()),
+});
+
+const UpdateTaskBody = Type.Object({
+  title: Type.Optional(Type.String()),
+  description: Type.Optional(Type.String()),
+});
 
 export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
   // ---- Tasks ---------------------------------------------------------------
@@ -26,13 +37,13 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
 
   // Generate a task from freeform input, then create it
   router.post("/tasks/generate", async (ctx) => {
-    const body: { prompt?: string } = await ctx.req.json();
+    const body = await parseBody(GenerateTaskBody, ctx.req);
 
     if (!body.prompt?.trim()) {
       badRequest("Prompt is required");
     }
 
-    const generated = await generateTask(body.prompt!.trim());
+    const generated = await generateTask(body.prompt.trim());
 
     try {
       const task = await ctx.project.tasks().create({
@@ -41,9 +52,10 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
         branch_name: generated.branch_name,
       });
       return Response.json(task, { status: 201 });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       return Response.json(
-        { error: `Failed to create task: ${err.message}` },
+        { error: `Failed to create task: ${message}` },
         { status: 500 },
       );
     }
@@ -51,18 +63,18 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
 
   // Get a single task with its sessions
   router.get("/tasks/:taskId", async (ctx) => {
-    const taskId = parseInt(ctx.params.taskId, 10);
+    const taskId = parseIntParam(ctx.params, "taskId");
     const task = getTask(taskId);
     if (!task) notFound("Task not found");
 
-    const sessions = serializeTaskSessionList(task!.id);
+    const sessions = serializeTaskSessionList(task.id);
     return Response.json({ ...task, sessions });
   });
 
   // Update a task
   router.patch("/tasks/:taskId", async (ctx) => {
-    const taskId = parseInt(ctx.params.taskId, 10);
-    const body: { title?: string; description?: string } = await ctx.req.json();
+    const taskId = parseIntParam(ctx.params, "taskId");
+    const body = await parseBody(UpdateTaskBody, ctx.req);
     const updated = ctx.project.tasks().update(taskId, body);
     if (!updated) notFound("Task not found");
     return Response.json(updated);
@@ -70,12 +82,12 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
 
   // Delete a task (with sessions, messages, and git branch)
   router.delete("/tasks/:taskId", async (ctx) => {
-    const taskId = parseInt(ctx.params.taskId, 10);
+    const taskId = parseIntParam(ctx.params, "taskId");
 
     try {
       await ctx.project.tasks().delete(taskId);
       return Response.json({ ok: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof TaskNotFoundError) notFound(err.message);
       if (err instanceof TaskHasActiveSessionsError) conflict(err.message);
       throw err;

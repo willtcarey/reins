@@ -3,6 +3,7 @@
  */
 
 import { existsSync } from "fs";
+import { Type } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import { API } from "../api-paths.js";
 import { badRequest, notFound, conflict } from "../errors.js";
@@ -11,6 +12,13 @@ import {
   updateProject, deleteProject,
 } from "../project-store.js";
 import { createProject, DuplicateProjectError } from "../models/projects.js";
+import { parseBody, parseIntParam } from "./validate.js";
+
+const ProjectBody = Type.Object({
+  name: Type.Optional(Type.String()),
+  path: Type.Optional(Type.String()),
+  base_branch: Type.Optional(Type.String()),
+});
 
 export function registerProjectRoutes(router: RouterGroup) {
   // List all projects
@@ -20,22 +28,22 @@ export function registerProjectRoutes(router: RouterGroup) {
 
   // Create a project
   router.post(API.projects, async (ctx) => {
-    const body: { name?: string; path?: string; base_branch?: string } = await ctx.req.json();
+    const body = await parseBody(ProjectBody, ctx.req);
     if (!body.name || !body.path) {
       badRequest("name and path are required");
     }
-    if (!existsSync(body.path!)) {
+    if (!existsSync(body.path)) {
       badRequest(`Directory does not exist: ${body.path}`);
     }
 
     try {
       const project = await createProject({
-        name: body.name!,
-        path: body.path!,
+        name: body.name,
+        path: body.path,
         base_branch: body.base_branch,
       });
       return Response.json(project, { status: 201 });
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof DuplicateProjectError) conflict(err.message);
       throw err;
     }
@@ -43,8 +51,8 @@ export function registerProjectRoutes(router: RouterGroup) {
 
   // Update a project
   router.patch(API.project, async (ctx) => {
-    const id = parseInt(ctx.params.id, 10);
-    const body: { name?: string; path?: string; base_branch?: string } = await ctx.req.json();
+    const id = parseIntParam(ctx.params, "id");
+    const body = await parseBody(ProjectBody, ctx.req);
 
     if (body.name !== undefined && !body.name.trim()) {
       badRequest("name cannot be empty");
@@ -66,7 +74,7 @@ export function registerProjectRoutes(router: RouterGroup) {
 
   // Delete a project
   router.delete(API.project, async (ctx) => {
-    const id = parseInt(ctx.params.id, 10);
+    const id = parseIntParam(ctx.params, "id");
     const deleted = deleteProject(id);
     if (!deleted) notFound("Project not found");
     return Response.json({ ok: true });
