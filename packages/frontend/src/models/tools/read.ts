@@ -81,6 +81,6 @@ export function getReadImages(block: ToolBlockData): ToolResultImage[] {
         (c): c is { type: "image"; data: string; mimeType: string } =>
           c.type === "image",
       )
-      .map((c) => ({ data: c.data, mimeType: c.mimeType })) ?? []
+      .map((c) => ({ type: "image" as const, data: c.data, mimeType: c.mimeType })) ?? []
   );
 }

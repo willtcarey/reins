@@ -4,7 +4,6 @@ import type { ToolBlockData } from "../models/chat-state.js";
 
 function makeDelegateBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockData {
   return {
-    type: "tool",
     id: "delegate-test-id",
     name: "delegate",
     args: { prompt: "Refactor the authentication module to use JWT tokens instead of session cookies" },

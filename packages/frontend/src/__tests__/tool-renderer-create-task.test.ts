@@ -4,7 +4,6 @@ import type { ToolBlockData } from "../models/chat-state.js";
 
 function makeCreateTaskBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockData {
   return {
-    type: "tool",
     id: "task-test-id",
     name: "create_task",
     args: { title: "Add dark mode", description: "Implement dark mode toggle in settings panel", branch_name: "task/dark-mode" },

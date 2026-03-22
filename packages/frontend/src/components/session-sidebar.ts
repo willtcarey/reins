@@ -18,7 +18,7 @@ import { customElement, property, state, query } from "lit/decorators.js";
 import { navigateToSession } from "../models/router.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import type { ActivityState } from "../models/stores/app-store.js";
-import type { ProjectInfo } from "../models/ws-client.js";
+import type { ProjectInfo, TaskListItem } from "../models/ws-client.js";
 import type { TaskForm } from "./task-form.js";
 import type { TaskDetail } from "./task-detail.js";
 import type { ProjectSidebar } from "./project-sidebar.js";
@@ -149,7 +149,7 @@ export class SessionSidebar extends LitElement {
     }
   }
 
-  private handleEditTask(e: CustomEvent<{ task: import("./ws-client.js").TaskListItem }>) {
+  private handleEditTask(e: CustomEvent<{ task: TaskListItem }>) {
     this.taskDetail?.open(e.detail.task);
   }
 

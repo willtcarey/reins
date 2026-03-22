@@ -4,7 +4,6 @@ import type { ToolBlockData } from "../models/chat-state.js";
 
 function makeEditBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockData {
   return {
-    type: "tool",
     id: "edit-test-id",
     name: "Edit",
     args: { path: "src/app.ts", oldText: "foo", newText: "bar" },
