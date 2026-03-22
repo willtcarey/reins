@@ -159,9 +159,10 @@ export class TaskList extends LitElement {
     );
   }
 
-  private renderActivityDot(sessionId: string) {
+  private renderActivityDot(sessionId: string, opts?: { runningOnly?: boolean }) {
     const state = this.activityMap.get(sessionId);
     if (!state) return nothing;
+    if (opts?.runningOnly && state !== "running") return nothing;
     const classes = state === "running"
       ? "w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"
       : "w-2 h-2 rounded-full bg-amber-500 shrink-0";
@@ -202,7 +203,7 @@ export class TaskList extends LitElement {
                 ${isActive ? "bg-zinc-700/60" : "hover:bg-zinc-700"}"
               @click=${() => this.handleSelectSession(child.id)}
             >
-              ${this.renderActivityDot(child.id)}
+              ${this.renderActivityDot(child.id, { runningOnly: true })}
               <div class="min-w-0 flex-1">
                 <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
                 <div class="text-[10px] text-zinc-500">${date} · ${child.message_count} msg</div>
@@ -232,7 +233,7 @@ export class TaskList extends LitElement {
           @click=${() => this.handleSelectSession(s.id)}
         >
           <div class="flex items-center gap-1.5">
-            ${this.renderActivityDot(s.id)}
+            ${this.renderActivityDot(s.id, isDelegated ? { runningOnly: true } : undefined)}
             ${isDelegated ? html`<span class="text-[9px] px-1 py-0.5 rounded bg-zinc-700 text-zinc-400 shrink-0">sub</span>` : nothing}
             <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
           </div>
