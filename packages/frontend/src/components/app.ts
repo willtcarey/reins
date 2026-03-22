@@ -23,8 +23,8 @@ import type { Route } from "../models/router.js";
 
 // Ensure sub-components are registered
 import "./chat-panel.js";
-import "./components/changes/diff-panel.js";
-import "./components/changes/diff-file-tree.js";
+import "./changes/diff-panel.js";
+import "./changes/diff-file-tree.js";
 import type { SessionSidebar } from "./session-sidebar.js";
 import "./session-sidebar.js";
 import "./branch-indicator.js";

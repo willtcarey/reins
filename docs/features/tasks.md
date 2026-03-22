@@ -62,7 +62,7 @@ A task cannot be deleted while any of its sessions are actively running. Stop th
 
 Task sessions can **delegate** work to sub-sessions. When an agent calls the `delegate` tool, a new session is spawned on the same task with a fresh context window. The sub-session does a focused piece of work and returns a summary to the parent. This enables work decomposition — an orchestrating session can break a large task into steps, delegating each one to keep context windows lean.
 
-Sub-sessions appear in the task's session list with a visual indicator showing they were delegated. They're full sessions you can click into and review.
+Sub-sessions are hidden from the top-level task session list. Instead, parent sessions that spawned sub-sessions show a **+N** badge. Clicking the badge expands an inline list of the sub-sessions, each marked with a "sub" tag. Clicking a sub-session navigates to it.
 
 Delegation is depth-limited (max 3 levels) to prevent runaway nesting, and serialized per project to avoid branch conflicts.
 

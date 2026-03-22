@@ -1,8 +1,11 @@
 /**
- * Session List
+ * Assistant Session
  *
- * Renders the assistant session (most recent scratch session) as a plain row.
+ * Renders the current assistant (scratch) session as a single sidebar row.
  * A popover menu provides "New conversation" and access to previous sessions.
+ *
+ * Scratch sessions cannot delegate, so there is no sub-session handling here.
+ * Delegate sub-sessions are only relevant in task-list.
  */
 
 import { LitElement, html, nothing } from "lit";
@@ -12,8 +15,8 @@ import type { ActivityState } from "../models/stores/app-store.js";
 import { formatRelativeDate } from "../models/format.js";
 import "./popover-menu.js";
 
-@customElement("session-list")
-export class SessionList extends LitElement {
+@customElement("assistant-session")
+export class AssistantSession extends LitElement {
   override createRenderRoot() {
     return this;
   }
@@ -139,6 +142,6 @@ export class SessionList extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    "session-list": SessionList;
+    "assistant-session": AssistantSession;
   }
 }

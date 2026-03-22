@@ -28,7 +28,7 @@ When changing existing behavior, update the test first to reflect the new contra
 
 - Run `bun test` and confirm the full suite passes.
 - Update or create docs:
-  - [`docs/features/`](../features/) if user-facing behavior changed.
+  - [`docs/features/`](../features/) if user-facing behavior changed — update an existing doc before creating a new one.
   - [`docs/dev/`](./) if internal conventions or architecture changed.
   - [`docs/dev/INDEX.md`](INDEX.md) if you added a new dev doc.
 - Suggest tech debt items you noticed (don't add without confirmation).
