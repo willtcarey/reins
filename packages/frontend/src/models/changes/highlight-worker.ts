@@ -163,7 +163,7 @@ self.onmessage = async (e: MessageEvent<HighlightRequest>) => {
 
     const response: HighlightResponse = { id, type: "result", files: results };
     self.postMessage(response);
-  } catch (err: any) {
+  } catch {
     // On error, return escaped plain text so the UI still works
     const results = files.map(({ path, hunks }) => ({
       path,

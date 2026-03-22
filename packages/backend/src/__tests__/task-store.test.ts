@@ -77,7 +77,7 @@ describe("task-store", () => {
     });
 
     test("orders closed tasks last", () => {
-      const t1 = createTask(projectId, "Open Task", null, "task/open");
+      createTask(projectId, "Open Task", null, "task/open");
       const t2 = createTask(projectId, "Closed Task", null, "task/closed");
       markTasksClosed([t2.id]);
 
@@ -123,7 +123,7 @@ describe("task-store", () => {
 
     test("cascades to sessions and messages", () => {
       const t = createTask(projectId, "T", null, "task/t");
-      const sess = createSession("sess-1", projectId, { taskId: t.id });
+      createSession("sess-1", projectId, { taskId: t.id });
       persistMessages("sess-1", [
         { role: "user", content: [{ type: "text", text: "hello" }] },
       ]);

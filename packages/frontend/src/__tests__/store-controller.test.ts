@@ -2,7 +2,7 @@
  * Tests for StoreController — generic reactive controller that subscribes
  * to any store with a subscribe/unsubscribe pattern and triggers host updates.
  */
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect } from "bun:test";
 import { StoreController } from "../controllers/store-controller.js";
 import type { Subscribable } from "../controllers/store-controller.js";
 import type { ReactiveControllerHost, ReactiveController } from "lit";
@@ -42,11 +42,11 @@ function fakeHost() {
     get controllers() { return controllers; },
     /** Simulate Lit disconnecting the component. */
     disconnect() {
-      for (const c of [...controllers]) c.hostDisconnected?.();
+      for (const c of Array.from(controllers)) c.hostDisconnected?.();
     },
     /** Simulate Lit reconnecting the component. */
     connect() {
-      for (const c of [...controllers]) c.hostConnected?.();
+      for (const c of Array.from(controllers)) c.hostConnected?.();
     },
   } satisfies ReactiveControllerHost & {
     updateCount: number;
@@ -184,13 +184,13 @@ describe("StoreController", () => {
 
   test("hostDisconnected without a store is safe", () => {
     const host = fakeHost();
-    const ctrl = new StoreController(host);
+    new StoreController(host);
     expect(() => host.disconnect()).not.toThrow();
   });
 
   test("hostConnected without a store is safe", () => {
     const host = fakeHost();
-    const ctrl = new StoreController(host);
+    new StoreController(host);
     expect(() => host.connect()).not.toThrow();
   });
 });

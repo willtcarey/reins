@@ -29,11 +29,6 @@ function makeToolResultMsg(id: string, text: string, ts = 3000): ToolResultMessa
   };
 }
 
-/** Helper: create state with given messages. */
-function stateWith(messages: AgentMessage[]): ChatState {
-  return { ...initialChatState(), messages };
-}
-
 /** Helper: apply a sequence of events to a state. */
 function applyEvents(state: ChatState, events: any[]): ChatState {
   return events.reduce((s, e) => applyChatEvent(s, e), state);

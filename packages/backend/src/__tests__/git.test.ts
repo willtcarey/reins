@@ -30,7 +30,6 @@ import {
   fetchOrigin,
   fetchAll,
   pullBaseBranch,
-  fastForwardBaseBranch,
   mergeBase,
   trackBranch,
   isLargeOrBinary,

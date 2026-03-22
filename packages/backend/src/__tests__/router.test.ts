@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeEach } from "bun:test";
-import { createRouter, type RouteContext, type Middleware } from "../router.js";
+import { describe, test, expect } from "bun:test";
+import { createRouter, type Middleware } from "../router.js";
 import { HttpError } from "../errors.js";
 import { createTestState } from "./helpers/test-state.js";
 

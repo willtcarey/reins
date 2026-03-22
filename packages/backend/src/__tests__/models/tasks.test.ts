@@ -3,9 +3,9 @@ import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo, commitFile } from "../helpers/test-repo.js";
 import { createProject } from "../../project-store.js";
 import { getTask } from "../../task-store.js";
-import { branchExists, getCurrentBranch, revParse, mergeBase, createBranch } from "../../git.js";
+import { branchExists, revParse, mergeBase, createBranch } from "../../git.js";
 import { ProjectTasks, type CreateTaskParams } from "../../models/tasks.js";
-import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
+import type { Broadcast } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 
 describe("createTaskWithBranch", () => {

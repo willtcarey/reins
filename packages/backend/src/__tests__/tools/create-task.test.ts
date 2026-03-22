@@ -4,7 +4,7 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import { createProject } from "../../project-store.js";
 import { getTask } from "../../task-store.js";
 import { branchExists } from "../../git.js";
-import { createTaskTool, type CreateTaskToolOpts } from "../../tools/create-task.js";
+import { createTaskTool } from "../../tools/create-task.js";
 import type { Broadcast } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";

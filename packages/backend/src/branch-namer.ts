@@ -9,7 +9,7 @@
 import { createAgentSession, SessionManager, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
 import { getModel } from "@mariozechner/pi-ai";
 
-const BRANCH_PATTERN = /^task\/[a-z0-9][a-z0-9\-]*$/;
+const BRANCH_PATTERN = /^task\/[a-z0-9][a-z0-9-]*$/;
 const TIMEOUT_MS = 10_000;
 
 const SYSTEM_PROMPT =
@@ -56,7 +56,7 @@ export async function generateBranchName(title: string): Promise<string> {
     if (BRANCH_PATTERN.test(text)) {
       return text;
     }
-  } catch (err) {
+  } catch {
     // Session creation or prompt failed — fall through to slugify
   }
 

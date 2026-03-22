@@ -2,7 +2,7 @@
  * Tests for AppStore activity tracking with projectId support.
  */
 import { describe, test, expect, beforeEach } from "bun:test";
-import { AppStore, type ActivityState } from "../models/stores/app-store.js";
+import { AppStore } from "../models/stores/app-store.js";
 
 // Minimal stub of AppClient that lets us fire events
 class StubClient {

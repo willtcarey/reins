@@ -7,7 +7,7 @@ import type { RouterGroup } from "../router.js";
 import { API } from "../api-paths.js";
 import { badRequest, notFound, conflict } from "../errors.js";
 import {
-  listProjects, getProject,
+  listProjects,
   updateProject, deleteProject,
 } from "../project-store.js";
 import { createProject, DuplicateProjectError } from "../models/projects.js";

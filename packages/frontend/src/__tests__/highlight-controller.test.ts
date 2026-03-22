@@ -64,10 +64,10 @@ function fakeHost() {
     get updateCount() { return updateCount; },
     get controllers() { return controllers; },
     disconnect() {
-      for (const c of [...controllers]) c.hostDisconnected?.();
+      for (const c of Array.from(controllers)) c.hostDisconnected?.();
     },
     connect() {
-      for (const c of [...controllers]) c.hostConnected?.();
+      for (const c of Array.from(controllers)) c.hostConnected?.();
     },
   } satisfies ReactiveControllerHost & {
     updateCount: number;
@@ -242,7 +242,7 @@ describe("HighlightController", () => {
   test("hostDisconnected is safe (does not dispose shared highlighter)", () => {
     const host = fakeHost();
     const hl = new FakeHighlighter();
-    const ctrl = new HighlightController(host, hl);
+    new HighlightController(host, hl);
 
     expect(() => host.disconnect()).not.toThrow();
     expect(hl.disposed).toBe(false);
