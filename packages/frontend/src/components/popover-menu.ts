@@ -57,14 +57,20 @@ export class PopoverMenu extends LitElement {
     }
   };
 
+  private _onScroll = () => {
+    if (this.open) this.open = false;
+  };
+
   override connectedCallback() {
     super.connectedCallback();
     document.addEventListener("click", this._onDocClick, true);
+    document.addEventListener("scroll", this._onScroll, true);
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     document.removeEventListener("click", this._onDocClick, true);
+    document.removeEventListener("scroll", this._onScroll, true);
   }
 
   close() {
