@@ -237,6 +237,7 @@ export class TaskList extends LitElement {
           <popover-menu
             triggerClass="!p-0 !px-1 !py-1.5 !opacity-100"
             panelClass="w-64"
+            anchor="right-start"
             .content=${() => this.renderDelegatePopoverContent(children)}
             .triggerTemplate=${html`
               <span

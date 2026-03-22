@@ -13,6 +13,7 @@
 
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { styleMap } from "lit/directives/style-map.js";
 
 @customElement("popover-menu")
 export class PopoverMenu extends LitElement {
@@ -36,7 +37,18 @@ export class PopoverMenu extends LitElement {
   @property({ attribute: false })
   triggerTemplate: TemplateResult | null = null;
 
+  /**
+   * Controls where the panel appears relative to the trigger.
+   * - "right" (default): right edge aligned, opens downward
+   * - "left": left edge aligned, opens downward
+   * - "right-start": opens to the right of the trigger, top-aligned
+   * - "left-start": opens to the left of the trigger, top-aligned
+   */
+  @property({ type: String })
+  anchor: "right" | "left" | "right-start" | "left-start" = "right";
+
   @state() private open = false;
+  @state() private panelStyle: Record<string, string> = {};
 
   private _onDocClick = (e: MouseEvent) => {
     if (!this.open) return;
@@ -61,7 +73,35 @@ export class PopoverMenu extends LitElement {
 
   private toggle(e: Event) {
     e.stopPropagation();
+    if (!this.open) {
+      this.updatePanelPosition();
+    }
     this.open = !this.open;
+  }
+
+  /** Compute fixed position for the panel based on trigger's viewport rect. */
+  private updatePanelPosition() {
+    const trigger = this.renderRoot.querySelector("button") ?? this;
+    const rect = trigger.getBoundingClientRect();
+    const gap = 2;
+
+    let style: Record<string, string>;
+    switch (this.anchor) {
+      case "left":
+        style = { top: `${rect.bottom + gap}px`, left: `${rect.left}px` };
+        break;
+      case "right-start":
+        style = { top: `${rect.top}px`, left: `${rect.right + gap}px` };
+        break;
+      case "left-start":
+        style = { top: `${rect.top}px`, right: `${window.innerWidth - rect.left + gap}px` };
+        break;
+      case "right":
+      default:
+        style = { top: `${rect.bottom + gap}px`, right: `${window.innerWidth - rect.right}px` };
+        break;
+    }
+    this.panelStyle = style;
   }
 
   private onPanelClick() {
@@ -70,7 +110,7 @@ export class PopoverMenu extends LitElement {
 
   override render() {
     return html`
-      <div class="relative shrink-0">
+      <div class="shrink-0">
         <button
           class="${this.triggerTemplate
             ? `cursor-pointer ${this.triggerClass}`
@@ -84,7 +124,8 @@ export class PopoverMenu extends LitElement {
         </button>
         ${this.open && this.content ? html`
           <div
-            class="absolute right-0 top-full z-40 mt-0.5 ${this.panelClass || "w-36"} bg-zinc-800 border border-zinc-600 rounded-md shadow-xl overflow-hidden"
+            class="fixed z-50 ${this.panelClass || "w-36"} bg-zinc-800 border border-zinc-600 rounded-md shadow-xl overflow-hidden"
+            style=${styleMap(this.panelStyle)}
             @click=${this.onPanelClick}
           >
             ${this.content()}
