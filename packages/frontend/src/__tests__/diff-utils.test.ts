@@ -9,8 +9,8 @@ import {
   gutterWidth,
   getHunkEndLine,
   EXPAND_STEP,
-} from "../changes/diff-utils.js";
-import type { DiffFile, DiffHunk } from "../changes/types.js";
+} from "../models/changes/diff-utils.js";
+import type { DiffFile, DiffHunk } from "../models/changes/types.js";
 
 // ---- Helpers to build test data --------------------------------------------
 

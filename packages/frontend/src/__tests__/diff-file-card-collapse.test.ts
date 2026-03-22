@@ -6,7 +6,7 @@
  * No `toggle-collapse` event is emitted.
  */
 import { describe, test, expect } from "bun:test";
-import { DiffFileCard } from "../changes/diff-file-card.js";
+import { DiffFileCard } from "../components/changes/diff-file-card.js";
 
 describe("DiffFileCard collapse", () => {
   test("collapsed is not a reflected property (it is internal state)", () => {

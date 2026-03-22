@@ -24,9 +24,9 @@
  *   const html = this._hl.getLineHtml(index);
  */
 import type { ReactiveControllerHost } from "lit";
-import type { DiffHunk } from "../changes/types.js";
+import type { DiffHunk } from "../models/changes/types.js";
 import { HighlightController } from "./highlight-controller.js";
-import type { IHighlighter } from "../changes/highlighter.js";
+import type { IHighlighter } from "../models/changes/highlighter.js";
 
 /** Return the path and hunk to highlight, or null to skip. */
 export type LazyHighlightDataFn = () => { path: string; hunk: DiffHunk } | null;

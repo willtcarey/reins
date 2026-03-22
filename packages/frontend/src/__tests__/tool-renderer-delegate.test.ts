@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { getDelegateSummary, getDelegateDetail } from "../tool-renderers/delegate.js";
-import type { ToolBlockData } from "../chat-state.js";
+import { getDelegateSummary, getDelegateDetail } from "../models/tools/delegate.js";
+import type { ToolBlockData } from "../models/chat-state.js";
 
 function makeDelegateBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockData {
   return {

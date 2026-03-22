@@ -2,7 +2,7 @@
  * Tests for quick-open store fuzzy matching and filtering.
  */
 import { describe, test, expect } from "bun:test";
-import { fuzzyMatch, filterItems, itemSearchText, type PaletteItem } from "../stores/quick-open-store.js";
+import { fuzzyMatch, filterItems, itemSearchText, type PaletteItem } from "../models/stores/quick-open-store.js";
 
 // ---- fuzzyMatch -------------------------------------------------------------
 

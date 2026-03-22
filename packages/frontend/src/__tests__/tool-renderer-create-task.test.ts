@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { getTaskSummary, getTaskDetail } from "../tool-renderers/create-task.js";
-import type { ToolBlockData } from "../chat-state.js";
+import { getTaskSummary, getTaskDetail } from "../models/tools/create-task.js";
+import type { ToolBlockData } from "../models/chat-state.js";
 
 function makeCreateTaskBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockData {
   return {

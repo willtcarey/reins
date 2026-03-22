@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { getReadSummary, getReadPreview, getReadContent, getReadLineCount, getReadRange, getReadTrailer } from "../tool-renderers/read.js";
-import type { ToolBlockData } from "../chat-state.js";
+import { getReadSummary, getReadPreview, getReadContent, getReadLineCount, getReadRange, getReadTrailer } from "../models/tools/read.js";
+import type { ToolBlockData } from "../models/chat-state.js";
 
 function makeToolBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockData {
   return {

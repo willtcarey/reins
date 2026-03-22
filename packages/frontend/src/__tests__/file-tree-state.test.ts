@@ -3,7 +3,7 @@
  * in the diff file tree.
  */
 import { describe, test, expect, beforeEach, mock } from "bun:test";
-import { FileTreeState } from "../changes/file-tree-state.js";
+import { FileTreeState } from "../models/changes/file-tree-state.js";
 
 describe("FileTreeState", () => {
   let state: FileTreeState;

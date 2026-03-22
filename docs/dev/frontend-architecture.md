@@ -2,13 +2,119 @@
 
 The frontend is a Lit + Tailwind CSS v4 SPA bundled with `bun build`. It communicates with the backend via REST (fetches) and a WebSocket (real-time events and commands).
 
+## Source Organization
+
+```
+src/
+├── models/          Pure logic — no LitElement, no html``
+├── components/      Lit components — rendering + interaction
+├── controllers/     Lit reactive controllers (glue between models + components)
+├── __tests__/       All test files (flat)
+└── index.ts         Entry point
+```
+
+**Dependency rule:** `models/` never imports from `components/` or `controllers/`. Everything else can import from `models/`.
+
+```
+  components/  ──→  models/  ←──  controllers/
+       │                               │
+       └──────→  controllers/  ←───────┘
+```
+
+### models/
+
+Pure TypeScript with no Lit dependency. Contains all business logic, state management, data extraction, and server communication. Everything here is directly testable with bun:test — no DOM, no browser.
+
+```
+models/
+├── stores/              Shared state management (pubsub)
+│   ├── app-store.ts
+│   ├── active-session-store.ts
+│   ├── diff-store.ts
+│   ├── project-store.ts
+│   ├── project-collection-store.ts
+│   └── quick-open-store.ts
+├── changes/             Diff/highlighting pure logic
+│   ├── diff-sort.ts, diff-utils.ts, file-tree-state.ts
+│   ├── highlighter.ts, highlight-worker.ts, scroll-spy.ts
+│   └── types.ts
+├── tools/               Tool data extraction helpers
+│   ├── read.ts, edit.ts, write.ts, bash.ts
+│   ├── create-task.ts, delegate.ts, generic.ts
+│   ├── bash-command-parser.ts
+│   └── types.ts
+├── chat-state.ts        Chat event reducer
+├── format.ts            Display formatting helpers
+├── router.ts            Hash-based route parsing
+└── ws-client.ts         WebSocket client
+```
+
+### components/
+
+Lit custom elements that own rendering and user interaction. Import from `models/` for data, from `controllers/` for lifecycle-managed behavior.
+
+```
+components/
+├── changes/             Diff viewer components
+│   ├── diff-panel.ts, diff-file-card.ts, diff-file-tree.ts
+│   ├── diff-hunk.ts, diff-markdown-preview.ts
+├── tools/               Tool-specific chat renderers
+│   ├── read.ts, edit.ts, write.ts, bash.ts
+│   ├── create-task.ts, delegate.ts, generic.ts
+│   ├── index.ts (registry), types.ts
+├── app.ts               Root shell
+├── chat-panel.ts        Message display + input
+├── session-sidebar.ts   Sidebar layout
+├── session-list.ts, project-sidebar.ts, project-form.ts
+├── task-list.ts, task-detail.ts, task-form.ts
+├── branch-indicator.ts, quick-open.ts
+├── popover-menu.ts, toast.ts
+└── app.css
+```
+
+### controllers/
+
+Lit reactive controllers — lifecycle-managed glue reused across components. See [reactive-controllers.md](reactive-controllers.md).
+
+```
+controllers/
+├── store-controller.ts          Generic store subscription
+├── highlight-controller.ts      Shiki web worker bridge
+└── lazy-highlight-controller.ts IntersectionObserver + highlighting
+```
+
+## Data Flow
+
+The overall data flow is one-directional:
+
+```
+  Server (REST + WS)
+         │
+         ▼
+  models/stores/     ← owns all fetches, WS events, polling
+         │
+         │ subscribe()
+         ▼
+  controllers/       ← lifecycle glue (StoreController, HighlightController)
+         │
+         │ host.requestUpdate()
+         ▼
+  components/        ← render from store state, dispatch intents via events
+         │
+         │ custom events (new-session, delete-task, etc.)
+         ▼
+  models/stores/     ← handles intents, triggers fetches
+```
+
+Views never call `fetch()` directly or listen to WebSocket events. All server communication and event→refetch logic is internal to the stores.
+
 ## Store layer
 
 All server communication — fetching, WebSocket event handling, polling, and invalidation — lives in a centralized store layer. Views read state and render; they never fetch data or decide when to refetch.
 
 ```
                     ┌──────────────────────────────────────────────┐
-                    │                  app.ts                       │
+                    │              components/app.ts                │
                     │  - creates AppStore + AppClient               │
                     │  - applies hash-based routes                  │
                     │  - passes store to views (read-only)          │
@@ -17,6 +123,7 @@ All server communication — fetching, WebSocket event handling, polling, and in
                                        │
                            ┌───────────▼───────────┐
                            │       AppStore         │
+                           │   (models/stores/)     │
                            │                        │
                            │  State:                │
                            │  - projects            │
@@ -36,9 +143,10 @@ All server communication — fetching, WebSocket event handling, polling, and in
                     ┌──────────┬───────┴───────┬──────────┐
                     ▼          ▼               ▼          ▼
              session-sidebar  chat-panel   diff-panel  project-sidebar
+                              (components/)
 ```
 
-### AppStore (`stores/app-store.ts`)
+### AppStore (`models/stores/app-store.ts`)
 
 The central store. Constructed with an `AppClient` (WebSocket client) and internally subscribes to connection and event callbacks. Responsibilities:
 
@@ -50,7 +158,7 @@ The central store. Constructed with an `AppClient` (WebSocket client) and intern
 
 Internally, AppStore delegates project/session state management to `ProjectCollectionStore` (a private implementation detail, not accessed by views).
 
-### DiffStore (`stores/diff-store.ts`)
+### DiffStore (`models/stores/diff-store.ts`)
 
 Owned by AppStore. Manages git diff state: file listings, full diffs, commit spread, and diff mode (branch vs. uncommitted). Handles its own polling timers:
 
@@ -61,15 +169,15 @@ Owned by AppStore. Manages git diff state: file listings, full diffs, commit spr
 
 Views access DiffStore through `store.diffStore` as a read-only surface.
 
-### ProjectCollectionStore (`stores/project-collection-store.ts`)
+### ProjectCollectionStore (`models/stores/project-collection-store.ts`)
 
 Internal to AppStore — not accessed by views directly. Manages the project list, project CRUD, and lazily-created `ProjectStore` instances that hold per-project task/session data.
 
-### ProjectStore (`stores/project-store.ts`)
+### ProjectStore (`models/stores/project-store.ts`)
 
 One instance per project, lazily created by `ProjectCollectionStore`. Holds task list, session list, task session sublists, and task mutations for a single project.
 
-### QuickOpenStore (`stores/quick-open-store.ts`)
+### QuickOpenStore (`models/stores/quick-open-store.ts`)
 
 Standalone store owned by the app shell (not by AppStore — it has no WS event dependencies). Manages data for the quick-open palette (`Cmd+K`):
 
@@ -104,7 +212,7 @@ connectedCallback() {
 }
 ```
 
-## WebSocket client (`ws-client.ts`)
+## WebSocket client (`models/ws-client.ts`)
 
 Thin WebSocket wrapper. Two roles:
 
@@ -123,14 +231,14 @@ The client provides `onConnection(cb)` and `onEvent(cb)` hooks. AppStore is the 
 | `tool_execution_end` (file-modifying) | Refresh diff |
 | WS reconnect | Refetch project list, refetch active session data |
 
-## Routing (`router.ts`)
+## Routing (`models/router.ts`)
 
 Hash-based routing with a single pattern:
 
 - `#/session/:sessionId` — View a specific session
 - (empty hash) — No session selected, show empty state
 
-`app.ts` listens for `hashchange`, parses the route, and calls `store.setRoute()`. The store fetches the session data (which includes `project_id`) and derives the active project from it.
+`components/app.ts` listens for `hashchange`, parses the route, and calls `store.setRoute()`. The store fetches the session data (which includes `project_id`) and derives the active project from it.
 
 ## Component structure
 
@@ -149,6 +257,8 @@ app-shell                    — root shell, creates store, applies routes
 ├── quick-open               — Cmd+K fuzzy search across all sessions
 └── branch-indicator         — current branch display
 ```
+
+All components live under `components/`. Sub-directories (`changes/`, `tools/`) group related components.
 
 ### Sidebar layout
 
@@ -191,31 +301,32 @@ Per-component state and behavior (collapse toggles, markdown preview, clipboard 
 - **Dispatch intents via events** — Views emit custom events (`new-session`, `delete-task`, etc.) for actions. The parent component or store handles the intent.
 - **No WS event handling** — Views never listen to WebSocket events. All event→refetch logic is internal to AppStore.
 
-## Tool renderers (`tool-renderers/`)
+## Tool renderers (`components/tools/`)
 
-Tool calls in the chat panel are rendered by tool-specific renderers rather than a generic JSON dump. Each tool (read, bash, edit, write, create_task, delegate) has a dedicated renderer that owns its full visual output. A registry in `tool-renderers/index.ts` maps tool names to renderers, falling back to a generic renderer for unknown tools.
+Tool calls in the chat panel are rendered by tool-specific renderers rather than a generic JSON dump. Each tool (read, bash, edit, write, create_task, delegate) has a dedicated component in `components/tools/` that owns its full visual output. Pure data-extraction helpers live in `models/tools/`. A registry in `components/tools/index.ts` maps tool names to renderers, falling back to a generic renderer for unknown tools.
 
-`chat-panel.ts`'s `renderToolBlock()` is a thin 5-line dispatcher that looks up the renderer and calls `renderRunning()` or `renderDone()`.
-
-Simple tools (bash, create-task, delegate) use inline `html` templates. Tools needing syntax highlighting (read, edit, write) delegate to custom Lit elements (`<read-tool-block>`, `<edit-tool-block>`, `<write-tool-block>`) that use `LazyHighlightController` for IntersectionObserver-gated Shiki highlighting.
+`components/chat-panel.ts`'s `renderToolBlock()` is a thin 5-line dispatcher that looks up the renderer and calls `render()`.
 
 See [tool-renderers.md](tool-renderers.md) for the full architecture, rendering tiers, and how to add new renderers.
 
-## Changes subsystem (`changes/`)
+## Changes subsystem
 
-The diff/changes feature has its own directory with several supporting modules:
+The diff/changes feature spans both `models/changes/` (pure logic) and `components/changes/` (Lit components):
 
-- `diff-panel.ts` — Layout shell: branch header, scroll container, file tree sidebar. Owns state coordination (collapsed files, markdown cache, expand-hunk loading keys) and wires child events to the DiffStore.
-- `diff-file-card.ts` — Per-file card: collapsible header with copy/download actions, delegates to `<diff-hunk>` and `<diff-markdown-preview>`.
-- `diff-hunk.ts` — Single hunk: separator/expand-up button, hunk header, diff lines, trailer/expand-down button.
-- `diff-markdown-preview.ts` — Markdown Diff/Preview tab bar and rendered content area.
-- `diff-file-tree.ts` — Collapsible file tree with scroll spy integration
+**Pure logic (`models/changes/`):**
+- `diff-sort.ts` — Sorting utilities for diff files
+- `diff-utils.ts` — Pure helpers (isMarkdown, fileCardId, escapeHtml, gutterWidth, getHunkEndLine)
 - `file-tree-state.ts` — UI-local state for tree expansion (not in store — ephemeral)
 - `scroll-spy.ts` — Tracks which diff card is visible for tree highlighting
 - `highlighter.ts` — Pure-function interface to the Shiki Web Worker: text lines in, HTML lines out via callback. Exports `IHighlighter` for test fakes.
 - `highlight-worker.ts` — Web Worker for off-main-thread Shiki highlighting
-- `diff-sort.ts` — Sorting utilities for diff files
-- `diff-utils.ts` — Pure helpers (isMarkdown, fileCardId, escapeHtml, gutterWidth, getHunkEndLine)
 - `types.ts` — Shared types for diff data structures
+
+**Components (`components/changes/`):**
+- `diff-panel.ts` — Layout shell: branch header, scroll container, file tree sidebar. Owns state coordination and wires child events to the DiffStore.
+- `diff-file-card.ts` — Per-file card: collapsible header with copy/download actions, delegates to `<diff-hunk>` and `<diff-markdown-preview>`.
+- `diff-hunk.ts` — Single hunk: separator/expand-up button, hunk header, diff lines, trailer/expand-down button.
+- `diff-markdown-preview.ts` — Markdown Diff/Preview tab bar and rendered content area.
+- `diff-file-tree.ts` — Collapsible file tree with scroll spy integration
 
 `diff-file-card` and `diff-hunk` use `StoreController<DiffStore>` to re-render on store notifications. Each `<diff-hunk>` owns a `HighlightController` that sends the hunk's text lines to the Shiki web worker for syntax highlighting. The controller stores the resulting HTML strings — the highlighter never mutates `DiffLine` objects. During render, `diff-hunk` reads `controller.getLineHtml(index)` and falls back to escaped plain text if highlighting hasn't completed yet (see [reactive-controllers.md](reactive-controllers.md)).

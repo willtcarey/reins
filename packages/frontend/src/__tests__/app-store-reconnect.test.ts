@@ -7,7 +7,7 @@
  *  - Re-fetch the active session's messages if one is being viewed
  */
 import { describe, test, expect, beforeEach, mock } from "bun:test";
-import { AppStore } from "../stores/app-store.js";
+import { AppStore } from "../models/stores/app-store.js";
 
 // Minimal stub of AppClient that lets us fire connection events
 class StubClient {

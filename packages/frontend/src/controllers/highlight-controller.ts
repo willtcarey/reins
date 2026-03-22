@@ -24,9 +24,9 @@
  *   const html = this._highlight.getLineHtml(lineIndex);
  */
 import type { ReactiveController, ReactiveControllerHost } from "lit";
-import type { DiffHunk } from "../changes/types.js";
-import type { IHighlighter } from "../changes/highlighter.js";
-import { Highlighter } from "../changes/highlighter.js";
+import type { DiffHunk } from "../models/changes/types.js";
+import type { IHighlighter } from "../models/changes/highlighter.js";
+import { Highlighter } from "../models/changes/highlighter.js";
 
 export class HighlightController implements ReactiveController {
   /**

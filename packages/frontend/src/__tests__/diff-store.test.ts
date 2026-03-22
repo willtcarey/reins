@@ -6,8 +6,8 @@
  * algorithm.
  */
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
-import { DiffStore } from "../stores/diff-store.js";
-import type { DiffFile, DiffHunk, DiffLine } from "../changes/types.js";
+import { DiffStore } from "../models/stores/diff-store.js";
+import type { DiffFile, DiffHunk, DiffLine } from "../models/changes/types.js";
 
 // ---------------------------------------------------------------------------
 // Fetch mock helpers (same pattern as project-store.test.ts)
