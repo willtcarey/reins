@@ -12,8 +12,8 @@ import type { SessionListItem, TaskListItem } from "../models/ws-client.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import type { ActivityState } from "../models/stores/app-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
-import { formatRelativeDate } from "../models/format.js";
-import "./popover-menu.js";
+import "./delete-task-dialog.js";
+import "./task-list-item.js";
 
 @customElement("task-list")
 export class TaskList extends LitElement {
@@ -76,21 +76,8 @@ export class TaskList extends LitElement {
     }
   }
 
-  /** Build a map of parent session ID → child sessions for a given task. */
-  private getChildMap(taskId: number): Map<string, SessionListItem[]> {
-    const sessions = this.taskSessions.get(taskId) ?? [];
-    const map = new Map<string, SessionListItem[]>();
-    for (const s of sessions) {
-      if (s.parent_session_id) {
-        const children = map.get(s.parent_session_id) ?? [];
-        children.push(s);
-        map.set(s.parent_session_id, children);
-      }
-    }
-    return map;
-  }
-
-  private handleExpandTask(taskId: number) {
+  private handleToggleExpand(e: CustomEvent<{ taskId: number }>) {
+    const { taskId } = e.detail;
     if (this.expandedTaskId === taskId) {
       this.expandedTaskId = null;
       return;
@@ -99,309 +86,8 @@ export class TaskList extends LitElement {
     this.projectStore?.fetchTaskSessions(taskId);
   }
 
-  private handleNewTaskSession(taskId: number, e: Event) {
-    e.stopPropagation();
-    this.dispatchEvent(
-      new CustomEvent("new-task-session", {
-        bubbles: true,
-        composed: true,
-        detail: { projectId: this.projectId, taskId },
-      })
-    );
-  }
-
-  private handleEditTask(task: TaskListItem) {
-    this.dispatchEvent(
-      new CustomEvent("edit-task", {
-        bubbles: true,
-        composed: true,
-        detail: { projectId: this.projectId, task },
-      }),
-    );
-  }
-
-  private handleDeleteTask(task: TaskListItem) {
-    this.deleteConfirmTask = task;
-  }
-
-  private handleCopyBranchName(task: TaskListItem) {
-    navigator.clipboard.writeText(task.branch_name).catch(() => {});
-  }
-
-  private handleCancelDelete() {
-    this.deleteConfirmTask = null;
-  }
-
-  private handleConfirmDelete() {
-    const task = this.deleteConfirmTask;
-    if (!task) return;
-
-    this.deleteConfirmTask = null;
-    if (this.expandedTaskId === task.id) {
-      this.expandedTaskId = null;
-    }
-    this.dispatchEvent(
-      new CustomEvent("delete-task", {
-        bubbles: true,
-        composed: true,
-        detail: { projectId: this.projectId, taskId: task.id },
-      }),
-    );
-  }
-
-  private handleSelectSession(sessionId: string) {
-    this.dispatchEvent(
-      new CustomEvent("select-session", {
-        bubbles: true,
-        composed: true,
-        detail: { projectId: this.projectId, sessionId },
-      })
-    );
-  }
-
-  private renderActivityDot(sessionId: string, opts?: { runningOnly?: boolean }) {
-    const state = this.activityMap.get(sessionId);
-    if (!state) return nothing;
-    if (opts?.runningOnly && state !== "running") return nothing;
-    const classes = state === "running"
-      ? "w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"
-      : "w-2 h-2 rounded-full bg-amber-500 shrink-0";
-    return html`<span class="${classes}" title="${state === "running" ? "Running" : "New activity"}"></span>`;
-  }
-
-  /** Check if any session within a task has activity. */
-  private getTaskActivity(taskId: number): ActivityState | undefined {
-    const sessions = this.taskSessions.get(taskId);
-    if (!sessions) return undefined;
-    let hasFinished = false;
-    for (const s of sessions) {
-      const state = this.activityMap.get(s.id);
-      if (state === "running") return "running";
-      if (state === "finished") hasFinished = true;
-    }
-    return hasFinished ? "finished" : undefined;
-  }
-
-  /** Check if any child delegate session is currently running. */
-  private hasRunningChild(children: SessionListItem[]): boolean {
-    return children.some(c => this.activityMap.get(c.id) === "running");
-  }
-
-  private renderDelegatePopoverContent(children: SessionListItem[]) {
-    return html`
-      <div class="px-3 py-1 text-[10px] text-zinc-500 uppercase tracking-wide font-semibold">Delegate sub-sessions</div>
-      <div class="max-h-48 overflow-y-auto">
-        ${children.map(child => {
-          const label = child.name || child.first_message || "Sub-session";
-          const truncated = label.length > 40 ? label.slice(0, 40) + "…" : label;
-          const isActive = child.id === this.activeSessionId;
-          const date = formatRelativeDate(child.updated_at);
-          return html`
-            <button
-              data-session-id=${child.id}
-              class="w-full text-left px-3 py-1.5 cursor-pointer transition-colors flex items-center gap-1.5
-                ${isActive ? "bg-zinc-700/60" : "hover:bg-zinc-700"}"
-              @click=${() => this.handleSelectSession(child.id)}
-            >
-              ${this.renderActivityDot(child.id, { runningOnly: true })}
-              <div class="min-w-0 flex-1">
-                <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
-                <div class="text-[10px] text-zinc-500">${date} · ${child.message_count} msg</div>
-              </div>
-            </button>
-          `;
-        })}
-      </div>
-    `;
-  }
-
-  private renderSession(s: SessionListItem, childMap?: Map<string, SessionListItem[]>) {
-    const isActive = s.id === this.activeSessionId;
-    const label = s.name || s.first_message || "Empty session";
-    const truncated = label.length > 60 ? label.slice(0, 60) + "..." : label;
-    const date = formatRelativeDate(s.updated_at);
-    const children = childMap?.get(s.id) ?? [];
-    const childCount = children.length;
-
-    return html`
-      <div class="border-b border-zinc-700/50 flex items-center">
-        <button
-          data-session-id=${s.id}
-          class="flex-1 min-w-0 text-left px-3 py-2 cursor-pointer transition-colors
-            ${isActive ? "bg-zinc-700/60" : "hover:bg-zinc-700/30"}"
-          @click=${() => this.handleSelectSession(s.id)}
-        >
-          <div class="flex items-center gap-1.5">
-            ${this.renderActivityDot(s.id)}
-            <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
-          </div>
-          <div class="text-[10px] text-zinc-500 mt-0.5">${date} · ${s.message_count} messages</div>
-        </button>
-        ${childCount > 0 ? html`
-          <popover-menu
-            triggerClass="!p-0 !px-1 !py-1.5 !opacity-100"
-            panelClass="w-64"
-            anchor="right-start"
-            .content=${() => this.renderDelegatePopoverContent(children)}
-            .triggerTemplate=${html`
-              <span
-                class="text-[9px] px-1.5 py-0.5 rounded-full shrink-0 transition-colors
-                  ${this.hasRunningChild(children)
-                    ? "bg-blue-500/30 text-blue-300 animate-pulse"
-                    : "bg-blue-500/20 text-blue-400 hover:bg-blue-500/30"}"
-                title="${this.hasRunningChild(children)
-                  ? `${childCount} delegate sub-session${childCount !== 1 ? "s" : ""} (running)`
-                  : `Show ${childCount} delegate sub-session${childCount !== 1 ? "s" : ""}`}"
-              >+${childCount}</span>
-            `}
-          ></popover-menu>
-        ` : nothing}
-      </div>
-    `;
-  }
-
-  private renderTaskActivityDot(taskId: number) {
-    const state = this.getTaskActivity(taskId);
-    if (!state) return nothing;
-    const classes = state === "running"
-      ? "w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"
-      : "w-2 h-2 rounded-full bg-amber-500 shrink-0";
-    return html`<span class="${classes}"></span>`;
-  }
-
-  private renderBranchInfo(task: TaskListItem) {
-    if (task.status === "closed") return nothing;
-
-    const stats = task.diffStats;
-    return html`
-      <div class="flex items-center gap-1.5 mt-0.5">
-        <svg class="shrink-0 text-zinc-500" xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
-        <span class="text-[10px] font-mono text-zinc-500 truncate">${task.branch_name}</span>
-        ${stats && (stats.additions > 0 || stats.removals > 0) ? html`
-          <span class="text-[10px] shrink-0">
-            ${stats.additions > 0 ? html`<span class="text-green-500">+${stats.additions}</span>` : nothing}
-            ${stats.additions > 0 && stats.removals > 0 ? html`<span class="text-zinc-600"> </span>` : nothing}
-            ${stats.removals > 0 ? html`<span class="text-red-400">-${stats.removals}</span>` : nothing}
-          </span>
-        ` : nothing}
-      </div>
-    `;
-  }
-
-  private renderTask(task: TaskListItem) {
-    const isExpanded = this.expandedTaskId === task.id;
-    const sessions = this.taskSessions.get(task.id) ?? [];
-    const date = formatRelativeDate(task.updated_at);
-    const isClosed = task.status === "closed";
-
-    return html`
-      <div class="border-b border-zinc-700/50 group/task ${isClosed ? "opacity-50" : ""}">
-        <div class="flex items-start transition-colors hover:bg-zinc-700/30">
-          <button
-            class="flex-1 text-left px-3 py-2.5 cursor-pointer flex items-start gap-2 min-w-0"
-            @click=${() => this.handleExpandTask(task.id)}
-          >
-            <span class="text-zinc-500 text-[10px] mt-0.5 shrink-0">${isClosed ? "✓" : isExpanded ? "▼" : "▶"}</span>
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-1.5">
-                <div class="text-xs ${isClosed ? "text-zinc-400" : "text-zinc-200"} truncate">${task.title}</div>
-                ${this.renderTaskActivityDot(task.id)}
-              </div>
-              ${this.renderBranchInfo(task)}
-              <div class="text-[10px] text-zinc-500 mt-0.5">
-                ${date} · ${task.session_count} session${task.session_count !== 1 ? "s" : ""}
-              </div>
-            </div>
-          </button>
-          <popover-menu
-            triggerClass="md:opacity-0 md:group-hover/task:opacity-100"
-            .content=${() => html`
-              <button
-                class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
-                @click=${() => this.handleEditTask(task)}
-              >Edit</button>
-              <button
-                class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
-                @click=${() => this.handleCopyBranchName(task)}
-              >Copy branch</button>
-              <button
-                class="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-zinc-700 cursor-pointer transition-colors"
-                @click=${() => this.handleDeleteTask(task)}
-              >Delete</button>
-            `}
-          ></popover-menu>
-        </div>
-
-        ${isExpanded ? html`
-          <div class="pl-5 bg-zinc-800/30">
-            ${(() => {
-              const childMap = this.getChildMap(task.id);
-              // Show only top-level sessions (non-sub-sessions) — children appear nested under parents
-              const topLevel = sessions.filter(s => !s.parent_session_id);
-              return topLevel.length === 0 && sessions.length === 0
-                ? html`<div class="px-3 py-2 text-[10px] text-zinc-500">No sessions yet</div>`
-                : topLevel.map(s => this.renderSession(s, childMap));
-            })()}
-            <div class="px-3 py-1.5">
-              <button
-                class="w-full py-1 text-[10px] text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
-                @click=${(e: Event) => this.handleNewTaskSession(task.id, e)}
-              >
-                + New Session
-              </button>
-            </div>
-          </div>
-        ` : nothing}
-      </div>
-    `;
-  }
-
-  private renderDeleteDialog() {
-    const task = this.deleteConfirmTask;
-    if (!task) return nothing;
-
-    return html`
-      <div
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-        @click=${this.handleCancelDelete}
-      >
-        <div
-          class="bg-zinc-800 border border-zinc-600 rounded-lg shadow-xl max-w-sm w-full mx-4 p-5"
-          @click=${(e: Event) => e.stopPropagation()}
-        >
-          <h3 class="text-sm font-semibold text-zinc-100 mb-3">Delete Task</h3>
-          <p class="text-xs text-zinc-300 mb-1">
-            Are you sure you want to delete this task?
-          </p>
-          <div class="bg-zinc-900 rounded px-3 py-2 mb-3">
-            <div class="text-xs text-zinc-200 font-medium">${task.title}</div>
-            ${task.description ? html`<div class="text-[11px] text-zinc-400 mt-1">${task.description}</div>` : nothing}
-            <div class="text-[10px] text-zinc-500 mt-1.5">
-              Branch: <span class="text-zinc-400 font-mono">${task.branch_name}</span>
-              · ${task.session_count} session${task.session_count !== 1 ? "s" : ""}
-            </div>
-          </div>
-          <p class="text-[11px] text-zinc-400 mb-4">
-            This will permanently delete the task, all its sessions, and the git branch
-            <span class="font-mono text-zinc-300">${task.branch_name}</span>.
-          </p>
-          <div class="flex justify-end gap-2">
-            <button
-              class="px-3 py-1.5 text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600 rounded cursor-pointer transition-colors"
-              @click=${this.handleCancelDelete}
-            >
-              Cancel
-            </button>
-            <button
-              class="px-3 py-1.5 text-xs text-white bg-red-600 hover:bg-red-500 rounded cursor-pointer transition-colors"
-              @click=${this.handleConfirmDelete}
-            >
-              Delete
-            </button>
-          </div>
-        </div>
-      </div>
-    `;
+  private handleDeleteTask(e: CustomEvent<{ task: TaskListItem }>) {
+    this.deleteConfirmTask = e.detail.task;
   }
 
   private handleNewTask() {
@@ -412,6 +98,21 @@ export class TaskList extends LitElement {
         detail: { projectId: this.projectId },
       })
     );
+  }
+
+  private renderTask(task: TaskListItem) {
+    return html`
+      <task-list-item
+        .task=${task}
+        .expanded=${this.expandedTaskId === task.id}
+        .sessions=${this.taskSessions.get(task.id) ?? []}
+        .activeSessionId=${this.activeSessionId}
+        .activityMap=${this.activityMap}
+        .projectId=${this.projectId}
+        @toggle-expand=${this.handleToggleExpand}
+        @delete-task=${this.handleDeleteTask}
+      ></task-list-item>
+    `;
   }
 
   override render() {
@@ -443,7 +144,16 @@ export class TaskList extends LitElement {
           ${this.closedExpanded ? closedTasks.map(t => this.renderTask(t)) : nothing}
         </div>
       ` : nothing}
-      ${this.renderDeleteDialog()}
+      <delete-task-dialog
+        .task=${this.deleteConfirmTask}
+        @cancel-delete=${() => { this.deleteConfirmTask = null; }}
+        @confirm-delete=${(e: CustomEvent) => {
+          const taskId = e.detail.taskId;
+          this.deleteConfirmTask = null;
+          if (this.expandedTaskId === taskId) this.expandedTaskId = null;
+          this.dispatchEvent(new CustomEvent("delete-task", { bubbles: true, composed: true, detail: { projectId: this.projectId, taskId } }));
+        }}
+      ></delete-task-dialog>
     `;
   }
 }
