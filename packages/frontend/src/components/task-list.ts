@@ -46,8 +46,7 @@ export class TaskList extends LitElement {
   @state() private expandedTaskId: number | null = null;
   @state() private deleteConfirmTask: TaskListItem | null = null;
   @state() private closedExpanded = false;
-  /** Set of parent session IDs whose delegate sub-sessions are expanded inline. */
-  @state() private expandedDelegates = new Set<string>();
+
 
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has("projectId")) {
@@ -75,17 +74,6 @@ export class TaskList extends LitElement {
     if (this.expandedTaskId != null) {
       this.projectStore?.fetchTaskSessions(this.expandedTaskId);
     }
-  }
-
-  private toggleDelegates(parentId: string, e: Event) {
-    e.stopPropagation();
-    const next = new Set(this.expandedDelegates);
-    if (next.has(parentId)) {
-      next.delete(parentId);
-    } else {
-      next.add(parentId);
-    }
-    this.expandedDelegates = next;
   }
 
   /** Build a map of parent session ID → child sessions for a given task. */
@@ -193,6 +181,35 @@ export class TaskList extends LitElement {
     return hasFinished ? "finished" : undefined;
   }
 
+  private renderDelegatePopoverContent(children: SessionListItem[]) {
+    return html`
+      <div class="px-3 py-1 text-[10px] text-zinc-500 uppercase tracking-wide font-semibold">Delegate sub-sessions</div>
+      <div class="max-h-48 overflow-y-auto">
+        ${children.map(child => {
+          const label = child.name || child.first_message || "Sub-session";
+          const truncated = label.length > 40 ? label.slice(0, 40) + "…" : label;
+          const isActive = child.id === this.activeSessionId;
+          const date = formatRelativeDate(child.updated_at);
+          return html`
+            <button
+              data-session-id=${child.id}
+              class="w-full text-left px-3 py-1.5 cursor-pointer transition-colors flex items-center gap-1.5
+                ${isActive ? "bg-zinc-700/60" : "hover:bg-zinc-700"}"
+              @click=${() => this.handleSelectSession(child.id)}
+            >
+              ${this.renderActivityDot(child.id)}
+              <span class="text-[9px] px-1 py-0.5 rounded bg-zinc-700 text-zinc-400 shrink-0">sub</span>
+              <div class="min-w-0 flex-1">
+                <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
+                <div class="text-[10px] text-zinc-500">${date} · ${child.message_count} msg</div>
+              </div>
+            </button>
+          `;
+        })}
+      </div>
+    `;
+  }
+
   private renderSession(s: SessionListItem, childMap?: Map<string, SessionListItem[]>) {
     const isActive = s.id === this.activeSessionId;
     const label = s.name || s.first_message || "Empty session";
@@ -201,13 +218,12 @@ export class TaskList extends LitElement {
     const isDelegated = !!s.parent_session_id;
     const children = childMap?.get(s.id) ?? [];
     const childCount = children.length;
-    const isExpanded = this.expandedDelegates.has(s.id);
 
     return html`
-      <div class="border-b border-zinc-700/50">
+      <div class="border-b border-zinc-700/50 flex items-center">
         <button
           data-session-id=${s.id}
-          class="w-full text-left px-3 py-2 cursor-pointer transition-colors
+          class="flex-1 min-w-0 text-left px-3 py-2 cursor-pointer transition-colors
             ${isActive ? "bg-zinc-700/60" : "hover:bg-zinc-700/30"}"
           @click=${() => this.handleSelectSession(s.id)}
         >
@@ -215,40 +231,21 @@ export class TaskList extends LitElement {
             ${this.renderActivityDot(s.id)}
             ${isDelegated ? html`<span class="text-[9px] px-1 py-0.5 rounded bg-zinc-700 text-zinc-400 shrink-0">sub</span>` : nothing}
             <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
-            ${childCount > 0 ? html`
-              <button
-                class="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 shrink-0 cursor-pointer transition-colors"
-                title="${isExpanded ? "Hide" : "Show"} ${childCount} delegate sub-session${childCount !== 1 ? "s" : ""}"
-                @click=${(e: Event) => this.toggleDelegates(s.id, e)}
-              >+${childCount}</button>
-            ` : nothing}
           </div>
           <div class="text-[10px] text-zinc-500 mt-0.5">${date} · ${s.message_count} messages</div>
         </button>
-        ${isExpanded && children.length > 0 ? html`
-          <div class="pl-4 bg-zinc-800/40">
-            ${children.map(child => {
-              const childLabel = child.name || child.first_message || "Sub-session";
-              const childTruncated = childLabel.length > 50 ? childLabel.slice(0, 50) + "…" : childLabel;
-              const childIsActive = child.id === this.activeSessionId;
-              const childDate = formatRelativeDate(child.updated_at);
-              return html`
-                <button
-                  data-session-id=${child.id}
-                  class="w-full text-left px-3 py-1.5 cursor-pointer transition-colors flex items-center gap-1.5 border-t border-zinc-700/30
-                    ${childIsActive ? "bg-zinc-700/60" : "hover:bg-zinc-700/30"}"
-                  @click=${() => this.handleSelectSession(child.id)}
-                >
-                  ${this.renderActivityDot(child.id)}
-                  <span class="text-[9px] px-1 py-0.5 rounded bg-zinc-700 text-zinc-400 shrink-0">sub</span>
-                  <div class="min-w-0 flex-1">
-                    <div class="text-xs ${childIsActive ? "text-zinc-100" : "text-zinc-300"} truncate">${childTruncated}</div>
-                    <div class="text-[10px] text-zinc-500">${childDate} · ${child.message_count} msg</div>
-                  </div>
-                </button>
-              `;
-            })}
-          </div>
+        ${childCount > 0 ? html`
+          <popover-menu
+            triggerClass="!p-0 !px-1 !py-1.5 !opacity-100"
+            panelClass="w-64"
+            .content=${() => this.renderDelegatePopoverContent(children)}
+            .triggerTemplate=${html`
+              <span
+                class="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 shrink-0 transition-colors"
+                title="Show ${childCount} delegate sub-session${childCount !== 1 ? "s" : ""}"
+              >+${childCount}</span>
+            `}
+          ></popover-menu>
         ` : nothing}
       </div>
     `;

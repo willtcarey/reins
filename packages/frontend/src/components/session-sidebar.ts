@@ -10,7 +10,7 @@
  *  - task-form        — new task creation (shared, opened with projectId)
  *  - task-detail      — task editing (shared)
  *  - task-list        — per-project task listing with expandable sessions
- *  - session-list     — per-project scratch session listing
+ *  - assistant-session — per-project scratch session row + history popover
  */
 
 import { LitElement, html, nothing } from "lit";
@@ -26,7 +26,7 @@ import "./project-sidebar.js";
 import "./task-form.js";
 import "./task-detail.js";
 import "./task-list.js";
-import "./session-list.js";
+import "./assistant-session.js";
 import "./popover-menu.js";
 import { showToast } from "./toast.js";
 
@@ -349,12 +349,12 @@ export class SessionSidebar extends LitElement {
             ${projectData?.loading && !projectData?.loaded ? html`
               <div class="px-3 py-2 text-[10px] text-zinc-500">Loading...</div>
             ` : html`
-              <session-list
+              <assistant-session
                 .projectId=${project.id}
                 .sessions=${projectData?.sessions ?? []}
                 .activeSessionId=${store.sessionId ?? ""}
                 .activityMap=${this.activityMap}
-              ></session-list>
+              ></assistant-session>
 
               <task-list
                 @new-task=${() => { this.taskForm?.open(project.id); }}
