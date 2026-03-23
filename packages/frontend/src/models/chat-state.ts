@@ -91,6 +91,8 @@ export type ChatEvent =
   | { type: "message_end" }
   | { type: "compaction_start"; reason?: string }
   | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean }
+  | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
+  | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
   | { type: "user_message"; message: string };
 
 // ---- State ------------------------------------------------------------------
@@ -174,15 +176,37 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
       // was refreshed mid-run (reconnect, navigation), state.messages
       // already contains some/all of these. Deduplicate by skipping
       // messages whose role+timestamp already exist.
+
+      // Check for error: the last assistant message may have stopReason: "error"
+      // with an empty content array, indicating the LLM call failed entirely.
+      let errorMessage = state.errorMessage;
+      const eventMessages: AgentMessage[] | undefined = event.messages;
+      if (eventMessages) {
+        for (let i = eventMessages.length - 1; i >= 0; i--) {
+          const m = eventMessages[i] as any;
+          if (m.role === "assistant" && m.stopReason === "error" && m.errorMessage) {
+            errorMessage = m.errorMessage;
+            break;
+          }
+        }
+      }
+
       let messages = state.messages;
-      if (event.messages) {
+      if (eventMessages) {
         const existing = new Set(
           state.messages.map((m: AgentMessage) => `${m.role}:${m.timestamp}`)
         );
-        const eventMessages: AgentMessage[] = event.messages;
-        const fresh = eventMessages.filter(
-          (m) => m.role !== "user" && !existing.has(`${m.role}:${m.timestamp}`)
-        );
+        // Filter out empty error assistant messages — they shouldn't appear in the UI
+        const fresh = eventMessages.filter((m) => {
+          if (m.role === "user") return false;
+          if (existing.has(`${m.role}:${m.timestamp}`)) return false;
+          // Skip empty assistant messages with stopReason: "error"
+          const msg = m as any;
+          if (msg.role === "assistant" && msg.stopReason === "error" && Array.isArray(msg.content) && msg.content.length === 0) {
+            return false;
+          }
+          return true;
+        });
         if (fresh.length > 0) {
           messages = [...state.messages, ...fresh];
         }
@@ -192,6 +216,7 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
         isStreaming: false,
         streamingBlocks: [],
         messages,
+        errorMessage,
       };
     }
 
@@ -216,6 +241,21 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
             timestamp: Date.now(),
           },
         ],
+      };
+
+    case "auto_retry_start":
+      return {
+        ...state,
+        errorMessage: `Retrying (${event.attempt}/${event.maxAttempts})… ${event.errorMessage}`,
+      };
+
+    case "auto_retry_end":
+      if (event.success) {
+        return { ...state, errorMessage: "" };
+      }
+      return {
+        ...state,
+        errorMessage: event.finalError || "All retry attempts failed",
       };
 
     case "user_message":
