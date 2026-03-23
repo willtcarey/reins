@@ -31,7 +31,7 @@ When expanding closes the gap between two adjacent hunks, they automatically mer
 Markdown files (`.md`, `.mdx`, `.markdown`) get two view modes toggled via tabs above the diff:
 
 - **Diff** (default) — the normal syntax-highlighted diff with word wrapping enabled
-- **Preview** — the rendered markdown content of the current file version
+- **Preview** — the rendered markdown content of the current file version. Mermaid diagrams (` ```mermaid ` fenced code blocks) are rendered as SVG diagrams.
 
 ## Sync status
 

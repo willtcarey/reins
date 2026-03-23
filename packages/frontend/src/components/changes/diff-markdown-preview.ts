@@ -10,7 +10,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { unsafeHTML } from "lit/directives/unsafe-html.js";
+import "../markdown-content.js";
 
 @customElement("diff-markdown-preview")
 export class DiffMarkdownPreview extends LitElement {
@@ -26,9 +26,11 @@ export class DiffMarkdownPreview extends LitElement {
   @property({ type: Boolean })
   loading = false;
 
-  /** The rendered HTML content (from marked). */
+  /** The raw markdown text to preview. */
   @property({ attribute: false })
   content: string | null = null;
+
+
 
   private _fireToggle() {
     this.dispatchEvent(new Event("toggle-rendered", { bubbles: true, composed: true }));
@@ -89,8 +91,8 @@ export class DiffMarkdownPreview extends LitElement {
 
     if (this.content) {
       return html`
-        <div class="p-5 prose prose-invert prose-sm max-w-none break-words leading-relaxed">
-          ${unsafeHTML(this.content)}
+        <div class="p-5">
+          <markdown-content .text=${this.content}></markdown-content>
         </div>
       `;
     }

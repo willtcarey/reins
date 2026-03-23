@@ -110,7 +110,8 @@ describe("DiffFileCard markdown preview", () => {
 
     expect((card as any).rendered).toBe(true);
     expect((card as any).markdownContent).toContain("Hello World");
-    expect((card as any).markdownContent).toContain("<h1");
+    // markdownContent now stores raw markdown text (rendering is done by <markdown-content>)
+    expect((card as any).markdownContent).toBe("# Hello World");
   });
 
   test("toggleRendered back to diff does not clear cache", async () => {
@@ -145,7 +146,8 @@ describe("DiffFileCard markdown preview", () => {
 
     await (card as any)._toggleRendered();
 
-    expect((card as any).markdownContent).toContain("500");
+    expect((card as any).markdownError).toContain("500");
+    expect((card as any).markdownContent).toBe(null);
   });
 
   test("markdownLoading is true during fetch", async () => {

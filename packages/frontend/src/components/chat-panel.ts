@@ -8,9 +8,8 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import { marked } from "marked";
 import type { AppClient, FrontendEvent, SessionData } from "../models/ws-client.js";
+import "./markdown-content.js";
 import { getToolRenderer } from "./tools/index.js";
 import {
   applyChatEvent,
@@ -24,12 +23,6 @@ import {
   type ToolBlockData,
   type StreamingBlock,
 } from "../models/chat-state.js";
-
-// Configure marked for safe defaults
-marked.setOptions({
-  breaks: true,
-  gfm: true,
-});
 
 // ---- Component --------------------------------------------------------------
 
@@ -221,14 +214,6 @@ export class ChatPanel extends LitElement {
     this.expandedSections = next;
   }
 
-  private renderMarkdown(text: string): ReturnType<typeof html> {
-    try {
-      const rendered = marked.parse(text, { async: false });
-      return html`<div class="prose prose-invert prose-sm max-w-none break-words leading-relaxed">${unsafeHTML(rendered)}</div>`;
-    } catch {
-      return html`<pre class="whitespace-pre-wrap text-sm">${text}</pre>`;
-    }
-  }
 
   private renderUserMessage(msg: UserMessage) {
     const text = typeof msg.content === "string"
@@ -264,7 +249,7 @@ export class ChatPanel extends LitElement {
       <div class="mb-3">
         ${text ? html`
           <div class="bg-zinc-800 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm">
-            ${this.renderMarkdown(text)}
+            <markdown-content .text=${text}></markdown-content>
           </div>
         ` : nothing}
         ${toolCalls.map((tc) => this.renderToolCall(tc))}
@@ -319,7 +304,7 @@ export class ChatPanel extends LitElement {
         </div>
         ${expanded && summary ? html`
           <div class="mt-2 mx-4 bg-zinc-800/50 rounded-lg px-4 py-3 text-sm border border-zinc-700">
-            ${this.renderMarkdown(summary)}
+            <markdown-content .text=${summary}></markdown-content>
           </div>
         ` : nothing}
       </div>
@@ -361,7 +346,7 @@ export class ChatPanel extends LitElement {
           if (block.type === "text") {
             return html`
               <div class="bg-zinc-800 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm mb-1">
-                ${this.renderMarkdown(block.text)}
+                <markdown-content .text=${block.text} .streaming=${true}></markdown-content>
               </div>
             `;
           }

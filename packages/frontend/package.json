@@ -11,6 +11,7 @@
   "dependencies": {
     "lit": "^3.3.1",
     "marked": "^15.0.0",
+    "mermaid": "^11.13.0",
     "shiki": "^3.22.0"
   },
   "devDependencies": {

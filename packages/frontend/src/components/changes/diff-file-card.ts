@@ -16,17 +16,10 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { marked } from "marked";
 import type { DiffFile } from "../../models/changes/types.js";
 import { isMarkdown, shouldWrapLines, fileCardId, gutterWidth } from "../../models/changes/diff-utils.js";
 import "./diff-hunk.js";
 import "./diff-markdown-preview.js";
-
-// Configure marked for markdown rendering
-marked.setOptions({
-  breaks: true,
-  gfm: true,
-});
 
 @customElement("diff-file-card")
 export class DiffFileCard extends LitElement {
@@ -46,8 +39,11 @@ export class DiffFileCard extends LitElement {
   /** Whether markdown content is currently loading. */
   @state() private markdownLoading = false;
 
-  /** Cached rendered markdown HTML content. */
+  /** Cached raw markdown text. */
   @state() private markdownContent: string | null = null;
+
+  /** Error message from a failed markdown fetch. */
+  @state() private markdownError: string | null = null;
 
   /** Set of expanding-hunk keys currently loading. */
   @property({ attribute: false })
@@ -157,16 +153,16 @@ export class DiffFileCard extends LitElement {
     if (!url) return;
 
     this.markdownLoading = true;
+    this.markdownError = null;
     try {
       const resp = await fetch(url);
       if (!resp.ok) {
-        this.markdownContent = `<p class="text-red-400">Failed to load file (HTTP ${resp.status})</p>`;
+        this.markdownError = `Failed to load file (HTTP ${resp.status})`;
         return;
       }
-      const raw = await resp.text();
-      this.markdownContent = await marked.parse(raw);
+      this.markdownContent = await resp.text();
     } catch (err: any) {
-      this.markdownContent = `<p class="text-red-400">Error: ${err.message}</p>`;
+      this.markdownError = err.message;
     } finally {
       this.markdownLoading = false;
     }
@@ -232,9 +228,12 @@ export class DiffFileCard extends LitElement {
             <diff-markdown-preview
               ?rendered=${this.rendered}
               ?loading=${this.markdownLoading}
-              .content=${this.markdownContent}
+              .content=${this.markdownError ? null : this.markdownContent}
               @toggle-rendered=${() => this._toggleRendered()}
             ></diff-markdown-preview>
+            ${this.rendered && this.markdownError ? html`
+              <div class="p-4 text-red-400 text-sm">${this.markdownError}</div>
+            ` : nothing}
           ` : nothing}
           ${!(isMd && this.rendered) ? this.renderDiffContent() : nothing}
         ` : nothing}
