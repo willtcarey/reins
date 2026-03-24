@@ -140,6 +140,53 @@ describe("DiffFileCard markdown preview", () => {
     expect(fetchCount).toBe(1);
   });
 
+  test("cache is invalidated when file property changes (same path, new diff)", async () => {
+    let fetchCount = 0;
+    mockFetch(() => {
+      fetchCount++;
+      return new Response(`# Version ${fetchCount}`);
+    });
+    const card = cardWithProject();
+
+    // Simulate initial willUpdate (normally done by Lit lifecycle)
+    (card as any).willUpdate(new Map([["file", undefined]]));
+
+    // First render — fetches
+    await (card as any)._toggleRendered();
+    expect(fetchCount).toBe(1);
+    expect((card as any).markdownContent).toBe("# Version 1");
+
+    // Simulate file update (same path, new diff data) — triggers willUpdate
+    const updatedFile = mdFile();
+    updatedFile.additions = 5;
+    card.file = updatedFile;
+    (card as any).willUpdate(new Map([["file", card.file]]));
+
+    // Should have re-fetched since we were in rendered mode
+    await new Promise((r) => setTimeout(r, 10));
+    expect(fetchCount).toBe(2);
+    expect((card as any).markdownContent).toBe("# Version 2");
+  });
+
+  test("cache is cleared when file property changes to different path", async () => {
+    mockFetch(() => new Response("# Original"));
+    const card = cardWithProject();
+
+    // Simulate initial willUpdate
+    (card as any).willUpdate(new Map([["file", undefined]]));
+
+    await (card as any)._toggleRendered();
+    expect((card as any).rendered).toBe(true);
+    expect((card as any).markdownContent).toBe("# Original");
+
+    // Simulate component reuse with a different file
+    card.file = mdFile("docs/other.md");
+    (card as any).willUpdate(new Map([["file", card.file]]));
+
+    expect((card as any).rendered).toBe(false);
+    expect((card as any).markdownContent).toBe(null);
+  });
+
   test("fetch error stores error message in markdownContent", async () => {
     mockFetch(() => new Response("", { status: 500 }));
     const card = cardWithProject();

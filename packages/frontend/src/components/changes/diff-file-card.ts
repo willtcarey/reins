@@ -45,6 +45,9 @@ export class DiffFileCard extends LitElement {
   /** Error message from a failed markdown fetch. */
   @state() private markdownError: string | null = null;
 
+  /** Track the file path the cached markdown belongs to, for invalidation. */
+  private _cachedFilePath: string | null = null;
+
   /** Set of expanding-hunk keys currently loading. */
   @property({ attribute: false })
   expandingHunks: Set<string> = new Set();
@@ -67,6 +70,30 @@ export class DiffFileCard extends LitElement {
   override disconnectedCallback() {
     super.disconnectedCallback();
     if (this._copyTimer) clearTimeout(this._copyTimer);
+  }
+
+  override willUpdate(changed: Map<string, unknown>) {
+    if (changed.has("file") && this.file) {
+      const prevPath = this._cachedFilePath;
+      this._cachedFilePath = this.file.path;
+
+      // Skip first assignment (no cached content to invalidate)
+      if (prevPath === null) return;
+
+      if (prevPath === this.file.path) {
+        // Same file, new diff — clear cache and re-fetch if in preview mode
+        this.markdownContent = null;
+        this.markdownError = null;
+        if (this.rendered) {
+          this._fetchMarkdown();
+        }
+      } else {
+        // Different file entirely (component reused) — reset everything
+        this.markdownContent = null;
+        this.markdownError = null;
+        this.rendered = false;
+      }
+    }
   }
 
   // ---- URL helpers ----------------------------------------------------------
