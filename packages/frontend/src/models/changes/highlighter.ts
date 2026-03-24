@@ -35,7 +35,7 @@ export class Highlighter implements IHighlighter {
   private callbacks = new Map<number, HighlightHunkCallback>();
 
   constructor() {
-    this.worker = new Worker("/dist/changes/highlight-worker.js", {
+    this.worker = new Worker("/dist/models/changes/highlight-worker.js", {
       type: "module",
     });
     this.worker.onmessage = (e: MessageEvent<HighlightResponse>) => {
