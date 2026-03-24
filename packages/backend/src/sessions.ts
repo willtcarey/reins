@@ -292,8 +292,9 @@ function handleCompactionEnd(
 ): void {
   if (!event.aborted) {
     try {
-      persistMessages(sessionId, agentSession.messages);
-      console.log(`  Compaction persisted for ${sessionId} (${agentSession.messages.length} post-compaction messages)`);
+      const filtered = filterErrorMessages(agentSession.messages);
+      persistMessages(sessionId, filtered);
+      console.log(`  Compaction persisted for ${sessionId} (${filtered.length} post-compaction messages)`);
     } catch (err) {
       console.error(`  Failed to persist compaction for ${sessionId}:`, err);
     }
@@ -373,7 +374,15 @@ function wireSession(
     // restarts mid-conversation.
     if (event.type === "turn_end" || event.type === "agent_end") {
       try {
-        persistMessages(sessionId, filterErrorMessages(agentSession.messages));
+        const filtered = filterErrorMessages(agentSession.messages);
+        persistMessages(sessionId, filtered);
+
+        // If we stripped error messages, also clean up the agent's
+        // in-memory context so subsequent prompts don't send empty
+        // error messages to the LLM.
+        if (filtered.length < agentSession.messages.length) {
+          agentSession.agent.replaceMessages(filtered);
+        }
 
         // Update model/thinking metadata on agent_end
         if (event.type === "agent_end") {

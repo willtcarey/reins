@@ -28,6 +28,10 @@ export interface AssistantMessage {
   role: "assistant";
   content: (TextContent | ThinkingContent | ToolCall)[];
   timestamp: number;
+  /** Present when the LLM call ended abnormally (e.g. "error", "aborted"). */
+  stopReason?: string;
+  /** Human-readable error detail when stopReason is "error". */
+  errorMessage?: string;
 }
 
 export interface UserMessage {
@@ -183,7 +187,7 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
       const eventMessages: AgentMessage[] | undefined = event.messages;
       if (eventMessages) {
         for (let i = eventMessages.length - 1; i >= 0; i--) {
-          const m = eventMessages[i] as any;
+          const m = eventMessages[i];
           if (m.role === "assistant" && m.stopReason === "error" && m.errorMessage) {
             errorMessage = m.errorMessage;
             break;
@@ -201,8 +205,7 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
           if (m.role === "user") return false;
           if (existing.has(`${m.role}:${m.timestamp}`)) return false;
           // Skip empty assistant messages with stopReason: "error"
-          const msg = m as any;
-          if (msg.role === "assistant" && msg.stopReason === "error" && Array.isArray(msg.content) && msg.content.length === 0) {
+          if (m.role === "assistant" && m.stopReason === "error" && m.content.length === 0) {
             return false;
           }
           return true;

@@ -24,7 +24,7 @@ function makeAssistantMsg(text: string, ts = 2000): AssistantMessage {
   };
 }
 
-function makeErrorAssistantMsg(errorMessage: string, ts = 2000): AssistantMessage & { stopReason: string; errorMessage: string } {
+function makeErrorAssistantMsg(errorMessage: string, ts = 2000): AssistantMessage {
   return {
     role: "assistant" as const,
     content: [],
