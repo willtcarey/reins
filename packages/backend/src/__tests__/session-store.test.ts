@@ -417,16 +417,112 @@ describe("session-store", () => {
       expect(llmMsgs[0].summary).toBe("summary of batches 1-2");
       expect(llmMsgs[1].content).toBe("batch 3");
 
-      // Full history is preserved through multiple compactions
+      // Full history: pre-compaction + first CS + second CS + new post-compaction
+      // Old post-compaction messages (batch 2, reply 2) are deleted during re-compaction
+      // since they're now subsumed by the new compaction summary.
       const allMsgs = loadMessages("sess-1");
       const allRoles = allMsgs.map((m: any) => m.role);
       expect(allRoles.filter((r: string) => r === "compactionSummary")).toHaveLength(2);
       const allContents = allMsgs.map((m: any) => m.content || m.summary);
       expect(allContents).toContain("batch 1");
       expect(allContents).toContain("summary of batch 1");
-      expect(allContents).toContain("batch 2");
       expect(allContents).toContain("summary of batches 1-2");
       expect(allContents).toContain("batch 3");
+      // Old post-compaction messages are removed — they're subsumed by the new CS
+      expect(allContents).not.toContain("batch 2");
+      expect(allContents).not.toContain("reply 2");
+    });
+
+    test("re-compaction does not duplicate messages", () => {
+      createSession("sess-1", projectId);
+
+      // Initial messages
+      persistMessages("sess-1", [
+        { role: "user", content: "msg 1" },
+        { role: "assistant", content: "reply 1" },
+        { role: "user", content: "msg 2" },
+        { role: "assistant", content: "reply 2" },
+      ]);
+
+      // First compaction — pi's array is now [CS1, msg 2, reply 2]
+      const postCompact1 = [
+        { role: "compactionSummary", summary: "summary v1" },
+        { role: "user", content: "msg 2" },
+        { role: "assistant", content: "reply 2" },
+      ];
+      persistMessages("sess-1", postCompact1);
+
+      // User continues — pi's array grows
+      const continued = [
+        ...postCompact1,
+        { role: "user", content: "msg 3" },
+        { role: "assistant", content: "reply 3" },
+        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "tool output" }] },
+        { role: "assistant", content: "reply 4" },
+      ];
+      persistMessages("sess-1", continued);
+
+      // Re-compaction — pi compacts again, new summary subsumes everything
+      const postCompact2 = [
+        { role: "compactionSummary", summary: "summary v2" },
+        { role: "assistant", content: "reply 4" },
+      ];
+      persistMessages("sess-1", postCompact2);
+
+      // Verify no duplicates: each content value appears at most once
+      const allMsgs = loadMessages("sess-1");
+      const allContents = allMsgs.map((m: any) => m.content || m.summary);
+      const duplicates = allContents.filter((c: string, i: number) => allContents.indexOf(c) !== i);
+      expect(duplicates).toEqual([]);
+
+      // LLM context uses only the latest compaction
+      const llmMsgs = loadMessagesForLLM("sess-1");
+      expect(llmMsgs).toHaveLength(2);
+      expect(llmMsgs[0].role).toBe("compactionSummary");
+      expect(llmMsgs[0].summary).toBe("summary v2");
+      expect(llmMsgs[1].content).toBe("reply 4");
+
+      // Old post-compaction messages were deleted, not duplicated
+      const msgContents = allMsgs.map((m: any) => m.content);
+      expect(msgContents.filter((c: string) => c === "reply 4")).toHaveLength(1);
+    });
+
+    test("re-compaction prunes tool results from all pre-compaction messages", () => {
+      createSession("sess-1", projectId);
+
+      // Messages with tool results
+      persistMessages("sess-1", [
+        { role: "user", content: "question" },
+        { role: "toolResult", toolCallId: "tc0", content: [{ type: "text", text: "early tool output" }] },
+        { role: "assistant", content: "answer" },
+      ]);
+
+      // First compaction
+      const postCompact1 = [
+        { role: "compactionSummary", summary: "summary v1" },
+        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "kept tool output" }] },
+        { role: "assistant", content: "reply" },
+      ];
+      persistMessages("sess-1", postCompact1);
+
+      // Re-compaction
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "summary v2" },
+        { role: "assistant", content: "final" },
+      ]);
+
+      const allMsgs = loadMessages("sess-1");
+
+      // All toolResult messages before the latest compaction should be pruned
+      const toolResults = allMsgs.filter((m: any) => m.role === "toolResult");
+      for (const tr of toolResults) {
+        expect(tr.content).toEqual([{ type: "text", text: "[pruned]" }]);
+      }
+
+      // No orphaned tool results in LLM context
+      const llmMsgs = loadMessagesForLLM("sess-1");
+      const llmToolResults = llmMsgs.filter((m: any) => m.role === "toolResult");
+      expect(llmToolResults).toHaveLength(0);
     });
   });
 

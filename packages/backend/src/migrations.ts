@@ -4,6 +4,10 @@
  * Append-only list of migrations. Each entry is [name, sql].
  * They run in order, once each, tracked in a `migrations` table.
  * Never modify or reorder existing entries — only append new ones.
+ *
+ * Migrations are for schema changes and product-wide data fixes only.
+ * Do NOT add instance-specific data repairs (e.g. fixing a single user's
+ * corrupted session). Use a one-off SQL script for those instead.
  */
 
 import type { Database } from "bun:sqlite";
