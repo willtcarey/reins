@@ -377,13 +377,6 @@ function wireSession(
         const filtered = filterErrorMessages(agentSession.messages);
         persistMessages(sessionId, filtered);
 
-        // If we stripped error messages, also clean up the agent's
-        // in-memory context so subsequent prompts don't send empty
-        // error messages to the LLM.
-        if (filtered.length < agentSession.messages.length) {
-          agentSession.agent.replaceMessages(filtered);
-        }
-
         // Update model/thinking metadata on agent_end
         if (event.type === "agent_end") {
           const model = agentSession.model;
