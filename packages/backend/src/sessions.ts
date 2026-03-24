@@ -31,6 +31,29 @@ import { createBroadcast, type Broadcast } from "./models/broadcast.js";
 // ---------------------------------------------------------------------------
 
 /**
+ * Filter out empty assistant messages with stopReason: "error".
+ * These are produced when the LLM call fails entirely (e.g. overloaded_error)
+ * and should not be persisted — they poison the conversation context and
+ * cause cascading empty responses on subsequent prompts.
+ *
+ * Assistant messages with actual content are preserved even if they have
+ * stopReason: "error" (partial responses from connection resets, etc.).
+ */
+export function filterErrorMessages(messages: any[]): any[] {
+  return messages.filter((m) => {
+    if (
+      m.role === "assistant" &&
+      m.stopReason === "error" &&
+      Array.isArray(m.content) &&
+      m.content.length === 0
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
+/**
  * Populate a SessionManager's entry tree from stored messages.
  * This is needed on resume so that compaction (which reads from
  * SessionManager.getBranch()) sees the conversation history.
@@ -269,8 +292,9 @@ function handleCompactionEnd(
 ): void {
   if (!event.aborted) {
     try {
-      persistMessages(sessionId, agentSession.messages);
-      console.log(`  Compaction persisted for ${sessionId} (${agentSession.messages.length} post-compaction messages)`);
+      const filtered = filterErrorMessages(agentSession.messages);
+      persistMessages(sessionId, filtered);
+      console.log(`  Compaction persisted for ${sessionId} (${filtered.length} post-compaction messages)`);
     } catch (err) {
       console.error(`  Failed to persist compaction for ${sessionId}:`, err);
     }
@@ -350,7 +374,8 @@ function wireSession(
     // restarts mid-conversation.
     if (event.type === "turn_end" || event.type === "agent_end") {
       try {
-        persistMessages(sessionId, agentSession.messages);
+        const filtered = filterErrorMessages(agentSession.messages);
+        persistMessages(sessionId, filtered);
 
         // Update model/thinking metadata on agent_end
         if (event.type === "agent_end") {
