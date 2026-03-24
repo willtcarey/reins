@@ -69,7 +69,7 @@ export class AssistantSession extends LitElement {
     return html`
       <button
         class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
-        @click=${this.handleNewSession}
+        @click=${() => this.handleNewSession()}
       >New conversation</button>
       ${previous.length > 0 ? html`
         <div class="border-t border-zinc-700 my-1"></div>
