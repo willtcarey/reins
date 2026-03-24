@@ -280,6 +280,31 @@ export async function resumeSession(
  */
 
 /**
+ * Log SessionManager state at compaction start for debugging empty summaries.
+ */
+function logCompactionState(sessionId: string, agentSession: any): void {
+  try {
+    const sm = agentSession.sessionManager;
+    const branch = sm.getBranch();
+    const entries = branch.map((e: any) => ({
+      type: e.type,
+      role: e.type === "message" ? e.message?.role : undefined,
+      contentPreview: e.type === "message"
+        ? JSON.stringify(e.message?.content)?.slice(0, 100)
+        : e.type === "compaction"
+          ? e.summary?.slice(0, 100)
+          : undefined,
+    }));
+    console.log(`  Compaction starting for ${sessionId}:`);
+    console.log(`    SessionManager branch: ${branch.length} entries`);
+    console.log(`    Agent messages: ${agentSession.messages?.length ?? "N/A"}`);
+    console.log(`    Entries:`, JSON.stringify(entries, null, 2));
+  } catch (err) {
+    console.error(`  Failed to log compaction state for ${sessionId}:`, err);
+  }
+}
+
+/**
  * Handle a compaction_end event: persist to SQLite and broadcast.
  * Used for both auto-compaction (from pi events) and manual /compact.
  */
@@ -325,6 +350,7 @@ export async function runManualCompaction(
     event: { type: "compaction_start", reason: "manual" },
   });
   try {
+    logCompactionState(sessionId, managed.session);
     const result = await managed.session.compact(instructions);
     handleCompactionEnd(sessionId, managed.session, { result, aborted: false }, broadcast, projectId);
   } catch (err: any) {
@@ -358,6 +384,7 @@ function wireSession(
     // compaction_start / compaction_end so the frontend gets a unified
     // event regardless of whether compaction was manual or automatic.
     if (event.type === "auto_compaction_start") {
+      logCompactionState(sessionId, agentSession);
       broadcast({ type: "event", sessionId, projectId, event: { type: "compaction_start", reason: event.reason ?? "auto" } });
       return;
     }

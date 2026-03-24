@@ -258,6 +258,18 @@ export function persistMessages(sessionId: string, messages: any[]): void {
 
       if (lastSummaryRow?.last_seq == null || postCompactionMsgCount < dbPostCompactionCount) {
         // NEW COMPACTION (first or re-compaction): append compactionSummary + post-compaction messages
+
+        if (lastSummaryRow?.last_seq != null) {
+          // Re-compaction: delete old post-compaction messages that will be
+          // superseded by the new compaction summary + its post-compaction messages.
+          // Without this, the new post-compaction messages would duplicate rows
+          // that already exist between the old compactionSummary and nextSeq.
+          db.query(
+            `DELETE FROM session_messages
+             WHERE session_id = ? AND seq > ? AND seq < ?`,
+          ).run(sessionId, lastSummaryRow.last_seq, nextSeq);
+        }
+
         for (let i = compactionIdx; i < messages.length; i++) {
           const msg = messages[i];
           insert.run(sessionId, nextSeq + (i - compactionIdx), msg.role, JSON.stringify(msg));
