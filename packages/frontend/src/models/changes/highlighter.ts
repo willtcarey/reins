@@ -14,6 +14,9 @@ import type { HighlightRequest, HighlightResponse } from "./highlight-worker.js"
 /** Callback that receives per-line highlighted HTML strings. */
 export type HighlightHunkCallback = (htmlLines: string[]) => void;
 
+/** Callback that receives the full highlighted HTML string for a code block. */
+export type HighlightCodeCallback = (html: string) => void;
+
 /** Minimal interface for highlight providers — allows test fakes. */
 export interface IHighlighter {
   /**
@@ -24,6 +27,15 @@ export interface IHighlighter {
     path: string,
     lines: string[],
     onComplete: HighlightHunkCallback,
+  ): void;
+  /**
+   * Highlight a code block by language.
+   * The callback receives the full highlighted HTML (lines joined with <br>).
+   */
+  highlightCode(
+    lang: string,
+    code: string,
+    onComplete: HighlightCodeCallback,
   ): void;
   dispose(): void;
 }
@@ -51,6 +63,7 @@ export class Highlighter implements IHighlighter {
     path: string,
     lines: string[],
     onComplete: HighlightHunkCallback,
+    lang?: string,
   ): void {
     const id = nextId++;
 
@@ -60,6 +73,7 @@ export class Highlighter implements IHighlighter {
       files: [
         {
           path,
+          lang,
           hunks: [{ lines }],
         },
       ],
@@ -67,6 +81,24 @@ export class Highlighter implements IHighlighter {
 
     this.callbacks.set(id, onComplete);
     this.worker.postMessage(request);
+  }
+
+  /**
+   * Highlight a code block by language.
+   * The callback receives the full highlighted HTML (lines joined with <br>).
+   */
+  highlightCode(
+    lang: string,
+    code: string,
+    onComplete: HighlightCodeCallback,
+  ): void {
+    const lines = code.split("\n");
+    this.highlightHunk(
+      `block.${lang}`,
+      lines,
+      (htmlLines) => onComplete(htmlLines.join("\n")),
+      lang,
+    );
   }
 
   private handleResponse(resp: HighlightResponse): void {

@@ -16,6 +16,7 @@ import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked, type MarkedExtension } from "marked";
+import { getSharedHighlighter } from "../models/changes/shared-highlighter.js";
 
 // ---------------------------------------------------------------------------
 // Marked configuration — runs once at module load
@@ -34,6 +35,9 @@ const mermaidExtension: MarkedExtension = {
     code({ text, lang }) {
       if (lang === "mermaid") {
         return `<div class="mermaid">${escapeHtml(text)}</div>`;
+      }
+      if (lang) {
+        return `<pre><code data-lang="${escapeHtml(lang)}">${escapeHtml(text)}</code></pre>`;
       }
       // Return false to fall through to the default renderer
       return false;
@@ -103,10 +107,36 @@ export class MarkdownContent extends LitElement {
   override async updated() {
     if (this.streaming) return;
 
+    this._highlightCodeBlocks();
+    await this._renderMermaid();
+  }
+
+  /** Syntax-highlight fenced code blocks via the shared Shiki worker. */
+  private _highlightCodeBlocks() {
+    const codeEls = this.querySelectorAll<HTMLElement>("pre code[data-lang]");
+    if (codeEls.length === 0) return;
+
+    const highlighter = getSharedHighlighter();
+
+    for (const codeEl of codeEls) {
+      if (codeEl.hasAttribute("data-highlighted")) continue;
+      codeEl.setAttribute("data-highlighted", "");
+
+      const lang = codeEl.dataset.lang;
+      if (!lang) continue;
+
+      const text = codeEl.textContent ?? "";
+      highlighter.highlightCode(lang, text, (highlighted) => {
+        codeEl.innerHTML = highlighted;
+      });
+    }
+  }
+
+  /** Render mermaid diagrams from fenced code blocks. */
+  private async _renderMermaid() {
     const nodes = this.querySelectorAll<HTMLElement>("div.mermaid");
     if (nodes.length === 0) return;
 
-    // Skip nodes already rendered by mermaid
     const unrendered = Array.from(nodes).filter(
       (n) => !n.hasAttribute("data-processed"),
     );

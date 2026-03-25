@@ -26,15 +26,9 @@
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import type { DiffHunk } from "../models/changes/types.js";
 import type { IHighlighter } from "../models/changes/highlighter.js";
-import { Highlighter } from "../models/changes/highlighter.js";
+import { getSharedHighlighter } from "../models/changes/shared-highlighter.js";
 
 export class HighlightController implements ReactiveController {
-  /**
-   * Shared highlighter instance — survives component disconnects so the
-   * Shiki web worker (and its loaded languages) aren't thrown away on
-   * tab switches. All HighlightController instances share the same worker.
-   */
-  private static _shared: IHighlighter = new Highlighter();
 
   private _host: ReactiveControllerHost;
   private _highlighter: IHighlighter;
@@ -54,7 +48,7 @@ export class HighlightController implements ReactiveController {
    */
   constructor(host: ReactiveControllerHost, highlighter?: IHighlighter) {
     this._host = host;
-    this._highlighter = highlighter ?? HighlightController._shared;
+    this._highlighter = highlighter ?? getSharedHighlighter();
     host.addController(this);
   }
 

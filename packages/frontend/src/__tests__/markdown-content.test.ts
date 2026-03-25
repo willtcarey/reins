@@ -35,19 +35,20 @@ describe("parseMarkdown", () => {
   // Regular code blocks — should be unchanged
   // ---------------------------------------------------------------------------
 
-  test("renders a javascript code block as <pre><code>", () => {
+  test("renders a javascript code block as <pre><code> with data-lang", () => {
     const md = "```javascript\nconsole.log('hi');\n```";
     const result = parseMarkdown(md);
     expect(result).toContain("<pre>");
-    expect(result).toContain("<code");
+    expect(result).toContain('<code data-lang="javascript"');
     expect(result).toContain("console.log");
   });
 
-  test("renders a code block with no language as <pre><code>", () => {
+  test("renders a code block with no language as <pre><code> without data-lang", () => {
     const md = "```\nplain code\n```";
     const result = parseMarkdown(md);
     expect(result).toContain("<pre>");
     expect(result).toContain("<code");
+    expect(result).not.toContain("data-lang");
   });
 
   // ---------------------------------------------------------------------------

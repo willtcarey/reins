@@ -100,7 +100,7 @@ html, body {
 
 /* Markdown prose overrides for dark theme */
 .prose pre {
-  @apply bg-zinc-900 text-zinc-200 rounded-lg overflow-x-auto;
+  @apply bg-zinc-950 text-zinc-200 rounded-lg overflow-x-auto p-4 my-3 border border-zinc-700/50;
 }
 
 .prose code {
@@ -108,7 +108,7 @@ html, body {
 }
 
 .prose pre code {
-  @apply bg-transparent p-0;
+  @apply bg-transparent text-zinc-200 p-0 border-none text-xs leading-relaxed;
 }
 
 .prose a {

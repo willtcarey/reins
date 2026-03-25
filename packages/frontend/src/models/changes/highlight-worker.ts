@@ -102,15 +102,29 @@ async function ensureLang(hl: Highlighter, lang: BundledLanguage): Promise<void>
 }
 
 /**
+ * Resolve an explicit language string to a BundledLanguage.
+ * Checks overrides first, then tries the string directly as a language ID.
+ */
+function resolveExplicitLang(lang: string): BundledLanguage | null {
+  const lower = lang.toLowerCase();
+  const override = EXT_OVERRIDES[lower];
+  if (override) return override;
+  if (isBundledLanguage(lower)) return lower;
+  return null;
+}
+
+/**
  * Highlight an array of source lines for a given file path.
+ * If an explicit language is provided, it takes precedence over path detection.
  * Returns an array of HTML strings (one per input line).
  */
 async function highlightLines(
   hl: Highlighter,
   filePath: string,
   lines: string[],
+  explicitLang?: string,
 ): Promise<string[]> {
-  const lang = langFromPath(filePath);
+  const lang = explicitLang ? resolveExplicitLang(explicitLang) : langFromPath(filePath);
 
   if (!lang) {
     return lines.map(escapeHtml);
@@ -139,7 +153,7 @@ async function highlightLines(
 export interface HighlightRequest {
   id: number;
   type: "highlight";
-  files: Array<{ path: string; hunks: Array<{ lines: string[] }> }>;
+  files: Array<{ path: string; lang?: string; hunks: Array<{ lines: string[] }> }>;
 }
 
 export interface HighlightResponse {
@@ -155,11 +169,11 @@ self.onmessage = async (e: MessageEvent<HighlightRequest>) => {
     const hl = await getHighlighter();
 
     const results = await Promise.all(
-      files.map(async ({ path, hunks }) => ({
+      files.map(async ({ path, lang, hunks }) => ({
         path,
         hunks: await Promise.all(
           hunks.map(async ({ lines }) => ({
-            htmlLines: await highlightLines(hl, path, lines),
+            htmlLines: await highlightLines(hl, path, lines, lang),
           })),
         ),
       })),
