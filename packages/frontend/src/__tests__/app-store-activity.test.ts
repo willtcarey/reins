@@ -3,36 +3,7 @@
  */
 import { describe, test, expect, beforeEach } from "bun:test";
 import { AppStore } from "../models/stores/app-store.js";
-
-// Minimal stub of AppClient that lets us fire events
-class StubClient {
-  private eventListeners = new Set<(sessionId: string, projectId: number, event: any) => void>();
-  private connectionListeners = new Set<(connected: boolean) => void>();
-
-  onEvent(listener: (sessionId: string, projectId: number, event: any) => void): () => void {
-    this.eventListeners.add(listener);
-    return () => this.eventListeners.delete(listener);
-  }
-
-  onConnection(listener: (connected: boolean) => void): () => void {
-    this.connectionListeners.add(listener);
-    return () => this.connectionListeners.delete(listener);
-  }
-
-  // Test helpers
-  fireEvent(sessionId: string, projectId: number, event: any) {
-    for (const l of this.eventListeners) l(sessionId, projectId, event);
-  }
-
-  fireConnection(connected: boolean) {
-    for (const l of this.connectionListeners) l(connected);
-  }
-
-  // Stubs for methods AppStore might call
-  connect() {}
-  disconnect() {}
-  get isConnected() { return false; }
-}
+import { StubClient } from "./helpers/stub-client.js";
 
 describe("AppStore activity tracking", () => {
   let client: StubClient;
@@ -40,7 +11,7 @@ describe("AppStore activity tracking", () => {
 
   beforeEach(() => {
     client = new StubClient();
-    store = new AppStore(client as any);
+    store = new AppStore(client);
   });
 
   test("agent_start sets running activity with projectId", () => {

@@ -1,6 +1,19 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
+import type { SessionEntry, SessionMessageEntry, CompactionEntry } from "@mariozechner/pi-coding-agent";
 import { useTestDb } from "./helpers/test-db.js";
+
+/** Narrow a SessionEntry to SessionMessageEntry (throws if wrong type). */
+function asMessage(entry: SessionEntry): SessionMessageEntry {
+  if (entry.type !== "message") throw new Error(`Expected message entry, got ${entry.type}`);
+  return entry;
+}
+
+/** Narrow a SessionEntry to CompactionEntry (throws if wrong type). */
+function asCompaction(entry: SessionEntry): CompactionEntry {
+  if (entry.type !== "compaction") throw new Error(`Expected compaction entry, got ${entry.type}`);
+  return entry;
+}
 import { createProject } from "../project-store.js";
 import { createTask } from "../task-store.js";
 import {
@@ -677,11 +690,15 @@ describe("session-store", () => {
 
       const entries = sm.getEntries();
       expect(entries).toHaveLength(4);
-      expect(entries.every((e: any) => e.type === "message")).toBe(true);
-      expect((entries[0] as any).message.role).toBe("user");
-      expect((entries[0] as any).message.content).toBe("hello");
-      expect((entries[3] as any).message.role).toBe("assistant");
-      expect((entries[3] as any).message.content).toBe("4");
+      expect(entries.every((e) => e.type === "message")).toBe(true);
+      const msg0 = asMessage(entries[0]).message;
+      expect(msg0.role).toBe("user");
+      if ("content" in msg0) expect(msg0.content).toBe("hello");
+      else throw new Error("expected content on user message");
+      const msg3 = asMessage(entries[3]).message;
+      expect(msg3.role).toBe("assistant");
+      if ("content" in msg3) expect(msg3.content).toBe("4");
+      else throw new Error("expected content on assistant message");
     });
 
     test("entries form a linear chain via parentId", () => {
@@ -727,7 +744,7 @@ describe("session-store", () => {
       const entries = sm.getEntries();
       expect(entries).toHaveLength(3);
       expect(entries[0].type).toBe("compaction");
-      expect((entries[0] as any).summary).toBe("discussed project setup");
+      expect(asCompaction(entries[0]).summary).toBe("discussed project setup");
       expect(entries[1].type).toBe("message");
       expect(entries[2].type).toBe("message");
     });
@@ -768,7 +785,7 @@ describe("session-store", () => {
       const entries = sm.getEntries();
       expect(entries).toHaveLength(2);
       expect(entries[0].type).toBe("compaction");
-      expect((entries[0] as any).summary).toBe("");
+      expect(asCompaction(entries[0]).summary).toBe("");
     });
 
     test("handles toolResult messages", () => {
@@ -784,7 +801,7 @@ describe("session-store", () => {
 
       const entries = sm.getEntries();
       expect(entries).toHaveLength(4);
-      expect((entries[2] as any).message.role).toBe("toolResult");
+      expect(asMessage(entries[2]).message.role).toBe("toolResult");
     });
   });
 });

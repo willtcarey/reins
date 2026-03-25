@@ -1,18 +1,11 @@
 /**
  * Tests for ProjectStore — per-project task/session data cache.
  */
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { ProjectStore } from "../models/stores/project-store.js";
+import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 
 // Mock fetch globally
-const originalFetch = globalThis.fetch;
-
-function mockFetch(handler: (url: string) => Response | Promise<Response>) {
-  globalThis.fetch = mock((input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input.toString();
-    return Promise.resolve(handler(url));
-  }) as any;
-}
 
 function jsonResponse(data: unknown, ok = true): Response {
   return new Response(JSON.stringify(data), {
@@ -26,7 +19,7 @@ describe("ProjectStore", () => {
 
   beforeEach(() => {
     store = new ProjectStore(42);
-    globalThis.fetch = originalFetch;
+    restoreFetch();
   });
 
   test("constructor sets projectId and initial state", () => {
@@ -39,7 +32,8 @@ describe("ProjectStore", () => {
   });
 
   test("fetchLists fetches tasks and sessions in parallel", async () => {
-    const tasks = [{ id: 1, project_id: 42, title: "Task 1", description: null, branch_name: "", status: "open" as const, created_at: "", updated_at: "", session_count: 0, session_ids: [] as string[], diffStats: null }];
+    const sessionIds: string[] = [];
+    const tasks = [{ id: 1, project_id: 42, title: "Task 1", description: null, branch_name: "", status: "open" as const, created_at: "", updated_at: "", session_count: 0, session_ids: sessionIds, diffStats: null }];
     const sessions = [{ id: "s1", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null }];
 
     mockFetch((url) => {
@@ -157,11 +151,10 @@ describe("ProjectStore", () => {
 
   test("fetchLists uses correct URLs for projectId", async () => {
     const urls: string[] = [];
-    globalThis.fetch = mock((input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
+    mockFetch((url) => {
       urls.push(url);
-      return Promise.resolve(jsonResponse([]));
-    }) as any;
+      return jsonResponse([]);
+    });
 
     await store.fetchLists();
 
@@ -171,11 +164,10 @@ describe("ProjectStore", () => {
 
   test("fetchTaskSessions uses correct URL", async () => {
     const urls: string[] = [];
-    globalThis.fetch = mock((input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
+    mockFetch((url) => {
       urls.push(url);
-      return Promise.resolve(jsonResponse([]));
-    }) as any;
+      return jsonResponse([]);
+    });
 
     await store.fetchTaskSessions(7);
 

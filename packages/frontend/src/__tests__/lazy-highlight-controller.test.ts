@@ -25,6 +25,10 @@ class FakeHighlighter implements IHighlighter {
     onComplete(lines.map((t) => `<hl>${t}</hl>`));
   }
 
+  highlightCode(_lang: string, code: string, onComplete: (html: string) => void): void {
+    onComplete(`<hl>${code}</hl>`);
+  }
+
   dispose(): void {
     this.disposed = true;
   }
@@ -36,6 +40,10 @@ class AsyncFakeHighlighter implements IHighlighter {
 
   highlightHunk(path: string, lines: string[], onComplete: HighlightHunkCallback): void {
     this.pending.push({ path, lines, onComplete });
+  }
+
+  highlightCode(_lang: string, code: string, onComplete: (html: string) => void): void {
+    onComplete(`<hl>${code}</hl>`);
   }
 
   complete(index = this.pending.length - 1) {
@@ -53,11 +61,15 @@ class AsyncFakeHighlighter implements IHighlighter {
  * Fake host that doubles as an HTMLElement (with a no-op for
  * IntersectionObserver). The controller needs `ReactiveControllerHost & HTMLElement`.
  */
-function fakeHost() {
+/** Minimal stub satisfying ReactiveControllerHost & HTMLElement for tests. */
+interface FakeHost extends ReactiveControllerHost, HTMLElement {
+  updateCount: number;
+}
+
+function fakeHost(): FakeHost {
   const controllers: ReactiveController[] = [];
   let updateCount = 0;
-  return {
-    // ReactiveControllerHost
+  const stub = {
     addController(c: ReactiveController) { controllers.push(c); },
     removeController(c: ReactiveController) {
       const i = controllers.indexOf(c);
@@ -66,10 +78,13 @@ function fakeHost() {
     requestUpdate() { updateCount++; },
     updateComplete: Promise.resolve(true),
     get updateCount() { return updateCount; },
-    // Minimal HTMLElement stubs for IntersectionObserver.observe()
     nodeType: 1,
     tagName: "DIV",
-  } as unknown as ReactiveControllerHost & HTMLElement & { updateCount: number };
+  };
+  // Return the minimal stub as a FakeHost. Object.create copies the prototype
+  // chain isn't needed — the controller only uses the properties above.
+  const host: FakeHost = Object.create(stub);
+  return host;
 }
 
 function line(type: DiffLine["type"], text: string, newLine?: number): DiffLine {
@@ -138,7 +153,7 @@ describe("LazyHighlightController", () => {
     const host = fakeHost();
     const ctrl = new LazyHighlightController(host, getData, hl);
     // Force visibility by accessing internals — acceptable for testing
-    (ctrl as any)._hasBeenVisible = true;
+    ctrl["_hasBeenVisible"] = true;
     return { host, ctrl };
   }
 
@@ -274,10 +289,19 @@ describe("LazyHighlightController", () => {
     // Stub IntersectionObserver for this test since bun doesn't have it
     const origIO = globalThis.IntersectionObserver;
     let disconnected = false;
-    (globalThis as any).IntersectionObserver = class {
-      observe() {}
-      disconnect() { disconnected = true; }
-    };
+    Object.defineProperty(globalThis, "IntersectionObserver", {
+      value: class {
+        observe() {}
+        unobserve() {}
+        disconnect() { disconnected = true; }
+        takeRecords() { return []; }
+        root = null;
+        rootMargin = "";
+        thresholds = [];
+      },
+      writable: true,
+      configurable: true,
+    });
 
     try {
       const host = fakeHost();
@@ -294,7 +318,7 @@ describe("LazyHighlightController", () => {
       if (origIO) {
         globalThis.IntersectionObserver = origIO;
       } else {
-        delete (globalThis as any).IntersectionObserver;
+        globalThis.IntersectionObserver = undefined!;
       }
     }
   });

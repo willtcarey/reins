@@ -26,7 +26,7 @@ describe("getBashCommand", () => {
   });
 
   test("returns empty string when args is undefined", () => {
-    expect(getBashCommand(makeBashBlock({ args: undefined as any }))).toBe("");
+    expect(getBashCommand(makeBashBlock({ args: undefined }))).toBe("");
   });
 
   test("returns full long commands without truncation", () => {

@@ -21,7 +21,7 @@ function simulateMessage(msg: any): { sessionId: string; projectId: number; even
   });
 
   // Access private handleMessage
-  (client as any).handleMessage(msg);
+  client["handleMessage"](msg);
 
   return received;
 }

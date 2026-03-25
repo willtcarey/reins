@@ -8,7 +8,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { AppClient, FrontendEvent, SessionData } from "../models/ws-client.js";
+import type { IAppClient, FrontendEvent, SessionData } from "../models/ws-client.js";
 import "./markdown-content.js";
 import { getToolRenderer } from "./tools/index.js";
 import {
@@ -34,7 +34,7 @@ export class ChatPanel extends LitElement {
   }
 
   @property({ attribute: false })
-  client: AppClient | null = null;
+  client: IAppClient | null = null;
 
   @property({ type: String })
   sessionId = "";

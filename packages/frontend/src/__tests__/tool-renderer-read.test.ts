@@ -26,7 +26,7 @@ describe("getReadSummary", () => {
   });
 
   test("returns empty string when args is undefined", () => {
-    expect(getReadSummary(makeToolBlock({ args: undefined as any }))).toBe("");
+    expect(getReadSummary(makeToolBlock({ args: undefined }))).toBe("");
   });
 });
 
@@ -52,7 +52,7 @@ describe("getReadPreview", () => {
 
   test("returns empty string when result has no text content", () => {
     const block = makeToolBlock({
-      result: { content: [{ type: "image" as any, data: "abc", mimeType: "image/png" }] },
+      result: { content: [{ type: "image", data: "abc", mimeType: "image/png" }] },
     });
     expect(getReadPreview(block)).toBe("");
   });

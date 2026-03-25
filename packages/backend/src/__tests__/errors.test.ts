@@ -21,9 +21,10 @@ describe("badRequest", () => {
     expect(() => badRequest("missing field")).toThrow(HttpError);
     try {
       badRequest("missing field");
-    } catch (err) {
-      expect((err as HttpError).status).toBe(400);
-      expect((err as HttpError).message).toBe("missing field");
+    } catch (e) {
+      const err = e instanceof HttpError ? e : undefined;
+      expect(err?.status).toBe(400);
+      expect(err?.message).toBe("missing field");
     }
   });
 });
@@ -33,9 +34,10 @@ describe("notFound", () => {
     expect(() => notFound("no such thing")).toThrow(HttpError);
     try {
       notFound("no such thing");
-    } catch (err) {
-      expect((err as HttpError).status).toBe(404);
-      expect((err as HttpError).message).toBe("no such thing");
+    } catch (e) {
+      const err = e instanceof HttpError ? e : undefined;
+      expect(err?.status).toBe(404);
+      expect(err?.message).toBe("no such thing");
     }
   });
 });
@@ -45,9 +47,10 @@ describe("conflict", () => {
     expect(() => conflict("already exists")).toThrow(HttpError);
     try {
       conflict("already exists");
-    } catch (err) {
-      expect((err as HttpError).status).toBe(409);
-      expect((err as HttpError).message).toBe("already exists");
+    } catch (e) {
+      const err = e instanceof HttpError ? e : undefined;
+      expect(err?.status).toBe(409);
+      expect(err?.message).toBe("already exists");
     }
   });
 });

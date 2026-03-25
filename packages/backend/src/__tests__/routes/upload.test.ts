@@ -16,7 +16,7 @@ function makeUploadRequest(
     const blob =
       typeof f.content === "string"
         ? new Blob([f.content], { type: "text/plain" })
-        : new Blob([f.content as BlobPart], { type: "application/octet-stream" });
+        : new Blob([new Uint8Array(f.content)], { type: "application/octet-stream" });
     formData.append(f.name, blob, f.filename);
   }
   return new Request(`http://localhost${path}`, { method: "POST", body: formData });

@@ -5,6 +5,7 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createSession, persistMessages } from "../../session-store.js";
+import { createTestManagedSession } from "../helpers/test-pi.js";
 
 function makeRequest(method: string, path: string): Request {
   return new Request(`http://localhost${path}`, { method });
@@ -30,16 +31,7 @@ describe("session routes (top-level)", () => {
       const sessionId = "lookup-memory";
       createSession(sessionId, projectId, {});
 
-      state.sessions.set(sessionId, {
-        session: {
-          isStreaming: true,
-          messages: [{ role: "user", content: "hi" }],
-          model: { provider: "test", id: "test-model" },
-          thinkingLevel: "none",
-        } as any,
-        id: sessionId,
-        lastActivity: Date.now(),
-      });
+      state.sessions.set(sessionId, await createTestManagedSession(sessionId));
 
       const res = await router.handle(
         makeRequest("GET", `/api/sessions/${sessionId}`),
@@ -49,7 +41,7 @@ describe("session routes (top-level)", () => {
       const body = await res!.json();
       expect(body.id).toBe(sessionId);
       expect(body.project_id).toBe(projectId);
-      expect(body.state.isStreaming).toBe(true);
+      expect(body.state.isStreaming).toBe(false);
     });
 
     test("returns session from DB with project_id", async () => {

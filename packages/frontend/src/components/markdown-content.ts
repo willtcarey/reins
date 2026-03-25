@@ -58,7 +58,8 @@ marked.use(mermaidExtension);
 
 /** Parse markdown to HTML. Mermaid fenced code blocks become `<div class="mermaid">`. */
 export function parseMarkdown(text: string): string {
-  return marked.parse(text, { async: false }) as string;
+  const result: string = marked.parse(text, { async: false });
+  return result;
 }
 
 // ---------------------------------------------------------------------------

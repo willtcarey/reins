@@ -22,7 +22,7 @@ describe("getWriteSummary", () => {
   });
 
   test("returns empty string when args is undefined", () => {
-    expect(getWriteSummary(makeWriteBlock({ args: undefined as any }))).toBe("");
+    expect(getWriteSummary(makeWriteBlock({ args: undefined }))).toBe("");
   });
 });
 
@@ -44,6 +44,6 @@ describe("getWriteInfo", () => {
   });
 
   test("returns 0 when args is undefined", () => {
-    expect(getWriteInfo(makeWriteBlock({ args: undefined as any }))).toEqual({ lines: 0 });
+    expect(getWriteInfo(makeWriteBlock({ args: undefined }))).toEqual({ lines: 0 });
   });
 });

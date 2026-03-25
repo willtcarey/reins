@@ -118,7 +118,7 @@ export function useTestRepo(opts?: { withRemote?: boolean }): TestRepoRef {
       ? await createTestRepoWithRemote()
       : await createTestRepo();
     ref.dir = repo.dir;
-    if ("remoteDir" in repo) ref.remoteDir = (repo as any).remoteDir;
+    if ("remoteDir" in repo) ref.remoteDir = String(repo.remoteDir);
     ref._cleanup = repo.cleanup;
   });
 

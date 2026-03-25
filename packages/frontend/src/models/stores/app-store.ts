@@ -8,7 +8,7 @@
  * internally — views never participate in fetch/event decisions.
  */
 
-import { AppClient } from "../ws-client.js";
+import type { IAppClient } from "../ws-client.js";
 import { ActiveSessionStore } from "./active-session-store.js";
 import { ProjectCollectionStore } from "./project-collection-store.js";
 import { DiffStore } from "./diff-store.js";
@@ -26,7 +26,7 @@ export class AppStore {
   // ---- Delegates ------------------------------------------------------------
 
   private _activeSession = new ActiveSessionStore();
-  private _client: AppClient;
+  private _client: IAppClient;
 
   // ---- Sub-stores -----------------------------------------------------------
 
@@ -55,7 +55,7 @@ export class AppStore {
     return [this._activeSession, this.projectCollectionStore, this.diffStore];
   }
 
-  constructor(client: AppClient) {
+  constructor(client: IAppClient) {
     this._client = client;
 
     // Forward sub-store notifications to our subscribers
@@ -354,7 +354,7 @@ export class AppStore {
   // ---- Client access (for commands) -----------------------------------------
 
   /** The underlying WebSocket client — for sending commands (prompt, steer, abort). */
-  get client(): AppClient {
+  get client(): IAppClient {
     return this._client;
   }
 

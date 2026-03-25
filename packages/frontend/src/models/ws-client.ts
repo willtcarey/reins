@@ -84,9 +84,22 @@ export type FrontendEvent =
 export type EventListener = (sessionId: string, projectId: number, event: FrontendEvent) => void;
 export type ConnectionListener = (connected: boolean) => void;
 
+// ---- Public interface (for test doubles) ------------------------------------
+
+export interface IAppClient {
+  connect(): void;
+  disconnect(): void;
+  readonly isConnected: boolean;
+  prompt(sessionId: string, message: string): void;
+  steer(sessionId: string, message: string): void;
+  abort(sessionId: string): void;
+  onEvent(listener: EventListener): () => void;
+  onConnection(listener: ConnectionListener): () => void;
+}
+
 // ---- Client ----------------------------------------------------------------
 
-export class AppClient {
+export class AppClient implements IAppClient {
   private ws: WebSocket | null = null;
   private url: string;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;

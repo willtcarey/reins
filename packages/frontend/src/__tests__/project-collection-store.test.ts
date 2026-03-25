@@ -1,19 +1,12 @@
 /**
  * Tests for ProjectCollectionStore — project list, CRUD, and per-project data stores.
  */
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { ProjectCollectionStore } from "../models/stores/project-collection-store.js";
 import { ProjectStore } from "../models/stores/project-store.js";
+import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 
 // Mock fetch globally
-const originalFetch = globalThis.fetch;
-
-function mockFetch(handler: (url: string) => Response | Promise<Response>) {
-  globalThis.fetch = mock((input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input.toString();
-    return Promise.resolve(handler(url));
-  }) as any;
-}
 
 function jsonResponse(data: unknown, ok = true): Response {
   return new Response(JSON.stringify(data), {
@@ -27,7 +20,7 @@ describe("ProjectCollectionStore per-project data", () => {
 
   beforeEach(() => {
     store = new ProjectCollectionStore();
-    globalThis.fetch = originalFetch;
+    restoreFetch();
   });
 
   // ---- Lazy creation --------------------------------------------------------

@@ -9,22 +9,15 @@
  *
  * No `toggle-rendered` event is emitted to the parent.
  */
-import { describe, test, expect, mock, afterEach } from "bun:test";
+import { describe, test, expect, afterEach } from "bun:test";
 import { DiffFileCard } from "../components/changes/diff-file-card.js";
 import type { DiffFile } from "../models/changes/types.js";
+import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
+import { getElementProperties } from "./helpers/lit-internals.js";
 
 // ---------------------------------------------------------------------------
 // Fetch mock helpers
 // ---------------------------------------------------------------------------
-
-const originalFetch = globalThis.fetch;
-
-function mockFetch(handler: (url: string) => Response | Promise<Response>) {
-  globalThis.fetch = mock((input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input.toString();
-    return Promise.resolve(handler(url));
-  }) as any;
-}
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -60,33 +53,33 @@ function cardWithProject(file?: DiffFile): DiffFileCard {
 
 describe("DiffFileCard markdown preview", () => {
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    restoreFetch();
   });
 
   test("rendered is internal state, not a property", () => {
     const card = new DiffFileCard();
-    const props = (card.constructor as any).elementProperties as Map<string, any>;
+    const props = getElementProperties(card);
     const descriptor = props.get("rendered");
     expect(descriptor?.state).toBe(true);
   });
 
   test("markdownContent is internal state, not a property", () => {
     const card = new DiffFileCard();
-    const props = (card.constructor as any).elementProperties as Map<string, any>;
+    const props = getElementProperties(card);
     const descriptor = props.get("markdownContent");
     expect(descriptor?.state).toBe(true);
   });
 
   test("markdownLoading is internal state, not a property", () => {
     const card = new DiffFileCard();
-    const props = (card.constructor as any).elementProperties as Map<string, any>;
+    const props = getElementProperties(card);
     const descriptor = props.get("markdownLoading");
     expect(descriptor?.state).toBe(true);
   });
 
   test("card starts with rendered = false", () => {
     const card = new DiffFileCard();
-    expect((card as any).rendered).toBe(false);
+    expect(card["rendered"]).toBe(false);
   });
 
   test("toggleRendered flips rendered state without emitting an event", () => {
@@ -96,9 +89,9 @@ describe("DiffFileCard markdown preview", () => {
     const events: string[] = [];
     card.addEventListener("toggle-rendered", () => events.push("toggle-rendered"));
 
-    (card as any)._toggleRendered();
+    card["_toggleRendered"]();
 
-    expect((card as any).rendered).toBe(true);
+    expect(card["rendered"]).toBe(true);
     expect(events).toEqual([]);
   });
 
@@ -106,23 +99,23 @@ describe("DiffFileCard markdown preview", () => {
     mockFetch(() => new Response("# Hello World"));
     const card = cardWithProject();
 
-    await (card as any)._toggleRendered();
+    await card["_toggleRendered"]();
 
-    expect((card as any).rendered).toBe(true);
-    expect((card as any).markdownContent).toContain("Hello World");
+    expect(card["rendered"]).toBe(true);
+    expect(card["markdownContent"]).toContain("Hello World");
     // markdownContent now stores raw markdown text (rendering is done by <markdown-content>)
-    expect((card as any).markdownContent).toBe("# Hello World");
+    expect(card["markdownContent"]).toBe("# Hello World");
   });
 
   test("toggleRendered back to diff does not clear cache", async () => {
     mockFetch(() => new Response("# Cached"));
     const card = cardWithProject();
 
-    await (card as any)._toggleRendered(); // on
-    (card as any)._toggleRendered(); // off
+    await card["_toggleRendered"](); // on
+    card["_toggleRendered"](); // off
 
-    expect((card as any).rendered).toBe(false);
-    expect((card as any).markdownContent).toContain("Cached");
+    expect(card["rendered"]).toBe(false);
+    expect(card["markdownContent"]).toContain("Cached");
   });
 
   test("second toggle-on uses cache and does not re-fetch", async () => {
@@ -133,9 +126,9 @@ describe("DiffFileCard markdown preview", () => {
     });
     const card = cardWithProject();
 
-    await (card as any)._toggleRendered(); // on — fetches
-    (card as any)._toggleRendered(); // off
-    await (card as any)._toggleRendered(); // on again — should use cache
+    await card["_toggleRendered"](); // on — fetches
+    card["_toggleRendered"](); // off
+    await card["_toggleRendered"](); // on again — should use cache
 
     expect(fetchCount).toBe(1);
   });
@@ -149,23 +142,23 @@ describe("DiffFileCard markdown preview", () => {
     const card = cardWithProject();
 
     // Simulate initial willUpdate (normally done by Lit lifecycle)
-    (card as any).willUpdate(new Map([["file", undefined]]));
+    card["willUpdate"](new Map([["file", undefined]]));
 
     // First render — fetches
-    await (card as any)._toggleRendered();
+    await card["_toggleRendered"]();
     expect(fetchCount).toBe(1);
-    expect((card as any).markdownContent).toBe("# Version 1");
+    expect(card["markdownContent"]).toBe("# Version 1");
 
     // Simulate file update (same path, new diff data) — triggers willUpdate
     const updatedFile = mdFile();
     updatedFile.additions = 5;
     card.file = updatedFile;
-    (card as any).willUpdate(new Map([["file", card.file]]));
+    card["willUpdate"](new Map([["file", card.file]]));
 
     // Should have re-fetched since we were in rendered mode
     await new Promise((r) => setTimeout(r, 10));
     expect(fetchCount).toBe(2);
-    expect((card as any).markdownContent).toBe("# Version 2");
+    expect(card["markdownContent"]).toBe("# Version 2");
   });
 
   test("cache is cleared when file property changes to different path", async () => {
@@ -173,28 +166,28 @@ describe("DiffFileCard markdown preview", () => {
     const card = cardWithProject();
 
     // Simulate initial willUpdate
-    (card as any).willUpdate(new Map([["file", undefined]]));
+    card["willUpdate"](new Map([["file", undefined]]));
 
-    await (card as any)._toggleRendered();
-    expect((card as any).rendered).toBe(true);
-    expect((card as any).markdownContent).toBe("# Original");
+    await card["_toggleRendered"]();
+    expect(card["rendered"]).toBe(true);
+    expect(card["markdownContent"]).toBe("# Original");
 
     // Simulate component reuse with a different file
     card.file = mdFile("docs/other.md");
-    (card as any).willUpdate(new Map([["file", card.file]]));
+    card["willUpdate"](new Map([["file", card.file]]));
 
-    expect((card as any).rendered).toBe(false);
-    expect((card as any).markdownContent).toBe(null);
+    expect(card["rendered"]).toBe(false);
+    expect(card["markdownContent"]).toBe(null);
   });
 
   test("fetch error stores error message in markdownContent", async () => {
     mockFetch(() => new Response("", { status: 500 }));
     const card = cardWithProject();
 
-    await (card as any)._toggleRendered();
+    await card["_toggleRendered"]();
 
-    expect((card as any).markdownError).toContain("500");
-    expect((card as any).markdownContent).toBe(null);
+    expect(card["markdownError"]).toContain("500");
+    expect(card["markdownContent"]).toBe(null);
   });
 
   test("markdownLoading is true during fetch", async () => {
@@ -202,14 +195,14 @@ describe("DiffFileCard markdown preview", () => {
     mockFetch(() => new Promise<Response>((r) => { resolveResp = r; }));
     const card = cardWithProject();
 
-    const promise = (card as any)._toggleRendered();
+    const promise = card["_toggleRendered"]();
 
-    expect((card as any).markdownLoading).toBe(true);
+    expect(card["markdownLoading"]).toBe(true);
 
     resolveResp(new Response("# Done"));
     await promise;
 
-    expect((card as any).markdownLoading).toBe(false);
+    expect(card["markdownLoading"]).toBe(false);
   });
 
   test("no fetch when projectId is null", async () => {
@@ -220,18 +213,18 @@ describe("DiffFileCard markdown preview", () => {
     card.file = mdFile();
     // no projectId set
 
-    await (card as any)._toggleRendered();
+    await card["_toggleRendered"]();
 
-    expect((card as any).rendered).toBe(true);
+    expect(card["rendered"]).toBe(true);
     expect(fetched).toBe(false);
-    expect((card as any).markdownContent).toBe(null);
+    expect(card["markdownContent"]).toBe(null);
   });
 });
 
 describe("DiffFileCard file URL generation", () => {
   test("builds URL with projectId, path, and branch", () => {
     const card = cardWithProject(mdFile("docs/guide.md"));
-    const url = (card as any)._fileUrl();
+    const url = card["_fileUrl"]();
 
     expect(url).toBe("/api/projects/42/file?path=docs%2Fguide.md&ref=main");
   });
@@ -242,7 +235,7 @@ describe("DiffFileCard file URL generation", () => {
     card.projectId = 7;
     card.branch = null;
 
-    const url = (card as any)._fileUrl();
+    const url = card["_fileUrl"]();
 
     expect(url).toBe("/api/projects/7/file?path=README.md");
   });
@@ -252,6 +245,6 @@ describe("DiffFileCard file URL generation", () => {
     card.file = mdFile();
     card.projectId = null;
 
-    expect((card as any)._fileUrl()).toBe(null);
+    expect(card["_fileUrl"]()).toBe(null);
   });
 });

@@ -33,7 +33,7 @@ describe("getDelegateSummary", () => {
   });
 
   test("returns empty string when args is undefined", () => {
-    expect(getDelegateSummary(makeDelegateBlock({ args: undefined as any }))).toBe("");
+    expect(getDelegateSummary(makeDelegateBlock({ args: undefined }))).toBe("");
   });
 
   test("short prompts are not truncated", () => {
@@ -53,6 +53,6 @@ describe("getDelegateDetail", () => {
   });
 
   test("returns empty string when args is undefined", () => {
-    expect(getDelegateDetail(makeDelegateBlock({ args: undefined as any }))).toEqual({ prompt: "" });
+    expect(getDelegateDetail(makeDelegateBlock({ args: undefined }))).toEqual({ prompt: "" });
   });
 });

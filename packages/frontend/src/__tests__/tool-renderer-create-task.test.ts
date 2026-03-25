@@ -22,7 +22,7 @@ describe("getTaskSummary", () => {
   });
 
   test("returns empty string when args is undefined", () => {
-    expect(getTaskSummary(makeCreateTaskBlock({ args: undefined as any }))).toBe("");
+    expect(getTaskSummary(makeCreateTaskBlock({ args: undefined }))).toBe("");
   });
 });
 
@@ -42,7 +42,7 @@ describe("getTaskDetail", () => {
   });
 
   test("returns empty strings when args is undefined", () => {
-    expect(getTaskDetail(makeCreateTaskBlock({ args: undefined as any }))).toEqual({
+    expect(getTaskDetail(makeCreateTaskBlock({ args: undefined }))).toEqual({
       description: "",
       branch: "",
     });

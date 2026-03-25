@@ -45,14 +45,16 @@ describe("applyChatEvent — agent_end error handling", () => {
     const user = makeUserMsg("hello");
     const errorMsg = makeErrorAssistantMsg("Anthropic overloaded_error: Server is overloaded");
 
+    const messages: AgentMessage[] = [user];
     let state: ChatState = {
       ...initialChatState(),
-      messages: [user] as AgentMessage[],
+      messages,
     };
     state = applyChatEvent(state, { type: "agent_start" });
+    const runMessages: AgentMessage[] = [user, errorMsg];
     state = applyChatEvent(state, {
       type: "agent_end",
-      messages: [user, errorMsg] as AgentMessage[],
+      messages: runMessages,
     });
 
     expect(state.isStreaming).toBe(false);
@@ -63,14 +65,16 @@ describe("applyChatEvent — agent_end error handling", () => {
     const user = makeUserMsg("hello");
     const errorMsg = makeErrorAssistantMsg("Server error");
 
+    const messages: AgentMessage[] = [user];
     let state: ChatState = {
       ...initialChatState(),
-      messages: [user] as AgentMessage[],
+      messages,
     };
     state = applyChatEvent(state, { type: "agent_start" });
+    const runMessages: AgentMessage[] = [user, errorMsg];
     state = applyChatEvent(state, {
       type: "agent_end",
-      messages: [user, errorMsg] as AgentMessage[],
+      messages: runMessages,
     });
 
     // Error messages should not be added to the conversation
@@ -82,14 +86,16 @@ describe("applyChatEvent — agent_end error handling", () => {
     const user = makeUserMsg("hello");
     const assistant = makeAssistantMsg("hi there");
 
+    const messages: AgentMessage[] = [user];
     let state: ChatState = {
       ...initialChatState(),
-      messages: [user] as AgentMessage[],
+      messages,
     };
     state = applyChatEvent(state, { type: "agent_start" });
+    const runMessages: AgentMessage[] = [user, assistant];
     state = applyChatEvent(state, {
       type: "agent_end",
-      messages: [user, assistant] as AgentMessage[],
+      messages: runMessages,
     });
 
     expect(state.errorMessage).toBe("");
@@ -101,14 +107,16 @@ describe("applyChatEvent — agent_end error handling", () => {
     const assistant = makeAssistantMsg("let me try", 1500);
     const errorMsg = makeErrorAssistantMsg("Rate limited", 2000);
 
+    const messages: AgentMessage[] = [user];
     let state: ChatState = {
       ...initialChatState(),
-      messages: [user] as AgentMessage[],
+      messages,
     };
     state = applyChatEvent(state, { type: "agent_start" });
+    const runMessages: AgentMessage[] = [user, assistant, errorMsg];
     state = applyChatEvent(state, {
       type: "agent_end",
-      messages: [user, assistant, errorMsg] as AgentMessage[],
+      messages: runMessages,
     });
 
     expect(state.errorMessage).toBe("Rate limited");

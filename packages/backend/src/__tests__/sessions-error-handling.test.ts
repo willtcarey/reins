@@ -11,7 +11,6 @@ import {
   createSession,
   persistMessages,
   loadMessages,
-  loadMessagesForLLM,
 } from "../session-store.js";
 import { filterErrorMessages } from "../sessions.js";
 

@@ -5,22 +5,14 @@
  * the store's reactive state, mode/branch setters, and the per-hunk expansion
  * algorithm.
  */
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { DiffStore } from "../models/stores/diff-store.js";
 import type { DiffFile, DiffHunk, DiffLine } from "../models/changes/types.js";
+import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 
 // ---------------------------------------------------------------------------
 // Fetch mock helpers (same pattern as project-store.test.ts)
 // ---------------------------------------------------------------------------
-
-const originalFetch = globalThis.fetch;
-
-function mockFetch(handler: (url: string, init?: RequestInit) => Response | Promise<Response>) {
-  globalThis.fetch = mock((input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input.toString();
-    return Promise.resolve(handler(url, init));
-  }) as any;
-}
 
 function jsonResponse(data: unknown, ok = true): Response {
   return new Response(JSON.stringify(data), {
@@ -85,7 +77,7 @@ describe("DiffStore", () => {
 
   afterEach(() => {
     store.dispose();
-    globalThis.fetch = originalFetch;
+    restoreFetch();
   });
 
   // ---- Initial state -------------------------------------------------------

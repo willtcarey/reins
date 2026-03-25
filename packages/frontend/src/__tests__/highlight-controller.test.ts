@@ -26,6 +26,10 @@ class FakeHighlighter implements IHighlighter {
     onComplete(lines.map((t) => `<span class="hl">${t}</span>`));
   }
 
+  highlightCode(_lang: string, code: string, onComplete: (html: string) => void): void {
+    onComplete(`<span class="hl">${code}</span>`);
+  }
+
   dispose(): void {
     this.disposed = true;
   }
@@ -37,6 +41,10 @@ class AsyncFakeHighlighter implements IHighlighter {
 
   highlightHunk(path: string, lines: string[], onComplete: HighlightHunkCallback): void {
     this.pendingHunks.push({ path, lines, onComplete });
+  }
+
+  highlightCode(_lang: string, code: string, onComplete: (html: string) => void): void {
+    onComplete(`<span class="hl">${code}</span>`);
   }
 
   completeHunk(index = this.pendingHunks.length - 1) {

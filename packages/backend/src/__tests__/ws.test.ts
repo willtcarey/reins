@@ -160,7 +160,7 @@ describe("WebSocket handlers", () => {
       handleWsOpen(state, mock.ws);
 
       const buf = Buffer.from("not json");
-      handleWsMessage(state, mock.ws, buf as any);
+      handleWsMessage(state, mock.ws, buf);
 
       await Bun.sleep(10);
 

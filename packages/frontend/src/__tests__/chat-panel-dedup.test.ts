@@ -51,16 +51,18 @@ describe("applyChatEvent — agent_end deduplication", () => {
     const newAssistant = makeAssistantMsg("hi there", 2000);
     const newTool = makeToolResultMsg("tc1", "output", 3000);
 
+    const messages: AgentMessage[] = [oldUser, oldAssistant, newUser];
     let state: ChatState = {
       ...initialChatState(),
-      messages: [oldUser, oldAssistant, newUser] as AgentMessage[],
+      messages,
     };
     state = applyChatEvent(state, { type: "agent_start" });
 
     // agent_end with this run's messages
+    const runMessages: AgentMessage[] = [newUser, newAssistant, newTool];
     state = applyChatEvent(state, {
       type: "agent_end",
-      messages: [newUser, newAssistant, newTool] as AgentMessage[],
+      messages: runMessages,
     });
 
     // Should have old history + new messages, no duplicates
@@ -80,25 +82,28 @@ describe("applyChatEvent — agent_end deduplication", () => {
     const tool = makeToolResultMsg("tc1", "output", 3000);
 
     // Start with optimistic user message
+    const startMessages: AgentMessage[] = [oldUser, newUser];
     let state: ChatState = {
       ...initialChatState(),
-      messages: [oldUser, newUser] as AgentMessage[],
+      messages: startMessages,
     };
     state = applyChatEvent(state, { type: "agent_start" });
 
     // Simulate sessionData refresh mid-run (reconnect/navigation):
     // API returns the full conversation including messages the agent
     // has already produced.
+    const refreshedMessages: AgentMessage[] = [oldUser, newUser, assistant, tool];
     state = {
       ...state,
-      messages: [oldUser, newUser, assistant, tool] as AgentMessage[],
+      messages: refreshedMessages,
     };
 
     // agent_end arrives — event.messages has this run's messages,
     // which overlap with what sessionData already populated.
+    const runMessages: AgentMessage[] = [newUser, assistant, tool];
     state = applyChatEvent(state, {
       type: "agent_end",
-      messages: [newUser, assistant, tool] as AgentMessage[],
+      messages: runMessages,
     });
 
     // No duplicates
@@ -109,7 +114,8 @@ describe("applyChatEvent — agent_end deduplication", () => {
 
   test("agent_end with undefined messages preserves existing messages", () => {
     const user = makeUserMsg("hello");
-    let state = { ...initialChatState(), messages: [user] as AgentMessage[] };
+    const messages: AgentMessage[] = [user];
+    let state = { ...initialChatState(), messages };
     state = applyChatEvent(state, { type: "agent_start" });
     state = applyChatEvent(state, { type: "agent_end" });
 
@@ -123,19 +129,23 @@ describe("applyChatEvent — agent_end deduplication", () => {
     const tool1 = makeToolResultMsg("t1", "result 1", 3000);
     const asst2 = makeAssistantMsg("step 2", 4000);
 
-    let state = { ...initialChatState(), messages: [user] as AgentMessage[] };
+    const startMessages: AgentMessage[] = [user];
+    let state = { ...initialChatState(), messages: startMessages };
     state = applyChatEvent(state, { type: "agent_start" });
 
     // First reconnect refresh — partial results already in messages
-    state = { ...state, messages: [user, asst1, tool1] as AgentMessage[] };
+    const refresh1: AgentMessage[] = [user, asst1, tool1];
+    state = { ...state, messages: refresh1 };
 
     // Second reconnect refresh — even more results
-    state = { ...state, messages: [user, asst1, tool1, asst2] as AgentMessage[] };
+    const refresh2: AgentMessage[] = [user, asst1, tool1, asst2];
+    state = { ...state, messages: refresh2 };
 
     // agent_end with all run messages
+    const runMessages: AgentMessage[] = [user, asst1, tool1, asst2];
     state = applyChatEvent(state, {
       type: "agent_end",
-      messages: [user, asst1, tool1, asst2] as AgentMessage[],
+      messages: runMessages,
     });
 
     expect(state.messages).toHaveLength(4);
@@ -152,14 +162,16 @@ describe("applyChatEvent — agent_end deduplication", () => {
     const newUser = makeUserMsg("third question", 1000);
     const newAssistant = makeAssistantMsg("third answer", 2000);
 
+    const allMessages: AgentMessage[] = [hist1, hist2, hist3, hist4, newUser];
     let state: ChatState = {
       ...initialChatState(),
-      messages: [hist1, hist2, hist3, hist4, newUser] as AgentMessage[],
+      messages: allMessages,
     };
     state = applyChatEvent(state, { type: "agent_start" });
+    const runMessages: AgentMessage[] = [newUser, newAssistant];
     state = applyChatEvent(state, {
       type: "agent_end",
-      messages: [newUser, newAssistant] as AgentMessage[],
+      messages: runMessages,
     });
 
     // All history preserved + new assistant appended
@@ -238,7 +250,7 @@ describe("applyChatEvent — other event types", () => {
 
     expect(state.isCompacting).toBe(false);
     expect(state.messages).toHaveLength(1);
-    expect((state.messages[0] as any).role).toBe("compactionSummary");
+    expect(state.messages[0].role).toBe("compactionSummary");
   });
 
   test("compaction_end does not append marker when aborted", () => {

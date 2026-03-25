@@ -8,22 +8,14 @@
  *   2. Subscribers are notified after line insertion.
  *   3. New lines don't have html set (highlighting is the controller's job).
  */
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { DiffStore } from "../models/stores/diff-store.js";
 import type { DiffFile, DiffLine } from "../models/changes/types.js";
+import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 
 // ---------------------------------------------------------------------------
 // Fetch mock helpers
 // ---------------------------------------------------------------------------
-
-const originalFetch = globalThis.fetch;
-
-function mockFetch(handler: (url: string) => Response | Promise<Response>) {
-  globalThis.fetch = mock((input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input.toString();
-    return Promise.resolve(handler(url));
-  }) as any;
-}
 
 function jsonResponse(data: unknown): Response {
   return new Response(JSON.stringify(data), {
@@ -70,7 +62,7 @@ describe("DiffStore expandHunk (no highlighting)", () => {
 
   afterEach(() => {
     store.dispose();
-    globalThis.fetch = originalFetch;
+    restoreFetch();
   });
 
   test("expandHunk inserts lines and notifies subscribers", async () => {

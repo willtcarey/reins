@@ -8,34 +8,7 @@
  */
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { AppStore } from "../models/stores/app-store.js";
-
-// Minimal stub of AppClient that lets us fire connection events
-class StubClient {
-  private eventListeners = new Set<(sessionId: string, projectId: number, event: any) => void>();
-  private connectionListeners = new Set<(connected: boolean) => void>();
-
-  onEvent(listener: (sessionId: string, projectId: number, event: any) => void): () => void {
-    this.eventListeners.add(listener);
-    return () => this.eventListeners.delete(listener);
-  }
-
-  onConnection(listener: (connected: boolean) => void): () => void {
-    this.connectionListeners.add(listener);
-    return () => this.connectionListeners.delete(listener);
-  }
-
-  fireConnection(connected: boolean) {
-    for (const l of this.connectionListeners) l(connected);
-  }
-
-  fireEvent(sessionId: string, projectId: number, event: any) {
-    for (const l of this.eventListeners) l(sessionId, projectId, event);
-  }
-
-  connect() {}
-  disconnect() {}
-  get isConnected() { return false; }
-}
+import { StubClient } from "./helpers/stub-client.js";
 
 describe("AppStore reconnect catch-up", () => {
   let client: StubClient;
@@ -43,13 +16,13 @@ describe("AppStore reconnect catch-up", () => {
 
   beforeEach(() => {
     client = new StubClient();
-    store = new AppStore(client as any);
+    store = new AppStore(client);
   });
 
   test("reconnect calls refreshAll on projectCollectionStore", () => {
     const calls: string[] = [];
-    store.projectCollectionStore.refreshAll = mock(async () => { calls.push("refreshAll"); }) as any;
-    store.projectCollectionStore.fetchProjects = mock(async () => { calls.push("fetchProjects"); }) as any;
+    store.projectCollectionStore.refreshAll = mock(async () => { calls.push("refreshAll"); });
+    store.projectCollectionStore.fetchProjects = mock(async () => { calls.push("fetchProjects"); });
 
     client.fireConnection(true);
 
@@ -59,7 +32,7 @@ describe("AppStore reconnect catch-up", () => {
 
   test("reconnect does not call refreshAll when disconnecting", () => {
     const refreshAllSpy = mock(async () => {});
-    store.projectCollectionStore.refreshAll = refreshAllSpy as any;
+    store.projectCollectionStore.refreshAll = refreshAllSpy;
 
     client.fireConnection(false);
 

@@ -5,12 +5,12 @@ import { createProject } from "../../project-store.js";
 import { getTask } from "../../task-store.js";
 import { branchExists, revParse, mergeBase, createBranch } from "../../git.js";
 import { ProjectTasks, type CreateTaskParams } from "../../models/tasks.js";
-import type { Broadcast } from "../../models/broadcast.js";
+import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 
 describe("createTaskWithBranch", () => {
   let projectId: number;
-  let broadcastSpy: ReturnType<typeof mock>;
+  let broadcastSpy: ReturnType<typeof mock<(msg: ServerMessage) => void>>;
   let broadcast: Broadcast;
   let sessions: Map<string, ManagedSession>;
   let tasks: ProjectTasks;
@@ -21,8 +21,8 @@ describe("createTaskWithBranch", () => {
   beforeEach(() => {
     const project = createProject("Test Project", repo.dir, "main");
     projectId = project.id;
-    broadcastSpy = mock();
-    broadcast = broadcastSpy as unknown as Broadcast;
+    broadcastSpy = mock<(msg: ServerMessage) => void>();
+    broadcast = broadcastSpy;
     sessions = new Map();
     tasks = new ProjectTasks(projectId, repo.dir, "main", sessions, broadcast);
   });
@@ -143,7 +143,7 @@ describe("createTaskWithBranch", () => {
 
 describe("createTaskWithBranch — remote adoption", () => {
   let projectId: number;
-  let broadcastSpy: ReturnType<typeof mock>;
+  let broadcastSpy: ReturnType<typeof mock<(msg: ServerMessage) => void>>;
   let broadcast: Broadcast;
   let sessions: Map<string, ManagedSession>;
   let tasks: ProjectTasks;
@@ -154,8 +154,8 @@ describe("createTaskWithBranch — remote adoption", () => {
   beforeEach(() => {
     const project = createProject("Test Project", repo.dir, "main");
     projectId = project.id;
-    broadcastSpy = mock();
-    broadcast = broadcastSpy as unknown as Broadcast;
+    broadcastSpy = mock<(msg: ServerMessage) => void>();
+    broadcast = broadcastSpy;
     sessions = new Map();
     tasks = new ProjectTasks(projectId, repo.dir, "main", sessions, broadcast);
   });

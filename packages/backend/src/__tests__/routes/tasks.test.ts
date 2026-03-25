@@ -6,6 +6,7 @@ import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createTask, getTask } from "../../task-store.js";
 import { createSession } from "../../session-store.js";
+import { createTestManagedSession } from "../helpers/test-pi.js";
 
 function makeRequest(method: string, path: string, body?: any): Request {
   const opts: RequestInit = { method };
@@ -166,11 +167,7 @@ describe("task routes", () => {
       createSession(sessionId, projectId, { taskId: task.id });
 
       // Add a streaming session to state
-      state.sessions.set(sessionId, {
-        session: { isStreaming: true } as any,
-        id: sessionId,
-        lastActivity: Date.now(),
-      });
+      state.sessions.set(sessionId, await createTestManagedSession(sessionId, { isStreaming: true }));
 
       const res = await router.handle(
         makeRequest("DELETE", `/api/projects/${projectId}/tasks/${task.id}`),

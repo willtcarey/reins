@@ -22,7 +22,7 @@ describe("getEditSummary", () => {
   });
 
   test("returns empty string when args is undefined", () => {
-    expect(getEditSummary(makeEditBlock({ args: undefined as any }))).toBe("");
+    expect(getEditSummary(makeEditBlock({ args: undefined }))).toBe("");
   });
 });
 
@@ -49,7 +49,7 @@ describe("getEditStats", () => {
   });
 
   test("handles missing args gracefully", () => {
-    expect(getEditStats(makeEditBlock({ args: undefined as any }))).toEqual({ additions: 0, removals: 0 });
+    expect(getEditStats(makeEditBlock({ args: undefined }))).toEqual({ additions: 0, removals: 0 });
     expect(getEditStats(makeEditBlock({ args: {} }))).toEqual({ additions: 0, removals: 0 });
   });
 

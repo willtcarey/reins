@@ -9,7 +9,7 @@ import {
   PathTraversalError,
   FileNotFoundError,
 } from "../../models/projects.js";
-import type { Broadcast } from "../../models/broadcast.js";
+import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 
 describe("ProjectModel.serveFile", () => {
@@ -20,7 +20,7 @@ describe("ProjectModel.serveFile", () => {
 
   beforeEach(() => {
     const project = createProject("Test", repo.dir, "main");
-    const broadcastSpy = mock() as unknown as Broadcast;
+    const broadcastSpy: Broadcast = mock<(msg: ServerMessage) => void>();
     const sessions = new Map<string, ManagedSession>();
     model = new ProjectModel(project.id, repo.dir, "main", sessions, broadcastSpy);
   });
@@ -100,7 +100,8 @@ describe("ProjectModel.serveFile", () => {
       writeFileSync(join(repo.dir, "bin.dat"), bytes);
       const result = await model.serveFile("bin.dat", null, true);
       expect(result.content).toBeInstanceOf(Uint8Array);
-      expect(new Uint8Array(result.content as Uint8Array)).toEqual(bytes);
+      if (!(result.content instanceof Uint8Array)) throw new Error("expected Uint8Array");
+      expect(result.content).toEqual(bytes);
     });
 
     test("preserves binary bytes for a PNG file download", async () => {
@@ -110,7 +111,8 @@ describe("ProjectModel.serveFile", () => {
       ]);
       writeFileSync(join(repo.dir, "image.png"), pngHeader);
       const result = await model.serveFile("image.png", null, true);
-      expect(new Uint8Array(result.content as Uint8Array)).toEqual(pngHeader);
+      if (!(result.content instanceof Uint8Array)) throw new Error("expected Uint8Array");
+      expect(result.content).toEqual(pngHeader);
     });
   });
 
@@ -153,7 +155,8 @@ describe("ProjectModel.serveFile", () => {
 
       const result = await model.serveFile("data.bin", "feature/bin", true);
       expect(result.content).toBeInstanceOf(Uint8Array);
-      expect(new Uint8Array(result.content as Uint8Array)).toEqual(bytes);
+      if (!(result.content instanceof Uint8Array)) throw new Error("expected Uint8Array");
+      expect(result.content).toEqual(bytes);
       expect(result.filename).toBe("data.bin");
     });
   });
