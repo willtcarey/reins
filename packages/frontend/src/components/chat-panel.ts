@@ -7,7 +7,7 @@
  */
 
 import { LitElement, html, nothing } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
+import { customElement, property, query, state } from "lit/decorators.js";
 import type { IAppClient, FrontendEvent, SessionData } from "../models/ws-client.js";
 import "./markdown-content.js";
 import { getToolRenderer } from "./tools/index.js";
@@ -42,6 +42,10 @@ export class ChatPanel extends LitElement {
   @property({ attribute: false })
   sessionData: SessionData | null = null;
 
+  /** Whether this panel is currently visible (active tab). */
+  @property({ type: Boolean })
+  visible = false;
+
   @state() private messages: AgentMessage[] = [];
   @state() private isStreaming = false;
   @state() private streamingBlocks: StreamingBlock[] = [];
@@ -50,6 +54,8 @@ export class ChatPanel extends LitElement {
   @state() private isCompacting = false;
   @state() private errorMessage = "";
   private errorTimeout?: ReturnType<typeof setTimeout>;
+
+  @query("textarea") private textarea!: HTMLTextAreaElement;
 
   private unsubscribeEvent?: () => void;
   private scrollContainer: HTMLElement | null = null;
@@ -76,6 +82,10 @@ export class ChatPanel extends LitElement {
     if (changed.has("client")) {
       this.wireClient();
     }
+    // Autofocus the textarea when switching sessions or returning to chat tab (desktop only)
+    if ((changed.has("sessionId") && this.sessionId) || (changed.has("visible") && this.visible)) {
+      this.focusInput();
+    }
     // Load messages from session data when it changes
     if (changed.has("sessionData")) {
       if (this.sessionData) {
@@ -92,6 +102,12 @@ export class ChatPanel extends LitElement {
     }
     // Auto-scroll after render
     this.autoScroll();
+  }
+
+  /** Focus the chat textarea, skipping on touch devices to avoid keyboard popup. */
+  private focusInput() {
+    if ("ontouchstart" in window || navigator.maxTouchPoints > 0) return;
+    requestAnimationFrame(() => this.textarea?.focus());
   }
 
   private wireClient() {

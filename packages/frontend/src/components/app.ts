@@ -298,6 +298,7 @@ export class AppShell extends LitElement {
                   .client=${this.appStore.client}
                   .sessionId=${store.sessionId}
                   .sessionData=${store.sessionData}
+                  ?visible=${this.activeTab === "chat"}
                 ></chat-panel>
                 <!-- File tree sidebar (chat tab, wide screens only) -->
                 <div class="w-60 border-l border-zinc-700 shrink-0 hidden lg:block">
