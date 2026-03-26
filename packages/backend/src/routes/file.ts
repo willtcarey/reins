@@ -22,7 +22,10 @@ export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
     try {
       const { content, mimeType, filename } = await ctx.project.serveFile(filePath!, ref, download);
 
-      const headers: Record<string, string> = { "Content-Type": mimeType };
+      const headers: Record<string, string> = {
+        "Content-Type": mimeType,
+        "Cache-Control": "no-cache, no-store",
+      };
       if (download) {
         headers["Content-Disposition"] = `attachment; filename="${filename}"`;
       }
