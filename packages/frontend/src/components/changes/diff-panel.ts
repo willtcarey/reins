@@ -46,6 +46,9 @@ export class DiffPanel extends LitElement {
   /** Tracks which expand buttons are currently loading. */
   @state() private expandingHunks = new Set<string>();
 
+  /** File path to scroll to once diff data loads. */
+  private _pendingScrollTarget: string | null = null;
+
   private _unsubscribe: (() => void) | null = null;
 
   private scrollSpy = new ScrollSpy({
@@ -103,7 +106,12 @@ export class DiffPanel extends LitElement {
 
   /** Called when the store notifies us of new data. */
   private _onStoreUpdate() {
-    // Currently a no-op hook — retained for future cross-card coordination.
+    if (this._pendingScrollTarget && this.store?.fullData) {
+      const target = this._pendingScrollTarget;
+      this._pendingScrollTarget = null;
+      // Wait for Lit to render the new file cards, then scroll
+      requestAnimationFrame(() => this.scrollToFile(target));
+    }
   }
 
   // ---- File navigation --------------------------------------------------------
@@ -116,6 +124,10 @@ export class DiffPanel extends LitElement {
     const card = this.querySelector(`#${CSS.escape(fileCardId(path))}`);
     if (card) {
       card.scrollIntoView({ behavior: "smooth", block: "start" });
+      this._pendingScrollTarget = null;
+    } else {
+      // Data not loaded yet — scroll once it arrives
+      this._pendingScrollTarget = path;
     }
   }
 
