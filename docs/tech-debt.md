@@ -21,10 +21,10 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 - Several Lit components use manual `querySelector` instead of the idiomatic `@query` decorator (`app.ts`, `chat-panel.ts`, `task-form.ts`)
 - Scroll active session into view in sidebar on navigation. Session buttons have `data-session-id` attributes ready. Attempted `scrollIntoView`, manual `scrollTo` on the overflow container, and `MutationObserver` for async data loading — none worked. Needs hands-on debugging in the browser to figure out what's blocking the scroll.
-- Auto-focus chat input on session navigation (e.g. from quick-open palette). Attempted in `chat-panel.ts` `updated()` hook with `requestAnimationFrame` and `updateComplete` + `setTimeout` — neither worked. Likely a focus-stealing issue with the palette overlay or Lit render timing. Needs investigation.
-
 - No frontend tests. The stores (`DiffStore`, `AppStore`, `ActiveProjectStore`) have coordination logic (polling, re-fetch triggers, session switching) that's entirely untested. At minimum, store-level tests with mocked fetch would catch regressions in when data is refreshed.
 - Sessions are fetched eagerly — scratch sessions load in bulk via `ProjectStore.fetchLists()` when a project expands, and task sessions load via `fetchTaskSessions()` when a task expands. All session lists should be lazy-loaded (paginated or fetched on demand) since they're rarely browsed and will eventually become continuous conversations with lazy loading.
+
+- Large diffs (e.g. unignored node_modules with 1.5M+ lines) grind the app to a halt. Multiple layers contribute: the diff API response is huge, parsing/processing it is slow, and the file tree renders thousands of DOM nodes. Mitigation ideas: (1) ETag/304 on diff responses so polling skips client-side work when nothing changed, (2) virtualize the file tree to only render visible nodes, (3) cap diff size with a summary fallback ("N files changed, diff too large to display"), (4) server-side pagination or streaming of diff data.
 
 ## Cross-cutting
 
