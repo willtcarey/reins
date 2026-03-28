@@ -264,7 +264,7 @@ export class ChatPanel extends LitElement {
     return html`
       <div class="mb-3">
         ${text ? html`
-          <div class="bg-zinc-800 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm">
+          <div class="bg-zinc-800 border-l-2 border-blue-400/60 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm">
             <markdown-content .text=${text}></markdown-content>
           </div>
         ` : nothing}
