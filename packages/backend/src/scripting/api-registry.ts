@@ -17,7 +17,12 @@
 import type { TSchema, TObject, TProperties, Static } from "@sinclair/typebox";
 import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
-import { schemaField, schemaPropertyKeys } from "./schema-utils.js";
+import {
+  schemaItems,
+  schemaAnyOf,
+  schemaProperties,
+  schemaPropertyKeys,
+} from "./schema-utils.js";
 import { TASK_FUNCTIONS, TaskSchema } from "./tasks.js";
 import { SESSION_FUNCTIONS, SessionSchema, MessageSchema } from "./sessions.js";
 import { PROJECT_FUNCTIONS, ProjectSchema } from "./projects.js";
@@ -39,33 +44,27 @@ export interface ApiContext {
 }
 
 /**
- * A single function in the API registry.
+ * A single function in the API registry (stored form).
  *
- * Generic over P (parameter schema) and R (return schema) so that:
- * - `execute` params are typed from the parameter schema
- * - `execute` return type must match the return schema
- *
- * The widened form (default type params) is used for heterogeneous
- * collections like API_FUNCTIONS.
+ * Uses method syntax for `execute` to enable bivariant parameter
+ * checking — this lets defineFunction() widen generic types without
+ * type assertions.
  */
-export interface ApiFunctionDef<
-  P extends TObject<TProperties> = TObject<TProperties>,
-  R extends TSchema = TSchema,
-> {
+export interface ApiFunctionDef {
   /** Fully qualified name, e.g. "tasks.list". Namespace is derived from the prefix before the dot. */
   name: string;
   /** Human-readable description */
   description: string;
   /** TypeBox schema for the function's parameters (Type.Object) */
-  parameters: P;
+  parameters: TObject<TProperties>;
   /** TypeBox schema for the return type */
-  returns: R;
+  returns: TSchema;
   /** Whether the function is async */
   async?: boolean;
   /** Searchable tags (lowercase) */
   tags: string[];
-  /** The actual implementation, called at runtime */
-  execute: (params: Static<P>, ctx: ApiContext) => Static<R> | Promise<Static<R>>;
+  /** The actual implementation, called at runtime. Method syntax for bivariant checking. */
+  execute(params: Record<string, unknown>, ctx: ApiContext): unknown;
 }
 
 /** Derive the namespace from a fully qualified function name (e.g. "tasks.list" → "tasks"). */
@@ -86,11 +85,19 @@ export function fnMethod(fn: ApiFunctionDef): string {
  * - `execute` must return a value matching the return schema
  *
  * The result is widened to `ApiFunctionDef` for storage in arrays.
+ * This works without type assertions because ApiFunctionDef.execute
+ * uses method syntax (bivariant parameter checking).
  */
-export function defineFunction<P extends TObject<TProperties>, R extends TSchema>(
-  def: ApiFunctionDef<P, R>,
-): ApiFunctionDef {
-  return def as unknown as ApiFunctionDef; // eslint-disable-line @typescript-eslint/consistent-type-assertions -- widen generics for heterogeneous storage
+export function defineFunction<P extends TObject<TProperties>, R extends TSchema>(def: {
+  name: string;
+  description: string;
+  parameters: P;
+  returns: R;
+  async?: boolean;
+  tags: string[];
+  execute: (params: Static<P>, ctx: ApiContext) => Static<R> | Promise<Static<R>>;
+}): ApiFunctionDef {
+  return def;
 }
 
 // ---------------------------------------------------------------------------
@@ -203,24 +210,24 @@ function schemaReferences(schema: TSchema, target: TSchema): boolean {
   if (schema === target) return true;
 
   // Array items
-  const items = schemaField(schema, "items");
+  const items = schemaItems(schema);
   if (schema.type === "array" && items) {
-    if (schemaReferences(items as TSchema, target)) return true; // eslint-disable-line @typescript-eslint/consistent-type-assertions -- items is TSchema by JSON Schema spec
+    if (schemaReferences(items, target)) return true;
   }
 
   // Union members
-  const anyOf = schemaField(schema, "anyOf");
-  if (Array.isArray(anyOf)) {
+  const anyOf = schemaAnyOf(schema);
+  if (anyOf) {
     for (const member of anyOf) {
       if (schemaReferences(member, target)) return true;
     }
   }
 
   // Object properties
-  const properties = schemaField(schema, "properties");
-  if (schema.type === "object" && properties && typeof properties === "object") {
-    for (const p of Object.values(properties)) {
-      if (schemaReferences(p as TSchema, target)) return true; // eslint-disable-line @typescript-eslint/consistent-type-assertions -- property values are TSchema by TypeBox contract
+  const props = schemaProperties(schema);
+  if (schema.type === "object" && props) {
+    for (const p of Object.values(props)) {
+      if (schemaReferences(p, target)) return true;
     }
   }
 
@@ -239,10 +246,10 @@ function schemaReferences(schema: TSchema, target: TSchema): boolean {
  *   tasks.get(taskId)  — schema has { taskId: number }
  *   tasks.update(taskId, updates) — schema has { taskId, updates }
  */
-// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
-export function buildApiObject(ctx: ApiContext): Record<string, Record<string, Function>> {
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
-  const api: Record<string, Record<string, Function>> = {};
+type ApiMethod = (...args: unknown[]) => unknown;
+
+export function buildApiObject(ctx: ApiContext): Record<string, Record<string, ApiMethod>> {
+  const api: Record<string, Record<string, ApiMethod>> = {};
 
   for (const fn of API_FUNCTIONS) {
     const ns = fnNamespace(fn);

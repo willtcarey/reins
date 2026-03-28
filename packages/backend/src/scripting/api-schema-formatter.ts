@@ -13,7 +13,14 @@
  */
 
 import type { TSchema } from "@sinclair/typebox";
-import { schemaField } from "./schema-utils.js";
+import {
+  schemaItems,
+  schemaAnyOf,
+  schemaProperties,
+  schemaPropertiesEntries,
+  schemaRequiredSet,
+  schemaConst,
+} from "./schema-utils.js";
 
 /**
  * A map from schema identity to its display name.
@@ -38,7 +45,7 @@ export function formatSchema(schema: TSchema, name?: string, names?: SchemaNameM
   if (!name) return inline;
 
   // For object schemas, render as named block
-  if (schema.type === "object" && schemaField(schema, "properties")) {
+  if (schema.type === "object" && schemaProperties(schema)) {
     const fields = renderObjectFields(schema, names);
     return `${name} {\n${fields}\n}`;
   }
@@ -71,7 +78,7 @@ function renderType(schema: TSchema, names?: SchemaNameMap): string {
   if (knownName) return knownName;
 
   // Primitives
-  const constVal = schemaField(schema, "const");
+  const constVal = schemaConst(schema);
   if (schema.type === "string" && constVal !== undefined) {
     return JSON.stringify(constVal);
   }
@@ -81,22 +88,22 @@ function renderType(schema: TSchema, names?: SchemaNameMap): string {
   if (schema.type === "null") return "null";
 
   // Union (anyOf)
-  const anyOf = schemaField(schema, "anyOf");
-  if (Array.isArray(anyOf)) {
-    const members = (anyOf as TSchema[]).map((s) => renderType(s, names)); // eslint-disable-line @typescript-eslint/consistent-type-assertions -- array elements are TSchema by JSON Schema spec
+  const anyOf = schemaAnyOf(schema);
+  if (anyOf) {
+    const members = anyOf.map((s) => renderType(s, names));
     return members.join(" | ");
   }
 
   // Array
-  const items = schemaField(schema, "items");
+  const items = schemaItems(schema);
   if (schema.type === "array" && items) {
-    const itemType = renderType(items as TSchema, names); // eslint-disable-line @typescript-eslint/consistent-type-assertions -- items is a TSchema by JSON Schema spec
+    const itemType = renderType(items, names);
     const needsParens = itemType.includes(" | ");
     return needsParens ? `(${itemType})[]` : `${itemType}[]`;
   }
 
   // Object
-  if (schema.type === "object" && schemaField(schema, "properties")) {
+  if (schema.type === "object" && schemaProperties(schema)) {
     return renderObjectInline(schema, names);
   }
 
@@ -107,14 +114,11 @@ function renderType(schema: TSchema, names?: SchemaNameMap): string {
 }
 
 function getProps(schema: TSchema): [string, TSchema][] {
-  const props = schemaField(schema, "properties");
-  if (!props || typeof props !== "object") return [];
-  return Object.entries(props) as [string, TSchema][]; // eslint-disable-line @typescript-eslint/consistent-type-assertions -- property values are TSchema by TypeBox contract
+  return schemaPropertiesEntries(schema);
 }
 
 function getRequiredSet(schema: TSchema): Set<string> {
-  const req = schemaField(schema, "required");
-  return new Set(Array.isArray(req) ? req : []);
+  return schemaRequiredSet(schema);
 }
 
 function renderObjectInline(schema: TSchema, names?: SchemaNameMap): string {

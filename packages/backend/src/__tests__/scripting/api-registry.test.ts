@@ -5,7 +5,11 @@
 import { describe, test, expect } from "bun:test";
 import type { TSchema } from "@sinclair/typebox";
 import { API_FUNCTIONS, DOMAIN_TYPES, fnNamespace } from "../../scripting/api-registry.js";
-import { schemaField } from "../../scripting/schema-utils.js";
+import {
+  schemaItems,
+  schemaAnyOf,
+  schemaProperties,
+} from "../../scripting/schema-utils.js";
 
 describe("API registry schema constraints", () => {
   /**
@@ -36,11 +40,11 @@ describe("API registry schema constraints", () => {
     for (const fn of API_FUNCTIONS) {
       // Skip the top-level params object itself — it's always an inline Type.Object
       // Only check nested objects within parameter properties
-      const props = schemaField(fn.parameters, "properties");
-      if (!props || typeof props !== "object") continue;
+      const props = schemaProperties(fn.parameters);
+      if (!props) continue;
 
       for (const [key, propSchema] of Object.entries(props)) {
-        const violations = findNonDomainObjects(propSchema as TSchema, domainSchemas, { allowTopLevelObject: true });
+        const violations = findNonDomainObjects(propSchema, domainSchemas, { allowTopLevelObject: true });
         if (violations.length > 0) {
           throw new Error(
             `${fn.name}: parameter "${key}" contains inline object schema(s) not in DOMAIN_TYPES. ` +
@@ -88,34 +92,32 @@ function findNonDomainObjects(
   const violations: TSchema[] = [];
 
   // Check if this is an object schema
-  if (schema.type === "object" && schemaField(schema, "properties")) {
+  const props = schemaProperties(schema);
+  if (schema.type === "object" && props) {
     const isTopLevel = depth === 0 && opts?.allowTopLevelObject;
-    const isEmpty = Object.keys((schemaField(schema, "properties") as object) ?? {}).length === 0;
+    const isEmpty = Object.keys(props).length === 0;
 
     if (!isTopLevel && !isEmpty && !domainSchemas.has(schema)) {
       violations.push(schema);
     }
 
     // Recurse into object properties
-    const properties = schemaField(schema, "properties");
-    if (properties && typeof properties === "object") {
-      for (const propSchema of Object.values(properties)) {
-        violations.push(...findNonDomainObjects(propSchema as TSchema, domainSchemas, undefined, depth + 1));
-      }
+    for (const propSchema of Object.values(props)) {
+      violations.push(...findNonDomainObjects(propSchema, domainSchemas, undefined, depth + 1));
     }
   }
 
   // Array items
-  const items = schemaField(schema, "items");
+  const items = schemaItems(schema);
   if (schema.type === "array" && items) {
-    violations.push(...findNonDomainObjects(items as TSchema, domainSchemas, undefined, depth + 1));
+    violations.push(...findNonDomainObjects(items, domainSchemas, undefined, depth + 1));
   }
 
   // Union members
-  const anyOf = schemaField(schema, "anyOf");
-  if (Array.isArray(anyOf)) {
+  const anyOf = schemaAnyOf(schema);
+  if (anyOf) {
     for (const member of anyOf) {
-      violations.push(...findNonDomainObjects(member as TSchema, domainSchemas, undefined, depth + 1));
+      violations.push(...findNonDomainObjects(member, domainSchemas, undefined, depth + 1));
     }
   }
 
