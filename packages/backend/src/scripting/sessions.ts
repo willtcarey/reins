@@ -72,9 +72,11 @@ export const SESSION_FUNCTIONS: ApiFunctionDef[] = [
     parameters: Type.Object({ sessionId: Type.String() }),
     returns: SessionSchema,
     tags: ["sessions", "get", "read", "lookup"],
-    execute: (params, _ctx) => {
+    execute: (params, ctx) => {
       const session = getSession(params.sessionId);
-      if (!session) throw new Error(`Session ${params.sessionId} not found`);
+      if (!session || session.project_id !== ctx.projectId) {
+        throw new Error(`Session ${params.sessionId} not found`);
+      }
       return session;
     },
   }),
@@ -84,6 +86,13 @@ export const SESSION_FUNCTIONS: ApiFunctionDef[] = [
     parameters: Type.Object({ sessionId: Type.String() }),
     returns: Type.Array(MessageSchema),
     tags: ["sessions", "messages", "read", "history", "conversation"],
-    execute: (params, _ctx) => loadMessages(params.sessionId),
+    execute: (params, ctx) => {
+      // Verify session belongs to this project before loading messages
+      const session = getSession(params.sessionId);
+      if (!session || session.project_id !== ctx.projectId) {
+        throw new Error(`Session ${params.sessionId} not found`);
+      }
+      return loadMessages(params.sessionId);
+    },
   }),
 ];
