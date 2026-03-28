@@ -13,6 +13,7 @@ import { resolve, normalize, basename, join } from "path";
 import { mkdirSync } from "fs";
 import {
   createProject as storeCreateProject,
+  getProject,
   type Project,
 } from "../project-store.js";
 import { listOpenTasks, markTasksClosed } from "../task-store.js";
@@ -106,13 +107,19 @@ export async function createProject(params: CreateProjectParams): Promise<Projec
 // ---------------------------------------------------------------------------
 
 export class ProjectModel {
+  readonly projectDir: string;
+  readonly baseBranch: string;
+
   constructor(
     readonly projectId: number,
-    readonly projectDir: string,
-    readonly baseBranch: string,
     private sessions: Map<string, ManagedSession>,
     private broadcast: Broadcast,
-  ) {}
+  ) {
+    const project = getProject(projectId);
+    if (!project) throw new Error(`Project ${projectId} not found`);
+    this.projectDir = project.path;
+    this.baseBranch = project.base_branch;
+  }
 
   /**
    * Return a ProjectTasks instance for task lifecycle operations.

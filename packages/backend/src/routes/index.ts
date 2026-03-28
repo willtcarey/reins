@@ -44,8 +44,7 @@ const projectMiddleware: Middleware<{ project: ProjectModel }> = (ctx) => {
   }
   Object.assign(ctx, {
     project: new ProjectModel(
-      project.id, project.path, project.base_branch,
-      ctx.state.sessions, createBroadcast(ctx.state.clients),
+      project.id, ctx.state.sessions, createBroadcast(ctx.state.clients),
     ),
   });
 };

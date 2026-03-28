@@ -17,7 +17,6 @@ import type { TaskRow } from "../task-store.js";
 import type { Broadcast } from "../models/broadcast.js";
 import type { CreateSessionFn } from "./delegate.js";
 import { ProjectModel } from "../models/projects.js";
-import { getProject } from "../project-store.js";
 import type { ManagedSession } from "../state.js";
 
 const parameters = Type.Object({
@@ -62,10 +61,7 @@ export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition<typeof 
 
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       try {
-        const project = getProject(projectId);
-        if (!project) throw new Error(`Project ${projectId} not found`);
-
-        const projectModel = new ProjectModel(projectId, project.path, project.base_branch, sessions, broadcast);
+        const projectModel = new ProjectModel(projectId, sessions, broadcast);
         const task: TaskRow = await projectModel.tasks().create({
           title: params.title,
           description: params.description,
@@ -75,7 +71,7 @@ export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition<typeof 
         // Fire-and-forget: kick off a session on the new task if a prompt was provided.
         // Intentionally not awaited — the tool returns task info immediately.
         if (params.prompt && createSession) {
-          createSession(projectId, project.path, { taskId: task.id })
+          createSession(projectId, projectModel.projectDir, { taskId: task.id })
             .then((managed) => {
               managed.session.prompt(params.prompt!).catch((err: any) => {
                 console.error(`  Failed to prompt task session ${managed.id}:`, err);

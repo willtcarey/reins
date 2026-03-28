@@ -4,7 +4,8 @@ import { useTestRepo, commitFile } from "../helpers/test-repo.js";
 import { createProject } from "../../project-store.js";
 import { getTask } from "../../task-store.js";
 import { branchExists, revParse, mergeBase, createBranch } from "../../git.js";
-import { ProjectTasks, type CreateTaskParams } from "../../models/tasks.js";
+import { ProjectModel } from "../../models/projects.js";
+import type { CreateTaskParams } from "../../models/tasks.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 
@@ -13,7 +14,7 @@ describe("createTaskWithBranch", () => {
   let broadcastSpy: ReturnType<typeof mock<(msg: ServerMessage) => void>>;
   let broadcast: Broadcast;
   let sessions: Map<string, ManagedSession>;
-  let tasks: ProjectTasks;
+  let model: ProjectModel;
 
   useTestDb();
   const repo = useTestRepo();
@@ -24,7 +25,7 @@ describe("createTaskWithBranch", () => {
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
     sessions = new Map();
-    tasks = new ProjectTasks(projectId, repo.dir, "main", sessions, broadcast);
+    model = new ProjectModel(projectId, sessions, broadcast);
   });
 
   test("creates a git branch and a DB row", async () => {
@@ -33,7 +34,7 @@ describe("createTaskWithBranch", () => {
       description: "Build the login UI",
     };
 
-    const task = await tasks.create(params);
+    const task = await model.tasks().create(params);
 
     // DB row exists and has correct fields
     expect(task.id).toBeGreaterThan(0);
@@ -55,23 +56,23 @@ describe("createTaskWithBranch", () => {
   });
 
   test("derives branch name from title when not provided", async () => {
-    const task = await tasks.create({ title: "Fix broken tests", description: "" });
+    const task = await model.tasks().create({ title: "Fix broken tests", description: "" });
 
     expect(task.branch_name).toBe("task/fix-broken-tests");
   });
 
   test("uses provided branch name when given", async () => {
-    const task = await tasks.create({ title: "Some task", description: "", branch_name: "task/custom-name" });
+    const task = await model.tasks().create({ title: "Some task", description: "", branch_name: "task/custom-name" });
 
     expect(task.branch_name).toBe("task/custom-name");
   });
 
   test("appends suffix on branch collision", async () => {
     // Create the first task to occupy the branch name
-    await tasks.create({ title: "My Feature", description: "" });
+    await model.tasks().create({ title: "My Feature", description: "" });
 
     // Create a second task with the same title — should get a suffixed branch
-    const task2 = await tasks.create({ title: "My Feature", description: "" });
+    const task2 = await model.tasks().create({ title: "My Feature", description: "" });
 
     expect(task2.branch_name).toStartWith("task/my-feature-");
     expect(task2.branch_name).not.toBe("task/my-feature");
@@ -81,13 +82,13 @@ describe("createTaskWithBranch", () => {
   test("captures base commit SHA", async () => {
     const expectedSha = await revParse(repo.dir, "main");
 
-    const task = await tasks.create({ title: "Capture SHA", description: "" });
+    const task = await model.tasks().create({ title: "Capture SHA", description: "" });
 
     expect(task.base_commit).toBe(expectedSha);
   });
 
   test("calls broadcast with task_updated", async () => {
-    await tasks.create({ title: "Broadcast test", description: "" });
+    await model.tasks().create({ title: "Broadcast test", description: "" });
 
     expect(broadcastSpy).toHaveBeenCalledTimes(1);
     expect(broadcastSpy).toHaveBeenCalledWith({
@@ -97,10 +98,12 @@ describe("createTaskWithBranch", () => {
   });
 
   test("throws on git failure and does not create DB row", async () => {
-    const badTasks = new ProjectTasks(projectId, repo.dir, "nonexistent-branch", sessions, broadcast);
+    // Create a project pointing at the same repo but with a nonexistent base branch
+    const badProject = createProject("Bad Project", repo.dir + "/.", "nonexistent-branch");
+    const badModel = new ProjectModel(badProject.id, sessions, broadcast);
 
     await expect(
-      badTasks.create({ title: "Should fail", description: "" }),
+      badModel.tasks().create({ title: "Should fail", description: "" }),
     ).rejects.toThrow();
 
     // Broadcast should not have been called
@@ -108,7 +111,7 @@ describe("createTaskWithBranch", () => {
   });
 
   test("trims title and description", async () => {
-    const task = await tasks.create({ title: "  Trimmed Title  ", description: "  Trimmed Desc  " });
+    const task = await model.tasks().create({ title: "  Trimmed Title  ", description: "  Trimmed Desc  " });
 
     expect(task.title).toBe("Trimmed Title");
     expect(task.description).toBe("Trimmed Desc");
@@ -128,7 +131,7 @@ describe("createTaskWithBranch", () => {
     // merge-base should differ from main tip (main advanced past the branch point)
     expect(expectedBase).not.toBe(mainTip);
 
-    const task = await tasks.create({
+    const task = await model.tasks().create({
       title: "Adopt me",
       description: "",
       branch_name: "task/existing",
@@ -146,7 +149,7 @@ describe("createTaskWithBranch — remote adoption", () => {
   let broadcastSpy: ReturnType<typeof mock<(msg: ServerMessage) => void>>;
   let broadcast: Broadcast;
   let sessions: Map<string, ManagedSession>;
-  let tasks: ProjectTasks;
+  let model: ProjectModel;
 
   useTestDb();
   const repo = useTestRepo({ withRemote: true });
@@ -157,7 +160,7 @@ describe("createTaskWithBranch — remote adoption", () => {
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
     sessions = new Map();
-    tasks = new ProjectTasks(projectId, repo.dir, "main", sessions, broadcast);
+    model = new ProjectModel(projectId, sessions, broadcast);
   });
 
   test("adopts a remote-only branch when branch_name is explicitly provided", async () => {
@@ -186,7 +189,7 @@ describe("createTaskWithBranch — remote adoption", () => {
     // Verify branch does NOT exist locally but DOES exist on remote
     expect(await branchExists(repo.dir, "task/remote-only")).toBe(false);
 
-    const task = await tasks.create({
+    const task = await model.tasks().create({
       title: "Remote adopt",
       description: "",
       branch_name: "task/remote-only",

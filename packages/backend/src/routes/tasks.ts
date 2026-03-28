@@ -31,7 +31,7 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
 
   // List tasks for a project (enriched with diff stats for open tasks)
   router.get("/tasks", async (ctx) => {
-    const enriched = await ctx.project.tasks().list();
+    const enriched = await ctx.project.tasks().listWithDiffStats();
     return Response.json(enriched);
   });
 

@@ -4,8 +4,6 @@
 
 import { Type } from "@sinclair/typebox";
 import { ProjectModel } from "../models/projects.js";
-import { getProject } from "../project-store.js";
-import { getTask, listTasks, updateTask } from "../task-store.js";
 import { type ApiFunctionDef, defineFunction } from "./api-registry.js";
 
 // ---------------------------------------------------------------------------
@@ -27,17 +25,29 @@ export const TaskSchema = Type.Object({
 });
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function projectModel(ctx: { projectId: number; sessions: any; broadcast: any }) {
+  return new ProjectModel(ctx.projectId, ctx.sessions, ctx.broadcast);
+}
+
+// ---------------------------------------------------------------------------
 // Function definitions
 // ---------------------------------------------------------------------------
 
 export const TASK_FUNCTIONS: ApiFunctionDef[] = [
   defineFunction({
     name: "tasks.list",
-    description: "List all tasks for the current project. Open tasks appear before closed ones.",
-    parameters: Type.Object({}),
+    description:
+      "List tasks for the current project. Open tasks appear before closed ones. " +
+      "Optionally filter by status.",
+    parameters: Type.Object({
+      status: Type.Optional(TaskStatusSchema),
+    }),
     returns: Type.Array(TaskSchema),
-    tags: ["tasks", "list", "query", "read"],
-    execute: (_params, ctx) => listTasks(ctx.projectId),
+    tags: ["tasks", "list", "query", "read", "filter"],
+    execute: (params, ctx) => projectModel(ctx).tasks().list(params.status),
   }),
   defineFunction({
     name: "tasks.current",
@@ -45,7 +55,7 @@ export const TASK_FUNCTIONS: ApiFunctionDef[] = [
     parameters: Type.Object({}),
     returns: Type.Union([TaskSchema, Type.Null()]),
     tags: ["tasks", "current", "read", "self", "context"],
-    execute: (_params, ctx) => (ctx.taskId ? getTask(ctx.taskId) : null),
+    execute: (_params, ctx) => (ctx.taskId ? projectModel(ctx).tasks().get(ctx.taskId) : null),
   }),
   defineFunction({
     name: "tasks.get",
@@ -53,8 +63,8 @@ export const TASK_FUNCTIONS: ApiFunctionDef[] = [
     parameters: Type.Object({ taskId: Type.Number() }),
     returns: TaskSchema,
     tags: ["tasks", "get", "read", "lookup"],
-    execute: (params, _ctx) => {
-      const task = getTask(params.taskId);
+    execute: (params, ctx) => {
+      const task = projectModel(ctx).tasks().get(params.taskId);
       if (!task) throw new Error(`Task ${params.taskId} not found`);
       return task;
     },
@@ -71,10 +81,7 @@ export const TASK_FUNCTIONS: ApiFunctionDef[] = [
     async: true,
     tags: ["tasks", "create", "write", "branch"],
     execute: async (params, ctx) => {
-      const project = getProject(ctx.projectId);
-      if (!project) throw new Error(`Project ${ctx.projectId} not found`);
-      const model = new ProjectModel(ctx.projectId, project.path, project.base_branch, ctx.sessions, ctx.broadcast);
-      return model.tasks().create({
+      return projectModel(ctx).tasks().create({
         title: params.title,
         description: params.description,
         branch_name: params.branchName,
@@ -93,10 +100,30 @@ export const TASK_FUNCTIONS: ApiFunctionDef[] = [
     }),
     returns: TaskSchema,
     tags: ["tasks", "update", "write", "edit"],
-    execute: (params, _ctx) => {
-      const task = updateTask(params.taskId, params.updates);
+    execute: (params, ctx) => {
+      const task = projectModel(ctx).tasks().update(params.taskId, params.updates);
       if (!task) throw new Error(`Task ${params.taskId} not found`);
       return task;
+    },
+  }),
+  defineFunction({
+    name: "tasks.close",
+    description: "Close an open task. Throws if the task is not found.",
+    parameters: Type.Object({ taskId: Type.Number() }),
+    returns: TaskSchema,
+    tags: ["tasks", "close", "write", "status"],
+    execute: (params, ctx) => {
+      return projectModel(ctx).tasks().close(params.taskId);
+    },
+  }),
+  defineFunction({
+    name: "tasks.reopen",
+    description: "Reopen a closed task. Throws if the task is not found.",
+    parameters: Type.Object({ taskId: Type.Number() }),
+    returns: TaskSchema,
+    tags: ["tasks", "reopen", "write", "status"],
+    execute: (params, ctx) => {
+      return projectModel(ctx).tasks().reopen(params.taskId);
     },
   }),
 ];

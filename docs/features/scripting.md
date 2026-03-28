@@ -1,4 +1,4 @@
-# Execute & Search Tools
+# Scripting
 
 Agents have two tools for scriptable access to Reins internals.
 
@@ -32,8 +32,8 @@ execute({
 
 | Namespace | Functions |
 |---|---|
-| `api.tasks` | `list()`, `get(taskId)`, `create(title, description, branchName?)`, `update(taskId, updates)` |
-| `api.sessions` | `list()`, `listForTask(taskId)`, `get(sessionId)`, `messages(sessionId)` |
+| `api.tasks` | `list(status?)`, `get(taskId)`, `current()`, `create(title, description, branchName?)`, `update(taskId, updates)`, `close(taskId)`, `reopen(taskId)` |
+| `api.sessions` | `list()`, `listForTask(taskId)`, `get(sessionId)`, `current()`, `messages(sessionId)` |
 | `api.projects` | `list()`, `get(projectId)`, `current()` |
 
 ### Design

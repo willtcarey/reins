@@ -21,6 +21,8 @@ These tools let the agent interact with Reins itself:
 |------|-------------|-------------|
 | **create_task** | Create a new task with a title, description, and git branch. Can optionally kick off an initial session on the task immediately — the task is created and work begins in the background. | All sessions |
 | **delegate** | Spawn a sub-session on the current task with a fresh context window. The agent can break large work into focused sub-sessions, keeping each one's context lean. The sub-session runs to completion and returns its result. | Task sessions only |
+| **search** | Discover available API functions for the `execute` tool. Returns function signatures and type definitions filtered by query. | All sessions |
+| **execute** | Run async JavaScript against Reins internals. The agent writes a function body with access to an `api` object (tasks, sessions, projects). See [Scripting](scripting.md) for details. | All sessions |
 
 ## How They Appear in Chat
 

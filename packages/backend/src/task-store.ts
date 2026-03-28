@@ -52,10 +52,12 @@ export function getTask(id: number): TaskRow | null {
   return db.query<TaskRow, [number]>("SELECT * FROM tasks WHERE id = ?").get(id) ?? null;
 }
 
-export function listTasks(projectId: number): TaskListItem[] {
+export function listTasks(projectId: number, status?: TaskStatus): TaskListItem[] {
   const db = getDb();
+  const statusFilter = status ? `AND t.status = ?` : "";
+  const params = status ? [projectId, status] : [projectId];
   const rows = db
-    .query<TaskRow & { session_count: number; session_ids_json: string }, [number]>(
+    .query<TaskRow & { session_count: number; session_ids_json: string }, (number | string)[]>(
       `SELECT
          t.*,
          COALESCE(sc.cnt, 0) AS session_count,
@@ -68,10 +70,10 @@ export function listTasks(projectId: number): TaskListItem[] {
          WHERE task_id IS NOT NULL
          GROUP BY task_id
        ) sc ON sc.task_id = t.id
-       WHERE t.project_id = ?
+       WHERE t.project_id = ? ${statusFilter}
        ORDER BY CASE t.status WHEN 'closed' THEN 1 ELSE 0 END, t.updated_at DESC`,
     )
-    .all(projectId);
+    .all(...params);
 
   return rows.map(({ session_ids_json, ...rest }) => ({
     ...rest,
@@ -125,6 +127,19 @@ export function deleteTask(id: number): boolean {
   tx();
 
   return true;
+}
+
+/**
+ * Set a task's status (open or closed). Returns the updated row, or null if not found.
+ */
+export function setTaskStatus(id: number, status: TaskStatus): TaskRow | null {
+  const db = getDb();
+  const task = getTask(id);
+  if (!task) return null;
+  db.query(
+    `UPDATE tasks SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
+  ).run(status, id);
+  return getTask(id);
 }
 
 /**

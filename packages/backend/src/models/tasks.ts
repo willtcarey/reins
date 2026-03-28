@@ -11,12 +11,14 @@
 import {
   createTask,
   listTasks,
-  getTask,
+  getTask as storeGetTask,
   updateTask as storeUpdateTask,
+  setTaskStatus,
   deleteTask as storeDeleteTask,
   getTaskSessionIds,
   type TaskRow,
   type TaskListItem,
+  type TaskStatus,
 } from "../task-store.js";
 import { slugifyBranchName } from "../branch-namer.js";
 import {
@@ -124,12 +126,29 @@ export class ProjectTasks {
   }
 
   /**
+   * Get a single task by ID. Returns null if not found or doesn't belong to this project.
+   */
+  get(taskId: number): TaskRow | null {
+    const task = storeGetTask(taskId);
+    if (!task || task.project_id !== this.projectId) return null;
+    return task;
+  }
+
+  /**
+   * List tasks for a project, optionally filtered by status.
+   * Open tasks appear before closed ones, ordered by most recent update.
+   */
+  list(status?: TaskStatus): TaskListItem[] {
+    return listTasks(this.projectId, status);
+  }
+
+  /**
    * List all tasks for a project, enriching open ones with diff stats.
    *
    * Per-task errors (e.g. missing branch) are swallowed — the task is
    * returned with `diffStats: null`.
    */
-  async list(): Promise<TaskWithDiffStats[]> {
+  async listWithDiffStats(): Promise<TaskWithDiffStats[]> {
     const tasks = listTasks(this.projectId);
 
     return Promise.all(
@@ -153,11 +172,36 @@ export class ProjectTasks {
    * Returns the updated row, or null if the task doesn't exist.
    */
   update(taskId: number, updates: { title?: string; description?: string }): TaskRow | null {
+    if (!this.get(taskId)) return null;
     const updated = storeUpdateTask(taskId, updates);
     if (updated) {
       this.broadcast({ type: "task_updated", projectId: this.projectId });
     }
     return updated;
+  }
+
+  /**
+   * Close an open task and broadcast the change.
+   * Throws if the task doesn't exist.
+   */
+  close(taskId: number): TaskRow {
+    if (!this.get(taskId)) throw new TaskNotFoundError();
+    const task = setTaskStatus(taskId, "closed");
+    if (!task) throw new TaskNotFoundError();
+    this.broadcast({ type: "task_updated", projectId: this.projectId });
+    return task;
+  }
+
+  /**
+   * Reopen a closed task and broadcast the change.
+   * Throws if the task doesn't exist.
+   */
+  reopen(taskId: number): TaskRow {
+    if (!this.get(taskId)) throw new TaskNotFoundError();
+    const task = setTaskStatus(taskId, "open");
+    if (!task) throw new TaskNotFoundError();
+    this.broadcast({ type: "task_updated", projectId: this.projectId });
+    return task;
   }
 
   /**
@@ -168,10 +212,8 @@ export class ProjectTasks {
    * or has active streaming sessions.
    */
   async delete(taskId: number): Promise<void> {
-    const task = getTask(taskId);
-    if (!task || task.project_id !== this.projectId) {
-      throw new TaskNotFoundError();
-    }
+    const task = this.get(taskId);
+    if (!task) throw new TaskNotFoundError();
 
     // Check for active (in-memory, streaming) sessions
     const sessionIds = getTaskSessionIds(taskId);

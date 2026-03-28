@@ -22,7 +22,7 @@ describe("ProjectModel.serveFile", () => {
     const project = createProject("Test", repo.dir, "main");
     const broadcastSpy: Broadcast = mock<(msg: ServerMessage) => void>();
     const sessions = new Map<string, ManagedSession>();
-    model = new ProjectModel(project.id, repo.dir, "main", sessions, broadcastSpy);
+    model = new ProjectModel(project.id, sessions, broadcastSpy);
   });
 
   // ---- MIME type detection -----------------------------------------------
