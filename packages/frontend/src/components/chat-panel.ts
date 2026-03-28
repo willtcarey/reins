@@ -361,7 +361,7 @@ export class ChatPanel extends LitElement {
         ${this.streamingBlocks.map((block) => {
           if (block.type === "text") {
             return html`
-              <div class="bg-zinc-800 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm mb-1">
+              <div class="bg-zinc-800 border-l-2 border-blue-400/60 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm mb-1">
                 <markdown-content .text=${block.text} .streaming=${true}></markdown-content>
               </div>
             `;
