@@ -142,6 +142,24 @@ export function listTaskSessions(taskId: number): SessionListItem[] {
     .all(taskId);
 }
 
+export function listSessionRows(projectId: number): SessionRow[] {
+  const db = getDb();
+  return db
+    .query<SessionRow, [number]>(
+      `SELECT * FROM sessions WHERE project_id = ? AND task_id IS NULL ORDER BY updated_at DESC`,
+    )
+    .all(projectId);
+}
+
+export function listTaskSessionRows(taskId: number): SessionRow[] {
+  const db = getDb();
+  return db
+    .query<SessionRow, [number]>(
+      `SELECT * FROM sessions WHERE task_id = ? ORDER BY updated_at DESC`,
+    )
+    .all(taskId);
+}
+
 export function listPaletteItems(): PaletteItem[] {
   const db = getDb();
   const rows = db

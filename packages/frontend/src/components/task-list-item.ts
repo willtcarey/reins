@@ -85,10 +85,11 @@ export class TaskListItemElement extends LitElement {
   }
 
   private getTaskActivity(): ActivityState | undefined {
-    if (!this.sessions.length) return undefined;
+    const ids = this.task.session_ids;
+    if (!ids.length) return undefined;
     let hasFinished = false;
-    for (const s of this.sessions) {
-      const state = this.activityMap.get(s.id);
+    for (const id of ids) {
+      const state = this.activityMap.get(id);
       if (state === "running") return "running";
       if (state === "finished") hasFinished = true;
     }

@@ -26,6 +26,10 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 - Large diffs (e.g. unignored node_modules with 1.5M+ lines) grind the app to a halt. Multiple layers contribute: the diff API response is huge, parsing/processing it is slow, and the file tree renders thousands of DOM nodes. Mitigation ideas: (1) ETag/304 on diff responses so polling skips client-side work when nothing changed, (2) virtualize the file tree to only render visible nodes, (3) cap diff size with a summary fallback ("N files changed, diff too large to display"), (4) server-side pagination or streaming of diff data.
 
+## Scripting / Execute Tool
+
+- The `execute` tool uses Node.js `vm.createContext` for isolation, which prevents access to `process`, `import()`, `require`, filesystem, and network from agent-written scripts. This is adequate for preventing accidental misuse and casual prompt injection, but `vm` is **not a security boundary** — a determined attacker could potentially escape it. If the execute tool gains wider exposure (e.g. third-party plugins, untrusted input), upgrade to a child-process sandbox: spawn an isolated subprocess that communicates with the parent via IPC, with the API object proxied through an RPC bridge. See the planning doc at `docs/plans/execute-and-search-tools.md` for a comparison of sandbox approaches.
+
 ## Cross-cutting
 
 - Frontend duplicates backend types (`ProjectInfo`, `SessionListItem`, `TaskListItem`, `SessionData` in `ws-client.ts`) and API path strings (hardcoded in stores). These can drift. Use TypeScript `paths` mapping (`"@backend/*": ["../backend/src/*"]`) so the frontend can `import type` directly from backend source files — `tsc` resolves them for type checking, `bun build` erases them completely. Runtime values like `API` path constants would need a zero-dependency shared file or stay duplicated.

@@ -39,9 +39,10 @@ export class SessionSidebar extends LitElement {
   @property({ attribute: false })
   store: AppStore | null = null;
 
-  /** Activity states for all sessions (running/finished indicators). */
-  @property({ attribute: false })
-  activityMap = new Map<string, ActivityState>();
+  /** Activity states for all sessions — derived from store on each render. */
+  private get activityMap(): Map<string, ActivityState> {
+    return this.store?.activityMap ?? new Map();
+  }
 
   @state() private collapsed = window.matchMedia("(max-width: 768px)").matches;
   @state() private expandedProjects = new Set<number>();

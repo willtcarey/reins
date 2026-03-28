@@ -119,6 +119,8 @@ async function buildSessionOpts(params: {
 
   const customTools = createCustomTools({
     projectId,
+    sessionId,
+    taskId: task?.id ?? null,
     broadcast,
     sessions: state.sessions,
     createSession: createSessionFn,

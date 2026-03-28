@@ -226,7 +226,6 @@ export class AppShell extends LitElement {
           <!-- Session sidebar -->
           <session-sidebar
             .store=${store}
-            .activityMap=${store.activityMap}
           ></session-sidebar>
 
           ${hasProject ? html`

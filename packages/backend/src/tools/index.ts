@@ -10,9 +10,13 @@ import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { createTaskTool } from "./create-task.js";
 import { createDelegateTool, type CreateSessionFn } from "./delegate.js";
+import { createSearchTool } from "./search.js";
+import { createExecuteTool } from "./execute.js";
 
 export interface CustomToolsOpts {
   projectId: number;
+  sessionId: string;
+  taskId: number | null;
   broadcast: Broadcast;
   sessions: Map<string, ManagedSession>;
   /** Session creation function — used by create_task (prompt) and delegate. */
@@ -32,6 +36,14 @@ export function createCustomTools(opts: CustomToolsOpts): ToolDefinition<any>[] 
       broadcast: opts.broadcast,
       sessions: opts.sessions,
       createSession: opts.createSession,
+    }),
+    createSearchTool(),
+    createExecuteTool({
+      projectId: opts.projectId,
+      sessionId: opts.sessionId,
+      taskId: opts.taskId,
+      broadcast: opts.broadcast,
+      sessions: opts.sessions,
     }),
   ];
 

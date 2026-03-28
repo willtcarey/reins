@@ -3,7 +3,7 @@
 Roadmap and open items. Remove items when they're done — don't check them off.
 
 - *(2026-02-12)* Better conversation design — [inspiration](https://x.com/benjitaylor/status/2027902450049708385)
-- *(2026-02-12)* Conversation naming
+- *(2026-02-12)* Conversation naming — auto-generate a short name/topic for each session. Replaces the current first-message display with a proper name field. May unify `SessionRow` and session list item types since the name would be available directly on the session.
 - *(2026-02-14)* Comments on changes — allow users to comment on individual changes and inject those comments into the session context so the LLM can see and respond to feedback
 - *(2026-02-17)* Support non-`origin` remotes in git operations (fetch, branch creation, diff base resolution) — currently hardcoded to `origin`
 - *(2026-02-19)* Stash uncommitted changes on branch switch — when switching between task branches, uncommitted changes carry over and muddy the other branch's working tree. Stash before switching and pop after switching back. The diff view should treat stashed changes as "uncommitted" so they still appear in the UI.
