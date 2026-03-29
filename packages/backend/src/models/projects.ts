@@ -30,6 +30,8 @@ import {
   deleteBranch,
   showFile,
   showFileBinary,
+  listTrackedFiles,
+  listUntrackedFiles,
 } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
@@ -136,6 +138,21 @@ export class ProjectModel {
     await fetchAll(this.projectDir);
     await fastForwardBaseBranch(this.projectDir, this.baseBranch);
     await this.reconcileClosedTasks();
+  }
+
+  // ---- File listing ---------------------------------------------------------
+
+  /**
+   * List all non-ignored files in the project.
+   * Combines tracked and untracked-but-not-ignored files into a
+   * sorted, deduplicated list of relative paths.
+   */
+  async listFiles(): Promise<string[]> {
+    const [tracked, untracked] = await Promise.all([
+      listTrackedFiles(this.projectDir),
+      listUntrackedFiles(this.projectDir),
+    ]);
+    return [...new Set([...tracked, ...untracked])].toSorted();
   }
 
   // ---- Path safety ----------------------------------------------------------

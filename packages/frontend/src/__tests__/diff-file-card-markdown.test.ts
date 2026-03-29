@@ -226,7 +226,7 @@ describe("DiffFileCard file URL generation", () => {
     const card = cardWithProject(mdFile("docs/guide.md"));
     const url = card["_fileUrl"]();
 
-    expect(url).toBe("/api/projects/42/file?path=docs%2Fguide.md&ref=main");
+    expect(url).toBe("/api/projects/42/files/content?path=docs%2Fguide.md&ref=main");
   });
 
   test("omits ref param when branch is null", () => {
@@ -237,7 +237,7 @@ describe("DiffFileCard file URL generation", () => {
 
     const url = card["_fileUrl"]();
 
-    expect(url).toBe("/api/projects/7/file?path=README.md");
+    expect(url).toBe("/api/projects/7/files/content?path=README.md");
   });
 
   test("returns null when projectId is null", () => {

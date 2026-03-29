@@ -30,6 +30,8 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 - The `execute` tool uses Node.js `vm.createContext` for isolation, which prevents access to `process`, `import()`, `require`, filesystem, and network from agent-written scripts. This is adequate for preventing accidental misuse and casual prompt injection, but `vm` is **not a security boundary** — a determined attacker could potentially escape it. If the execute tool gains wider exposure (e.g. third-party plugins, untrusted input), upgrade to a child-process sandbox: spawn an isolated subprocess that communicates with the parent via IPC, with the API object proxied through an RPC bridge. See the planning doc at `docs/plans/completed/execute-and-search-tools.md` for a comparison of sandbox approaches.
 
+- HTTP responses are not compressed. Bun's built-in server doesn't apply gzip/br automatically. Currently fine (largest JSON response is ~13KB for file listings), but will matter if payloads grow (e.g. large repos with thousands of files, or bulk API responses). Add response compression middleware or use Bun's `Bun.gzipSync` for JSON responses above a size threshold.
+
 ## Cross-cutting
 
 - Frontend duplicates backend types (`ProjectInfo`, `SessionListItem`, `TaskListItem`, `SessionData` in `ws-client.ts`) and API path strings (hardcoded in stores). These can drift. Use TypeScript `paths` mapping (`"@backend/*": ["../backend/src/*"]`) so the frontend can `import type` directly from backend source files — `tsc` resolves them for type checking, `bun build` erases them completely. Runtime values like `API` path constants would need a zero-dependency shared file or stay duplicated.

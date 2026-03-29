@@ -1,9 +1,8 @@
 /**
- * File Content Route (project-scoped)
+ * File Routes (project-scoped)
  *
- * Thin adapter that delegates to ProjectModel.serveFile() for content
- * reading, MIME detection, and filename extraction. Builds the HTTP
- * response (headers + body) from the returned metadata.
+ * GET /files         — list non-ignored files in the project
+ * GET /files/content — read a single file's content (working tree or git ref)
  */
 
 import type { RouterGroup } from "../router.js";
@@ -12,7 +11,14 @@ import { badRequest, notFound } from "../errors.js";
 import { PathTraversalError, FileNotFoundError } from "../models/projects.js";
 
 export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
-  router.get("/file", async (ctx) => {
+  /** List all non-ignored files. */
+  router.get("/files", async (ctx) => {
+    const files = await ctx.project.listFiles();
+    return Response.json({ files });
+  });
+
+  /** Read a single file's content. */
+  router.get("/files/content", async (ctx) => {
     const filePath = ctx.url.searchParams.get("path");
     if (!filePath) badRequest("Missing ?path= parameter");
 

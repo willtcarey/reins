@@ -20,7 +20,7 @@ import { registerSessionRoutes } from "./sessions.js";
 import { registerProjectSessionRoutes } from "./project-sessions.js";
 import { registerTaskSessionRoutes } from "./task-sessions.js";
 import { registerDiffRoutes } from "./diff.js";
-import { registerFileRoutes } from "./file.js";
+import { registerFileRoutes } from "./files.js";
 import { registerTaskRoutes } from "./tasks.js";
 import { registerGitRoutes } from "./git.js";
 import { registerPaletteRoutes } from "./palette.js";

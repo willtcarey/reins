@@ -101,7 +101,7 @@ export class DiffFileCard extends LitElement {
   /** Build the API URL for this file's raw content. */
   private _fileUrl(): string | null {
     if (this.projectId == null) return null;
-    let url = `/api/projects/${this.projectId}/file?path=${encodeURIComponent(this.file.path)}`;
+    let url = `/api/projects/${this.projectId}/files/content?path=${encodeURIComponent(this.file.path)}`;
     if (this.branch) url += `&ref=${encodeURIComponent(this.branch)}`;
     return url;
   }

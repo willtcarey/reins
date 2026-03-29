@@ -30,6 +30,9 @@ import "./branch-indicator.js";
 import "./quick-open.js";
 import type { QuickOpen } from "./quick-open.js";
 import { QuickOpenStore } from "../models/stores/quick-open-store.js";
+import "./file-browser.js";
+import type { FileBrowser } from "./file-browser.js";
+import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 
 @customElement("app-shell")
 export class AppShell extends LitElement {
@@ -48,6 +51,8 @@ export class AppShell extends LitElement {
     || ("standalone" in navigator && navigator.standalone === true);
   private quickOpenStore = new QuickOpenStore();
   @query("quick-open") private _quickOpen!: QuickOpen;
+  private fileBrowserStore = new FileBrowserStore();
+  @query("file-browser") private _fileBrowser!: FileBrowser;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -211,6 +216,7 @@ export class AppShell extends LitElement {
     void this._storeVersion;
     const store = this.appStore;
     const hasProject = store.projectId != null;
+    this.fileBrowserStore.projectId = store.projectId;
 
     return html`
       <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden">
@@ -323,6 +329,11 @@ export class AppShell extends LitElement {
           .activityMap=${this.appStore.activityMap}
           .store=${this.quickOpenStore}
         ></quick-open>
+
+        <!-- File browser overlay -->
+        <file-browser
+          .store=${this.fileBrowserStore}
+        ></file-browser>
       </div>
     `;
   }
