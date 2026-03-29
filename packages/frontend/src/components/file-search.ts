@@ -152,7 +152,7 @@ export class FileSearch extends LitElement {
     return html`
       <search-palette
         placeholder="Search files by name..."
-        containerClass="w-[42rem] max-w-full mt-[10vh] max-h-[70vh]"
+        containerClass="w-[42rem] max-w-[calc(100vw-2rem)] mt-[10vh] max-h-[70vh]"
         resultsClass="flex-1"
         .itemCount=${items.length}
         .loading=${this.store?.loading ?? false}
