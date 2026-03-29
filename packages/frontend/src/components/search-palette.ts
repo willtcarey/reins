@@ -46,8 +46,8 @@ export class SearchPalette extends LitElement {
   /** Message shown when there's no query and no items. */
   @property() emptyNoQueryMessage = "";
 
-  /** Extra CSS classes for the outer container (width, max-height, margin, etc.). */
-  @property() containerClass = "w-[36rem] max-w-[calc(100vw-2rem)]";
+  /** Additional CSS classes for the outer container (e.g. max-height constraints). */
+  @property() containerClass = "";
 
   /** Extra CSS classes for the results scroll area. */
   @property() resultsClass = "max-h-96";
@@ -153,7 +153,7 @@ export class SearchPalette extends LitElement {
     const emptyMsg = this._query ? this.emptyMessage : (this.emptyNoQueryMessage || this.emptyMessage);
 
     return html`
-      <div class="${this.containerClass} bg-zinc-800 ring-1 ring-zinc-600 rounded-lg shadow-2xl flex flex-col">
+      <div class="w-[42rem] max-w-[calc(100vw-2rem)] bg-zinc-800 ring-1 ring-zinc-600 rounded-lg shadow-2xl flex flex-col ${this.containerClass}">
         <!-- Search input -->
         <div class="flex items-center gap-2 px-3 py-2.5 border-b border-zinc-700">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
