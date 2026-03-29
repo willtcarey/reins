@@ -47,7 +47,7 @@ export class SearchPalette extends LitElement {
   @property() emptyNoQueryMessage = "";
 
   /** Extra CSS classes for the outer container (width, max-height, margin, etc.). */
-  @property() containerClass = "w-full max-w-xl";
+  @property() containerClass = "w-[36rem] max-w-full";
 
   /** Extra CSS classes for the results scroll area. */
   @property() resultsClass = "max-h-96";
