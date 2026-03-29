@@ -165,7 +165,6 @@ export class QuickOpen extends LitElement {
       >
         <search-palette
           placeholder="Search sessions..."
-          containerClass="w-[36rem] max-w-[calc(100vw-2rem)]"
           .itemCount=${items.length}
           .loading=${this.store?.loading ?? false}
           emptyMessage="No sessions found"
