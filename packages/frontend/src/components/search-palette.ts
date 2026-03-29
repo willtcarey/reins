@@ -200,7 +200,7 @@ export class SearchPalette extends LitElement {
       items.push(html`
         <button
           data-palette-index=${i}
-          class="w-full text-left cursor-pointer transition-colors ${
+          class="w-full cursor-pointer transition-colors ${
             i === this._selectedIndex ? "bg-zinc-700" : "hover:bg-zinc-700/50"
           }"
           @click=${() => this.dispatchConfirm(i)}

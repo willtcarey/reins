@@ -130,7 +130,7 @@ export class FileSearch extends LitElement {
     if (!file) return html``;
 
     return html`
-      <div class="min-w-0 px-3 py-1.5 flex items-center gap-2">
+      <div class="min-w-0 px-3 py-1.5 flex items-center gap-2 text-left">
         <span class="text-sm text-zinc-300 truncate font-mono">${this.highlightPath(file)}</span>
       </div>
     `;

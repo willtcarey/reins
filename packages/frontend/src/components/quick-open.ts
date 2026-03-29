@@ -132,7 +132,7 @@ export class QuickOpen extends LitElement {
     if (!item) return html``;
 
     return html`
-      <div class="px-3 py-2.5 flex items-center gap-3">
+      <div class="px-3 py-2.5 flex items-center gap-3 text-left">
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-1.5 text-sm truncate">
             <span class="font-medium text-zinc-200">${item.projectName}</span>
