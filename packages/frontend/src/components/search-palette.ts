@@ -147,11 +147,6 @@ export class SearchPalette extends LitElement {
     });
   }
 
-  /** Update selectedIndex on mouse hover. Called by consumers wrapping items. */
-  hoverIndex(index: number) {
-    this._selectedIndex = index;
-  }
-
   // ---- Render ---------------------------------------------------------------
 
   override render() {
@@ -202,9 +197,31 @@ export class SearchPalette extends LitElement {
     if (!this.renderItem) return nothing;
     const items = [];
     for (let i = 0; i < this.itemCount; i++) {
-      items.push(this.renderItem(i, i === this._selectedIndex));
+      items.push(html`
+        <button
+          data-palette-index=${i}
+          class="w-full text-left cursor-pointer transition-colors ${
+            i === this._selectedIndex ? "bg-zinc-700" : "hover:bg-zinc-700/50"
+          }"
+          @click=${() => this.dispatchConfirm(i)}
+          @mouseenter=${() => { this._selectedIndex = i; }}
+        >
+          ${this.renderItem(i, i === this._selectedIndex)}
+        </button>
+      `);
     }
     return items;
+  }
+
+  private dispatchConfirm(index: number) {
+    this._selectedIndex = index;
+    this.dispatchEvent(
+      new CustomEvent("confirm", {
+        detail: index,
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 }
 

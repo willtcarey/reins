@@ -126,20 +126,13 @@ export class QuickOpen extends LitElement {
     return html`<span class="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="Finished"></span>`;
   }
 
-  private renderSessionItem = (index: number, selected: boolean) => {
+  private renderSessionItem = (index: number, _selected: boolean) => {
     const items = this.filteredItems;
     const item = items[index];
     if (!item) return html``;
 
     return html`
-      <button
-        data-palette-index=${index}
-        class="w-full px-3 py-2.5 flex items-center gap-3 text-left cursor-pointer transition-colors ${
-          selected ? "bg-zinc-700" : "hover:bg-zinc-700/50"
-        }"
-        @click=${() => this.selectItem(item)}
-        @mouseenter=${() => this._palette?.hoverIndex(index)}
-      >
+      <div class="px-3 py-2.5 flex items-center gap-3">
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-1.5 text-sm truncate">
             <span class="font-medium text-zinc-200">${item.projectName}</span>
@@ -155,7 +148,7 @@ export class QuickOpen extends LitElement {
           </div>
         </div>
         ${this.renderActivityDot(item.sessionId)}
-      </button>
+      </div>
     `;
   };
 

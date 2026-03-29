@@ -124,30 +124,17 @@ export class FileSearch extends LitElement {
     )}`;
   }
 
-  private renderFileItem = (index: number, selected: boolean) => {
+  private renderFileItem = (index: number, _selected: boolean) => {
     const items = this.filteredFiles;
     const file = items[index];
     if (!file) return html``;
 
     return html`
-      <button
-        data-palette-index=${index}
-        class="w-full min-w-0 px-3 py-1.5 flex items-center gap-2 text-left cursor-pointer transition-colors ${
-          selected ? "bg-zinc-700" : "hover:bg-zinc-700/50"
-        }"
-        @click=${() => this.selectFile(file)}
-        @mouseenter=${() => this._palette?.hoverIndex(index)}
-      >
+      <div class="min-w-0 px-3 py-1.5 flex items-center gap-2">
         <span class="text-sm text-zinc-300 truncate font-mono">${this.highlightPath(file)}</span>
-      </button>
+      </div>
     `;
   };
-
-  private selectFile(path: string) {
-    this.dispatchEvent(
-      new CustomEvent("file-select", { detail: path, bubbles: true, composed: true }),
-    );
-  }
 
   private footerTemplate = html`
     <div class="px-3 py-1.5 border-t border-zinc-700 flex items-center gap-3 text-[10px] text-zinc-500">
