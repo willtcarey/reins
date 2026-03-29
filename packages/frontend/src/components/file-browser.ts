@@ -121,7 +121,7 @@ export class FileBrowser extends LitElement {
     return html`
       <div
         id="file-browser-backdrop"
-        class="fixed inset-0 z-50 flex items-start justify-center bg-black/70 px-4"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
         @click=${this.handleBackdropClick}
         @close=${() => this.close()}
       >

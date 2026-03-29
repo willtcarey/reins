@@ -150,11 +150,8 @@ export class FileSearch extends LitElement {
     const items = this.filteredFiles;
 
     return html`
-      <div class="mt-[10vh]">
       <search-palette
         placeholder="Search files by name..."
-        containerClass="max-h-[70vh]"
-        resultsClass="flex-1"
         .itemCount=${items.length}
         .loading=${this.store?.loading ?? false}
         loadingMessage="Loading file list..."
@@ -166,7 +163,6 @@ export class FileSearch extends LitElement {
         @confirm=${this.handleConfirm}
         @close=${(e: Event) => { e.stopPropagation(); this.dispatchEvent(new CustomEvent("close", { bubbles: true, composed: true })); }}
       ></search-palette>
-      </div>
     `;
   }
 }
