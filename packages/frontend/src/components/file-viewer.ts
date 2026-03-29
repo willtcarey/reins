@@ -112,7 +112,7 @@ export class FileViewer extends LitElement {
     const path = store.selectedFile;
 
     return html`
-      <div class="w-full max-w-5xl mt-[3vh] mx-4 bg-zinc-800 ring-1 ring-zinc-600 rounded-lg shadow-2xl flex flex-col max-h-[94vh]">
+      <div class="w-[90vw] h-[90vh] my-[5vh] bg-zinc-800 ring-1 ring-zinc-600 rounded-lg shadow-2xl flex flex-col">
         <!-- Header -->
         <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-700 min-w-0">
           <button
