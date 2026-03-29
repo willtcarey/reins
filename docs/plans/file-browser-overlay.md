@@ -4,10 +4,10 @@ Status: **Phase 1 complete** — fuzzy search + file viewer shipped. Phase 2 (tr
 
 ## Bug fixes / polish
 
-- [ ] Search palette changes width as you type (results have different path lengths pushing the container wider)
-- [ ] File icons in the search palette are unclear emoji — replace with something better or remove
-- [ ] Escape doesn't close the file browser
-- [ ] Reuse the same palette shell as quick-open (`<quick-open>`) rather than duplicating the search palette UI — extract a shared palette component that both session search and file search can use
+- [x] Search palette changes width as you type — fixed with `px-4` on backdrop + `min-w-0` on result buttons for proper truncation
+- [x] File icons in the search palette are unclear emoji — removed entirely
+- [x] Escape doesn't close the file browser — centralized Escape handling in `<file-browser>`, removed from child components
+- [x] Reuse the same palette shell as quick-open — extracted `<search-palette>` component, both quick-open and file-search use it
 
 ## Motivation
 
