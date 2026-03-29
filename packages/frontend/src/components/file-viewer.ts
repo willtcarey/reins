@@ -44,13 +44,11 @@ export class FileViewer extends LitElement {
     this._subscribeToStore();
     // Highlight immediately if content is already loaded
     this._maybeHighlight();
-    window.addEventListener("keydown", this._onKeydown);
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     this._unsub?.();
-    window.removeEventListener("keydown", this._onKeydown);
   }
 
   override updated(changed: Map<string, unknown>) {
@@ -67,13 +65,6 @@ export class FileViewer extends LitElement {
       this._maybeHighlight();
     });
   }
-
-  private _onKeydown = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      this.dispatchEvent(new CustomEvent("back", { bubbles: true, composed: true }));
-    }
-  };
 
   private _maybeHighlight() {
     if (!this.store) return;

@@ -92,6 +92,15 @@ export class FileBrowser extends LitElement {
         this.open();
       }
     }
+
+    if (e.key === "Escape" && this._open) {
+      e.preventDefault();
+      if (this._mode === "viewer") {
+        this.switchToSearch();
+      } else {
+        this.close();
+      }
+    }
   };
 
   private handleFileSelect(e: CustomEvent<string>) {
@@ -112,7 +121,7 @@ export class FileBrowser extends LitElement {
     return html`
       <div
         id="file-browser-backdrop"
-        class="fixed inset-0 z-50 flex items-start justify-center bg-black/70"
+        class="fixed inset-0 z-50 flex items-start justify-center bg-black/70 px-4"
         @click=${this.handleBackdropClick}
         @close=${() => this.close()}
       >
