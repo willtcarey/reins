@@ -8,6 +8,7 @@ Status: **Phase 1 complete** — fuzzy search + file viewer shipped. Phase 2 (tr
 - [x] File icons in the search palette are unclear emoji — removed entirely
 - [x] Escape doesn't close the file browser — centralized Escape handling in `<file-browser>`, removed from child components
 - [x] Reuse the same palette shell as quick-open — extracted `<search-palette>` component, both quick-open and file-search use it
+- [x] File viewer should use `shouldWrapLines(path)` for per-file-type line wrapping, matching diff viewer behavior
 
 ## Motivation
 
@@ -21,20 +22,24 @@ A full IDE-style file browser is overkill. The goal is read-only access to any f
 
 - **Keyboard shortcut**: `Cmd+P` / `Ctrl+P` opens fuzzy file search. No conflict — quick-open uses `Cmd+K`.
 - **Backend endpoint**: `GET /api/projects/:id/files` — runs `git ls-files` + `git ls-files --others --exclude-standard` in parallel, returns sorted deduplicated list.
-- **Fuzzy file search** (`<file-search>`): palette with fuzzy matching (reuses `fuzzyMatch` from quick-open-store), match character highlighting, file type icons, keyboard navigation (↑/↓/Enter/Esc).
-- **File viewer** (`<file-viewer>`): syntax-highlighted read-only viewer with line numbers, Shiki highlighting via shared worker, binary file detection, large file truncation (5,000 lines).
-- **Overlay shell** (`<file-browser>`): manages open/close, mode routing, backdrop. Exposes `open()` and `openFile(path)` for programmatic triggers.
-- **Store** (`FileBrowserStore`): file list fetching (cached per project), content loading via existing `/api/projects/:id/file` endpoint, fuzzy filtering.
+- **Fuzzy file search** (`<file-search>`): standalone palette (like quick-open) with fuzzy matching (reuses `fuzzyMatch` from quick-open-store), match character highlighting, keyboard navigation (↑/↓/Enter/Esc). Dispatches `open-in-browser` on selection.
+- **File viewer** (`<file-viewer>`): syntax-highlighted read-only viewer with line numbers, Shiki highlighting via shared worker, binary file detection, large file truncation (5,000 lines), per-file-type line wrapping.
+- **Viewer overlay** (`<file-browser>`): wraps `<file-viewer>` in a backdrop. Exposes `openFile(path)` — opens fresh or updates in place if already open.
+- **Store** (`FileBrowserStore`): file list fetching (cached per project), content loading via existing `/api/projects/:id/file` endpoint, fuzzy filtering. Shared by `<file-search>` and `<file-browser>`.
+- **Entry points**: clickable file paths in read/edit/write tool blocks, view button in diff file card headers — all dispatch `open-in-browser`.
+- **UI layers**: z-index system via CSS variables (`--layer-content`, `--layer-sidebar`, `--layer-overlay`, `--layer-palette`, `--layer-toast`). File search (palette layer) renders above the file viewer (overlay layer), allowing file switching while the viewer is open.
 
 ### Architecture
 
-Three components with clear responsibilities:
+Three independent components with clear responsibilities:
 
 | Component | Role |
 |---|---|
-| `<file-browser>` | Overlay shell — open/close, keyboard shortcut, mode routing |
-| `<file-search>` | Search palette — input, results, keyboard nav. Fires `file-select` and `close` |
-| `<file-viewer>` | Content viewer — highlighting, line numbers, loading/error states. Fires `back` and `close` |
+| `<file-search>` | Standalone search palette — owns `Cmd+P` shortcut, open/close state. Dispatches `open-in-browser` on file select. |
+| `<file-browser>` | Viewer overlay shell — wraps `<file-viewer>`, opens via `openFile(path)`. Escape/close dismisses. |
+| `<file-viewer>` | Content viewer — highlighting, line numbers, loading/error states. Fires `close`. |
+
+All entry points converge on a single bubbling `open-in-browser` CustomEvent, caught by `<app-shell>` which calls `fileBrowser.openFile(path)`.
 
 ### Resolved questions
 
@@ -52,7 +57,7 @@ Add a directory tree panel alongside the file viewer, powered by lazy `readdir` 
 
 ```
 ┌──────────────────────────────────────────────┐
-│  🔍 [search/filter bar]                 [✕]  │
+│  file path                              [✕]  │
 │──────────┬───────────────────────────────────│
 │          │                                    │
 │  file    │  file content                      │
@@ -67,16 +72,18 @@ Add a directory tree panel alongside the file viewer, powered by lazy `readdir` 
 **Layout:**
 - Left panel: collapsible file tree sidebar for browsing
 - Right panel: file content viewer (takes most of the width)
-- Top bar: search/filter input (filters the tree and/or does fuzzy file search) + close button
+- Top bar: current file path + close button
+
+**Search is external:** `Cmd+P` opens the standalone file search palette (palette layer) on top of the viewer (overlay layer). Selecting a file updates the viewer in place and the tree auto-expands to show the file's location.
 
 ### Navigation within the overlay
 
 Once the overlay is open, the user can:
 
 - **Click files in the tree** to view them. The tree shows the repo directory structure with expand/collapse on directories.
-- **Use the search bar** to fuzzy-filter the tree or jump to a file by name. This reuses the same search as the initial `Cmd+P` entry — it just runs inside the overlay instead of opening a new one.
+- **Press `Cmd+P`** to open the file search palette on top, pick a file, and the viewer updates in place.
 - **Click breadcrumbs** at the top of the content pane to navigate up the directory hierarchy.
-- **Keyboard navigation**: `↑`/`↓` to move through tree or search results, `Enter` to open, `Escape` to close the overlay.
+- **Keyboard navigation**: `↑`/`↓` to move through tree, `Enter` to open, `Escape` to close the overlay.
 - **Browser back** should close the overlay (treat it as a layer, not a route).
 
 ### Tree behavior
@@ -102,14 +109,18 @@ The agent could open the file browser to a specific file via the `execute` tool 
 - Frontend WS listener that calls `fileBrowser.openFile(path)` on receipt
 - UX consideration: what happens if the user is mid-typing or has another overlay open?
 
-## Future entry points (not yet wired)
+## Entry points
 
-| Action | Result |
-|---|---|
-| Click file path in read tool result | Opens overlay to that file via `openFile(path)`. |
-| Click file path in edit tool result | Opens overlay to that file via `openFile(path)`. |
-| Click file path header in diff view | Opens overlay to that file via `openFile(path)`. |
-| Agent calls `api.ui.openFile(path)` | Opens overlay to that file (via WS broadcast). |
+| Action | Status | Result |
+|---|---|---|
+| `Cmd+P` / `Ctrl+P` | ✅ Shipped | Opens fuzzy file search overlay. |
+| Click file path in read tool result | ✅ Shipped | Opens overlay to that file via `openFile(path)`. |
+| Click file path in edit tool result | ✅ Shipped | Opens overlay to that file via `openFile(path)`. |
+| Click file path in write tool result | ✅ Shipped | Opens overlay to that file via `openFile(path)`. |
+| 👁 button in diff file card header | ✅ Shipped | Opens overlay to that file via `openFile(path)`. |
+| Agent calls `api.ui.openFile(path)` | Not started | Opens overlay to that file (via WS broadcast). |
+
+All entry points use a bubbling `open-in-browser` CustomEvent caught by `<app-shell>`, which calls `fileBrowser.openFile(path)`.
 
 ## What it is NOT
 

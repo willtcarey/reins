@@ -6,14 +6,14 @@
  * states, errors, binary files, and large file truncation.
  *
  * Fires:
- *   `back`  — when the user clicks the back button or presses Escape
- *   `close` — when the user clicks the close (✕) button
+ *   `close` — when the user clicks the close (✕) button or presses Escape
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import type { FileBrowserStore } from "../models/stores/file-browser-store.js";
+import { shouldWrapLines } from "../models/changes/diff-utils.js";
 import { getSharedHighlighter } from "../models/changes/shared-highlighter.js";
 import type { IHighlighter } from "../models/changes/highlighter.js";
 
@@ -115,17 +115,6 @@ export class FileViewer extends LitElement {
       <div class="w-[90vw] h-[90vh] bg-zinc-800 ring-1 ring-zinc-600 rounded-lg shadow-2xl flex flex-col">
         <!-- Header -->
         <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-700 min-w-0">
-          <button
-            class="p-1 text-zinc-400 hover:text-zinc-200 cursor-pointer shrink-0"
-            @click=${() =>
-              this.dispatchEvent(new CustomEvent("back", { bubbles: true, composed: true }))}
-            title="Back to search (Esc)"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="m15 18-6-6 6-6"/>
-            </svg>
-          </button>
           <span class="text-sm text-zinc-300 font-mono truncate flex-1">${path}</span>
           <kbd class="hidden sm:inline text-[10px] text-zinc-500 bg-zinc-700 px-1.5 py-0.5 rounded">Esc</kbd>
           <button
@@ -165,18 +154,20 @@ export class FileViewer extends LitElement {
     const displayLines = truncated ? lines.slice(0, MAX_RENDER_LINES) : lines;
     const highlighted = this._highlightedLines;
     const gutterWidth = String(truncated ? MAX_RENDER_LINES : totalLines).length;
+    const wrap = shouldWrapLines(this.store.selectedFile ?? "");
+    const contentCls = wrap ? "pl-4 pr-3 py-0 whitespace-pre-wrap break-words" : "pl-4 pr-3 py-0 whitespace-pre";
 
     return html`
       <div class="font-mono text-xs leading-5">
-        <table class="w-full border-collapse">
+        <table class="${wrap ? "w-full table-fixed" : "w-fit min-w-full"} border-collapse">
           <tbody>
             ${displayLines.map((line, i) => {
               const lineHtml = highlighted?.[i];
               return html`
                 <tr class="hover:bg-zinc-700/30">
-                  <td class="text-right text-zinc-600 select-none px-3 py-0 align-top whitespace-nowrap border-r border-zinc-700/50"
-                      style="min-width: ${gutterWidth + 1}ch">${i + 1}</td>
-                  <td class="pl-4 pr-3 py-0 whitespace-pre-wrap break-all">${lineHtml ? unsafeHTML(lineHtml) : line}</td>
+                  <td class="text-right text-zinc-600 select-none px-2 py-0 align-top whitespace-nowrap border-r border-zinc-700/50"
+                      style="${wrap ? `width: ${gutterWidth + 2}ch` : `min-width: ${gutterWidth + 1}ch`}">${i + 1}</td>
+                  <td class="${contentCls}">${lineHtml ? unsafeHTML(lineHtml) : line}</td>
                 </tr>
               `;
             })}

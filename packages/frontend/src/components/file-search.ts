@@ -1,17 +1,18 @@
 /**
- * File Search — fuzzy file search palette for the file browser overlay.
+ * File Search — standalone Cmd+P / Ctrl+P fuzzy file search palette.
  *
- * Renders a search input with a filtered results list using `<search-palette>`.
- * The parent `<file-browser>` owns open/close state and the store; this
- * component is purely presentational + keyboard navigation.
+ * Owns its own open/close state. Registers the global keyboard shortcut
+ * and exposes an `open()` method for programmatic triggers.
+ * Selecting a file dispatches a bubbling `open-in-browser` event that
+ * the app shell catches to open the file viewer overlay.
  *
- * Fires:
- *   `file-select` — when the user picks a file (detail: file path string)
- *   `close`       — when the user presses Escape
+ * Uses `<search-palette>` for the shared shell (input, keyboard nav,
+ * container styling).
  */
 
-import { LitElement, html } from "lit";
+import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
+import { openInBrowserEvent } from "./events.js";
 import type { FileBrowserStore } from "../models/stores/file-browser-store.js";
 import "./search-palette.js";
 import type { SearchPalette } from "./search-palette.js";
@@ -24,6 +25,7 @@ export class FileSearch extends LitElement {
 
   @property({ attribute: false }) store!: FileBrowserStore;
 
+  @state() private _open = false;
   @state() private _query = "";
   @state() private _storeVersion = 0;
 
@@ -36,11 +38,13 @@ export class FileSearch extends LitElement {
     if (this.store) {
       this._unsub = this.store.subscribe(() => this._storeVersion++);
     }
+    window.addEventListener("keydown", this._onKeydown);
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     this._unsub?.();
+    window.removeEventListener("keydown", this._onKeydown);
   }
 
   override updated(changed: Map<string, unknown>) {
@@ -48,18 +52,32 @@ export class FileSearch extends LitElement {
       this._unsub?.();
       this._unsub = this.store.subscribe(() => this._storeVersion++);
     }
+
+    if (changed.has("_open") && this._open) {
+      this._query = "";
+      this.store?.fetchFiles();
+      this.updateComplete.then(() => {
+        this._palette?.reset();
+        this._palette?.focusInput();
+      });
+    }
   }
 
-  /** Focus the search input. Called by parent after opening. */
-  focusInput() {
-    this._palette?.focusInput();
+  /** Open the palette. */
+  open() {
+    this._open = true;
   }
 
-  /** Reset query and selection. Called by parent when re-entering search mode. */
-  reset() {
-    this._query = "";
-    this._palette?.reset();
+  private close() {
+    this._open = false;
   }
+
+  private _onKeydown = (e: KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "p") {
+      e.preventDefault();
+      this._open = !this._open;
+    }
+  };
 
   private get filteredFiles(): string[] {
     void this._storeVersion;
@@ -73,13 +91,14 @@ export class FileSearch extends LitElement {
   private handleConfirm(e: CustomEvent<number>) {
     const items = this.filteredFiles;
     if (items.length > 0 && e.detail < items.length) {
-      this.dispatchEvent(
-        new CustomEvent("file-select", {
-          detail: items[e.detail],
-          bubbles: true,
-          composed: true,
-        }),
-      );
+      this.close();
+      this.dispatchEvent(openInBrowserEvent(items[e.detail]));
+    }
+  }
+
+  private handleBackdropClick(e: MouseEvent) {
+    if (e.target instanceof HTMLElement && e.target.id === "file-search-backdrop") {
+      this.close();
     }
   }
 
@@ -147,22 +166,30 @@ export class FileSearch extends LitElement {
   // ---- Render ---------------------------------------------------------------
 
   override render() {
+    if (!this._open) return nothing;
+
     const items = this.filteredFiles;
 
     return html`
-      <search-palette
-        placeholder="Search files by name..."
-        .itemCount=${items.length}
-        .loading=${this.store?.loading ?? false}
-        loadingMessage="Loading file list..."
-        emptyMessage="No files match your search"
-        emptyNoQueryMessage="No files found"
-        .renderItem=${this.renderFileItem}
-        .footerTemplate=${this.footerTemplate}
-        @query-change=${this.handleQueryChange}
-        @confirm=${this.handleConfirm}
-        @close=${(e: Event) => { e.stopPropagation(); this.dispatchEvent(new CustomEvent("close", { bubbles: true, composed: true })); }}
-      ></search-palette>
+      <div
+        id="file-search-backdrop"
+        class="fixed inset-0 z-[var(--layer-palette)] flex items-center justify-center px-4 bg-black/40"
+        @click=${this.handleBackdropClick}
+      >
+        <search-palette
+          placeholder="Search files by name..."
+          .itemCount=${items.length}
+          .loading=${this.store?.loading ?? false}
+          loadingMessage="Loading file list..."
+          emptyMessage="No files match your search"
+          emptyNoQueryMessage="No files found"
+          .renderItem=${this.renderFileItem}
+          .footerTemplate=${this.footerTemplate}
+          @query-change=${this.handleQueryChange}
+          @confirm=${this.handleConfirm}
+          @close=${() => this.close()}
+        ></search-palette>
+      </div>
     `;
   }
 }

@@ -10,6 +10,18 @@ html, body {
    Collapses the safe-area inset when the virtual keyboard is open. */
 :root {
   --input-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+
+  /* UI layer z-indices (low → high):
+     content  — sticky headers, in-page floating elements
+     sidebar  — mobile sidebar backdrop
+     overlay  — modal overlays (file viewer, delete dialog, popovers)
+     palette  — command palettes (quick-open, file search)
+     toast    — toast notifications, always visible */
+  --layer-content: 10;
+  --layer-sidebar: 40;
+  --layer-overlay: 50;
+  --layer-palette: 60;
+  --layer-toast: 70;
 }
 
 :root.keyboard-open {

@@ -17,6 +17,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { DiffFile } from "../../models/changes/types.js";
+import { openInBrowserEvent } from "../events.js";
 import { isMarkdown, shouldWrapLines, fileCardId, gutterWidth } from "../../models/changes/diff-utils.js";
 import "./diff-hunk.js";
 import "./diff-markdown-preview.js";
@@ -161,6 +162,12 @@ export class DiffFileCard extends LitElement {
     document.body.removeChild(a);
   }
 
+  /** Open this file in the file browser overlay. */
+  private _openInBrowser(e: Event) {
+    e.stopPropagation();
+    this.dispatchEvent(openInBrowserEvent(this.file.path));
+  }
+
   private async _toggleRendered() {
     if (this.rendered) {
       this.rendered = false;
@@ -224,11 +231,18 @@ export class DiffFileCard extends LitElement {
     return html`
       <div class="mx-4 mb-3 first:mt-4 border border-zinc-700 rounded-lg" id=${fileCardId(file.path)} data-file-path=${file.path}>
         <button
-          class="w-full flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-750 text-sm cursor-pointer sticky top-0 z-10 rounded-t-lg border-b border-zinc-700"
+          class="w-full flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-750 text-sm cursor-pointer sticky top-0 z-[var(--layer-content)] rounded-t-lg border-b border-zinc-700"
           @click=${() => this._toggleCollapse()}
         >
           <span class="text-zinc-500 font-mono text-xs shrink-0">${this.collapsed ? "▶" : "▼"}</span>
           <span class="font-mono text-zinc-200 flex-1 min-w-0 text-left truncate direction-rtl text-ellipsis" title=${file.path}>${file.path}</span>
+          <span
+            class="inline-flex items-center text-zinc-500 hover:text-zinc-300 transition-colors p-0.5 rounded hover:bg-zinc-700/50 shrink-0"
+            title="View file"
+            @click=${(e: Event) => this._openInBrowser(e)}
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+          </span>
           <span
             class="inline-flex items-center text-zinc-500 hover:text-zinc-300 transition-colors p-0.5 rounded hover:bg-zinc-700/50 shrink-0"
             title="Copy path"

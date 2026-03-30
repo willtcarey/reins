@@ -39,7 +39,7 @@ export class DeleteTaskDialog extends LitElement {
 
     return html`
       <div
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+        class="fixed inset-0 z-[var(--layer-overlay)] flex items-center justify-center bg-black/60"
         @click=${this.handleCancel}
       >
         <div

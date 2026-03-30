@@ -133,6 +133,7 @@ export class SearchPalette extends LitElement {
         break;
       case "Escape":
         e.preventDefault();
+        e.stopPropagation();
         this.dispatchEvent(
           new CustomEvent("close", { bubbles: true, composed: true }),
         );

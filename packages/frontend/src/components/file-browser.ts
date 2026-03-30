@@ -1,18 +1,16 @@
 /**
- * File Browser — overlay shell for file search + viewer.
+ * File Browser — viewer overlay for displaying file contents.
  *
- * Owns open/close state, the global Cmd+P / Ctrl+P keyboard shortcut,
- * and mode routing between `<file-search>` and `<file-viewer>`.
- * Delegates all search UI and file rendering to child components.
+ * A simple overlay shell around `<file-viewer>`. Opens via `openFile(path)`
+ * (called by the app shell in response to `open-in-browser` events).
+ * Escape or the close button dismisses it.
  *
- * Exposes `open()` and `openFile(path)` for programmatic triggers.
+ * The search palette is a separate standalone component (`<file-search>`).
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type { FileBrowserStore } from "../models/stores/file-browser-store.js";
-import "./file-search.js";
-import type { FileSearch } from "./file-search.js";
 import "./file-viewer.js";
 import type { FileViewer } from "./file-viewer.js";
 
@@ -25,9 +23,7 @@ export class FileBrowser extends LitElement {
   @property({ attribute: false }) store!: FileBrowserStore;
 
   @state() private _open = false;
-  @state() private _mode: "search" | "viewer" = "search";
 
-  @query("file-search") private _search!: FileSearch;
   @query("file-viewer") private _viewer!: FileViewer;
 
   override connectedCallback() {
@@ -40,74 +36,29 @@ export class FileBrowser extends LitElement {
     window.removeEventListener("keydown", this._onGlobalKeydown);
   }
 
-  override updated(changed: Map<string, unknown>) {
-    if (changed.has("_open") && this._open && this._mode === "search") {
-      this.store?.fetchFiles();
-      // Wait for render, then focus the search input
-      this.updateComplete.then(() => this._search?.focusInput());
-    }
-  }
-
-  /** Open the overlay to the search palette. */
-  open() {
-    this.store?.reset();
-    this._mode = "search";
-    this._open = true;
-  }
-
-  /** Open the overlay directly to a specific file. */
+  /** Open the overlay to a specific file, or switch files if already open. */
   openFile(path: string) {
-    this.store?.reset();
-    this._mode = "viewer";
-    this._open = true;
-    this.store?.fetchFiles();
+    if (!this._open) {
+      this.store?.reset();
+      this._open = true;
+      this.store?.fetchFiles();
+    }
+    this._viewer?.resetHighlight();
     this.store?.selectFile(path);
   }
 
   private close() {
     this._open = false;
     this.store?.reset();
-  }
-
-  private switchToSearch() {
-    this._mode = "search";
-    this.store?.reset();
     this._viewer?.resetHighlight();
-    this.updateComplete.then(() => {
-      this._search?.reset();
-      this._search?.focusInput();
-    });
   }
 
   private _onGlobalKeydown = (e: KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "p") {
-      e.preventDefault();
-      if (this._open) {
-        if (this._mode === "viewer") {
-          this.switchToSearch();
-        } else {
-          this.close();
-        }
-      } else {
-        this.open();
-      }
-    }
-
     if (e.key === "Escape" && this._open) {
       e.preventDefault();
-      if (this._mode === "viewer") {
-        this.switchToSearch();
-      } else {
-        this.close();
-      }
+      this.close();
     }
   };
-
-  private handleFileSelect(e: CustomEvent<string>) {
-    this._mode = "viewer";
-    this._viewer?.resetHighlight();
-    this.store?.selectFile(e.detail);
-  }
 
   private handleBackdropClick(e: MouseEvent) {
     if (e.target instanceof HTMLElement && e.target.id === "file-browser-backdrop") {
@@ -121,25 +72,14 @@ export class FileBrowser extends LitElement {
     return html`
       <div
         id="file-browser-backdrop"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+        class="fixed inset-0 z-[var(--layer-overlay)] flex items-center justify-center bg-black/70 px-4"
         @click=${this.handleBackdropClick}
         @close=${() => this.close()}
       >
-        ${this._mode === "search"
-          ? html`
-              <file-search
-                .store=${this.store}
-                @file-select=${this.handleFileSelect}
-                @close=${() => this.close()}
-              ></file-search>
-            `
-          : html`
-              <file-viewer
-                .store=${this.store}
-                @back=${() => this.switchToSearch()}
-                @close=${() => this.close()}
-              ></file-viewer>
-            `}
+        <file-viewer
+          .store=${this.store}
+          @close=${() => this.close()}
+        ></file-viewer>
       </div>
     `;
   }

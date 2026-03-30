@@ -160,7 +160,7 @@ export class QuickOpen extends LitElement {
     return html`
       <div
         id="palette-backdrop"
-        class="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/70"
+        class="fixed inset-0 z-[var(--layer-palette)] flex items-center justify-center px-4 bg-black/70"
         @click=${this.handleBackdropClick}
       >
         <search-palette
