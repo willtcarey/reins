@@ -19,6 +19,7 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 ## Frontend
 
+- `app.css` contains ~80 lines of `.hljs-*` token color rules for highlight.js, but highlight.js is no longer used anywhere. Markdown code blocks were migrated to Shiki (via `shared-highlighter.ts` in `markdown-content.ts`), making these dead CSS rules. Safe to delete.
 - Several Lit components use manual `querySelector` instead of the idiomatic `@query` decorator (`app.ts`, `chat-panel.ts`, `task-form.ts`)
 - Scroll active session into view in sidebar on navigation. Session buttons have `data-session-id` attributes ready. Attempted `scrollIntoView`, manual `scrollTo` on the overflow container, and `MutationObserver` for async data loading — none worked. Needs hands-on debugging in the browser to figure out what's blocking the scroll.
 - No frontend tests. The stores (`DiffStore`, `AppStore`, `ActiveProjectStore`) have coordination logic (polling, re-fetch triggers, session switching) that's entirely untested. At minimum, store-level tests with mocked fetch would catch regressions in when data is refreshed.

@@ -65,8 +65,9 @@ Diff additions and removals use translucent backgrounds so syntax highlighting s
 
 Two highlighting systems coexist:
 
-1. **Shiki** (primary) — Used via a shared Web Worker (`highlight-worker.ts`) for diff hunks and the file viewer. Produces pre-styled HTML spans. See [reactive-controllers.md](reactive-controllers.md) for the `HighlightController` pattern.
-2. **highlight.js token classes** (legacy) — `app.css` defines colors for `.hljs-*` classes used by markdown code blocks rendered via `marked` + `highlight.js`. These follow a dark theme consistent with the zinc palette.
+All syntax highlighting uses **Shiki** via a shared Web Worker (`highlight-worker.ts`). Diff hunks use `HighlightController` (see [reactive-controllers.md](reactive-controllers.md)), and markdown code blocks use `shared-highlighter.ts`. Shiki produces pre-styled HTML spans with inline styles — no external CSS classes needed.
+
+> **Dead code**: `app.css` still contains ~80 lines of `.hljs-*` token color rules from a previous highlight.js integration. These are unused — tracked in [tech-debt.md](../tech-debt.md) for removal.
 
 ## Markdown prose
 
