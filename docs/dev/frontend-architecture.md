@@ -301,32 +301,6 @@ Per-component state and behavior (collapse toggles, markdown preview, clipboard 
 - **Dispatch intents via events** — Views emit custom events (`new-session`, `delete-task`, etc.) for actions. The parent component or store handles the intent.
 - **No WS event handling** — Views never listen to WebSocket events. All event→refetch logic is internal to AppStore.
 
-## UI layers (z-index)
-
-Overlapping UI elements use a shared z-index system defined as CSS custom properties in `app.css`. This avoids magic numbers scattered across components and makes the stacking order explicit.
-
-```css
---layer-content: 10;   /* sticky headers, in-page floating elements */
---layer-sidebar: 40;   /* mobile sidebar backdrop */
---layer-overlay: 50;   /* modal overlays (file viewer, delete dialog, popovers) */
---layer-palette: 60;   /* command palettes (quick-open, file search) */
---layer-toast: 70;     /* toast notifications — always on top */
-```
-
-Components reference these via Tailwind's arbitrary value syntax: `z-[var(--layer-overlay)]`.
-
-The key design constraint is that **palettes render above overlays**. This lets the user open the file search palette (`Cmd+P`, palette layer) on top of the file viewer (overlay layer) to switch files without closing the viewer. The layer ordering is:
-
-```
-  toast      ─── 70  (always visible, e.g. copy confirmations)
-  palette    ─── 60  (quick-open, file search)
-  overlay    ─── 50  (file browser, delete dialog, popovers)
-  sidebar    ─── 40  (mobile sidebar backdrop)
-  content    ─── 10  (sticky diff card headers, etc.)
-```
-
-When adding new overlapping UI, pick the appropriate layer variable rather than inventing a new z-index value. If a new layer is genuinely needed, add it to `app.css` with a comment and update this table.
-
 ## Tool renderers (`components/tools/`)
 
 Tool calls in the chat panel are rendered by tool-specific renderers rather than a generic JSON dump. Each tool (read, bash, edit, write, create_task, delegate) has a dedicated component in `components/tools/` that owns its full visual output. Pure data-extraction helpers live in `models/tools/`. A registry in `components/tools/index.ts` maps tool names to renderers, falling back to a generic renderer for unknown tools.
