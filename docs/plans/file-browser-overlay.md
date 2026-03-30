@@ -10,6 +10,7 @@ Status: **Phase 1 complete** — fuzzy search + file viewer shipped. Phase 2 (tr
 - [x] Reuse the same palette shell as quick-open — extracted `<search-palette>` component, both quick-open and file-search use it
 - [x] File viewer should use `shouldWrapLines(path)` for per-file-type line wrapping, matching diff viewer behavior
 - [x] File viewer overlay goes full-screen on mobile (100vw × 100dvh, no rounded corners/ring) — centered 90vw × 90vh on desktop
+- [ ] When opening the file browser from a read or edit tool result, highlight the relevant line range in the file viewer (e.g. the lines that were read, or the lines affected by the edit). The `open-in-browser` event would need to carry optional line range info, and the viewer would scroll to and highlight those lines.
 - [ ] No way to open file search on mobile — needs a button somewhere (Cmd+P requires a keyboard)
 - [ ] Reject paths outside the project directory — the backend must validate that resolved paths don't escape the project root (e.g. via `../` traversal or absolute paths)
 
