@@ -9,6 +9,8 @@ Status: **Phase 1 complete** — fuzzy search + file viewer shipped. Phase 2 (tr
 - [x] Escape doesn't close the file browser — centralized Escape handling in `<file-browser>`, removed from child components
 - [x] Reuse the same palette shell as quick-open — extracted `<search-palette>` component, both quick-open and file-search use it
 - [x] File viewer should use `shouldWrapLines(path)` for per-file-type line wrapping, matching diff viewer behavior
+- [x] File viewer overlay goes full-screen on mobile (100vw × 100dvh, no rounded corners/ring) — centered 90vw × 90vh on desktop
+- [ ] No way to open file search on mobile — needs a button somewhere (Cmd+P requires a keyboard)
 
 ## Motivation
 
@@ -128,6 +130,7 @@ All entry points use a bubbling `open-in-browser` CustomEvent caught by `<app-sh
 - Not a git history viewer. Shows the working tree as-is, not diffs or blame.
 - Not a new tab or route. It's a transient overlay — open, look, close.
 - Not a replacement for the changes tab. Changed files still live in the diff view with their hunks and expand controls.
+- Not a general-purpose file viewer. Only files within the project directory can be viewed — paths that resolve outside the project root (e.g. via `../` traversal or absolute paths) must be rejected by the backend. This is a security boundary, not just a UX choice.
 
 ## Open questions
 

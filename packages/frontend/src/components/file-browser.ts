@@ -72,7 +72,7 @@ export class FileBrowser extends LitElement {
     return html`
       <div
         id="file-browser-backdrop"
-        class="fixed inset-0 z-[var(--layer-overlay)] flex items-center justify-center bg-black/70 px-4"
+        class="fixed inset-0 z-[var(--layer-overlay)] flex items-center justify-center bg-black/70 sm:px-4"
         @click=${this.handleBackdropClick}
         @close=${() => this.close()}
       >
