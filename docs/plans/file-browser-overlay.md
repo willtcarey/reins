@@ -51,7 +51,18 @@ All entry points converge on a single bubbling `open-in-browser` CustomEvent, ca
 2. **~~File tree data source~~**: Tree sidebar (Phase 2) will use `readdir`. Fuzzy search uses `git ls-files` + untracked non-ignored.
 3. **Caching/freshness**: File list is cached per project and fetched on overlay open. `store.refreshFiles()` exists for forced refresh.
 
-## Phase 2 — Not started
+## Phase 2 — In progress
+
+### Implementation checklist
+
+- [x] Backend `GET /files/tree` endpoint (`ProjectModel.listDirectory`) — lazy readdir, one level, path traversal protection
+- [x] Store tree state — `directoryEntries` cache, `expandedDirs`, `treeLoading`, `fetchDirectory()`, `toggleDirectory()`, `expandToPath()`
+- [ ] `<file-tree>` component — directory tree with expand/collapse, click to open file, highlight active file
+- [ ] Layout refactor in `<file-browser>` — header bar + tree sidebar + viewer in flex row
+- [ ] Auto-expand tree to show current file when opened via search or entry point
+- [ ] Inline image/PDF previews for binary files in `<file-viewer>`
+- [ ] Mobile support — tree as slide-out panel, button to open file search
+- [ ] Line range highlighting when opening from read/edit tool results (Phase 1 bug)
 
 ### Tree sidebar
 
