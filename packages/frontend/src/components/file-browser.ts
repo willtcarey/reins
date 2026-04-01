@@ -66,7 +66,6 @@ export class FileBrowser extends LitElement {
     }
     this._viewer?.resetHighlight();
     this.store?.selectFile(path);
-    this.store?.expandToPath(path);
   }
 
   private close() {

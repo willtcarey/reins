@@ -97,7 +97,7 @@ export class FileBrowserStore {
     await this.fetchFiles();
   }
 
-  /** Fetch content for a specific file. */
+  /** Fetch content for a specific file and expand the tree to show it. */
   async selectFile(path: string) {
     if (!this._projectId) return;
     this.selectedFile = path;
@@ -106,6 +106,9 @@ export class FileBrowserStore {
     this.isBinary = false;
     this.contentLoading = true;
     this.notify();
+
+    // Expand tree to show the file (fire-and-forget — don't block content loading)
+    this.expandToPath(path);
 
     try {
       const res = await fetch(
