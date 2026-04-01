@@ -11,6 +11,8 @@ import { fuzzyMatch } from "./quick-open-store.js";
 
 export type FileBrowserStoreListener = () => void;
 
+export type DirEntry = { name: string; type: "file" | "directory" };
+
 export class FileBrowserStore {
   // ---- Public reactive state ------------------------------------------------
 
@@ -23,6 +25,17 @@ export class FileBrowserStore {
   contentError: string | null = null;
   /** Whether the selected file is binary */
   isBinary = false;
+
+  // ---- Tree state -----------------------------------------------------------
+
+  /** Cache of fetched directory contents, keyed by relative path */
+  directoryEntries: Map<string, DirEntry[]> = new Map();
+  /** Which directories are currently expanded in the tree */
+  expandedDirs: Set<string> = new Set();
+  /** Which directories are currently being fetched */
+  treeLoading: Set<string> = new Set();
+  /** Error message if a directory fetch fails */
+  treeError: string | null = null;
 
   private _projectId: number | null = null;
   private _lastFetchProjectId: number | null = null;
@@ -119,6 +132,66 @@ export class FileBrowserStore {
     }
   }
 
+  // ---- Tree operations -------------------------------------------------------
+
+  /** Fetch one directory level from the server. Caches result. */
+  async fetchDirectory(dirPath: string) {
+    if (!this._projectId) return;
+    if (this.directoryEntries.has(dirPath)) return;
+
+    this.treeLoading.add(dirPath);
+    this.treeError = null;
+    this.notify();
+
+    try {
+      const res = await fetch(
+        `/api/projects/${this._projectId}/files/tree?path=${encodeURIComponent(dirPath)}`,
+      );
+      if (res.ok) {
+        const body = await res.json();
+        this.directoryEntries.set(dirPath, body.entries);
+      } else {
+        this.treeError = "Failed to load directory";
+      }
+    } catch {
+      this.treeError = "Failed to load directory";
+    } finally {
+      this.treeLoading.delete(dirPath);
+      this.notify();
+    }
+  }
+
+  /** Toggle a directory open/closed in the tree. */
+  async toggleDirectory(dirPath: string) {
+    if (this.expandedDirs.has(dirPath)) {
+      this.expandedDirs.delete(dirPath);
+      this.notify();
+    } else {
+      this.expandedDirs.add(dirPath);
+      this.notify();
+      await this.fetchDirectory(dirPath);
+    }
+  }
+
+  /** Expand all ancestor directories so the given file is visible. */
+  async expandToPath(filePath: string) {
+    const parts = filePath.split("/");
+    // Remove the filename — we only expand directories
+    parts.pop();
+
+    const ancestors: string[] = ["."];
+    for (let i = 0; i < parts.length; i++) {
+      ancestors.push(parts.slice(0, i + 1).join("/"));
+    }
+
+    for (const dir of ancestors) {
+      this.expandedDirs.add(dir);
+    }
+
+    await Promise.all(ancestors.map((dir) => this.fetchDirectory(dir)));
+    this.notify();
+  }
+
   // ---- Filtering ------------------------------------------------------------
 
   /** Filter files by fuzzy match. Returns at most `limit` results. */
@@ -143,6 +216,10 @@ export class FileBrowserStore {
     this.contentError = null;
     this.isBinary = false;
     this.contentLoading = false;
+    this.directoryEntries = new Map();
+    this.expandedDirs = new Set();
+    this.treeLoading = new Set();
+    this.treeError = null;
   }
 }
 
