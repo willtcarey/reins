@@ -13,6 +13,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import type { FileBrowserStore } from "../models/stores/file-browser-store.js";
+import { StoreController } from "../controllers/store-controller.js";
 import { shouldWrapLines } from "../models/changes/diff-utils.js";
 import { getSharedHighlighter } from "../models/changes/shared-highlighter.js";
 import type { IHighlighter } from "../models/changes/highlighter.js";
@@ -31,39 +32,23 @@ export class FileViewer extends LitElement {
 
   @property({ attribute: false }) store!: FileBrowserStore;
 
-  @state() private _storeVersion = 0;
+  private _storeCtrl = new StoreController(this);
   @state() private _highlightedLines: string[] | null = null;
 
-  private _unsub: (() => void) | null = null;
   private _highlighter: IHighlighter | null = null;
   /** Track which file we last requested highlighting for. */
   private _highlightedPath: string | null = null;
 
   override connectedCallback() {
     super.connectedCallback();
-    this._subscribeToStore();
-    // Highlight immediately if content is already loaded
     this._maybeHighlight();
   }
 
-  override disconnectedCallback() {
-    super.disconnectedCallback();
-    this._unsub?.();
-  }
-
-  override updated(changed: Map<string, unknown>) {
+  override willUpdate(changed: Map<string, unknown>) {
     if (changed.has("store")) {
-      this._subscribeToStore();
+      this._storeCtrl.store = this.store;
     }
-  }
-
-  private _subscribeToStore() {
-    this._unsub?.();
-    if (!this.store) return;
-    this._unsub = this.store.subscribe(() => {
-      this._storeVersion++;
-      this._maybeHighlight();
-    });
+    this._maybeHighlight();
   }
 
   private _maybeHighlight() {
@@ -106,7 +91,6 @@ export class FileViewer extends LitElement {
   // ---- Render ---------------------------------------------------------------
 
   override render() {
-    void this._storeVersion;
     const store = this.store;
     if (!store) return nothing;
 

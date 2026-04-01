@@ -7,8 +7,9 @@
  */
 
 import { LitElement, html, nothing } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
+import { customElement, property } from "lit/decorators.js";
 import type { FileBrowserStore, DirEntry } from "../models/stores/file-browser-store.js";
+import { StoreController } from "../controllers/store-controller.js";
 import { openInBrowserEvent } from "./events.js";
 
 @customElement("file-tree")
@@ -19,34 +20,18 @@ export class FileTree extends LitElement {
 
   @property({ attribute: false }) store!: FileBrowserStore;
 
-  @state() private _storeVersion = 0;
-
-  private _unsub: (() => void) | null = null;
+  private _storeCtrl = new StoreController(this);
 
   override connectedCallback() {
     super.connectedCallback();
-    this._subscribeToStore();
     this.store?.fetchDirectory(".");
   }
 
-  override disconnectedCallback() {
-    super.disconnectedCallback();
-    this._unsub?.();
-  }
-
-  override updated(changed: Map<string, unknown>) {
+  override willUpdate(changed: Map<string, unknown>) {
     if (changed.has("store")) {
-      this._subscribeToStore();
+      this._storeCtrl.store = this.store;
       this.store?.fetchDirectory(".");
     }
-  }
-
-  private _subscribeToStore() {
-    this._unsub?.();
-    if (!this.store) return;
-    this._unsub = this.store.subscribe(() => {
-      this._storeVersion++;
-    });
   }
 
   private _buildPath(parent: string, name: string): string {
@@ -110,7 +95,6 @@ export class FileTree extends LitElement {
   }
 
   override render() {
-    void this._storeVersion;
     const store = this.store;
     if (!store) return nothing;
 

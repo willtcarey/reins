@@ -12,6 +12,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type { FileBrowserStore } from "../models/stores/file-browser-store.js";
+import { StoreController } from "../controllers/store-controller.js";
 import "./file-viewer.js";
 import "./file-tree.js";
 import type { FileViewer } from "./file-viewer.js";
@@ -25,36 +26,25 @@ export class FileBrowser extends LitElement {
   @property({ attribute: false }) store!: FileBrowserStore;
 
   @state() private _open = false;
-  @state() private _storeVersion = 0;
+
+  private _storeCtrl = new StoreController(this);
 
   @query("file-viewer") private _viewer!: FileViewer;
-
-  private _unsub: (() => void) | null = null;
 
   override connectedCallback() {
     super.connectedCallback();
     window.addEventListener("keydown", this._onGlobalKeydown);
-    this._subscribeToStore();
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener("keydown", this._onGlobalKeydown);
-    this._unsub?.();
   }
 
-  override updated(changed: Map<string, unknown>) {
+  override willUpdate(changed: Map<string, unknown>) {
     if (changed.has("store")) {
-      this._subscribeToStore();
+      this._storeCtrl.store = this.store;
     }
-  }
-
-  private _subscribeToStore() {
-    this._unsub?.();
-    if (!this.store) return;
-    this._unsub = this.store.subscribe(() => {
-      this._storeVersion++;
-    });
   }
 
   /** Open the overlay to a specific file, or switch files if already open. */
@@ -89,8 +79,6 @@ export class FileBrowser extends LitElement {
 
   override render() {
     if (!this._open) return nothing;
-    void this._storeVersion;
-
     const path = this.store?.selectedFile;
 
     return html`
