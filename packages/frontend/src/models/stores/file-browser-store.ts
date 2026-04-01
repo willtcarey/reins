@@ -120,7 +120,7 @@ export class FileBrowserStore {
       }
 
       const contentType = res.headers.get("content-type") || "";
-      if (contentType.startsWith("text/")) {
+      if (isTextMimeType(contentType)) {
         this.fileContent = await res.text();
       } else {
         this.isBinary = true;
@@ -224,6 +224,31 @@ export class FileBrowserStore {
     this.treeLoading = new Set();
     this.treeError = null;
   }
+}
+
+/** MIME types that are textual despite not starting with `text/`. */
+const TEXT_APPLICATION_TYPES = new Set([
+  "application/json",
+  "application/javascript",
+  "application/typescript",
+  "application/xml",
+  "application/yaml",
+  "application/toml",
+  "application/x-sh",
+  "application/x-shellscript",
+  "application/x-ruby",
+  "application/x-python",
+  "application/x-perl",
+  "application/x-php",
+  "application/x-awk",
+  "application/x-lua",
+  "application/x-makefile",
+  "application/x-httpd-php",
+]);
+
+function isTextMimeType(mimeType: string): boolean {
+  if (mimeType.startsWith("text/")) return true;
+  return TEXT_APPLICATION_TYPES.has(mimeType);
 }
 
 function formatSize(bytes: number): string {
