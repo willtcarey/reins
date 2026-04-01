@@ -5,8 +5,8 @@
  * syntax highlighting via the shared highlight worker. Handles loading
  * states, errors, binary files, and large file truncation.
  *
- * Fires:
- *   `close` — when the user clicks the close (✕) button or presses Escape
+ * This component only renders the content area — the header bar and
+ * outer container are owned by `<file-browser>`.
  */
 
 import { LitElement, html, nothing } from "lit";
@@ -109,37 +109,16 @@ export class FileViewer extends LitElement {
     void this._storeVersion;
     const store = this.store;
     if (!store) return nothing;
-    const path = store.selectedFile;
 
     return html`
-      <div class="w-[100vw] h-[100dvh] min-w-0 min-h-0 sm:w-[90vw] sm:h-[90vh] overflow-hidden bg-zinc-800 sm:ring-1 sm:ring-zinc-600 sm:rounded-lg shadow-2xl flex flex-col">
-        <!-- Header -->
-        <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-700 min-w-0">
-          <span class="text-sm text-zinc-300 font-mono truncate flex-1">${path}</span>
-          <kbd class="hidden sm:inline text-[10px] text-zinc-500 bg-zinc-700 px-1.5 py-0.5 rounded">Esc</kbd>
-          <button
-            class="p-1 text-zinc-400 hover:text-zinc-200 cursor-pointer shrink-0"
-            @click=${() =>
-              this.dispatchEvent(new CustomEvent("close", { bubbles: true, composed: true }))}
-            title="Close"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
-            </svg>
-          </button>
-        </div>
-
-        <!-- Content -->
-        <div class="flex-1 overflow-auto min-h-0">
-          ${store.contentLoading
-            ? html`<div class="px-4 py-8 text-center text-sm text-zinc-500">Loading...</div>`
-            : store.contentError
-              ? html`<div class="px-4 py-8 text-center text-sm text-red-400">${store.contentError}</div>`
-              : store.isBinary
-                ? html`<div class="px-4 py-8 text-center text-sm text-zinc-500">${store.fileContent}</div>`
-                : this.renderFileContent()}
-        </div>
+      <div class="flex-1 overflow-auto min-h-0">
+        ${store.contentLoading
+          ? html`<div class="px-4 py-8 text-center text-sm text-zinc-500">Loading...</div>`
+          : store.contentError
+            ? html`<div class="px-4 py-8 text-center text-sm text-red-400">${store.contentError}</div>`
+            : store.isBinary
+              ? html`<div class="px-4 py-8 text-center text-sm text-zinc-500">${store.fileContent}</div>`
+              : this.renderFileContent()}
       </div>
     `;
   }
