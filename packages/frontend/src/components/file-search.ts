@@ -173,7 +173,7 @@ export class FileSearch extends LitElement {
     return html`
       <div
         id="file-search-backdrop"
-        class="fixed inset-0 z-[var(--layer-palette)] flex items-center justify-center px-4 bg-black/40"
+        class="fixed inset-0 z-[var(--layer-palette)] flex items-start justify-center px-4 pt-[15vh] bg-black/40"
         @click=${this.handleBackdropClick}
       >
         <search-palette
