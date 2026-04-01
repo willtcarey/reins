@@ -11,8 +11,8 @@ Status: **Phase 1 complete** — fuzzy search + file viewer shipped. Phase 2 (tr
 - [x] File viewer should use `shouldWrapLines(path)` for per-file-type line wrapping, matching diff viewer behavior
 - [x] File viewer overlay goes full-screen on mobile (100vw × 100dvh, no rounded corners/ring) — centered 90vw × 90vh on desktop
 - [ ] When opening the file browser from a read or edit tool result, highlight the relevant line range in the file viewer (e.g. the lines that were read, or the lines affected by the edit). The `open-in-browser` event would need to carry optional line range info, and the viewer would scroll to and highlight those lines.
-- [ ] No way to open file search on mobile — needs a button somewhere (Cmd+P requires a keyboard)
-- [ ] Reject paths outside the project directory — the backend must validate that resolved paths don't escape the project root (e.g. via `../` traversal or absolute paths)
+- [ ] No way to open file search on mobile — needs a button somewhere (Cmd+P requires a keyboard). Will be addressed in Phase 2 with the file browser view.
+- [x] Reject paths outside the project directory — defense in depth: frontend `isBrowsablePath()` rejects absolute paths and `..` traversal so they don't become clickable links or fire `open-in-browser` events; `handleOpenInBrowser` in app shell double-checks; backend `assertInsideProject()` validates resolved paths in `readFile()` and returns 400. All layers covered by tests.
 
 ## Motivation
 
@@ -97,9 +97,14 @@ Once the overlay is open, the user can:
 - When opening a file from search, its parent directories auto-expand so the file is visible in the tree context. This lets the user see sibling files and explore the neighborhood.
 - Changed files (from the current diff) could be badged or highlighted to show what's been modified.
 
-### Image preview
+### Inline preview for images and PDFs
 
-Detect image file extensions (`.png`, `.jpg`, `.jpeg`, `.gif`, `.svg`, `.webp`) and render an `<img>` tag pointing at the existing file content endpoint instead of showing "Binary file detected". Simple to implement, big UX improvement.
+Instead of showing "Binary file (X KB)" for non-text files, render inline previews where possible:
+
+- **Images** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.svg`, `.webp`): render an `<img>` tag pointing at the existing `/files/content` endpoint.
+- **PDFs**: render in an `<iframe>` or `<embed>` using the same endpoint.
+
+The content endpoint already serves the correct `Content-Type` and raw bytes, so the frontend just needs to build an object URL or point the element at the endpoint directly. Simple to implement, big UX improvement over a dead-end "Binary file" message.
 
 ### Mobile
 

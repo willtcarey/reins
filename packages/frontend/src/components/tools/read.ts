@@ -17,6 +17,7 @@ import { LazyHighlightController } from "../../controllers/lazy-highlight-contro
 import { escapeHtml, shouldWrapLines } from "../../models/changes/diff-utils.js";
 import type { ToolResultImage } from "./types.js";
 import { openInBrowserEvent } from "../events.js";
+import { isBrowsablePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import {
@@ -102,7 +103,7 @@ export class ReadToolBlock extends LitElement {
   /** Open this file in the file browser overlay. */
   private _openInBrowser = (e: Event) => {
     e.stopPropagation();
-    if (!this.path) return;
+    if (!this.path || !isBrowsablePath(this.path)) return;
     this.dispatchEvent(openInBrowserEvent(this.path));
   };
 
@@ -165,10 +166,13 @@ export class ReadToolBlock extends LitElement {
             : html`<span class="flex-shrink-0 text-xs">📄</span>`}
           <span class="text-[10px] font-semibold text-zinc-500 uppercase tracking-wide flex-shrink-0">Read</span>
           <span
-            class="text-xs font-mono ${isError ? "text-red-400" : "text-zinc-300"} truncate ${path ? "hover:underline cursor-pointer" : ""}"
-            @click=${path ? this._openInBrowser : nothing}
-            title=${path ? "Open in file browser" : ""}
+            class="text-xs font-mono ${isError ? "text-red-400" : "text-zinc-300"} truncate ${isBrowsablePath(path) ? "hover:underline cursor-pointer" : ""}"
+            @click=${isBrowsablePath(path) ? this._openInBrowser : nothing}
+            title=${isBrowsablePath(path) ? "Open in file browser" : "Outside project directory"}
           >${path || "…"}</span>
+          ${path && !isBrowsablePath(path)
+            ? html`<span class="text-[10px] font-mono text-zinc-600 bg-zinc-800/60 px-1.5 py-0.5 rounded flex-shrink-0">external</span>`
+            : nothing}
           ${range
             ? html`<span class="text-[10px] font-mono text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded flex-shrink-0">${range}</span>`
             : nothing}

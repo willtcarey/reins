@@ -125,6 +125,16 @@ describe("file routes", () => {
       expect(body.error).toContain("traversal");
     });
 
+    test("returns 400 for absolute path outside project", async () => {
+      const res = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/files/content?path=/etc/passwd`),
+        state,
+      );
+      expect(res!.status).toBe(400);
+      const body = await res!.json();
+      expect(body.error).toContain("traversal");
+    });
+
     test("returns 404 for nonexistent file", async () => {
       const res = await router.handle(
         makeRequest("GET", `/api/projects/${projectId}/files/content?path=nonexistent.txt`),

@@ -61,6 +61,7 @@ export class AppShell extends LitElement {
     // Subscribe to app store changes (covers project store + activity)
     this._unsubscribeStore = this.appStore.subscribe(() => {
       this._storeVersion++;
+      this.fileBrowserStore.projectId = this.appStore.projectId;
       this.updateTitleAndFavicon();
     });
 
@@ -160,7 +161,8 @@ export class AppShell extends LitElement {
   /** Handle `open-in-browser` events from tool blocks and diff cards. */
   private handleOpenInBrowser(e: CustomEvent<string>) {
     const path = e.detail;
-    if (path) this._fileBrowser?.openFile(path);
+    if (!path) return;
+    this._fileBrowser?.openFile(path);
   }
 
   private openSidebar() {
@@ -223,7 +225,6 @@ export class AppShell extends LitElement {
     void this._storeVersion;
     const store = this.appStore;
     const hasProject = store.projectId != null;
-    this.fileBrowserStore.projectId = store.projectId;
 
     return html`
       <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"

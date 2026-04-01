@@ -104,14 +104,7 @@ export class FileBrowserStore {
       }
 
       const contentType = res.headers.get("content-type") || "";
-      if (
-        contentType.startsWith("text/") ||
-        contentType.includes("json") ||
-        contentType.includes("javascript") ||
-        contentType.includes("xml") ||
-        contentType.includes("yaml") ||
-        contentType.includes("svg")
-      ) {
+      if (contentType.startsWith("text/")) {
         this.fileContent = await res.text();
       } else {
         this.isBinary = true;
