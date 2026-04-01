@@ -49,6 +49,7 @@ export class FileTree extends LitElement {
   @property({ attribute: false }) store!: FileBrowserStore;
 
   private _storeCtrl = new StoreController(this);
+  private _lastScrolledFile: string | null = null;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -59,6 +60,25 @@ export class FileTree extends LitElement {
     if (changed.has("store")) {
       this._storeCtrl.store = this.store;
       this.store?.fetchDirectory(".");
+    }
+  }
+
+  override updated() {
+    this._scrollActiveIntoView();
+  }
+
+  /**
+   * Scroll the active file row into view if it exists in the DOM
+   * and we haven't already scrolled for this file.
+   */
+  private _scrollActiveIntoView() {
+    const selected = this.store?.selectedFile;
+    if (!selected || selected === this._lastScrolledFile) return;
+
+    const el = this.querySelector<HTMLElement>("[data-active]");
+    if (el) {
+      el.scrollIntoView({ block: "nearest" });
+      this._lastScrolledFile = selected;
     }
   }
 
@@ -141,6 +161,7 @@ export class FileTree extends LitElement {
         style="padding-left: ${indent + 8}px"
         @click=${() => this._handleFileClick(fullPath)}
         title=${fullPath}
+        ?data-active=${isSelected}
       >
         ${fileIcon}
         <span class="truncate">${entry.name}</span>
