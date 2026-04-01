@@ -17,6 +17,20 @@ export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
     return Response.json({ files });
   });
 
+  /** List entries in a directory (one level). */
+  router.get("/files/tree", async (ctx) => {
+    const subPath = ctx.url.searchParams.get("path") || ".";
+
+    try {
+      const entries = ctx.project.listDirectory(subPath);
+      return Response.json({ entries });
+    } catch (err: any) {
+      if (err instanceof PathTraversalError) badRequest(err.message);
+      if (err instanceof FileNotFoundError) notFound(err.message);
+      throw err;
+    }
+  });
+
   /** Read a single file's content. */
   router.get("/files/content", async (ctx) => {
     const filePath = ctx.url.searchParams.get("path");

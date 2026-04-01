@@ -263,4 +263,121 @@ describe("file routes", () => {
       expect(res!.headers.get("Content-Disposition")).toContain("artifact.bin");
     });
   });
+
+  // ---- GET /files/tree (directory listing) ---------------------------------
+
+  describe("GET /api/projects/:id/files/tree", () => {
+    test("returns entries for project root", async () => {
+      const res = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/files/tree?path=.`),
+        state,
+      );
+      expect(res!.status).toBe(200);
+      const body = await res!.json();
+      expect(body.entries).toBeArray();
+      // README.md is committed by the test repo helper
+      const names = body.entries.map((e: any) => e.name);
+      expect(names).toContain("README.md");
+    });
+
+    test("returns entries for a subdirectory", async () => {
+      mkdirSync(join(repo.dir, "src"), { recursive: true });
+      writeFileSync(join(repo.dir, "src/index.ts"), "console.log('hi')");
+
+      const res = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/files/tree?path=src`),
+        state,
+      );
+      expect(res!.status).toBe(200);
+      const body = await res!.json();
+      const names = body.entries.map((e: any) => e.name);
+      expect(names).toContain("index.ts");
+    });
+
+    test("entries have correct type for files and directories", async () => {
+      mkdirSync(join(repo.dir, "lib"), { recursive: true });
+      writeFileSync(join(repo.dir, "lib/util.ts"), "export {}");
+
+      const res = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/files/tree?path=.`),
+        state,
+      );
+      expect(res!.status).toBe(200);
+      const body = await res!.json();
+      const libEntry = body.entries.find((e: any) => e.name === "lib");
+      const readmeEntry = body.entries.find((e: any) => e.name === "README.md");
+      expect(libEntry.type).toBe("directory");
+      expect(readmeEntry.type).toBe("file");
+    });
+
+    test("entries only have name and type fields", async () => {
+      writeFileSync(join(repo.dir, "hello.txt"), "hello world");
+
+      const res = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/files/tree?path=.`),
+        state,
+      );
+      expect(res!.status).toBe(200);
+      const body = await res!.json();
+      const fileEntry = body.entries.find((e: any) => e.name === "hello.txt");
+      expect(Object.keys(fileEntry).sort()).toEqual(["name", "type"]);
+    });
+
+    test("directories sort before files", async () => {
+      mkdirSync(join(repo.dir, "aaa-dir"), { recursive: true });
+      writeFileSync(join(repo.dir, "aaa-file.txt"), "content");
+
+      const res = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/files/tree?path=.`),
+        state,
+      );
+      expect(res!.status).toBe(200);
+      const body = await res!.json();
+      const dirs = body.entries.filter((e: any) => e.type === "directory");
+      const files = body.entries.filter((e: any) => e.type === "file");
+      // All directories should come before all files
+      const lastDirIndex = body.entries.lastIndexOf(dirs[dirs.length - 1]);
+      const firstFileIndex = body.entries.indexOf(files[0]);
+      expect(lastDirIndex).toBeLessThan(firstFileIndex);
+    });
+
+    test("returns 400 for path traversal with ..", async () => {
+      const res = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/files/tree?path=../../../etc`),
+        state,
+      );
+      expect(res!.status).toBe(400);
+      const body = await res!.json();
+      expect(body.error).toContain("traversal");
+    });
+
+    test("returns 400 for absolute path outside project", async () => {
+      const res = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/files/tree?path=/etc`),
+        state,
+      );
+      expect(res!.status).toBe(400);
+      const body = await res!.json();
+      expect(body.error).toContain("traversal");
+    });
+
+    test("returns 404 for nonexistent directory", async () => {
+      const res = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/files/tree?path=no-such-dir`),
+        state,
+      );
+      expect(res!.status).toBe(404);
+    });
+
+    test("defaults to root when no path param given", async () => {
+      const res = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/files/tree`),
+        state,
+      );
+      expect(res!.status).toBe(200);
+      const body = await res!.json();
+      const names = body.entries.map((e: any) => e.name);
+      expect(names).toContain("README.md");
+    });
+  });
 });

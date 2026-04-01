@@ -11,7 +11,7 @@
 
 import { resolve, normalize, basename, join } from "path";
 import { detectMimeType } from "../mime.js";
-import { mkdirSync } from "fs";
+import { mkdirSync, readdirSync } from "fs";
 import {
   createProject as storeCreateProject,
   getProject,
@@ -154,6 +154,40 @@ export class ProjectModel {
       listUntrackedFiles(this.projectDir),
     ]);
     return [...new Set([...tracked, ...untracked])].toSorted();
+  }
+
+  // ---- Directory listing ----------------------------------------------------
+
+  /**
+   * Read one level of a directory, returning typed entries sorted
+   * with directories first, then files, alphabetical within each group.
+   */
+  listDirectory(subPath = "."): { name: string; type: "file" | "directory" }[] {
+    const resolved = resolve(this.projectDir, subPath);
+    this.assertInsideProject(resolved);
+
+    let entries;
+    try {
+      entries = readdirSync(resolved, { withFileTypes: true });
+    } catch {
+      throw new FileNotFoundError("Directory not found");
+    }
+
+    // Filter to files and directories only (skip symlinks, etc.)
+    const result = entries
+      .filter((e) => e.isFile() || e.isDirectory())
+      .map((e) => ({
+        name: e.name,
+        type: e.isDirectory() ? "directory" as const : "file" as const,
+      }));
+
+    // Sort: directories first, then files; alphabetical within each group (case-insensitive)
+    result.sort((a, b) => {
+      if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+    });
+
+    return result;
   }
 
   // ---- Path safety ----------------------------------------------------------
