@@ -85,7 +85,7 @@ describe("DiffStore expandHunk (no highlighting)", () => {
 
     // Mock fetch for file content
     mockFetch((url) => {
-      if (url.includes("/file?")) return textResponse("line1\nline2\nline3\nline4\nline5\nline6");
+      if (url.includes("/files/content?")) return textResponse("line1\nline2\nline3\nline4\nline5\nline6");
       if (url.includes("/diff/files")) return jsonResponse({ files: [] });
       if (url.includes("/git/spread")) return jsonResponse({});
       return jsonResponse({});
@@ -120,7 +120,7 @@ describe("DiffStore expandHunk (no highlighting)", () => {
     };
 
     mockFetch((url) => {
-      if (url.includes("/file?")) return textResponse("l1\nl2\nl3\nl4\nhello world\nl6");
+      if (url.includes("/files/content?")) return textResponse("l1\nl2\nl3\nl4\nhello world\nl6");
       if (url.includes("/diff/files")) return jsonResponse({ files: [] });
       if (url.includes("/git/spread")) return jsonResponse({});
       return jsonResponse({});
@@ -153,7 +153,7 @@ describe("DiffStore expandHunk (no highlighting)", () => {
     };
 
     mockFetch((url) => {
-      if (url.includes("/file?")) return textResponse("line1\nline2\nline3\nline4\nline5\nline6");
+      if (url.includes("/files/content?")) return textResponse("line1\nline2\nline3\nline4\nline5\nline6");
       if (url.includes("/diff/files")) return jsonResponse({ files: [] });
       if (url.includes("/git/spread")) return jsonResponse({});
       return jsonResponse({});
@@ -183,7 +183,7 @@ describe("DiffStore expandHunk (no highlighting)", () => {
     };
 
     mockFetch((url) => {
-      if (url.includes("/file?")) return textResponse("line1\nline2\nline3");
+      if (url.includes("/files/content?")) return textResponse("line1\nline2\nline3");
       if (url.includes("/diff/files")) return jsonResponse({ files: [] });
       if (url.includes("/git/spread")) return jsonResponse({});
       return jsonResponse({});

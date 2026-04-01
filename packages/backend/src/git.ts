@@ -801,3 +801,34 @@ export async function getDiff(
     return { path: file.path, additions, removals, hunks };
   });
 }
+
+// ---------------------------------------------------------------------------
+// File listing
+// ---------------------------------------------------------------------------
+
+/** Parse newline-delimited git output into a list of non-empty strings. */
+function parseLines(output: string): string[] {
+  const lines: string[] = [];
+  for (const line of output.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed) lines.push(trimmed);
+  }
+  return lines;
+}
+
+/**
+ * List tracked files (`git ls-files`).
+ * Returns relative paths for all files in the index.
+ */
+export async function listTrackedFiles(projectDir: string): Promise<string[]> {
+  return parseLines(await run(projectDir, ["ls-files"]));
+}
+
+/**
+ * List untracked files that are not ignored
+ * (`git ls-files --others --exclude-standard`).
+ * Returns relative paths for files on disk but not in the index.
+ */
+export async function listUntrackedFiles(projectDir: string): Promise<string[]> {
+  return parseLines(await run(projectDir, ["ls-files", "--others", "--exclude-standard"]));
+}

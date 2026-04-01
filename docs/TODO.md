@@ -11,7 +11,6 @@ Roadmap and open items. Remove items when they're done — don't check them off.
 - *(2026-02-19)* Single-task lock and work queues — accept one active session at a time, deprioritise worktrees, build a queue primitive for sequential work items. See [planning doc](plans/task-queues.md).
 - *(2026-02-19)* Worktrees/sandboxing code execution (deprioritised — see task queues planning doc)
 - *(2026-02-21)* Task-pinned documents — let sessions mark repo files (plans, state-tracking docs, decision logs, etc.) as important for the current task. New sessions on the same task automatically ingest those documents, so context carries forward through the repo itself rather than through a separate memory store.
-- *(2026-02-22)* "View full file" link in tool results — add a link on Read tool results that opens the full file content via the existing `/file` HTTP route, so users can see the complete file without it being sent twice over the WebSocket.
 - *(2026-02-25)* Persist activity state across refresh — session activity indicators (running/finished dots) are lost on page refresh because they're purely in-memory on the client. Include `isStreaming` in session list endpoints so the frontend can seed activity state on load/reconnect.
 - *(2026-03-03)* Docker DB persistence — the SQLite database is written to `.reins/` inside the container's working directory, which is lost on restart. Need a volume mount or configurable DB path so data survives container restarts.
 - *(2026-03-03)* Keyboard shortcuts — switch between Chat/Changes tabs, create a new session, create a new task, navigate between sessions, and other common actions without reaching for the mouse.
@@ -22,4 +21,4 @@ Roadmap and open items. Remove items when they're done — don't check them off.
 - *(2026-03-27)* Green activity dot (running) not showing on task sessions — amber (finished) dot works fine but the green pulsing dot doesn't appear for running task sessions. Assistant sessions work. Needs browser debugging with console.log in `_setRunning`.
 - *(2026-03-30)* Agent identity confusion — agents think they are pi rather than Reins. Replace pi's default system prompt with a Reins-specific one. See [planning doc](plans/reins-system-prompt.md).
 - *(2026-03-30)* Image preview in Read tool display — when the Read tool returns an image (jpg, png, gif, webp), show a compact inline preview without auto-expanding. Currently images may require expansion to view; they should be visible at a glance in the collapsed tool result.
->>>>>>> 907c791 (Add agent identity TODO and system prompt planning doc)
+

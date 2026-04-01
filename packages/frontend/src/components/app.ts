@@ -30,6 +30,10 @@ import "./branch-indicator.js";
 import "./quick-open.js";
 import type { QuickOpen } from "./quick-open.js";
 import { QuickOpenStore } from "../models/stores/quick-open-store.js";
+import "./file-search.js";
+import "./file-browser.js";
+import type { FileBrowser } from "./file-browser.js";
+import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 
 @customElement("app-shell")
 export class AppShell extends LitElement {
@@ -48,6 +52,8 @@ export class AppShell extends LitElement {
     || ("standalone" in navigator && navigator.standalone === true);
   private quickOpenStore = new QuickOpenStore();
   @query("quick-open") private _quickOpen!: QuickOpen;
+  private fileBrowserStore = new FileBrowserStore();
+  @query("file-browser") private _fileBrowser!: FileBrowser;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -55,6 +61,7 @@ export class AppShell extends LitElement {
     // Subscribe to app store changes (covers project store + activity)
     this._unsubscribeStore = this.appStore.subscribe(() => {
       this._storeVersion++;
+      this.fileBrowserStore.projectId = this.appStore.projectId;
       this.updateTitleAndFavicon();
     });
 
@@ -151,6 +158,13 @@ export class AppShell extends LitElement {
     });
   }
 
+  /** Handle `open-in-browser` events from tool blocks and diff cards. */
+  private handleOpenInBrowser(e: CustomEvent<string>) {
+    const path = e.detail;
+    if (!path) return;
+    this._fileBrowser?.openFile(path);
+  }
+
   private openSidebar() {
     this.querySelector("session-sidebar")?.open();
   }
@@ -213,7 +227,8 @@ export class AppShell extends LitElement {
     const hasProject = store.projectId != null;
 
     return html`
-      <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden">
+      <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"
+        @open-in-browser=${this.handleOpenInBrowser}>
         <!-- Connection status bar -->
         ${!store.connected ? html`
           <div class="bg-yellow-800 text-yellow-200 text-xs text-center py-1">
@@ -323,6 +338,16 @@ export class AppShell extends LitElement {
           .activityMap=${this.appStore.activityMap}
           .store=${this.quickOpenStore}
         ></quick-open>
+
+        <!-- File search palette (Cmd+P) -->
+        <file-search
+          .store=${this.fileBrowserStore}
+        ></file-search>
+
+        <!-- File viewer overlay -->
+        <file-browser
+          .store=${this.fileBrowserStore}
+        ></file-browser>
       </div>
     `;
   }

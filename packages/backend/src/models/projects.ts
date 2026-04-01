@@ -10,6 +10,7 @@
  */
 
 import { resolve, normalize, basename, join } from "path";
+import { detectMimeType } from "../mime.js";
 import { mkdirSync } from "fs";
 import {
   createProject as storeCreateProject,
@@ -30,6 +31,8 @@ import {
   deleteBranch,
   showFile,
   showFileBinary,
+  listTrackedFiles,
+  listUntrackedFiles,
 } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
@@ -138,6 +141,21 @@ export class ProjectModel {
     await this.reconcileClosedTasks();
   }
 
+  // ---- File listing ---------------------------------------------------------
+
+  /**
+   * List all non-ignored files in the project.
+   * Combines tracked and untracked-but-not-ignored files into a
+   * sorted, deduplicated list of relative paths.
+   */
+  async listFiles(): Promise<string[]> {
+    const [tracked, untracked] = await Promise.all([
+      listTrackedFiles(this.projectDir),
+      listUntrackedFiles(this.projectDir),
+    ]);
+    return [...new Set([...tracked, ...untracked])].toSorted();
+  }
+
   // ---- Path safety ----------------------------------------------------------
 
   /**
@@ -213,7 +231,10 @@ export class ProjectModel {
     ref?: string | null,
     download?: boolean,
   ): Promise<ServeFileResult> {
-    const mimeType = Bun.file(filePath).type || "text/plain; charset=utf-8";
+    const resolved = resolve(this.projectDir, filePath);
+    this.assertInsideProject(resolved);
+
+    const mimeType = await detectMimeType(resolved);
     const filename = basename(filePath) || filePath;
 
     const content = download

@@ -19,8 +19,10 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 ## Frontend
 
+- `app.css` contains ~80 lines of `.hljs-*` token color rules for highlight.js, but highlight.js is no longer used anywhere. Markdown code blocks were migrated to Shiki (via `shared-highlighter.ts` in `markdown-content.ts`), making these dead CSS rules. Safe to delete.
 - Several Lit components use manual `querySelector` instead of the idiomatic `@query` decorator (`app.ts`, `chat-panel.ts`, `task-form.ts`)
 - Scroll active session into view in sidebar on navigation. Session buttons have `data-session-id` attributes ready. Attempted `scrollIntoView`, manual `scrollTo` on the overflow container, and `MutationObserver` for async data loading — none worked. Needs hands-on debugging in the browser to figure out what's blocking the scroll.
+- `new CustomEvent(...)` calls are scattered across ~15 component files (`task-list.ts`, `task-list-item.ts`, `session-list-item.ts`, `assistant-session.ts`, `delegate-popover.ts`, `delete-task-dialog.ts`, `search-palette.ts`, `diff-hunk.ts`, `diff-file-tree.ts`, `file-viewer.ts`, `project-form.ts`, `task-detail.ts`). The new `events.ts` module centralizes event factories so renaming or reshaping events is a compile-time error at every call site. Move the remaining inline `CustomEvent` constructors into `events.ts` as typed factory functions.
 - No frontend tests. The stores (`DiffStore`, `AppStore`, `ActiveProjectStore`) have coordination logic (polling, re-fetch triggers, session switching) that's entirely untested. At minimum, store-level tests with mocked fetch would catch regressions in when data is refreshed.
 - Sessions are fetched eagerly — scratch sessions load in bulk via `ProjectStore.fetchLists()` when a project expands, and task sessions load via `fetchTaskSessions()` when a task expands. All session lists should be lazy-loaded (paginated or fetched on demand) since they're rarely browsed and will eventually become continuous conversations with lazy loading.
 
@@ -29,6 +31,8 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 ## Scripting / Execute Tool
 
 - The `execute` tool uses Node.js `vm.createContext` for isolation, which prevents access to `process`, `import()`, `require`, filesystem, and network from agent-written scripts. This is adequate for preventing accidental misuse and casual prompt injection, but `vm` is **not a security boundary** — a determined attacker could potentially escape it. If the execute tool gains wider exposure (e.g. third-party plugins, untrusted input), upgrade to a child-process sandbox: spawn an isolated subprocess that communicates with the parent via IPC, with the API object proxied through an RPC bridge. See the planning doc at `docs/plans/completed/execute-and-search-tools.md` for a comparison of sandbox approaches.
+
+- HTTP responses are not compressed. Bun's built-in server doesn't apply gzip/br automatically. Currently fine (largest JSON response is ~13KB for file listings), but will matter if payloads grow (e.g. large repos with thousands of files, or bulk API responses). Add response compression middleware or use Bun's `Bun.gzipSync` for JSON responses above a size threshold.
 
 ## Cross-cutting
 

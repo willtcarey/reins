@@ -18,6 +18,7 @@ import { customElement, property, state, query } from "lit/decorators.js";
 import { navigateToSession } from "../models/router.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import type { ActivityState } from "../models/stores/app-store.js";
+
 import type { ProjectInfo, TaskListItem } from "../models/ws-client.js";
 import type { TaskForm } from "./task-form.js";
 import type { TaskDetail } from "./task-detail.js";
@@ -382,7 +383,7 @@ export class SessionSidebar extends LitElement {
     return html`
       <!-- Mobile backdrop (always rendered, animated) -->
       <div
-        class="fixed inset-0 bg-black/50 z-40 md:hidden transition-opacity duration-200 ease-out ${this.collapsed ? "opacity-0 pointer-events-none" : "opacity-100"}"
+        class="fixed inset-0 bg-black/50 z-[var(--layer-sidebar)] md:hidden transition-opacity duration-200 ease-out ${this.collapsed ? "opacity-0 pointer-events-none" : "opacity-100"}"
         @click=${this.toggleCollapse}
       ></div>
 
@@ -391,7 +392,7 @@ export class SessionSidebar extends LitElement {
         class="${this.collapsed
           ? "max-md:-translate-x-full md:w-10"
           : "max-md:translate-x-0 md:w-64"}
-          max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:w-64
+          max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-[var(--layer-overlay)] max-md:w-64
           max-md:transition-transform md:transition-[width]
           duration-200 ease-out
           h-full bg-zinc-900 border-r border-zinc-700 flex flex-col shrink-0 overflow-hidden"

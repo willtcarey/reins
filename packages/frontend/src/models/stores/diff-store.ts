@@ -192,7 +192,7 @@ export class DiffStore {
     if (projectId == null) return [""];
 
     const branch = this._branch ?? undefined;
-    let url = `/api/projects/${projectId}/file?path=${encodeURIComponent(filePath)}`;
+    let url = `/api/projects/${projectId}/files/content?path=${encodeURIComponent(filePath)}`;
     if (branch) url += `&ref=${encodeURIComponent(branch)}`;
 
     try {

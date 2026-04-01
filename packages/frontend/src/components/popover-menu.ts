@@ -130,7 +130,7 @@ export class PopoverMenu extends LitElement {
         </button>
         ${this.open && this.content ? html`
           <div
-            class="fixed z-50 ${this.panelClass || "w-36"} bg-zinc-800 border border-zinc-600 rounded-md shadow-xl overflow-hidden"
+            class="fixed z-[var(--layer-overlay)] ${this.panelClass || "w-36"} bg-zinc-800 border border-zinc-600 rounded-md shadow-xl overflow-hidden"
             style=${styleMap(this.panelStyle)}
             @click=${this.onPanelClick}
           >

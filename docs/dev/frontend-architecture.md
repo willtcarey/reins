@@ -33,6 +33,7 @@ models/
 │   ├── diff-store.ts
 │   ├── project-store.ts
 │   ├── project-collection-store.ts
+│   ├── file-browser-store.ts
 │   └── quick-open-store.ts
 ├── changes/             Diff/highlighting pure logic
 │   ├── diff-sort.ts, diff-utils.ts, file-tree-state.ts
@@ -67,7 +68,8 @@ components/
 ├── session-sidebar.ts   Sidebar layout
 ├── session-list.ts, project-sidebar.ts, project-form.ts
 ├── task-list.ts, task-detail.ts, task-form.ts
-├── branch-indicator.ts, quick-open.ts
+├── branch-indicator.ts, quick-open.ts, search-palette.ts
+├── file-browser.ts, file-search.ts, file-viewer.ts
 ├── popover-menu.ts, toast.ts
 └── app.css
 ```
@@ -185,6 +187,16 @@ Standalone store owned by the app shell (not by AppStore — it has no WS event 
 - **Fuzzy filtering** — Pure functions for fuzzy match scoring and item filtering.
 - **Recent session tracking** — Persists recently visited session IDs to localStorage for recency-based ordering.
 
+### FileBrowserStore (`models/stores/file-browser-store.ts`)
+
+Standalone store for the file browser overlay. Manages:
+
+- **File list** — Fetches project files via `GET /api/projects/:id/files` (git-tracked + untracked non-ignored), cached per project.
+- **Fuzzy filtering** — Reuses `fuzzyMatch` from `quick-open-store.ts` for file search.
+- **File content** — Loads file content via `GET /api/projects/:id/file?path=...` for the viewer.
+
+Shared by `<file-search>` (palette) and `<file-browser>` (viewer overlay). Both components and `<app-shell>` hold a reference to the same store instance.
+
 ### Subscription model
 
 Both AppStore and DiffStore use a `Set<listener>` + `notify()` pattern. Components subscribe and trigger Lit re-renders on each notification. Fine-grained per-field subscriptions aren't needed — Lit's dirty checking keeps renders efficient.
@@ -255,6 +267,9 @@ app-shell                    — root shell, creates store, applies routes
 ├── diff-panel               — full diff view with file cards
 │   └── diff-file-tree       — file tree with scroll spy
 ├── quick-open               — Cmd+K fuzzy search across all sessions
+├── file-search              — Cmd+P fuzzy file search (uses search-palette)
+├── file-browser             — file viewer overlay shell
+│   └── file-viewer          — syntax-highlighted read-only file content
 └── branch-indicator         — current branch display
 ```
 

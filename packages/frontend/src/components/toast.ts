@@ -74,7 +74,7 @@ export class ToastContainer extends LitElement {
     if (this.toasts.length === 0) return nothing;
 
     return html`
-      <div class="fixed bottom-4 left-1/2 -translate-x-1/2 z-[9999] flex flex-col items-center gap-2 pointer-events-none">
+      <div class="fixed bottom-4 left-1/2 -translate-x-1/2 z-[var(--layer-toast)] flex flex-col items-center gap-2 pointer-events-none">
         ${this.toasts.map((t) => {
           const bg =
             t.level === "success"

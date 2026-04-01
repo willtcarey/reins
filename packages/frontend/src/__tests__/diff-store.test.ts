@@ -282,7 +282,7 @@ describe("DiffStore", () => {
 
       // Mock fetch for file content request
       mockFetch((url) => {
-        if (url.includes("/file?")) return textResponse(fileContent(FILE_LINES));
+        if (url.includes("/files/content?")) return textResponse(fileContent(FILE_LINES));
         if (url.includes("/diff/files")) return jsonResponse({ files: [] });
         if (url.includes("/git/spread")) return jsonResponse({});
         return jsonResponse({});

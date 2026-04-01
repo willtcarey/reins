@@ -13,6 +13,8 @@ import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
 import { escapeHtml, shouldWrapLines } from "../../models/changes/diff-utils.js";
+import { openInBrowserEvent } from "../events.js";
+import { isBrowsablePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { getWriteSummary, getWriteInfo, getWriteContent } from "../../models/tools/write.js";
@@ -79,6 +81,13 @@ export class WriteToolBlock extends LitElement {
     this.expanded = !this.expanded;
   };
 
+  /** Open this file in the file browser overlay. */
+  private _openInBrowser = (e: Event) => {
+    e.stopPropagation();
+    if (!this.path || !isBrowsablePath(this.path)) return;
+    this.dispatchEvent(openInBrowserEvent(this.path));
+  };
+
   private _renderHighlightedLine(index: number, text: string) {
     const highlighted = this._hl.getLineHtml(index);
     return highlighted ? unsafeHTML(highlighted) : escapeHtml(text);
@@ -126,7 +135,14 @@ export class WriteToolBlock extends LitElement {
             ? html`<span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>`
             : html`<span class="flex-shrink-0 text-xs">📝</span>`}
           <span class="text-[10px] font-semibold text-zinc-500 uppercase tracking-wide flex-shrink-0">Write</span>
-          <span class="text-xs font-mono ${this.isError ? "text-red-400" : "text-zinc-300"} truncate">${this.path || "…"}</span>
+          <span
+            class="text-xs font-mono ${this.isError ? "text-red-400" : "text-zinc-300"} truncate ${isBrowsablePath(this.path) ? "hover:underline cursor-pointer" : ""}"
+            @click=${isBrowsablePath(this.path) ? this._openInBrowser : nothing}
+            title=${isBrowsablePath(this.path) ? "Open in file browser" : "Outside project directory"}
+          >${this.path || "…"}</span>
+          ${this.path && !isBrowsablePath(this.path)
+            ? html`<span class="text-[10px] font-mono text-zinc-600 bg-zinc-800/60 px-1.5 py-0.5 rounded flex-shrink-0">external</span>`
+            : nothing}
           ${this.isError
             ? html`<span class="text-[10px] font-semibold text-red-400 bg-red-400/10 px-1.5 py-0.5 rounded flex-shrink-0">error</span>`
             : nothing}

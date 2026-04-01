@@ -1,6 +1,18 @@
 # File Browser Overlay
 
-Status: **design** — not ready for implementation.
+Status: **Phase 1 complete** — fuzzy search + file viewer shipped. Phase 2 (tree sidebar) not started.
+
+## Bug fixes / polish
+
+- [x] Search palette changes width as you type — fixed with `px-4` on backdrop + `min-w-0` on result buttons for proper truncation
+- [x] File icons in the search palette are unclear emoji — removed entirely
+- [x] Escape doesn't close the file browser — centralized Escape handling in `<file-browser>`, removed from child components
+- [x] Reuse the same palette shell as quick-open — extracted `<search-palette>` component, both quick-open and file-search use it
+- [x] File viewer should use `shouldWrapLines(path)` for per-file-type line wrapping, matching diff viewer behavior
+- [x] File viewer overlay goes full-screen on mobile (100vw × 100dvh, no rounded corners/ring) — centered 90vw × 90vh on desktop
+- [ ] When opening the file browser from a read or edit tool result, highlight the relevant line range in the file viewer (e.g. the lines that were read, or the lines affected by the edit). The `open-in-browser` event would need to carry optional line range info, and the viewer would scroll to and highlight those lines.
+- [ ] No way to open file search on mobile — needs a button somewhere (Cmd+P requires a keyboard). Will be addressed in Phase 2 with the file browser view.
+- [x] Reject paths outside the project directory — defense in depth: frontend `isBrowsablePath()` rejects absolute paths and `..` traversal so they don't become clickable links or fire `open-in-browser` events; `handleOpenInBrowser` in app shell double-checks; backend `assertInsideProject()` validates resolved paths in `readFile()` and returns 400. All layers covered by tests.
 
 ## Motivation
 
@@ -8,23 +20,48 @@ Users have no way to view arbitrary files in the repo. Visibility is limited to 
 
 A full IDE-style file browser is overkill. The goal is read-only access to any file in the repo with minimal friction.
 
-## UX Design
+## Phase 1 — Completed
 
-### Entry point: fuzzy file search
+### What shipped
 
-A keyboard shortcut (`Cmd+P` / `Ctrl+P`) opens a fuzzy search palette, similar to the existing quick-open palette. The search is powered by `git ls-files` (cached) so it's fast even on large repos and naturally excludes gitignored files.
+- **Keyboard shortcut**: `Cmd+P` / `Ctrl+P` opens fuzzy file search. No conflict — quick-open uses `Cmd+K`.
+- **Backend endpoint**: `GET /api/projects/:id/files` — runs `git ls-files` + `git ls-files --others --exclude-standard` in parallel, returns sorted deduplicated list.
+- **Fuzzy file search** (`<file-search>`): standalone palette (like quick-open) with fuzzy matching (reuses `fuzzyMatch` from quick-open-store), match character highlighting, keyboard navigation (↑/↓/Enter/Esc). Dispatches `open-in-browser` on selection.
+- **File viewer** (`<file-viewer>`): syntax-highlighted read-only viewer with line numbers, Shiki highlighting via shared worker, binary file detection, large file truncation (5,000 lines), per-file-type line wrapping.
+- **Viewer overlay** (`<file-browser>`): wraps `<file-viewer>` in a backdrop. Exposes `openFile(path)` — opens fresh or updates in place if already open.
+- **Store** (`FileBrowserStore`): file list fetching (cached per project), content loading via existing `/api/projects/:id/file` endpoint, fuzzy filtering. Shared by `<file-search>` and `<file-browser>`.
+- **Entry points**: clickable file paths in read/edit/write tool blocks, view button in diff file card headers — all dispatch `open-in-browser`.
+- **UI layers**: z-index system via CSS variables (`--layer-content`, `--layer-sidebar`, `--layer-overlay`, `--layer-palette`, `--layer-toast`). File search (palette layer) renders above the file viewer (overlay layer), allowing file switching while the viewer is open.
 
-The palette shows matching file paths as the user types. Selecting a file opens the file browser overlay with that file displayed.
+### Architecture
 
-This means the primary access pattern is: **know roughly what file you want → search → view**. No tree navigation required for the common case.
+Three independent components with clear responsibilities:
 
-### The overlay
+| Component | Role |
+|---|---|
+| `<file-search>` | Standalone search palette — owns `Cmd+P` shortcut, open/close state. Dispatches `open-in-browser` on file select. |
+| `<file-browser>` | Viewer overlay shell — wraps `<file-viewer>`, opens via `openFile(path)`. Escape/close dismisses. |
+| `<file-viewer>` | Content viewer — highlighting, line numbers, loading/error states. Fires `close`. |
 
-A full-screen overlay (like a modal, dismissible with `Escape`) that sits on top of the current view — chat, changes, whatever. The user's place is preserved underneath.
+All entry points converge on a single bubbling `open-in-browser` CustomEvent, caught by `<app-shell>` which calls `fileBrowser.openFile(path)`.
+
+### Resolved questions
+
+1. **~~Conflict with quick-open~~**: No conflict. Quick-open is `Cmd+K`, file search is `Cmd+P`.
+2. **~~File tree data source~~**: Tree sidebar (Phase 2) will use `readdir`. Fuzzy search uses `git ls-files` + untracked non-ignored.
+3. **Caching/freshness**: File list is cached per project and fetched on overlay open. `store.refreshFiles()` exists for forced refresh.
+
+## Phase 2 — Not started
+
+### Tree sidebar
+
+Add a directory tree panel alongside the file viewer, powered by lazy `readdir` (one level at a time). This lets users browse the full directory structure including gitignored files that don't appear in fuzzy search.
+
+### UX Design
 
 ```
 ┌──────────────────────────────────────────────┐
-│  🔍 [search/filter bar]                 [✕]  │
+│  file path                              [✕]  │
 │──────────┬───────────────────────────────────│
 │          │                                    │
 │  file    │  file content                      │
@@ -39,16 +76,18 @@ A full-screen overlay (like a modal, dismissible with `Escape`) that sits on top
 **Layout:**
 - Left panel: collapsible file tree sidebar for browsing
 - Right panel: file content viewer (takes most of the width)
-- Top bar: search/filter input (filters the tree and/or does fuzzy file search) + close button
+- Top bar: current file path + close button
+
+**Search is external:** `Cmd+P` opens the standalone file search palette (palette layer) on top of the viewer (overlay layer). Selecting a file updates the viewer in place and the tree auto-expands to show the file's location.
 
 ### Navigation within the overlay
 
 Once the overlay is open, the user can:
 
 - **Click files in the tree** to view them. The tree shows the repo directory structure with expand/collapse on directories.
-- **Use the search bar** to fuzzy-filter the tree or jump to a file by name. This reuses the same search as the initial `Cmd+P` entry — it just runs inside the overlay instead of opening a new one.
+- **Press `Cmd+P`** to open the file search palette on top, pick a file, and the viewer updates in place.
 - **Click breadcrumbs** at the top of the content pane to navigate up the directory hierarchy.
-- **Keyboard navigation**: `↑`/`↓` to move through tree or search results, `Enter` to open, `Escape` to close the overlay.
+- **Keyboard navigation**: `↑`/`↓` to move through tree, `Enter` to open, `Escape` to close the overlay.
 - **Browser back** should close the overlay (treat it as a layer, not a route).
 
 ### Tree behavior
@@ -58,32 +97,39 @@ Once the overlay is open, the user can:
 - When opening a file from search, its parent directories auto-expand so the file is visible in the tree context. This lets the user see sibling files and explore the neighborhood.
 - Changed files (from the current diff) could be badged or highlighted to show what's been modified.
 
-### File content viewer
+### Inline preview for images and PDFs
 
-- Read-only, syntax highlighted (via the existing Shiki worker, using file extension for language detection).
-- Line numbers in the gutter.
-- Markdown files get a rendered preview (reuse `markdown-content`) with a toggle to see raw source.
-- Binary files show a simple "Binary file, N bytes" message (or an image preview for image files).
-- Large files should truncate with a "Show more" affordance rather than rendering 50k lines of DOM.
+Instead of showing "Binary file (X KB)" for non-text files, render inline previews where possible:
+
+- **Images** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.svg`, `.webp`): render an `<img>` tag pointing at the existing `/files/content` endpoint.
+- **PDFs**: render in an `<iframe>` or `<embed>` using the same endpoint.
+
+The content endpoint already serves the correct `Content-Type` and raw bytes, so the frontend just needs to build an object URL or point the element at the endpoint directly. Simple to implement, big UX improvement over a dead-end "Binary file" message.
 
 ### Mobile
 
 On mobile (or narrow viewports), the tree sidebar is hidden by default. The search-first entry point works well on mobile since there's no tree to navigate. The overlay takes the full screen. A hamburger or back-arrow reveals the tree as a slide-out panel if needed.
 
-## How it's accessed
+## Phase 3 — Agent-triggered file viewing (not started)
 
-| Action | Result |
-|---|---|
-| `Cmd+P` / `Ctrl+P` | Opens fuzzy file search. Selecting a result opens the overlay. |
-| Click file path in read tool result | Opens overlay to that file. |
-| Click file path in edit tool result | Opens overlay to that file. |
-| Click file path header in diff view | Opens overlay to that file. |
-| Agent calls `api.ui.openFile(path)` | Opens overlay to that file (via WS broadcast). |
-| Click file in overlay tree | Views that file in the content pane. |
-| Search bar within overlay | Filters tree / fuzzy matches files. Selecting one views it. |
-| `Escape` | Closes the overlay (or collapses search if focused). |
-| Click ✕ button | Closes the overlay. |
-| Click outside overlay | Closes the overlay. |
+The agent could open the file browser to a specific file via the `execute` tool (e.g., `api.ui.openFile("src/index.ts")`). Requires:
+- A new outbound WS message type: `{ type: "open_file", path: string }`
+- Backend plumbing to broadcast it when the execute tool calls `api.ui.openFile()`
+- Frontend WS listener that calls `fileBrowser.openFile(path)` on receipt
+- UX consideration: what happens if the user is mid-typing or has another overlay open?
+
+## Entry points
+
+| Action | Status | Result |
+|---|---|---|
+| `Cmd+P` / `Ctrl+P` | ✅ Shipped | Opens fuzzy file search overlay. |
+| Click file path in read tool result | ✅ Shipped | Opens overlay to that file via `openFile(path)`. |
+| Click file path in edit tool result | ✅ Shipped | Opens overlay to that file via `openFile(path)`. |
+| Click file path in write tool result | ✅ Shipped | Opens overlay to that file via `openFile(path)`. |
+| 👁 button in diff file card header | ✅ Shipped | Opens overlay to that file via `openFile(path)`. |
+| Agent calls `api.ui.openFile(path)` | Not started | Opens overlay to that file (via WS broadcast). |
+
+All entry points use a bubbling `open-in-browser` CustomEvent caught by `<app-shell>`, which calls `fileBrowser.openFile(path)`.
 
 ## What it is NOT
 
@@ -91,12 +137,8 @@ On mobile (or narrow viewports), the tree sidebar is hidden by default. The sear
 - Not a git history viewer. Shows the working tree as-is, not diffs or blame.
 - Not a new tab or route. It's a transient overlay — open, look, close.
 - Not a replacement for the changes tab. Changed files still live in the diff view with their hunks and expand controls.
+- Not a general-purpose file viewer. Only files within the project directory can be viewed — paths that resolve outside the project root (e.g. via `../` traversal or absolute paths) must be rejected by the backend. This is a security boundary, not just a UX choice.
 
 ## Open questions
 
-1. **Conflict with quick-open**: `Cmd+P` currently opens the session quick-open palette. Need a different shortcut for file search, or combine them into one palette with a mode prefix (e.g., typing `>` switches to file mode, similar to VS Code). Alternatively, a different shortcut like `Cmd+Shift+P` or `Cmd+O`.
-2. **~~File tree data source~~**: Tree sidebar uses `readdir` (one level at a time, lazy) to show everything on disk including gitignored files. Fuzzy search indexes only non-ignored files (`git ls-files` + `git ls-files --others --exclude-standard`) to stay fast. Gitignored files are only reachable by navigating the tree.
-3. **Caching/freshness**: How often to refresh the file list? On overlay open? On a timer? After agent tool calls that might create files?
-4. **Deep linking**: Should the overlay be URL-addressable (e.g., `#/project/1/file/src/index.ts`)? Useful for sharing, but adds routing complexity.
-5. **Integration with chat**: Should the file browser have a "Send to chat" action — e.g., "Ask the agent about this file"? Or a "Copy path" button for pasting into the chat input?
-6. **Agent-triggered file viewing**: The agent could open the file browser to a specific file via the `execute` tool (e.g., `api.ui.openFile("src/index.ts")`). This would let the agent show relevant files during a conversation — "let me show you what I'm looking at." Would need a UI API surface exposed to the execute tool and a way to push a frontend action from the backend (broadcast a WS event that the frontend handles by opening the overlay).
+_Working notes — the agent can leave observations, unresolved issues, or design questions here as they come up during implementation._
