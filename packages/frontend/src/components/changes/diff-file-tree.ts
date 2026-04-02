@@ -1,35 +1,35 @@
 /**
  * Diff File Tree
  *
- * Lit web component that renders a nested file tree of changed files from a
- * git diff. Directories are collapsible and show aggregate +/− stats.
- * Clicking a file emits a `file-select` CustomEvent with the file path.
- * Uses light DOM for Tailwind compatibility.
+ * Renders a nested file tree of changed files from a git diff.
+ * Thin wrapper around `<tree-view>` — builds `TreeNode[]` from
+ * DiffStore file data, provides a `renderExtra` callback for
+ * +/− stats, and maps tree-view events to `file-select` events.
  *
- * Receives its data from a shared DiffStore instance.
+ * Also owns the diff mode selector (branch vs uncommitted).
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { styleMap } from "lit/directives/style-map.js";
 import type { DiffFileSummary } from "../../models/changes/types.js";
 import type { DiffStore } from "../../models/stores/diff-store.js";
 import type { FileTreeState } from "../../models/changes/file-tree-state.js";
+import "../tree-view.js";
+import type { TreeNode, RenderExtra } from "../tree-view.js";
 
-interface TreeNode {
+// ---- Tree building ----------------------------------------------------------
+
+interface BuildNode {
   name: string;
-  /** Full path from repo root (for files) or directory prefix (for dirs) */
   path: string;
   additions: number;
   removals: number;
-  children: TreeNode[];
+  children: BuildNode[];
   isFile: boolean;
 }
 
-// ---- Helpers ---------------------------------------------------------------
-
 /** Sort tree nodes: directories first, then files, each group alphabetical. */
-function sortChildren(node: TreeNode) {
+function sortChildren(node: BuildNode) {
   node.children.sort((a, b) => {
     if (a.isFile !== b.isFile) return a.isFile ? 1 : -1;
     return a.name.localeCompare(b.name);
@@ -41,16 +41,10 @@ function sortChildren(node: TreeNode) {
 
 /**
  * Build a nested tree structure from a flat list of file paths.
- * Directories are sorted before files; each group is sorted alphabetically.
  */
-function buildTree(files: DiffFileSummary[]): TreeNode[] {
-  const root: TreeNode = {
-    name: "",
-    path: "",
-    additions: 0,
-    removals: 0,
-    children: [],
-    isFile: false,
+function buildBuildTree(files: DiffFileSummary[]): BuildNode[] {
+  const root: BuildNode = {
+    name: "", path: "", additions: 0, removals: 0, children: [], isFile: false,
   };
 
   for (const file of files) {
@@ -63,22 +57,17 @@ function buildTree(files: DiffFileSummary[]): TreeNode[] {
       const partPath = parts.slice(0, i + 1).join("/");
 
       let child = current.children.find(
-        (c) => c.name === part && c.isFile === isLast
+        (c) => c.name === part && c.isFile === isLast,
       );
 
       if (!child) {
         child = {
-          name: part,
-          path: partPath,
-          additions: 0,
-          removals: 0,
-          children: [],
-          isFile: isLast,
+          name: part, path: partPath, additions: 0, removals: 0,
+          children: [], isFile: isLast,
         };
         current.children.push(child);
       }
 
-      // Accumulate stats up the tree
       child.additions += file.additions;
       child.removals += file.removals;
 
@@ -87,11 +76,33 @@ function buildTree(files: DiffFileSummary[]): TreeNode[] {
   }
 
   sortChildren(root);
-
   return root.children;
 }
 
-// ---- Component -------------------------------------------------------------
+/** Stash stats on TreeNode for the renderExtra callback. */
+const statsMap = new Map<string, { additions: number; removals: number }>();
+
+/** Convert BuildNode tree → TreeNode tree, recording stats in the side map. */
+function toTreeNodes(buildNodes: BuildNode[], collapsedDirs: Set<string>): TreeNode[] {
+  return buildNodes.map((bn) => {
+    statsMap.set(bn.path, { additions: bn.additions, removals: bn.removals });
+
+    if (bn.isFile) {
+      return { name: bn.name, path: bn.path, type: "file" as const };
+    }
+
+    const expanded = !collapsedDirs.has(bn.path);
+    return {
+      name: bn.name,
+      path: bn.path,
+      type: "directory" as const,
+      expanded,
+      children: expanded ? toTreeNodes(bn.children, collapsedDirs) : undefined,
+    };
+  });
+}
+
+// ---- Component --------------------------------------------------------------
 
 @customElement("diff-file-tree")
 export class DiffFileTree extends LitElement {
@@ -99,17 +110,9 @@ export class DiffFileTree extends LitElement {
     return this;
   }
 
-  /** Shared diff data store. */
-  @property({ attribute: false })
-  store: DiffStore | null = null;
-
-  /** Currently highlighted / visible file path. */
-  @property({ type: String })
-  activeFile: string | null = null;
-
-  /** Shared UI state for collapse/expand. */
-  @property({ attribute: false })
-  treeState: FileTreeState | null = null;
+  @property({ attribute: false }) store: DiffStore | null = null;
+  @property({ type: String }) activeFile: string | null = null;
+  @property({ attribute: false }) treeState: FileTreeState | null = null;
 
   private _unsubscribe: (() => void) | null = null;
   private _unsubscribeTree: (() => void) | null = null;
@@ -128,9 +131,7 @@ export class DiffFileTree extends LitElement {
   override disconnectedCallback() {
     super.disconnectedCallback();
     this._unsubscribe?.();
-    this._unsubscribe = null;
     this._unsubscribeTree?.();
-    this._unsubscribeTree = null;
   }
 
   private _subscribe() {
@@ -146,32 +147,35 @@ export class DiffFileTree extends LitElement {
     }
   }
 
-  private get collapsedDirs(): Set<string> {
-    return this.treeState?.collapsedDirs ?? new Set();
+  // ---- Event handlers -------------------------------------------------------
+
+  private _handleFileClick(e: CustomEvent<string>) {
+    this.dispatchEvent(
+      new CustomEvent("file-select", {
+        detail: e.detail, bubbles: true, composed: true,
+      }),
+    );
   }
 
-  private toggleDir(path: string) {
-    this.treeState?.toggleDir(path);
+  private _handleDirToggle(e: CustomEvent<string>) {
+    this.treeState?.toggleDir(e.detail);
   }
 
-  private handleModeChange(e: Event) {
+  private _handleModeChange(e: Event) {
     if (!(e.target instanceof HTMLSelectElement)) return;
     const mode = e.target.value;
     if (mode !== "branch" && mode !== "uncommitted") return;
     this.store?.setDiffMode(mode);
   }
 
-  private selectFile(path: string) {
-    this.dispatchEvent(
-      new CustomEvent("file-select", {
-        detail: path,
-        bubbles: true,
-        composed: true,
-      })
-    );
-  }
+  // ---- Render extras --------------------------------------------------------
 
-  private renderStats(additions: number, removals: number) {
+  private _renderExtra: RenderExtra = (node) => {
+    const stats = statsMap.get(node.path);
+    if (!stats) return nothing;
+    const { additions, removals } = stats;
+    if (additions === 0 && removals === 0) return nothing;
+
     return html`
       <span class="ml-auto flex items-center gap-1.5 shrink-0 pl-2">
         ${additions > 0
@@ -182,77 +186,11 @@ export class DiffFileTree extends LitElement {
           : nothing}
       </span>
     `;
-  }
+  };
 
-  private renderIndentGuides(depth: number) {
-    if (depth === 0) return nothing;
-    const guides = [];
-    for (let i = 0; i < depth; i++) {
-      const styles = {
-        position: "absolute",
-        left: `${i * 12 + 16}px`,
-        top: "0",
-        bottom: "0",
-        width: "1px",
-        background: "var(--color-zinc-700)",
-        opacity: "0.4",
-      };
-      guides.push(html`<span style=${styleMap(styles)}></span>`);
-    }
-    return guides;
-  }
+  // ---- Render ---------------------------------------------------------------
 
-  private renderNode(node: TreeNode, depth: number): unknown {
-    const indent = depth * 12;
-
-    if (node.isFile) {
-      const isActive = this.activeFile === node.path;
-      return html`
-        <button
-          class="relative w-full flex items-center gap-1.5 px-2 py-1 text-xs cursor-pointer transition-colors truncate
-            ${isActive
-              ? "bg-blue-500/15 text-blue-300"
-              : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"}"
-          style="padding-left: ${indent + 8}px"
-          @click=${() => this.selectFile(node.path)}
-          title=${node.path}
-        >
-          ${this.renderIndentGuides(depth)}
-          <svg class="w-3.5 h-3.5 shrink-0 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-          </svg>
-          <span class="truncate">${node.name}</span>
-          ${this.renderStats(node.additions, node.removals)}
-        </button>
-      `;
-    }
-
-    // Directory node
-    const collapsed = this.collapsedDirs.has(node.path);
-    return html`
-      <div>
-        <button
-          class="relative w-full flex items-center gap-1.5 px-2 py-1 text-xs cursor-pointer transition-colors text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/50 truncate"
-          style="padding-left: ${indent + 8}px"
-          @click=${() => this.toggleDir(node.path)}
-        >
-          ${this.renderIndentGuides(depth)}
-          <span class="text-[10px] text-zinc-500 shrink-0 w-3 text-center">${collapsed ? "▶" : "▼"}</span>
-          <svg class="w-3.5 h-3.5 shrink-0 ${collapsed ? "text-zinc-500" : "text-zinc-400"}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-          </svg>
-          <span class="truncate">${node.name}</span>
-        </button>
-        ${!collapsed
-          ? node.children.map((child) => this.renderNode(child, depth + 1))
-          : nothing}
-      </div>
-    `;
-  }
-
-  private renderModeSelector() {
+  private _renderModeSelector() {
     const currentMode = this.store?.diffMode ?? "branch";
     const baseBranch = this.store?.data.baseBranch;
 
@@ -262,7 +200,7 @@ export class DiffFileTree extends LitElement {
           class="w-full bg-zinc-800 text-zinc-300 text-xs rounded border border-zinc-600 px-2 py-1.5 cursor-pointer focus:outline-none focus:border-zinc-500 appearance-none"
           style="background-image: url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E&quot;); background-repeat: no-repeat; background-position: right 6px center;"
           .value=${currentMode}
-          @change=${this.handleModeChange}
+          @change=${this._handleModeChange}
         >
           <option value="branch">Branch changes${baseBranch ? ` (vs ${baseBranch})` : ""}</option>
           <option value="uncommitted">Uncommitted changes</option>
@@ -277,7 +215,7 @@ export class DiffFileTree extends LitElement {
     if (files.length === 0) {
       return html`
         <div class="h-full flex flex-col min-w-0">
-          ${this.renderModeSelector()}
+          ${this._renderModeSelector()}
           <div class="flex-1 flex items-center justify-center text-zinc-500 text-xs p-4">
             No changes
           </div>
@@ -287,11 +225,16 @@ export class DiffFileTree extends LitElement {
 
     const totalAdditions = files.reduce((s, f) => s + f.additions, 0);
     const totalRemovals = files.reduce((s, f) => s + f.removals, 0);
-    const tree = buildTree(files);
+    const collapsedDirs = this.treeState?.collapsedDirs ?? new Set<string>();
+
+    // Build tree and convert to TreeNode[]
+    const buildTree = buildBuildTree(files);
+    statsMap.clear();
+    const nodes = toTreeNodes(buildTree, collapsedDirs);
 
     return html`
       <div class="h-full flex flex-col min-w-0">
-        ${this.renderModeSelector()}
+        ${this._renderModeSelector()}
         <!-- Summary header -->
         <div class="px-3 py-2 text-xs text-zinc-400 border-b border-zinc-700 flex items-center gap-2 shrink-0">
           <span>${files.length} file${files.length !== 1 ? "s" : ""}</span>
@@ -303,8 +246,14 @@ export class DiffFileTree extends LitElement {
             : nothing}
         </div>
         <!-- Tree -->
-        <div class="flex-1 overflow-y-auto py-1">
-          ${tree.map((node) => this.renderNode(node, 0))}
+        <div class="flex-1 overflow-y-auto">
+          <tree-view
+            .nodes=${nodes}
+            .activeFile=${this.activeFile}
+            .renderExtra=${this._renderExtra}
+            @tree-file-click=${this._handleFileClick}
+            @tree-dir-toggle=${this._handleDirToggle}
+          ></tree-view>
         </div>
       </div>
     `;

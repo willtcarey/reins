@@ -1,44 +1,19 @@
 /**
- * File Tree — recursive directory tree sidebar for the file browser.
+ * File Tree — lazy-loaded directory tree sidebar for the file browser.
  *
- * Renders a lazy-loaded directory tree from the store's `directoryEntries`.
- * Directories expand/collapse on click; files dispatch `open-in-browser`
- * events that bubble up to the app shell.
- *
- * Features:
- * - SVG file/folder icons instead of disclosure triangles
- * - Compact single-child directory chains (VS Code style): `src/components/ui`
- *   renders as one row when each intermediate dir has exactly one child dir.
+ * Thin wrapper around `<tree-view>` that transforms `FileBrowserStore`
+ * data into `TreeNode[]`. Handles lazy directory fetching, compact
+ * single-child directory chains (VS Code style), and maps tree-view
+ * events back to store operations and `open-in-browser` events.
  */
 
-import { LitElement, html, nothing, type TemplateResult } from "lit";
+import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { FileBrowserStore, DirEntry } from "../models/stores/file-browser-store.js";
 import { StoreController } from "../controllers/store-controller.js";
 import { openInBrowserEvent } from "./events.js";
-import { svg } from "lit";
-
-// ---- SVG icons (14×14, stroke-based) ----------------------------------------
-
-/** Closed folder: rectangle with a tab on top-left */
-const folderIcon = svg`<svg class="shrink-0 text-amber-500/70" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2 3.5h3.5l1 1H12a1 1 0 0 1 1 1V11a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z"/>
-</svg>`;
-
-/** Open folder: top edge angled open */
-const folderOpenIcon = svg`<svg class="shrink-0 text-amber-500/70" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M1 11V4.5a1 1 0 0 1 1-1h3.5l1 1H12a1 1 0 0 1 1 1V7"/>
-  <path d="M1 11l1.5-4h10l-1.5 4H1Z"/>
-</svg>`;
-
-/** File: rectangle with dog-ear corner */
-const fileIcon = svg`<svg class="shrink-0 text-blue-400/70" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M8 1H3.5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V4.5L8 1Z"/>
-  <path d="M8 1v3.5h3.5"/>
-</svg>`;
-
-/** Indentation per nesting level (px) */
-const INDENT_PX = 12;
+import "./tree-view.js";
+import type { TreeNode } from "./tree-view.js";
 
 @customElement("file-tree")
 export class FileTree extends LitElement {
@@ -49,7 +24,13 @@ export class FileTree extends LitElement {
   @property({ attribute: false }) store!: FileBrowserStore;
 
   private _storeCtrl = new StoreController(this);
-  private _lastScrolledFile: string | null = null;
+
+  /**
+   * Track compacted directory chains so we can expand intermediates
+   * when the user clicks a compacted directory row.
+   * Maps deepPath → list of intermediate paths.
+   */
+  private _compactedIntermediates = new Map<string, string[]>();
 
   override connectedCallback() {
     super.connectedCallback();
@@ -63,63 +44,16 @@ export class FileTree extends LitElement {
     }
   }
 
-  override updated() {
-    this._scrollActiveIntoView();
-  }
-
-  /**
-   * Scroll the active file row into view if it exists in the DOM
-   * and we haven't already scrolled for this file.
-   */
-  private _scrollActiveIntoView() {
-    const selected = this.store?.selectedFile;
-    if (!selected || selected === this._lastScrolledFile) return;
-
-    const el = this.querySelector<HTMLElement>("[data-active]");
-    if (el) {
-      el.scrollIntoView({ block: "nearest" });
-      this._lastScrolledFile = selected;
-    }
-  }
+  // ---- Data transformation --------------------------------------------------
 
   private _buildPath(parent: string, name: string): string {
     return parent === "." ? name : `${parent}/${name}`;
   }
 
-  private _handleFileClick(path: string) {
-    this.dispatchEvent(openInBrowserEvent(path));
-  }
-
   /**
-   * Handle click on a (possibly compacted) directory row.
-   * Toggles the deepest directory, while ensuring all intermediate
-   * directories in the compacted chain are expanded so their entries
-   * get fetched.
-   */
-  private _handleCompactedDirClick(fullPath: string, intermediatePaths: string[]) {
-    const store = this.store;
-    if (!store) return;
-
-    const isExpanded = store.expandedDirs.has(fullPath);
-
-    if (isExpanded) {
-      // Collapsing — just collapse the deepest
-      store.toggleDirectory(fullPath);
-    } else {
-      // Expanding — ensure all intermediates are expanded too
-      for (const p of intermediatePaths) {
-        if (!store.expandedDirs.has(p)) {
-          store.toggleDirectory(p);
-        }
-      }
-      store.toggleDirectory(fullPath);
-    }
-  }
-
-  /**
-   * Try to compact a chain of single-child directories starting from
-   * the given entry. Returns the compacted display label, the deepest
-   * directory path, and intermediate paths that need expanding.
+   * Compact single-child directory chains.
+   * Returns the compacted display label, the deepest directory path,
+   * and intermediate paths that need expanding.
    */
   private _compactChain(
     entry: DirEntry,
@@ -137,7 +71,6 @@ export class FileTree extends LitElement {
       const only = children[0]!;
       if (only.type !== "directory") break;
 
-      // This directory has a single child that is also a directory — compact
       intermediates.push(currentPath);
       label = `${label}/${only.name}`;
       currentPath = this._buildPath(currentPath, only.name);
@@ -146,63 +79,72 @@ export class FileTree extends LitElement {
     return { label, deepPath: currentPath, intermediates };
   }
 
-  private _renderEntry(entry: DirEntry, parentPath: string, depth: number): unknown {
-    if (entry.type === "directory") {
-      return this._renderDirectoryEntry(entry, parentPath, depth);
+  /** Convert store's DirEntry[] into TreeNode[] for tree-view. */
+  private _buildNodes(entries: DirEntry[], parentPath: string): TreeNode[] {
+    this._compactedIntermediates.clear();
+    return this._buildNodesInner(entries, parentPath);
+  }
+
+  private _buildNodesInner(entries: DirEntry[], parentPath: string): TreeNode[] {
+    return entries.map((entry) => {
+      if (entry.type === "file") {
+        const path = this._buildPath(parentPath, entry.name);
+        return { name: entry.name, path, type: "file" as const };
+      }
+
+      const { label, deepPath, intermediates } = this._compactChain(entry, parentPath);
+
+      // Stash intermediates for expand handling
+      if (intermediates.length > 0) {
+        this._compactedIntermediates.set(deepPath, intermediates);
+      }
+
+      const expanded = this.store?.expandedDirs.has(deepPath) ?? false;
+      const loading = (this.store?.treeLoading.has(deepPath) ?? false) ||
+        intermediates.some((p) => this.store?.treeLoading.has(p));
+      const childEntries = this.store?.directoryEntries.get(deepPath);
+
+      return {
+        name: label,
+        path: deepPath,
+        type: "directory" as const,
+        expanded,
+        loading,
+        children: expanded && childEntries
+          ? this._buildNodesInner(childEntries, deepPath)
+          : undefined,
+      };
+    });
+  }
+
+  // ---- Event handlers -------------------------------------------------------
+
+  private _handleFileClick(e: CustomEvent<string>) {
+    this.dispatchEvent(openInBrowserEvent(e.detail));
+  }
+
+  private _handleDirToggle(e: CustomEvent<string>) {
+    const store = this.store;
+    if (!store) return;
+
+    const dirPath = e.detail;
+    const isExpanded = store.expandedDirs.has(dirPath);
+    const intermediates = this._compactedIntermediates.get(dirPath) ?? [];
+
+    if (isExpanded) {
+      store.toggleDirectory(dirPath);
+    } else {
+      // Expanding — ensure all intermediates in the compacted chain are expanded
+      for (const p of intermediates) {
+        if (!store.expandedDirs.has(p)) {
+          store.toggleDirectory(p);
+        }
+      }
+      store.toggleDirectory(dirPath);
     }
-
-    const fullPath = this._buildPath(parentPath, entry.name);
-    const indent = depth * INDENT_PX;
-    const isSelected = this.store?.selectedFile === fullPath;
-    return html`
-      <button
-        class="w-full flex items-center gap-1.5 px-2 py-1 text-left text-xs font-mono truncate cursor-pointer
-               hover:bg-zinc-700/50 ${isSelected ? "bg-zinc-700 text-zinc-100" : "text-zinc-300"}"
-        style="padding-left: ${indent + 8}px"
-        @click=${() => this._handleFileClick(fullPath)}
-        title=${fullPath}
-        ?data-active=${isSelected}
-      >
-        ${fileIcon}
-        <span class="truncate">${entry.name}</span>
-      </button>
-    `;
   }
 
-  /**
-   * Render a directory entry, compacting single-child chains.
-   */
-  private _renderDirectoryEntry(
-    entry: DirEntry,
-    parentPath: string,
-    depth: number,
-  ): TemplateResult {
-    const { label, deepPath, intermediates } = this._compactChain(entry, parentPath);
-    const indent = depth * INDENT_PX;
-    const expanded = this.store?.expandedDirs.has(deepPath);
-    const loading = this.store?.treeLoading.has(deepPath) ||
-      intermediates.some((p) => this.store?.treeLoading.has(p));
-    const children = this.store?.directoryEntries.get(deepPath);
-
-    return html`
-      <div>
-        <button
-          class="w-full flex items-center gap-1.5 px-2 py-1 text-left text-xs font-mono font-medium truncate cursor-pointer
-                 hover:bg-zinc-700/50 text-zinc-200"
-          style="padding-left: ${indent + 8}px"
-          @click=${() => this._handleCompactedDirClick(deepPath, intermediates)}
-          title=${deepPath}
-        >
-          ${expanded ? folderOpenIcon : folderIcon}
-          <span class="truncate">${label}</span>
-          ${loading ? html`<span class="text-zinc-500 text-xs ml-1">…</span>` : nothing}
-        </button>
-        ${expanded && children
-          ? children.map((child) => this._renderEntry(child, deepPath, depth + 1))
-          : nothing}
-      </div>
-    `;
-  }
+  // ---- Render ---------------------------------------------------------------
 
   override render() {
     const store = this.store;
@@ -211,14 +153,19 @@ export class FileTree extends LitElement {
     const rootEntries = store.directoryEntries.get(".");
     const rootLoading = store.treeLoading.has(".");
 
+    if (rootLoading && !rootEntries) {
+      return html`<div class="px-4 py-2 text-xs text-zinc-500">Loading…</div>`;
+    }
+
+    const nodes = rootEntries ? this._buildNodes(rootEntries, ".") : [];
+
     return html`
-      <div class="overflow-y-auto min-w-0 py-1">
-        ${rootLoading && !rootEntries
-          ? html`<div class="px-4 py-2 text-xs text-zinc-500">Loading…</div>`
-          : rootEntries
-            ? rootEntries.map((entry) => this._renderEntry(entry, ".", 0))
-            : html`<div class="px-4 py-2 text-xs text-zinc-500">No files</div>`}
-      </div>
+      <tree-view
+        .nodes=${nodes}
+        .activeFile=${store.selectedFile}
+        @tree-file-click=${this._handleFileClick}
+        @tree-dir-toggle=${this._handleDirToggle}
+      ></tree-view>
     `;
   }
 }
