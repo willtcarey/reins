@@ -24,7 +24,7 @@ import { styleMap } from "lit/directives/style-map.js";
 // ---- Public types -----------------------------------------------------------
 
 export interface TreeNode {
-  /** Display name — may be a compacted path like "src/components" */
+  /** Display name (single segment, e.g. "components") */
   name: string;
   /** Full path from repo root */
   path: string;
@@ -154,26 +154,57 @@ export class TreeView extends LitElement {
     `;
   }
 
+  /**
+   * Compact single-child directory chains (VS Code style).
+   * If a directory has exactly one child that is also a directory,
+   * join them into one row: "src/components/ui".
+   *
+   * Returns the compacted label, the deepest node in the chain,
+   * and whether any node in the chain is loading.
+   */
+  private _compactChain(node: TreeNode): {
+    label: string;
+    deep: TreeNode;
+    loading: boolean;
+  } {
+    let label = node.name;
+    let current = node;
+    let loading = current.loading ?? false;
+
+    while (
+      current.expanded &&
+      current.children?.length === 1 &&
+      current.children[0].type === "directory"
+    ) {
+      current = current.children[0];
+      label = `${label}/${current.name}`;
+      loading = loading || (current.loading ?? false);
+    }
+
+    return { label, deep: current, loading };
+  }
+
   private _renderDirNode(node: TreeNode, depth: number): TemplateResult {
+    const { label, deep, loading } = this._compactChain(node);
     const indent = depth * INDENT_PX;
-    const expanded = node.expanded ?? false;
+    const expanded = deep.expanded ?? false;
 
     return html`
       <div>
         <button
           class="relative w-full flex items-center gap-1.5 px-2 py-1 text-left text-xs cursor-pointer transition-colors text-zinc-200 hover:bg-zinc-700/50 truncate"
           style="padding-left: ${indent + 8}px"
-          @click=${() => this._onDirToggle(node.path)}
-          title=${node.path}
+          @click=${() => this._onDirToggle(deep.path)}
+          title=${deep.path}
         >
           ${this._renderIndentGuides(depth)}
           ${expanded ? folderOpenIcon : folderIcon}
-          <span class="truncate">${node.name}</span>
-          ${node.loading ? html`<span class="text-zinc-500 text-[10px] ml-1">…</span>` : nothing}
-          ${this.renderExtra ? this.renderExtra(node) : nothing}
+          <span class="truncate">${label}</span>
+          ${loading ? html`<span class="text-zinc-500 text-[10px] ml-1">…</span>` : nothing}
+          ${this.renderExtra ? this.renderExtra(deep) : nothing}
         </button>
-        ${expanded && node.children
-          ? node.children.map((child) => this._renderNode(child, depth + 1))
+        ${expanded && deep.children
+          ? deep.children.map((child) => this._renderNode(child, depth + 1))
           : nothing}
       </div>
     `;
