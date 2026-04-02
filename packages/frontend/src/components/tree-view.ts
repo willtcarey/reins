@@ -37,7 +37,7 @@ export interface TreeNode {
   children?: TreeNode[];
 }
 
-export type RenderExtra = (node: TreeNode) => TemplateResult | typeof nothing;
+export type RenderNodeTrailer = (node: TreeNode) => TemplateResult | typeof nothing;
 
 // ---- SVG icons (14×14, stroke-based) ----------------------------------------
 
@@ -73,7 +73,7 @@ export class TreeView extends LitElement {
   @property({ type: String }) activeFile: string | null = null;
 
   /** Optional callback to render extra content at the end of each row. */
-  @property({ attribute: false }) renderExtra: RenderExtra | null = null;
+  @property({ attribute: false }) renderNodeTrailer: RenderNodeTrailer | null = null;
 
   private _lastScrolledFile: string | null = null;
 
@@ -149,7 +149,7 @@ export class TreeView extends LitElement {
         ${this._renderIndentGuides(depth)}
         ${fileIcon}
         <span class="truncate">${node.name}</span>
-        ${this.renderExtra ? this.renderExtra(node) : nothing}
+        ${this.renderNodeTrailer ? this.renderNodeTrailer(node) : nothing}
       </button>
     `;
   }
@@ -201,7 +201,7 @@ export class TreeView extends LitElement {
           ${expanded ? folderOpenIcon : folderIcon}
           <span class="truncate">${label}</span>
           ${loading ? html`<span class="text-zinc-500 text-[10px] ml-1">…</span>` : nothing}
-          ${this.renderExtra ? this.renderExtra(deep) : nothing}
+          ${this.renderNodeTrailer ? this.renderNodeTrailer(deep) : nothing}
         </button>
         ${expanded && deep.children
           ? deep.children.map((child) => this._renderNode(child, depth + 1))

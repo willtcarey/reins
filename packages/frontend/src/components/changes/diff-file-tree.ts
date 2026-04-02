@@ -3,7 +3,7 @@
  *
  * Renders a nested file tree of changed files from a git diff.
  * Thin wrapper around `<tree-view>` — builds `TreeNode[]` from
- * DiffStore file data, provides a `renderExtra` callback for
+ * DiffStore file data, provides a `renderNodeTrailer` callback for
  * +/− stats, and maps tree-view events to `file-select` events.
  *
  * Also owns the diff mode selector (branch vs uncommitted).
@@ -15,7 +15,7 @@ import type { DiffFileSummary } from "../../models/changes/types.js";
 import type { DiffStore } from "../../models/stores/diff-store.js";
 import type { FileTreeState } from "../../models/changes/file-tree-state.js";
 import "../tree-view.js";
-import type { TreeNode, RenderExtra } from "../tree-view.js";
+import type { TreeNode, RenderNodeTrailer } from "../tree-view.js";
 
 // ---- Tree building ----------------------------------------------------------
 
@@ -79,7 +79,7 @@ function buildBuildTree(files: DiffFileSummary[]): BuildNode[] {
   return root.children;
 }
 
-/** Stash stats on TreeNode for the renderExtra callback. */
+/** Stash stats on TreeNode for the renderNodeTrailer callback. */
 const statsMap = new Map<string, { additions: number; removals: number }>();
 
 /** Convert BuildNode tree → TreeNode tree, recording stats in the side map. */
@@ -170,7 +170,7 @@ export class DiffFileTree extends LitElement {
 
   // ---- Render extras --------------------------------------------------------
 
-  private _renderExtra: RenderExtra = (node) => {
+  private _renderNodeTrailer: RenderNodeTrailer = (node) => {
     if (node.type !== "file") return nothing;
     const stats = statsMap.get(node.path);
     if (!stats) return nothing;
@@ -251,7 +251,7 @@ export class DiffFileTree extends LitElement {
           <tree-view
             .nodes=${nodes}
             .activeFile=${this.activeFile}
-            .renderExtra=${this._renderExtra}
+            .renderNodeTrailer=${this._renderNodeTrailer}
             @tree-file-click=${this._handleFileClick}
             @tree-dir-toggle=${this._handleDirToggle}
           ></tree-view>
