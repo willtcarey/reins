@@ -31,6 +31,7 @@ import "./quick-open.js";
 import type { QuickOpen } from "./quick-open.js";
 import { QuickOpenStore } from "../models/stores/quick-open-store.js";
 import "./file-search.js";
+import type { FileSearch } from "./file-search.js";
 import "./file-browser.js";
 import type { FileBrowser } from "./file-browser.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
@@ -53,6 +54,7 @@ export class AppShell extends LitElement {
   private quickOpenStore = new QuickOpenStore();
   @query("quick-open") private _quickOpen!: QuickOpen;
   private fileBrowserStore = new FileBrowserStore();
+  @query("file-search") private _fileSearch!: FileSearch;
   @query("file-browser") private _fileBrowser!: FileBrowser;
 
   override connectedCallback() {
@@ -173,6 +175,10 @@ export class AppShell extends LitElement {
     this._quickOpen?.open();
   }
 
+  private openFileSearch() {
+    this._fileSearch?.open();
+  }
+
   private renderEmptyState() {
     return html`
       <div class="flex-1 flex flex-col">
@@ -228,7 +234,8 @@ export class AppShell extends LitElement {
 
     return html`
       <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"
-        @open-in-browser=${this.handleOpenInBrowser}>
+        @open-in-browser=${this.handleOpenInBrowser}
+        @open-quick-open=${() => this.openQuickOpen()}>
         <!-- Connection status bar -->
         ${!store.connected ? html`
           <div class="bg-yellow-800 text-yellow-200 text-xs text-center py-1">
@@ -255,13 +262,13 @@ export class AppShell extends LitElement {
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
                 </button>
-                <!-- Search button (mobile only) -->
+                <!-- File search button -->
                 <button
                   class="p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer shrink-0"
-                  @click=${this.openQuickOpen}
-                  title="Search sessions (Cmd+K)"
+                  @click=${this.openFileSearch}
+                  title="Search files (Cmd+P)"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 2h10"/><path d="M5 6h14"/><rect x="3" y="10" width="18" height="12" rx="2"/></svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><circle cx="11.5" cy="14.5" r="2.5"/><path d="M13.3 16.3 15 18"/></svg>
                 </button>
                 <branch-indicator
                   .currentBranch=${this.appStore.diffStore.branch ?? this.appStore.diffStore.fileData.branch}

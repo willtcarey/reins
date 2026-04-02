@@ -198,6 +198,11 @@ export class SessionSidebar extends LitElement {
     this.collapsed = false;
   }
 
+  /** Open the quick-open palette (Cmd+K). */
+  private _openQuickOpen() {
+    this.dispatchEvent(new CustomEvent("open-quick-open", { bubbles: true, composed: true }));
+  }
+
   private handleEditProject(project: ProjectInfo) {
     this.projectSidebar?.openEdit(project);
   }
@@ -404,20 +409,36 @@ export class SessionSidebar extends LitElement {
         @delete-task=${this.handleDeleteTask}
         @toggle-collapse=${this.toggleCollapse}
       >
-        <!-- Header: collapse toggle -->
+        <!-- Header: collapse toggle + quick-open -->
         <div class="flex items-center border-b border-zinc-700 shrink-0 ${this.collapsed ? "justify-center" : ""}">
           ${this.collapsed ? html`
-            <!-- Collapsed: centered expand chevron -->
-            <button
-              class="relative p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
-              @click=${this.toggleCollapse}
-              title="Show sidebar"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-              ${this.renderRailBadge()}
-            </button>
+            <!-- Collapsed: expand chevron + search icon -->
+            <div class="flex flex-col items-center gap-1 py-1">
+              <button
+                class="relative p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
+                @click=${this.toggleCollapse}
+                title="Show sidebar"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                ${this.renderRailBadge()}
+              </button>
+              <button
+                class="p-1.5 text-zinc-500 hover:text-zinc-200 cursor-pointer transition-colors"
+                @click=${this._openQuickOpen}
+                title="Search sessions (Cmd+K)"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              </button>
+            </div>
           ` : html`
-            <!-- Expanded: collapse chevron -->
+            <!-- Expanded: search button + collapse chevron -->
+            <button
+              class="p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors shrink-0"
+              @click=${this._openQuickOpen}
+              title="Search sessions (Cmd+K)"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            </button>
             <div class="flex-1 min-w-0"></div>
             <button
               class="p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors shrink-0"
