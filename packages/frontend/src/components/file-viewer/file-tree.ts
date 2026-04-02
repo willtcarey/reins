@@ -11,11 +11,11 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { FileBrowserStore, DirEntry } from "../models/stores/file-browser-store.js";
-import { StoreController } from "../controllers/store-controller.js";
-import { openInBrowserEvent } from "./events.js";
-import "./tree-view.js";
-import type { TreeNode } from "./tree-view.js";
+import type { FileBrowserStore, DirEntry } from "../../models/stores/file-browser-store.js";
+import { StoreController } from "../../controllers/store-controller.js";
+import { openInBrowserEvent } from "../events.js";
+import "../tree-view.js";
+import type { TreeNode } from "../tree-view.js";
 
 @customElement("file-tree")
 export class FileTree extends LitElement {

@@ -32,8 +32,8 @@ import type { QuickOpen } from "./quick-open.js";
 import { QuickOpenStore } from "../models/stores/quick-open-store.js";
 import "./file-search.js";
 import type { FileSearch } from "./file-search.js";
-import "./file-browser.js";
-import type { FileBrowser } from "./file-browser.js";
+import "./file-viewer/file-browser.js";
+import type { FileBrowser } from "./file-viewer/file-browser.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 
 @customElement("app-shell")
