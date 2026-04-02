@@ -170,7 +170,7 @@ export class SearchPalette extends LitElement {
             autocapitalize="off"
             autocorrect="off"
             spellcheck="false"
-            class="flex-1 bg-transparent text-sm text-zinc-100 placeholder-zinc-500 outline-none"
+            class="flex-1 bg-transparent text-base text-zinc-100 placeholder-zinc-500 outline-none"
             .placeholder=${this.placeholder}
             .value=${this._query}
             @input=${this.handleInput}
