@@ -30,6 +30,7 @@ import "./task-list.js";
 import "./assistant-session.js";
 import "./popover-menu.js";
 import { showToast } from "./toast.js";
+import { openQuickOpenEvent } from "./events.js";
 
 @customElement("session-sidebar")
 export class SessionSidebar extends LitElement {
@@ -200,7 +201,7 @@ export class SessionSidebar extends LitElement {
 
   /** Open the quick-open palette (Cmd+K). */
   private _openQuickOpen() {
-    this.dispatchEvent(new CustomEvent("open-quick-open", { bubbles: true, composed: true }));
+    this.dispatchEvent(openQuickOpenEvent());
   }
 
   private handleEditProject(project: ProjectInfo) {

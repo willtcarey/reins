@@ -16,7 +16,7 @@ import { StoreController } from "../controllers/store-controller.js";
 import "./file-viewer.js";
 import "./file-tree.js";
 import type { FileViewer } from "./file-viewer.js";
-import type { FileSearch } from "./file-search.js";
+import { openFileSearchEvent } from "./events.js";
 
 @customElement("file-browser")
 export class FileBrowser extends LitElement {
@@ -70,9 +70,7 @@ export class FileBrowser extends LitElement {
   }
 
   private _openFileSearch() {
-    // Find the file-search component (sibling in app shell) and open it
-    const fileSearch = document.querySelector<FileSearch>("file-search");
-    fileSearch?.open();
+    this.dispatchEvent(openFileSearchEvent());
   }
 
   private _onGlobalKeydown = (e: KeyboardEvent) => {

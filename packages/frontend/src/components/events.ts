@@ -13,3 +13,19 @@ export function openInBrowserEvent(path: string) {
     composed: true,
   });
 }
+
+/** Request to open the quick-open (session search) palette. */
+export function openQuickOpenEvent() {
+  return new CustomEvent("open-quick-open", {
+    bubbles: true,
+    composed: true,
+  });
+}
+
+/** Request to open the file-search palette. */
+export function openFileSearchEvent() {
+  return new CustomEvent("open-file-search", {
+    bubbles: true,
+    composed: true,
+  });
+}

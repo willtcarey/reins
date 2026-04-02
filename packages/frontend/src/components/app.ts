@@ -235,7 +235,8 @@ export class AppShell extends LitElement {
     return html`
       <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"
         @open-in-browser=${this.handleOpenInBrowser}
-        @open-quick-open=${() => this.openQuickOpen()}>
+        @open-quick-open=${() => this.openQuickOpen()}
+        @open-file-search=${() => this.openFileSearch()}>
         <!-- Connection status bar -->
         ${!store.connected ? html`
           <div class="bg-yellow-800 text-yellow-200 text-xs text-center py-1">
