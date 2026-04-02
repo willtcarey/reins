@@ -79,12 +79,30 @@ export class EditToolBlock extends LitElement {
     this.expanded = !this.expanded;
   };
 
-  /** Open this file in the file browser overlay. */
+  /** Open this file in the file browser overlay, highlighting the edited range. */
   private _openInBrowser = (e: Event) => {
     e.stopPropagation();
     if (!this.path || !isBrowsablePath(this.path)) return;
-    this.dispatchEvent(openInBrowserEvent(this.path));
+    // Compute the line range affected by the edit from the diff's new-side line numbers
+    const lineRange = this._computeEditLineRange();
+    this.dispatchEvent(openInBrowserEvent(this.path, lineRange));
   };
+
+  /** Extract the new-side line range from the diff lines (added + context lines). */
+  private _computeEditLineRange(): { startLine: number; endLine: number } | undefined {
+    if (this.diffLines.length === 0) return undefined;
+    let min = Infinity;
+    let max = -Infinity;
+    for (const line of this.diffLines) {
+      // Use newLine for add/context lines (these are the lines in the current file)
+      const n = line.newLine;
+      if (n != null) {
+        if (n < min) min = n;
+        if (n > max) max = n;
+      }
+    }
+    return min <= max ? { startLine: min, endLine: max } : undefined;
+  }
 
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has("diffLines") || changed.has("path")) {

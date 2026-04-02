@@ -5,10 +5,19 @@
  * shape is a compile-time error at every call site.
  */
 
+/** Detail payload for the open-in-browser event. */
+export interface OpenInBrowserDetail {
+  path: string;
+  /** Optional 1-based start line to highlight and scroll to. */
+  startLine?: number;
+  /** Optional 1-based end line (inclusive) of the highlight range. */
+  endLine?: number;
+}
+
 /** Request to open a file in the file browser overlay. */
-export function openInBrowserEvent(path: string) {
-  return new CustomEvent("open-in-browser", {
-    detail: path,
+export function openInBrowserEvent(path: string, lineRange?: { startLine: number; endLine: number }) {
+  return new CustomEvent<OpenInBrowserDetail>("open-in-browser", {
+    detail: { path, ...lineRange },
     bubbles: true,
     composed: true,
   });

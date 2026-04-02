@@ -30,6 +30,9 @@ export class FileBrowser extends LitElement {
   /** Whether the mobile tree slide-out panel is visible. */
   @state() private _mobileTreeOpen = false;
 
+  /** Line range to apply once the viewer finishes loading content. */
+  private _pendingHighlight: { startLine: number; endLine: number } | null = null;
+
   private _storeCtrl = new StoreController(this);
 
   @query("file-viewer") private _viewer!: FileViewer;
@@ -51,7 +54,7 @@ export class FileBrowser extends LitElement {
   }
 
   /** Open the overlay to a specific file, or switch files if already open. */
-  openFile(path: string) {
+  openFile(path: string, lineRange?: { startLine: number; endLine: number }) {
     if (!this._open) {
       this.store?.reset();
       this._open = true;
@@ -59,7 +62,17 @@ export class FileBrowser extends LitElement {
       this.store?.fetchFiles();
     }
     this._viewer?.resetHighlight();
+    this._pendingHighlight = lineRange ?? null;
     this.store?.selectFile(path);
+  }
+
+  override updated() {
+    // Push the pending highlight to the viewer once content has loaded
+    if (this._pendingHighlight && this.store && !this.store.contentLoading && this._viewer) {
+      const range = this._pendingHighlight;
+      this._pendingHighlight = null;
+      this._viewer.setHighlightRange(range);
+    }
   }
 
   private close() {

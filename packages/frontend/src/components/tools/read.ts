@@ -100,11 +100,16 @@ export class ReadToolBlock extends LitElement {
     this.expanded = !this.expanded;
   };
 
-  /** Open this file in the file browser overlay. */
+  /** Open this file in the file browser overlay, highlighting the read range. */
   private _openInBrowser = (e: Event) => {
     e.stopPropagation();
     if (!this.path || !isBrowsablePath(this.path)) return;
-    this.dispatchEvent(openInBrowserEvent(this.path));
+    // Only highlight when a specific range was read (offset/limit specified).
+    // Reading the full file doesn't benefit from highlighting every line.
+    const lineRange = this.range && this.totalLines > 0
+      ? { startLine: this.startLine, endLine: this.startLine + this.totalLines - 1 }
+      : undefined;
+    this.dispatchEvent(openInBrowserEvent(this.path, lineRange));
   };
 
   private _renderHighlightedLine(index: number, text: string) {

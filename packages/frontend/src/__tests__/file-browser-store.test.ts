@@ -59,7 +59,6 @@ describe("FileBrowserStore", () => {
       store.contentError = "error";
       store.isBinary = true;
       store.contentLoading = true;
-
       store.reset();
 
       expect(store.selectedFile).toBeNull();

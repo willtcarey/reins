@@ -30,6 +30,18 @@ export class FileViewerCode extends LitElement {
   /** File path — used for syntax detection and line wrapping. */
   @property() path = "";
 
+  /** Optional 1-based line range to highlight (inclusive). */
+  @property({ attribute: false }) highlightRange: { startLine: number; endLine: number } | null = null;
+
+  /** Whether we need to scroll to the highlight range after next render. */
+  private _pendingScrollToHighlight = false;
+
+  /** Line number where a gutter drag started, or null if not dragging. */
+  private _gutterDragAnchor: number | null = null;
+
+  /** Whether the current highlight was set by gutter interaction (skip scroll). */
+  private _highlightFromGutter = false;
+
   private _highlight = new LazyHighlightController(this, () => {
     if (!this.content || !this.path) return null;
     // Skip highlighting for very large files
@@ -56,12 +68,100 @@ export class FileViewerCode extends LitElement {
   override disconnectedCallback() {
     super.disconnectedCallback();
     this._highlight.disconnect();
+    // Clean up any in-progress gutter drag
+    document.removeEventListener("mousemove", this._onGutterMouseMove);
+    document.removeEventListener("mouseup", this._onGutterMouseUp);
+    this._gutterDragAnchor = null;
   }
 
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has("content") || changed.has("path")) {
       this._highlight.update();
     }
+    if (changed.has("highlightRange") || changed.has("content")) {
+      if (this.highlightRange && this.content && !this._highlightFromGutter) {
+        this._pendingScrollToHighlight = true;
+      }
+      this._highlightFromGutter = false;
+    }
+  }
+
+  override updated() {
+    if (this._pendingScrollToHighlight) {
+      this._pendingScrollToHighlight = false;
+      this._scrollToHighlightRange();
+    }
+  }
+
+  /**
+   * Scroll the first highlighted line into view.
+   * The scrollable container is the nearest ancestor with overflow-auto.
+   */
+  private _scrollToHighlightRange() {
+    if (!this.highlightRange) return;
+    const lineEl = this.querySelector(`[data-line="${this.highlightRange.startLine}"]`);
+    if (!lineEl) return;
+    // Find the scrollable container (the element with class overflow-auto, which is this element itself
+    // or its parent depending on layout). scrollIntoView with nearest block avoids jarring jumps.
+    requestAnimationFrame(() => {
+      lineEl.scrollIntoView({ block: "center", behavior: "instant" });
+    });
+  }
+
+  /** Clear highlight when clicking outside the highlighted range (but not on gutter). */
+  private _onLineClick = (e: MouseEvent) => {
+    // Ignore clicks on the gutter — those are handled by the drag system
+    if ((e.target as HTMLElement).closest?.("[data-gutter]")) return;
+    if (!this.highlightRange) return;
+    const lineEl = (e.target as HTMLElement).closest<HTMLElement>("[data-line]");
+    if (!lineEl) return;
+    const lineNo = parseInt(lineEl.dataset.line!, 10);
+    if (lineNo >= this.highlightRange.startLine && lineNo <= this.highlightRange.endLine) return;
+    this.highlightRange = null;
+  };
+
+  // ---- Gutter drag-to-highlight --------------------------------------------
+
+  /** Start a gutter drag on mousedown. */
+  private _onGutterMouseDown = (e: MouseEvent) => {
+    const gutterEl = (e.target as HTMLElement).closest<HTMLElement>("[data-gutter]");
+    if (!gutterEl) return;
+    e.preventDefault(); // prevent text selection during drag
+    const lineNo = parseInt(gutterEl.dataset.gutter!, 10);
+    this._gutterDragAnchor = lineNo;
+    this._highlightFromGutter = true;
+    this.highlightRange = { startLine: lineNo, endLine: lineNo };
+    document.addEventListener("mousemove", this._onGutterMouseMove);
+    document.addEventListener("mouseup", this._onGutterMouseUp);
+  };
+
+  /** Extend the range as the mouse moves during a gutter drag. */
+  private _onGutterMouseMove = (e: MouseEvent) => {
+    if (this._gutterDragAnchor == null) return;
+    const lineNo = this._lineFromPoint(e.clientX, e.clientY);
+    if (lineNo == null) return;
+    const anchor = this._gutterDragAnchor;
+    this._highlightFromGutter = true;
+    this.highlightRange = {
+      startLine: Math.min(anchor, lineNo),
+      endLine: Math.max(anchor, lineNo),
+    };
+  };
+
+  /** Finalize the range on mouseup. */
+  private _onGutterMouseUp = () => {
+    this._gutterDragAnchor = null;
+    document.removeEventListener("mousemove", this._onGutterMouseMove);
+    document.removeEventListener("mouseup", this._onGutterMouseUp);
+  };
+
+  /** Resolve a screen point to a 1-based line number using the data-line divs. */
+  private _lineFromPoint(x: number, y: number): number | null {
+    const el = document.elementFromPoint(x, y);
+    if (!el) return null;
+    const lineEl = (el as HTMLElement).closest<HTMLElement>("[data-line]");
+    if (!lineEl) return null;
+    return parseInt(lineEl.dataset.line!, 10);
   }
 
   /** Clear highlight cache. Call when the viewer is hidden/reused. */
@@ -81,20 +181,28 @@ export class FileViewerCode extends LitElement {
     const gutterWidth = String(truncated ? MAX_RENDER_LINES : totalLines).length;
     const wrap = shouldWrapLines(this.path);
 
-    const lineCls = wrap
-      ? "flex px-2 leading-5 font-mono hover:bg-zinc-700/30"
-      : "px-2 leading-5 font-mono whitespace-pre hover:bg-zinc-700/30";
-    const gutterCls = `select-none text-zinc-600 inline-block text-right border-r border-zinc-700/50 pr-2 mr-2${wrap ? " shrink-0" : ""}`;
+    const baseLineCls = wrap
+      ? "flex px-2 leading-5 font-mono"
+      : "px-2 leading-5 font-mono whitespace-pre";
+    const gutterCls = `select-none text-zinc-600 inline-block text-right border-r border-zinc-700/50 pr-2 mr-2 cursor-pointer hover:text-zinc-400${wrap ? " shrink-0" : ""}`;
     const contentCls = wrap
       ? "pl-3 whitespace-pre-wrap break-words min-w-0"
       : "pl-3";
 
+    const hlStart = this.highlightRange?.startLine ?? -1;
+    const hlEnd = this.highlightRange?.endLine ?? -1;
+
     return html`
-      <div class="font-mono text-xs leading-5">
+      <div class="font-mono text-xs leading-5" @click=${this._onLineClick}>
         ${displayLines.map((line, i) => {
+          const lineNo = i + 1;
           const lineHtml = this._highlight.getLineHtml(i);
+          const inRange = lineNo >= hlStart && lineNo <= hlEnd;
+          const lineCls = inRange
+            ? `${baseLineCls} bg-yellow-500/15 shadow-[inset_2px_0_0_0_theme(colors.yellow.500)]`
+            : `${baseLineCls} hover:bg-zinc-700/30`;
           return html`
-            <div class="${lineCls}"><span class="${gutterCls}" style="min-width:${gutterWidth + 2}ch">${i + 1}</span><span class="${contentCls}">${lineHtml ? unsafeHTML(lineHtml) : line}</span></div>
+            <div class="${lineCls}" data-line=${lineNo}><span class="${gutterCls}" data-gutter=${lineNo} style="min-width:${gutterWidth + 2}ch" @mousedown=${this._onGutterMouseDown}>${lineNo}</span><span class="${contentCls}">${lineHtml ? unsafeHTML(lineHtml) : line}</span></div>
           `;
         })}
         ${truncated

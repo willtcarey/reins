@@ -35,6 +35,7 @@ import type { FileSearch } from "./file-search.js";
 import "./file-viewer/file-browser.js";
 import type { FileBrowser } from "./file-viewer/file-browser.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
+import type { OpenInBrowserDetail } from "./events.js";
 
 @customElement("app-shell")
 export class AppShell extends LitElement {
@@ -161,10 +162,10 @@ export class AppShell extends LitElement {
   }
 
   /** Handle `open-in-browser` events from tool blocks and diff cards. */
-  private handleOpenInBrowser(e: CustomEvent<string>) {
-    const path = e.detail;
+  private handleOpenInBrowser(e: CustomEvent<OpenInBrowserDetail>) {
+    const { path, startLine, endLine } = e.detail;
     if (!path) return;
-    this._fileBrowser?.openFile(path);
+    this._fileBrowser?.openFile(path, startLine != null && endLine != null ? { startLine, endLine } : undefined);
   }
 
   private openSidebar() {

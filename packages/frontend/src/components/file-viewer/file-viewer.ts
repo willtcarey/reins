@@ -42,6 +42,13 @@ export class FileViewer extends LitElement {
     }
   }
 
+  /** Set a line range to highlight and scroll to in the code viewer. */
+  setHighlightRange(range: { startLine: number; endLine: number }) {
+    if (this._codeViewer) {
+      this._codeViewer.highlightRange = range;
+    }
+  }
+
   /** Clear cached state in child renderers. Call when the viewer is hidden/reused. */
   resetHighlight() {
     this._codeViewer?.resetHighlight();
