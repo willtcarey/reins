@@ -171,6 +171,7 @@ export class DiffFileTree extends LitElement {
   // ---- Render extras --------------------------------------------------------
 
   private _renderExtra: RenderExtra = (node) => {
+    if (node.type !== "file") return nothing;
     const stats = statsMap.get(node.path);
     if (!stats) return nothing;
     const { additions, removals } = stats;
