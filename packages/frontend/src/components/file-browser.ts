@@ -16,6 +16,7 @@ import { StoreController } from "../controllers/store-controller.js";
 import "./file-viewer.js";
 import "./file-tree.js";
 import type { FileViewer } from "./file-viewer.js";
+import type { FileSearch } from "./file-search.js";
 
 @customElement("file-browser")
 export class FileBrowser extends LitElement {
@@ -26,6 +27,8 @@ export class FileBrowser extends LitElement {
   @property({ attribute: false }) store!: FileBrowserStore;
 
   @state() private _open = false;
+  /** Whether the mobile tree slide-out panel is visible. */
+  @state() private _mobileTreeOpen = false;
 
   private _storeCtrl = new StoreController(this);
 
@@ -52,6 +55,7 @@ export class FileBrowser extends LitElement {
     if (!this._open) {
       this.store?.reset();
       this._open = true;
+      this._mobileTreeOpen = false;
       this.store?.fetchFiles();
     }
     this._viewer?.resetHighlight();
@@ -60,8 +64,15 @@ export class FileBrowser extends LitElement {
 
   private close() {
     this._open = false;
+    this._mobileTreeOpen = false;
     this.store?.reset();
     this._viewer?.resetHighlight();
+  }
+
+  private _openFileSearch() {
+    // Find the file-search component (sibling in app shell) and open it
+    const fileSearch = document.querySelector<FileSearch>("file-search");
+    fileSearch?.open();
   }
 
   private _onGlobalKeydown = (e: KeyboardEvent) => {
@@ -90,6 +101,28 @@ export class FileBrowser extends LitElement {
         <div class="w-[100vw] h-[100dvh] min-w-0 min-h-0 sm:w-[90vw] sm:h-[90vh] overflow-hidden bg-zinc-800 sm:ring-1 sm:ring-zinc-600 sm:rounded-lg shadow-2xl flex flex-col">
           <!-- Header -->
           <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-700 min-w-0">
+            <!-- Mobile tree toggle -->
+            <button
+              class="p-1 text-zinc-400 hover:text-zinc-200 cursor-pointer shrink-0 sm:hidden"
+              @click=${() => { this._mobileTreeOpen = !this._mobileTreeOpen; }}
+              title="Toggle file tree"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 6h18"/><path d="M3 12h18"/><path d="M3 18h18"/>
+              </svg>
+            </button>
+            <!-- Mobile file search button -->
+            <button
+              class="p-1 text-zinc-400 hover:text-zinc-200 cursor-pointer shrink-0 sm:hidden"
+              @click=${this._openFileSearch}
+              title="Search files"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+              </svg>
+            </button>
             <span class="text-sm text-zinc-300 font-mono truncate flex-1">${path}</span>
             <kbd class="hidden sm:inline text-[10px] text-zinc-500 bg-zinc-700 px-1.5 py-0.5 rounded">Esc</kbd>
             <button
@@ -105,11 +138,29 @@ export class FileBrowser extends LitElement {
           </div>
 
           <!-- Body: tree sidebar + viewer -->
-          <div class="flex flex-1 min-h-0 overflow-hidden">
-            <!-- Tree sidebar -->
+          <div class="flex flex-1 min-h-0 overflow-hidden relative">
+            <!-- Tree sidebar (desktop: always visible, mobile: slide-out overlay) -->
             <div class="hidden sm:block w-[220px] shrink-0 border-r border-zinc-700 overflow-y-auto">
               <file-tree .store=${this.store}></file-tree>
             </div>
+
+            <!-- Mobile tree slide-out panel -->
+            ${this._mobileTreeOpen ? html`
+              <div
+                class="sm:hidden absolute inset-0 z-10 flex"
+                @click=${(e: MouseEvent) => {
+                  if (e.target instanceof HTMLElement && e.target.id === "mobile-tree-backdrop") {
+                    this._mobileTreeOpen = false;
+                  }
+                }}
+              >
+                <div class="w-[260px] shrink-0 bg-zinc-800 border-r border-zinc-700 overflow-y-auto shadow-xl"
+                     @open-in-browser=${() => { this._mobileTreeOpen = false; }}>
+                  <file-tree .store=${this.store}></file-tree>
+                </div>
+                <div id="mobile-tree-backdrop" class="flex-1 bg-black/50"></div>
+              </div>
+            ` : nothing}
 
             <!-- Content viewer -->
             <file-viewer

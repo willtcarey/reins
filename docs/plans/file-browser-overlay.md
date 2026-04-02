@@ -11,7 +11,7 @@ Status: **Phase 1 complete** — fuzzy search + file viewer shipped. Phase 2 (tr
 - [x] File viewer should use `shouldWrapLines(path)` for per-file-type line wrapping, matching diff viewer behavior
 - [x] File viewer overlay goes full-screen on mobile (100vw × 100dvh, no rounded corners/ring) — centered 90vw × 90vh on desktop
 - [ ] When opening the file browser from a read or edit tool result, highlight the relevant line range in the file viewer (e.g. the lines that were read, or the lines affected by the edit). The `open-in-browser` event would need to carry optional line range info, and the viewer would scroll to and highlight those lines.
-- [ ] No way to open file search on mobile — needs a button somewhere (Cmd+P requires a keyboard). Will be addressed in Phase 2 with the file browser view.
+- [x] No way to open file search on mobile — needs a button somewhere (Cmd+P requires a keyboard). Added search icon button in the file browser header bar (visible on mobile only via `sm:hidden`).
 - [x] Reject paths outside the project directory — defense in depth: frontend `isBrowsablePath()` rejects absolute paths and `..` traversal so they don't become clickable links or fire `open-in-browser` events; `handleOpenInBrowser` in app shell double-checks; backend `assertInsideProject()` validates resolved paths in `readFile()` and returns 400. All layers covered by tests.
 
 ## Motivation
@@ -61,7 +61,7 @@ All entry points converge on a single bubbling `open-in-browser` CustomEvent, ca
 - [x] Layout refactor in `<file-browser>` — header bar + tree sidebar + viewer in flex row
 - [x] Auto-expand tree to show current file when opened via search or entry point
 - [ ] Inline image/PDF previews for binary files in `<file-viewer>`
-- [ ] Mobile support — tree as slide-out panel, button to open file search
+- [x] Mobile support — tree as slide-out panel, button to open file search
 - [ ] Line range highlighting when opening from read/edit tool results (Phase 1 bug)
 
 ### Tree sidebar
