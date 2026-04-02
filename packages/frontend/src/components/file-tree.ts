@@ -21,18 +21,18 @@ import { svg } from "lit";
 // ---- SVG icons (14×14, stroke-based) ----------------------------------------
 
 /** Closed folder: rectangle with a tab on top-left */
-const folderIcon = svg`<svg class="shrink-0 text-zinc-500" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+const folderIcon = svg`<svg class="shrink-0 text-amber-500/70" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M2 3.5h3.5l1 1H12a1 1 0 0 1 1 1V11a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z"/>
 </svg>`;
 
 /** Open folder: top edge angled open */
-const folderOpenIcon = svg`<svg class="shrink-0 text-zinc-500" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+const folderOpenIcon = svg`<svg class="shrink-0 text-amber-500/70" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M1 11V4.5a1 1 0 0 1 1-1h3.5l1 1H12a1 1 0 0 1 1 1V7"/>
   <path d="M1 11l1.5-4h10l-1.5 4H1Z"/>
 </svg>`;
 
 /** File: rectangle with dog-ear corner */
-const fileIcon = svg`<svg class="shrink-0 text-zinc-500" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+const fileIcon = svg`<svg class="shrink-0 text-blue-400/70" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M8 1H3.5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V4.5L8 1Z"/>
   <path d="M8 1v3.5h3.5"/>
 </svg>`;
@@ -156,7 +156,7 @@ export class FileTree extends LitElement {
     const isSelected = this.store?.selectedFile === fullPath;
     return html`
       <button
-        class="w-full flex items-center gap-1.5 px-2 py-0.5 text-left text-sm font-mono truncate cursor-pointer
+        class="w-full flex items-center gap-1.5 px-2 py-1 text-left text-xs font-mono truncate cursor-pointer
                hover:bg-zinc-700/50 ${isSelected ? "bg-zinc-700 text-zinc-100" : "text-zinc-300"}"
         style="padding-left: ${indent + 8}px"
         @click=${() => this._handleFileClick(fullPath)}
@@ -187,7 +187,7 @@ export class FileTree extends LitElement {
     return html`
       <div>
         <button
-          class="w-full flex items-center gap-1.5 px-2 py-0.5 text-left text-sm font-mono font-medium truncate cursor-pointer
+          class="w-full flex items-center gap-1.5 px-2 py-1 text-left text-xs font-mono font-medium truncate cursor-pointer
                  hover:bg-zinc-700/50 text-zinc-200"
           style="padding-left: ${indent + 8}px"
           @click=${() => this._handleCompactedDirClick(deepPath, intermediates)}
