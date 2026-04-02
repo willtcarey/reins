@@ -8,6 +8,7 @@
  */
 
 import { fuzzyMatch } from "./quick-open-store.js";
+import { isImage, isPdf } from "../changes/diff-utils.js";
 
 export type FileBrowserStoreListener = () => void;
 
@@ -110,6 +111,14 @@ export class FileBrowserStore {
     // Expand tree to show the file (fire-and-forget — don't block content loading)
     this.expandToPath(path);
 
+    // Images and PDFs are rendered via URL — no need to fetch content into JS.
+    if (isImage(path) || isPdf(path)) {
+      this.isBinary = true;
+      this.contentLoading = false;
+      this.notify();
+      return;
+    }
+
     try {
       const res = await fetch(
         `/api/projects/${this._projectId}/files/content?path=${encodeURIComponent(path)}`,
@@ -210,6 +219,12 @@ export class FileBrowserStore {
     }
     results.sort((a, b) => a.score - b.score);
     return results.slice(0, limit).map((r) => r.file);
+  }
+
+  /** Build a URL to fetch the raw content of the currently selected file. */
+  get contentUrl(): string | null {
+    if (!this._projectId || !this.selectedFile) return null;
+    return `/api/projects/${this._projectId}/files/content?path=${encodeURIComponent(this.selectedFile)}`;
   }
 
   /** Reset store state (e.g. when closing the overlay). */

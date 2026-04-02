@@ -16,7 +16,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import type { DiffFile, DiffHunk as DiffHunkType, DiffLine } from "../../models/changes/types.js";
-import { HighlightController } from "../../controllers/highlight-controller.js";
+import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
 import { EXPAND_STEP, escapeHtml, getHunkEndLine } from "../../models/changes/diff-utils.js";
 
 export interface ExpandDetail {
@@ -30,8 +30,12 @@ export class DiffHunk extends LitElement {
     return this;
   }
 
-  /** Highlights this hunk when it receives a new object reference. */
-  private _highlight = new HighlightController(this);
+  /** Highlights this hunk when it scrolls into view. */
+  private _highlight = new LazyHighlightController(this, () => {
+    const hunk = this.file?.hunks[this.hunkIndex];
+    if (!hunk || !this.file) return null;
+    return { path: this.file.path, hunk };
+  });
 
   /** The parent file — needed for separator gap calculations and language detection. */
   @property({ attribute: false })
@@ -53,9 +57,19 @@ export class DiffHunk extends LitElement {
   @property({ attribute: false })
   expandingHunks: Set<string> = new Set();
 
+  override connectedCallback() {
+    super.connectedCallback();
+    this._highlight.connect();
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this._highlight.disconnect();
+  }
+
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has("file") || changed.has("hunkIndex")) {
-      this._highlight.setHunk(this.file.path, this.file.hunks[this.hunkIndex]);
+      this._highlight.update();
     }
   }
 

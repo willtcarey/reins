@@ -103,6 +103,6 @@ export class LazyHighlightController {
     if (key === this._lastKey) return;
     this._lastKey = key;
 
-    this._highlight.setHunk(data.path, data.hunk);
+    this._highlight.highlight(data.path, data.hunk.lines.map((l) => l.text));
   }
 }

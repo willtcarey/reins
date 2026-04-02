@@ -1,30 +1,23 @@
 /**
  * HighlightController
  *
- * Reactive controller that owns syntax highlighting for a **single** DiffHunk.
- * Each `<diff-hunk>` creates its own instance. The shared static Highlighter
- * (Shiki web worker) is reused across all instances and survives component
- * disconnects (e.g. tab switches).
- *
- * When the `hunk` setter receives a new object reference, the hunk's text
- * lines are sent to the highlighter along with the file path (for language
- * detection). The resulting HTML is stored here — the highlighter never
- * mutates DiffLine objects. Same-ref assignments are skipped.
+ * Reactive controller that owns syntax highlighting for a set of text lines.
+ * Sends lines to the shared Shiki web worker for highlighting and stores the
+ * resulting HTML. Consumers call `highlight(path, lines)` whenever the input
+ * changes — same-reference assignments are skipped, and stale callbacks from
+ * earlier requests are ignored.
  *
  * Usage (inside a Lit component):
  *   private _highlight = new HighlightController(this);
  *
  *   willUpdate(changed) {
- *     if (changed.has('file') || changed.has('hunkIndex')) {
- *       this._highlight.setHunk(this.file.path, this.file.hunks[this.hunkIndex]);
- *     }
+ *     this._highlight.highlight(this.path, this.lines);
  *   }
  *
  *   // In render:
  *   const html = this._highlight.getLineHtml(lineIndex);
  */
 import type { ReactiveController, ReactiveControllerHost } from "lit";
-import type { DiffHunk } from "../models/changes/types.js";
 import type { IHighlighter } from "../models/changes/highlighter.js";
 import { getSharedHighlighter } from "../models/changes/shared-highlighter.js";
 
@@ -32,13 +25,12 @@ export class HighlightController implements ReactiveController {
 
   private _host: ReactiveControllerHost;
   private _highlighter: IHighlighter;
-  private _lastHunk: DiffHunk | null = null;
+  private _lastLines: string[] | null = null;
 
   /**
-   * Highlighted HTML strings for each line in the current hunk.
-   * Null until the highlighter callback fires. Cleared when a new
-   * hunk ref is set (so stale HTML from the previous hunk is never
-   * used with the new hunk's lines).
+   * Highlighted HTML strings for each line.
+   * Null until the highlighter callback fires. Cleared when new lines
+   * are set (so stale HTML is never used with new content).
    */
   private _htmlLines: string[] | null = null;
 
@@ -53,25 +45,23 @@ export class HighlightController implements ReactiveController {
   }
 
   /**
-   * Set the hunk to highlight. When the hunk reference changes, its text
-   * lines are sent to the highlighter. The resulting HTML is stored on this
-   * controller (not mutated onto the DiffLine objects). Same-ref assignments
-   * are skipped.
+   * Highlight the given lines. When the lines reference changes, they are
+   * sent to the highlighter. Same-ref assignments are skipped. Pass null
+   * to clear.
    */
-  setHunk(path: string, hunk: DiffHunk | null): void {
-    if (hunk === this._lastHunk) return;
-    this._lastHunk = hunk;
+  highlight(path: string, lines: string[] | null): void {
+    if (lines === this._lastLines) return;
+    this._lastLines = lines;
     this._htmlLines = null;
-    if (!hunk) return;
+    if (!lines) return;
 
-    const targetHunk = hunk;
+    const targetLines = lines;
     this._highlighter.highlightHunk(
       path,
-      hunk.lines.map((l) => l.text),
+      lines,
       (htmlLines) => {
-        // Guard against stale callbacks — only store the result if the
-        // hunk hasn't been replaced by a newer setHunk call.
-        if (this._lastHunk === targetHunk) {
+        // Guard against stale callbacks
+        if (this._lastLines === targetLines) {
           this._htmlLines = htmlLines;
         }
         this._host.requestUpdate();
@@ -86,10 +76,6 @@ export class HighlightController implements ReactiveController {
 
   get htmlLines(): string[] | null {
     return this._htmlLines;
-  }
-
-  get hunk(): DiffHunk | null {
-    return this._lastHunk;
   }
 
   hostConnected() {}

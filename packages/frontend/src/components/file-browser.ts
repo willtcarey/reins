@@ -13,9 +13,9 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type { FileBrowserStore } from "../models/stores/file-browser-store.js";
 import { StoreController } from "../controllers/store-controller.js";
-import "./file-viewer.js";
+import "./file-viewer/file-viewer.js";
 import "./file-tree.js";
-import type { FileViewer } from "./file-viewer.js";
+import type { FileViewer } from "./file-viewer/file-viewer.js";
 import { openFileSearchEvent } from "./events.js";
 
 @customElement("file-browser")

@@ -8,9 +8,25 @@
  *  - `toggle-rendered` (no detail) — user clicked to switch modes
  */
 
-import { LitElement, html, nothing } from "lit";
+import { LitElement, html, nothing, svg } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import "../markdown-content.js";
+import "../view-mode-tabs.js";
+import type { TabDef } from "../view-mode-tabs.js";
+
+const CODE_ICON = svg`<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>`;
+const PREVIEW_ICON = svg`<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>`;
+
+const TABS: TabDef[] = [
+  {
+    label: "Diff",
+    icon: html`<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">${CODE_ICON}</svg>`,
+  },
+  {
+    label: "Preview",
+    icon: html`<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">${PREVIEW_ICON}</svg>`,
+  },
+];
 
 @customElement("diff-markdown-preview")
 export class DiffMarkdownPreview extends LitElement {
@@ -36,41 +52,19 @@ export class DiffMarkdownPreview extends LitElement {
     this.dispatchEvent(new Event("toggle-rendered", { bubbles: true, composed: true }));
   }
 
+  private _onTabChange(e: CustomEvent<number>) {
+    const wantsPreview = e.detail === 1;
+    if (wantsPreview !== this.rendered) this._fireToggle();
+  }
+
   /** Render the Diff / Preview tab bar. */
   renderViewToggle() {
     return html`
-      <div class="flex items-center border-b border-zinc-700 bg-zinc-800/50" @click=${(e: Event) => e.stopPropagation()}>
-        <button
-          class="px-3 py-1.5 text-xs cursor-pointer transition-colors ${
-            !this.rendered
-              ? "text-zinc-200 border-b-2 border-blue-400"
-              : "text-zinc-500 hover:text-zinc-300 border-b-2 border-transparent"
-          }"
-          @click=${() => { if (this.rendered) this._fireToggle(); }}
-        >
-          <span class="flex items-center gap-1">
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
-            </svg>
-            Diff
-          </span>
-        </button>
-        <button
-          class="px-3 py-1.5 text-xs cursor-pointer transition-colors ${
-            this.rendered
-              ? "text-zinc-200 border-b-2 border-blue-400"
-              : "text-zinc-500 hover:text-zinc-300 border-b-2 border-transparent"
-          }"
-          @click=${() => { if (!this.rendered) this._fireToggle(); }}
-        >
-          <span class="flex items-center gap-1">
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-            </svg>
-            Preview
-          </span>
-        </button>
-      </div>
+      <view-mode-tabs
+        .tabs=${TABS}
+        .activeIndex=${this.rendered ? 1 : 0}
+        @tab-change=${this._onTabChange}
+      ></view-mode-tabs>
     `;
   }
 

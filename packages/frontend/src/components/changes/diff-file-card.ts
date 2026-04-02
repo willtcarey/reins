@@ -3,7 +3,7 @@
  *
  * Lit component that renders a single file's diff card: collapsible header
  * with file path, copy/download actions, optional markdown badge/toggle,
- * diff hunks, and markdown preview.
+ * diff hunks, markdown preview, and inline image/PDF previews for binary files.
  *
  * Events emitted:
  *  - `expand-up`        (detail: { filePath, hunkIndex })
@@ -18,9 +18,11 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { DiffFile } from "../../models/changes/types.js";
 import { openInBrowserEvent } from "../events.js";
-import { isMarkdown, shouldWrapLines, fileCardId, gutterWidth } from "../../models/changes/diff-utils.js";
+import { isMarkdown, isImage, isPdf, shouldWrapLines, fileCardId, gutterWidth } from "../../models/changes/diff-utils.js";
 import "./diff-hunk.js";
 import "./diff-markdown-preview.js";
+import "../file-viewer/file-viewer-image.js";
+import "../file-viewer/file-viewer-pdf.js";
 
 @customElement("diff-file-card")
 export class DiffFileCard extends LitElement {
@@ -204,6 +206,28 @@ export class DiffFileCard extends LitElement {
 
   // ---- Render ---------------------------------------------------------------
 
+  /** Render an inline image preview for image files in the diff. */
+  private renderImagePreview() {
+    const url = this._fileUrl();
+    if (!url) return nothing;
+    const filename = this.file.path.split("/").pop() ?? this.file.path;
+    return html`<file-viewer-image
+      class="block"
+      src=${url}
+      filename=${filename}
+    ></file-viewer-image>`;
+  }
+
+  /** Render an inline PDF preview for PDF files in the diff. */
+  private renderPdfPreview() {
+    const url = this._fileUrl();
+    if (!url) return nothing;
+    return html`<file-viewer-pdf
+      class="block min-h-[400px]"
+      src=${url}
+    ></file-viewer-pdf>`;
+  }
+
   private renderDiffContent() {
     const wrap = shouldWrapLines(this.file.path);
     const gw = gutterWidth(this.file);
@@ -227,6 +251,8 @@ export class DiffFileCard extends LitElement {
   override render() {
     const file = this.file;
     const isMd = isMarkdown(file.path);
+    const isImg = isImage(file.path);
+    const isPdfFile = isPdf(file.path);
 
     return html`
       <div class="mx-4 mb-3 first:mt-4 border border-zinc-700 rounded-lg" id=${fileCardId(file.path)} data-file-path=${file.path}>
@@ -261,10 +287,14 @@ export class DiffFileCard extends LitElement {
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
           </span>
           ${isMd ? html`<span class="text-blue-400 text-xs font-mono px-1.5 py-0.5 bg-blue-400/10 rounded shrink-0">MD</span>` : nothing}
+          ${isImg ? html`<span class="text-purple-400 text-xs font-mono px-1.5 py-0.5 bg-purple-400/10 rounded shrink-0">IMG</span>` : nothing}
+          ${isPdfFile ? html`<span class="text-orange-400 text-xs font-mono px-1.5 py-0.5 bg-orange-400/10 rounded shrink-0">PDF</span>` : nothing}
           ${file.additions > 0 ? html`<span class="text-green-400 text-xs font-mono shrink-0">+${file.additions}</span>` : nothing}
           ${file.removals > 0 ? html`<span class="text-red-400 text-xs font-mono shrink-0">-${file.removals}</span>` : nothing}
         </button>
         ${!this.collapsed ? html`
+          ${isImg ? this.renderImagePreview() : nothing}
+          ${isPdfFile ? this.renderPdfPreview() : nothing}
           ${isMd ? html`
             <diff-markdown-preview
               ?rendered=${this.rendered}
@@ -276,7 +306,7 @@ export class DiffFileCard extends LitElement {
               <div class="p-4 text-red-400 text-sm">${this.markdownError}</div>
             ` : nothing}
           ` : nothing}
-          ${!(isMd && this.rendered) ? this.renderDiffContent() : nothing}
+          ${!(isMd && this.rendered) && !isImg && !isPdfFile ? this.renderDiffContent() : nothing}
         ` : nothing}
       </div>
     `;

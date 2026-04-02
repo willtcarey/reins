@@ -4,6 +4,8 @@
 import { describe, test, expect } from "bun:test";
 import {
   isMarkdown,
+  isImage,
+  isPdf,
   fileCardId,
   escapeHtml,
   gutterWidth,
@@ -70,6 +72,48 @@ describe("isMarkdown", () => {
     expect(isMarkdown("markdown-parser.ts")).toBe(false);
     expect(isMarkdown("cmd/main.go")).toBe(false);
     expect(isMarkdown("readme.md.bak")).toBe(false);
+  });
+});
+
+// ---- isImage ---------------------------------------------------------------
+
+describe("isImage", () => {
+  test("recognizes common image extensions", () => {
+    expect(isImage("photo.png")).toBe(true);
+    expect(isImage("photo.jpg")).toBe(true);
+    expect(isImage("photo.jpeg")).toBe(true);
+    expect(isImage("icon.gif")).toBe(true);
+    expect(isImage("logo.svg")).toBe(true);
+    expect(isImage("hero.webp")).toBe(true);
+    expect(isImage("icon.avif")).toBe(true);
+    expect(isImage("favicon.ico")).toBe(true);
+    expect(isImage("image.bmp")).toBe(true);
+  });
+
+  test("is case-insensitive", () => {
+    expect(isImage("PHOTO.PNG")).toBe(true);
+    expect(isImage("photo.Jpg")).toBe(true);
+  });
+
+  test("rejects non-image files", () => {
+    expect(isImage("file.txt")).toBe(false);
+    expect(isImage("file.ts")).toBe(false);
+    expect(isImage("file.pdf")).toBe(false);
+    expect(isImage("file.png.bak")).toBe(false);
+  });
+});
+
+// ---- isPdf -----------------------------------------------------------------
+
+describe("isPdf", () => {
+  test("recognizes PDF files", () => {
+    expect(isPdf("document.pdf")).toBe(true);
+    expect(isPdf("docs/report.PDF")).toBe(true);
+  });
+
+  test("rejects non-PDF files", () => {
+    expect(isPdf("file.txt")).toBe(false);
+    expect(isPdf("file.pdf.bak")).toBe(false);
   });
 });
 

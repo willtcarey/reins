@@ -13,6 +13,7 @@ Status: **Phase 1 complete** — fuzzy search + file viewer shipped. Phase 2 (tr
 - [ ] When opening the file browser from a read or edit tool result, highlight the relevant line range in the file viewer (e.g. the lines that were read, or the lines affected by the edit). The `open-in-browser` event would need to carry optional line range info, and the viewer would scroll to and highlight those lines.
 - [x] No way to open file search on mobile — needs a button somewhere (Cmd+P requires a keyboard). Added search icon button in the file browser header bar (visible on mobile only via `sm:hidden`).
 - [x] Reject paths outside the project directory — defense in depth: frontend `isBrowsablePath()` rejects absolute paths and `..` traversal so they don't become clickable links or fire `open-in-browser` events; `handleOpenInBrowser` in app shell double-checks; backend `assertInsideProject()` validates resolved paths in `readFile()` and returns 400. All layers covered by tests.
+- [ ] File content not live-updated: if the agent writes to a file while the browser is open to that file, the viewer shows stale content. The store would need to re-fetch on working tree changes, and the code viewer would need to detect content changes at the same path and re-highlight.
 
 ## Motivation
 
@@ -60,8 +61,11 @@ All entry points converge on a single bubbling `open-in-browser` CustomEvent, ca
 - [x] `<file-tree>` component — directory tree with expand/collapse, click to open file, highlight active file
 - [x] Layout refactor in `<file-browser>` — header bar + tree sidebar + viewer in flex row
 - [x] Auto-expand tree to show current file when opened via search or entry point
-- [ ] Inline image/PDF previews for binary files in `<file-viewer>`
+- [x] Inline image/PDF previews for binary files in `<file-viewer>`
+- [x] Inline image/PDF previews in diff file cards (`<diff-file-card>`)
+- [x] Markdown preview with code/preview toggle in `<file-viewer>`
 - [x] Mobile support — tree as slide-out panel, button to open file search
+- [x] Migrated `<file-viewer-code>` and `<diff-hunk>` from eager `HighlightController` to `LazyHighlightController` — all highlighting consumers now use the same lazy controller
 - [ ] Line range highlighting when opening from read/edit tool results (Phase 1 bug)
 
 ### Tree sidebar
