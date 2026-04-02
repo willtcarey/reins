@@ -110,7 +110,7 @@ export class TreeView extends LitElement {
     for (let i = 0; i < depth; i++) {
       const styles = {
         position: "absolute",
-        left: `${i * INDENT_PX + 16}px`,
+        left: `${i * INDENT_PX + 8}px`,
         top: "0",
         bottom: "0",
         width: "1px",

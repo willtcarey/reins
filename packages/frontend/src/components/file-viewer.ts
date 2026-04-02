@@ -118,24 +118,25 @@ export class FileViewer extends LitElement {
     const highlighted = this._highlightedLines;
     const gutterWidth = String(truncated ? MAX_RENDER_LINES : totalLines).length;
     const wrap = shouldWrapLines(this.store.selectedFile ?? "");
-    const contentCls = wrap ? "pl-4 pr-3 py-0 whitespace-pre-wrap break-words" : "pl-4 pr-3 py-0 whitespace-pre";
+
+    const lineCls = wrap
+      ? "flex px-2 leading-5 font-mono hover:bg-zinc-700/30"
+      : "px-2 leading-5 font-mono whitespace-pre hover:bg-zinc-700/30";
+    const gutterCls = `select-none text-zinc-600 inline-block text-right border-r border-zinc-700/50 pr-2 mr-2${wrap ? " shrink-0" : ""}`;
+    const contentCls = wrap
+      ? "pl-3 whitespace-pre-wrap break-words min-w-0"
+      : "pl-3";
 
     return html`
       <div class="font-mono text-xs leading-5">
-        <table class="${wrap ? "w-full table-fixed" : "w-fit min-w-full"} border-collapse">
-          <tbody>
-            ${displayLines.map((line, i) => {
-              const lineHtml = highlighted?.[i];
-              return html`
-                <tr class="hover:bg-zinc-700/30">
-                  <td class="text-right text-zinc-600 select-none px-2 py-0 align-top whitespace-nowrap border-r border-zinc-700/50"
-                      style="${wrap ? `width: ${gutterWidth + 2}ch` : `min-width: ${gutterWidth + 1}ch`}">${i + 1}</td>
-                  <td class="${contentCls}">${lineHtml ? unsafeHTML(lineHtml) : line}</td>
-                </tr>
-              `;
-            })}
-          </tbody>
-        </table>
+        ${displayLines.map((line, i) => {
+          const lineHtml = highlighted?.[i];
+          return html`
+            <div class="${lineCls}"><span class="${gutterCls}" style="min-width:${gutterWidth + 2}ch">${i + 1}</span>${wrap
+              ? html`<span class="${contentCls}">${lineHtml ? unsafeHTML(lineHtml) : line}</span>`
+              : html`<span class="${contentCls}">${lineHtml ? unsafeHTML(lineHtml) : line}</span>`}</div>
+          `;
+        })}
         ${truncated
           ? html`<div class="px-4 py-3 text-center text-sm text-zinc-500 border-t border-zinc-700">
               Showing first ${MAX_RENDER_LINES.toLocaleString()} of ${totalLines.toLocaleString()} lines
