@@ -65,12 +65,12 @@ export class SessionListItem extends LitElement {
         <button
           data-session-id=${s.id}
           class="flex-1 min-w-0 text-left px-3 py-2 cursor-pointer transition-colors
-            ${this.active ? "bg-zinc-700/60" : "hover:bg-zinc-700/30"}"
+            ${this.active ? "bg-blue-500/15" : "hover:bg-zinc-700/30"}"
           @click=${this.handleClick}
         >
           <div class="flex items-center gap-1.5">
             <activity-dot .state=${this.activityState}></activity-dot>
-            <div class="text-xs ${this.active ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
+            <div class="text-xs ${this.active ? "text-blue-300" : "text-zinc-300"} truncate">${truncated}</div>
           </div>
           <div class="text-[10px] text-zinc-500 mt-0.5">${date} · ${s.message_count} messages</div>
         </button>

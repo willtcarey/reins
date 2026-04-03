@@ -83,10 +83,10 @@ export class AssistantSession extends LitElement {
             return html`
               <button
                 class="w-full text-left px-3 py-1.5 cursor-pointer transition-colors
-                  ${isActive ? "bg-zinc-700/60" : "hover:bg-zinc-700"}"
+                  ${isActive ? "bg-blue-500/15" : "hover:bg-zinc-700"}"
                 @click=${() => this.handleSelectSession(s.id)}
               >
-                <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
+                <div class="text-xs ${isActive ? "text-blue-300" : "text-zinc-300"} truncate">${truncated}</div>
                 <div class="text-[10px] text-zinc-500">${date} · ${s.message_count} msg</div>
               </button>
             `;
@@ -107,12 +107,12 @@ export class AssistantSession extends LitElement {
             <button
               data-session-id=${assistant.id}
               class="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 cursor-pointer text-left transition-colors hover:bg-zinc-700/30
-                ${isActive ? "bg-zinc-700/60" : ""}"
+                ${isActive ? "bg-blue-500/15" : ""}"
               @click=${() => this.handleSelectSession(assistant.id)}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-zinc-500"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
               ${this.renderActivityDot(assistant.id)}
-              <span class="text-xs ${isActive ? "text-zinc-100 font-medium" : "text-zinc-300"} truncate">Assistant</span>
+              <span class="text-xs ${isActive ? "text-blue-300 font-medium" : "text-zinc-300"} truncate">Assistant</span>
             </button>
             <popover-menu
               triggerClass="md:opacity-0 md:group-hover/assistant:opacity-100"
