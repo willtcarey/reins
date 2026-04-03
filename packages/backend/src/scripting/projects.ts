@@ -4,6 +4,7 @@
 
 import { Type } from "@sinclair/typebox";
 import { getProject, listProjects } from "../project-store.js";
+import { createProject } from "../models/projects.js";
 import { type ApiFunctionDef, defineFunction } from "./api-registry.js";
 
 // ---------------------------------------------------------------------------
@@ -43,6 +44,21 @@ export const PROJECT_FUNCTIONS: ApiFunctionDef[] = [
       if (!project) throw new Error(`Project ${params.projectId} not found`);
       return project;
     },
+  }),
+  defineFunction({
+    name: "projects.create",
+    description:
+      "Create a new project. Detects the default branch automatically if not provided. " +
+      "Throws if a project with that path already exists.",
+    parameters: Type.Object({
+      name: Type.String(),
+      path: Type.String(),
+      base_branch: Type.Optional(Type.String()),
+    }),
+    returns: ProjectSchema,
+    async: true,
+    tags: ["projects", "create", "write", "mutation"],
+    execute: (params) => createProject(params),
   }),
   defineFunction({
     name: "projects.current",

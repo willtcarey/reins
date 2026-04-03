@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
-import { useTestRepo } from "../helpers/test-repo.js";
+import { useTestRepo, createTestRepo } from "../helpers/test-repo.js";
 import { createProject, type Project } from "../../project-store.js";
 import { createTask, getTask } from "../../task-store.js";
 import {
@@ -102,6 +102,35 @@ describe("createExecuteTool", () => {
       }, undefined, undefined, strictCtx);
 
       expect(textOf(result)).toContain("Error:");
+    });
+
+    test("projects.create() creates a new project", async () => {
+      const secondRepo = await createTestRepo();
+      try {
+        const tool = makeTool();
+        const result = await tool.execute("c-create", {
+          code: `return await api.projects.create("New Project", ${JSON.stringify(secondRepo.dir)})`,
+        }, undefined, undefined, strictCtx);
+
+        const parsed = JSON.parse(textOf(result));
+        expect(parsed.name).toBe("New Project");
+        expect(parsed.path).toBe(secondRepo.dir);
+        expect(parsed.base_branch).toBe("main");
+        expect(parsed.id).toBeGreaterThan(0);
+      } finally {
+        secondRepo.cleanup();
+      }
+    });
+
+    test("projects.create() throws on duplicate path", async () => {
+      const tool = makeTool();
+      // repo.dir is already used by the project created in beforeEach
+      const result = await tool.execute("c-dup", {
+        code: `return await api.projects.create("Dupe", ${JSON.stringify(repo.dir)})`,
+      }, undefined, undefined, strictCtx);
+
+      expect(textOf(result)).toContain("Error:");
+      expect(textOf(result)).toContain("already exists");
     });
   });
 
