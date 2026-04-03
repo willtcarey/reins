@@ -125,13 +125,15 @@ The content endpoint already serves the correct `Content-Type` and raw bytes, so
 
 On mobile (or narrow viewports), the tree sidebar is hidden by default. The search-first entry point works well on mobile since there's no tree to navigate. The overlay takes the full screen. A hamburger or back-arrow reveals the tree as a slide-out panel if needed.
 
-## Phase 3 — Agent-triggered file viewing (not started)
+## Phase 3 — Agent-triggered file viewing (complete)
 
-The agent could open the file browser to a specific file via the `execute` tool (e.g., `api.ui.openFile("src/index.ts")`). Requires:
-- A new outbound WS message type: `{ type: "open_file", path: string }`
-- Backend plumbing to broadcast it when the execute tool calls `api.ui.openFile()`
-- Frontend WS listener that calls `fileBrowser.openFile(path)` on receipt
-- UX consideration: what happens if the user is mid-typing or has another overlay open?
+The agent can open the file browser to a specific file via the `execute` tool: `api.ui.openFile("src/index.ts")`, optionally with `startLine` and `endLine` for line range highlighting.
+
+### What shipped
+- **`ui.openFile()` API function** (`packages/backend/src/scripting/ui.ts`): registered in the API registry, discoverable via the `search` tool
+- **`open_file` WS message type**: added to backend `ServerMessage` and frontend `ServerMessage`/`FrontendEvent`
+- **Frontend handling**: `AppStore.onOpenFile` callback, wired in `app.ts` to call `fileBrowser.openFile(path, highlight?)`
+- **Chat panel**: ignores `open_file` events (like other non-chat events)
 
 ## Entry points
 
@@ -142,7 +144,7 @@ The agent could open the file browser to a specific file via the `execute` tool 
 | Click file path in edit tool result | ✅ Shipped | Opens overlay to that file via `openFile(path)`. |
 | Click file path in write tool result | ✅ Shipped | Opens overlay to that file via `openFile(path)`. |
 | 👁 button in diff file card header | ✅ Shipped | Opens overlay to that file via `openFile(path)`. |
-| Agent calls `api.ui.openFile(path)` | Not started | Opens overlay to that file (via WS broadcast). |
+| Agent calls `api.ui.openFile(path)` | ✅ Shipped | Opens overlay to that file (via WS broadcast). Supports optional `startLine`/`endLine`. |
 
 All entry points use a bubbling `open-in-browser` CustomEvent caught by `<app-shell>`, which calls `fileBrowser.openFile(path)`.
 

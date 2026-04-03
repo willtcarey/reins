@@ -26,6 +26,7 @@ import {
 import { TASK_FUNCTIONS, TaskSchema } from "./tasks.js";
 import { SESSION_FUNCTIONS, SessionSchema, MessageSchema } from "./sessions.js";
 import { PROJECT_FUNCTIONS, ProjectSchema } from "./projects.js";
+import { UI_FUNCTIONS } from "./ui.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -124,6 +125,7 @@ export const API_FUNCTIONS: ApiFunctionDef[] = [
   ...TASK_FUNCTIONS,
   ...SESSION_FUNCTIONS,
   ...PROJECT_FUNCTIONS,
+  ...UI_FUNCTIONS,
 ];
 
 // ---------------------------------------------------------------------------

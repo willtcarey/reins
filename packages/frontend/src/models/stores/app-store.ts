@@ -13,6 +13,7 @@ import { ActiveSessionStore } from "./active-session-store.js";
 import { ProjectCollectionStore } from "./project-collection-store.js";
 import { DiffStore } from "./diff-store.js";
 import type { ProjectInfo, SessionData } from "../ws-client.js";
+import { openInBrowserEvent } from "../../components/events.js";
 
 /** Activity state for a session: running, finished, or absent (no entry). */
 export type ActivityState = "running" | "finished";
@@ -83,6 +84,17 @@ export class AppStore {
       // Handle task_updated broadcast (not tagged with a sessionId)
       if (event.type === "task_updated") {
         this.projectCollectionStore.refresh(event.projectId);
+        return;
+      }
+
+      // Handle open_file broadcast (agent triggered ui.openFile()).
+      // Only open if the user is viewing the session that sent it.
+      if (event.type === "open_file") {
+        if (sessionId !== this._activeSession.sessionId) return;
+        const lineRange = event.startLine != null && event.endLine != null
+          ? { startLine: event.startLine, endLine: event.endLine }
+          : undefined;
+        document.dispatchEvent(openInBrowserEvent(event.path, lineRange));
         return;
       }
 

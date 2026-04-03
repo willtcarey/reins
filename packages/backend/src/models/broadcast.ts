@@ -27,7 +27,8 @@ export type ServerMessage =
   | { type: "event"; sessionId: string; projectId: number; event: AgentSessionEvent | CompactionEvent }
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null }
-  | { type: "user_message"; sessionId: string; projectId: number; message: string };
+  | { type: "user_message"; sessionId: string; projectId: number; message: string }
+  | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number };
 
 // ---------------------------------------------------------------------------
 // Broadcast function

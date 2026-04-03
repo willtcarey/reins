@@ -81,6 +81,11 @@ export class AppShell extends LitElement {
     // Listen for hash changes
     window.addEventListener("hashchange", this.onHashChange);
 
+    // Listen for open-in-browser events dispatched on document (e.g. from
+    // agent-triggered ui.openFile() via WS). Events from child components
+    // bubble to the template handler; document-level events need this listener.
+    document.addEventListener("open-in-browser", this.handleOpenInBrowser as EventListener);
+
     this.appStore.connect();
 
     // Detect virtual keyboard open/close to toggle safe-area bottom padding.
@@ -101,6 +106,7 @@ export class AppShell extends LitElement {
     super.disconnectedCallback();
     this._unsubscribeStore?.();
     window.removeEventListener("hashchange", this.onHashChange);
+    document.removeEventListener("open-in-browser", this.handleOpenInBrowser as EventListener);
     this.appStore.disconnect();
     this.appStore.dispose();
   }
@@ -167,8 +173,8 @@ export class AppShell extends LitElement {
     });
   }
 
-  /** Handle `open-in-browser` events from tool blocks and diff cards. */
-  private handleOpenInBrowser(e: CustomEvent<OpenInBrowserDetail>) {
+  /** Handle `open-in-browser` events — from child components (bubbling) and agent-triggered (document dispatch). */
+  private handleOpenInBrowser = (e: CustomEvent<OpenInBrowserDetail>) => {
     const { startLine, endLine } = e.detail;
     // Normalise absolute project paths to relative before opening
     const path = toRelativePath(e.detail.path);
@@ -243,7 +249,6 @@ export class AppShell extends LitElement {
 
     return html`
       <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"
-        @open-in-browser=${this.handleOpenInBrowser}
         @open-quick-open=${() => this.openQuickOpen()}
         @open-file-search=${() => this.openFileSearch()}>
         <!-- Connection status bar -->

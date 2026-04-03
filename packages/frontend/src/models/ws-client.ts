@@ -66,6 +66,7 @@ export type ServerMessage =
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null }
   | { type: "user_message"; sessionId: string; projectId: number; message: string }
+  | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
   | { type: "ack"; command: string }
   | { type: "error"; error: string };
 
@@ -78,6 +79,7 @@ export type FrontendEvent =
   | ChatEvent
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null }
+  | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
   | { type: "ws_ack"; command: string }
   | { type: "ws_error"; error: string };
 
@@ -283,6 +285,19 @@ export class AppClient implements IAppClient {
           listener(msg.sessionId, msg.projectId, {
             type: "user_message",
             message: msg.message,
+          });
+        }
+        break;
+
+      case "open_file":
+        for (const listener of this.eventListeners) {
+          listener(msg.sessionId, msg.projectId, {
+            type: "open_file",
+            sessionId: msg.sessionId,
+            projectId: msg.projectId,
+            path: msg.path,
+            startLine: msg.startLine,
+            endLine: msg.endLine,
           });
         }
         break;
