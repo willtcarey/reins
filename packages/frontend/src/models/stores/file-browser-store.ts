@@ -8,7 +8,6 @@
  */
 
 import { fuzzyMatch } from "./quick-open-store.js";
-import { isImage, isPdf } from "../changes/diff-utils.js";
 
 export type FileBrowserStoreListener = () => void;
 
@@ -110,14 +109,6 @@ export class FileBrowserStore {
 
     // Expand tree to show the file (fire-and-forget — don't block content loading)
     this.expandToPath(path);
-
-    // Images and PDFs are rendered via URL — no need to fetch content into JS.
-    if (isImage(path) || isPdf(path)) {
-      this.isBinary = true;
-      this.contentLoading = false;
-      this.notify();
-      return;
-    }
 
     try {
       const res = await fetch(
