@@ -320,7 +320,7 @@ describe("file routes", () => {
       expect(res!.status).toBe(200);
       const body = await res!.json();
       const fileEntry = body.entries.find((e: any) => e.name === "hello.txt");
-      expect(Object.keys(fileEntry).sort()).toEqual(["name", "type"]);
+      expect(Object.keys(fileEntry).toSorted()).toEqual(["name", "type"]);
     });
 
     test("directories sort before files", async () => {

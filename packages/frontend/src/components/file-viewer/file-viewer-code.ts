@@ -110,10 +110,11 @@ export class FileViewerCode extends LitElement {
 
   /** Clear highlight when clicking outside the highlighted range (but not on gutter). */
   private _onLineClick = (e: MouseEvent) => {
+    if (!(e.target instanceof HTMLElement)) return;
     // Ignore clicks on the gutter — those are handled by the drag system
-    if ((e.target as HTMLElement).closest?.("[data-gutter]")) return;
+    if (e.target.closest("[data-gutter]")) return;
     if (!this.highlightRange) return;
-    const lineEl = (e.target as HTMLElement).closest<HTMLElement>("[data-line]");
+    const lineEl = e.target.closest<HTMLElement>("[data-line]");
     if (!lineEl) return;
     const lineNo = parseInt(lineEl.dataset.line!, 10);
     if (lineNo >= this.highlightRange.startLine && lineNo <= this.highlightRange.endLine) return;
@@ -124,7 +125,8 @@ export class FileViewerCode extends LitElement {
 
   /** Start a gutter drag on mousedown. */
   private _onGutterMouseDown = (e: MouseEvent) => {
-    const gutterEl = (e.target as HTMLElement).closest<HTMLElement>("[data-gutter]");
+    if (!(e.target instanceof HTMLElement)) return;
+    const gutterEl = e.target.closest<HTMLElement>("[data-gutter]");
     if (!gutterEl) return;
     e.preventDefault(); // prevent text selection during drag
     const lineNo = parseInt(gutterEl.dataset.gutter!, 10);
@@ -158,8 +160,8 @@ export class FileViewerCode extends LitElement {
   /** Resolve a screen point to a 1-based line number using the data-line divs. */
   private _lineFromPoint(x: number, y: number): number | null {
     const el = document.elementFromPoint(x, y);
-    if (!el) return null;
-    const lineEl = (el as HTMLElement).closest<HTMLElement>("[data-line]");
+    if (!(el instanceof HTMLElement)) return null;
+    const lineEl = el.closest<HTMLElement>("[data-line]");
     if (!lineEl) return null;
     return parseInt(lineEl.dataset.line!, 10);
   }

@@ -91,7 +91,7 @@ export class ExecuteToolBlock extends LitElement {
   }
 
   override render() {
-    const { code, isError, output, showSpinner } = this;
+    const { isError, output, showSpinner } = this;
 
     const borderColor = isError
       ? "border-cyan-500/60"
