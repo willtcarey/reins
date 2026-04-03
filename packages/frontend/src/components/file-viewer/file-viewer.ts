@@ -2,10 +2,10 @@
  * File Viewer — dispatches to type-specific renderers based on file extension.
  *
  * Rendering strategy:
- *  - **Text files** always get a code view. If a preview renderer exists for
- *    the file type, Code + Preview tabs are shown.
- *  - **Binary files** show `<file-viewer-binary>` unless a preview renderer
- *    exists for the file type (image, PDF), in which case that renders directly.
+ *  1. Collect all applicable renderers into an array (each with a label, icon,
+ *     and render function).
+ *  2. If there are multiple renderers, show a tab bar to switch between them.
+ *  3. If there's only one renderer, render it directly — no tab bar.
  *
  * This component only renders the content area — the header bar and
  * outer container are owned by `<file-browser>`.
@@ -26,21 +26,23 @@ import "../view-mode-tabs.js";
 import type { TabDef } from "../view-mode-tabs.js";
 import type { FileViewerCode } from "./file-viewer-code.js";
 
-type ViewMode = "code" | "preview";
+interface RendererDef {
+  tab: TabDef;
+  render: () => TemplateResult;
+}
 
 const CODE_ICON = svg`<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>`;
 const PREVIEW_ICON = svg`<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>`;
 
-const CODE_PREVIEW_TABS: TabDef[] = [
-  {
-    label: "Code",
-    icon: html`<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">${CODE_ICON}</svg>`,
-  },
-  {
-    label: "Preview",
-    icon: html`<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">${PREVIEW_ICON}</svg>`,
-  },
-];
+const CODE_TAB: TabDef = {
+  label: "Code",
+  icon: html`<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">${CODE_ICON}</svg>`,
+};
+
+const PREVIEW_TAB: TabDef = {
+  label: "Preview",
+  icon: html`<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">${PREVIEW_ICON}</svg>`,
+};
 
 @customElement("file-viewer")
 export class FileViewer extends LitElement {
@@ -50,10 +52,10 @@ export class FileViewer extends LitElement {
 
   @property({ attribute: false }) store!: FileBrowserStore;
 
-  @state() private _viewMode: ViewMode = "code";
+  @state() private _activeTab = 0;
 
-  /** Track the file the view mode applies to so we reset on file change. */
-  private _viewModeFile: string | null = null;
+  /** Track the file the active tab applies to so we reset on file change. */
+  private _activeTabFile: string | null = null;
 
   private _storeCtrl = new StoreController(this);
 
@@ -64,18 +66,19 @@ export class FileViewer extends LitElement {
       this._storeCtrl.store = this.store;
     }
 
-    // Reset view mode when the selected file changes.
+    // Reset to first tab when the selected file changes.
     const path = this.store?.selectedFile ?? null;
-    if (path !== this._viewModeFile) {
-      this._viewModeFile = path;
-      this._viewMode = "code";
+    if (path !== this._activeTabFile) {
+      this._activeTabFile = path;
+      this._activeTab = 0;
     }
   }
 
   /** Set a line range to highlight and scroll to in the code viewer. */
   setHighlightRange(range: { startLine: number; endLine: number }) {
-    if (this._viewMode !== "code") {
-      this._viewMode = "code";
+    // Switch to code tab (always index 0 for text files).
+    if (this._activeTab !== 0) {
+      this._activeTab = 0;
     }
     this.updateComplete.then(() => {
       if (this._codeViewer) {
@@ -89,58 +92,72 @@ export class FileViewer extends LitElement {
     this._codeViewer?.resetHighlight();
   }
 
-  // ---- Preview renderers ----------------------------------------------------
+  // ---- Renderer collection --------------------------------------------------
 
-  /** Whether a preview renderer exists for this file type. */
-  private _hasPreviewRenderer(path: string | null): boolean {
-    if (!path) return false;
-    return isImage(path) || isPdf(path) || isMarkdown(path);
-  }
+  /** Build the list of renderers that apply to the current file. */
+  private _collectRenderers(path: string, store: FileBrowserStore): RendererDef[] {
+    const renderers: RendererDef[] = [];
 
-  /** Render the preview for the current file, or nothing. */
-  private _renderPreview(path: string, store: FileBrowserStore): TemplateResult | typeof nothing {
+    // Text files always get a code renderer.
+    if (!store.isBinary && store.fileContent != null) {
+      renderers.push({
+        tab: CODE_TAB,
+        render: () => html`<file-viewer-code
+          class="flex-1 overflow-auto min-h-0"
+          .content=${store.fileContent}
+          .path=${path}
+        ></file-viewer-code>`,
+      });
+    }
+
+    // Preview renderers (image, PDF, markdown).
     if (isImage(path) && store.contentUrl) {
       const filename = path.split("/").pop() ?? path;
-      return html`<file-viewer-image
-        class="flex-1 min-h-0 flex flex-col"
-        src=${store.contentUrl}
-        filename=${filename}
-      ></file-viewer-image>`;
+      renderers.push({
+        tab: PREVIEW_TAB,
+        render: () => html`<file-viewer-image
+          class="flex-1 min-h-0 flex flex-col"
+          src=${store.contentUrl!}
+          filename=${filename}
+        ></file-viewer-image>`,
+      });
+    } else if (isPdf(path) && store.contentUrl) {
+      renderers.push({
+        tab: PREVIEW_TAB,
+        render: () => html`<file-viewer-pdf
+          class="flex-1 min-h-0 flex flex-col"
+          src=${store.contentUrl!}
+        ></file-viewer-pdf>`,
+      });
+    } else if (isMarkdown(path) && store.fileContent) {
+      renderers.push({
+        tab: PREVIEW_TAB,
+        render: () => html`<file-viewer-markdown
+          class="flex-1 min-h-0 flex flex-col"
+          .content=${store.fileContent}
+        ></file-viewer-markdown>`,
+      });
     }
 
-    if (isPdf(path) && store.contentUrl) {
-      return html`<file-viewer-pdf
-        class="flex-1 min-h-0 flex flex-col"
-        src=${store.contentUrl}
-      ></file-viewer-pdf>`;
+    // Binary fallback — only if no other renderer matched.
+    if (renderers.length === 0) {
+      renderers.push({
+        tab: { label: "Binary" },
+        render: () => html`<file-viewer-binary
+          class="flex-1 min-h-0 flex flex-col"
+          label=${store.fileContent ?? "Binary file"}
+        ></file-viewer-binary>`,
+      });
     }
 
-    if (isMarkdown(path) && store.fileContent) {
-      return html`<file-viewer-markdown
-        class="flex-1 min-h-0 flex flex-col"
-        .content=${store.fileContent}
-      ></file-viewer-markdown>`;
-    }
-
-    return nothing;
-  }
-
-  // ---- Tabs -----------------------------------------------------------------
-
-  private _onTabChange(e: CustomEvent<number>) {
-    this._viewMode = e.detail === 0 ? "code" : "preview";
-  }
-
-  private _renderTabs() {
-    return html`<view-mode-tabs
-      class="shrink-0"
-      .tabs=${CODE_PREVIEW_TABS}
-      .activeIndex=${this._viewMode === "code" ? 0 : 1}
-      @tab-change=${this._onTabChange}
-    ></view-mode-tabs>`;
+    return renderers;
   }
 
   // ---- Render ---------------------------------------------------------------
+
+  private _onTabChange(e: CustomEvent<number>) {
+    this._activeTab = e.detail;
+  }
 
   override render() {
     const store = this.store;
@@ -161,39 +178,26 @@ export class FileViewer extends LitElement {
     const path = store.selectedFile;
     if (!path) return nothing;
 
-    const hasPreview = this._hasPreviewRenderer(path);
+    const renderers = this._collectRenderers(path, store);
+    const activeIndex = Math.min(this._activeTab, renderers.length - 1);
 
-    // ── Binary ──
-    if (store.isBinary) {
-      if (hasPreview) return this._renderPreview(path, store);
-      return html`<file-viewer-binary
-        class="flex-1 min-h-0 flex flex-col"
-        label=${store.fileContent ?? "Binary file"}
-      ></file-viewer-binary>`;
+    // Single renderer — no tab bar.
+    if (renderers.length === 1) {
+      return renderers[0].render();
     }
 
-    // ── Text with preview → code + preview tabs ──
-    if (hasPreview) {
-      return html`
-        <div class="flex-1 overflow-hidden min-h-0 flex flex-col">
-          ${this._renderTabs()}
-          ${this._viewMode === "preview"
-            ? this._renderPreview(path, store)
-            : html`<file-viewer-code
-                class="flex-1 overflow-auto min-h-0"
-                .content=${store.fileContent}
-                .path=${path}
-              ></file-viewer-code>`}
-        </div>
-      `;
-    }
-
-    // ── Text, no preview → code only ──
-    return html`<file-viewer-code
-      class="flex-1 overflow-auto min-h-0"
-      .content=${store.fileContent}
-      .path=${path}
-    ></file-viewer-code>`;
+    // Multiple renderers — show tab bar.
+    return html`
+      <div class="flex-1 overflow-hidden min-h-0 flex flex-col">
+        <view-mode-tabs
+          class="shrink-0"
+          .tabs=${renderers.map((r) => r.tab)}
+          .activeIndex=${activeIndex}
+          @tab-change=${this._onTabChange}
+        ></view-mode-tabs>
+        ${renderers[activeIndex].render()}
+      </div>
+    `;
   }
 }
 
