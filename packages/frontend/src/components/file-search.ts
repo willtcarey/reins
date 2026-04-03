@@ -35,9 +35,6 @@ export class FileSearch extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
-    if (this.store) {
-      this._unsub = this.store.subscribe(() => this._storeVersion++);
-    }
     window.addEventListener("keydown", this._onKeydown);
   }
 
@@ -47,15 +44,18 @@ export class FileSearch extends LitElement {
     window.removeEventListener("keydown", this._onKeydown);
   }
 
-  override updated(changed: Map<string, unknown>) {
-    if (changed.has("store") && this.store) {
+  override willUpdate(changed: Map<string, unknown>) {
+    if (changed.has("store")) {
       this._unsub?.();
-      this._unsub = this.store.subscribe(() => this._storeVersion++);
+      this._unsub = this.store?.subscribe(() => { this._storeVersion++; this._refilter(); }) ?? null;
     }
+  }
 
+  override updated(changed: Map<string, unknown>) {
     if (changed.has("_open") && this._open) {
       this._query = "";
       this.store?.fetchFiles();
+      this._refilter();
       this.updateComplete.then(() => {
         this._palette?.reset();
         this._palette?.focusInput();
@@ -79,17 +79,20 @@ export class FileSearch extends LitElement {
     }
   };
 
-  private get filteredFiles(): string[] {
+  @state() private _filteredFiles: string[] = [];
+
+  private _refilter() {
     void this._storeVersion;
-    return this.store?.filter(this._query) ?? [];
+    this._filteredFiles = this.store?.filter(this._query) ?? [];
   }
 
   private handleQueryChange(e: CustomEvent<string>) {
     this._query = e.detail;
+    this._refilter();
   }
 
   private handleConfirm(e: CustomEvent<number>) {
-    const items = this.filteredFiles;
+    const items = this._filteredFiles;
     if (items.length > 0 && e.detail < items.length) {
       this.close();
       this.dispatchEvent(openInBrowserEvent(items[e.detail]));
@@ -144,7 +147,7 @@ export class FileSearch extends LitElement {
   }
 
   private renderFileItem = (index: number, _selected: boolean) => {
-    const items = this.filteredFiles;
+    const items = this._filteredFiles;
     const file = items[index];
     if (!file) return html``;
 
@@ -168,7 +171,7 @@ export class FileSearch extends LitElement {
   override render() {
     if (!this._open) return nothing;
 
-    const items = this.filteredFiles;
+    const items = this._filteredFiles;
 
     return html`
       <div
