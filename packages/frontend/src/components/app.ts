@@ -36,6 +36,7 @@ import "./file-viewer/file-browser.js";
 import type { FileBrowser } from "./file-viewer/file-browser.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 import type { OpenInBrowserDetail } from "./events.js";
+import { setProjectDir, toRelativePath } from "../models/path-utils.js";
 
 @customElement("app-shell")
 export class AppShell extends LitElement {
@@ -65,6 +66,11 @@ export class AppShell extends LitElement {
     this._unsubscribeStore = this.appStore.subscribe(() => {
       this._storeVersion++;
       this.fileBrowserStore.projectId = this.appStore.projectId;
+      // Keep path-utils aware of the current project directory so
+      // absolute paths inside the project are treated as browsable.
+      const pid = this.appStore.projectId;
+      const proj = pid != null ? this.appStore.projects.find(p => p.id === pid) : null;
+      setProjectDir(proj?.path ?? null);
       this.updateTitleAndFavicon();
     });
 
@@ -163,7 +169,9 @@ export class AppShell extends LitElement {
 
   /** Handle `open-in-browser` events from tool blocks and diff cards. */
   private handleOpenInBrowser(e: CustomEvent<OpenInBrowserDetail>) {
-    const { path, startLine, endLine } = e.detail;
+    const { startLine, endLine } = e.detail;
+    // Normalise absolute project paths to relative before opening
+    const path = toRelativePath(e.detail.path);
     if (!path) return;
     this._fileBrowser?.openFile(path, startLine != null && endLine != null ? { startLine, endLine } : undefined);
   }

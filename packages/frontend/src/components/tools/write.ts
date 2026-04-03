@@ -14,7 +14,7 @@ import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
 import { escapeHtml, shouldWrapLines } from "../../models/changes/diff-utils.js";
 import { openInBrowserEvent } from "../events.js";
-import { isBrowsablePath } from "../../models/path-utils.js";
+import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { getWriteSummary, getWriteInfo, getWriteContent } from "../../models/tools/write.js";
@@ -192,7 +192,7 @@ declare global {
 
 export const writeRenderer: ToolRenderer = {
   render(block: ToolBlockData) {
-    const path = getWriteSummary(block);
+    const path = toRelativePath(getWriteSummary(block));
     const content = getWriteContent(block);
     const { lines: lineCount } = getWriteInfo(block);
     const isError = !!block.isError;

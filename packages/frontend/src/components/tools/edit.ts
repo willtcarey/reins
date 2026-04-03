@@ -17,7 +17,7 @@ import { LazyHighlightController } from "../../controllers/lazy-highlight-contro
 import { escapeHtml, shouldWrapLines } from "../../models/changes/diff-utils.js";
 import type { DiffLine } from "../../models/changes/types.js";
 import { openInBrowserEvent } from "../events.js";
-import { isBrowsablePath } from "../../models/path-utils.js";
+import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import {
@@ -223,7 +223,7 @@ declare global {
 // ---------------------------------------------------------------------------
 
 function renderEditBlock(block: ToolBlockData, showSpinner: boolean) {
-  const path = getEditSummary(block);
+  const path = toRelativePath(getEditSummary(block));
   const isError = !!block.isError;
   const { additions, removals } = getEditStats(block);
   const diffLines = getEditDiffLines(block);

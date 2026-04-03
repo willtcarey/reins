@@ -17,7 +17,7 @@ import { LazyHighlightController } from "../../controllers/lazy-highlight-contro
 import { escapeHtml, shouldWrapLines } from "../../models/changes/diff-utils.js";
 import type { ToolResultImage } from "./types.js";
 import { openInBrowserEvent } from "../events.js";
-import { isBrowsablePath } from "../../models/path-utils.js";
+import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import {
@@ -260,7 +260,7 @@ declare global {
 export const readRenderer: ToolRenderer = {
   render(block: ToolBlockData) {
     const isRunning = block.status === "running";
-    const path = getReadSummary(block);
+    const path = toRelativePath(getReadSummary(block));
     const range = getReadRange(block);
     const trailer = isRunning ? "" : getReadTrailer(block);
     const preview = isRunning ? "" : getReadPreview(block, PREVIEW_LINES);
