@@ -5,6 +5,22 @@
  * shape is a compile-time error at every call site.
  */
 
+// Augment the global event maps so addEventListener/removeEventListener
+// are fully typed for our custom events — no `as EventListener` casts needed.
+declare global {
+  interface DocumentEventMap {
+    "open-in-browser": CustomEvent<OpenInBrowserDetail>;
+    "open-quick-open": CustomEvent<void>;
+    "open-file-search": CustomEvent<void>;
+  }
+
+  interface HTMLElementEventMap {
+    "open-in-browser": CustomEvent<OpenInBrowserDetail>;
+    "open-quick-open": CustomEvent<void>;
+    "open-file-search": CustomEvent<void>;
+  }
+}
+
 /** Detail payload for the open-in-browser event. */
 export interface OpenInBrowserDetail {
   path: string;

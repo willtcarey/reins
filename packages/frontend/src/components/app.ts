@@ -84,7 +84,7 @@ export class AppShell extends LitElement {
     // Listen for open-in-browser events dispatched on document (e.g. from
     // agent-triggered ui.openFile() via WS). Events from child components
     // bubble to the template handler; document-level events need this listener.
-    document.addEventListener("open-in-browser", this.handleOpenInBrowser as EventListener);
+    document.addEventListener("open-in-browser", this.handleOpenInBrowser);
 
     this.appStore.connect();
 
@@ -106,7 +106,7 @@ export class AppShell extends LitElement {
     super.disconnectedCallback();
     this._unsubscribeStore?.();
     window.removeEventListener("hashchange", this.onHashChange);
-    document.removeEventListener("open-in-browser", this.handleOpenInBrowser as EventListener);
+    document.removeEventListener("open-in-browser", this.handleOpenInBrowser);
     this.appStore.disconnect();
     this.appStore.dispose();
   }

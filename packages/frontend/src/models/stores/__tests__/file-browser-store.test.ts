@@ -172,65 +172,26 @@ describe("FileBrowserStore tree state", () => {
   });
 });
 
-// ---- selectFile: image/PDF shortcut -----------------------------------------
+// ---- selectFile: binary detection via content-type --------------------------
 
-describe("FileBrowserStore selectFile for images/PDFs", () => {
+describe("FileBrowserStore selectFile binary detection", () => {
   let store: FileBrowserStore;
   let fetchCalls: string[];
-
-  beforeEach(() => {
-    store = new FileBrowserStore();
-    store.projectId = 1;
-    fetchCalls = [];
-    // Mock fetch that records calls — tree fetches return empty entries
-    mockFetch((url) => {
-      fetchCalls.push(String(url));
-      return new Response(JSON.stringify({ entries: [] }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    });
-  });
 
   afterEach(() => {
     restoreFetch();
   });
 
-  test("skips content fetch for image files", async () => {
-    await store.selectFile("assets/logo.png");
-
-    expect(store.selectedFile).toBe("assets/logo.png");
-    expect(store.isBinary).toBe(true);
-    expect(store.contentLoading).toBe(false);
-    // Only tree-expansion fetches should have been made, not content fetch
-    const contentFetches = fetchCalls.filter((u) => u.includes("/files/content"));
-    expect(contentFetches).toHaveLength(0);
-  });
-
-  test("skips content fetch for PDF files", async () => {
-    await store.selectFile("docs/report.pdf");
-
-    expect(store.selectedFile).toBe("docs/report.pdf");
-    expect(store.isBinary).toBe(true);
-    expect(store.contentLoading).toBe(false);
-    const contentFetches = fetchCalls.filter((u) => u.includes("/files/content"));
-    expect(contentFetches).toHaveLength(0);
-  });
-
-  test("contentUrl is set correctly for images", async () => {
-    await store.selectFile("assets/logo.png");
-    expect(store.contentUrl).toBe("/api/projects/1/files/content?path=assets%2Flogo.png");
-  });
-
-  test("still fetches content for text files", async () => {
-    // Override mock to return text content
-    restoreFetch();
+  function setupStore(contentType: string, body: BodyInit = "data") {
+    store = new FileBrowserStore();
+    store.projectId = 1;
+    fetchCalls = [];
     mockFetch((url) => {
       fetchCalls.push(String(url));
       if (String(url).includes("/files/content")) {
-        return new Response("hello world", {
+        return new Response(body, {
           status: 200,
-          headers: { "content-type": "text/plain" },
+          headers: { "content-type": contentType },
         });
       }
       return new Response(JSON.stringify({ entries: [] }), {
@@ -238,7 +199,38 @@ describe("FileBrowserStore selectFile for images/PDFs", () => {
         headers: { "content-type": "application/json" },
       });
     });
+  }
 
+  test("detects image files as binary via content-type", async () => {
+    setupStore("image/png", new Blob([new Uint8Array(64)]));
+    await store.selectFile("assets/logo.png");
+
+    expect(store.selectedFile).toBe("assets/logo.png");
+    expect(store.isBinary).toBe(true);
+    expect(store.contentLoading).toBe(false);
+    const contentFetches = fetchCalls.filter((u) => u.includes("/files/content"));
+    expect(contentFetches).toHaveLength(1);
+  });
+
+  test("detects PDF files as binary via content-type", async () => {
+    setupStore("application/pdf", new Blob([new Uint8Array(128)]));
+    await store.selectFile("docs/report.pdf");
+
+    expect(store.selectedFile).toBe("docs/report.pdf");
+    expect(store.isBinary).toBe(true);
+    expect(store.contentLoading).toBe(false);
+    const contentFetches = fetchCalls.filter((u) => u.includes("/files/content"));
+    expect(contentFetches).toHaveLength(1);
+  });
+
+  test("contentUrl is set correctly for images", async () => {
+    setupStore("image/png", new Blob([new Uint8Array(64)]));
+    await store.selectFile("assets/logo.png");
+    expect(store.contentUrl).toBe("/api/projects/1/files/content?path=assets%2Flogo.png");
+  });
+
+  test("fetches and reads content for text files", async () => {
+    setupStore("text/plain", "hello world");
     await store.selectFile("src/index.ts");
 
     const contentFetches = fetchCalls.filter((u) => u.includes("/files/content"));
