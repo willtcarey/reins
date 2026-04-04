@@ -12,12 +12,14 @@ declare global {
     "open-in-browser": CustomEvent<OpenInBrowserDetail>;
     "open-quick-open": CustomEvent<void>;
     "open-file-search": CustomEvent<void>;
+    "open-settings": CustomEvent<void>;
   }
 
   interface HTMLElementEventMap {
     "open-in-browser": CustomEvent<OpenInBrowserDetail>;
     "open-quick-open": CustomEvent<void>;
     "open-file-search": CustomEvent<void>;
+    "open-settings": CustomEvent<void>;
   }
 }
 
@@ -50,6 +52,14 @@ export function openQuickOpenEvent() {
 /** Request to open the file-search palette. */
 export function openFileSearchEvent() {
   return new CustomEvent("open-file-search", {
+    bubbles: true,
+    composed: true,
+  });
+}
+
+/** Request to open the settings panel. */
+export function openSettingsEvent() {
+  return new CustomEvent("open-settings", {
     bubbles: true,
     composed: true,
   });

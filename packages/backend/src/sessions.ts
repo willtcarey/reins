@@ -123,6 +123,7 @@ async function buildSessionOpts(params: {
     taskId: task?.id ?? null,
     broadcast,
     sessions: state.sessions,
+    encryptionSecret: state.encryptionSecret,
     createSession: createSessionFn,
     delegate: includeDelegateTool
       ? {

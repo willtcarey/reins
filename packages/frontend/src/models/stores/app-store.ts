@@ -198,12 +198,14 @@ export class AppStore {
 
   private _setRunning(sessionId: string, projectId: number): void {
     if (this._activityStates.get(sessionId)?.state === "running") return;
+    console.log(`[activity] setRunning: session=${sessionId.slice(0, 8)} project=${projectId}`);
     this._activityStates.set(sessionId, { state: "running", projectId });
     this._activityMapCache = null;
     this.notify();
   }
 
   private _setFinished(sessionId: string, projectId: number, activeSessionId: string): void {
+    console.log(`[activity] setFinished: session=${sessionId.slice(0, 8)} project=${projectId} active=${activeSessionId.slice(0, 8)} isActive=${sessionId === activeSessionId}`);
     if (sessionId === activeSessionId) {
       this.clearActivity(sessionId);
       return;

@@ -7,7 +7,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { type ApiFunctionDef, defineFunction } from "./api-registry.js";
+import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------
 // Function definitions

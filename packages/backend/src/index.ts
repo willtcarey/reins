@@ -15,6 +15,8 @@ import { watch } from "fs";
 import { resolve, join } from "path";
 import { mkdirSync, existsSync } from "fs";
 import type { ServerState, ManagedSession, WsClient } from "./state.js";
+import { resolveDataDir } from "./db.js";
+import { getOrCreateSecret } from "./crypto.js";
 
 // We import the handler types but load via dynamic import so we can reload
 import type * as RoutesModule from "./handler.js";
@@ -55,6 +57,7 @@ const state: ServerState = {
   clients: new Set<WsClient>(),
   frontendDir: new URL("../../frontend/", import.meta.url).pathname,
   explicitModel,
+  encryptionSecret: getOrCreateSecret(resolveDataDir()),
 };
 
 // Idle eviction — evict sessions that haven't had activity recently

@@ -25,6 +25,8 @@ import { registerTaskRoutes } from "./tasks.js";
 import { registerGitRoutes } from "./git.js";
 import { registerPaletteRoutes } from "./palette.js";
 import { registerUploadRoutes } from "./upload.js";
+import { registerSettingsRoutes } from "./settings.js";
+import { registerModelsRoutes } from "./models.js";
 
 /** Context available to handlers inside the project group (after project middleware). */
 export type ProjectRouteContext = RouteContext & { project: ProjectModel };
@@ -57,6 +59,8 @@ export function buildRouter() {
   registerHealthRoutes(router);
   registerProjectRoutes(router);
   registerPaletteRoutes(router);
+  registerSettingsRoutes(router);
+  registerModelsRoutes(router);
   router.group(API.sessions, (r) => {
     registerSessionRoutes(r);
   });

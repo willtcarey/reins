@@ -106,6 +106,14 @@ const MIGRATIONS: [name: string, sql: string][] = [
     "013_remove_duplicate_compaction_markers",
     `DELETE FROM session_messages WHERE role = 'compaction_summary'`,
   ],
+  [
+    "014_create_settings",
+    `CREATE TABLE settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

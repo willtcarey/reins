@@ -13,4 +13,6 @@ export const API = {
   tasks:    "/api/tasks",
   palette:  "/api/palette",
   upload:   "/api/projects/:id/upload",
+  settings: "/api/settings",
+  models:   "/api/models",
 } as const;

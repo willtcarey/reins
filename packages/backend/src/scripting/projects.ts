@@ -5,7 +5,7 @@
 import { Type } from "@sinclair/typebox";
 import { getProject, listProjects } from "../project-store.js";
 import { createProject } from "../models/projects.js";
-import { type ApiFunctionDef, defineFunction } from "./api-registry.js";
+import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------
 // Schema

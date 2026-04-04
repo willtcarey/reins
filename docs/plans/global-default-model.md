@@ -105,7 +105,7 @@ The phases are ordered so that the running instance is never broken. All new cod
 
 ### Phase 1: Settings table, store, and encryption
 
-1. Add migration 014 to `migrations.ts` — create `settings` table:
+✅ 1. Add migration 014 to `migrations.ts` — create `settings` table:
    ```sql
    CREATE TABLE settings (
      key TEXT PRIMARY KEY,
@@ -113,40 +113,40 @@ The phases are ordered so that the running instance is never broken. All new cod
      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
    )
    ```
-2. Create `crypto.ts` with `getOrCreateSecret(dataDir)`, `encrypt(plaintext, secret)`, `decrypt(encrypted, secret)`. Write tests for round-trip encryption, different secrets produce different output, tampered ciphertext throws.
-3. Define the `SETTINGS_SCHEMA` registry in `settings-store.ts` with `default_model`, `api_key_anthropic`, `api_key_openai`, `api_key_openrouter` entries and their behavior flags.
-4. Implement `getSetting()` — read from DB, deserialize JSON for object schemas, decrypt if `encrypted` flag set. Test: returns null for missing key, returns typed object for `default_model`, returns decrypted string for `api_key_*`.
-5. Implement `setSetting()` — validate against TypeBox schema, serialize JSON for objects, encrypt if `encrypted` flag set, upsert to DB. Test: round-trips with `getSetting`, rejects invalid data (wrong type, missing fields), encrypted values are not plaintext in DB.
-6. Implement `deleteSetting()` — remove from DB. Test: get returns null after delete.
-7. Implement `listSettings()` — return all stored settings, redact values where `redacted` flag set. Test: API keys show as `"********"`, non-redacted values shown normally.
+✅ 2. Create `crypto.ts` with `getOrCreateSecret(dataDir)`, `encrypt(plaintext, secret)`, `decrypt(encrypted, secret)`. Write tests for round-trip encryption, different secrets produce different output, tampered ciphertext throws.
+✅ 3. Define the `SETTINGS_SCHEMA` registry in `settings-store.ts` with `default_model`, `api_key_anthropic`, `api_key_openai`, `api_key_openrouter` entries and their behavior flags.
+✅ 4. Implement `getSetting()` — read from DB, deserialize JSON for object schemas, decrypt if `encrypted` flag set. Test: returns null for missing key, returns typed object for `default_model`, returns decrypted string for `api_key_*`.
+✅ 5. Implement `setSetting()` — validate against TypeBox schema, serialize JSON for objects, encrypt if `encrypted` flag set, upsert to DB. Test: round-trips with `getSetting`, rejects invalid data (wrong type, missing fields), encrypted values are not plaintext in DB.
+✅ 6. Implement `deleteSetting()` — remove from DB. Test: get returns null after delete.
+✅ 7. Implement `listSettings()` — return all stored settings, redact values where `redacted` flag set. Test: API keys show as `"********"`, non-redacted values shown normally.
 
 ### Phase 2: Settings and models API routes
 
-1. Add `settings: "/api/settings"` and `models: "/api/models"` to `api-paths.ts`.
-2. Create `routes/settings.ts` with `GET /api/settings` — calls `listSettings()`, returns JSON. Test: returns empty array when no settings, returns redacted values after setting API keys.
-3. Add `GET /api/settings/:key` — calls `getSetting()`, returns value or 404. For redacted keys, return `{ configured: true }` instead of the value. Test: returns 404 for missing key, returns value for `default_model`, returns `configured: true` for API keys.
-4. Add `PUT /api/settings/:key` — parse body, call `setSetting()`, return 200. Test: round-trips with GET, returns 400 for invalid key name, returns 400 for invalid value shape.
-5. Add `DELETE /api/settings/:key` — call `deleteSetting()`, return 204. Test: GET returns 404 after delete.
-6. Register settings routes in `routes/index.ts`.
-7. Create `routes/models.ts` with `GET /api/models` — query pi-ai `getProviders()` and `getModels()`, check `hasKey`/`keySource` for each provider. Test: returns expected provider/model structure, `hasKey` reflects configured keys.
-8. Register models route in `routes/index.ts`.
+✅ 1. Add `settings: "/api/settings"` and `models: "/api/models"` to `api-paths.ts`.
+✅ 2. Create `routes/settings.ts` with `GET /api/settings` — calls `listSettings()`, returns JSON. Test: returns empty array when no settings, returns redacted values after setting API keys.
+✅ 3. Add `GET /api/settings/:key` — calls `getSetting()`, returns value or 404. For redacted keys, return `{ configured: true }` instead of the value. Test: returns 404 for missing key, returns value for `default_model`, returns `configured: true` for API keys.
+✅ 4. Add `PUT /api/settings/:key` — parse body, call `setSetting()`, return 200. Test: round-trips with GET, returns 400 for invalid key name, returns 400 for invalid value shape.
+✅ 5. Add `DELETE /api/settings/:key` — call `deleteSetting()`, return 204. Test: GET returns 404 after delete.
+✅ 6. Register settings routes in `routes/index.ts`.
+✅ 7. Create `routes/models.ts` with `GET /api/models` — query pi-ai `getProviders()` and `getModels()`, check `hasKey`/`keySource` for each provider. Test: returns expected provider/model structure, `hasKey` reflects configured keys.
+✅ 8. Register models route in `routes/index.ts`.
 
 ### Phase 3: Frontend settings UI
 
-1. Create `components/settings-panel.ts` — Lit component, two sections (API Keys, Default Model).
-2. Add settings gear icon to the sidebar (`project-sidebar.ts` or equivalent). Clicking opens the settings panel.
-3. **API Keys section:** Fetch `GET /api/settings` on open. For each provider in the schema, show a row with provider name, status indicator, and masked text input. Wire blur/enter to `PUT /api/settings/api_key_<provider>`. Wire delete button to `DELETE /api/settings/api_key_<provider>`. Show "configured via environment" badge for env-var-sourced keys (from `GET /api/models` `keySource` field).
-4. **Default Model section:** Fetch `GET /api/models` for available providers/models. Fetch `GET /api/settings/default_model` for current selection. Render cascading dropdowns: provider → model → thinking level. Wire each dropdown's change event to `PUT /api/settings/default_model` with the full compound value.
-5. Handle loading/error states. Show success feedback on auto-persist (brief checkmark or similar).
+✅ 1. Create `components/settings-panel.ts` — Lit component, two sections (API Keys, Default Model).
+✅ 2. Add settings gear icon to the sidebar (`project-sidebar.ts` or equivalent). Clicking opens the settings panel.
+✅ 3. **API Keys section:** Fetch `GET /api/settings` on open. For each provider in the schema, show a row with provider name, status indicator, and masked text input. Wire blur/enter to `PUT /api/settings/api_key_<provider>`. Wire delete button to `DELETE /api/settings/api_key_<provider>`. Show "configured via environment" badge for env-var-sourced keys (from `GET /api/models` `keySource` field).
+✅ 4. **Default Model section:** Fetch `GET /api/models` for available providers/models. Fetch `GET /api/settings/default_model` for current selection. Render cascading dropdowns: provider → model → thinking level. Wire each dropdown's change event to `PUT /api/settings/default_model` with the full compound value.
+✅ 5. Handle loading/error states. Show success feedback on auto-persist (brief checkmark or similar).
 
 At this point the UI is fully functional for viewing and saving settings, but session creation doesn't read from the DB yet. Users can configure everything without risk.
 
 ### Phase 4: `sessions.setModel()` and `models.*` in the execute tool API
 
-1. Create `scripting/models.ts`. Define `models.list()` — returns providers with models, `hasKey`, thinking levels. Same data as `GET /api/models`, shared implementation. Test: returns expected shape, reflects configured keys.
-2. Define `models.listProviders()` — returns just provider names. Test: returns string array.
-3. Register model functions in `api-registry.ts` (`MODEL_FUNCTIONS` added to `API_FUNCTIONS`).
-4. Add `sessions.setModel(sessionId, provider, modelId, thinkingLevel?)` to `scripting/sessions.ts`:
+✅ 1. Create `scripting/models.ts`. Define `models.list()` — returns providers with models, `hasKey`, thinking levels. Same data as `GET /api/models`, shared implementation. Test: returns expected shape, reflects configured keys.
+✅ 2. Define `models.listProviders()` — returns just provider names. Test: returns string array.
+✅ 3. Register model functions in `api-registry.ts` (`MODEL_FUNCTIONS` added to `API_FUNCTIONS`).
+✅ 4. Add `sessions.setModel(sessionId, provider, modelId, thinkingLevel?)` to `scripting/sessions.ts`:
    - Look up `ManagedSession` from `ctx.sessions`
    - Validate session belongs to `ctx.projectId`
    - Resolve `Model` via `getModels(provider).find(m => m.id === modelId)`
@@ -155,7 +155,7 @@ At this point the UI is fully functional for viewing and saving settings, but se
    - Update SQLite row (`model_provider`, `model_id`, `thinking_level`)
    - Broadcast `session_model_changed` event
    - Return the updated session row
-5. Test: setModel updates DB row, invalid provider throws, invalid model throws, session not in project throws, thinkingLevel is optional.
+✅ 5. Test: setModel updates DB row, invalid provider throws, invalid model throws, session not in project throws, thinkingLevel is optional.
 
 ### Phase 5: Wire it all together
 

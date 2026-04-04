@@ -12,11 +12,13 @@
  *
  * Function definitions live in per-resource files (tasks.ts, sessions.ts,
  * projects.ts) and are assembled here into a single registry.
+ *
+ * Core types (ApiContext, ApiFunctionDef, defineFunction) live in
+ * define-function.ts to avoid circular imports — per-resource files
+ * import from there, and this file re-exports for external consumers.
  */
 
-import type { TSchema, TObject, TProperties, Static } from "@sinclair/typebox";
-import type { Broadcast } from "../models/broadcast.js";
-import type { ManagedSession } from "../state.js";
+import type { TSchema } from "@sinclair/typebox";
 import {
   schemaItems,
   schemaAnyOf,
@@ -27,78 +29,24 @@ import { TASK_FUNCTIONS, TaskSchema } from "./tasks.js";
 import { SESSION_FUNCTIONS, SessionSchema, MessageSchema } from "./sessions.js";
 import { PROJECT_FUNCTIONS, ProjectSchema } from "./projects.js";
 import { UI_FUNCTIONS } from "./ui.js";
+import { MODEL_FUNCTIONS } from "./models.js";
+
+// Re-export core types from define-function.ts for backward compatibility
+export type { ApiContext, ApiFunctionDef } from "./define-function.js";
+export { defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------
-// Types
+// Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Runtime context passed to every API function's execute method.
- * Carries the project scope and shared state.
- */
-export interface ApiContext {
-  projectId: number;
-  sessionId: string;
-  taskId: number | null;
-  broadcast: Broadcast;
-  sessions: Map<string, ManagedSession>;
-}
-
-/**
- * A single function in the API registry (stored form).
- *
- * Uses method syntax for `execute` to enable bivariant parameter
- * checking — this lets defineFunction() widen generic types without
- * type assertions.
- */
-export interface ApiFunctionDef {
-  /** Fully qualified name, e.g. "tasks.list". Namespace is derived from the prefix before the dot. */
-  name: string;
-  /** Human-readable description */
-  description: string;
-  /** TypeBox schema for the function's parameters (Type.Object) */
-  parameters: TObject<TProperties>;
-  /** TypeBox schema for the return type */
-  returns: TSchema;
-  /** Whether the function is async */
-  async?: boolean;
-  /** Searchable tags (lowercase) */
-  tags: string[];
-  /** The actual implementation, called at runtime. Method syntax for bivariant checking. */
-  execute(params: Record<string, unknown>, ctx: ApiContext): unknown;
-}
 
 /** Derive the namespace from a fully qualified function name (e.g. "tasks.list" → "tasks"). */
-export function fnNamespace(fn: ApiFunctionDef): string {
+export function fnNamespace(fn: { name: string }): string {
   return fn.name.split(".")[0];
 }
 
-/** Derive the method name from a fully qualified function name (e.g. "tasks.list" → "list"). */
-export function fnMethod(fn: ApiFunctionDef): string {
+/** Derive the method name from a fully qualified function name (e.g. "tasks.list" ��� "list"). */
+export function fnMethod(fn: { name: string }): string {
   return fn.name.split(".")[1];
-}
-
-/**
- * Define a single API function with full type inference.
- *
- * The generic parameters are inferred from the definition, ensuring:
- * - `execute` receives correctly-typed params (from the parameter schema)
- * - `execute` must return a value matching the return schema
- *
- * The result is widened to `ApiFunctionDef` for storage in arrays.
- * This works without type assertions because ApiFunctionDef.execute
- * uses method syntax (bivariant parameter checking).
- */
-export function defineFunction<P extends TObject<TProperties>, R extends TSchema>(def: {
-  name: string;
-  description: string;
-  parameters: P;
-  returns: R;
-  async?: boolean;
-  tags: string[];
-  execute: (params: Static<P>, ctx: ApiContext) => Static<R> | Promise<Static<R>>;
-}): ApiFunctionDef {
-  return def;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,11 +69,12 @@ export const DOMAIN_TYPES: NamedType[] = [
 // Function registry (assembled from per-resource files)
 // ---------------------------------------------------------------------------
 
-export const API_FUNCTIONS: ApiFunctionDef[] = [
+export const API_FUNCTIONS: import("./define-function.js").ApiFunctionDef[] = [
   ...TASK_FUNCTIONS,
   ...SESSION_FUNCTIONS,
   ...PROJECT_FUNCTIONS,
   ...UI_FUNCTIONS,
+  ...MODEL_FUNCTIONS,
 ];
 
 // ---------------------------------------------------------------------------
@@ -139,7 +88,7 @@ export const API_FUNCTIONS: ApiFunctionDef[] = [
  *
  * Returns matching function definitions sorted by relevance.
  */
-export function searchFunctions(query: string): ApiFunctionDef[] {
+export function searchFunctions(query: string): import("./define-function.js").ApiFunctionDef[] {
   const terms = query
     .toLowerCase()
     .split(/\s+/)
@@ -187,7 +136,7 @@ export function searchFunctions(query: string): ApiFunctionDef[] {
  * A type is "referenced" if its schema appears in any function's
  * parameters or returns.
  */
-export function referencedTypes(fns: ApiFunctionDef[]): NamedType[] {
+export function referencedTypes(fns: import("./define-function.js").ApiFunctionDef[]): NamedType[] {
   const seen = new Set<string>();
   const result: NamedType[] = [];
 
@@ -250,7 +199,7 @@ function schemaReferences(schema: TSchema, target: TSchema): boolean {
  */
 type ApiMethod = (...args: unknown[]) => unknown;
 
-export function buildApiObject(ctx: ApiContext): Record<string, Record<string, ApiMethod>> {
+export function buildApiObject(ctx: import("./define-function.js").ApiContext): Record<string, Record<string, ApiMethod>> {
   const api: Record<string, Record<string, ApiMethod>> = {};
 
   for (const fn of API_FUNCTIONS) {

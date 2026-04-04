@@ -41,6 +41,7 @@ interface Route {
 export interface RouterGroup<Ctx extends RouteContext = RouteContext> {
   get(path: string, handler: RouteHandler<Ctx>): void;
   post(path: string, handler: RouteHandler<Ctx>): void;
+  put(path: string, handler: RouteHandler<Ctx>): void;
   patch(path: string, handler: RouteHandler<Ctx>): void;
   delete(path: string, handler: RouteHandler<Ctx>): void;
   group(prefix: string, cb: (r: RouterGroup<Ctx>) => void): void;
@@ -69,6 +70,7 @@ export function createRouter(): RouterGroup & { handle: (req: Request, state: Se
     const group: RouterGroup<any> = {
       get(path, handler)    { addRoute("GET",    prefix + path, handler, parentMiddlewares); },
       post(path, handler)   { addRoute("POST",   prefix + path, handler, parentMiddlewares); },
+      put(path, handler)    { addRoute("PUT",    prefix + path, handler, parentMiddlewares); },
       patch(path, handler)  { addRoute("PATCH",  prefix + path, handler, parentMiddlewares); },
       delete(path, handler) { addRoute("DELETE", prefix + path, handler, parentMiddlewares); },
 

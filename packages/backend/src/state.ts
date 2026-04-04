@@ -34,4 +34,6 @@ export interface ServerState {
   clients: Set<WsClient>;
   frontendDir: string;
   explicitModel: Model<Api> | undefined;
+  /** Encryption secret for settings store (derived from REINS_SECRET or auto-generated). */
+  encryptionSecret: Buffer;
 }
