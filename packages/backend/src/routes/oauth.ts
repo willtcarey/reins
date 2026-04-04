@@ -121,6 +121,7 @@ export function registerOAuthRoutes(router: RouterGroup) {
       ),
     ]);
 
+    console.log(`[oauth] Started login for ${providerId}, auth URL ready`);
     return Response.json({ url: authUrl, instructions: authInstructions });
   });
 
@@ -151,15 +152,26 @@ export function registerOAuthRoutes(router: RouterGroup) {
       // Wait for the login to complete
       const credentials = await pending.loginPromise;
 
+      // Validate we got actual credentials back
+      if (
+        !credentials ||
+        typeof credentials.access !== "string" ||
+        typeof credentials.refresh !== "string" ||
+        typeof credentials.expires !== "number"
+      ) {
+        console.error(`[oauth] Invalid credentials from ${providerId}:`, credentials);
+        badRequest(
+          `OAuth login failed: provider returned invalid credentials (missing access, refresh, or expires)`,
+        );
+      }
+
       // Store credentials encrypted in DB
-      setSetting(
-        oauthSettingKey(providerId),
-        credentials,
-        ctx.state.encryptionSecret,
-      );
+      const settingKey = oauthSettingKey(providerId);
+      setSetting(settingKey, credentials, ctx.state.encryptionSecret);
 
       return Response.json({ ok: true });
     } catch (err: unknown) {
+      console.error(`[oauth] Login failed for ${providerId}:`, err);
       const msg = err instanceof Error ? err.message : String(err);
       badRequest(`OAuth login failed: ${msg}`);
     } finally {
