@@ -35,6 +35,7 @@ const EXT_OVERRIDES: Record<string, BundledLanguage> = {
   md: "markdown",
   gql: "graphql",
   rb: "ruby",
+  cshtml: "razor",
 };
 
 // Filename-based overrides for files without extensions
