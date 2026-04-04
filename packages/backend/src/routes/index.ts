@@ -27,6 +27,7 @@ import { registerPaletteRoutes } from "./palette.js";
 import { registerUploadRoutes } from "./upload.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerModelsRoutes } from "./models.js";
+import { registerOAuthRoutes } from "./oauth.js";
 
 /** Context available to handlers inside the project group (after project middleware). */
 export type ProjectRouteContext = RouteContext & { project: ProjectModel };
@@ -61,6 +62,7 @@ export function buildRouter() {
   registerPaletteRoutes(router);
   registerSettingsRoutes(router);
   registerModelsRoutes(router);
+  registerOAuthRoutes(router);
   router.group(API.sessions, (r) => {
     registerSessionRoutes(r);
   });

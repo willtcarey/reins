@@ -18,8 +18,14 @@ import { showToast } from "./toast.js";
 interface ProviderInfo {
   provider: string;
   hasKey: boolean;
-  keySource: "db" | "env" | null;
+  keySource: "db" | "env" | "oauth" | null;
   models: ModelInfo[];
+}
+
+interface OAuthProviderInfo {
+  id: string;
+  name: string;
+  configured: boolean;
 }
 
 interface ModelInfo {
@@ -39,7 +45,7 @@ interface ApiKeyState {
   /** Display label */
   label: string;
   /** Source of the active key */
-  keySource: "db" | "env" | null;
+  keySource: "db" | "env" | "oauth" | null;
 }
 
 /** Prettify a provider slug into a display label. */
@@ -70,10 +76,20 @@ export class SettingsPanel extends LitElement {
   // API Keys state
   @state() private _apiKeys: ApiKeyState[] = [];
 
+  // OAuth providers
+  @state() private _oauthProviders: OAuthProviderInfo[] = [];
+
   // "Add key" flow — selected provider + input value
   @state() private _addKeyProvider = "";
   @state() private _addKeyValue = "";
   @state() private _addKeySaving = false;
+
+  // OAuth login flow state
+  @state() private _oauthLoginProvider = "";
+  @state() private _oauthAuthUrl = "";
+  @state() private _oauthInstructions = "";
+  @state() private _oauthCallbackValue = "";
+  @state() private _oauthLoading = false;
 
   // Models state
   @state() private _providers: ProviderInfo[] = [];
@@ -101,10 +117,11 @@ export class SettingsPanel extends LitElement {
 
   private async _loadData() {
     try {
-      const [providersRes, defaultModelRes, settingsRes] = await Promise.all([
+      const [providersRes, defaultModelRes, settingsRes, oauthRes] = await Promise.all([
         fetch("/api/models"),
         fetch("/api/settings/default_model"),
         fetch("/api/settings"),
+        fetch("/api/oauth/providers"),
       ]);
 
       // Parse providers
@@ -121,9 +138,13 @@ export class SettingsPanel extends LitElement {
       }
 
       // Parse settings list (for checking which API keys are configured)
-      let settingsEntries: { key: string; redacted: boolean }[] = [];
       if (settingsRes.ok) {
-        settingsEntries = await settingsRes.json();
+        await settingsRes.json(); // consumed but not currently used beyond loading
+      }
+
+      // Parse OAuth providers
+      if (oauthRes.ok) {
+        this._oauthProviders = await oauthRes.json();
       }
 
       // Build API key states only for providers that have a key configured
@@ -139,6 +160,13 @@ export class SettingsPanel extends LitElement {
       this._addKeyProvider = "";
       this._addKeyValue = "";
       this._addKeySaving = false;
+
+      // Reset OAuth login flow
+      this._oauthLoginProvider = "";
+      this._oauthAuthUrl = "";
+      this._oauthInstructions = "";
+      this._oauthCallbackValue = "";
+      this._oauthLoading = false;
 
       // Set selected dropdowns from default model
       if (this._defaultModel) {
@@ -220,6 +248,121 @@ export class SettingsPanel extends LitElement {
       e.preventDefault();
       this._saveNewApiKey();
     }
+  }
+
+  // ---- OAuth handlers -------------------------------------------------------
+
+  /** Get OAuth providers that aren't already configured and aren't already shown as having a key. */
+  private get _availableOAuthProviders(): OAuthProviderInfo[] {
+    const configuredProviders = new Set(
+      this._apiKeys.map((k) => k.provider),
+    );
+    return this._oauthProviders.filter(
+      (p) => !p.configured && !configuredProviders.has(p.id),
+    );
+  }
+
+  /** Check if a provider has an OAuth option available. */
+  private _hasOAuthOption(provider: string): boolean {
+    return this._oauthProviders.some((p) => p.id === provider);
+  }
+
+  private async _startOAuthLogin(providerId: string) {
+    this._oauthLoading = true;
+    this._oauthLoginProvider = providerId;
+    this._oauthAuthUrl = "";
+    this._oauthCallbackValue = "";
+
+    try {
+      const res = await fetch(`/api/oauth/start/${providerId}`, {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        const detail = data?.error ?? `HTTP ${res.status}`;
+        showToast(`Failed to start OAuth login: ${detail}`, "error");
+        this._oauthLoginProvider = "";
+        return;
+      }
+
+      const data = await res.json();
+      this._oauthAuthUrl = data.url;
+      this._oauthInstructions = data.instructions || "";
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to start OAuth login: ${msg}`, "error");
+      this._oauthLoginProvider = "";
+    } finally {
+      this._oauthLoading = false;
+    }
+  }
+
+  private async _completeOAuthLogin() {
+    const code = this._oauthCallbackValue.trim();
+    if (!code || !this._oauthLoginProvider) return;
+
+    this._oauthLoading = true;
+
+    try {
+      const res = await fetch(`/api/oauth/callback/${this._oauthLoginProvider}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        const detail = data?.error ?? `HTTP ${res.status}`;
+        showToast(`OAuth login failed: ${detail}`, "error");
+      } else {
+        showToast(
+          `${providerLabel(this._oauthLoginProvider)} connected via OAuth`,
+          "success",
+        );
+        await this._loadData();
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`OAuth login failed: ${msg}`, "error");
+    } finally {
+      this._oauthLoading = false;
+    }
+  }
+
+  private async _disconnectOAuth(providerId: string) {
+    try {
+      const res = await fetch(`/api/oauth/${providerId}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        const detail = data?.error ?? `HTTP ${res.status}`;
+        showToast(`Failed to disconnect: ${detail}`, "error");
+      } else {
+        showToast(`${providerLabel(providerId)} disconnected`, "success");
+        await this._loadData();
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to disconnect: ${msg}`, "error");
+    }
+  }
+
+  private _handleOAuthCallbackKeyDown(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      this._completeOAuthLogin();
+    }
+  }
+
+  private _cancelOAuthLogin() {
+    this._oauthLoginProvider = "";
+    this._oauthAuthUrl = "";
+    this._oauthInstructions = "";
+    this._oauthCallbackValue = "";
+    this._oauthLoading = false;
   }
 
   // ---- Default Model handlers -----------------------------------------------
@@ -346,6 +489,7 @@ export class SettingsPanel extends LitElement {
   private _renderConfiguredKey(keyState: ApiKeyState) {
     const isEnv = keyState.keySource === "env";
     const isDb = keyState.keySource === "db";
+    const isOAuth = keyState.keySource === "oauth";
 
     return html`
       <div class="flex items-center gap-2 py-1.5">
@@ -364,6 +508,16 @@ export class SettingsPanel extends LitElement {
             >Remove</button>
           `
           : nothing}
+        ${isOAuth
+          ? html`
+            <span class="text-[10px] text-blue-400/70 bg-blue-900/30 px-1.5 py-0.5 rounded">oauth</span>
+            <button
+              class="text-[10px] text-red-400 hover:text-red-300 cursor-pointer transition-colors ml-auto"
+              @click=${() => this._disconnectOAuth(keyState.provider)}
+              title="Disconnect OAuth"
+            >Disconnect</button>
+          `
+          : nothing}
       </div>
     `;
   }
@@ -376,6 +530,8 @@ export class SettingsPanel extends LitElement {
     const selectClass =
       "px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 outline-none focus:border-blue-500 transition-colors cursor-pointer appearance-none";
 
+    const hasOAuth = this._addKeyProvider && this._hasOAuthOption(this._addKeyProvider);
+
     return html`
       <div class="flex flex-col gap-2 pt-2">
         <div class="flex items-center gap-2">
@@ -386,9 +542,10 @@ export class SettingsPanel extends LitElement {
               if (e.target instanceof HTMLSelectElement) {
                 this._addKeyProvider = e.target.value;
                 this._addKeyValue = "";
+                this._cancelOAuthLogin();
               }
             }}
-            ?disabled=${this._addKeySaving}
+            ?disabled=${this._addKeySaving || this._oauthLoading}
           >
             <option value="">Add API key...</option>
             ${unconfigured.map(
@@ -398,6 +555,7 @@ export class SettingsPanel extends LitElement {
         </div>
         ${this._addKeyProvider
           ? html`
+            ${hasOAuth ? this._renderOAuthSignIn(this._addKeyProvider) : nothing}
             <div class="flex items-center gap-2">
               <input
                 type="password"
@@ -422,6 +580,75 @@ export class SettingsPanel extends LitElement {
             </div>
           `
           : nothing}
+      </div>
+    `;
+  }
+
+  /** Render the OAuth sign-in flow for a specific provider. */
+  private _renderOAuthSignIn(providerId: string) {
+    // If we're not in an active OAuth login for this provider, show the sign-in button
+    if (this._oauthLoginProvider !== providerId) {
+      return html`
+        <div class="flex items-center gap-2">
+          <button
+            class="px-2.5 py-1.5 text-xs text-zinc-100 bg-purple-600 hover:bg-purple-500 rounded cursor-pointer
+                   transition-colors disabled:opacity-50"
+            @click=${() => this._startOAuthLogin(providerId)}
+            ?disabled=${this._oauthLoading}
+          >
+            ${this._oauthLoading ? "Starting..." : `Sign in with ${providerLabel(providerId)}`}
+          </button>
+          <span class="text-[10px] text-zinc-500">or paste an API key below</span>
+        </div>
+      `;
+    }
+
+    // Active OAuth login — show auth URL and callback input
+    return html`
+      <div class="flex flex-col gap-2 p-2.5 bg-zinc-700/50 border border-zinc-600 rounded">
+        ${this._oauthAuthUrl
+          ? html`
+            <div class="flex flex-col gap-1.5">
+              <span class="text-[10px] text-zinc-400">1. Open this link to sign in:</span>
+              <a
+                href=${this._oauthAuthUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-xs text-blue-400 hover:text-blue-300 break-all underline"
+              >${this._oauthAuthUrl.length > 80 ? this._oauthAuthUrl.slice(0, 80) + "..." : this._oauthAuthUrl}</a>
+              <p class="text-[10px] text-zinc-500 leading-relaxed">
+                ${this._oauthInstructions || "After signing in, your browser will try to redirect to localhost which will fail. Copy the URL from your browser's address bar and paste it below."}
+              </p>
+              <span class="text-[10px] text-zinc-400 mt-1">2. Paste the redirect URL:</span>
+              <div class="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Paste the redirect URL here..."
+                  class="flex-1 px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100
+                         placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors font-mono"
+                  .value=${this._oauthCallbackValue}
+                  @input=${(e: InputEvent) => {
+                    if (e.target instanceof HTMLInputElement) {
+                      this._oauthCallbackValue = e.target.value;
+                    }
+                  }}
+                  @keydown=${this._handleOAuthCallbackKeyDown}
+                  ?disabled=${this._oauthLoading}
+                />
+                <button
+                  class="px-2.5 py-1.5 text-xs text-zinc-100 bg-purple-600 hover:bg-purple-500 rounded cursor-pointer
+                         transition-colors disabled:opacity-50 shrink-0"
+                  @click=${this._completeOAuthLogin}
+                  ?disabled=${this._oauthLoading || !this._oauthCallbackValue.trim()}
+                >${this._oauthLoading ? "Connecting..." : "Connect"}</button>
+              </div>
+            </div>
+          `
+          : html`<span class="text-[10px] text-zinc-400">Starting OAuth flow...</span>`}
+        <button
+          class="text-[10px] text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors self-start"
+          @click=${this._cancelOAuthLogin}
+        >Cancel</button>
       </div>
     `;
   }

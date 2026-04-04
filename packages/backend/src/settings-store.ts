@@ -41,23 +41,50 @@ const API_KEY_DEF: SettingDef = {
   redacted: true,
 };
 
+/** Definition shared by all dynamic `oauth_*` settings (OAuth credentials). */
+const OAUTH_DEF: SettingDef = {
+  schema: Type.Intersect([
+    Type.Object({
+      refresh: Type.String(),
+      access: Type.String(),
+      expires: Type.Number(),
+    }),
+    Type.Record(Type.String(), Type.Unknown()),
+  ]),
+  encrypted: true,
+  redacted: true,
+};
+
 /** Matches `api_key_<provider>` where provider is a non-empty lowercase slug. */
 const API_KEY_PATTERN = /^api_key_[a-z][a-z0-9-]*$/;
 
-export type SettingsKey = keyof typeof SETTINGS_SCHEMA | `api_key_${string}`;
+/** Matches `oauth_<provider>` where provider is a non-empty lowercase slug. */
+const OAUTH_PATTERN = /^oauth_[a-z][a-z0-9-]*$/;
+
+export type SettingsKey = keyof typeof SETTINGS_SCHEMA | `api_key_${string}` | `oauth_${string}`;
+
+/** The shape of stored OAuth credentials. */
+export type OAuthCredentialValue = {
+  refresh: string;
+  access: string;
+  expires: number;
+  [key: string]: unknown;
+};
 
 /** Infer the TypeScript type for a setting key. */
 export type SettingValue<K extends SettingsKey> =
   K extends keyof typeof SETTINGS_SCHEMA
     ? Static<(typeof SETTINGS_SCHEMA)[K]["schema"]>
-    : string; // api_key_* keys are always strings
+    : K extends `oauth_${string}`
+      ? OAuthCredentialValue
+      : string; // api_key_* keys are always strings
 
 const REDACTED_PLACEHOLDER = "********";
 
 // ---- Helpers ---------------------------------------------------------------
 
 function isSettingsKey(key: string): key is SettingsKey {
-  return key in SETTINGS_SCHEMA || API_KEY_PATTERN.test(key);
+  return key in SETTINGS_SCHEMA || API_KEY_PATTERN.test(key) || OAUTH_PATTERN.test(key);
 }
 
 function getDef(key: string): SettingDef {
@@ -66,6 +93,9 @@ function getDef(key: string): SettingDef {
   }
   if (API_KEY_PATTERN.test(key)) {
     return API_KEY_DEF;
+  }
+  if (OAUTH_PATTERN.test(key)) {
+    return OAUTH_DEF;
   }
   throw new Error(`Unknown setting key: ${key}`);
 }

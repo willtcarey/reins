@@ -11,6 +11,10 @@ import {
   getModels,
   getEnvApiKey,
 } from "@mariozechner/pi-ai";
+import {
+  getOAuthProviders,
+} from "@mariozechner/pi-ai/oauth";
+import type { OAuthCredentials } from "@mariozechner/pi-ai/oauth";
 import { getSetting, type SettingsKey, isValidSettingsKey } from "../settings-store.js";
 import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 
@@ -21,7 +25,7 @@ import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 export interface ProviderInfo {
   provider: string;
   hasKey: boolean;
-  keySource: "db" | "env" | null;
+  keySource: "db" | "env" | "oauth" | null;
   models: ModelInfo[];
 }
 
@@ -39,11 +43,23 @@ function apiKeySettingForProvider(provider: string): SettingsKey | null {
   return isValidSettingsKey(key) ? key : null;
 }
 
+/** The settings key for a provider's OAuth credentials. */
+function oauthSettingForProvider(provider: string): SettingsKey {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- dynamic key validated by settings store
+  return `oauth_${provider}` as SettingsKey;
+}
+
+/** Build the set of OAuth provider IDs for quick lookup. */
+function getOAuthProviderIds(): Set<string> {
+  return new Set(getOAuthProviders().map((p) => p.id));
+}
+
 /**
  * Build the full provider/model list. Shared between the route and scripting API.
  */
 export function buildProviderList(encryptionSecret: Buffer): ProviderInfo[] {
   const providers = getProviders();
+  const oauthProviderIds = getOAuthProviderIds();
   const result: ProviderInfo[] = [];
 
   for (const provider of providers) {
@@ -51,12 +67,22 @@ export function buildProviderList(encryptionSecret: Buffer): ProviderInfo[] {
     const dbKey = settingKey ? getSetting(settingKey, encryptionSecret) : null;
     const envKey = getEnvApiKey(provider);
 
-    const hasKey = dbKey !== null || !!envKey;
-    const keySource: "db" | "env" | null = dbKey !== null
+    // Check for OAuth credentials
+    let oauthCreds: OAuthCredentials | null = null;
+    if (oauthProviderIds.has(provider)) {
+      const oauthKey = oauthSettingForProvider(provider);
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- dynamic key; runtime validated by settings store
+      oauthCreds = getSetting(oauthKey, encryptionSecret) as OAuthCredentials | null;
+    }
+
+    const hasKey = dbKey !== null || !!envKey || oauthCreds !== null;
+    const keySource: "db" | "env" | "oauth" | null = dbKey !== null
       ? "db"
       : envKey
         ? "env"
-        : null;
+        : oauthCreds !== null
+          ? "oauth"
+          : null;
 
     const models = getModels(provider).map((m) => ({
       id: m.id,

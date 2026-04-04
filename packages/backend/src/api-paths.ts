@@ -15,4 +15,8 @@ export const API = {
   upload:   "/api/projects/:id/upload",
   settings: "/api/settings",
   models:   "/api/models",
+  oauthProviders:  "/api/oauth/providers",
+  oauthStart:      "/api/oauth/start/:providerId",
+  oauthCallback:   "/api/oauth/callback/:providerId",
+  oauthCredential: "/api/oauth/:providerId",
 } as const;
