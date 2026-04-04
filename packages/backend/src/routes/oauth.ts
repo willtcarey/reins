@@ -30,6 +30,7 @@ interface PendingLogin {
   resolveManualCode: (code: string) => void;
   rejectManualCode: (err: Error) => void;
   loginPromise: Promise<OAuthCredentials>;
+  encryptionSecret: Buffer;
   createdAt: number;
 }
 
@@ -109,6 +110,7 @@ export function registerOAuthRoutes(router: RouterGroup) {
         resolveManualCode,
         rejectManualCode,
         loginPromise,
+        encryptionSecret: ctx.state.encryptionSecret,
         createdAt: Date.now(),
       });
     });
@@ -166,8 +168,10 @@ export function registerOAuthRoutes(router: RouterGroup) {
       }
 
       // Store credentials encrypted in DB
+      // Use the encryption secret captured at start time — ctx.state may not
+      // carry it reliably across the async gap between start and callback.
       const settingKey = oauthSettingKey(providerId);
-      setSetting(settingKey, credentials, ctx.state.encryptionSecret);
+      setSetting(settingKey, credentials, pending.encryptionSecret);
 
       return Response.json({ ok: true });
     } catch (err: unknown) {
