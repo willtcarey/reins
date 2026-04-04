@@ -32,43 +32,42 @@ const SETTINGS_SCHEMA = {
       thinkingLevel: Type.String(),
     }),
   },
-  api_key_anthropic: {
-    schema: Type.String(),
-    encrypted: true,
-    redacted: true,
-  },
-  api_key_openai: {
-    schema: Type.String(),
-    encrypted: true,
-    redacted: true,
-  },
-  api_key_openrouter: {
-    schema: Type.String(),
-    encrypted: true,
-    redacted: true,
-  },
 } as const satisfies Record<string, SettingDef>;
 
-export type SettingsKey = keyof typeof SETTINGS_SCHEMA;
+/** Definition shared by all dynamic `api_key_*` settings. */
+const API_KEY_DEF: SettingDef = {
+  schema: Type.String(),
+  encrypted: true,
+  redacted: true,
+};
+
+/** Matches `api_key_<provider>` where provider is a non-empty lowercase slug. */
+const API_KEY_PATTERN = /^api_key_[a-z][a-z0-9-]*$/;
+
+export type SettingsKey = keyof typeof SETTINGS_SCHEMA | `api_key_${string}`;
 
 /** Infer the TypeScript type for a setting key. */
-export type SettingValue<K extends SettingsKey> = Static<
-  (typeof SETTINGS_SCHEMA)[K]["schema"]
->;
+export type SettingValue<K extends SettingsKey> =
+  K extends keyof typeof SETTINGS_SCHEMA
+    ? Static<(typeof SETTINGS_SCHEMA)[K]["schema"]>
+    : string; // api_key_* keys are always strings
 
 const REDACTED_PLACEHOLDER = "********";
 
 // ---- Helpers ---------------------------------------------------------------
 
 function isSettingsKey(key: string): key is SettingsKey {
-  return key in SETTINGS_SCHEMA;
+  return key in SETTINGS_SCHEMA || API_KEY_PATTERN.test(key);
 }
 
 function getDef(key: string): SettingDef {
-  if (!isSettingsKey(key)) {
-    throw new Error(`Unknown setting key: ${key}`);
+  if (key in SETTINGS_SCHEMA) {
+    return SETTINGS_SCHEMA[key as keyof typeof SETTINGS_SCHEMA];
   }
-  return SETTINGS_SCHEMA[key];
+  if (API_KEY_PATTERN.test(key)) {
+    return API_KEY_DEF;
+  }
+  throw new Error(`Unknown setting key: ${key}`);
 }
 
 function serializeValue(value: unknown, def: SettingDef): string {
@@ -178,7 +177,7 @@ export function listSettings(secret: Buffer): SettingEntry[] {
   const entries: SettingEntry[] = [];
   for (const row of rows) {
     // Skip unknown keys (e.g. from a newer version)
-    if (!(row.key in SETTINGS_SCHEMA)) continue;
+    if (!isSettingsKey(row.key)) continue;
 
     const def = getDef(row.key);
     const isRedacted = def.redacted === true;
@@ -206,7 +205,7 @@ export function listSettings(secret: Buffer): SettingEntry[] {
 }
 
 /**
- * Get all valid setting keys from the schema.
+ * Get the static setting keys from the schema (does not include dynamic api_key_* keys).
  */
 export function getSettingsKeys(): SettingsKey[] {
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Object.keys loses const narrowing
@@ -215,16 +214,16 @@ export function getSettingsKeys(): SettingsKey[] {
 
 /**
  * Check whether a key is a valid settings key.
+ * Accepts both static schema keys and dynamic `api_key_*` keys.
  */
 export function isValidSettingsKey(key: string): key is SettingsKey {
-  return key in SETTINGS_SCHEMA;
+  return isSettingsKey(key);
 }
 
 /**
  * Check whether a setting key has the redacted flag.
  */
 export function isRedactedKey(key: SettingsKey): boolean {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- accessing optional flag from union
-  const def = SETTINGS_SCHEMA[key] as SettingDef;
+  const def = getDef(key);
   return def.redacted === true;
 }

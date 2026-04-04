@@ -38,21 +38,17 @@ interface ApiKeyState {
   provider: string;
   /** Display label */
   label: string;
-  /** Whether a key is configured (DB or env) */
-  configured: boolean;
   /** Source of the active key */
   keySource: "db" | "env" | null;
-  /** Current input value (empty string = no draft) */
-  inputValue: string;
-  /** Whether we're currently saving */
-  saving: boolean;
 }
 
-const KNOWN_PROVIDERS: { provider: string; label: string }[] = [
-  { provider: "anthropic", label: "Anthropic" },
-  { provider: "openai", label: "OpenAI" },
-  { provider: "openrouter", label: "OpenRouter" },
-];
+/** Prettify a provider slug into a display label. */
+function providerLabel(provider: string): string {
+  return provider
+    .split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
 
 const THINKING_LEVELS = [
   { value: "minimal", label: "Minimal" },
@@ -73,6 +69,11 @@ export class SettingsPanel extends LitElement {
 
   // API Keys state
   @state() private _apiKeys: ApiKeyState[] = [];
+
+  // "Add key" flow — selected provider + input value
+  @state() private _addKeyProvider = "";
+  @state() private _addKeyValue = "";
+  @state() private _addKeySaving = false;
 
   // Models state
   @state() private _providers: ProviderInfo[] = [];
@@ -125,22 +126,19 @@ export class SettingsPanel extends LitElement {
         settingsEntries = await settingsRes.json();
       }
 
-      // Build API key states
-      this._apiKeys = KNOWN_PROVIDERS.map(({ provider, label }) => {
-        const providerInfo = this._providers.find((p) => p.provider === provider);
-        const settingEntry = settingsEntries.find(
-          (s) => s.key === `api_key_${provider}`,
-        );
+      // Build API key states only for providers that have a key configured
+      this._apiKeys = this._providers
+        .filter((p) => p.hasKey)
+        .map((providerInfo) => ({
+          provider: providerInfo.provider,
+          label: providerLabel(providerInfo.provider),
+          keySource: providerInfo.keySource,
+        }));
 
-        return {
-          provider,
-          label,
-          configured: settingEntry != null || providerInfo?.keySource === "env",
-          keySource: providerInfo?.keySource ?? null,
-          inputValue: "",
-          saving: false,
-        };
-      });
+      // Reset add-key flow
+      this._addKeyProvider = "";
+      this._addKeyValue = "";
+      this._addKeySaving = false;
 
       // Set selected dropdowns from default model
       if (this._defaultModel) {
@@ -152,8 +150,9 @@ export class SettingsPanel extends LitElement {
         this._selectedModel = "";
         this._selectedThinking = "high";
       }
-    } catch {
-      showToast("Failed to load settings", "error");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to load settings: ${msg}`, "error");
     } finally {
       this._loading = false;
     }
@@ -161,68 +160,65 @@ export class SettingsPanel extends LitElement {
 
   // ---- API Key handlers -----------------------------------------------------
 
-  private _updateKeyInput(provider: string, value: string) {
-    this._apiKeys = this._apiKeys.map((k) =>
-      k.provider === provider ? { ...k, inputValue: value } : k,
-    );
+  /** Providers that don't yet have a key configured (candidates for the "Add" dropdown). */
+  private get _unconfiguredProviders(): ProviderInfo[] {
+    return this._providers.filter((p) => !p.hasKey);
   }
 
-  private async _saveApiKey(provider: string) {
-    const keyState = this._apiKeys.find((k) => k.provider === provider);
-    if (!keyState || !keyState.inputValue.trim()) return;
+  private async _saveNewApiKey() {
+    const provider = this._addKeyProvider;
+    const value = this._addKeyValue.trim();
+    if (!provider || !value) return;
 
-    this._apiKeys = this._apiKeys.map((k) =>
-      k.provider === provider ? { ...k, saving: true } : k,
-    );
+    this._addKeySaving = true;
 
     try {
       const res = await fetch(`/api/settings/api_key_${provider}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(keyState.inputValue.trim()),
+        body: JSON.stringify(value),
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: "Failed to save" }));
-        showToast(data.error || "Failed to save API key", "error");
+        const data = await res.json().catch(() => null);
+        const detail = data?.error ?? `HTTP ${res.status}`;
+        showToast(`Failed to save API key: ${detail}`, "error");
       } else {
-        showToast(`${keyState.label} API key saved`, "success");
-        // Reload data to refresh key status and available models
+        showToast(`${providerLabel(provider)} API key saved`, "success");
         await this._loadData();
       }
-    } catch {
-      showToast("Failed to save API key", "error");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to save API key: ${msg}`, "error");
+    } finally {
+      this._addKeySaving = false;
     }
-
-    this._apiKeys = this._apiKeys.map((k) =>
-      k.provider === provider ? { ...k, saving: false } : k,
-    );
   }
 
   private async _deleteApiKey(provider: string) {
-    const keyState = this._apiKeys.find((k) => k.provider === provider);
-    if (!keyState) return;
-
     try {
       const res = await fetch(`/api/settings/api_key_${provider}`, {
         method: "DELETE",
       });
 
       if (!res.ok) {
-        showToast("Failed to remove API key", "error");
+        const data = await res.json().catch(() => null);
+        const detail = data?.error ?? `HTTP ${res.status}`;
+        showToast(`Failed to remove API key: ${detail}`, "error");
       } else {
-        showToast(`${keyState.label} API key removed`, "success");
+        showToast(`${providerLabel(provider)} API key removed`, "success");
         await this._loadData();
       }
-    } catch {
-      showToast("Failed to remove API key", "error");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to remove API key: ${msg}`, "error");
     }
   }
 
-  private _handleKeyDown(e: KeyboardEvent, provider: string) {
+  private _handleAddKeyKeyDown(e: KeyboardEvent) {
     if (e.key === "Enter") {
       e.preventDefault();
-      this._saveApiKey(provider);
+      this._saveNewApiKey();
     }
   }
 
@@ -277,14 +273,16 @@ export class SettingsPanel extends LitElement {
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: "Failed to save" }));
-        showToast(data.error || "Failed to save default model", "error");
+        const data = await res.json().catch(() => null);
+        const detail = data?.error ?? `HTTP ${res.status}`;
+        showToast(`Failed to save default model: ${detail}`, "error");
       } else {
         this._defaultModel = body;
         showToast("Default model updated", "success");
       }
-    } catch {
-      showToast("Failed to save default model", "error");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to save default model: ${msg}`, "error");
     } finally {
       this._savingModel = false;
     }
@@ -299,7 +297,9 @@ export class SettingsPanel extends LitElement {
       });
 
       if (!res.ok) {
-        showToast("Failed to clear default model", "error");
+        const data = await res.json().catch(() => null);
+        const detail = data?.error ?? `HTTP ${res.status}`;
+        showToast(`Failed to clear default model: ${detail}`, "error");
       } else {
         this._defaultModel = null;
         this._selectedProvider = "";
@@ -307,8 +307,9 @@ export class SettingsPanel extends LitElement {
         this._selectedThinking = "high";
         showToast("Default model cleared", "success");
       }
-    } catch {
-      showToast("Failed to clear default model", "error");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to clear default model: ${msg}`, "error");
     } finally {
       this._savingModel = false;
     }
@@ -341,63 +342,86 @@ export class SettingsPanel extends LitElement {
 
   // ---- Render ---------------------------------------------------------------
 
-  private _renderApiKeyRow(keyState: ApiKeyState) {
-    const isEnvOnly = keyState.keySource === "env";
-    const hasDbKey = keyState.keySource === "db";
+  /** Render a single configured API key row (compact, read-only). */
+  private _renderConfiguredKey(keyState: ApiKeyState) {
+    const isEnv = keyState.keySource === "env";
+    const isDb = keyState.keySource === "db";
 
     return html`
-      <div class="flex flex-col gap-1.5 py-2">
+      <div class="flex items-center gap-2 py-1.5">
+        <span class="w-2 h-2 rounded-full bg-green-500 shrink-0" title="Key configured"></span>
+        <span class="text-xs font-medium text-zinc-200">${keyState.label}</span>
+        ${isEnv
+          ? html`<span class="text-[10px] text-zinc-500 bg-zinc-700/50 px-1.5 py-0.5 rounded">env</span>`
+          : nothing}
+        ${isDb
+          ? html`
+            <span class="text-[10px] text-green-400/70 bg-green-900/30 px-1.5 py-0.5 rounded">stored</span>
+            <button
+              class="text-[10px] text-red-400 hover:text-red-300 cursor-pointer transition-colors ml-auto"
+              @click=${() => this._deleteApiKey(keyState.provider)}
+              title="Remove stored key"
+            >Remove</button>
+          `
+          : nothing}
+      </div>
+    `;
+  }
+
+  /** Render the "Add API Key" dropdown + input row. */
+  private _renderAddKeyRow() {
+    const unconfigured = this._unconfiguredProviders;
+    if (unconfigured.length === 0) return nothing;
+
+    const selectClass =
+      "px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 outline-none focus:border-blue-500 transition-colors cursor-pointer appearance-none";
+
+    return html`
+      <div class="flex flex-col gap-2 pt-2">
         <div class="flex items-center gap-2">
-          <span class="text-xs font-medium text-zinc-200 w-24">${keyState.label}</span>
-          ${keyState.configured
-            ? html`<span class="w-2 h-2 rounded-full bg-green-500 shrink-0" title="Key configured"></span>`
-            : html`<span class="w-2 h-2 rounded-full bg-zinc-600 shrink-0" title="No key configured"></span>`}
-          ${isEnvOnly
-            ? html`<span class="text-[10px] text-zinc-500 bg-zinc-700/50 px-1.5 py-0.5 rounded">via environment</span>`
-            : nothing}
-          ${hasDbKey
-            ? html`
-              <span class="text-[10px] text-green-400/70 bg-green-900/30 px-1.5 py-0.5 rounded">stored</span>
-              <button
-                class="text-[10px] text-red-400 hover:text-red-300 cursor-pointer transition-colors ml-auto"
-                @click=${() => this._deleteApiKey(keyState.provider)}
-                title="Remove stored key"
-              >
-                Remove
-              </button>
-            `
-            : nothing}
-        </div>
-        <div class="flex items-center gap-2">
-          <input
-            type="password"
-            placeholder=${hasDbKey ? "Enter new key to replace..." : "Enter API key..."}
-            class="flex-1 px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100
-                   placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors font-mono"
-            .value=${keyState.inputValue}
-            @input=${(e: InputEvent) => {
-              if (e.target instanceof HTMLInputElement) {
-                this._updateKeyInput(keyState.provider, e.target.value);
+          <select
+            class="${selectClass} w-44 shrink-0"
+            .value=${this._addKeyProvider}
+            @change=${(e: Event) => {
+              if (e.target instanceof HTMLSelectElement) {
+                this._addKeyProvider = e.target.value;
+                this._addKeyValue = "";
               }
             }}
-            @keydown=${(e: KeyboardEvent) => this._handleKeyDown(e, keyState.provider)}
-            @blur=${() => {
-              if (keyState.inputValue.trim()) {
-                this._saveApiKey(keyState.provider);
-              }
-            }}
-            ?disabled=${keyState.saving}
-          />
-          ${keyState.inputValue.trim()
-            ? html`
-              <button
-                class="px-2.5 py-1.5 text-xs text-zinc-100 bg-blue-600 hover:bg-blue-500 rounded cursor-pointer transition-colors disabled:opacity-50"
-                @click=${() => this._saveApiKey(keyState.provider)}
-                ?disabled=${keyState.saving}
-              >${keyState.saving ? "Saving..." : "Save"}</button>
-            `
-            : nothing}
+            ?disabled=${this._addKeySaving}
+          >
+            <option value="">Add API key...</option>
+            ${unconfigured.map(
+              (p) => html`<option value=${p.provider}>${providerLabel(p.provider)}</option>`,
+            )}
+          </select>
         </div>
+        ${this._addKeyProvider
+          ? html`
+            <div class="flex items-center gap-2">
+              <input
+                type="password"
+                placeholder="Paste API key..."
+                class="flex-1 px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100
+                       placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors font-mono"
+                .value=${this._addKeyValue}
+                @input=${(e: InputEvent) => {
+                  if (e.target instanceof HTMLInputElement) {
+                    this._addKeyValue = e.target.value;
+                  }
+                }}
+                @keydown=${this._handleAddKeyKeyDown}
+                ?disabled=${this._addKeySaving}
+              />
+              <button
+                class="px-2.5 py-1.5 text-xs text-zinc-100 bg-blue-600 hover:bg-blue-500 rounded cursor-pointer
+                       transition-colors disabled:opacity-50"
+                @click=${this._saveNewApiKey}
+                ?disabled=${this._addKeySaving || !this._addKeyValue.trim()}
+              >${this._addKeySaving ? "Saving..." : "Save"}</button>
+            </div>
+          `
+          : nothing}
       </div>
     `;
   }
@@ -535,9 +559,14 @@ export class SettingsPanel extends LitElement {
               <!-- API Keys Section -->
               <div class="mb-5">
                 <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">API Keys</h3>
-                <div class="divide-y divide-zinc-700/50">
-                  ${this._apiKeys.map((k) => this._renderApiKeyRow(k))}
-                </div>
+                ${this._apiKeys.length > 0
+                  ? html`
+                    <div class="divide-y divide-zinc-700/50">
+                      ${this._apiKeys.map((k) => this._renderConfiguredKey(k))}
+                    </div>
+                  `
+                  : html`<p class="text-[10px] text-zinc-500 py-1">No API keys configured.</p>`}
+                ${this._renderAddKeyRow()}
               </div>
 
               <!-- Default Model Section -->
