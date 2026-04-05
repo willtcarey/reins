@@ -10,6 +10,7 @@ import {
   loadMessages,
 } from "../session-store.js";
 import { ProjectSessions } from "../models/sessions.js";
+import { ThinkingLevelSchema } from "../thinking-level.js";
 import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------
@@ -114,9 +115,7 @@ export const SESSION_FUNCTIONS: ApiFunctionDef[] = [
       sessionId: Type.String({ description: "Session ID to update." }),
       provider: Type.String({ description: "Provider name (e.g. 'anthropic', 'openai')." }),
       modelId: Type.String({ description: "Model ID (e.g. 'claude-sonnet-4-20250514')." }),
-      thinkingLevel: Type.Optional(
-        Type.String({ description: "Thinking level (e.g. 'off', 'low', 'medium', 'high'). Optional." }),
-      ),
+      thinkingLevel: Type.Optional(ThinkingLevelSchema),
     }),
     returns: SessionSchema,
     async: true,

@@ -15,6 +15,7 @@ import { Type, type TSchema, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { getDb } from "./db.js";
 import { encrypt, decrypt } from "./crypto.js";
+import { ThinkingLevelSchema } from "./thinking-level.js";
 
 // ---- Schema Registry -------------------------------------------------------
 
@@ -29,7 +30,7 @@ const SETTINGS_SCHEMA = {
     schema: Type.Object({
       provider: Type.String(),
       modelId: Type.String(),
-      thinkingLevel: Type.String(),
+      thinkingLevel: ThinkingLevelSchema,
     }),
   },
 } as const satisfies Record<string, SettingDef>;

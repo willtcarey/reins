@@ -7,7 +7,6 @@
  */
 
 import { getModels, getProviders } from "@mariozechner/pi-ai";
-import type { ThinkingLevel } from "@mariozechner/pi-ai";
 import {
   getSession,
   updateSessionMeta,
@@ -15,18 +14,7 @@ import {
 } from "../session-store.js";
 import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
-
-const THINKING_LEVELS: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh"];
-
-function validateThinkingLevel(level: string): ThinkingLevel {
-  const found = THINKING_LEVELS.find((l) => l === level);
-  if (!found) {
-    throw new Error(
-      `Invalid thinking level '${level}'. Valid levels: ${THINKING_LEVELS.join(", ")}`,
-    );
-  }
-  return found;
-}
+import { parseThinkingLevel } from "../thinking-level.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -75,9 +63,9 @@ export class ProjectSessions {
     }
 
     const thinkingLevel = params.thinkingLevel
-      ? validateThinkingLevel(params.thinkingLevel)
+      ? parseThinkingLevel(params.thinkingLevel)
       : sessionRow.thinking_level;
-    const liveThinkingLevel = params.thinkingLevel ? validateThinkingLevel(params.thinkingLevel) : null;
+    const liveThinkingLevel = params.thinkingLevel ? parseThinkingLevel(params.thinkingLevel) : null;
 
     if (managed) {
       await managed.session.setModel(model);

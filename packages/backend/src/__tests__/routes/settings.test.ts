@@ -55,7 +55,7 @@ describe("settings routes", () => {
 
     test("returns value for default_model", async () => {
       const { router, state } = setup();
-      const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" };
+      const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" } as const;
       setSetting("default_model", model);
 
       const res = await router.handle(makeRequest("GET", "/api/settings/default_model"), state);
@@ -87,7 +87,7 @@ describe("settings routes", () => {
   describe("PUT /api/settings/:key", () => {
     test("round-trips with GET", async () => {
       const { router, state } = setup();
-      const model = { provider: "openai", modelId: "gpt-5", thinkingLevel: "medium" };
+      const model = { provider: "openai", modelId: "gpt-5", thinkingLevel: "medium" } as const;
 
       const putRes = await router.handle(
         makeRequest("PUT", "/api/settings/default_model", model),
@@ -151,7 +151,7 @@ describe("settings routes", () => {
   describe("DELETE /api/settings/:key", () => {
     test("GET returns 404 after delete", async () => {
       const { router, state } = setup();
-      const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" };
+      const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" } as const;
       setSetting("default_model", model);
 
       const delRes = await router.handle(

@@ -28,6 +28,7 @@ import type { CreateSessionOpts } from "./tools/delegate.js";
 import { createBroadcast, type Broadcast } from "./models/broadcast.js";
 import { getSetting } from "./settings-store.js";
 import { getModels, getProviders, type Api, type Model } from "@mariozechner/pi-ai";
+import type { ThinkingLevel } from "./thinking-level.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -99,6 +100,16 @@ async function resolveTask(
   return task;
 }
 
+function resolveConfiguredSessionDefaults(): { model: Model<Api>; thinkingLevel: ThinkingLevel } | undefined {
+  const dbDefault = getSetting("default_model");
+  if (!dbDefault) return undefined;
+
+  const model = resolveConfiguredModel();
+  if (!model) return undefined;
+
+  return { model, thinkingLevel: dbDefault.thinkingLevel };
+}
+
 /**
  * Resolve the globally configured default model from settings.
  * Returns undefined when no valid default is configured, allowing the pi SDK
@@ -111,7 +122,7 @@ export function resolveConfiguredModel(): Model<Api> | undefined {
   const provider = getProviders().find((candidate) => candidate === dbDefault.provider);
   if (!provider) return undefined;
 
-  return getModels(provider).find((model) => model.id === dbDefault.modelId);
+  return getModels(provider).find((candidate) => candidate.id === dbDefault.modelId);
 }
 
 /**
@@ -165,7 +176,7 @@ async function buildSessionOpts(params: {
   await resourceLoader.reload();
 
   // Resolve model: DB default → SDK default
-  const model = resolveConfiguredModel();
+  const configuredDefaults = resolveConfiguredSessionDefaults();
 
   return {
     cwd: projectDir,
@@ -173,7 +184,8 @@ async function buildSessionOpts(params: {
     customTools,
     sessionManager,
     resourceLoader,
-    model,
+    model: configuredDefaults?.model,
+    configuredThinkingLevel: configuredDefaults?.thinkingLevel,
     authStorage: createDbBackedAuthStorage(),
   };
 }
@@ -215,6 +227,17 @@ export async function createNewSession(
 
   if (result.modelFallbackMessage) {
     console.warn(`  Model fallback: ${result.modelFallbackMessage}`);
+  }
+
+  if (sessionOpts.configuredThinkingLevel) {
+    try {
+      agentSession.setThinkingLevel(sessionOpts.configuredThinkingLevel);
+    } catch (err) {
+      console.warn(
+        `  Failed to apply configured thinking level '${sessionOpts.configuredThinkingLevel}' for ${sessionId}:`,
+        err,
+      );
+    }
   }
 
   // Persist session row using our pre-generated ID

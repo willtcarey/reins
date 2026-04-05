@@ -24,7 +24,7 @@ describe("settings-store", () => {
     });
 
     test("returns typed object for default_model", () => {
-      const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" };
+      const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" } as const;
       setSetting("default_model", model);
 
       const result = getSetting("default_model");
@@ -51,13 +51,13 @@ describe("settings-store", () => {
 
   describe("setSetting", () => {
     test("round-trips with getSetting for default_model", () => {
-      const model = { provider: "openai", modelId: "gpt-5", thinkingLevel: "off" };
+      const model = { provider: "openai", modelId: "gpt-5", thinkingLevel: "minimal" } as const;
       setSetting("default_model", model);
       expect(getSetting("default_model")).toEqual(model);
     });
 
     test("upserts on second call", () => {
-      setSetting("default_model", { provider: "a", modelId: "b", thinkingLevel: "off" });
+      setSetting("default_model", { provider: "a", modelId: "b", thinkingLevel: "minimal" });
       setSetting("default_model", { provider: "x", modelId: "y", thinkingLevel: "high" });
       expect(getSetting("default_model")).toEqual({
         provider: "x",
@@ -79,7 +79,13 @@ describe("settings-store", () => {
     });
 
     test("rejects invalid data — wrong field type", () => {
-      const badValue: unknown = { provider: 123, modelId: "b", thinkingLevel: "off" };
+      const badValue: unknown = { provider: 123, modelId: "b", thinkingLevel: "medium" };
+      // @ts-expect-error -- testing runtime validation of bad input
+      expect(() => setSetting("default_model", badValue)).toThrow(/Invalid value/);
+    });
+
+    test("rejects invalid data — invalid thinking level", () => {
+      const badValue: unknown = { provider: "a", modelId: "b", thinkingLevel: "off" };
       // @ts-expect-error -- testing runtime validation of bad input
       expect(() => setSetting("default_model", badValue)).toThrow(/Invalid value/);
     });
@@ -101,7 +107,7 @@ describe("settings-store", () => {
     });
 
     test("non-encrypted values are stored as plaintext JSON", () => {
-      const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" };
+      const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" } as const;
       setSetting("default_model", model);
 
       const db = getDb();
@@ -120,7 +126,7 @@ describe("settings-store", () => {
 
   describe("deleteSetting", () => {
     test("get returns null after delete", () => {
-      setSetting("default_model", { provider: "a", modelId: "b", thinkingLevel: "off" });
+      setSetting("default_model", { provider: "a", modelId: "b", thinkingLevel: "minimal" });
       expect(getSetting("default_model")).not.toBeNull();
 
       deleteSetting("default_model");
@@ -164,7 +170,7 @@ describe("settings-store", () => {
     });
 
     test("non-redacted values shown normally", () => {
-      const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" };
+      const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" } as const;
       setSetting("default_model", model);
 
       const entries = listSettings();
@@ -176,7 +182,7 @@ describe("settings-store", () => {
     });
 
     test("returns all stored settings sorted by key", () => {
-      setSetting("default_model", { provider: "a", modelId: "b", thinkingLevel: "off" });
+      setSetting("default_model", { provider: "a", modelId: "b", thinkingLevel: "minimal" });
       setSetting("api_key_anthropic", "key1");
       setSetting("api_key_openai", "key2");
 
