@@ -19,7 +19,6 @@ export interface CustomToolsOpts {
   taskId: number | null;
   broadcast: Broadcast;
   sessions: Map<string, ManagedSession>;
-  encryptionSecret: Buffer;
   /** Session creation function — used by create_task (prompt) and delegate. */
   createSession: CreateSessionFn;
   /** When set, delegation is available for this session. */
@@ -45,7 +44,6 @@ export function createCustomTools(opts: CustomToolsOpts): ToolDefinition<any>[] 
       taskId: opts.taskId,
       broadcast: opts.broadcast,
       sessions: opts.sessions,
-      encryptionSecret: opts.encryptionSecret,
     }),
   ];
 

@@ -3,31 +3,21 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { getModels, getProviders } from "@mariozechner/pi-ai";
-import type { ThinkingLevel } from "@mariozechner/pi-ai";
 import {
   getSession,
   listSessionRows,
   listTaskSessionRows,
   loadMessages,
-  updateSessionMeta,
 } from "../session-store.js";
-import { type ApiFunctionDef, defineFunction } from "./define-function.js";
+import { ProjectSessions } from "../models/sessions.js";
+import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const THINKING_LEVELS: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh"];
-
-function validateThinkingLevel(level: string): ThinkingLevel {
-  const found = THINKING_LEVELS.find((l) => l === level);
-  if (!found) {
-    throw new Error(
-      `Invalid thinking level '${level}'. Valid levels: ${THINKING_LEVELS.join(", ")}`,
-    );
-  }
-  return found;
+function sessionModel(ctx: ApiContext) {
+  return new ProjectSessions(ctx.projectId, ctx.sessions, ctx.broadcast);
 }
 
 // ---------------------------------------------------------------------------
@@ -132,68 +122,7 @@ export const SESSION_FUNCTIONS: ApiFunctionDef[] = [
     async: true,
     tags: ["sessions", "model", "set", "write", "switch", "provider"],
     execute: async (params, ctx) => {
-      // Validate session exists and belongs to this project
-      const sessionRow = getSession(params.sessionId);
-      if (!sessionRow || sessionRow.project_id !== ctx.projectId) {
-        throw new Error(`Session ${params.sessionId} not found`);
-      }
-
-      // Look up the ManagedSession (must be open in memory)
-      const managed = ctx.sessions.get(params.sessionId);
-      if (!managed) {
-        throw new Error(`Session ${params.sessionId} is not currently open`);
-      }
-
-      // Validate provider
-      const providers = getProviders();
-      const provider = providers.find((p) => p === params.provider);
-      if (!provider) {
-        throw new Error(
-          `Unknown provider '${params.provider}'. Available providers: ${providers.join(", ")}`,
-        );
-      }
-
-      // Resolve the model from pi-ai
-      const models = getModels(provider);
-      const model = models.find((m) => m.id === params.modelId);
-      if (!model) {
-        throw new Error(
-          `Model '${params.modelId}' not found for provider '${params.provider}'. ` +
-            `Available models: ${models.map((m) => m.id).join(", ")}`,
-        );
-      }
-
-      // Set the model on the pi SDK session
-      await managed.session.setModel(model);
-
-      // Set thinking level if provided
-      const thinkingLevel = params.thinkingLevel ?? managed.session.thinkingLevel;
-      if (params.thinkingLevel) {
-        const level = validateThinkingLevel(params.thinkingLevel);
-        managed.session.setThinkingLevel(level);
-      }
-
-      // Update the SQLite row
-      updateSessionMeta(params.sessionId, {
-        modelProvider: params.provider,
-        modelId: params.modelId,
-        thinkingLevel,
-      });
-
-      // Broadcast the change
-      ctx.broadcast({
-        type: "session_model_changed",
-        sessionId: params.sessionId,
-        projectId: ctx.projectId,
-        provider: params.provider,
-        modelId: params.modelId,
-        thinkingLevel,
-      });
-
-      // Return the updated session row
-      const updated = getSession(params.sessionId);
-      if (!updated) throw new Error(`Session ${params.sessionId} not found after update`);
-      return updated;
+      return sessionModel(ctx).setModel(params);
     },
   }),
 ];

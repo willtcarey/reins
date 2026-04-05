@@ -37,8 +37,8 @@ import type { FileBrowser } from "./file-viewer/file-browser.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 import type { OpenInBrowserDetail } from "./events.js";
 import { setProjectDir, toRelativePath } from "../models/path-utils.js";
-import "./settings-panel.js";
-import type { SettingsPanel } from "./settings-panel.js";
+import "./settings/panel.js";
+import type { SettingsPanel } from "./settings/panel.js";
 
 @customElement("app-shell")
 export class AppShell extends LitElement {

@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { randomBytes } from "crypto";
+import { initEncryptionSecret } from "../crypto.js";
 import { useTestDb } from "./helpers/test-db.js";
 import { getDb } from "../db.js";
 import {
@@ -10,10 +11,11 @@ import {
   isValidSettingsKey,
 } from "../settings-store.js";
 
+// Initialize encryption secret for tests
+initEncryptionSecret(randomBytes(32));
+
 describe("settings-store oauth_* keys", () => {
   useTestDb();
-
-  const secret = randomBytes(32);
 
   const validCreds = {
     refresh: "refresh-token-123",
@@ -48,30 +50,30 @@ describe("settings-store oauth_* keys", () => {
 
   describe("setSetting + getSetting", () => {
     test("round-trips basic OAuth credentials", () => {
-      setSetting("oauth_anthropic", validCreds, secret);
-      const result = getSetting("oauth_anthropic", secret);
+      setSetting("oauth_anthropic", validCreds);
+      const result = getSetting("oauth_anthropic");
       expect(result).toEqual(validCreds);
     });
 
     test("round-trips credentials with extra fields", () => {
-      setSetting("oauth_github-copilot", credsWithExtras, secret);
-      const result = getSetting("oauth_github-copilot", secret);
+      setSetting("oauth_github-copilot", credsWithExtras);
+      const result = getSetting("oauth_github-copilot");
       expect(result).toEqual(credsWithExtras);
     });
 
     test("rejects credentials missing required fields", () => {
       const bad = { refresh: "token" }; // missing access and expires
       // @ts-expect-error -- testing runtime validation of bad input
-      expect(() => setSetting("oauth_anthropic", bad, secret)).toThrow(/Invalid value/);
+      expect(() => setSetting("oauth_anthropic", bad)).toThrow(/Invalid value/);
     });
 
     test("rejects non-object value", () => {
       // @ts-expect-error -- testing runtime validation
-      expect(() => setSetting("oauth_anthropic", "not-an-object", secret)).toThrow(/Invalid value/);
+      expect(() => setSetting("oauth_anthropic", "not-an-object")).toThrow(/Invalid value/);
     });
 
     test("encrypted values are not plaintext in DB", () => {
-      setSetting("oauth_anthropic", validCreds, secret);
+      setSetting("oauth_anthropic", validCreds);
 
       const db = getDb();
       const row = db
@@ -90,11 +92,11 @@ describe("settings-store oauth_* keys", () => {
 
   describe("deleteSetting", () => {
     test("removes stored OAuth credentials", () => {
-      setSetting("oauth_anthropic", validCreds, secret);
-      expect(getSetting("oauth_anthropic", secret)).not.toBeNull();
+      setSetting("oauth_anthropic", validCreds);
+      expect(getSetting("oauth_anthropic")).not.toBeNull();
 
       deleteSetting("oauth_anthropic");
-      expect(getSetting("oauth_anthropic", secret)).toBeNull();
+      expect(getSetting("oauth_anthropic")).toBeNull();
     });
   });
 
@@ -102,9 +104,9 @@ describe("settings-store oauth_* keys", () => {
 
   describe("listSettings", () => {
     test("OAuth keys show as redacted", () => {
-      setSetting("oauth_anthropic", validCreds, secret);
+      setSetting("oauth_anthropic", validCreds);
 
-      const entries = listSettings(secret);
+      const entries = listSettings();
       const entry = entries.find((e) => e.key === "oauth_anthropic");
 
       expect(entry).toBeDefined();

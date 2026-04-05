@@ -33,13 +33,11 @@ Then open [http://localhost:3100](http://localhost:3100) and add projects using 
 
 ### Using other providers
 
-Pass the relevant API key and set `REINS_PROVIDER` / `REINS_MODEL` together:
+Pass the relevant provider API key, then choose the default model in the app's settings UI:
 
 ```sh
 docker run -p 3100:3100 \
   -e GEMINI_API_KEY=your-key \
-  -e REINS_PROVIDER=google \
-  -e REINS_MODEL=gemini-2.5-pro \
   -v reins-data:/data \
   reins
 ```

@@ -83,13 +83,17 @@ const REDACTED_PLACEHOLDER = "********";
 
 // ---- Helpers ---------------------------------------------------------------
 
+function isStaticSettingsKey(key: string): key is keyof typeof SETTINGS_SCHEMA {
+  return key in SETTINGS_SCHEMA;
+}
+
 function isSettingsKey(key: string): key is SettingsKey {
-  return key in SETTINGS_SCHEMA || API_KEY_PATTERN.test(key) || OAUTH_PATTERN.test(key);
+  return isStaticSettingsKey(key) || API_KEY_PATTERN.test(key) || OAUTH_PATTERN.test(key);
 }
 
 function getDef(key: string): SettingDef {
-  if (key in SETTINGS_SCHEMA) {
-    return SETTINGS_SCHEMA[key as keyof typeof SETTINGS_SCHEMA];
+  if (isStaticSettingsKey(key)) {
+    return SETTINGS_SCHEMA[key];
   }
   if (API_KEY_PATTERN.test(key)) {
     return API_KEY_DEF;
@@ -123,7 +127,6 @@ function deserializeValue(raw: string, def: SettingDef): unknown {
  */
 export function getSetting<K extends SettingsKey>(
   key: K,
-  secret: Buffer,
 ): SettingValue<K> | null {
   const def = getDef(key);
   const db = getDb();
@@ -138,7 +141,7 @@ export function getSetting<K extends SettingsKey>(
 
   let raw = row.value;
   if (def.encrypted) {
-    raw = decrypt(raw, secret);
+    raw = decrypt(raw);
   }
 
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- schema-validated dynamic deserialize
@@ -152,7 +155,6 @@ export function getSetting<K extends SettingsKey>(
 export function setSetting<K extends SettingsKey>(
   key: K,
   value: SettingValue<K>,
-  secret: Buffer,
 ): void {
   const def = getDef(key);
 
@@ -165,7 +167,7 @@ export function setSetting<K extends SettingsKey>(
 
   let serialized = serializeValue(value, def);
   if (def.encrypted) {
-    serialized = encrypt(serialized, secret);
+    serialized = encrypt(serialized);
   }
 
   const db = getDb();
@@ -196,7 +198,7 @@ export interface SettingEntry {
  * List all stored settings. Redacted settings have their values replaced
  * with a placeholder. Non-redacted settings are fully deserialized.
  */
-export function listSettings(secret: Buffer): SettingEntry[] {
+export function listSettings(): SettingEntry[] {
   const db = getDb();
   const rows = db
     .query<{ key: string; value: string }, []>(
@@ -218,7 +220,7 @@ export function listSettings(secret: Buffer): SettingEntry[] {
     } else {
       let raw = row.value;
       if (def.encrypted) {
-        raw = decrypt(raw, secret);
+        raw = decrypt(raw);
       }
       value = deserializeValue(raw, def);
     }

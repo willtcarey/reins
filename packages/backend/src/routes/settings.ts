@@ -18,11 +18,12 @@ import {
   isRedactedKey,
   type SettingValue,
 } from "../settings-store.js";
+import { isApiKeySettingKey } from "../auth-storage.js";
 
 export function registerSettingsRoutes(router: RouterGroup) {
   // List all settings (redacted where flagged)
-  router.get(API.settings, async (ctx: RouteContext) => {
-    const entries = listSettings(ctx.state.encryptionSecret);
+  router.get(API.settings, async (_ctx: RouteContext) => {
+    const entries = listSettings();
     return Response.json(entries);
   });
 
@@ -33,7 +34,7 @@ export function registerSettingsRoutes(router: RouterGroup) {
       badRequest(`Unknown setting key: ${key}`);
     }
 
-    const value = getSetting(key, ctx.state.encryptionSecret);
+    const value = getSetting(key);
     if (value === null) {
       notFound(`Setting not found: ${key}`);
     }
@@ -62,9 +63,15 @@ export function registerSettingsRoutes(router: RouterGroup) {
 
     try {
       // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- store validates at runtime
-      setSetting(key, body as SettingValue<typeof key>, ctx.state.encryptionSecret);
+      setSetting(key, body as SettingValue<typeof key>);
     } catch (err: unknown) {
       badRequest(err instanceof Error ? err.message : "Invalid value");
+    }
+
+    if (isApiKeySettingKey(key)) {
+      for (const managed of ctx.state.sessions.values()) {
+        managed.session.modelRegistry.authStorage.reload();
+      }
     }
 
     return Response.json({ ok: true });
@@ -78,6 +85,11 @@ export function registerSettingsRoutes(router: RouterGroup) {
     }
 
     deleteSetting(key);
+    if (isApiKeySettingKey(key)) {
+      for (const managed of ctx.state.sessions.values()) {
+        managed.session.modelRegistry.authStorage.reload();
+      }
+    }
     return new Response(null, { status: 204 });
   });
 }

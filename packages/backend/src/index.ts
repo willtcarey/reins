@@ -9,14 +9,11 @@
  * stay alive mid-turn.
  */
 
-import { getModels, getProviders } from "@mariozechner/pi-ai";
-import type { KnownProvider } from "@mariozechner/pi-ai";
 import { watch } from "fs";
 import { resolve, join } from "path";
 import { mkdirSync, existsSync } from "fs";
 import type { ServerState, ManagedSession, WsClient } from "./state.js";
-import { resolveDataDir } from "./db.js";
-import { getOrCreateSecret } from "./crypto.js";
+import { subscribeAuthStorageChanges } from "./auth-storage.js";
 
 // We import the handler types but load via dynamic import so we can reload
 import type * as RoutesModule from "./handler.js";
@@ -35,30 +32,17 @@ if (IS_DEV) console.log(`  Hot reload: enabled`);
 // 1. Long-lived state (survives hot reloads)
 // ---------------------------------------------------------------------------
 
-const explicitProvider = process.env.REINS_PROVIDER;
-const explicitModelId = process.env.REINS_MODEL;
-
-function isKnownProvider(value: string): value is KnownProvider {
-  const providers: readonly string[] = getProviders();
-  return providers.includes(value);
-}
-
-function findModel(provider: KnownProvider, modelId: string) {
-  return getModels(provider).find((m) => m.id === modelId);
-}
-
-const explicitModel =
-  explicitProvider && explicitModelId && isKnownProvider(explicitProvider)
-    ? findModel(explicitProvider, explicitModelId)
-    : undefined;
-
 const state: ServerState = {
   sessions: new Map<string, ManagedSession>(),
   clients: new Set<WsClient>(),
   frontendDir: new URL("../../frontend/", import.meta.url).pathname,
-  explicitModel,
-  encryptionSecret: getOrCreateSecret(resolveDataDir()),
 };
+
+subscribeAuthStorageChanges(() => {
+  for (const managed of state.sessions.values()) {
+    managed.session.modelRegistry.authStorage.reload();
+  }
+});
 
 // Idle eviction — evict sessions that haven't had activity recently
 // and aren't currently streaming

@@ -12,7 +12,6 @@
  */
 
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
-import type { Model, Api } from "@mariozechner/pi-ai";
 
 export interface ManagedSession {
   session: AgentSession;
@@ -33,7 +32,4 @@ export interface ServerState {
   sessions: Map<string, ManagedSession>;
   clients: Set<WsClient>;
   frontendDir: string;
-  explicitModel: Model<Api> | undefined;
-  /** Encryption secret for settings store (derived from REINS_SECRET or auto-generated). */
-  encryptionSecret: Buffer;
 }

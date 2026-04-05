@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { randomBytes } from "crypto";
+import { initEncryptionSecret } from "../crypto.js";
 import { useTestDb } from "./helpers/test-db.js";
 import { getDb } from "../db.js";
 import {
@@ -9,37 +10,38 @@ import {
   listSettings,
 } from "../settings-store.js";
 
+// Initialize encryption secret for tests
+initEncryptionSecret(randomBytes(32));
+
 describe("settings-store", () => {
   useTestDb();
-
-  const secret = randomBytes(32);
 
   // ---- getSetting ----------------------------------------------------------
 
   describe("getSetting", () => {
     test("returns null for missing key", () => {
-      expect(getSetting("default_model", secret)).toBeNull();
+      expect(getSetting("default_model")).toBeNull();
     });
 
     test("returns typed object for default_model", () => {
       const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" };
-      setSetting("default_model", model, secret);
+      setSetting("default_model", model);
 
-      const result = getSetting("default_model", secret);
+      const result = getSetting("default_model");
       expect(result).toEqual(model);
     });
 
     test("returns decrypted string for api_key_anthropic", () => {
       const key = "sk-ant-test-key-12345";
-      setSetting("api_key_anthropic", key, secret);
+      setSetting("api_key_anthropic", key);
 
-      const result = getSetting("api_key_anthropic", secret);
+      const result = getSetting("api_key_anthropic");
       expect(result).toBe(key);
     });
 
     test("throws for unknown key", () => {
       // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- testing runtime validation of bad input
-      expect(() => getSetting("nonexistent" as any, secret)).toThrow(
+      expect(() => getSetting("nonexistent" as any)).toThrow(
         /Unknown setting key/,
       );
     });
@@ -50,14 +52,14 @@ describe("settings-store", () => {
   describe("setSetting", () => {
     test("round-trips with getSetting for default_model", () => {
       const model = { provider: "openai", modelId: "gpt-5", thinkingLevel: "off" };
-      setSetting("default_model", model, secret);
-      expect(getSetting("default_model", secret)).toEqual(model);
+      setSetting("default_model", model);
+      expect(getSetting("default_model")).toEqual(model);
     });
 
     test("upserts on second call", () => {
-      setSetting("default_model", { provider: "a", modelId: "b", thinkingLevel: "off" }, secret);
-      setSetting("default_model", { provider: "x", modelId: "y", thinkingLevel: "high" }, secret);
-      expect(getSetting("default_model", secret)).toEqual({
+      setSetting("default_model", { provider: "a", modelId: "b", thinkingLevel: "off" });
+      setSetting("default_model", { provider: "x", modelId: "y", thinkingLevel: "high" });
+      expect(getSetting("default_model")).toEqual({
         provider: "x",
         modelId: "y",
         thinkingLevel: "high",
@@ -67,24 +69,24 @@ describe("settings-store", () => {
     test("rejects invalid data — wrong type", () => {
       const badValue: unknown = "not-an-object";
       // @ts-expect-error -- testing runtime validation of bad input
-      expect(() => setSetting("default_model", badValue, secret)).toThrow(/Invalid value/);
+      expect(() => setSetting("default_model", badValue)).toThrow(/Invalid value/);
     });
 
     test("rejects invalid data — missing fields", () => {
       const badValue: unknown = { provider: "a" };
       // @ts-expect-error -- testing runtime validation of bad input
-      expect(() => setSetting("default_model", badValue, secret)).toThrow(/Invalid value/);
+      expect(() => setSetting("default_model", badValue)).toThrow(/Invalid value/);
     });
 
     test("rejects invalid data — wrong field type", () => {
       const badValue: unknown = { provider: 123, modelId: "b", thinkingLevel: "off" };
       // @ts-expect-error -- testing runtime validation of bad input
-      expect(() => setSetting("default_model", badValue, secret)).toThrow(/Invalid value/);
+      expect(() => setSetting("default_model", badValue)).toThrow(/Invalid value/);
     });
 
     test("encrypted values are not plaintext in DB", () => {
       const apiKey = "sk-ant-super-secret-key";
-      setSetting("api_key_anthropic", apiKey, secret);
+      setSetting("api_key_anthropic", apiKey);
 
       const db = getDb();
       const row = db
@@ -100,7 +102,7 @@ describe("settings-store", () => {
 
     test("non-encrypted values are stored as plaintext JSON", () => {
       const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" };
-      setSetting("default_model", model, secret);
+      setSetting("default_model", model);
 
       const db = getDb();
       const row = db
@@ -118,11 +120,11 @@ describe("settings-store", () => {
 
   describe("deleteSetting", () => {
     test("get returns null after delete", () => {
-      setSetting("default_model", { provider: "a", modelId: "b", thinkingLevel: "off" }, secret);
-      expect(getSetting("default_model", secret)).not.toBeNull();
+      setSetting("default_model", { provider: "a", modelId: "b", thinkingLevel: "off" });
+      expect(getSetting("default_model")).not.toBeNull();
 
       deleteSetting("default_model");
-      expect(getSetting("default_model", secret)).toBeNull();
+      expect(getSetting("default_model")).toBeNull();
     });
 
     test("delete on non-existent key is a no-op", () => {
@@ -141,14 +143,14 @@ describe("settings-store", () => {
 
   describe("listSettings", () => {
     test("returns empty array when no settings stored", () => {
-      expect(listSettings(secret)).toEqual([]);
+      expect(listSettings()).toEqual([]);
     });
 
     test("API keys show as redacted", () => {
-      setSetting("api_key_anthropic", "sk-ant-key", secret);
-      setSetting("api_key_openai", "sk-openai-key", secret);
+      setSetting("api_key_anthropic", "sk-ant-key");
+      setSetting("api_key_openai", "sk-openai-key");
 
-      const entries = listSettings(secret);
+      const entries = listSettings();
       const anthropic = entries.find((e) => e.key === "api_key_anthropic");
       const openai = entries.find((e) => e.key === "api_key_openai");
 
@@ -163,9 +165,9 @@ describe("settings-store", () => {
 
     test("non-redacted values shown normally", () => {
       const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" };
-      setSetting("default_model", model, secret);
+      setSetting("default_model", model);
 
-      const entries = listSettings(secret);
+      const entries = listSettings();
       const entry = entries.find((e) => e.key === "default_model");
 
       expect(entry).toBeDefined();
@@ -174,11 +176,11 @@ describe("settings-store", () => {
     });
 
     test("returns all stored settings sorted by key", () => {
-      setSetting("default_model", { provider: "a", modelId: "b", thinkingLevel: "off" }, secret);
-      setSetting("api_key_anthropic", "key1", secret);
-      setSetting("api_key_openai", "key2", secret);
+      setSetting("default_model", { provider: "a", modelId: "b", thinkingLevel: "off" });
+      setSetting("api_key_anthropic", "key1");
+      setSetting("api_key_openai", "key2");
 
-      const entries = listSettings(secret);
+      const entries = listSettings();
       expect(entries).toHaveLength(3);
       // Sorted by key
       expect(entries.map((e) => e.key)).toEqual([

@@ -2,7 +2,8 @@ import { describe, test, expect, beforeEach } from "bun:test";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { useTestDb } from "../helpers/test-db.js";
-import { createTestState } from "../helpers/test-state.js";
+import { makeRequest } from "../helpers/request.js";
+import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
@@ -19,11 +20,11 @@ function makeUploadRequest(
         : new Blob([new Uint8Array(f.content)], { type: "application/octet-stream" });
     formData.append(f.name, blob, f.filename);
   }
-  return new Request(`http://localhost${path}`, { method: "POST", body: formData });
+  return makeRequest(path, { method: "POST", body: formData });
 }
 
 describe("upload routes", () => {
-  let state: ReturnType<typeof createTestState>;
+  let state: ReturnType<typeof createServerState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
 
@@ -31,7 +32,7 @@ describe("upload routes", () => {
   const repo = useTestRepo();
 
   beforeEach(() => {
-    state = createTestState();
+    state = createServerState();
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
     projectId = p.id;
@@ -122,7 +123,7 @@ describe("upload routes", () => {
 
     test("returns 400 when no files are provided", async () => {
       const formData = new FormData();
-      const req = new Request(`http://localhost/api/projects/${projectId}/upload`, {
+      const req = makeRequest(`/api/projects/${projectId}/upload`, {
         method: "POST",
         body: formData,
       });

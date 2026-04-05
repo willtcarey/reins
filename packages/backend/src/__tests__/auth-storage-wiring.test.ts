@@ -1,0 +1,240 @@
+import { describe, test, expect, beforeEach, beforeAll, afterAll, afterEach } from "bun:test";
+import { AuthStorage } from "@mariozechner/pi-coding-agent";
+import { registerOAuthProvider, unregisterOAuthProvider, type OAuthProviderInterface } from "@mariozechner/pi-ai/oauth";
+import { useTestDb } from "./helpers/test-db.js";
+import { useTestRepo } from "./helpers/test-repo.js";
+import { createServerState } from "./helpers/server-state.js";
+import { makeRequest } from "./helpers/request.js";
+import { buildRouter } from "../routes/index.js";
+import { createProject } from "../project-store.js";
+import { setSetting, getSetting, deleteSetting } from "../settings-store.js";
+import { createNewSession } from "../sessions.js";
+import {
+  DbAuthStorageBackend,
+  createDbBackedAuthStorage,
+  createSharedAuthStorage,
+  loadDbApiKeyRuntimeOverrides,
+  loadDbOAuthCredentials,
+  subscribeAuthStorageChanges,
+} from "../auth-storage.js";
+import { clearPendingLogins } from "../routes/oauth.js";
+
+const TEST_PROVIDER_ID = "test-oauth-wiring";
+
+const testOAuthProvider: OAuthProviderInterface = {
+  id: TEST_PROVIDER_ID,
+  name: "Test OAuth Wiring",
+  async login(callbacks) {
+    callbacks.onAuth({ url: "https://example.test/oauth" });
+    const code = await callbacks.onManualCodeInput?.();
+    return {
+      refresh: `refresh:${code}`,
+      access: `access:${code}`,
+      expires: Date.now() + 60_000,
+    };
+  },
+  async refreshToken(credentials) {
+    return credentials;
+  },
+  getApiKey(credentials) {
+    return credentials.access;
+  },
+};
+
+describe("auth storage wiring", () => {
+  useTestDb();
+  const repo = useTestRepo();
+
+  beforeAll(() => {
+    registerOAuthProvider(testOAuthProvider);
+  });
+
+  afterEach(() => {
+    clearPendingLogins();
+  });
+
+  afterAll(() => {
+    unregisterOAuthProvider(TEST_PROVIDER_ID);
+  });
+
+  describe("DB runtime override loading", () => {
+    test("loads api_key_* settings into auth storage runtime overrides", async () => {
+      const authStorage = AuthStorage.inMemory();
+      setSetting("api_key_anthropic", "sk-ant-db");
+      setSetting("api_key_openai", "sk-openai-db");
+
+      loadDbApiKeyRuntimeOverrides(authStorage);
+
+      await expect(authStorage.getApiKey("anthropic")).resolves.toBe("sk-ant-db");
+      await expect(authStorage.getApiKey("openai")).resolves.toBe("sk-openai-db");
+    });
+
+    test("loads oauth_* settings into shared auth storage", async () => {
+      const authStorage = AuthStorage.inMemory();
+      const credentials = {
+        refresh: "refresh-db",
+        access: "access-db",
+        expires: Date.now() + 60_000,
+      };
+      setSetting("oauth_anthropic", credentials);
+
+      loadDbOAuthCredentials(authStorage);
+
+      expect(authStorage.get("anthropic")).toEqual({
+        type: "oauth",
+        ...credentials,
+      });
+      await expect(authStorage.getApiKey("anthropic")).resolves.toBe("access-db");
+    });
+
+    test("keeps environment variable fallback when no DB override exists", async () => {
+      deleteSetting("api_key_openai");
+      const prev = process.env.OPENAI_API_KEY;
+      process.env.OPENAI_API_KEY = "sk-openai-env";
+
+      try {
+        const authStorage = createSharedAuthStorage();
+        await expect(authStorage.getApiKey("openai")).resolves.toBe("sk-openai-env");
+      } finally {
+        if (prev === undefined) delete process.env.OPENAI_API_KEY;
+        else process.env.OPENAI_API_KEY = prev;
+      }
+    });
+  });
+
+  describe("DB-backed AuthStorage backend", () => {
+    test("reads API keys and OAuth credentials from settings via AuthStorage.fromStorage", async () => {
+      setSetting("api_key_anthropic", "sk-ant-db");
+      setSetting("oauth_openai", {
+        refresh: "refresh-openai",
+        access: "access-openai",
+        expires: Date.now() + 60_000,
+      });
+
+      const authStorage = AuthStorage.fromStorage(new DbAuthStorageBackend());
+
+      await expect(authStorage.getApiKey("anthropic")).resolves.toBe("sk-ant-db");
+      expect(authStorage.get("openai")).toEqual({
+        type: "oauth",
+        refresh: "refresh-openai",
+        access: "access-openai",
+        expires: expect.any(Number),
+      });
+    });
+
+    test("persists changes back to settings so fresh AuthStorage instances see them", async () => {
+      const first = createDbBackedAuthStorage();
+      first.set("anthropic", { type: "api_key", key: "sk-ant-fresh" });
+      first.set("openai", {
+        type: "oauth",
+        refresh: "refresh-new",
+        access: "access-new",
+        expires: Date.now() + 60_000,
+      });
+
+      expect(getSetting("api_key_anthropic")).toBe("sk-ant-fresh");
+      expect(getSetting("oauth_openai")).toEqual({
+        refresh: "refresh-new",
+        access: "access-new",
+        expires: expect.any(Number),
+      });
+
+      const second = createDbBackedAuthStorage();
+      await expect(second.getApiKey("anthropic")).resolves.toBe("sk-ant-fresh");
+      expect(second.get("openai")).toEqual({
+        type: "oauth",
+        refresh: "refresh-new",
+        access: "access-new",
+        expires: expect.any(Number),
+      });
+
+      first.remove("anthropic");
+      first.remove("openai");
+      expect(getSetting("api_key_anthropic")).toBeNull();
+      expect(getSetting("oauth_openai")).toBeNull();
+    });
+  });
+
+  describe("live session propagation", () => {
+    let state: ReturnType<typeof createServerState>;
+    let router: ReturnType<typeof buildRouter>;
+    let projectId: number;
+
+    beforeEach(() => {
+      state = createServerState();
+      router = buildRouter();
+      projectId = createProject("Test Project", repo.dir, "main").id;
+    });
+
+    test("new sessions create fresh auth storage instances", async () => {
+      const first = await createNewSession(state, projectId, repo.dir);
+      const second = await createNewSession(state, projectId, repo.dir);
+
+      expect(first.session.modelRegistry.authStorage).not.toBe(second.session.modelRegistry.authStorage);
+    });
+
+    test("PUT/DELETE api_key_* updates propagate to existing sessions", async () => {
+      const managed = await createNewSession(state, projectId, repo.dir);
+
+      const putRes = await router.handle(
+        makeRequest("PUT", "/api/settings/api_key_anthropic", "sk-updated"),
+        state,
+      );
+      expect(putRes!.status).toBe(200);
+      await expect(managed.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-updated");
+
+      const delRes = await router.handle(
+        makeRequest("DELETE", "/api/settings/api_key_anthropic"),
+        state,
+      );
+      expect(delRes!.status).toBe(204);
+      await expect(managed.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBeUndefined();
+    });
+
+    test("OAuth callback/delete updates propagate to existing sessions", async () => {
+      const managed = await createNewSession(state, projectId, repo.dir);
+
+      const startRes = await router.handle(
+        makeRequest("POST", `/api/oauth/start/${TEST_PROVIDER_ID}`),
+        state,
+      );
+      expect(startRes!.status).toBe(200);
+
+      const callbackRes = await router.handle(
+        makeRequest("POST", `/api/oauth/callback/${TEST_PROVIDER_ID}`, { code: "session-code" }),
+        state,
+      );
+      expect(callbackRes!.status).toBe(200);
+      await expect(managed.session.modelRegistry.authStorage.getApiKey(TEST_PROVIDER_ID)).resolves.toBe("access:session-code");
+
+      const deleteRes = await router.handle(
+        makeRequest("DELETE", `/api/oauth/${TEST_PROVIDER_ID}`),
+        state,
+      );
+      expect(deleteRes!.status).toBe(204);
+      await expect(managed.session.modelRegistry.authStorage.getApiKey(TEST_PROVIDER_ID)).resolves.toBeUndefined();
+    });
+
+    test("DB-backed auth writes notify listeners so other sessions can reload", async () => {
+      const first = await createNewSession(state, projectId, repo.dir);
+      const second = await createNewSession(state, projectId, repo.dir);
+
+      const unsubscribe = subscribeAuthStorageChanges(() => {
+        for (const managed of state.sessions.values()) {
+          managed.session.modelRegistry.authStorage.reload();
+        }
+      });
+
+      try {
+        first.session.modelRegistry.authStorage.set("anthropic", {
+          type: "api_key",
+          key: "sk-from-first-session",
+        });
+
+        await expect(second.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-from-first-session");
+      } finally {
+        unsubscribe();
+      }
+    });
+  });
+});

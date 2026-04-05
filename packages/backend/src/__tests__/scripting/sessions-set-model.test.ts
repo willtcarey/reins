@@ -6,7 +6,7 @@
 
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
-import { createTestState } from "../helpers/test-state.js";
+import { createServerState } from "../helpers/server-state.js";
 import { createProject, type Project } from "../../project-store.js";
 import { createSession, getSession } from "../../session-store.js";
 import { SESSION_FUNCTIONS } from "../../scripting/sessions.js";
@@ -38,7 +38,6 @@ describe("sessions.setModel", () => {
   let broadcastMessages: ServerMessage[];
   let broadcast: ApiContext["broadcast"];
   let sessions: Map<string, ManagedSession>;
-  let state: ReturnType<typeof createTestState>;
 
   beforeEach(() => {
     // Create test project — needs a valid path for the DB but we don't use git
@@ -46,7 +45,7 @@ describe("sessions.setModel", () => {
     broadcastMessages = [];
     broadcast = (msg: ServerMessage) => broadcastMessages.push(msg);
     sessions = new Map();
-    state = createTestState({ sessions });
+    createServerState({ sessions });
   });
 
   function makeCtx(overrides?: Partial<ApiContext>): ApiContext {
@@ -56,7 +55,6 @@ describe("sessions.setModel", () => {
       taskId: null,
       broadcast,
       sessions,
-      encryptionSecret: state.encryptionSecret,
       ...overrides,
     };
   }
@@ -139,7 +137,7 @@ describe("sessions.setModel", () => {
     expect(updated!.thinking_level).toBe("medium");
   });
 
-  test("broadcasts session_model_changed event", async () => {
+  test("broadcasts session_model_changed event when session is open in memory", async () => {
     createSession("sess-5", project.id);
     const managed = createMockManagedSession("sess-5");
     sessions.set("sess-5", managed);
@@ -160,6 +158,25 @@ describe("sessions.setModel", () => {
       expect(msg.modelId).toBe("claude-sonnet-4-20250514");
       expect(msg.thinkingLevel).toBe("high");
     }
+  });
+
+  test("updates DB without broadcast when session is not open in memory", async () => {
+    createSession("sess-5b", project.id, { thinkingLevel: "low" });
+
+    const ctx = makeCtx();
+    const result = await setModelFn.execute(
+      { sessionId: "sess-5b", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
+      ctx,
+    ) as any;
+
+    const updated = getSession("sess-5b");
+    expect(updated!.model_provider).toBe("anthropic");
+    expect(updated!.model_id).toBe("claude-sonnet-4-20250514");
+    expect(updated!.thinking_level).toBe("low");
+    expect(result.model_provider).toBe("anthropic");
+    expect(result.model_id).toBe("claude-sonnet-4-20250514");
+    expect(result.thinking_level).toBe("low");
+    expect(broadcastMessages).toHaveLength(0);
   });
 
   test("throws for unknown provider", async () => {
@@ -206,8 +223,8 @@ describe("sessions.setModel", () => {
     ).rejects.toThrow(/not found/);
   });
 
-  test("throws when session not open in memory", async () => {
-    createSession("sess-9", project.id);
+  test("updates inactive sessions without calling the pi SDK", async () => {
+    createSession("sess-9", project.id, { thinkingLevel: "medium" });
     // Don't add to sessions map
 
     const ctx = makeCtx();
@@ -216,7 +233,13 @@ describe("sessions.setModel", () => {
         { sessionId: "sess-9", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
         ctx,
       ),
-    ).rejects.toThrow(/not currently open/);
+    ).resolves.toBeDefined();
+
+    const updated = getSession("sess-9");
+    expect(updated!.model_provider).toBe("anthropic");
+    expect(updated!.model_id).toBe("claude-sonnet-4-20250514");
+    expect(updated!.thinking_level).toBe("medium");
+    expect(broadcastMessages).toHaveLength(0);
   });
 
   test("throws for invalid thinking level", async () => {

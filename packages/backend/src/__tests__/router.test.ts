@@ -1,14 +1,11 @@
 import { describe, test, expect } from "bun:test";
 import { createRouter, type Middleware } from "../router.js";
 import { HttpError } from "../errors.js";
-import { createTestState } from "./helpers/test-state.js";
-
-function makeRequest(method: string, path: string): Request {
-  return new Request(`http://localhost${path}`, { method });
-}
+import { createServerState } from "./helpers/server-state.js";
+import { makeRequest } from "./helpers/request.js";
 
 describe("createRouter", () => {
-  const state = createTestState();
+  const state = createServerState();
 
   test("matches a GET route and returns response", async () => {
     const router = createRouter();

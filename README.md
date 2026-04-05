@@ -65,10 +65,9 @@ The only required environment variable is an API key for your LLM provider (e.g.
 | `ANTHROPIC_API_KEY` | — | API key for Anthropic models (required if using Anthropic) |
 | `REINS_DATA_DIR` | `.reins/` (cwd) | Directory for the SQLite database; set to a mounted volume path in Docker |
 | `REINS_PORT` | `3100` | Server port |
-| `REINS_PROVIDER` | — | Override LLM provider (e.g. `anthropic`, `openai`) |
-| `REINS_MODEL` | — | Override model ID (e.g. `claude-sonnet-4-20250514`) |
+| `REINS_SECRET` | auto-generated | Hex-encoded 32-byte key for encrypting sensitive settings at rest |
 
-`REINS_PROVIDER` and `REINS_MODEL` must be set together. When omitted, the server uses the default model from the pi-coding-agent SDK.
+The default model is configured in the app's settings UI and stored in the database. If no default model is configured, the server uses the pi SDK's built-in default. See [docs/features/settings.md](docs/features/settings.md).
 
 ## Development
 

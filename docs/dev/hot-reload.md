@@ -12,7 +12,6 @@ index.ts (stable, never reloads)
 │   sessions: Map                  │
 │   clients: Set                   │
 │   frontendDir                    │
-│   explicitModel                  │
 │ }                                │
 │                                  │
 │ let routes: RoutesModule  ───────┼──┐
@@ -44,9 +43,9 @@ state.ts (types only)
 
 ## How it works
 
-- **`index.ts`** owns long-lived state (sessions map, clients set, Bun server).
-  It delegates all request handling through mutable `routes` and `ws`
-  references.
+- **`index.ts`** owns long-lived state (sessions map, clients set, frontend dir,
+  Bun server). It delegates all request handling through mutable `routes` and
+  `ws` references.
 - **`routes.ts`** is the HTTP entry point — it handles WebSocket upgrades,
   delegates API routes via the router (`routes/index.ts` → per-resource route
   files), and serves static frontend files.

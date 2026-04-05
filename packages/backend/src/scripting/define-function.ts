@@ -25,7 +25,6 @@ export interface ApiContext {
   taskId: number | null;
   broadcast: Broadcast;
   sessions: Map<string, ManagedSession>;
-  encryptionSecret: Buffer;
 }
 
 /**

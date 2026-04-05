@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { handleWsOpen, handleWsMessage, handleWsClose } from "../ws.js";
-import { createTestState } from "./helpers/test-state.js";
+import { createServerState } from "./helpers/server-state.js";
 import type { ServerState } from "../state.js";
 
 /**
@@ -32,7 +32,7 @@ describe("WebSocket handlers", () => {
   let state: ServerState;
 
   beforeEach(() => {
-    state = createTestState();
+    state = createServerState();
   });
 
   describe("handleWsOpen / handleWsClose — client tracking", () => {

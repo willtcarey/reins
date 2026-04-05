@@ -7,13 +7,13 @@
 
 import type { RouterGroup, RouteContext } from "../router.js";
 import { API } from "../api-paths.js";
-import { buildProviderList } from "../scripting/models.js";
+import { buildProviderList } from "../models-store.js";
 
-export type { ProviderInfo, ModelInfo } from "../scripting/models.js";
+export type { ProviderInfo, ModelInfo } from "../models-store.js";
 
 export function registerModelsRoutes(router: RouterGroup) {
-  router.get(API.models, async (ctx: RouteContext) => {
-    const result = buildProviderList(ctx.state.encryptionSecret);
+  router.get(API.models, async (_ctx: RouteContext) => {
+    const result = buildProviderList();
     return Response.json(result);
   });
 }

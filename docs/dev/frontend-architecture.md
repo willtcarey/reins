@@ -34,7 +34,8 @@ models/
 │   ├── project-store.ts
 │   ├── project-collection-store.ts
 │   ├── file-browser-store.ts
-│   └── quick-open-store.ts
+│   ├── quick-open-store.ts
+│   └── settings-store.ts
 ├── changes/             Diff/highlighting pure logic
 │   ├── diff-sort.ts, diff-utils.ts, file-tree-state.ts
 │   ├── highlighter.ts, highlight-worker.ts, scroll-spy.ts
@@ -73,6 +74,8 @@ components/
 ├── popover-menu.ts, toast.ts
 └── app.css
 ```
+
+When splitting or moving components, prefer the new canonical path immediately. Do **not** leave thin compatibility wrapper modules that only re-export from the new location. Update imports at call sites instead — wrapper files add indirection and make the component layout harder to navigate.
 
 ### controllers/
 
@@ -196,6 +199,16 @@ Standalone store for the file browser overlay. Manages:
 - **File content** — Loads file content via `GET /api/projects/:id/file?path=...` for the viewer.
 
 Shared by `<file-search>` (palette) and `<file-browser>` (viewer overlay). Both components and `<app-shell>` hold a reference to the same store instance.
+
+### SettingsStore (`models/stores/settings-store.ts`)
+
+Standalone store for the settings overlay. Manages:
+
+- **Settings fetches** — Loads available model providers, OAuth providers, and the current default model.
+- **Settings mutations** — Saves/removes API keys, starts/completes OAuth flows, and updates the default model.
+- **Panel state boundary** — Holds server-backed state and async action flags; the component keeps only overlay visibility and ephemeral input values.
+
+Used by `<settings-panel>` via `StoreController` so the view renders from store state instead of calling `fetch()` directly.
 
 ### Subscription model
 

@@ -1,15 +1,12 @@
 import { describe, test, expect } from "bun:test";
 import { buildRouter } from "../../routes/index.js";
-import { createTestState } from "../helpers/test-state.js";
-
-function makeRequest(method: string, path: string): Request {
-  return new Request(`http://localhost${path}`, { method });
-}
+import { makeRequest } from "../helpers/request.js";
+import { createServerState } from "../helpers/server-state.js";
 
 describe("GET /api/health", () => {
   test("returns 200 with status ok", async () => {
     const router = buildRouter();
-    const state = createTestState();
+    const state = createServerState();
     const res = await router.handle(makeRequest("GET", "/api/health"), state);
     expect(res).not.toBeNull();
     expect(res!.status).toBe(200);
@@ -24,7 +21,7 @@ describe("GET /api/health", () => {
     const sessions = new Map();
     sessions.set("s1", { session: { isStreaming: false }, id: "s1", lastActivity: Date.now() });
     sessions.set("s2", { session: { isStreaming: true }, id: "s2", lastActivity: Date.now() });
-    const state = createTestState({ sessions });
+    const state = createServerState({ sessions });
 
     const res = await router.handle(makeRequest("GET", "/api/health"), state);
     const body = await res!.json();

@@ -30,7 +30,6 @@ interface PendingLogin {
   resolveManualCode: (code: string) => void;
   rejectManualCode: (err: Error) => void;
   loginPromise: Promise<OAuthCredentials>;
-  encryptionSecret: Buffer;
   createdAt: number;
 }
 
@@ -52,10 +51,10 @@ function oauthSettingKey(providerId: string): SettingsKey {
 
 export function registerOAuthRoutes(router: RouterGroup) {
   // List OAuth providers with their configuration status
-  router.get(API.oauthProviders, async (ctx: RouteContext) => {
+  router.get(API.oauthProviders, async (_ctx: RouteContext) => {
     const providers = getOAuthProviders();
     const result = providers.map((p) => {
-      const creds = getSetting(oauthSettingKey(p.id), ctx.state.encryptionSecret);
+      const creds = getSetting(oauthSettingKey(p.id));
       return {
         id: p.id,
         name: p.name,
@@ -110,7 +109,6 @@ export function registerOAuthRoutes(router: RouterGroup) {
         resolveManualCode,
         rejectManualCode,
         loginPromise,
-        encryptionSecret: ctx.state.encryptionSecret,
         createdAt: Date.now(),
       });
     });
@@ -167,11 +165,12 @@ export function registerOAuthRoutes(router: RouterGroup) {
         );
       }
 
-      // Store credentials encrypted in DB
-      // Use the encryption secret captured at start time — ctx.state may not
-      // carry it reliably across the async gap between start and callback.
+      // Store credentials encrypted in DB and reload active session auth state
       const settingKey = oauthSettingKey(providerId);
-      setSetting(settingKey, credentials, pending.encryptionSecret);
+      setSetting(settingKey, credentials);
+      for (const managed of ctx.state.sessions.values()) {
+        managed.session.modelRegistry.authStorage.reload();
+      }
 
       return Response.json({ ok: true });
     } catch (err: unknown) {
@@ -191,7 +190,11 @@ export function registerOAuthRoutes(router: RouterGroup) {
       notFound(`Unknown OAuth provider: ${providerId}`);
     }
 
-    deleteSetting(oauthSettingKey(providerId));
+    const settingKey = oauthSettingKey(providerId);
+    deleteSetting(settingKey);
+    for (const managed of ctx.state.sessions.values()) {
+      managed.session.modelRegistry.authStorage.reload();
+    }
     return new Response(null, { status: 204 });
   });
 }

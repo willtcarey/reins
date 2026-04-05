@@ -20,11 +20,14 @@ import {
   type SessionListItem,
 } from "./session-store.js";
 import { getTask, touchTask, type TaskRow } from "./task-store.js";
+import { createDbBackedAuthStorage } from "./auth-storage.js";
 import { getProject } from "./project-store.js";
 import { checkoutBranch } from "./git.js";
 import { createCustomTools } from "./tools/index.js";
 import type { CreateSessionOpts } from "./tools/delegate.js";
 import { createBroadcast, type Broadcast } from "./models/broadcast.js";
+import { getSetting } from "./settings-store.js";
+import { getModels, getProviders, type Api, type Model } from "@mariozechner/pi-ai";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -97,6 +100,21 @@ async function resolveTask(
 }
 
 /**
+ * Resolve the globally configured default model from settings.
+ * Returns undefined when no valid default is configured, allowing the pi SDK
+ * to fall back to its built-in default.
+ */
+export function resolveConfiguredModel(): Model<Api> | undefined {
+  const dbDefault = getSetting("default_model");
+  if (!dbDefault) return undefined;
+
+  const provider = getProviders().find((candidate) => candidate === dbDefault.provider);
+  if (!provider) return undefined;
+
+  return getModels(provider).find((model) => model.id === dbDefault.modelId);
+}
+
+/**
  * Build session options common to both create and resume paths.
  * Sets up tools, session manager, model, and resource loader.
  * Always creates a DefaultResourceLoader with the project's cwd so that
@@ -123,7 +141,6 @@ async function buildSessionOpts(params: {
     taskId: task?.id ?? null,
     broadcast,
     sessions: state.sessions,
-    encryptionSecret: state.encryptionSecret,
     createSession: createSessionFn,
     delegate: includeDelegateTool
       ? {
@@ -147,13 +164,17 @@ async function buildSessionOpts(params: {
   });
   await resourceLoader.reload();
 
+  // Resolve model: DB default → SDK default
+  const model = resolveConfiguredModel();
+
   return {
     cwd: projectDir,
     tools,
     customTools,
     sessionManager,
     resourceLoader,
-    model: state.explicitModel,
+    model,
+    authStorage: createDbBackedAuthStorage(),
   };
 }
 

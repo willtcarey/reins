@@ -1,27 +1,55 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, afterEach, beforeEach } from "bun:test";
+import {
+  registerOAuthProvider,
+  unregisterOAuthProvider,
+  type OAuthProviderInterface,
+} from "@mariozechner/pi-ai/oauth";
 import { useTestDb } from "../helpers/test-db.js";
-import { createTestState } from "../helpers/test-state.js";
+import { makeRequest } from "../helpers/request.js";
+import { createServerState } from "../helpers/server-state.js";
 import { buildRouter } from "../../routes/index.js";
 import { clearPendingLogins } from "../../routes/oauth.js";
+import { getSetting } from "../../settings-store.js";
 
-function makeRequest(method: string, path: string, body?: unknown): Request {
-  const opts: RequestInit = { method };
-  if (body !== undefined) {
-    opts.body = JSON.stringify(body);
-    opts.headers = { "Content-Type": "application/json" };
-  }
-  return new Request(`http://localhost${path}`, opts);
-}
+const TEST_PROVIDER_ID = "test-oauth";
+
+const testOAuthProvider: OAuthProviderInterface = {
+  id: TEST_PROVIDER_ID,
+  name: "Test OAuth",
+  async login(callbacks) {
+    callbacks.onAuth({
+      url: "https://example.test/oauth",
+      instructions: "Paste the callback URL",
+    });
+    const code = await callbacks.onManualCodeInput?.();
+    return {
+      refresh: `refresh:${code}`,
+      access: `access:${code}`,
+      expires: Date.now() + 60_000,
+    };
+  },
+  async refreshToken(credentials) {
+    return credentials;
+  },
+  getApiKey(credentials) {
+    return credentials.access;
+  },
+};
 
 describe("oauth routes", () => {
   useTestDb();
 
+  beforeEach(() => {
+    registerOAuthProvider(testOAuthProvider);
+  });
+
   afterEach(() => {
     clearPendingLogins();
+    unregisterOAuthProvider(TEST_PROVIDER_ID);
   });
 
   const setup = () => {
-    const state = createTestState();
+    const state = createServerState();
     const router = buildRouter();
     return { state, router };
   };
@@ -79,19 +107,35 @@ describe("oauth routes", () => {
 
     test("returns 204 for valid provider (even if no credentials stored)", async () => {
       const { router, state } = setup();
-      // Get a real provider ID
-      const listRes = await router.handle(
-        makeRequest("GET", "/api/oauth/providers"),
-        state,
-      );
-      const providers = await listRes!.json();
-      const providerId = providers[0].id;
-
       const res = await router.handle(
-        makeRequest("DELETE", `/api/oauth/${providerId}`),
+        makeRequest("DELETE", `/api/oauth/${TEST_PROVIDER_ID}`),
         state,
       );
       expect(res!.status).toBe(204);
+    });
+
+    test("removes stored OAuth credentials immediately", async () => {
+      const { router, state } = setup();
+
+      const startRes = await router.handle(
+        makeRequest("POST", `/api/oauth/start/${TEST_PROVIDER_ID}`),
+        state,
+      );
+      expect(startRes!.status).toBe(200);
+
+      const callbackRes = await router.handle(
+        makeRequest("POST", `/api/oauth/callback/${TEST_PROVIDER_ID}`, { code: "old" }),
+        state,
+      );
+      expect(callbackRes!.status).toBe(200);
+
+      const res = await router.handle(
+        makeRequest("DELETE", `/api/oauth/${TEST_PROVIDER_ID}`),
+        state,
+      );
+
+      expect(res!.status).toBe(204);
+      expect(getSetting("oauth_test-oauth")).toBeNull();
     });
   });
 
@@ -109,7 +153,7 @@ describe("oauth routes", () => {
 
     test("returns 400 for invalid JSON body", async () => {
       const { router, state } = setup();
-      const req = new Request("http://localhost/api/oauth/callback/anthropic", {
+      const req = makeRequest("/api/oauth/callback/anthropic", {
         method: "POST",
         body: "not-json{{{",
         headers: { "Content-Type": "application/json" },
@@ -120,11 +164,38 @@ describe("oauth routes", () => {
 
     test("returns 400 for missing code field", async () => {
       const { router, state } = setup();
+      const startRes = await router.handle(
+        makeRequest("POST", `/api/oauth/start/${TEST_PROVIDER_ID}`),
+        state,
+      );
+      expect(startRes!.status).toBe(200);
+
       const res = await router.handle(
-        makeRequest("POST", "/api/oauth/callback/anthropic", { notCode: "x" }),
+        makeRequest("POST", `/api/oauth/callback/${TEST_PROVIDER_ID}`, { notCode: "x" }),
         state,
       );
       expect(res!.status).toBe(400);
+    });
+
+    test("stores OAuth credentials in the DB-backed auth store after callback", async () => {
+      const { router, state } = setup();
+      const startRes = await router.handle(
+        makeRequest("POST", `/api/oauth/start/${TEST_PROVIDER_ID}`),
+        state,
+      );
+      expect(startRes!.status).toBe(200);
+
+      const res = await router.handle(
+        makeRequest("POST", `/api/oauth/callback/${TEST_PROVIDER_ID}`, { code: "callback-code" }),
+        state,
+      );
+      expect(res!.status).toBe(200);
+
+      expect(getSetting("oauth_test-oauth")).toEqual({
+        refresh: "refresh:callback-code",
+        access: "access:callback-code",
+        expires: expect.any(Number),
+      });
     });
   });
 

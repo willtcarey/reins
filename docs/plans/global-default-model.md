@@ -1,10 +1,10 @@
 # Global Default Model & API Key Management
 
-Status: **ready for implementation**
+Status: **in progress**
 
 ## Goal
 
-Store global default model and API keys in the database. Provide a settings UI (gear icon in the sidebar) for managing both. Allow agents to change their session's model mid-conversation via the `execute` tool. Env vars (`REINS_PROVIDER`, `REINS_MODEL`, `ANTHROPIC_API_KEY`, etc.) continue to work as fallbacks.
+Store global default model and API keys in the database. Provide a settings UI (gear icon in the sidebar) for managing both. Allow agents to change their session's model mid-conversation via the `execute` tool. Model selection should be driven through DB-backed settings rather than `REINS_PROVIDER` / `REINS_MODEL` env vars.
 
 ## Design
 
@@ -83,8 +83,7 @@ Plus one read-only derived data endpoint:
 | Scenario | Model used |
 |---|---|
 | New session, global default set | Global default from `default_model` setting |
-| New session, global default not set, env vars set | `REINS_PROVIDER`/`REINS_MODEL` (backward compat) |
-| New session, neither set | Pi SDK built-in default |
+| New session, global default not set | Pi SDK built-in default |
 | Resumed session | Session's stored model from `sessions` table |
 | Agent calls `sessions.setModel()` | Takes effect on the next LLM turn |
 | User changes global default in settings | Only affects future sessions |
@@ -159,22 +158,25 @@ At this point the UI is fully functional for viewing and saving settings, but se
 
 ### Phase 5: Wire it all together
 
-1. Add `authStorage` field to `ServerState` interface in `state.ts`.
-2. In `index.ts` startup: create `AuthStorage` instance, load all `api_key_*` settings, call `authStorage.setRuntimeApiKey()` for each, store on `ServerState`.
-3. In `routes/settings.ts`: after a successful `PUT` or `DELETE` of an `api_key_*` setting, also call `state.authStorage.setRuntimeApiKey()` or `state.authStorage.removeRuntimeApiKey()` to bridge the change to live sessions.
-4. In `sessions.ts` → `buildSessionOpts()`: pass `state.authStorage` to `createAgentSession()` options.
-5. In `sessions.ts` → `buildSessionOpts()`: change model resolution — try `getSetting("default_model")` first, resolve to a `Model` object via `getModels(provider).find()`, fall back to `state.explicitModel` (env vars), fall back to `undefined` (SDK default).
-6. Test: new session uses DB default model when set. Test: new session falls back to env var model when DB default unset. Test: new session falls back to SDK default when neither set. Test: DB API key is used by sessions (mock `authStorage.setRuntimeApiKey` was called). Test: env var keys still work when no DB key set.
+✅ 1. Add `authStorage` field to `ServerState` interface in `state.ts`.
+✅ 2. In `index.ts` startup: create `AuthStorage` instance, load all `api_key_*` settings, call `authStorage.setRuntimeApiKey()` for each, store on `ServerState`.
+✅ 3. In `routes/settings.ts`: after a successful `PUT` or `DELETE` of an `api_key_*` setting, also call `state.authStorage.setRuntimeApiKey()` or `state.authStorage.removeRuntimeApiKey()` to bridge the change to live sessions.
+✅ 4. In `sessions.ts` → `buildSessionOpts()`: pass `state.authStorage` to `createAgentSession()` options.
+✅ 5. In `sessions.ts` → `buildSessionOpts()`: change model resolution — try `getSetting("default_model")` first, resolve to a `Model` object via `getModels(provider).find()`, otherwise fall back to `undefined` (SDK default).
+✅ 6. Test: new session uses DB default model when set. Test: new session falls back to SDK default when no DB default is configured. Test: DB API key is used by sessions (mock `authStorage.setRuntimeApiKey` was called). Test: env var keys still work when no DB key set.
 
 ### Phase 6: Cleanup
 
-1. Update `README.md` — document settings UI, note env vars are still supported as fallback, document `REINS_SECRET`.
+1. Update `README.md` — document settings UI and `REINS_SECRET`.
 2. Add `docs/features/settings.md` covering API key management and default model selection.
 3. Move this plan to `docs/plans/completed/`.
+
+## Follow-up / TODO
+
+- Add a UI affordance for changing a single session's model directly. This is needed as a recovery path when the current model is degraded or unavailable and can't successfully use `sessions.setModel()` via scripting.
 
 ## Out of scope
 
 - Per-project model defaults (could layer on later with namespaced settings keys)
 - Model cost tracking or usage limits
-- Frontend per-session model picker UI (the agent handles this conversationally via `sessions.setModel()`)
 - OAuth provider login flows (only API key auth for now)

@@ -6,23 +6,22 @@
 
 import { describe, test, expect } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
-import { createTestState } from "../helpers/test-state.js";
+import "../helpers/server-state.js"; // side-effect: initializes encryption secret
 import { setSetting } from "../../settings-store.js";
-import { buildProviderList, MODEL_FUNCTIONS, type ProviderInfo } from "../../scripting/models.js";
+import { buildProviderList, type ProviderInfo } from "../../models-store.js";
+import { MODEL_FUNCTIONS } from "../../scripting/models.js";
 import type { ApiContext } from "../../scripting/api-registry.js";
 import type { ManagedSession } from "../../state.js";
 
 function noop() {}
 
 function makeCtx(overrides?: Partial<ApiContext>): ApiContext {
-  const state = createTestState();
   return {
     projectId: 1,
     sessionId: "test-session",
     taskId: null,
     broadcast: noop,
     sessions: new Map<string, ManagedSession>(),
-    encryptionSecret: state.encryptionSecret,
     ...overrides,
   };
 }
@@ -68,7 +67,7 @@ describe("models.list", () => {
     const ctx = makeCtx();
 
     // Set a DB key for anthropic
-    setSetting("api_key_anthropic", "sk-test-key", ctx.encryptionSecret);
+    setSetting("api_key_anthropic", "sk-test-key");
 
     const result = listFn.execute({}, ctx) as ProviderInfo[];
     const anthropic = result.find((p) => p.provider === "anthropic");
@@ -81,8 +80,7 @@ describe("buildProviderList", () => {
   useTestDb();
 
   test("returns same shape as models.list", () => {
-    const state = createTestState();
-    const result = buildProviderList(state.encryptionSecret);
+    const result = buildProviderList();
 
     expect(Array.isArray(result)).toBe(true);
     expect(result.length).toBeGreaterThan(0);

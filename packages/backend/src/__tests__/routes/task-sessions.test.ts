@@ -1,18 +1,15 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
-import { createTestState } from "../helpers/test-state.js";
+import { makeRequest } from "../helpers/request.js";
+import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createSession } from "../../session-store.js";
 import { createTask } from "../../task-store.js";
 
-function makeRequest(method: string, path: string): Request {
-  return new Request(`http://localhost${path}`, { method });
-}
-
 describe("task session routes (top-level)", () => {
-  let state: ReturnType<typeof createTestState>;
+  let state: ReturnType<typeof createServerState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
 
@@ -20,7 +17,7 @@ describe("task session routes (top-level)", () => {
   const repo = useTestRepo();
 
   beforeEach(() => {
-    state = createTestState();
+    state = createServerState();
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
     projectId = p.id;

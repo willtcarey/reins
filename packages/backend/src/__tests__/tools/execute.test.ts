@@ -12,9 +12,12 @@ import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 import { createStrictExtensionContext } from "../helpers/test-pi.js";
 import { randomBytes } from "crypto";
+import { initEncryptionSecret } from "../../crypto.js";
 
 const strictCtx = createStrictExtensionContext();
-const TEST_SECRET = randomBytes(32);
+
+// Initialize encryption secret for tests
+initEncryptionSecret(randomBytes(32));
 
 /** Extract text from the first content item. */
 function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
@@ -46,7 +49,6 @@ describe("createExecuteTool", () => {
       taskId,
       broadcast,
       sessions,
-      encryptionSecret: TEST_SECRET,
     });
   }
 

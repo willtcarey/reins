@@ -1,21 +1,13 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
-import { createTestState } from "../helpers/test-state.js";
+import { makeRequest } from "../helpers/request.js";
+import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo, commitFile } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 
-function makeRequest(method: string, path: string, body?: any): Request {
-  const opts: RequestInit = { method };
-  if (body !== undefined) {
-    opts.body = JSON.stringify(body);
-    opts.headers = { "Content-Type": "application/json" };
-  }
-  return new Request(`http://localhost${path}`, opts);
-}
-
 describe("git routes", () => {
-  let state: ReturnType<typeof createTestState>;
+  let state: ReturnType<typeof createServerState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
 
@@ -23,7 +15,7 @@ describe("git routes", () => {
   const repo = useTestRepo();
 
   beforeEach(() => {
-    state = createTestState();
+    state = createServerState();
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
     projectId = p.id;
@@ -135,7 +127,7 @@ describe("git routes", () => {
 });
 
 describe("git routes with remote", () => {
-  let state: ReturnType<typeof createTestState>;
+  let state: ReturnType<typeof createServerState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
 
@@ -143,7 +135,7 @@ describe("git routes with remote", () => {
   const repo = useTestRepo({ withRemote: true });
 
   beforeEach(() => {
-    state = createTestState();
+    state = createServerState();
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
     projectId = p.id;

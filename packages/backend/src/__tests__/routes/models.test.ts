@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
-import { createTestState } from "../helpers/test-state.js";
+import { makeRequest } from "../helpers/request.js";
+import { createServerState } from "../helpers/server-state.js";
 import { buildRouter } from "../../routes/index.js";
 import { setSetting } from "../../settings-store.js";
 
@@ -8,7 +9,7 @@ describe("GET /api/models", () => {
   useTestDb();
 
   const setup = () => {
-    const state = createTestState();
+    const state = createServerState();
     const router = buildRouter();
     return { state, router };
   };
@@ -16,7 +17,7 @@ describe("GET /api/models", () => {
   test("returns expected provider/model structure", async () => {
     const { router, state } = setup();
     const res = await router.handle(
-      new Request("http://localhost/api/models"),
+      makeRequest("/api/models"),
       state,
     );
     expect(res!.status).toBe(200);
@@ -52,17 +53,17 @@ describe("GET /api/models", () => {
 
     // Before setting key — anthropic may or may not have env var
     const res1 = await router.handle(
-      new Request("http://localhost/api/models"),
+      makeRequest("/api/models"),
       state,
     );
     const before = await res1!.json();
     const anthropicBefore = before.find((p: any) => p.provider === "anthropic");
 
     // Set a DB key
-    setSetting("api_key_anthropic", "sk-test-key", state.encryptionSecret);
+    setSetting("api_key_anthropic", "sk-test-key");
 
     const res2 = await router.handle(
-      new Request("http://localhost/api/models"),
+      makeRequest("/api/models"),
       state,
     );
     const after = await res2!.json();
@@ -77,10 +78,110 @@ describe("GET /api/models", () => {
     }
   });
 
+  test("keySources includes all configured sources", async () => {
+    const { router, state } = setup();
+
+    // Check that keySources array is present
+    const res1 = await router.handle(
+      makeRequest("/api/models"),
+      state,
+    );
+    const body1 = await res1!.json();
+    const first = body1[0];
+    expect(first).toHaveProperty("keySources");
+    expect(Array.isArray(first.keySources)).toBe(true);
+  });
+
+  test("keySources shows both db and env when both are configured", async () => {
+    const { router, state } = setup();
+
+    // Set a DB key for anthropic
+    setSetting("api_key_anthropic", "sk-test-key");
+
+    // Also set an env var
+    const origEnv = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "sk-env-test";
+
+    try {
+      const res = await router.handle(
+        makeRequest("/api/models"),
+        state,
+      );
+      const body = await res!.json();
+      const anthropic = body.find((p: any) => p.provider === "anthropic");
+
+      expect(anthropic.hasKey).toBe(true);
+      expect(anthropic.keySource).toBe("db"); // highest priority
+      expect(anthropic.keySources).toContain("db");
+      expect(anthropic.keySources).toContain("env");
+    } finally {
+      if (origEnv === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = origEnv;
+      }
+    }
+  });
+
+  test("keySources shows oauth when OAuth credentials are stored", async () => {
+    const { router, state } = setup();
+
+    // Store OAuth credentials
+    setSetting("oauth_anthropic", {
+      refresh: "refresh-token",
+      access: "access-token",
+      expires: Date.now() + 3600_000,
+    });
+
+    const res = await router.handle(
+      makeRequest("/api/models"),
+      state,
+    );
+    const body = await res!.json();
+    const anthropic = body.find((p: any) => p.provider === "anthropic");
+
+    expect(anthropic.hasKey).toBe(true);
+    expect(anthropic.keySources).toContain("oauth");
+  });
+
+  test("keySources shows env and oauth when both are configured", async () => {
+    const { router, state } = setup();
+
+    // Set env var + OAuth credentials
+    const origEnv = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "sk-env-test";
+
+    setSetting("oauth_anthropic", {
+      refresh: "refresh-token",
+      access: "access-token",
+      expires: Date.now() + 3600_000,
+    });
+
+    try {
+      const res = await router.handle(
+        makeRequest("/api/models"),
+        state,
+      );
+      const body = await res!.json();
+      const anthropic = body.find((p: any) => p.provider === "anthropic");
+
+      expect(anthropic.hasKey).toBe(true);
+      expect(anthropic.keySource).toBe("env"); // env has higher priority than oauth
+      expect(anthropic.keySources).toContain("env");
+      expect(anthropic.keySources).toContain("oauth");
+    } finally {
+      if (origEnv === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = origEnv;
+      }
+    }
+  });
+
   test("providers without DB keys show env source when env var set", async () => {
     const { router, state } = setup();
     const res = await router.handle(
-      new Request("http://localhost/api/models"),
+      makeRequest("/api/models"),
       state,
     );
     const body = await res!.json();

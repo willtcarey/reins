@@ -3,28 +3,20 @@ import { mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { useTestDb } from "../helpers/test-db.js";
-import { createTestState } from "../helpers/test-state.js";
+import { makeRequest } from "../helpers/request.js";
+import { createServerState } from "../helpers/server-state.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 
-function makeRequest(method: string, path: string, body?: any): Request {
-  const opts: RequestInit = { method };
-  if (body !== undefined) {
-    opts.body = JSON.stringify(body);
-    opts.headers = { "Content-Type": "application/json" };
-  }
-  return new Request(`http://localhost${path}`, opts);
-}
-
 describe("project routes", () => {
-  let state: ReturnType<typeof createTestState>;
+  let state: ReturnType<typeof createServerState>;
   let router: ReturnType<typeof buildRouter>;
   let tempDir: string;
 
   useTestDb();
 
   beforeEach(() => {
-    state = createTestState();
+    state = createServerState();
     router = buildRouter();
     tempDir = mkdtempSync(join(tmpdir(), "reins-test-projects-"));
   });

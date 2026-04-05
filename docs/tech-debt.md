@@ -6,7 +6,7 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 - `git.ts` is a bag of free functions that all take `projectDir` as their first argument. Refactor into a class (e.g. `GitRepo`) that accepts `projectDir` in the constructor so callers don't thread it through every call.
 - `getChangedFiles()` and `getDiff()` duplicate the same git operations (committed diff, uncommitted diff, untracked files) with different output flags (`--numstat` vs `-U{n}`). Unify so `getChangedFiles` derives file summaries from the parsed diff output that `getDiff` already computes, eliminating the duplicated subprocess calls and merge logic.
-- `sessions.ts` is too coupled to `ServerState`. It receives the full state object to access `state.sessions`, `state.clients`, and `state.explicitModel`. Ideally it should receive narrow dependencies (e.g. the session map, a `Broadcast` function, model config) rather than the entire server state bag, so it doesn't act as a conduit for threading `ServerState` into the rest of the bundle.
+- `sessions.ts` is too coupled to `ServerState`. It receives the full state object to access `state.sessions` and `state.clients`. Ideally it should receive narrow dependencies (e.g. the session map and a `Broadcast` function) rather than the entire server state bag, so it doesn't act as a conduit for threading `ServerState` into the rest of the bundle.
 
 - `session_messages` tool results consume ~68% of DB size (42.5MB of 63MB message data). Currently only pruned on compaction, but most sessions never compact. Add a routine to prune tool result content from closed/merged task sessions where the full output is no longer needed for LLM context.
 

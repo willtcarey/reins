@@ -9,11 +9,35 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { randomBytes, createCipheriv, createDecipheriv } from "crypto";
+import { resolveDataDir } from "./db.js";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12;
 const AUTH_TAG_LENGTH = 16;
 const KEY_LENGTH = 32;
+
+// ---------------------------------------------------------------------------
+// Module-level encryption secret
+// ---------------------------------------------------------------------------
+
+let _secret: Buffer | null = null;
+
+/** Initialize or override the module-level encryption secret. */
+export function initEncryptionSecret(secret: Buffer): void {
+  _secret = secret;
+}
+
+/**
+ * Get the module-level encryption secret.
+ * Lazily resolves and caches it on first use so hot-reloaded modules do not
+ * require startup-time secret injection through ServerState.
+ */
+export function getEncryptionSecret(): Buffer {
+  if (_secret) return _secret;
+
+  _secret = getOrCreateSecret(resolveDataDir());
+  return _secret;
+}
 
 /**
  * Get or create a server secret for encryption.
@@ -56,7 +80,8 @@ export function getOrCreateSecret(
  * Encrypt plaintext with AES-256-GCM.
  * Returns a base64-encoded string containing: iv + authTag + ciphertext.
  */
-export function encrypt(plaintext: string, secret: Buffer): string {
+export function encrypt(plaintext: string): string {
+  const secret = getEncryptionSecret();
   const iv = randomBytes(IV_LENGTH);
   const cipher = createCipheriv(ALGORITHM, secret, iv, {
     authTagLength: AUTH_TAG_LENGTH,
@@ -77,7 +102,8 @@ export function encrypt(plaintext: string, secret: Buffer): string {
  * Decrypt a base64-encoded AES-256-GCM ciphertext.
  * Throws on tampered data or wrong key.
  */
-export function decrypt(encoded: string, secret: Buffer): string {
+export function decrypt(encoded: string): string {
+  const secret = getEncryptionSecret();
   const packed = Buffer.from(encoded, "base64");
 
   if (packed.length < IV_LENGTH + AUTH_TAG_LENGTH) {

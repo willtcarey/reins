@@ -33,7 +33,6 @@ export interface ExecuteToolOpts {
   taskId: number | null;
   broadcast: Broadcast;
   sessions: Map<string, ManagedSession>;
-  encryptionSecret: Buffer;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,7 +79,6 @@ export function createExecuteTool(opts: ExecuteToolOpts): ToolDefinition<typeof 
           taskId: opts.taskId,
           broadcast: opts.broadcast,
           sessions: opts.sessions,
-          encryptionSecret: opts.encryptionSecret,
         });
 
         // Build a vm context with only the api object and safe JS builtins.

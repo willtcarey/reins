@@ -55,7 +55,7 @@ packages/backend/src/
     helpers/
       test-db.ts          # In-memory DB setup/teardown
       test-repo.ts         # Temp git repo setup/teardown
-      test-state.ts        # Minimal ServerState factory
+      test-state.ts          # Minimal ServerState factory
     branch-namer.test.ts
     db.test.ts
     errors.test.ts
