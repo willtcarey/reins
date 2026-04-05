@@ -10,6 +10,7 @@
 | [macos.md](macos.md) | macos | Native Mac app shell: setup, dev workflow, building |
 | [docker.md](docker.md) | all | Building and running REINS in a Docker container |
 | [workflow.md](workflow.md) | all | Development workflow: RGR, testing reference, pre/post-implementation checklist |
+| [code-style.md](code-style.md) | all | Repo-wide code and documentation style conventions |
 | [pwa.md](pwa.md) | frontend | PWA manifest, service worker, icons |
 | [reactive-controllers.md](reactive-controllers.md) | frontend | Using Lit Reactive Controllers to extract testable logic from components |
 | [tool-renderers.md](tool-renderers.md) | frontend | Tool renderer registry, per-tool rendering tiers, adding new renderers |

@@ -7,9 +7,14 @@
 
 import type { ServerState } from "./state.js";
 import { buildRouter } from "./routes/index.js";
+import { installRuntimeHooks } from "./runtime-hooks.js";
 import { serveStatic } from "./static.js";
 
 const router = buildRouter();
+
+export function install(state: ServerState): () => void {
+  return installRuntimeHooks(state);
+}
 
 export async function handleFetch(
   state: ServerState,

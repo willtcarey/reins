@@ -15,8 +15,8 @@ import {
   createSharedAuthStorage,
   loadDbApiKeyRuntimeOverrides,
   loadDbOAuthCredentials,
-  subscribeAuthStorageChanges,
 } from "../auth-storage.js";
+import { installRuntimeHooks } from "../runtime-hooks.js";
 import { clearPendingLogins } from "../routes/oauth.js";
 
 const TEST_PROVIDER_ID = "test-oauth-wiring";
@@ -215,15 +215,11 @@ describe("auth storage wiring", () => {
       await expect(managed.session.modelRegistry.authStorage.getApiKey(TEST_PROVIDER_ID)).resolves.toBeUndefined();
     });
 
-    test("DB-backed auth writes notify listeners so other sessions can reload", async () => {
+    test("DB-backed auth writes notify runtime hooks so other sessions can reload", async () => {
       const first = await createNewSession(state, projectId, repo.dir);
       const second = await createNewSession(state, projectId, repo.dir);
 
-      const unsubscribe = subscribeAuthStorageChanges(() => {
-        for (const managed of state.sessions.values()) {
-          managed.session.modelRegistry.authStorage.reload();
-        }
-      });
+      const uninstall = installRuntimeHooks(state);
 
       try {
         first.session.modelRegistry.authStorage.set("anthropic", {
@@ -233,7 +229,41 @@ describe("auth storage wiring", () => {
 
         await expect(second.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-from-first-session");
       } finally {
-        unsubscribe();
+        uninstall();
+      }
+    });
+
+    test("runtime hook installations are independent until explicitly uninstalled", async () => {
+      const firstState = createServerState();
+      const secondState = createServerState();
+
+      const firstObserver = await createNewSession(firstState, projectId, repo.dir);
+      const secondWriter = await createNewSession(secondState, projectId, repo.dir);
+      const secondObserver = await createNewSession(secondState, projectId, repo.dir);
+
+      const uninstallFirst = installRuntimeHooks(firstState);
+      const uninstallSecond = installRuntimeHooks(secondState);
+
+      try {
+        secondWriter.session.modelRegistry.authStorage.set("anthropic", {
+          type: "api_key",
+          key: "sk-runtime-hook",
+        });
+
+        await expect(firstObserver.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-runtime-hook");
+        await expect(secondObserver.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-runtime-hook");
+
+        uninstallFirst();
+
+        secondWriter.session.modelRegistry.authStorage.set("anthropic", {
+          type: "api_key",
+          key: "sk-runtime-hook-2",
+        });
+
+        await expect(firstObserver.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-runtime-hook");
+        await expect(secondObserver.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-runtime-hook-2");
+      } finally {
+        uninstallSecond();
       }
     });
   });

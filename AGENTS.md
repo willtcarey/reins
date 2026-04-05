@@ -11,7 +11,7 @@ These are your docs — update them as you work. Add new ones, revise stale ones
 
 | Location | What goes there |
 |---|---|
-| [`docs/dev/`](docs/dev/) ([index](docs/dev/INDEX.md)) | Developer guides — architecture, conventions, workflows. Add new docs to the index. |
+| [`docs/dev/`](docs/dev/) ([index](docs/dev/INDEX.md)) | Developer guides — architecture, conventions, workflows. Read and follow relevant docs here for the area you're touching; these docs are instructions for you, not just background reference. Add new docs to the index. |
 | [`docs/features/`](docs/features/) | Significant user-facing feature docs — how the user interacts, not implementation details. |
 | [`docs/plans/`](docs/plans/) | Planning docs for features, refactors, architectural changes. Move to `completed/` when done. |
 | [`docs/adr/`](docs/adr/) ([index](docs/adr/INDEX.md)) | Architecture Decision Records (`NNN-slug.md`). See index for when to write one. |

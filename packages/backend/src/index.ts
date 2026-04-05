@@ -13,7 +13,6 @@ import { watch } from "fs";
 import { resolve, join } from "path";
 import { mkdirSync, existsSync } from "fs";
 import type { ServerState, ManagedSession, WsClient } from "./state.js";
-import { subscribeAuthStorageChanges } from "./auth-storage.js";
 
 // We import the handler types but load via dynamic import so we can reload
 import type * as RoutesModule from "./handler.js";
@@ -38,12 +37,6 @@ const state: ServerState = {
   frontendDir: new URL("../../frontend/", import.meta.url).pathname,
 };
 
-subscribeAuthStorageChanges(() => {
-  for (const managed of state.sessions.values()) {
-    managed.session.modelRegistry.authStorage.reload();
-  }
-});
-
 // Idle eviction — evict sessions that haven't had activity recently
 // and aren't currently streaming
 setInterval(() => {
@@ -67,6 +60,7 @@ const WS_PATH = resolve(SRC_DIR, "ws.ts");
 
 let routes: typeof RoutesModule;
 let ws: typeof WsModule;
+let uninstallRuntimeHooks: (() => void) | null = null;
 
 /**
  * Dev build output directory — placed under packages/backend/ so that
@@ -74,6 +68,13 @@ let ws: typeof WsModule;
  * against the workspace's node_modules via Bun's module resolution.
  */
 const DEV_BUILD_DIR = resolve(SRC_DIR, "../.dev-build");
+
+// Install the current handler module's runtime hooks and replace the previous cleanup.
+function installRoutes(): void {
+  const nextUninstall = routes.install(state);
+  uninstallRuntimeHooks?.();
+  uninstallRuntimeHooks = nextUninstall;
+}
 
 async function loadHandlers(): Promise<void> {
   if (IS_DEV) {
@@ -125,6 +126,7 @@ if (IS_DEV) {
     debounce = setTimeout(async () => {
       try {
         await loadHandlers();
+        installRoutes();
         console.log(`\x1b[36m[hot reload]\x1b[0m ${filename} reloaded`);
       } catch (err) {
         console.error(`\x1b[31m[hot reload]\x1b[0m Failed to reload:`, err);
@@ -140,6 +142,7 @@ if (IS_DEV) {
 async function startServer(): Promise<void> {
   // Initial handler load
   await loadHandlers();
+  installRoutes();
 
   Bun.serve({
     port: PORT,

@@ -16,6 +16,7 @@ index.ts (stable, never reloads)
 │                                  │
 │ let routes: RoutesModule  ───────┼──┐
 │ let ws: WsModule          ───────┼──┤
+│ let uninstallRuntimeHooks() ─────┼──┤
 │                                  │  │
 │ Bun.serve({                      │  │  .dev-build/
 │   fetch → routes.handleFetch()   │  │  ┌──────────────────────┐
@@ -27,6 +28,9 @@ index.ts (stable, never reloads)
 │ watch(src/) ─── on .ts change ───┼──┘        │
 │   → Bun.build([routes.ts, ws.ts])────────────┘
 │   → import(.dev-build/*.js?t=…)  │
+│   → next = routes.install(state) │
+│   → uninstallRuntimeHooks?.()    │
+│   → uninstallRuntimeHooks = next │
 └──────────────────────────────────┘
 
 routes.ts ──► routes/index.ts ──► routes/*.ts
@@ -48,7 +52,8 @@ state.ts (types only)
   `ws` references.
 - **`routes.ts`** is the HTTP entry point — it handles WebSocket upgrades,
   delegates API routes via the router (`routes/index.ts` → per-resource route
-  files), and serves static frontend files.
+  files), serves static frontend files, and exposes an `install(state)` hook
+  that returns a cleanup function for hot-reloadable runtime wiring.
 - **`ws.ts`** handles the WebSocket lifecycle (`open`, `message`, `close`) and
   dispatches commands (`prompt`, `steer`, `abort`).
 - **`state.ts`** defines the shared types (`ServerState`, `ManagedSession`,
@@ -58,6 +63,9 @@ state.ts (types only)
   transitive `src/` imports) into `.dev-build/`, keeping `node_modules`
   external. The bundled files are then imported with a cache-busting query
   string (`?t=<timestamp>`), swapping the handler references.
+- After each import, `index.ts` calls `routes.install(state)` and stores the
+  returned cleanup function in stable process state. On the next reload it
+  installs the new hooks, then calls the previous cleanup.
 - Because the build bundles the full transitive dependency tree under `src/`,
   a change to *any* source file (e.g. `sessions.ts`, `router.ts`,
   `routes/projects.ts`) triggers a reload — not just `routes.ts` or `ws.ts`.
