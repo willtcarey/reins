@@ -12,6 +12,7 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { ManagedSession } from "../state.js";
 import { getSession } from "../session-store.js";
 import { getProject } from "../project-store.js";
+import { ThinkingLevelSchema } from "../thinking-level.js";
 
 // ---------------------------------------------------------------------------
 // Per-project mutex for delegation
@@ -39,6 +40,9 @@ export interface CreateSessionOpts {
   taskId?: number;
   delegateDepth?: number;
   parentSessionId?: string;
+  modelProvider?: string;
+  modelId?: string;
+  thinkingLevel?: string;
 }
 
 /**
@@ -90,6 +94,15 @@ const parameters = Type.Object({
       "Instructions for the sub-session. Be specific — the sub-session has no prior context. " +
       "You can also specify what you want back (e.g. a summary, a list of changes, a yes/no answer).",
   }),
+  modelProvider: Type.Optional(Type.String({
+    description: "Optional provider override for the sub-session (for example 'anthropic' or 'openai'). Requires modelId.",
+  })),
+  modelId: Type.Optional(Type.String({
+    description: "Optional model ID override for the sub-session. Requires modelProvider.",
+  })),
+  thinkingLevel: Type.Optional(Type.String({
+    description: `Optional thinking level override for the sub-session (${ThinkingLevelSchema.description}).`,
+  })),
 });
 
 /**
@@ -171,6 +184,9 @@ export function createDelegateTool(
             taskId: sessionRow.task_id,
             delegateDepth: depth + 1,
             parentSessionId: sessionId,
+            modelProvider: params.modelProvider,
+            modelId: params.modelId,
+            thinkingLevel: params.thinkingLevel,
           });
 
           const subSession = managed.session;

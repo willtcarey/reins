@@ -29,7 +29,8 @@ import { createBroadcast, type Broadcast } from "./models/broadcast.js";
 import { getSetting } from "./settings-store.js";
 import { type Api, type Model } from "@mariozechner/pi-ai";
 import type { ThinkingLevel } from "./thinking-level.js";
-import { resolveModelSetting } from "./model-settings.js";
+import { parseThinkingLevel } from "./thinking-level.js";
+import { resolveModel, resolveModelSetting } from "./model-settings.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -111,6 +112,20 @@ function resolveConfiguredSessionDefaults(): { model: Model<Api>; thinkingLevel:
   return { model, thinkingLevel: dbDefault.thinkingLevel };
 }
 
+function resolveRequestedSessionModel(opts?: CreateSessionOpts): Model<Api> | undefined {
+  if (!opts?.modelProvider && !opts?.modelId) return undefined;
+  if (!opts?.modelProvider || !opts?.modelId) {
+    throw new Error("Both modelProvider and modelId are required when overriding a session model.");
+  }
+
+  const model = resolveModel(opts.modelProvider, opts.modelId);
+  if (!model) {
+    throw new Error(`Unknown model override: ${opts.modelProvider}/${opts.modelId}`);
+  }
+
+  return model;
+}
+
 /**
  * Resolve the globally configured default model from settings.
  * Returns undefined when no valid default is configured, allowing the pi SDK
@@ -133,8 +148,9 @@ async function buildSessionOpts(params: {
   sessionId: string;
   task: TaskRow | null;
   includeDelegateTool: boolean;
+  createOpts?: CreateSessionOpts;
 }) {
-  const { state, projectId, projectDir, sessionId, task, includeDelegateTool } = params;
+  const { state, projectId, projectDir, sessionId, task, includeDelegateTool, createOpts } = params;
   const sessionManager = SessionManager.inMemory();
   const tools = createCodingTools(projectDir);
   const broadcast = createBroadcast(state.clients);
@@ -170,8 +186,12 @@ async function buildSessionOpts(params: {
   });
   await resourceLoader.reload();
 
-  // Resolve model: DB default → SDK default
+  // Resolve model: explicit override → DB default → SDK default
   const configuredDefaults = resolveConfiguredSessionDefaults();
+  const requestedModel = resolveRequestedSessionModel(createOpts);
+  const requestedThinkingLevel = createOpts?.thinkingLevel
+    ? parseThinkingLevel(createOpts.thinkingLevel)
+    : undefined;
 
   return {
     cwd: projectDir,
@@ -179,8 +199,8 @@ async function buildSessionOpts(params: {
     customTools,
     sessionManager,
     resourceLoader,
-    model: configuredDefaults?.model,
-    configuredThinkingLevel: configuredDefaults?.thinkingLevel,
+    model: requestedModel ?? configuredDefaults?.model,
+    configuredThinkingLevel: requestedThinkingLevel ?? configuredDefaults?.thinkingLevel,
     authStorage: createDbBackedAuthStorage(),
   };
 }
@@ -215,6 +235,7 @@ export async function createNewSession(
     sessionId,
     task,
     includeDelegateTool,
+    createOpts: opts,
   });
 
   const result = await createAgentSession(sessionOpts);
