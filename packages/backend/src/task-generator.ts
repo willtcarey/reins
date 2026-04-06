@@ -6,8 +6,8 @@
  */
 
 import { createAgentSession, SessionManager, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
-import { getModel } from "@mariozechner/pi-ai";
 import { slugifyBranchName } from "./branch-namer.js";
+import { resolveUtilityModel } from "./model-settings.js";
 
 export interface GeneratedTask {
   title: string;
@@ -41,7 +41,7 @@ export async function generateTask(prompt: string): Promise<GeneratedTask> {
 
     const { session } = await createAgentSession({
       tools: [],
-      model: getModel("anthropic", "claude-haiku-4-5"),
+      model: resolveUtilityModel(),
       sessionManager: SessionManager.inMemory(),
       resourceLoader,
     });

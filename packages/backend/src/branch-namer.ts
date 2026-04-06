@@ -7,7 +7,7 @@
  */
 
 import { createAgentSession, SessionManager, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
-import { getModel } from "@mariozechner/pi-ai";
+import { resolveUtilityModel } from "./model-settings.js";
 
 const BRANCH_PATTERN = /^task\/[a-z0-9][a-z0-9-]*$/;
 const TIMEOUT_MS = 10_000;
@@ -34,7 +34,7 @@ export async function generateBranchName(title: string): Promise<string> {
 
     const { session } = await createAgentSession({
       tools: [],
-      model: getModel("anthropic", "claude-haiku-4-5"),
+      model: resolveUtilityModel(),
       sessionManager: SessionManager.inMemory(),
       resourceLoader,
     });

@@ -26,6 +26,7 @@ describe("settings routes", () => {
       const { router, state } = setup();
 
       setSetting("default_model", { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" });
+      setSetting("utility_model", { provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" });
 
       const res = await router.handle(makeRequest("GET", "/api/settings"), state);
       const body = await res!.json();
@@ -34,6 +35,11 @@ describe("settings routes", () => {
         {
           key: "default_model",
           value: { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" },
+          redacted: false,
+        },
+        {
+          key: "utility_model",
+          value: { provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" },
           redacted: false,
         },
       ]);
@@ -55,6 +61,16 @@ describe("settings routes", () => {
       const res = await router.handle(makeRequest("GET", "/api/settings/default_model"), state);
       expect(res!.status).toBe(200);
       expect(await res!.json()).toEqual({ key: "default_model", value: model });
+    });
+
+    test("returns value for utility_model", async () => {
+      const { router, state } = setup();
+      const model = { provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" } as const;
+      setSetting("utility_model", model);
+
+      const res = await router.handle(makeRequest("GET", "/api/settings/utility_model"), state);
+      expect(res!.status).toBe(200);
+      expect(await res!.json()).toEqual({ key: "utility_model", value: model });
     });
 
     test("returns 400 for unknown key", async () => {

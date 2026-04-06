@@ -9,9 +9,20 @@ The **Default Model** setting controls which model new sessions use.
 - It is global to the server, not per-project.
 - It applies to newly created sessions only.
 - Existing sessions keep their current model unless changed explicitly.
-- If no default model is configured, the pi SDK's built-in default is used.
+- If no default model is configured, REINS uses its built-in fallback.
 
 You can change the default model from the settings panel in the sidebar using a single provider/model picker.
+
+## Utility model
+
+The **Utility Model** setting controls which model REINS uses for lightweight internal tasks such as task generation and branch naming.
+
+- It is global to the server, not per-project.
+- It is intended for cheaper and faster one-shot calls.
+- If no utility model is configured, REINS falls back to the default model.
+- If neither utility nor default model is configured, REINS uses its built-in fallback.
+
+You can configure it separately in the settings panel, alongside the default model.
 
 ## Auth credentials
 

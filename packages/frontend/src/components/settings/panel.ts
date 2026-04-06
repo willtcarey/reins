@@ -12,7 +12,7 @@ import { StoreController } from "../../controllers/store-controller.js";
 import { SettingsStore } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
 import "./api-keys-section.js";
-import "./default-model-section.js";
+import "./model-setting-section.js";
 
 @customElement("settings-panel")
 export class SettingsPanel extends LitElement {
@@ -86,10 +86,30 @@ export class SettingsPanel extends LitElement {
                 <settings-api-keys-section .store=${this.store}></settings-api-keys-section>
               </div>
 
-              <div>
+              <div class="mb-5">
                 <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">Default Model</h3>
                 <p class="text-[10px] text-zinc-500 mb-3">New sessions will use this model. Existing sessions are not affected.</p>
-                <settings-default-model-section .store=${this.store}></settings-default-model-section>
+                <settings-model-setting-section
+                  .store=${this.store}
+                  settingKey="default_model"
+                  emptyMessage="Configure at least one API key above to select a default model."
+                  successLabel="Default model updated"
+                  currentLabel="Current"
+                  clearSuccessLabel="Default model cleared"
+                ></settings-model-setting-section>
+              </div>
+
+              <div>
+                <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">Utility Model</h3>
+                <p class="text-[10px] text-zinc-500 mb-3">Used for lightweight internal tasks like task generation and branch naming. Falls back to the default model when unset.</p>
+                <settings-model-setting-section
+                  .store=${this.store}
+                  settingKey="utility_model"
+                  emptyMessage="Configure at least one API key above to select a utility model."
+                  successLabel="Utility model updated"
+                  currentLabel="Utility model"
+                  clearSuccessLabel="Utility model cleared"
+                ></settings-model-setting-section>
               </div>
             `}
         </div>

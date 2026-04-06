@@ -14,6 +14,7 @@ describe("settings-store", () => {
   describe("keys", () => {
     test("accepts static settings keys", () => {
       expect(isValidSettingsKey("default_model")).toBe(true);
+      expect(isValidSettingsKey("utility_model")).toBe(true);
     });
 
     test("rejects legacy auth keys", () => {
@@ -32,6 +33,13 @@ describe("settings-store", () => {
       setSetting("default_model", model);
 
       expect(getSetting("default_model")).toEqual(model);
+    });
+
+    test("returns typed object for utility_model", () => {
+      const model = { provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" } as const;
+      setSetting("utility_model", model);
+
+      expect(getSetting("utility_model")).toEqual(model);
     });
 
     test("throws for unknown key", () => {
@@ -85,13 +93,20 @@ describe("settings-store", () => {
     });
 
     test("returns stored settings", () => {
-      const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" } as const;
-      setSetting("default_model", model);
+      const defaultModel = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" } as const;
+      const utilityModel = { provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" } as const;
+      setSetting("default_model", defaultModel);
+      setSetting("utility_model", utilityModel);
 
       expect(listSettings()).toEqual([
         {
           key: "default_model",
-          value: model,
+          value: defaultModel,
+          redacted: false,
+        },
+        {
+          key: "utility_model",
+          value: utilityModel,
           redacted: false,
         },
       ]);

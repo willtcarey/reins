@@ -27,8 +27,9 @@ import { createCustomTools } from "./tools/index.js";
 import type { CreateSessionOpts } from "./tools/delegate.js";
 import { createBroadcast, type Broadcast } from "./models/broadcast.js";
 import { getSetting } from "./settings-store.js";
-import { getModels, getProviders, type Api, type Model } from "@mariozechner/pi-ai";
+import { type Api, type Model } from "@mariozechner/pi-ai";
 import type { ThinkingLevel } from "./thinking-level.js";
+import { resolveModelSetting } from "./model-settings.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -116,13 +117,7 @@ function resolveConfiguredSessionDefaults(): { model: Model<Api>; thinkingLevel:
  * to fall back to its built-in default.
  */
 export function resolveConfiguredModel(): Model<Api> | undefined {
-  const dbDefault = getSetting("default_model");
-  if (!dbDefault) return undefined;
-
-  const provider = getProviders().find((candidate) => candidate === dbDefault.provider);
-  if (!provider) return undefined;
-
-  return getModels(provider).find((candidate) => candidate.id === dbDefault.modelId);
+  return resolveModelSetting("default_model");
 }
 
 /**

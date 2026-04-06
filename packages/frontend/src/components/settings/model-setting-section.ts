@@ -7,11 +7,11 @@ import {
   formatDefaultModelOptionLabel,
   THINKING_LEVELS,
 } from "../../models/settings.js";
-import { SettingsStore } from "../../models/stores/settings-store.js";
+import { SettingsStore, type ModelSettingKey } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
 
-@customElement("settings-default-model-section")
-export class SettingsDefaultModelSection extends LitElement {
+@customElement("settings-model-setting-section")
+export class SettingsModelSettingSection extends LitElement {
   override createRenderRoot() {
     return this;
   }
@@ -27,6 +27,24 @@ export class SettingsDefaultModelSection extends LitElement {
     return this._storeCtrl.store;
   }
 
+  @property()
+  settingKey: ModelSettingKey = "default_model";
+
+  @property()
+  emptyMessage = "Configure at least one API key above to select a model.";
+
+  @property()
+  successLabel = "Model updated";
+
+  @property()
+  clearLabel = "Clear";
+
+  @property()
+  currentLabel = "Current";
+
+  @property()
+  clearSuccessLabel = "Model setting cleared";
+
   private async _handleProviderModelChange(e: Event) {
     const store = this.store;
     if (!store || !(e.target instanceof HTMLSelectElement)) return;
@@ -34,14 +52,14 @@ export class SettingsDefaultModelSection extends LitElement {
     const selection = decodeDefaultModelSelection(e.target.value);
     if (!selection) return;
 
-    const result = await store.selectDefaultModel(selection.provider, selection.modelId);
+    const result = await store.selectModelSetting(this.settingKey, selection.provider, selection.modelId);
     if ("error" in result) {
-      showToast(`Failed to save default model: ${result.error}`, "error");
+      showToast(`Failed to save model setting: ${result.error}`, "error");
       return;
     }
 
-    if (store.selectedProvider && store.selectedModel) {
-      showToast("Default model updated", "success");
+    if (this._selectedProvider && this._selectedModel) {
+      showToast(this.successLabel, "success");
     }
   }
 
@@ -49,28 +67,57 @@ export class SettingsDefaultModelSection extends LitElement {
     const store = this.store;
     if (!store || !(e.target instanceof HTMLSelectElement)) return;
 
-    const result = await store.selectThinkingLevel(e.target.value);
+    const result = await store.selectModelSettingThinkingLevel(this.settingKey, e.target.value);
     if ("error" in result) {
-      showToast(`Failed to save default model: ${result.error}`, "error");
+      showToast(`Failed to save model setting: ${result.error}`, "error");
       return;
     }
 
-    if (store.selectedProvider && store.selectedModel) {
-      showToast("Default model updated", "success");
+    if (this._selectedProvider && this._selectedModel) {
+      showToast(this.successLabel, "success");
     }
   }
 
-  private async _clearDefaultModel() {
+  private async _clearModelSetting() {
     const store = this.store;
     if (!store) return;
 
-    const result = await store.clearDefaultModel();
+    const result = await store.clearModelSetting(this.settingKey);
     if ("error" in result) {
-      showToast(`Failed to clear default model: ${result.error}`, "error");
+      showToast(`Failed to clear model setting: ${result.error}`, "error");
       return;
     }
 
-    showToast("Default model cleared", "success");
+    showToast(this.clearSuccessLabel, "success");
+  }
+
+  private get _currentModel() {
+    const store = this.store;
+    if (!store) return null;
+    return this.settingKey === "default_model" ? store.defaultModel : store.utilityModel;
+  }
+
+  private get _selectedProvider() {
+    const store = this.store;
+    if (!store) return "";
+    return this.settingKey === "default_model" ? store.selectedProvider : store.selectedUtilityProvider;
+  }
+
+  private get _selectedModel() {
+    const store = this.store;
+    if (!store) return "";
+    return this.settingKey === "default_model" ? store.selectedModel : store.selectedUtilityModel;
+  }
+
+  private get _selectedThinking() {
+    const store = this.store;
+    if (!store) return "high";
+    return this.settingKey === "default_model" ? store.selectedThinking : store.selectedUtilityThinking;
+  }
+
+  private _formatThinkingLevel(thinkingLevel: string): string {
+    const defaultThinkingLevel = this.settingKey === "default_model" ? "high" : "minimal";
+    return thinkingLevel === defaultThinkingLevel ? "" : `(${thinkingLevel})`;
   }
 
   override render() {
@@ -78,13 +125,14 @@ export class SettingsDefaultModelSection extends LitElement {
     if (!store) return nothing;
 
     const availableProviders = store.availableProviders;
-    const selectedValue = encodeDefaultModelSelection(store.selectedProvider, store.selectedModel);
-    const isReasoning = store.isSelectedModelReasoning();
+    const selectedValue = encodeDefaultModelSelection(this._selectedProvider, this._selectedModel);
+    const isReasoning = store.isSelectedModelReasoning(this.settingKey);
+    const currentModel = this._currentModel;
 
     if (availableProviders.length === 0) {
       return html`
         <p class="text-xs text-zinc-500 py-2">
-          Configure at least one API key above to select a default model.
+          ${this.emptyMessage}
         </p>
       `;
     }
@@ -108,7 +156,7 @@ export class SettingsDefaultModelSection extends LitElement {
                 (model) => html`
                   <option
                     value=${encodeDefaultModelSelection(provider.provider, model.id)}
-                    ?selected=${provider.provider === store.selectedProvider && model.id === store.selectedModel}
+                    ?selected=${provider.provider === this._selectedProvider && model.id === this._selectedModel}
                   >
                     ${formatDefaultModelOptionLabel(provider.provider, model.name)}
                   </option>
@@ -118,19 +166,19 @@ export class SettingsDefaultModelSection extends LitElement {
           </select>
         </div>
 
-        ${store.selectedModel && isReasoning
+        ${this._selectedModel && isReasoning
           ? html`
             <div>
               <label class="block text-[10px] text-zinc-400 mb-1">Thinking Level</label>
               <select
                 class=${selectClass}
-                .value=${store.selectedThinking}
+                .value=${this._selectedThinking}
                 @change=${this._handleThinkingChange}
                 ?disabled=${store.savingModel}
               >
                 ${THINKING_LEVELS.map(
                   (level) =>
-                    html`<option value=${level.value} ?selected=${level.value === store.selectedThinking}>
+                    html`<option value=${level.value} ?selected=${level.value === this._selectedThinking}>
                       ${level.label}
                     </option>`,
                 )}
@@ -139,19 +187,17 @@ export class SettingsDefaultModelSection extends LitElement {
           `
           : nothing}
 
-        ${store.defaultModel
+        ${currentModel
           ? html`
             <div class="flex items-center gap-2 pt-1">
               <span class="text-[10px] text-zinc-500">
-                Current: ${store.defaultModel.provider} / ${store.defaultModel.modelId}
-                ${store.defaultModel.thinkingLevel !== "high"
-                  ? `(${store.defaultModel.thinkingLevel})`
-                  : ""}
+                ${this.currentLabel}: ${currentModel.provider} / ${currentModel.modelId}
+                ${this._formatThinkingLevel(currentModel.thinkingLevel)}
               </span>
               <button
                 class="text-[10px] text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors"
-                @click=${() => void this._clearDefaultModel()}
-              >Clear</button>
+                @click=${() => void this._clearModelSetting()}
+              >${this.clearLabel}</button>
             </div>
           `
           : nothing}
@@ -162,6 +208,6 @@ export class SettingsDefaultModelSection extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    "settings-default-model-section": SettingsDefaultModelSection;
+    "settings-model-setting-section": SettingsModelSettingSection;
   }
 }

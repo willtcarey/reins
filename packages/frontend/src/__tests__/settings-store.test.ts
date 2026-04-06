@@ -53,6 +53,15 @@ describe("SettingsStore", () => {
           },
         });
       }
+      if (url === "/api/settings/utility_model") {
+        return jsonResponse({
+          value: {
+            provider: "anthropic",
+            modelId: "claude-haiku-4-5",
+            thinkingLevel: "minimal",
+          },
+        });
+      }
       if (url === "/api/oauth/providers") {
         return jsonResponse([
           { id: "openrouter", name: "OpenRouter", configured: false },
@@ -83,6 +92,14 @@ describe("SettingsStore", () => {
     expect(store.selectedProvider).toBe("anthropic");
     expect(store.selectedModel).toBe("claude-sonnet-4");
     expect(store.selectedThinking).toBe("medium");
+    expect(store.utilityModel).toEqual({
+      provider: "anthropic",
+      modelId: "claude-haiku-4-5",
+      thinkingLevel: "minimal",
+    });
+    expect(store.selectedUtilityProvider).toBe("anthropic");
+    expect(store.selectedUtilityModel).toBe("claude-haiku-4-5");
+    expect(store.selectedUtilityThinking).toBe("minimal");
     expect(store.availableOAuthProviders.map((provider) => provider.id)).toEqual(["openrouter"]);
   });
 
@@ -280,6 +297,48 @@ describe("SettingsStore", () => {
       provider: "openai",
       modelId: "gpt-4.1",
       thinkingLevel: "high",
+    }));
+  });
+
+  test("selectUtilityModel persists a chosen provider/model pair in one request", async () => {
+    store.providers = [
+      {
+        provider: "anthropic",
+        hasKey: true,
+        keySource: "db",
+        keySources: ["db"],
+        models: [
+          { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", reasoning: true },
+          { id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true },
+        ],
+      },
+    ];
+
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    mockFetch((url, init) => {
+      requests.push({ url, init });
+      if (url === "/api/settings/utility_model" && init?.method === "PUT") {
+        return new Response(null, { status: 200 });
+      }
+      return jsonResponse({}, false);
+    });
+
+    const result = await store.selectUtilityModel("anthropic", "claude-haiku-4-5");
+
+    expect(result).toEqual({ ok: true });
+    expect(store.selectedUtilityProvider).toBe("anthropic");
+    expect(store.selectedUtilityModel).toBe("claude-haiku-4-5");
+    expect(store.selectedUtilityThinking).toBe("minimal");
+    expect(store.utilityModel).toEqual({
+      provider: "anthropic",
+      modelId: "claude-haiku-4-5",
+      thinkingLevel: "minimal",
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.init?.body).toBe(JSON.stringify({
+      provider: "anthropic",
+      modelId: "claude-haiku-4-5",
+      thinkingLevel: "minimal",
     }));
   });
 

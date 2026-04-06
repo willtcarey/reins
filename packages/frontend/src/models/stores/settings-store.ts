@@ -2,7 +2,7 @@
  * Settings Store
  *
  * Owns all server-backed state for the settings panel: available providers,
- * OAuth provider metadata, default model selection, and API key mutations.
+ * OAuth provider metadata, model selections, and API key mutations.
  * Components render from public fields and call async store actions.
  */
 
@@ -28,7 +28,7 @@ export interface ModelInfo {
   reasoning: boolean;
 }
 
-export interface DefaultModel {
+export interface ModelSetting {
   provider: string;
   modelId: string;
   thinkingLevel: string;
@@ -43,6 +43,7 @@ export interface ApiKeyState {
 
 export type SettingsStoreResult = { ok: true } | { error: string };
 export type SettingsStoreListener = () => void;
+export type ModelSettingKey = "default_model" | "utility_model";
 
 export class SettingsStore {
   // ---- Public reactive state ------------------------------------------------
@@ -54,11 +55,16 @@ export class SettingsStore {
 
   providers: ProviderInfo[] = [];
   oauthProviders: OAuthProviderInfo[] = [];
-  defaultModel: DefaultModel | null = null;
+  defaultModel: ModelSetting | null = null;
+  utilityModel: ModelSetting | null = null;
 
   selectedProvider = "";
   selectedModel = "";
   selectedThinking = "high";
+
+  selectedUtilityProvider = "";
+  selectedUtilityModel = "";
+  selectedUtilityThinking = "minimal";
 
   oauthLoginProvider = "";
   oauthAuthUrl = "";
@@ -113,9 +119,11 @@ export class SettingsStore {
     return this.oauthProviders.some((oauthProvider) => oauthProvider.id === provider);
   }
 
-  isSelectedModelReasoning(): boolean {
-    const model = this.getModelsForProvider(this.selectedProvider)
-      .find((candidate) => candidate.id === this.selectedModel);
+  isSelectedModelReasoning(settingKey: ModelSettingKey = "default_model"): boolean {
+    const provider = this._selectedProviderFor(settingKey);
+    const modelId = this._selectedModelFor(settingKey);
+    const model = this.getModelsForProvider(provider)
+      .find((candidate) => candidate.id === modelId);
     return model?.reasoning ?? false;
   }
 
@@ -126,9 +134,10 @@ export class SettingsStore {
     this.notify();
 
     try {
-      const [providersRes, defaultModelRes, oauthRes] = await Promise.all([
+      const [providersRes, defaultModelRes, utilityModelRes, oauthRes] = await Promise.all([
         fetch("/api/models"),
         fetch("/api/settings/default_model"),
+        fetch("/api/settings/utility_model"),
         fetch("/api/oauth/providers"),
       ]);
 
@@ -136,19 +145,15 @@ export class SettingsStore {
         this.providers = await providersRes.json();
       }
 
-      if (defaultModelRes.ok) {
-        const data = await defaultModelRes.json();
-        this.defaultModel = data.value ?? null;
-      } else {
-        this.defaultModel = null;
-      }
+      this.defaultModel = await this._readModelSettingResponse(defaultModelRes);
+      this.utilityModel = await this._readModelSettingResponse(utilityModelRes);
 
       if (oauthRes.ok) {
         this.oauthProviders = await oauthRes.json();
       }
 
       this._resetOAuthLoginState();
-      this._syncSelectionFromDefault();
+      this._syncSelectionFromSettings();
 
       return { ok: true };
     } catch (err: unknown) {
@@ -297,65 +302,101 @@ export class SettingsStore {
   // ---- Default model --------------------------------------------------------
 
   async selectProvider(provider: string): Promise<SettingsStoreResult> {
-    this.selectedProvider = provider;
-
-    const providerModels = this.getModelsForProvider(provider);
-    this.selectedModel = providerModels[0]?.id ?? "";
-    this.selectedThinking = "high";
-    this.notify();
-
-    if (!this.selectedProvider || !this.selectedModel) {
-      return { ok: true };
-    }
-
-    return this._persistDefaultModel();
+    return this.selectModelSettingProvider("default_model", provider);
   }
 
   async selectModel(modelId: string): Promise<SettingsStoreResult> {
-    this.selectedModel = modelId;
-    this.notify();
-
-    if (!this.selectedProvider || !this.selectedModel) {
-      return { ok: true };
-    }
-
-    return this._persistDefaultModel();
+    return this.selectModelSettingModel("default_model", modelId);
   }
 
   async selectDefaultModel(provider: string, modelId: string): Promise<SettingsStoreResult> {
-    const providerChanged = this.selectedProvider !== provider;
-
-    this.selectedProvider = provider;
-    this.selectedModel = modelId;
-    if (providerChanged) {
-      this.selectedThinking = "high";
-    }
-    this.notify();
-
-    if (!this.selectedProvider || !this.selectedModel) {
-      return { ok: true };
-    }
-
-    return this._persistDefaultModel();
+    return this.selectModelSetting("default_model", provider, modelId);
   }
 
   async selectThinkingLevel(thinkingLevel: string): Promise<SettingsStoreResult> {
-    this.selectedThinking = thinkingLevel;
-    this.notify();
-
-    if (!this.selectedProvider || !this.selectedModel) {
-      return { ok: true };
-    }
-
-    return this._persistDefaultModel();
+    return this.selectModelSettingThinkingLevel("default_model", thinkingLevel);
   }
 
   async clearDefaultModel(): Promise<SettingsStoreResult> {
+    return this.clearModelSetting("default_model");
+  }
+
+  // ---- Utility model --------------------------------------------------------
+
+  async selectUtilityModel(provider: string, modelId: string): Promise<SettingsStoreResult> {
+    return this.selectModelSetting("utility_model", provider, modelId);
+  }
+
+  async selectUtilityThinkingLevel(thinkingLevel: string): Promise<SettingsStoreResult> {
+    return this.selectModelSettingThinkingLevel("utility_model", thinkingLevel);
+  }
+
+  async clearUtilityModel(): Promise<SettingsStoreResult> {
+    return this.clearModelSetting("utility_model");
+  }
+
+  // ---- Shared model-setting helpers ----------------------------------------
+
+  async selectModelSettingProvider(settingKey: ModelSettingKey, provider: string): Promise<SettingsStoreResult> {
+    this._setSelectedProvider(settingKey, provider);
+
+    const providerModels = this.getModelsForProvider(provider);
+    this._setSelectedModel(settingKey, providerModels[0]?.id ?? "");
+    this._setSelectedThinking(settingKey, this._defaultThinkingLevel(settingKey));
+    this.notify();
+
+    if (!this._selectedProviderFor(settingKey) || !this._selectedModelFor(settingKey)) {
+      return { ok: true };
+    }
+
+    return this._persistModelSetting(settingKey);
+  }
+
+  async selectModelSettingModel(settingKey: ModelSettingKey, modelId: string): Promise<SettingsStoreResult> {
+    this._setSelectedModel(settingKey, modelId);
+    this.notify();
+
+    if (!this._selectedProviderFor(settingKey) || !this._selectedModelFor(settingKey)) {
+      return { ok: true };
+    }
+
+    return this._persistModelSetting(settingKey);
+  }
+
+  async selectModelSetting(settingKey: ModelSettingKey, provider: string, modelId: string): Promise<SettingsStoreResult> {
+    const providerChanged = this._selectedProviderFor(settingKey) !== provider;
+
+    this._setSelectedProvider(settingKey, provider);
+    this._setSelectedModel(settingKey, modelId);
+    if (providerChanged) {
+      this._setSelectedThinking(settingKey, this._defaultThinkingLevel(settingKey));
+    }
+    this.notify();
+
+    if (!this._selectedProviderFor(settingKey) || !this._selectedModelFor(settingKey)) {
+      return { ok: true };
+    }
+
+    return this._persistModelSetting(settingKey);
+  }
+
+  async selectModelSettingThinkingLevel(settingKey: ModelSettingKey, thinkingLevel: string): Promise<SettingsStoreResult> {
+    this._setSelectedThinking(settingKey, thinkingLevel);
+    this.notify();
+
+    if (!this._selectedProviderFor(settingKey) || !this._selectedModelFor(settingKey)) {
+      return { ok: true };
+    }
+
+    return this._persistModelSetting(settingKey);
+  }
+
+  async clearModelSetting(settingKey: ModelSettingKey): Promise<SettingsStoreResult> {
     this.savingModel = true;
     this.notify();
 
     try {
-      const res = await fetch("/api/settings/default_model", {
+      const res = await fetch(`/api/settings/${settingKey}`, {
         method: "DELETE",
       });
 
@@ -363,10 +404,10 @@ export class SettingsStore {
         return { error: await errorDetail(res) };
       }
 
-      this.defaultModel = null;
-      this.selectedProvider = "";
-      this.selectedModel = "";
-      this.selectedThinking = "high";
+      this._setStoredModel(settingKey, null);
+      this._setSelectedProvider(settingKey, "");
+      this._setSelectedModel(settingKey, "");
+      this._setSelectedThinking(settingKey, this._defaultThinkingLevel(settingKey));
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
@@ -376,18 +417,18 @@ export class SettingsStore {
     }
   }
 
-  private async _persistDefaultModel(): Promise<SettingsStoreResult> {
+  private async _persistModelSetting(settingKey: ModelSettingKey): Promise<SettingsStoreResult> {
     this.savingModel = true;
     this.notify();
 
     try {
-      const body: DefaultModel = {
-        provider: this.selectedProvider,
-        modelId: this.selectedModel,
-        thinkingLevel: this.selectedThinking,
+      const body: ModelSetting = {
+        provider: this._selectedProviderFor(settingKey),
+        modelId: this._selectedModelFor(settingKey),
+        thinkingLevel: this._selectedThinkingFor(settingKey),
       };
 
-      const res = await fetch("/api/settings/default_model", {
+      const res = await fetch(`/api/settings/${settingKey}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -397,7 +438,7 @@ export class SettingsStore {
         return { error: await errorDetail(res) };
       }
 
-      this.defaultModel = body;
+      this._setStoredModel(settingKey, body);
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
@@ -407,17 +448,85 @@ export class SettingsStore {
     }
   }
 
-  private _syncSelectionFromDefault() {
-    if (this.defaultModel) {
-      this.selectedProvider = this.defaultModel.provider;
-      this.selectedModel = this.defaultModel.modelId;
-      this.selectedThinking = this.defaultModel.thinkingLevel;
+  private async _readModelSettingResponse(response: Response): Promise<ModelSetting | null> {
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.value ?? null;
+  }
+
+  private _syncSelectionFromSettings() {
+    this._syncSelectionFromSetting("default_model");
+    this._syncSelectionFromSetting("utility_model");
+  }
+
+  private _syncSelectionFromSetting(settingKey: ModelSettingKey) {
+    const model = this._storedModelFor(settingKey);
+    if (model) {
+      this._setSelectedProvider(settingKey, model.provider);
+      this._setSelectedModel(settingKey, model.modelId);
+      this._setSelectedThinking(settingKey, model.thinkingLevel);
       return;
     }
 
-    this.selectedProvider = "";
-    this.selectedModel = "";
-    this.selectedThinking = "high";
+    this._setSelectedProvider(settingKey, "");
+    this._setSelectedModel(settingKey, "");
+    this._setSelectedThinking(settingKey, this._defaultThinkingLevel(settingKey));
+  }
+
+  private _storedModelFor(settingKey: ModelSettingKey): ModelSetting | null {
+    return settingKey === "default_model" ? this.defaultModel : this.utilityModel;
+  }
+
+  private _setStoredModel(settingKey: ModelSettingKey, model: ModelSetting | null) {
+    if (settingKey === "default_model") {
+      this.defaultModel = model;
+      return;
+    }
+
+    this.utilityModel = model;
+  }
+
+  private _selectedProviderFor(settingKey: ModelSettingKey): string {
+    return settingKey === "default_model" ? this.selectedProvider : this.selectedUtilityProvider;
+  }
+
+  private _setSelectedProvider(settingKey: ModelSettingKey, provider: string) {
+    if (settingKey === "default_model") {
+      this.selectedProvider = provider;
+      return;
+    }
+
+    this.selectedUtilityProvider = provider;
+  }
+
+  private _selectedModelFor(settingKey: ModelSettingKey): string {
+    return settingKey === "default_model" ? this.selectedModel : this.selectedUtilityModel;
+  }
+
+  private _setSelectedModel(settingKey: ModelSettingKey, modelId: string) {
+    if (settingKey === "default_model") {
+      this.selectedModel = modelId;
+      return;
+    }
+
+    this.selectedUtilityModel = modelId;
+  }
+
+  private _selectedThinkingFor(settingKey: ModelSettingKey): string {
+    return settingKey === "default_model" ? this.selectedThinking : this.selectedUtilityThinking;
+  }
+
+  private _setSelectedThinking(settingKey: ModelSettingKey, thinkingLevel: string) {
+    if (settingKey === "default_model") {
+      this.selectedThinking = thinkingLevel;
+      return;
+    }
+
+    this.selectedUtilityThinking = thinkingLevel;
+  }
+
+  private _defaultThinkingLevel(settingKey: ModelSettingKey): string {
+    return settingKey === "default_model" ? "high" : "minimal";
   }
 
   private _resetOAuthLoginState() {

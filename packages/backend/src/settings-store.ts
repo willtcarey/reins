@@ -3,43 +3,45 @@ import { Value } from "@sinclair/typebox/value";
 import { getDb } from "./db.js";
 import { ThinkingLevelSchema } from "./thinking-level.js";
 
-const DefaultModelSchema = Type.Object({
+const ModelSettingSchema = Type.Object({
   provider: Type.String(),
   modelId: Type.String(),
   thinkingLevel: ThinkingLevelSchema,
 });
 
 const SETTINGS_SCHEMA = {
-  default_model: DefaultModelSchema,
+  default_model: ModelSettingSchema,
+  utility_model: ModelSettingSchema,
 } as const;
 
 export type SettingsKey = keyof typeof SETTINGS_SCHEMA;
-export type DefaultModelSetting = {
+export type ModelSettingsKey = "default_model" | "utility_model";
+export type ModelSetting = {
   provider: string;
   modelId: string;
   thinkingLevel: "minimal" | "low" | "medium" | "high" | "xhigh";
 };
 
 export interface SettingEntry {
-  key: "default_model";
-  value: DefaultModelSetting;
+  key: SettingsKey;
+  value: ModelSetting;
   redacted: false;
 }
 
 function isSettingsKey(key: string): key is SettingsKey {
-  return key === "default_model";
+  return key === "default_model" || key === "utility_model";
 }
 
-function serializeValue(key: "default_model", value: unknown): string {
+function serializeValue(_key: SettingsKey, value: unknown): string {
   return JSON.stringify(value);
 }
 
-function deserializeValue(key: "default_model", raw: string): DefaultModelSetting {
+function deserializeValue(_key: SettingsKey, raw: string): ModelSetting {
   return JSON.parse(raw);
 }
 
-export function getSetting(key: "default_model"): DefaultModelSetting | null;
-export function getSetting(key: SettingsKey): DefaultModelSetting | null {
+export function getSetting(key: ModelSettingsKey): ModelSetting | null;
+export function getSetting(key: SettingsKey): ModelSetting | null {
   if (!isSettingsKey(key)) {
     throw new Error(`Unknown setting key: ${key}`);
   }
@@ -51,7 +53,7 @@ export function getSetting(key: SettingsKey): DefaultModelSetting | null {
   return row ? deserializeValue(key, row.value) : null;
 }
 
-export function setSetting(key: "default_model", value: unknown): void;
+export function setSetting(key: ModelSettingsKey, value: unknown): void;
 export function setSetting(key: SettingsKey, value: unknown): void {
   if (!isSettingsKey(key)) {
     throw new Error(`Unknown setting key: ${key}`);
@@ -99,7 +101,7 @@ export function listSettings(): SettingEntry[] {
 }
 
 export function getSettingsKeys(): SettingsKey[] {
-  return ["default_model"];
+  return ["default_model", "utility_model"];
 }
 
 export function isValidSettingsKey(key: string): key is SettingsKey {
