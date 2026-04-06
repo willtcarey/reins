@@ -2,6 +2,8 @@
 
 REINS stores global configuration in its SQLite database.
 
+The settings UI loads only the specific setting keys it needs via `GET /api/settings?key=...`.
+
 ## Default model
 
 The **Default Model** setting controls which model new sessions use.

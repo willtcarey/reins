@@ -1,3 +1,6 @@
+import type { ProviderInfo } from "./model-catalog.js";
+import type { ModelSetting } from "./stores/settings-store.js";
+
 export function providerLabel(provider: string): string {
   return provider
     .split("-")
@@ -5,16 +8,16 @@ export function providerLabel(provider: string): string {
     .join(" ");
 }
 
-export function formatDefaultModelOptionLabel(provider: string, modelName: string): string {
+export function formatModelSelectionOptionLabel(provider: string, modelName: string): string {
   return `${providerLabel(provider)} / ${modelName}`;
 }
 
-export function encodeDefaultModelSelection(provider: string, modelId: string): string {
+export function encodeModelSelection(provider: string, modelId: string): string {
   if (!provider || !modelId) return "";
   return JSON.stringify([provider, modelId]);
 }
 
-export function decodeDefaultModelSelection(value: string): { provider: string; modelId: string } | null {
+export function decodeModelSelection(value: string): { provider: string; modelId: string } | null {
   if (!value) return null;
 
   try {
@@ -32,6 +35,41 @@ export function decodeDefaultModelSelection(value: string): { provider: string; 
   }
 
   return null;
+}
+
+export function findModelInfo(providers: ProviderInfo[], providerName: string, modelId: string) {
+  const provider = providers.find((candidate) => candidate.provider === providerName);
+  return provider?.models.find((candidate) => candidate.id === modelId) ?? null;
+}
+
+export function formatModelSettingLabel(params: {
+  providers: ProviderInfo[];
+  model: ModelSetting;
+  defaultThinkingLevel?: string;
+  includeProviderWhenAmbiguous?: boolean;
+}): string {
+  const {
+    providers,
+    model,
+    defaultThinkingLevel = "high",
+    includeProviderWhenAmbiguous = true,
+  } = params;
+
+  const modelInfo = findModelInfo(providers, model.provider, model.modelId);
+  const modelName = modelInfo?.name ?? model.modelId;
+
+  const providerNeeded = includeProviderWhenAmbiguous
+    && providers.some((provider) =>
+      provider.provider !== model.provider && provider.models.some((candidate) => candidate.id === model.modelId));
+
+  const thinking = THINKING_LEVELS.find((level) => level.value === model.thinkingLevel)?.label ?? model.thinkingLevel;
+  const parts = [providerNeeded ? formatModelSelectionOptionLabel(model.provider, modelName) : modelName];
+
+  if (model.thinkingLevel !== defaultThinkingLevel) {
+    parts.push(thinking);
+  }
+
+  return parts.join(" · ");
 }
 
 export const THINKING_LEVELS = [

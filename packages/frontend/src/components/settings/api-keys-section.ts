@@ -2,10 +2,8 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import { providerLabel } from "../../models/settings.js";
-import {
-  SettingsStore,
-  type ApiKeyState,
-} from "../../models/stores/settings-store.js";
+import { ModelCatalogStore, type ApiKeyState } from "../../models/stores/model-catalog-store.js";
+import { SettingsStore } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
 
 @customElement("settings-api-keys-section")
@@ -15,6 +13,7 @@ export class SettingsApiKeysSection extends LitElement {
   }
 
   private _storeCtrl = new StoreController<SettingsStore>(this);
+  private _catalogStoreCtrl = new StoreController<ModelCatalogStore>(this);
 
   @property({ attribute: false })
   set store(store: SettingsStore | null) {
@@ -25,6 +24,15 @@ export class SettingsApiKeysSection extends LitElement {
     return this._storeCtrl.store;
   }
 
+  @property({ attribute: false })
+  set catalogStore(store: ModelCatalogStore | null) {
+    this._catalogStoreCtrl.store = store;
+  }
+
+  get catalogStore(): ModelCatalogStore | null {
+    return this._catalogStoreCtrl.store;
+  }
+
   @state() private _addKeyProvider = "";
   @state() private _addKeyValue = "";
   @state() private _oauthCallbackValue = "";
@@ -33,6 +41,16 @@ export class SettingsApiKeysSection extends LitElement {
     this._addKeyProvider = "";
     this._addKeyValue = "";
     this._oauthCallbackValue = "";
+  }
+
+  private async _reloadCatalog(): Promise<boolean> {
+    const result = await this.catalogStore?.load();
+    if (result && "error" in result) {
+      showToast(`Failed to refresh model catalog: ${result.error}`, "error");
+      return false;
+    }
+
+    return true;
   }
 
   private async _saveNewApiKey() {
@@ -47,6 +65,7 @@ export class SettingsApiKeysSection extends LitElement {
       return;
     }
 
+    await this._reloadCatalog();
     this._resetLocalState();
     showToast(`${providerLabel(provider)} API key saved`, "success");
   }
@@ -61,6 +80,7 @@ export class SettingsApiKeysSection extends LitElement {
       return;
     }
 
+    await this._reloadCatalog();
     this._resetLocalState();
     showToast(`${providerLabel(provider)} API key removed`, "success");
   }
@@ -94,6 +114,7 @@ export class SettingsApiKeysSection extends LitElement {
       return;
     }
 
+    await this._reloadCatalog();
     this._resetLocalState();
     showToast(`${providerLabel(providerId)} connected via OAuth`, "success");
   }
@@ -108,6 +129,7 @@ export class SettingsApiKeysSection extends LitElement {
       return;
     }
 
+    await this._reloadCatalog();
     this._resetLocalState();
     showToast(`${providerLabel(providerId)} disconnected`, "success");
   }
@@ -245,9 +267,10 @@ export class SettingsApiKeysSection extends LitElement {
 
   private _renderAddProviderTrigger() {
     const store = this.store;
-    if (!store) return nothing;
+    const catalogStore = this.catalogStore;
+    if (!store || !catalogStore) return nothing;
 
-    const unconfigured = store.unconfiguredProviders;
+    const unconfigured = catalogStore.unconfiguredProviders;
     if (unconfigured.length === 0) return nothing;
 
     return html`
@@ -323,7 +346,8 @@ export class SettingsApiKeysSection extends LitElement {
 
   override render() {
     const store = this.store;
-    if (!store) return nothing;
+    const catalogStore = this.catalogStore;
+    if (!store || !catalogStore) return nothing;
 
     return html`
       <div class="space-y-2">
@@ -331,10 +355,10 @@ export class SettingsApiKeysSection extends LitElement {
           <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider">API Keys</h3>
           ${this._renderAddProviderTrigger()}
         </div>
-        ${store.apiKeys.length > 0
+        ${catalogStore.apiKeys.length > 0
           ? html`
             <div class="divide-y divide-zinc-700/50">
-              ${store.apiKeys.map((key) => this._renderConfiguredKey(key))}
+              ${catalogStore.apiKeys.map((key) => this._renderConfiguredKey(key))}
             </div>
           `
           : html`<p class="text-[10px] text-zinc-500 py-1">No API keys configured.</p>`}

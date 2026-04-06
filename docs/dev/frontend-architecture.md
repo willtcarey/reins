@@ -156,7 +156,7 @@ All server communication — fetching, WebSocket event handling, polling, and in
 The central store. Constructed with an `AppClient` (WebSocket client) and internally subscribes to connection and event callbacks. Responsibilities:
 
 - **Owns all HTTP fetches** — projects, tasks, sessions, session data, task generation, project CRUD. No component calls `fetch()` directly.
-- **Handles WS events internally** — `agent_start` / `agent_end` update activity state and trigger refetches. `task_updated` refreshes the task list. `tool_execution_end` for file-modifying tools refreshes the diff. Views don't participate in these decisions.
+- **Handles WS events internally** — `agent_start` / `agent_end` update activity state and trigger refetches. `task_updated` refreshes the task list. `session_updated` refreshes the active session and project lists. `tool_execution_end` for file-modifying tools refreshes the diff. Views don't participate in these decisions.
 - **Manages reconnect** — On WebSocket reconnect, refetches the project list and active session data to catch up on missed events.
 - **Coordinates sub-stores** — When the session or project changes, AppStore updates DiffStore's branch and project. When an agent completes, AppStore tells DiffStore to refresh.
 - **Tracks activity** — Per-session running/finished state (absorbed from the former ActivityTracker). Used for title badge counts and sidebar indicators.
@@ -200,15 +200,25 @@ Standalone store for the file browser overlay. Manages:
 
 Shared by `<file-search>` (palette) and `<file-browser>` (viewer overlay). Both components and `<app-shell>` hold a reference to the same store instance.
 
+### ModelCatalogStore (`models/stores/model-catalog-store.ts`)
+
+Standalone store for the shared `/api/models` catalog. Manages:
+
+- **Provider/model loading** — Fetches the provider catalog, including key availability and model metadata.
+- **Derived catalog helpers** — Exposes configured/unconfigured providers, API-key badges, and provider/model lookup helpers for UI components.
+- **Shared model metadata** — Keeps model naming and option lists decoupled from settings form state.
+
+Used by `<settings-panel>` and `<session-model-picker>` so both flows read from the same dedicated catalog boundary.
+
 ### SettingsStore (`models/stores/settings-store.ts`)
 
-Standalone store for the settings overlay. Manages:
+Standalone store for persisted settings and auth-related mutations. Manages:
 
-- **Settings fetches** — Loads available model providers, OAuth providers, and the current default model.
-- **Settings mutations** — Saves/removes API keys, starts/completes OAuth flows, and updates the default model.
-- **Panel state boundary** — Holds server-backed state and async action flags; the component keeps only overlay visibility and ephemeral input values.
+- **Settings fetches** — Loads OAuth providers and only the requested setting keys via the batched `/api/settings?key=...` endpoint.
+- **Settings mutations** — Saves/removes API keys, starts/completes OAuth flows, and updates model settings.
+- **Panel state boundary** — Holds stored settings state and async action flags; the component keeps only overlay visibility and ephemeral input values.
 
-Used by `<settings-panel>` via `StoreController` so the view renders from store state instead of calling `fetch()` directly.
+Used alongside `ModelCatalogStore` via `StoreController` so the view renders from store state instead of calling `fetch()` directly.
 
 ### Subscription model
 
@@ -241,7 +251,7 @@ connectedCallback() {
 
 Thin WebSocket wrapper. Two roles:
 
-1. **Receives** — All active session events, each tagged with a `sessionId`. Events include `agent_start`, `agent_end`, `tool_execution_end`, `task_updated`, streaming tokens, etc.
+1. **Receives** — All active session events, each tagged with a `sessionId`. Events include `agent_start`, `agent_end`, `tool_execution_end`, `task_updated`, `session_updated`, streaming tokens, etc.
 2. **Sends** — Commands (`prompt`, `steer`, `abort`) with an explicit `sessionId`.
 
 The client provides `onConnection(cb)` and `onEvent(cb)` hooks. AppStore is the sole consumer of these hooks — no other code listens to WS events.
@@ -253,6 +263,7 @@ The client provides `onConnection(cb)` and `onEvent(cb)` hooks. AppStore is the 
 | `agent_start` | Mark session running in activity state |
 | `agent_end` | Mark session finished, refetch task list, refresh diff |
 | `task_updated` | Refetch task list |
+| `session_updated` | Refetch the active session (if selected) and refresh project lists |
 | `tool_execution_end` (file-modifying) | Refresh diff |
 | WS reconnect | Refetch project list, refetch active session data |
 

@@ -96,22 +96,25 @@ export class ActiveSessionStore {
         return { error: body.error || "Failed to update session model" };
       }
 
-      if (this.sessionData?.state) {
-        this.sessionData = {
-          ...this.sessionData,
-          state: {
-            ...this.sessionData.state,
-            model: { provider: update.provider, id: update.modelId },
-            thinkingLevel: update.thinkingLevel,
-          },
-        };
-        this.notify();
-      }
-
+      this.applySessionModelChange(this.sessionId, update);
       return { ok: true };
     } catch {
       return { error: "Network error" };
     }
+  }
+
+  applySessionModelChange(sessionId: string, update: SessionModelUpdate): void {
+    if (sessionId !== this.sessionId || !this.sessionData?.state) return;
+
+    this.sessionData = {
+      ...this.sessionData,
+      state: {
+        ...this.sessionData.state,
+        model: { provider: update.provider, id: update.modelId },
+        thinkingLevel: update.thinkingLevel,
+      },
+    };
+    this.notify();
   }
 
   // ---- Internal fetching ----------------------------------------------------

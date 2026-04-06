@@ -107,6 +107,14 @@ export class AppStore {
         return;
       }
 
+      if (event.type === "session_updated") {
+        this.projectCollectionStore.refresh(event.projectId);
+        if (sessionId === this._activeSession.sessionId) {
+          void this._activeSession.refreshSession();
+        }
+        return;
+      }
+
       // Track activity for all sessions
       if (sessionId && event.type === "agent_start") {
         this._setRunning(sessionId, projectId);

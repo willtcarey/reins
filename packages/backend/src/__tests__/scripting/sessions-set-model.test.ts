@@ -137,7 +137,7 @@ describe("sessions.setModel", () => {
     expect(updated!.thinking_level).toBe("medium");
   });
 
-  test("broadcasts session_model_changed event when session is open in memory", async () => {
+  test("broadcasts session_updated event when a session model changes", async () => {
     createSession("sess-5", project.id);
     const managed = createMockManagedSession("sess-5");
     sessions.set("sess-5", managed);
@@ -150,17 +150,14 @@ describe("sessions.setModel", () => {
 
     expect(broadcastMessages.length).toBe(1);
     const msg = broadcastMessages[0];
-    expect(msg.type).toBe("session_model_changed");
-    if (msg.type === "session_model_changed") {
+    expect(msg.type).toBe("session_updated");
+    if (msg.type === "session_updated") {
       expect(msg.sessionId).toBe("sess-5");
       expect(msg.projectId).toBe(project.id);
-      expect(msg.provider).toBe("anthropic");
-      expect(msg.modelId).toBe("claude-sonnet-4-20250514");
-      expect(msg.thinkingLevel).toBe("high");
     }
   });
 
-  test("updates DB without broadcast when session is not open in memory", async () => {
+  test("updates DB and still broadcasts when session is not open in memory", async () => {
     createSession("sess-5b", project.id, { thinkingLevel: "low" });
 
     const ctx = makeCtx();
@@ -176,7 +173,13 @@ describe("sessions.setModel", () => {
     expect(result.model_provider).toBe("anthropic");
     expect(result.model_id).toBe("claude-sonnet-4-20250514");
     expect(result.thinking_level).toBe("low");
-    expect(broadcastMessages).toHaveLength(0);
+    expect(broadcastMessages).toEqual([
+      {
+        type: "session_updated",
+        sessionId: "sess-5b",
+        projectId: project.id,
+      },
+    ]);
   });
 
   test("throws for unknown provider", async () => {
@@ -239,7 +242,13 @@ describe("sessions.setModel", () => {
     expect(updated!.model_provider).toBe("anthropic");
     expect(updated!.model_id).toBe("claude-sonnet-4-20250514");
     expect(updated!.thinking_level).toBe("medium");
-    expect(broadcastMessages).toHaveLength(0);
+    expect(broadcastMessages).toEqual([
+      {
+        type: "session_updated",
+        sessionId: "sess-9",
+        projectId: project.id,
+      },
+    ]);
   });
 
   test("throws for invalid thinking level", async () => {

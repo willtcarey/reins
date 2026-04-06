@@ -34,8 +34,8 @@ export class ProjectSessions {
    * Change the AI model for a session.
    *
    * If the session is currently open in memory, the change is applied live
-   * for the next LLM turn and broadcast to connected clients. Inactive
-   * sessions are updated in SQLite only.
+   * for the next LLM turn. All session metadata changes broadcast a generic
+   * session_updated event so clients can reload the canonical session state.
    */
   async setModel(params: SetSessionModelParams): Promise<SessionRow> {
     const sessionRow = getSession(params.sessionId);
@@ -80,16 +80,11 @@ export class ProjectSessions {
       thinkingLevel,
     });
 
-    if (managed) {
-      this.broadcast({
-        type: "session_model_changed",
-        sessionId: params.sessionId,
-        projectId: this.projectId,
-        provider: params.provider,
-        modelId: params.modelId,
-        thinkingLevel,
-      });
-    }
+    this.broadcast({
+      type: "session_updated",
+      sessionId: params.sessionId,
+      projectId: this.projectId,
+    });
 
     const updated = getSession(params.sessionId);
     if (!updated) throw new Error(`Session ${params.sessionId} not found after update`);

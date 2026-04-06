@@ -7,7 +7,7 @@
  */
 
 import { createAgentSession, SessionManager, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
-import { resolveUtilityModel } from "./model-settings.js";
+import { resolveUtilityModel } from "./models/model-settings.js";
 
 const BRANCH_PATTERN = /^task\/[a-z0-9][a-z0-9-]*$/;
 const TIMEOUT_MS = 10_000;

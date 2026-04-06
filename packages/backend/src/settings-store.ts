@@ -1,70 +1,94 @@
-import { Type } from "@sinclair/typebox";
+import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { getDb } from "./db.js";
 import { ThinkingLevelSchema } from "./thinking-level.js";
 
-const ModelSettingSchema = Type.Object({
+export const ModelSettingSchema = Type.Object({
   provider: Type.String(),
   modelId: Type.String(),
   thinkingLevel: ThinkingLevelSchema,
 });
 
-const SETTINGS_SCHEMA = {
+export const SETTINGS_SCHEMA = {
   default_model: ModelSettingSchema,
   utility_model: ModelSettingSchema,
 } as const;
 
-export type SettingsKey = keyof typeof SETTINGS_SCHEMA;
-export type ModelSettingsKey = "default_model" | "utility_model";
-export type ModelSetting = {
-  provider: string;
-  modelId: string;
-  thinkingLevel: "minimal" | "low" | "medium" | "high" | "xhigh";
-};
+type SettingsSchema = typeof SETTINGS_SCHEMA;
+type KeysMatchingSchema<TTarget extends TSchema> = {
+  [K in SettingsKey]: [SettingValue<K>] extends [Static<TTarget>]
+    ? [Static<TTarget>] extends [SettingValue<K>] ? K : never
+    : never;
+}[SettingsKey];
 
-export interface SettingEntry {
-  key: SettingsKey;
-  value: ModelSetting;
-  redacted: false;
+export type SettingsKey = keyof SettingsSchema;
+export type SettingValue<K extends SettingsKey> = Static<SettingsSchema[K]>;
+export type ModelSetting = Static<typeof ModelSettingSchema>;
+export type ModelSettingsKey = KeysMatchingSchema<typeof ModelSettingSchema>;
+
+export interface SettingEntry<K extends SettingsKey = SettingsKey> {
+  key: K;
+  value: SettingValue<K>;
 }
 
-function isSettingsKey(key: string): key is SettingsKey {
-  return key === "default_model" || key === "utility_model";
+function getSchema<K extends SettingsKey>(key: K): SettingsSchema[K] {
+  return SETTINGS_SCHEMA[key];
 }
 
-function serializeValue(_key: SettingsKey, value: unknown): string {
-  return JSON.stringify(value);
+function formatSchemaErrors(schema: TSchema, value: unknown): string {
+  return [...Value.Errors(schema, value)]
+    .map((error) => `${error.path}: ${error.message}`)
+    .join("; ");
 }
 
-function deserializeValue(_key: SettingsKey, raw: string): ModelSetting {
-  return JSON.parse(raw);
+function buildValidationError<K extends SettingsKey>(
+  messagePrefix: string,
+  key: K,
+  value: unknown,
+): Error {
+  return new Error(`${messagePrefix} "${key}": ${formatSchemaErrors(getSchema(key), value)}`);
 }
 
-export function getSetting(key: ModelSettingsKey): ModelSetting | null;
-export function getSetting(key: SettingsKey): ModelSetting | null {
-  if (!isSettingsKey(key)) {
-    throw new Error(`Unknown setting key: ${key}`);
+function matchesSettingValue<K extends SettingsKey>(key: K, value: unknown): value is SettingValue<K> {
+  return Value.Check(getSchema(key), value);
+}
+
+export function validateSettingValue<K extends SettingsKey>(key: K, value: unknown): SettingValue<K> {
+  if (!matchesSettingValue(key, value)) {
+    throw buildValidationError("Invalid value for setting", key, value);
   }
 
+  return value;
+}
+
+function parseStoredValue<K extends SettingsKey>(key: K, raw: string): SettingValue<K> {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new Error(`Stored value for setting "${key}" is not valid JSON`);
+  }
+
+  if (!matchesSettingValue(key, value)) {
+    throw new Error(`Stored value for setting "${key}" is invalid: ${formatSchemaErrors(getSchema(key), value)}`);
+  }
+
+  return value;
+}
+
+function serializeValue<K extends SettingsKey>(key: K, value: SettingValue<K>): string {
+  return JSON.stringify(validateSettingValue(key, value));
+}
+
+export function getSetting<K extends SettingsKey>(key: K): SettingValue<K> | null {
   const row = getDb()
     .query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?")
     .get(key);
 
-  return row ? deserializeValue(key, row.value) : null;
+  return row ? parseStoredValue(key, row.value) : null;
 }
 
-export function setSetting(key: ModelSettingsKey, value: unknown): void;
-export function setSetting(key: SettingsKey, value: unknown): void {
-  if (!isSettingsKey(key)) {
-    throw new Error(`Unknown setting key: ${key}`);
-  }
-
-  if (!Value.Check(SETTINGS_SCHEMA[key], value)) {
-    const errors = [...Value.Errors(SETTINGS_SCHEMA[key], value)];
-    const messages = errors.map((error) => `${error.path}: ${error.message}`).join("; ");
-    throw new Error(`Invalid value for setting "${key}": ${messages}`);
-  }
-
+export function setSetting<K extends SettingsKey>(key: K, value: SettingValue<K>): void {
   getDb().query(
     `INSERT INTO settings (key, value, updated_at)
      VALUES (?, ?, datetime('now'))
@@ -73,41 +97,59 @@ export function setSetting(key: SettingsKey, value: unknown): void {
 }
 
 export function deleteSetting(key: SettingsKey): void {
-  if (!isSettingsKey(key)) {
-    throw new Error(`Unknown setting key: ${key}`);
-  }
-
   getDb().query("DELETE FROM settings WHERE key = ?").run(key);
 }
 
-export function listSettings(): SettingEntry[] {
+function listAllSettings(): SettingEntry[] {
   const rows = getDb()
-    .query<{ key: string; value: string }, []>(
+    .query<{ key: SettingsKey; value: string }, []>(
       "SELECT key, value FROM settings ORDER BY key",
     )
     .all();
 
-  const entries: SettingEntry[] = [];
-  for (const row of rows) {
-    if (!isSettingsKey(row.key)) continue;
-    entries.push({
-      key: row.key,
-      value: deserializeValue(row.key, row.value),
-      redacted: false,
-    });
-  }
-
-  return entries;
+  return rows.map((row) => ({
+    key: row.key,
+    value: parseStoredValue(row.key, row.value),
+  }));
 }
 
-export function getSettingsKeys(): SettingsKey[] {
-  return ["default_model", "utility_model"];
+function listSettingsForKeys<K extends SettingsKey>(keys: readonly K[]): SettingEntry<K>[] {
+  if (keys.length === 0) {
+    return [];
+  }
+
+  const rows = getDb()
+    .query<{ key: K; value: string }, string[]>(
+      `SELECT key, value
+       FROM settings
+       WHERE key IN (${keys.map(() => "?").join(", ")})
+       ORDER BY key`,
+    )
+    .all(...keys);
+
+  return rows.map((row) => ({
+    key: row.key,
+    value: parseStoredValue(row.key, row.value),
+  }));
+}
+
+export function listSettings(): SettingEntry[];
+export function listSettings<K extends SettingsKey>(keys: readonly K[]): SettingEntry<K>[];
+export function listSettings<K extends SettingsKey>(keys?: readonly K[]) {
+  return keys ? listSettingsForKeys(keys) : listAllSettings();
 }
 
 export function isValidSettingsKey(key: string): key is SettingsKey {
-  return isSettingsKey(key);
+  return Object.prototype.hasOwnProperty.call(SETTINGS_SCHEMA, key);
 }
 
-export function isRedactedKey(_key: SettingsKey): boolean {
-  return false;
+const SETTINGS_KEYS: SettingsKey[] = [];
+for (const key in SETTINGS_SCHEMA) {
+  if (isValidSettingsKey(key)) {
+    SETTINGS_KEYS.push(key);
+  }
+}
+
+export function getSettingsKeys(): SettingsKey[] {
+  return [...SETTINGS_KEYS];
 }

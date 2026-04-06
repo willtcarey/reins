@@ -1,5 +1,5 @@
 /**
- * Tests for SettingsStore — settings panel data fetching and mutations.
+ * Tests for SettingsStore — settings values and settings-related mutations.
  */
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { SettingsStore } from "../models/stores/settings-store.js";
@@ -24,43 +24,32 @@ describe("SettingsStore", () => {
     restoreFetch();
   });
 
-  test("load populates state from the settings endpoints", async () => {
+  test("load populates settings and oauth state without fetching the model catalog", async () => {
+    const requests: string[] = [];
+
     mockFetch((url) => {
-      if (url === "/api/models") {
+      requests.push(url);
+      if (url === "/api/settings?key=default_model&key=utility_model") {
         return jsonResponse([
           {
-            provider: "anthropic",
-            hasKey: true,
-            keySource: "env",
-            keySources: ["env"],
-            models: [{ id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true }],
+            key: "default_model",
+            value: {
+              provider: "anthropic",
+              modelId: "claude-sonnet-4",
+              thinkingLevel: "medium",
+            },
+            redacted: false,
           },
           {
-            provider: "openai",
-            hasKey: false,
-            keySource: null,
-            keySources: [],
-            models: [{ id: "gpt-4.1", name: "GPT-4.1", reasoning: false }],
+            key: "utility_model",
+            value: {
+              provider: "anthropic",
+              modelId: "claude-haiku-4-5",
+              thinkingLevel: "minimal",
+            },
+            redacted: false,
           },
         ]);
-      }
-      if (url === "/api/settings/default_model") {
-        return jsonResponse({
-          value: {
-            provider: "anthropic",
-            modelId: "claude-sonnet-4",
-            thinkingLevel: "medium",
-          },
-        });
-      }
-      if (url === "/api/settings/utility_model") {
-        return jsonResponse({
-          value: {
-            provider: "anthropic",
-            modelId: "claude-haiku-4-5",
-            thinkingLevel: "minimal",
-          },
-        });
       }
       if (url === "/api/oauth/providers") {
         return jsonResponse([
@@ -74,61 +63,57 @@ describe("SettingsStore", () => {
 
     expect(result).toEqual({ ok: true });
     expect(store.loading).toBe(false);
-    expect(store.apiKeys).toEqual([
-      {
-        provider: "anthropic",
-        label: "Anthropic",
-        keySource: "env",
-        keySources: ["env"],
-      },
-    ]);
-    expect(store.unconfiguredProviders.map((provider) => provider.provider)).toEqual(["openai"]);
-    expect(store.availableProviders.map((provider) => provider.provider)).toEqual(["anthropic"]);
-    expect(store.defaultModel).toEqual({
+    expect(requests).not.toContain("/api/models");
+    expect(store.getStoredModelSetting("default_model")).toEqual({
       provider: "anthropic",
       modelId: "claude-sonnet-4",
       thinkingLevel: "medium",
     });
-    expect(store.selectedProvider).toBe("anthropic");
-    expect(store.selectedModel).toBe("claude-sonnet-4");
-    expect(store.selectedThinking).toBe("medium");
-    expect(store.utilityModel).toEqual({
+    expect(store.getSelectedModelSetting("default_model")).toEqual({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4",
+      thinkingLevel: "medium",
+    });
+    expect(store.getStoredModelSetting("utility_model")).toEqual({
       provider: "anthropic",
       modelId: "claude-haiku-4-5",
       thinkingLevel: "minimal",
     });
-    expect(store.selectedUtilityProvider).toBe("anthropic");
-    expect(store.selectedUtilityModel).toBe("claude-haiku-4-5");
-    expect(store.selectedUtilityThinking).toBe("minimal");
-    expect(store.availableOAuthProviders.map((provider) => provider.id)).toEqual(["openrouter"]);
+    expect(store.getSelectedModelSetting("utility_model")).toEqual({
+      provider: "anthropic",
+      modelId: "claude-haiku-4-5",
+      thinkingLevel: "minimal",
+    });
+    expect(store.oauthProviders.map((provider) => provider.id)).toEqual(["openrouter"]);
   });
 
-  test("saveApiKey persists the key via auth API endpoints and reloads provider state", async () => {
-    let saved = false;
+  test("load can request a subset of setting keys", async () => {
+    const requests: string[] = [];
+
+    mockFetch((url) => {
+      requests.push(url);
+      if (url === "/api/settings?key=default_model") {
+        return jsonResponse([]);
+      }
+      if (url === "/api/oauth/providers") {
+        return jsonResponse([]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    const result = await store.load(["default_model"]);
+
+    expect(result).toEqual({ ok: true });
+    expect(requests).toContain("/api/settings?key=default_model");
+  });
+
+  test("saveApiKey persists the key via auth API endpoints without reloading /api/models", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
 
     mockFetch((url, init) => {
       requests.push({ url, init });
       if (url === "/api/auth/api-keys/openai" && init?.method === "PUT") {
-        saved = true;
         return new Response(null, { status: 200 });
-      }
-      if (url === "/api/models") {
-        return jsonResponse([
-          {
-            provider: "openai",
-            hasKey: saved,
-            keySource: saved ? "db" : null,
-            keySources: saved ? ["db"] : [],
-            models: [{ id: "gpt-4.1", name: "GPT-4.1", reasoning: false }],
-          },
-        ]);
-      }
-      if (url === "/api/settings/default_model") {
-        return new Response(null, { status: 404 });
-      }
-      if (url === "/api/oauth/providers") {
-        return jsonResponse([]);
       }
       return jsonResponse({}, false);
     });
@@ -137,45 +122,19 @@ describe("SettingsStore", () => {
 
     expect(result).toEqual({ ok: true });
     expect(store.apiKeySaving).toBe(false);
-    expect(store.apiKeys).toEqual([
-      {
-        provider: "openai",
-        label: "Openai",
-        keySource: "db",
-        keySources: ["db"],
-      },
-    ]);
+    expect(requests.map((request) => request.url)).not.toContain("/api/models");
     const saveRequest = requests.find((request) => request.url === "/api/auth/api-keys/openai");
     expect(saveRequest?.init?.method).toBe("PUT");
     expect(saveRequest?.init?.body).toBe(JSON.stringify({ apiKey: "sk-live" }));
   });
 
-  test("deleteApiKey removes the key via auth API endpoints and reloads provider state", async () => {
-    let deleted = false;
+  test("deleteApiKey removes the key via auth API endpoints without reloading /api/models", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
 
     mockFetch((url, init) => {
       requests.push({ url, init });
       if (url === "/api/auth/api-keys/openai" && init?.method === "DELETE") {
-        deleted = true;
         return new Response(null, { status: 204 });
-      }
-      if (url === "/api/models") {
-        return jsonResponse([
-          {
-            provider: "openai",
-            hasKey: !deleted,
-            keySource: deleted ? null : "db",
-            keySources: deleted ? [] : ["db"],
-            models: [{ id: "gpt-4.1", name: "GPT-4.1", reasoning: false }],
-          },
-        ]);
-      }
-      if (url === "/api/settings/default_model") {
-        return new Response(null, { status: 404 });
-      }
-      if (url === "/api/oauth/providers") {
-        return jsonResponse([]);
       }
       return jsonResponse({}, false);
     });
@@ -184,7 +143,7 @@ describe("SettingsStore", () => {
 
     expect(result).toEqual({ ok: true });
     expect(store.apiKeySaving).toBe(false);
-    expect(store.apiKeys).toEqual([]);
+    expect(requests.map((request) => request.url)).not.toContain("/api/models");
     const deleteRequest = requests.find((request) => request.url === "/api/auth/api-keys/openai");
     expect(deleteRequest?.init?.method).toBe("DELETE");
   });
@@ -209,69 +168,7 @@ describe("SettingsStore", () => {
     expect(store.oauthInstructions).toBe("Paste the callback URL after login.");
   });
 
-  test("selectProvider chooses the first model and persists the default model", async () => {
-    store.providers = [
-      {
-        provider: "anthropic",
-        hasKey: true,
-        keySource: "db",
-        keySources: ["db"],
-        models: [
-          { id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true },
-          { id: "claude-opus-4", name: "Claude Opus 4", reasoning: true },
-        ],
-      },
-    ];
-
-    let persistedBody: string | undefined;
-    mockFetch((url, init) => {
-      if (url === "/api/settings/default_model" && init?.method === "PUT") {
-        persistedBody = String(init.body);
-        return new Response(null, { status: 200 });
-      }
-      return jsonResponse({}, false);
-    });
-
-    const result = await store.selectProvider("anthropic");
-
-    expect(result).toEqual({ ok: true });
-    expect(store.selectedProvider).toBe("anthropic");
-    expect(store.selectedModel).toBe("claude-sonnet-4");
-    expect(store.selectedThinking).toBe("high");
-    expect(store.defaultModel).toEqual({
-      provider: "anthropic",
-      modelId: "claude-sonnet-4",
-      thinkingLevel: "high",
-    });
-    expect(persistedBody).toBe(JSON.stringify({
-      provider: "anthropic",
-      modelId: "claude-sonnet-4",
-      thinkingLevel: "high",
-    }));
-  });
-
-  test("selectDefaultModel persists a chosen provider/model pair in one request", async () => {
-    store.providers = [
-      {
-        provider: "anthropic",
-        hasKey: true,
-        keySource: "db",
-        keySources: ["db"],
-        models: [
-          { id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true },
-          { id: "claude-opus-4", name: "Claude Opus 4", reasoning: true },
-        ],
-      },
-      {
-        provider: "openai",
-        hasKey: true,
-        keySource: "db",
-        keySources: ["db"],
-        models: [{ id: "gpt-4.1", name: "GPT-4.1", reasoning: false }],
-      },
-    ];
-    store.selectedThinking = "medium";
-
+  test("selectModelSetting persists a chosen provider/model pair in one request", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     mockFetch((url, init) => {
       requests.push({ url, init });
@@ -281,13 +178,19 @@ describe("SettingsStore", () => {
       return jsonResponse({}, false);
     });
 
-    const result = await store.selectDefaultModel("openai", "gpt-4.1");
+    await store.selectModelSetting("default_model", "anthropic", "claude-sonnet-4");
+    await store.selectModelSettingThinkingLevel("default_model", "medium");
+    requests.length = 0;
+
+    const result = await store.selectModelSetting("default_model", "openai", "gpt-4.1");
 
     expect(result).toEqual({ ok: true });
-    expect(store.selectedProvider).toBe("openai");
-    expect(store.selectedModel).toBe("gpt-4.1");
-    expect(store.selectedThinking).toBe("high");
-    expect(store.defaultModel).toEqual({
+    expect(store.getSelectedModelSetting("default_model")).toEqual({
+      provider: "openai",
+      modelId: "gpt-4.1",
+      thinkingLevel: "high",
+    });
+    expect(store.getStoredModelSetting("default_model")).toEqual({
       provider: "openai",
       modelId: "gpt-4.1",
       thinkingLevel: "high",
@@ -300,20 +203,7 @@ describe("SettingsStore", () => {
     }));
   });
 
-  test("selectUtilityModel persists a chosen provider/model pair in one request", async () => {
-    store.providers = [
-      {
-        provider: "anthropic",
-        hasKey: true,
-        keySource: "db",
-        keySources: ["db"],
-        models: [
-          { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", reasoning: true },
-          { id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true },
-        ],
-      },
-    ];
-
+  test("selectModelSetting persists utility-model selections in one request", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     mockFetch((url, init) => {
       requests.push({ url, init });
@@ -323,13 +213,15 @@ describe("SettingsStore", () => {
       return jsonResponse({}, false);
     });
 
-    const result = await store.selectUtilityModel("anthropic", "claude-haiku-4-5");
+    const result = await store.selectModelSetting("utility_model", "anthropic", "claude-haiku-4-5");
 
     expect(result).toEqual({ ok: true });
-    expect(store.selectedUtilityProvider).toBe("anthropic");
-    expect(store.selectedUtilityModel).toBe("claude-haiku-4-5");
-    expect(store.selectedUtilityThinking).toBe("minimal");
-    expect(store.utilityModel).toEqual({
+    expect(store.getSelectedModelSetting("utility_model")).toEqual({
+      provider: "anthropic",
+      modelId: "claude-haiku-4-5",
+      thinkingLevel: "minimal",
+    });
+    expect(store.getStoredModelSetting("utility_model")).toEqual({
       provider: "anthropic",
       modelId: "claude-haiku-4-5",
       thinkingLevel: "minimal",
@@ -342,30 +234,29 @@ describe("SettingsStore", () => {
     }));
   });
 
-  test("clearDefaultModel removes the saved selection and resets local fields", async () => {
-    store.defaultModel = {
-      provider: "anthropic",
-      modelId: "claude-sonnet-4",
-      thinkingLevel: "medium",
-    };
-    store.selectedProvider = "anthropic";
-    store.selectedModel = "claude-sonnet-4";
-    store.selectedThinking = "medium";
-
+  test("clearModelSetting removes the saved selection and resets local fields", async () => {
     mockFetch((url, init) => {
+      if (url === "/api/settings/default_model" && init?.method === "PUT") {
+        return new Response(null, { status: 200 });
+      }
       if (url === "/api/settings/default_model" && init?.method === "DELETE") {
         return new Response(null, { status: 204 });
       }
       return jsonResponse({}, false);
     });
 
-    const result = await store.clearDefaultModel();
+    await store.selectModelSetting("default_model", "anthropic", "claude-sonnet-4");
+    await store.selectModelSettingThinkingLevel("default_model", "medium");
+
+    const result = await store.clearModelSetting("default_model");
 
     expect(result).toEqual({ ok: true });
-    expect(store.defaultModel).toBeNull();
-    expect(store.selectedProvider).toBe("");
-    expect(store.selectedModel).toBe("");
-    expect(store.selectedThinking).toBe("high");
+    expect(store.getStoredModelSetting("default_model")).toBeNull();
+    expect(store.getSelectedModelSetting("default_model")).toEqual({
+      provider: "",
+      modelId: "",
+      thinkingLevel: "high",
+    });
     expect(store.savingModel).toBe(false);
   });
 });

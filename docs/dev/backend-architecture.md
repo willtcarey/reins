@@ -58,8 +58,10 @@ Stateless helpers that don't depend on other layers.
 
 ## Current state
 
-The models layer covers all route handlers:
+The models layer covers all route handlers and some backend domain helpers:
 
 - `models/tasks.ts` — task create/update/delete with branch orchestration, list with diff stats
 - `models/projects.ts` — project creation, remote sync + task reconciliation, file content reads
+- `models/sessions.ts` — session model mutations and related broadcast behavior
+- `models/model-settings.ts` — resolves stored model settings into concrete pi model objects
 - `models/broadcast.ts` — typed broadcast abstraction over WS clients

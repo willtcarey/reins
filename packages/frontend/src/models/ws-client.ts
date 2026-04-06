@@ -65,6 +65,7 @@ export type ServerMessage =
   | { type: "event"; sessionId: string; projectId: number; event: ChatEvent }
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null }
+  | { type: "session_updated"; sessionId: string; projectId: number }
   | { type: "user_message"; sessionId: string; projectId: number; message: string }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
   | { type: "ack"; command: string }
@@ -79,6 +80,7 @@ export type FrontendEvent =
   | ChatEvent
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null }
+  | { type: "session_updated"; sessionId: string; projectId: number }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
   | { type: "ws_ack"; command: string }
   | { type: "ws_error"; error: string };
@@ -276,6 +278,16 @@ export class AppClient implements IAppClient {
             projectId: msg.projectId,
             sessionId: msg.sessionId,
             taskId: msg.taskId,
+          });
+        }
+        break;
+
+      case "session_updated":
+        for (const listener of this.eventListeners) {
+          listener(msg.sessionId, msg.projectId, {
+            type: "session_updated",
+            sessionId: msg.sessionId,
+            projectId: msg.projectId,
           });
         }
         break;

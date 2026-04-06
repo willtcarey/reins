@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { getDb } from "../db.js";
 import { useTestDb } from "./helpers/test-db.js";
 import {
   getSetting,
@@ -6,6 +7,7 @@ import {
   deleteSetting,
   listSettings,
   isValidSettingsKey,
+  validateSettingValue,
 } from "../settings-store.js";
 
 describe("settings-store", () => {
@@ -42,6 +44,14 @@ describe("settings-store", () => {
       expect(getSetting("utility_model")).toEqual(model);
     });
 
+    test("throws when a stored setting no longer matches its schema", () => {
+      getDb()
+        .query("INSERT INTO settings (key, value) VALUES (?, ?)")
+        .run("default_model", JSON.stringify({ provider: "anthropic" }));
+
+      expect(() => getSetting("default_model")).toThrow(/Stored value for setting "default_model" is invalid/);
+    });
+
     test("throws for unknown key", () => {
       const getUnknownSetting = (key: string) => {
         if (key === "default_model") {
@@ -72,10 +82,10 @@ describe("settings-store", () => {
     });
 
     test("rejects invalid data", () => {
-      expect(() => setSetting("default_model", "not-an-object")).toThrow(/Invalid value/);
-      expect(() => setSetting("default_model", { provider: "a" })).toThrow(/Invalid value/);
-      expect(() => setSetting("default_model", { provider: 123, modelId: "b", thinkingLevel: "medium" })).toThrow(/Invalid value/);
-      expect(() => setSetting("default_model", { provider: "a", modelId: "b", thinkingLevel: "off" })).toThrow(/Invalid value/);
+      expect(() => validateSettingValue("default_model", "not-an-object")).toThrow(/Invalid value/);
+      expect(() => validateSettingValue("default_model", { provider: "a" })).toThrow(/Invalid value/);
+      expect(() => validateSettingValue("default_model", { provider: 123, modelId: "b", thinkingLevel: "medium" })).toThrow(/Invalid value/);
+      expect(() => validateSettingValue("default_model", { provider: "a", modelId: "b", thinkingLevel: "off" })).toThrow(/Invalid value/);
     });
   });
 
@@ -102,14 +112,36 @@ describe("settings-store", () => {
         {
           key: "default_model",
           value: defaultModel,
-          redacted: false,
         },
         {
           key: "utility_model",
           value: utilityModel,
-          redacted: false,
         },
       ]);
+    });
+
+    test("returns a filtered subset for the requested keys", () => {
+      const defaultModel = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" } as const;
+      const utilityModel = { provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" } as const;
+      setSetting("default_model", defaultModel);
+      setSetting("utility_model", utilityModel);
+
+      expect(listSettings(["utility_model", "default_model"])).toEqual([
+        {
+          key: "default_model",
+          value: defaultModel,
+        },
+        {
+          key: "utility_model",
+          value: utilityModel,
+        },
+      ]);
+    });
+
+    test("returns an empty array when filtering by no valid keys", () => {
+      setSetting("default_model", { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" });
+
+      expect(listSettings([])).toEqual([]);
     });
   });
 });

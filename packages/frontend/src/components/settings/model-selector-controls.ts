@@ -1,12 +1,15 @@
 import { LitElement, html, nothing } from "lit";
+import type { PropertyValues } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import {
-  decodeDefaultModelSelection,
-  encodeDefaultModelSelection,
-  formatDefaultModelOptionLabel,
+  decodeModelSelection,
+  encodeModelSelection,
+  formatModelSelectionOptionLabel,
+  formatModelSettingLabel,
   THINKING_LEVELS,
 } from "../../models/settings.js";
-import type { ModelSetting, ProviderInfo } from "../../models/stores/settings-store.js";
+import type { ProviderInfo } from "../../models/model-catalog.js";
+import type { ModelSetting } from "../../models/stores/settings-store.js";
 
 @customElement("model-selector-controls")
 export class ModelSelectorControls extends LitElement {
@@ -38,6 +41,9 @@ export class ModelSelectorControls extends LitElement {
   @property({ type: String })
   clearLabel = "Clear";
 
+  @property({ type: Boolean })
+  showClear = true;
+
   @property({ type: String })
   currentLabel = "Current";
 
@@ -58,7 +64,7 @@ export class ModelSelectorControls extends LitElement {
 
   private _handleProviderModelChange(e: Event) {
     if (!(e.target instanceof HTMLSelectElement)) return;
-    const selection = decodeDefaultModelSelection(e.target.value);
+    const selection = decodeModelSelection(e.target.value);
     if (!selection) return;
     this.dispatchEvent(new CustomEvent("selection-change", {
       bubbles: true,
@@ -80,14 +86,35 @@ export class ModelSelectorControls extends LitElement {
     this.dispatchEvent(new CustomEvent("clear", { bubbles: true, composed: true }));
   }
 
-  private _formatThinkingLevel(thinkingLevel: string): string {
-    return thinkingLevel === this.thinkingDefault ? "" : `(${thinkingLevel})`;
-  }
-
   private _isSelectedModelReasoning(): boolean {
     const provider = this.providers.find((candidate) => candidate.provider === this.selectedProvider);
     const model = provider?.models.find((candidate) => candidate.id === this.selectedModel);
     return model?.reasoning ?? false;
+  }
+
+  override updated(changed: PropertyValues<this>) {
+    if (
+      changed.has("providers")
+      || changed.has("selectedProvider")
+      || changed.has("selectedModel")
+      || changed.has("selectedThinking")
+      || changed.has("currentModel")
+    ) {
+      const selects = Array.from(this.querySelectorAll("select"));
+      const modelSelect = selects[0] instanceof HTMLSelectElement ? selects[0] : null;
+      const thinkingSelect = selects[1] instanceof HTMLSelectElement ? selects[1] : null;
+      const expectedModelValue = encodeModelSelection(this.selectedProvider, this.selectedModel);
+      const modelOptionValues = modelSelect ? Array.from(modelSelect.options).map((option) => option.value) : [];
+      const hasExpectedModelOption = !!expectedModelValue && modelOptionValues.includes(expectedModelValue);
+
+      if (modelSelect && hasExpectedModelOption && modelSelect.value !== expectedModelValue) {
+        modelSelect.value = expectedModelValue;
+      }
+
+      if (thinkingSelect && thinkingSelect.value !== this.selectedThinking) {
+        thinkingSelect.value = this.selectedThinking;
+      }
+    }
   }
 
   override render() {
@@ -95,7 +122,7 @@ export class ModelSelectorControls extends LitElement {
       return html`<p class="text-xs text-zinc-500 py-2">${this.emptyMessage}</p>`;
     }
 
-    const selectedValue = encodeDefaultModelSelection(this.selectedProvider, this.selectedModel);
+    const selectedValue = encodeModelSelection(this.selectedProvider, this.selectedModel);
     const isReasoning = this._isSelectedModelReasoning();
     const selectClass =
       "w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 outline-none focus:border-blue-500 transition-colors cursor-pointer appearance-none";
@@ -114,11 +141,8 @@ export class ModelSelectorControls extends LitElement {
             ${this.providers.flatMap((provider) =>
               provider.models.map(
                 (model) => html`
-                  <option
-                    value=${encodeDefaultModelSelection(provider.provider, model.id)}
-                    ?selected=${provider.provider === this.selectedProvider && model.id === this.selectedModel}
-                  >
-                    ${formatDefaultModelOptionLabel(provider.provider, model.name)}
+                  <option value=${encodeModelSelection(provider.provider, model.id)}>
+                    ${formatModelSelectionOptionLabel(provider.provider, model.name)}
                   </option>
                 `,
               ),
@@ -138,9 +162,7 @@ export class ModelSelectorControls extends LitElement {
               >
                 ${THINKING_LEVELS.map(
                   (level) =>
-                    html`<option value=${level.value} ?selected=${level.value === this.selectedThinking}>
-                      ${level.label}
-                    </option>`,
+                    html`<option value=${level.value}>${level.label}</option>`,
                 )}
               </select>
             </div>
@@ -151,13 +173,21 @@ export class ModelSelectorControls extends LitElement {
           ? html`
             <div class="flex items-center gap-2 pt-1">
               <span class="text-[10px] text-zinc-500">
-                ${this.currentLabel}: ${this.currentModel.provider} / ${this.currentModel.modelId}
-                ${this._formatThinkingLevel(this.currentModel.thinkingLevel)}
+                ${this.currentLabel}: ${formatModelSettingLabel({
+                  providers: this.providers,
+                  model: this.currentModel,
+                  defaultThinkingLevel: this.thinkingDefault,
+                  includeProviderWhenAmbiguous: true,
+                })}
               </span>
-              <button
-                class="text-[10px] text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors"
-                @click=${() => this._handleClear()}
-              >${this.clearLabel}</button>
+              ${this.showClear
+                ? html`
+                  <button
+                    class="text-[10px] text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors"
+                    @click=${() => this._handleClear()}
+                  >${this.clearLabel}</button>
+                `
+                : nothing}
             </div>
           `
           : nothing}

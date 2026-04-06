@@ -8,11 +8,17 @@ import {
   deleteSetting,
   listSettings,
   isValidSettingsKey,
+  validateSettingValue,
 } from "../settings-store.js";
 
 export function registerSettingsRoutes(router: RouterGroup) {
-  router.get(API.settings, async (_ctx: RouteContext) => {
-    return Response.json(listSettings());
+  router.get(API.settings, async (ctx: RouteContext) => {
+    const rawKeys = ctx.url.searchParams.getAll("key");
+    const requestedKeys = rawKeys.length > 0
+      ? rawKeys.filter(isValidSettingsKey)
+      : undefined;
+
+    return Response.json(requestedKeys ? listSettings(requestedKeys) : listSettings());
   });
 
   router.get(`${API.settings}/:key`, async (ctx: RouteContext) => {
@@ -43,7 +49,7 @@ export function registerSettingsRoutes(router: RouterGroup) {
     }
 
     try {
-      setSetting(key, body);
+      setSetting(key, validateSettingValue(key, body));
     } catch (err: unknown) {
       badRequest(err instanceof Error ? err.message : "Invalid value");
     }

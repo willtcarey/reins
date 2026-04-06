@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { nothing, type TemplateResult } from "lit";
 import { SettingsApiKeysSection } from "../components/settings/api-keys-section.js";
+import { ModelCatalogStore } from "../models/stores/model-catalog-store.js";
 import { SettingsStore } from "../models/stores/settings-store.js";
 
 function isTemplateResult(value: unknown): value is TemplateResult {
@@ -32,7 +33,8 @@ function templateToString(value: unknown): string {
 describe("SettingsApiKeysSection", () => {
   test("renders the API Keys header inline with the + trigger", () => {
     const store = new SettingsStore();
-    store.providers = [
+    const catalogStore = new ModelCatalogStore();
+    catalogStore.providers = [
       {
         provider: "anthropic",
         hasKey: true,
@@ -51,6 +53,7 @@ describe("SettingsApiKeysSection", () => {
 
     const el = new SettingsApiKeysSection();
     el.store = store;
+    el.catalogStore = catalogStore;
 
     const output = templateToString(el.render());
 

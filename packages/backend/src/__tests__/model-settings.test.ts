@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { useTestDb } from "./helpers/test-db.js";
 import { deleteSetting, setSetting } from "../settings-store.js";
 import { resolveConfiguredModel } from "../sessions.js";
-import { resolveModelSetting, resolveUtilityModel } from "../model-settings.js";
+import { resolveModelSetting, resolveUtilityModel } from "../models/model-settings.js";
 
 describe("model settings resolution", () => {
   useTestDb();

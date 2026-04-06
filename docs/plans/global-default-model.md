@@ -29,41 +29,30 @@ DB keys win over env vars, but env vars still work when no DB key is set. Zero b
 
 ### Typed settings store
 
-All settings are defined in a single TypeBox schema registry. Each entry declares its type and behavior flags. The store uses the registry for type inference, runtime validation, encryption, and redaction — no pattern matching or special-case code paths.
+All non-secret settings are defined in a single TypeBox schema registry. The registry is just `setting key -> value schema`, and the store uses it for key discovery, type inference, and runtime validation.
 
 ```ts
 const SETTINGS_SCHEMA = {
-  default_model: {
-    schema: Type.Object({
-      provider: Type.String(),
-      modelId: Type.String(),
-      thinkingLevel: Type.String(),
-    }),
-  },
-  api_key_anthropic: {
-    schema: Type.String(),
-    encrypted: true,
-    redacted: true,
-  },
-  api_key_openai: {
-    schema: Type.String(),
-    encrypted: true,
-    redacted: true,
-  },
-  api_key_openrouter: {
-    schema: Type.String(),
-    encrypted: true,
-    redacted: true,
-  },
+  default_model: Type.Object({
+    provider: Type.String(),
+    modelId: Type.String(),
+    thinkingLevel: Type.String(),
+  }),
+  utility_model: Type.Object({
+    provider: Type.String(),
+    modelId: Type.String(),
+    thinkingLevel: Type.String(),
+  }),
 } as const;
 ```
 
-The schema does triple duty:
-1. **TypeScript types** — `getSetting("default_model")` returns `{ provider: string, modelId: string, thinkingLevel: string } | null`, `getSetting("api_key_anthropic")` returns `string | null`
-2. **Runtime validation** — `setSetting()` validates against the TypeBox schema on write
-3. **Behavior flags** — `encrypted` drives encrypt-on-write/decrypt-on-read, `redacted` drives value masking in list responses
+The schema does double duty:
+1. **TypeScript types** — `getSetting("default_model")` returns the typed model-setting object for that key
+2. **Runtime validation** — `getSetting()` and `setSetting()` validate stored values against the schema for the requested key
 
-Adding a new provider or setting is one entry in the registry.
+Secret material is intentionally kept out of the settings table. API keys and OAuth credentials live in `auth_credentials`, where encryption and redaction are handled separately.
+
+Adding a new non-secret setting is one entry in the registry.
 
 ### Generic settings API
 
@@ -152,7 +141,7 @@ At this point the UI is fully functional for viewing and saving settings, but se
    - Call `managed.session.setModel(model)` (pi SDK)
    - If `thinkingLevel` provided, call `managed.session.setThinkingLevel(level)`
    - Update SQLite row (`model_provider`, `model_id`, `thinking_level`)
-   - Broadcast `session_model_changed` event
+   - Broadcast `session_updated` event so clients can reload the canonical session state
    - Return the updated session row
 ✅ 5. Test: setModel updates DB row, invalid provider throws, invalid model throws, session not in project throws, thinkingLevel is optional.
 
@@ -174,6 +163,7 @@ At this point the UI is fully functional for viewing and saving settings, but se
 ## Follow-up / TODO
 
 - Add a UI affordance for changing a single session's model directly. This is needed as a recovery path when the current model is degraded or unavailable and can't successfully use `sessions.setModel()` via scripting.
+- Investigate active-run session refreshes that temporarily hide the optimistic user message and current tool call until the run completes when revisiting a session mid-run. A likely mitigation is to decouple chat message loading from the rest of session state with a dedicated messages endpoint / store so transient session metadata refreshes do not replace in-flight chat history.
 
 ## Out of scope
 

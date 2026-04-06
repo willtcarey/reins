@@ -1,7 +1,7 @@
 /**
  * Tests for AppStore activity tracking with projectId support.
  */
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { AppStore } from "../models/stores/app-store.js";
 import { StubClient } from "./helpers/stub-client.js";
 
@@ -74,5 +74,19 @@ describe("AppStore activity tracking", () => {
     const summary = store.activitySummary;
     expect(summary.running).toBe(1);
     expect(summary.finished).toBe(1);
+  });
+
+  test("session_updated refreshes the active session data", () => {
+    const activeSession = store["_activeSession"];
+    activeSession.sessionId = "sess-1";
+    activeSession.refreshSession = mock(async () => {});
+
+    client.fireEvent("sess-1", 42, {
+      type: "session_updated",
+      sessionId: "sess-1",
+      projectId: 42,
+    });
+
+    expect(activeSession.refreshSession).toHaveBeenCalledTimes(1);
   });
 });

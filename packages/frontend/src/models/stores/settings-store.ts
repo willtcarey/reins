@@ -1,31 +1,15 @@
 /**
  * Settings Store
  *
- * Owns all server-backed state for the settings panel: available providers,
- * OAuth provider metadata, model selections, and API key mutations.
- * Components render from public fields and call async store actions.
+ * Owns server-backed state for settings values, OAuth provider metadata,
+ * and settings-related mutations. Model/provider catalog data lives in
+ * ModelCatalogStore.
  */
-
-import { providerLabel } from "../settings.js";
-
-export interface ProviderInfo {
-  provider: string;
-  hasKey: boolean;
-  keySource: "db" | "env" | "oauth" | null;
-  keySources: ("db" | "env" | "oauth")[];
-  models: ModelInfo[];
-}
 
 export interface OAuthProviderInfo {
   id: string;
   name: string;
   configured: boolean;
-}
-
-export interface ModelInfo {
-  id: string;
-  name: string;
-  reasoning: boolean;
 }
 
 export interface ModelSetting {
@@ -34,43 +18,58 @@ export interface ModelSetting {
   thinkingLevel: string;
 }
 
-export interface ApiKeyState {
-  provider: string;
-  label: string;
-  keySource: "db" | "env" | "oauth" | null;
-  keySources: ("db" | "env" | "oauth")[];
-}
-
 export type SettingsStoreResult = { ok: true } | { error: string };
 export type SettingsStoreListener = () => void;
 export type ModelSettingKey = "default_model" | "utility_model";
 
-export class SettingsStore {
-  // ---- Public reactive state ------------------------------------------------
+type ModelSelection = {
+  provider: string;
+  modelId: string;
+  thinkingLevel: string;
+};
 
+type ModelSettingState = {
+  stored: ModelSetting | null;
+  selected: ModelSelection;
+};
+
+const MODEL_SETTING_KEYS: ModelSettingKey[] = ["default_model", "utility_model"];
+
+const MODEL_SETTING_DEFAULTS: Record<ModelSettingKey, ModelSelection> = {
+  default_model: {
+    provider: "",
+    modelId: "",
+    thinkingLevel: "high",
+  },
+  utility_model: {
+    provider: "",
+    modelId: "",
+    thinkingLevel: "minimal",
+  },
+};
+
+export class SettingsStore {
   loading = false;
   apiKeySaving = false;
   oauthLoading = false;
   savingModel = false;
 
-  providers: ProviderInfo[] = [];
   oauthProviders: OAuthProviderInfo[] = [];
-  defaultModel: ModelSetting | null = null;
-  utilityModel: ModelSetting | null = null;
-
-  selectedProvider = "";
-  selectedModel = "";
-  selectedThinking = "high";
-
-  selectedUtilityProvider = "";
-  selectedUtilityModel = "";
-  selectedUtilityThinking = "minimal";
 
   oauthLoginProvider = "";
   oauthAuthUrl = "";
   oauthInstructions = "";
 
-  // ---- Subscription ---------------------------------------------------------
+  private _modelSettings: Record<ModelSettingKey, ModelSettingState> = {
+    default_model: {
+      stored: null,
+      selected: { ...MODEL_SETTING_DEFAULTS.default_model },
+    },
+    utility_model: {
+      stored: null,
+      selected: { ...MODEL_SETTING_DEFAULTS.utility_model },
+    },
+  };
 
   private _listeners = new Set<SettingsStoreListener>();
 
@@ -83,77 +82,49 @@ export class SettingsStore {
     for (const fn of this._listeners) fn();
   }
 
-  // ---- Derived state --------------------------------------------------------
-
-  get apiKeys(): ApiKeyState[] {
-    return this.providers
-      .filter((providerInfo) => providerInfo.hasKey)
-      .map((providerInfo) => ({
-        provider: providerInfo.provider,
-        label: providerLabel(providerInfo.provider),
-        keySource: providerInfo.keySource,
-        keySources: providerInfo.keySources ?? (providerInfo.keySource ? [providerInfo.keySource] : []),
-      }));
+  get defaultModel(): ModelSetting | null {
+    return this.getStoredModelSetting("default_model");
   }
 
-  get unconfiguredProviders(): ProviderInfo[] {
-    return this.providers.filter((provider) => !provider.hasKey);
+  get utilityModel(): ModelSetting | null {
+    return this.getStoredModelSetting("utility_model");
   }
 
-  get availableOAuthProviders(): OAuthProviderInfo[] {
-    const configuredProviders = new Set(this.apiKeys.map((key) => key.provider));
-    return this.oauthProviders.filter(
-      (provider) => !provider.configured && !configuredProviders.has(provider.id),
-    );
+  getStoredModelSetting(settingKey: ModelSettingKey): ModelSetting | null {
+    return this._modelSettings[settingKey].stored;
   }
 
-  get availableProviders(): ProviderInfo[] {
-    return this.providers.filter((provider) => provider.hasKey);
-  }
-
-  getModelsForProvider(providerName: string): ModelInfo[] {
-    return this.providers.find((provider) => provider.provider === providerName)?.models ?? [];
+  getSelectedModelSetting(settingKey: ModelSettingKey): ModelSelection {
+    return this._modelSettings[settingKey].selected;
   }
 
   hasOAuthOption(provider: string): boolean {
     return this.oauthProviders.some((oauthProvider) => oauthProvider.id === provider);
   }
 
-  isSelectedModelReasoning(settingKey: ModelSettingKey = "default_model"): boolean {
-    const provider = this._selectedProviderFor(settingKey);
-    const modelId = this._selectedModelFor(settingKey);
-    const model = this.getModelsForProvider(provider)
-      .find((candidate) => candidate.id === modelId);
-    return model?.reasoning ?? false;
-  }
-
-  // ---- Data loading ---------------------------------------------------------
-
-  async load(): Promise<SettingsStoreResult> {
+  async load(settingKeys: ModelSettingKey[] = ["default_model", "utility_model"]): Promise<SettingsStoreResult> {
     this.loading = true;
     this.notify();
 
     try {
-      const [providersRes, defaultModelRes, utilityModelRes, oauthRes] = await Promise.all([
-        fetch("/api/models"),
-        fetch("/api/settings/default_model"),
-        fetch("/api/settings/utility_model"),
+      const settingsQuery = settingKeys.map((key) => `key=${encodeURIComponent(key)}`).join("&");
+      const [settingsRes, oauthRes] = await Promise.all([
+        fetch(`/api/settings?${settingsQuery}`),
         fetch("/api/oauth/providers"),
       ]);
 
-      if (providersRes.ok) {
-        this.providers = await providersRes.json();
+      if (!settingsRes.ok) {
+        return { error: await errorDetail(settingsRes) };
       }
+      this._applyLoadedModelSettings(await settingsRes.json());
 
-      this.defaultModel = await this._readModelSettingResponse(defaultModelRes);
-      this.utilityModel = await this._readModelSettingResponse(utilityModelRes);
-
-      if (oauthRes.ok) {
-        this.oauthProviders = await oauthRes.json();
+      if (!oauthRes.ok) {
+        return { error: await errorDetail(oauthRes) };
       }
+      this.oauthProviders = await oauthRes.json();
 
       this._resetOAuthLoginState();
-      this._syncSelectionFromSettings();
+      this._syncSelectionsFromSettings(settingKeys);
 
       return { ok: true };
     } catch (err: unknown) {
@@ -163,8 +134,6 @@ export class SettingsStore {
       this.notify();
     }
   }
-
-  // ---- API keys -------------------------------------------------------------
 
   async saveApiKey(provider: string, value: string): Promise<SettingsStoreResult> {
     this.apiKeySaving = true;
@@ -181,7 +150,7 @@ export class SettingsStore {
         return { error: await errorDetail(res) };
       }
 
-      return await this.load();
+      return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
     } finally {
@@ -203,7 +172,7 @@ export class SettingsStore {
         return { error: await errorDetail(res) };
       }
 
-      return await this.load();
+      return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
     } finally {
@@ -211,8 +180,6 @@ export class SettingsStore {
       this.notify();
     }
   }
-
-  // ---- OAuth ----------------------------------------------------------------
 
   async startOAuthLogin(providerId: string): Promise<SettingsStoreResult> {
     this.oauthLoading = true;
@@ -299,81 +266,16 @@ export class SettingsStore {
     this.notify();
   }
 
-  // ---- Default model --------------------------------------------------------
-
-  async selectProvider(provider: string): Promise<SettingsStoreResult> {
-    return this.selectModelSettingProvider("default_model", provider);
-  }
-
-  async selectModel(modelId: string): Promise<SettingsStoreResult> {
-    return this.selectModelSettingModel("default_model", modelId);
-  }
-
-  async selectDefaultModel(provider: string, modelId: string): Promise<SettingsStoreResult> {
-    return this.selectModelSetting("default_model", provider, modelId);
-  }
-
-  async selectThinkingLevel(thinkingLevel: string): Promise<SettingsStoreResult> {
-    return this.selectModelSettingThinkingLevel("default_model", thinkingLevel);
-  }
-
-  async clearDefaultModel(): Promise<SettingsStoreResult> {
-    return this.clearModelSetting("default_model");
-  }
-
-  // ---- Utility model --------------------------------------------------------
-
-  async selectUtilityModel(provider: string, modelId: string): Promise<SettingsStoreResult> {
-    return this.selectModelSetting("utility_model", provider, modelId);
-  }
-
-  async selectUtilityThinkingLevel(thinkingLevel: string): Promise<SettingsStoreResult> {
-    return this.selectModelSettingThinkingLevel("utility_model", thinkingLevel);
-  }
-
-  async clearUtilityModel(): Promise<SettingsStoreResult> {
-    return this.clearModelSetting("utility_model");
-  }
-
-  // ---- Shared model-setting helpers ----------------------------------------
-
-  async selectModelSettingProvider(settingKey: ModelSettingKey, provider: string): Promise<SettingsStoreResult> {
-    this._setSelectedProvider(settingKey, provider);
-
-    const providerModels = this.getModelsForProvider(provider);
-    this._setSelectedModel(settingKey, providerModels[0]?.id ?? "");
-    this._setSelectedThinking(settingKey, this._defaultThinkingLevel(settingKey));
-    this.notify();
-
-    if (!this._selectedProviderFor(settingKey) || !this._selectedModelFor(settingKey)) {
-      return { ok: true };
-    }
-
-    return this._persistModelSetting(settingKey);
-  }
-
-  async selectModelSettingModel(settingKey: ModelSettingKey, modelId: string): Promise<SettingsStoreResult> {
-    this._setSelectedModel(settingKey, modelId);
-    this.notify();
-
-    if (!this._selectedProviderFor(settingKey) || !this._selectedModelFor(settingKey)) {
-      return { ok: true };
-    }
-
-    return this._persistModelSetting(settingKey);
-  }
-
   async selectModelSetting(settingKey: ModelSettingKey, provider: string, modelId: string): Promise<SettingsStoreResult> {
-    const providerChanged = this._selectedProviderFor(settingKey) !== provider;
-
-    this._setSelectedProvider(settingKey, provider);
-    this._setSelectedModel(settingKey, modelId);
-    if (providerChanged) {
-      this._setSelectedThinking(settingKey, this._defaultThinkingLevel(settingKey));
-    }
+    const selection = this.getSelectedModelSetting(settingKey);
+    this._setSelectedModelSetting(settingKey, {
+      provider,
+      modelId,
+      ...(selection.provider !== provider ? { thinkingLevel: this.defaultThinkingLevel(settingKey) } : {}),
+    });
     this.notify();
 
-    if (!this._selectedProviderFor(settingKey) || !this._selectedModelFor(settingKey)) {
+    if (!provider || !modelId) {
       return { ok: true };
     }
 
@@ -381,10 +283,11 @@ export class SettingsStore {
   }
 
   async selectModelSettingThinkingLevel(settingKey: ModelSettingKey, thinkingLevel: string): Promise<SettingsStoreResult> {
-    this._setSelectedThinking(settingKey, thinkingLevel);
+    this._setSelectedModelSetting(settingKey, { thinkingLevel });
     this.notify();
 
-    if (!this._selectedProviderFor(settingKey) || !this._selectedModelFor(settingKey)) {
+    const selection = this.getSelectedModelSetting(settingKey);
+    if (!selection.provider || !selection.modelId) {
       return { ok: true };
     }
 
@@ -404,10 +307,10 @@ export class SettingsStore {
         return { error: await errorDetail(res) };
       }
 
-      this._setStoredModel(settingKey, null);
-      this._setSelectedProvider(settingKey, "");
-      this._setSelectedModel(settingKey, "");
-      this._setSelectedThinking(settingKey, this._defaultThinkingLevel(settingKey));
+      this._modelSettings[settingKey] = {
+        stored: null,
+        selected: { ...MODEL_SETTING_DEFAULTS[settingKey] },
+      };
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
@@ -417,16 +320,16 @@ export class SettingsStore {
     }
   }
 
+  defaultThinkingLevel(settingKey: ModelSettingKey): string {
+    return MODEL_SETTING_DEFAULTS[settingKey].thinkingLevel;
+  }
+
   private async _persistModelSetting(settingKey: ModelSettingKey): Promise<SettingsStoreResult> {
     this.savingModel = true;
     this.notify();
 
     try {
-      const body: ModelSetting = {
-        provider: this._selectedProviderFor(settingKey),
-        modelId: this._selectedModelFor(settingKey),
-        thinkingLevel: this._selectedThinkingFor(settingKey),
-      };
+      const body: ModelSetting = { ...this.getSelectedModelSetting(settingKey) };
 
       const res = await fetch(`/api/settings/${settingKey}`, {
         method: "PUT",
@@ -438,7 +341,10 @@ export class SettingsStore {
         return { error: await errorDetail(res) };
       }
 
-      this._setStoredModel(settingKey, body);
+      this._modelSettings[settingKey] = {
+        ...this._modelSettings[settingKey],
+        stored: body,
+      };
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
@@ -448,85 +354,46 @@ export class SettingsStore {
     }
   }
 
-  private async _readModelSettingResponse(response: Response): Promise<ModelSetting | null> {
-    if (!response.ok) return null;
-    const data = await response.json();
-    return data.value ?? null;
-  }
+  private _applyLoadedModelSettings(entries: Array<{ key: ModelSettingKey; value: ModelSetting }>) {
+    const loadedKeys = new Set(entries.map((entry) => entry.key));
 
-  private _syncSelectionFromSettings() {
-    this._syncSelectionFromSetting("default_model");
-    this._syncSelectionFromSetting("utility_model");
-  }
-
-  private _syncSelectionFromSetting(settingKey: ModelSettingKey) {
-    const model = this._storedModelFor(settingKey);
-    if (model) {
-      this._setSelectedProvider(settingKey, model.provider);
-      this._setSelectedModel(settingKey, model.modelId);
-      this._setSelectedThinking(settingKey, model.thinkingLevel);
-      return;
+    for (const settingKey of MODEL_SETTING_KEYS) {
+      if (!loadedKeys.has(settingKey)) {
+        this._modelSettings[settingKey] = {
+          ...this._modelSettings[settingKey],
+          stored: null,
+        };
+      }
     }
 
-    this._setSelectedProvider(settingKey, "");
-    this._setSelectedModel(settingKey, "");
-    this._setSelectedThinking(settingKey, this._defaultThinkingLevel(settingKey));
-  }
-
-  private _storedModelFor(settingKey: ModelSettingKey): ModelSetting | null {
-    return settingKey === "default_model" ? this.defaultModel : this.utilityModel;
-  }
-
-  private _setStoredModel(settingKey: ModelSettingKey, model: ModelSetting | null) {
-    if (settingKey === "default_model") {
-      this.defaultModel = model;
-      return;
+    for (const entry of entries) {
+      this._modelSettings[entry.key] = {
+        ...this._modelSettings[entry.key],
+        stored: entry.value,
+      };
     }
-
-    this.utilityModel = model;
   }
 
-  private _selectedProviderFor(settingKey: ModelSettingKey): string {
-    return settingKey === "default_model" ? this.selectedProvider : this.selectedUtilityProvider;
-  }
-
-  private _setSelectedProvider(settingKey: ModelSettingKey, provider: string) {
-    if (settingKey === "default_model") {
-      this.selectedProvider = provider;
-      return;
+  private _syncSelectionsFromSettings(settingKeys: ModelSettingKey[]) {
+    for (const settingKey of settingKeys) {
+      const model = this.getStoredModelSetting(settingKey);
+      this._modelSettings[settingKey] = {
+        stored: model,
+        selected: model
+          ? { ...model }
+          : { ...MODEL_SETTING_DEFAULTS[settingKey] },
+      };
     }
-
-    this.selectedUtilityProvider = provider;
   }
 
-  private _selectedModelFor(settingKey: ModelSettingKey): string {
-    return settingKey === "default_model" ? this.selectedModel : this.selectedUtilityModel;
-  }
-
-  private _setSelectedModel(settingKey: ModelSettingKey, modelId: string) {
-    if (settingKey === "default_model") {
-      this.selectedModel = modelId;
-      return;
-    }
-
-    this.selectedUtilityModel = modelId;
-  }
-
-  private _selectedThinkingFor(settingKey: ModelSettingKey): string {
-    return settingKey === "default_model" ? this.selectedThinking : this.selectedUtilityThinking;
-  }
-
-  private _setSelectedThinking(settingKey: ModelSettingKey, thinkingLevel: string) {
-    if (settingKey === "default_model") {
-      this.selectedThinking = thinkingLevel;
-      return;
-    }
-
-    this.selectedUtilityThinking = thinkingLevel;
-  }
-
-  private _defaultThinkingLevel(settingKey: ModelSettingKey): string {
-    return settingKey === "default_model" ? "high" : "minimal";
+  private _setSelectedModelSetting(settingKey: ModelSettingKey, updates: Partial<ModelSelection>) {
+    this._modelSettings[settingKey] = {
+      ...this._modelSettings[settingKey],
+      selected: {
+        ...this._modelSettings[settingKey].selected,
+        ...updates,
+      },
+    };
   }
 
   private _resetOAuthLoginState() {

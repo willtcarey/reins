@@ -38,7 +38,7 @@ describe("ProjectSessions.setModel", () => {
     model = new ProjectSessions(project.id, sessions, broadcast);
   });
 
-  test("updates an open session live, persists metadata, and broadcasts the change", async () => {
+  test("updates an open session live, persists metadata, and broadcasts a session update", async () => {
     createSession("sess-1", project.id, { thinkingLevel: "medium" });
     const managed = createMockManagedSession("sess-1");
     sessions.set("sess-1", managed);
@@ -62,16 +62,13 @@ describe("ProjectSessions.setModel", () => {
     expect(result.thinking_level).toBe("high");
 
     expect(broadcastSpy).toHaveBeenCalledWith({
-      type: "session_model_changed",
+      type: "session_updated",
       sessionId: "sess-1",
       projectId: project.id,
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
-      thinkingLevel: "high",
     });
   });
 
-  test("updates an inactive session in the DB without live SDK calls or broadcast", async () => {
+  test("updates an inactive session in the DB and broadcasts a session update", async () => {
     createSession("sess-2", project.id, { thinkingLevel: "low" });
 
     const result = await model.setModel({
@@ -85,7 +82,11 @@ describe("ProjectSessions.setModel", () => {
     expect(updated!.model_id).toBe("claude-sonnet-4-20250514");
     expect(updated!.thinking_level).toBe("low");
     expect(result.thinking_level).toBe("low");
-    expect(broadcastSpy).not.toHaveBeenCalled();
+    expect(broadcastSpy).toHaveBeenCalledWith({
+      type: "session_updated",
+      sessionId: "sess-2",
+      projectId: project.id,
+    });
   });
 
   test("throws when the session does not belong to the project", async () => {

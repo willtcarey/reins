@@ -1,8 +1,10 @@
 import { LitElement, html, nothing } from "lit";
+import type { PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { SessionData } from "../models/ws-client.js";
-import { providerLabel, THINKING_LEVELS } from "../models/settings.js";
-import { SettingsStore, type ModelSetting } from "../models/stores/settings-store.js";
+import { formatModelSettingLabel } from "../models/settings.js";
+import { ModelCatalogStore } from "../models/stores/model-catalog-store.js";
+import type { ModelSetting } from "../models/stores/settings-store.js";
 import { showToast } from "./toast.js";
 import "./popover-menu.js";
 import "./settings/model-selector-controls.js";
@@ -22,14 +24,14 @@ export class SessionModelPicker extends LitElement {
   @property({ attribute: false })
   updateSessionModel: ((update: { provider: string; modelId: string; thinkingLevel: string }) => Promise<{ ok: true } | { error: string }>) | null = null;
 
-  @state() private _store = new SettingsStore();
+  @state() private _catalogStore = new ModelCatalogStore();
   @state() private _loading = false;
   @state() private _saving = false;
   @state() private _selectedProvider = "";
   @state() private _selectedModel = "";
   @state() private _selectedThinking = "high";
 
-  override updated(changed: Map<string, unknown>) {
+  override willUpdate(changed: PropertyValues<this>) {
     if (changed.has("sessionData")) {
       this._syncSelectionFromSession();
     }
@@ -42,12 +44,14 @@ export class SessionModelPicker extends LitElement {
   }
 
   private async _ensureLoaded() {
-    if (this._store.providers.length > 0) return;
+    if (this._catalogStore.providers.length > 0) return;
+
     this._loading = true;
-    const result = await this._store.load();
+    const catalogResult = await this._catalogStore.load();
     this._loading = false;
-    if ("error" in result) {
-      showToast(`Failed to load models: ${result.error}`, "error");
+
+    if ("error" in catalogResult) {
+      showToast(`Failed to load models: ${catalogResult.error}`, "error");
     }
   }
 
@@ -65,64 +69,56 @@ export class SessionModelPicker extends LitElement {
     const current = this._currentModel();
     if (!current) return "Session model";
 
-    const allMatchingModels = this._store.providers.flatMap((provider) =>
-      provider.models
-        .filter((model) => model.id === current.modelId)
-        .map((model) => ({ provider: provider.provider, name: model.name })),
-    );
-
-    const currentModelName = this._store.providers
-      .find((provider) => provider.provider === current.provider)
-      ?.models.find((model) => model.id === current.modelId)
-      ?.name ?? current.modelId;
-
-    const providerNeeded = allMatchingModels.some((match) => match.provider !== current.provider);
-    const thinkingIsDefault = current.thinkingLevel === "high";
-    const thinking = THINKING_LEVELS.find((level) => level.value === current.thinkingLevel)?.label ?? current.thinkingLevel;
-
-    const parts = [providerNeeded ? `${providerLabel(current.provider)} / ${currentModelName}` : currentModelName];
-    if (!thinkingIsDefault) {
-      parts.push(thinking);
-    }
-    return parts.join(" · ");
+    return formatModelSettingLabel({
+      providers: this._catalogStore.providers,
+      model: current,
+      defaultThinkingLevel: "high",
+    });
   }
 
-  private async _saveModel(provider: string, modelId: string, thinkingLevel: string) {
-    if (!this.updateSessionModel || !this.sessionId) return;
+  private async _saveModel(provider: string, modelId: string, thinkingLevel: string): Promise<{ ok: true } | { error: string } | undefined> {
+    if (!this.updateSessionModel || !this.sessionId) return undefined;
 
     this._saving = true;
     try {
       const result = await this.updateSessionModel({ provider, modelId, thinkingLevel });
       if ("error" in result) {
-        showToast(`Failed to update session model: ${result.error}`, "error");
-        return;
+        return { error: result.error };
       }
 
-      this._syncSelectionFromSession();
       showToast("Session model updated", "success");
+      return { ok: true };
     } finally {
       this._saving = false;
     }
   }
 
   private async _handleSelectionChange(e: CustomEvent<{ provider: string; modelId: string }>) {
+    const previous = {
+      provider: this._selectedProvider,
+      model: this._selectedModel,
+    };
+
     this._selectedProvider = e.detail.provider;
     this._selectedModel = e.detail.modelId;
-    await this._saveModel(this._selectedProvider, this._selectedModel, this._selectedThinking);
+
+    const result = await this._saveModel(this._selectedProvider, this._selectedModel, this._selectedThinking);
+    if (result && "error" in result) {
+      this._selectedProvider = previous.provider;
+      this._selectedModel = previous.model;
+      showToast(`Failed to update session model: ${result.error}`, "error");
+    }
   }
 
   private async _handleThinkingChange(e: CustomEvent<{ thinkingLevel: string }>) {
+    const previousThinking = this._selectedThinking;
     this._selectedThinking = e.detail.thinkingLevel;
-    await this._saveModel(this._selectedProvider, this._selectedModel, this._selectedThinking);
-  }
 
-  private async _applyDefault() {
-    const model = this._store.defaultModel;
-    if (!model) return;
-    this._selectedProvider = model.provider;
-    this._selectedModel = model.modelId;
-    this._selectedThinking = model.thinkingLevel;
-    await this._saveModel(model.provider, model.modelId, model.thinkingLevel);
+    const result = await this._saveModel(this._selectedProvider, this._selectedModel, this._selectedThinking);
+    if (result && "error" in result) {
+      this._selectedThinking = previousThinking;
+      showToast(`Failed to update session model: ${result.error}`, "error");
+    }
   }
 
   private renderPopoverContent() {
@@ -137,18 +133,16 @@ export class SessionModelPicker extends LitElement {
           <div class="text-[10px] text-zinc-500 mt-1">Changes apply to this session only.</div>
         </div>
         <model-selector-controls
-          .providers=${this._store.availableProviders}
+          .providers=${this._catalogStore.availableProviders}
           .selectedProvider=${this._selectedProvider}
           .selectedModel=${this._selectedModel}
           .selectedThinking=${this._selectedThinking}
-          .currentModel=${this._currentModel()}
           .saving=${this._saving}
+          .showClear=${false}
+          .showCurrent=${false}
           emptyMessage="Configure at least one API key in settings to change the model."
-          clearLabel="Use global default"
-          currentLabel="Current"
           @selection-change=${(e: CustomEvent<{ provider: string; modelId: string }>) => this._handleSelectionChange(e)}
           @thinking-change=${(e: CustomEvent<{ thinkingLevel: string }>) => this._handleThinkingChange(e)}
-          @clear=${() => void this._applyDefault()}
         ></model-selector-controls>
       </div>
     `;

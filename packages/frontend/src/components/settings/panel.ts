@@ -2,13 +2,14 @@
  * Settings Panel
  *
  * Full-screen overlay for managing global settings.
- * Server-backed state and mutations live in SettingsStore. This shell owns
- * only overlay visibility, data loading, and section composition.
+ * Server-backed state and mutations live in SettingsStore and ModelCatalogStore.
+ * This shell owns only overlay visibility, data loading, and section composition.
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
+import { ModelCatalogStore } from "../../models/stores/model-catalog-store.js";
 import { SettingsStore } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
 import "./api-keys-section.js";
@@ -23,15 +24,22 @@ export class SettingsPanel extends LitElement {
   @state() private _open = false;
 
   private _store = new SettingsStore();
+  private _catalogStore = new ModelCatalogStore();
   private _storeCtrl = new StoreController<SettingsStore>(this);
+  private _catalogStoreCtrl = new StoreController<ModelCatalogStore>(this);
 
   constructor() {
     super();
     this._storeCtrl.store = this._store;
+    this._catalogStoreCtrl.store = this._catalogStore;
   }
 
   private get store(): SettingsStore {
     return this._store;
+  }
+
+  private get catalogStore(): ModelCatalogStore {
+    return this._catalogStore;
   }
 
   open() {
@@ -44,9 +52,16 @@ export class SettingsPanel extends LitElement {
   }
 
   private async _loadData() {
-    const result = await this.store.load();
-    if ("error" in result) {
-      showToast(`Failed to load settings: ${result.error}`, "error");
+    const [settingsResult, catalogResult] = await Promise.all([
+      this.store.load(),
+      this.catalogStore.load(),
+    ]);
+
+    if ("error" in settingsResult) {
+      showToast(`Failed to load settings: ${settingsResult.error}`, "error");
+    }
+    if ("error" in catalogResult) {
+      showToast(`Failed to load model catalog: ${catalogResult.error}`, "error");
     }
   }
 
@@ -79,11 +94,11 @@ export class SettingsPanel extends LitElement {
             </button>
           </div>
 
-          ${this.store.loading
+          ${this.store.loading || this.catalogStore.loading
             ? html`<div class="text-xs text-zinc-500 py-4 text-center">Loading settings...</div>`
             : html`
               <div class="mb-5">
-                <settings-api-keys-section .store=${this.store}></settings-api-keys-section>
+                <settings-api-keys-section .store=${this.store} .catalogStore=${this.catalogStore}></settings-api-keys-section>
               </div>
 
               <div class="mb-5">
@@ -91,6 +106,7 @@ export class SettingsPanel extends LitElement {
                 <p class="text-[10px] text-zinc-500 mb-3">New sessions will use this model. Existing sessions are not affected.</p>
                 <settings-model-setting-section
                   .store=${this.store}
+                  .catalogStore=${this.catalogStore}
                   settingKey="default_model"
                   emptyMessage="Configure at least one API key above to select a default model."
                   successLabel="Default model updated"
@@ -104,6 +120,7 @@ export class SettingsPanel extends LitElement {
                 <p class="text-[10px] text-zinc-500 mb-3">Used for lightweight internal tasks like task generation and branch naming. Falls back to the default model when unset.</p>
                 <settings-model-setting-section
                   .store=${this.store}
+                  .catalogStore=${this.catalogStore}
                   settingKey="utility_model"
                   emptyMessage="Configure at least one API key above to select a utility model."
                   successLabel="Utility model updated"

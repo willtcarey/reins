@@ -137,7 +137,13 @@ export class ChatPanel extends LitElement {
       this.showError(event.error || "Something went wrong");
       return;
     }
-    if (event.type === "task_updated" || event.type === "session_created" || event.type === "open_file" || event.type === "ws_ack") {
+    if (
+      event.type === "task_updated"
+      || event.type === "session_created"
+      || event.type === "session_updated"
+      || event.type === "open_file"
+      || event.type === "ws_ack"
+    ) {
       return;
     }
 

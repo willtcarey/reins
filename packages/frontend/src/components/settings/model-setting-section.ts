@@ -1,6 +1,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
+import { ModelCatalogStore } from "../../models/stores/model-catalog-store.js";
 import { SettingsStore, type ModelSettingKey } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
 import "./model-selector-controls.js";
@@ -12,6 +13,7 @@ export class SettingsModelSettingSection extends LitElement {
   }
 
   private _storeCtrl = new StoreController<SettingsStore>(this);
+  private _catalogStoreCtrl = new StoreController<ModelCatalogStore>(this);
 
   @property({ attribute: false })
   set store(store: SettingsStore | null) {
@@ -20,6 +22,15 @@ export class SettingsModelSettingSection extends LitElement {
 
   get store(): SettingsStore | null {
     return this._storeCtrl.store;
+  }
+
+  @property({ attribute: false })
+  set catalogStore(store: ModelCatalogStore | null) {
+    this._catalogStoreCtrl.store = store;
+  }
+
+  get catalogStore(): ModelCatalogStore | null {
+    return this._catalogStoreCtrl.store;
   }
 
   @property()
@@ -52,7 +63,8 @@ export class SettingsModelSettingSection extends LitElement {
       return;
     }
 
-    if (this._selectedProvider && this._selectedModel) {
+    const selected = this._selected;
+    if (selected.provider && selected.modelId) {
       showToast(this.successLabel, "success");
     }
   }
@@ -67,7 +79,8 @@ export class SettingsModelSettingSection extends LitElement {
       return;
     }
 
-    if (this._selectedProvider && this._selectedModel) {
+    const selected = this._selected;
+    if (selected.provider && selected.modelId) {
       showToast(this.successLabel, "success");
     }
   }
@@ -86,45 +99,34 @@ export class SettingsModelSettingSection extends LitElement {
   }
 
   private get _currentModel() {
-    const store = this.store;
-    if (!store) return null;
-    return this.settingKey === "default_model" ? store.defaultModel : store.utilityModel;
+    return this.store?.getStoredModelSetting(this.settingKey) ?? null;
   }
 
-  private get _selectedProvider() {
-    const store = this.store;
-    if (!store) return "";
-    return this.settingKey === "default_model" ? store.selectedProvider : store.selectedUtilityProvider;
-  }
-
-  private get _selectedModel() {
-    const store = this.store;
-    if (!store) return "";
-    return this.settingKey === "default_model" ? store.selectedModel : store.selectedUtilityModel;
-  }
-
-  private get _selectedThinking() {
-    const store = this.store;
-    if (!store) return "high";
-    return this.settingKey === "default_model" ? store.selectedThinking : store.selectedUtilityThinking;
+  private get _selected() {
+    return this.store?.getSelectedModelSetting(this.settingKey) ?? {
+      provider: "",
+      modelId: "",
+      thinkingLevel: "high",
+    };
   }
 
   override render() {
     const store = this.store;
-    if (!store) return nothing;
+    const catalogStore = this.catalogStore;
+    if (!store || !catalogStore) return nothing;
 
     return html`
       <model-selector-controls
-        .providers=${store.availableProviders}
-        .selectedProvider=${this._selectedProvider}
-        .selectedModel=${this._selectedModel}
-        .selectedThinking=${this._selectedThinking}
+        .providers=${catalogStore.availableProviders}
+        .selectedProvider=${this._selected.provider}
+        .selectedModel=${this._selected.modelId}
+        .selectedThinking=${this._selected.thinkingLevel}
         .currentModel=${this._currentModel}
         .saving=${store.savingModel}
         .emptyMessage=${this.emptyMessage}
         .clearLabel=${this.clearLabel}
         .currentLabel=${this.currentLabel}
-        .thinkingDefault=${this.settingKey === "default_model" ? "high" : "minimal"}
+        .thinkingDefault=${store.defaultThinkingLevel(this.settingKey)}
         @selection-change=${this._handleProviderModelChange}
         @thinking-change=${this._handleThinkingChange}
         @clear=${() => void this._clearModelSetting()}
