@@ -10,6 +10,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { IAppClient, FrontendEvent, SessionData } from "../models/ws-client.js";
 import "./markdown-content.js";
+import "./session-model-picker.js";
 import { getToolRenderer } from "./tools/index.js";
 import {
   applyChatEvent,
@@ -41,6 +42,9 @@ export class ChatPanel extends LitElement {
 
   @property({ attribute: false })
   sessionData: SessionData | null = null;
+
+  @property({ attribute: false })
+  updateSessionModel: ((update: { provider: string; modelId: string; thinkingLevel: string }) => Promise<{ ok: true } | { error: string }>) | null = null;
 
   /** Whether this panel is currently visible (active tab). */
   @property({ type: Boolean })
@@ -397,11 +401,20 @@ export class ChatPanel extends LitElement {
         </div>
 
         <!-- Input area -->
-        <div class="border-t border-zinc-700 p-3 pb-[var(--input-bottom)]">
+        <div class="border-t border-zinc-700 px-3 pt-2 pb-[var(--input-bottom)]">
           ${this.errorMessage ? html`
             <div class="flex items-center gap-2 mb-2 px-3 py-1.5 bg-red-900/30 border border-red-800/50 rounded-lg text-xs text-red-300">
               <span class="flex-1">${this.errorMessage}</span>
               <button class="text-red-400 hover:text-red-200 cursor-pointer" @click=${() => { this.errorMessage = ""; }}>✕</button>
+            </div>
+          ` : nothing}
+          ${this.sessionData?.state.model ? html`
+            <div class="mb-2 flex items-center justify-start leading-none">
+              <session-model-picker
+                .sessionId=${this.sessionId}
+                .sessionData=${this.sessionData}
+                .updateSessionModel=${this.updateSessionModel}
+              ></session-model-picker>
             </div>
           ` : nothing}
           <div class="flex gap-2 items-end">

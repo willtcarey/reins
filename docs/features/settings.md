@@ -38,6 +38,14 @@ API keys are managed through dedicated auth endpoints under `/api/auth/api-keys/
 
 ## Per-session model changes
 
-Agents can change a session's model via the scripting API (`sessions.setModel(...)`). That only affects the targeted session, not the global default.
+Each chat session has its own **Session model** control near the message composer.
+
+- It changes the model for the current session only.
+- It does not modify the global default used for future sessions.
+- It can change both the selected model and the thinking level for the session.
+- The change applies on the next turn if a response is already in flight.
+- It includes a shortcut to apply the current global default model to the session.
+
+Agents can also change a session's model via the scripting API (`sessions.setModel(...)`). That only affects the targeted session, not the global default.
 
 If the session is currently open, the change is applied live for the next LLM turn and broadcast to connected clients. If the session is inactive, the stored session metadata is updated so bulk operations like moving all sessions on a task to a new model work without reopening them first.

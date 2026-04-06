@@ -9,7 +9,7 @@
  */
 
 import type { IAppClient } from "../ws-client.js";
-import { ActiveSessionStore } from "./active-session-store.js";
+import { ActiveSessionStore, type SessionModelUpdate } from "./active-session-store.js";
 import { ProjectCollectionStore } from "./project-collection-store.js";
 import { DiffStore } from "./diff-store.js";
 import type { ProjectInfo, SessionData } from "../ws-client.js";
@@ -241,6 +241,10 @@ export class AppStore {
 
   async refreshSession() {
     return this._activeSession.refreshSession();
+  }
+
+  async updateSessionModel(update: SessionModelUpdate): Promise<{ ok: true } | { error: string }> {
+    return this._activeSession.updateSessionModel(update);
   }
 
   async updateTask(

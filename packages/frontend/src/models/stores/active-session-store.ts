@@ -11,6 +11,12 @@
 
 import type { SessionData } from "../ws-client.js";
 
+export interface SessionModelUpdate {
+  provider: string;
+  modelId: string;
+  thinkingLevel: string;
+}
+
 export type ActiveSessionStoreListener = () => void;
 
 export class ActiveSessionStore {
@@ -72,6 +78,39 @@ export class ActiveSessionStore {
   async refreshSession() {
     if (this.sessionId) {
       await this.fetchSession(this.sessionId);
+    }
+  }
+
+  async updateSessionModel(update: SessionModelUpdate): Promise<{ ok: true } | { error: string }> {
+    if (!this.sessionId) return { error: "No active session" };
+
+    try {
+      const resp = await fetch(`/api/sessions/${encodeURIComponent(this.sessionId)}/model`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(update),
+      });
+
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        return { error: body.error || "Failed to update session model" };
+      }
+
+      if (this.sessionData?.state) {
+        this.sessionData = {
+          ...this.sessionData,
+          state: {
+            ...this.sessionData.state,
+            model: { provider: update.provider, id: update.modelId },
+            thinkingLevel: update.thinkingLevel,
+          },
+        };
+        this.notify();
+      }
+
+      return { ok: true };
+    } catch {
+      return { error: "Network error" };
     }
   }
 

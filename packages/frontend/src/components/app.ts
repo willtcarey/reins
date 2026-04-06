@@ -18,6 +18,7 @@ import { AppClient } from "../models/ws-client.js";
 import type { DiffPanel } from "./changes/diff-panel.js";
 import { FileTreeState } from "../models/changes/file-tree-state.js";
 import { AppStore } from "../models/stores/app-store.js";
+import type { SessionModelUpdate } from "../models/stores/active-session-store.js";
 import { parseHash } from "../models/router.js";
 import type { Route } from "../models/router.js";
 
@@ -294,7 +295,7 @@ export class AppShell extends LitElement {
                   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><circle cx="11.5" cy="14.5" r="2.5"/><path d="M13.3 16.3 15 18"/></svg>
                 </button>
                 <branch-indicator
-                  .currentBranch=${this.appStore.diffStore.branch ?? this.appStore.diffStore.fileData.branch}
+                  .currentBranch=${store.diffStore.branch ?? store.diffStore.fileData.branch}
                 ></branch-indicator>
                 <button
                   class="px-4 py-2 text-sm font-semibold transition-colors cursor-pointer shrink-0 ${this.activeTab === "chat" ? "text-zinc-100 border-b-2 border-blue-500" : "text-zinc-500 hover:text-zinc-300"}"
@@ -339,15 +340,16 @@ export class AppShell extends LitElement {
               <div class="flex-1 flex min-h-0 ${this.activeTab === "chat" ? "" : "hidden"}">
                 <chat-panel
                   class="flex-1 min-h-0 min-w-0"
-                  .client=${this.appStore.client}
+                  .client=${store.client}
                   .sessionId=${store.sessionId}
                   .sessionData=${store.sessionData}
+                  .updateSessionModel=${(update: SessionModelUpdate) => store.updateSessionModel(update)}
                   ?visible=${this.activeTab === "chat"}
                 ></chat-panel>
                 <!-- File tree sidebar (chat tab, wide screens only) -->
                 <div class="w-60 border-l border-zinc-700 shrink-0 hidden lg:block">
                   <diff-file-tree
-                    .store=${this.appStore.diffStore}
+                    .store=${store.diffStore}
                     .treeState=${this.fileTreeState}
                     @file-select=${this.handleChatFileSelect}
                   ></diff-file-tree>
@@ -355,7 +357,7 @@ export class AppShell extends LitElement {
               </div>
               ${keyed(store.projectId, html`<diff-panel
                 class="flex-1 min-h-0 ${this.activeTab === "changes" ? "" : "hidden"}"
-                .store=${this.appStore.diffStore}
+                .store=${store.diffStore}
                 .treeState=${this.fileTreeState}
                 .visible=${this.activeTab === "changes"}
               ></diff-panel>`)}
@@ -365,7 +367,7 @@ export class AppShell extends LitElement {
 
         <!-- Quick-open overlay -->
         <quick-open
-          .activityMap=${this.appStore.activityMap}
+          .activityMap=${store.activityMap}
           .store=${this.quickOpenStore}
         ></quick-open>
 

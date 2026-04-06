@@ -8,7 +8,7 @@
  * returning a Lit TemplateResult. This avoids light DOM / slot issues
  * since the component uses light DOM for Tailwind compatibility.
  *
- * The menu auto-closes when a click lands inside the panel.
+ * The menu can optionally auto-close when a click lands inside the panel.
  */
 
 import { LitElement, html, nothing, type TemplateResult } from "lit";
@@ -43,9 +43,11 @@ export class PopoverMenu extends LitElement {
    * - "left": left edge aligned, opens downward
    * - "right-start": opens to the right of the trigger, top-aligned
    * - "left-start": opens to the left of the trigger, top-aligned
+   * - "right-end": right edge aligned, opens upward
+   * - "left-end": left edge aligned, opens upward
    */
   @property({ type: String })
-  anchor: "right" | "left" | "right-start" | "left-start" = "right";
+  anchor: "right" | "left" | "right-start" | "left-start" | "right-end" | "left-end" = "right";
 
   @state() private open = false;
   @state() private panelStyle: Record<string, string> = {};
@@ -101,6 +103,12 @@ export class PopoverMenu extends LitElement {
         break;
       case "left-start":
         style = { top: `${rect.top}px`, right: `${window.innerWidth - rect.left + gap}px` };
+        break;
+      case "right-end":
+        style = { bottom: `${window.innerHeight - rect.top + gap}px`, right: `${window.innerWidth - rect.right}px` };
+        break;
+      case "left-end":
+        style = { bottom: `${window.innerHeight - rect.top + gap}px`, left: `${rect.left}px` };
         break;
       case "right":
       default:

@@ -6,12 +6,44 @@
  * derive the active project context from a session URL.
  */
 
+import { Type } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import type { RouteContext } from "../router.js";
+import { badRequest, notFound } from "../errors.js";
 import { getSession as dbGetSession } from "../session-store.js";
+import { ProjectSessions } from "../models/sessions.js";
 import { serializeSession, serializeSessionFromDb } from "../sessions.js";
+import { parseBody } from "./validate.js";
+
+const SessionModelBody = Type.Object({
+  provider: Type.String(),
+  modelId: Type.String(),
+  thinkingLevel: Type.Optional(Type.String()),
+});
 
 export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
+  router.put("/:sessionId/model", async (ctx) => {
+    const sessionId = ctx.params.sessionId;
+    const row = dbGetSession(sessionId);
+    if (!row) {
+      notFound(`Session not found: ${sessionId}`);
+    }
+
+    const body = await parseBody(SessionModelBody, ctx.req);
+
+    try {
+      const sessions = new ProjectSessions(row.project_id, ctx.state.sessions, () => {});
+      const updated = await sessions.setModel({ sessionId, ...body });
+      return Response.json(updated);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to update session model";
+      if (message.includes("not found")) {
+        notFound(message);
+      }
+      badRequest(message);
+    }
+  });
+
   // Get a session by its globally-unique ID
   router.get("/:sessionId", async (ctx) => {
     const sessionId = ctx.params.sessionId;

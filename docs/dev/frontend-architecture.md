@@ -326,6 +326,7 @@ Per-component state and behavior (collapse toggles, markdown preview, clipboard 
 ### View conventions
 
 - **Read from store, don't fetch** — Views receive the store (or store state) as Lit properties and render from it. No direct `fetch()` calls.
+- **Pass callbacks for action-only dependencies** — If a child only needs to trigger an action and does not subscribe to or render from store state, pass a narrow callback like `onSave` / `updateSessionModel` instead of the whole store.
 - **Dispatch intents via events** — Views emit custom events (`new-session`, `delete-task`, etc.) for actions. The parent component or store handles the intent.
 - **No WS event handling** — Views never listen to WebSocket events. All event→refetch logic is internal to AppStore.
 
