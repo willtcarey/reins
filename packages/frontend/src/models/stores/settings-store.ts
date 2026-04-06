@@ -166,10 +166,10 @@ export class SettingsStore {
     this.notify();
 
     try {
-      const res = await fetch(`/api/settings/api_key_${provider}`, {
+      const res = await fetch(`/api/auth/api-keys/${provider}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(value),
+        body: JSON.stringify({ apiKey: value }),
       });
 
       if (!res.ok) {
@@ -190,7 +190,7 @@ export class SettingsStore {
     this.notify();
 
     try {
-      const res = await fetch(`/api/settings/api_key_${provider}`, {
+      const res = await fetch(`/api/auth/api-keys/${provider}`, {
         method: "DELETE",
       });
 

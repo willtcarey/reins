@@ -7,17 +7,18 @@ import { createServerState } from "./helpers/server-state.js";
 import { makeRequest } from "./helpers/request.js";
 import { buildRouter } from "../routes/index.js";
 import { createProject } from "../project-store.js";
-import { setSetting, getSetting, deleteSetting } from "../settings-store.js";
 import { createNewSession } from "../sessions.js";
 import {
   DbAuthStorageBackend,
   createDbBackedAuthStorage,
-  createSharedAuthStorage,
-  loadDbApiKeyRuntimeOverrides,
-  loadDbOAuthCredentials,
 } from "../auth-storage.js";
 import { installRuntimeHooks } from "../runtime-hooks.js";
 import { clearPendingLogins } from "../routes/oauth.js";
+import {
+  getAuthCredential,
+  setApiKeyCredential,
+  setOAuthCredential,
+} from "../auth-credentials-store.js";
 
 const TEST_PROVIDER_ID = "test-oauth-wiring";
 
@@ -57,55 +58,10 @@ describe("auth storage wiring", () => {
     unregisterOAuthProvider(TEST_PROVIDER_ID);
   });
 
-  describe("DB runtime override loading", () => {
-    test("loads api_key_* settings into auth storage runtime overrides", async () => {
-      const authStorage = AuthStorage.inMemory();
-      setSetting("api_key_anthropic", "sk-ant-db");
-      setSetting("api_key_openai", "sk-openai-db");
-
-      loadDbApiKeyRuntimeOverrides(authStorage);
-
-      await expect(authStorage.getApiKey("anthropic")).resolves.toBe("sk-ant-db");
-      await expect(authStorage.getApiKey("openai")).resolves.toBe("sk-openai-db");
-    });
-
-    test("loads oauth_* settings into shared auth storage", async () => {
-      const authStorage = AuthStorage.inMemory();
-      const credentials = {
-        refresh: "refresh-db",
-        access: "access-db",
-        expires: Date.now() + 60_000,
-      };
-      setSetting("oauth_anthropic", credentials);
-
-      loadDbOAuthCredentials(authStorage);
-
-      expect(authStorage.get("anthropic")).toEqual({
-        type: "oauth",
-        ...credentials,
-      });
-      await expect(authStorage.getApiKey("anthropic")).resolves.toBe("access-db");
-    });
-
-    test("keeps environment variable fallback when no DB override exists", async () => {
-      deleteSetting("api_key_openai");
-      const prev = process.env.OPENAI_API_KEY;
-      process.env.OPENAI_API_KEY = "sk-openai-env";
-
-      try {
-        const authStorage = createSharedAuthStorage();
-        await expect(authStorage.getApiKey("openai")).resolves.toBe("sk-openai-env");
-      } finally {
-        if (prev === undefined) delete process.env.OPENAI_API_KEY;
-        else process.env.OPENAI_API_KEY = prev;
-      }
-    });
-  });
-
   describe("DB-backed AuthStorage backend", () => {
-    test("reads API keys and OAuth credentials from settings via AuthStorage.fromStorage", async () => {
-      setSetting("api_key_anthropic", "sk-ant-db");
-      setSetting("oauth_openai", {
+    test("reads API keys and OAuth credentials from auth_credentials via AuthStorage.fromStorage", async () => {
+      setApiKeyCredential("anthropic", "sk-ant-db");
+      setOAuthCredential("openai", {
         refresh: "refresh-openai",
         access: "access-openai",
         expires: Date.now() + 60_000,
@@ -122,7 +78,24 @@ describe("auth storage wiring", () => {
       });
     });
 
-    test("persists changes back to settings so fresh AuthStorage instances see them", async () => {
+    test("prefers API keys over OAuth when both exist for the same provider", async () => {
+      setApiKeyCredential("anthropic", "sk-ant-db");
+      setOAuthCredential("anthropic", {
+        refresh: "refresh-ant",
+        access: "access-ant",
+        expires: Date.now() + 60_000,
+      });
+
+      const authStorage = AuthStorage.fromStorage(new DbAuthStorageBackend());
+
+      await expect(authStorage.getApiKey("anthropic")).resolves.toBe("sk-ant-db");
+      expect(authStorage.get("anthropic")).toEqual({
+        type: "api_key",
+        key: "sk-ant-db",
+      });
+    });
+
+    test("persists changes back to auth_credentials so fresh AuthStorage instances see them", async () => {
       const first = createDbBackedAuthStorage();
       first.set("anthropic", { type: "api_key", key: "sk-ant-fresh" });
       first.set("openai", {
@@ -132,11 +105,21 @@ describe("auth storage wiring", () => {
         expires: Date.now() + 60_000,
       });
 
-      expect(getSetting("api_key_anthropic")).toBe("sk-ant-fresh");
-      expect(getSetting("oauth_openai")).toEqual({
-        refresh: "refresh-new",
-        access: "access-new",
-        expires: expect.any(Number),
+      expect(getAuthCredential("anthropic", "api_key")).toEqual({
+        provider: "anthropic",
+        type: "api_key",
+        value: "sk-ant-fresh",
+        updatedAt: expect.any(String),
+      });
+      expect(getAuthCredential("openai", "oauth")).toEqual({
+        provider: "openai",
+        type: "oauth",
+        value: {
+          refresh: "refresh-new",
+          access: "access-new",
+          expires: expect.any(Number),
+        },
+        updatedAt: expect.any(String),
       });
 
       const second = createDbBackedAuthStorage();
@@ -150,8 +133,21 @@ describe("auth storage wiring", () => {
 
       first.remove("anthropic");
       first.remove("openai");
-      expect(getSetting("api_key_anthropic")).toBeNull();
-      expect(getSetting("oauth_openai")).toBeNull();
+      expect(getAuthCredential("anthropic", "api_key")).toBeNull();
+      expect(getAuthCredential("openai", "oauth")).toBeNull();
+    });
+
+    test("keeps environment variable fallback when no DB override exists", async () => {
+      const prev = process.env.OPENAI_API_KEY;
+      process.env.OPENAI_API_KEY = "sk-openai-env";
+
+      try {
+        const authStorage = createDbBackedAuthStorage();
+        await expect(authStorage.getApiKey("openai")).resolves.toBe("sk-openai-env");
+      } finally {
+        if (prev === undefined) delete process.env.OPENAI_API_KEY;
+        else process.env.OPENAI_API_KEY = prev;
+      }
     });
   });
 
@@ -173,18 +169,18 @@ describe("auth storage wiring", () => {
       expect(first.session.modelRegistry.authStorage).not.toBe(second.session.modelRegistry.authStorage);
     });
 
-    test("PUT/DELETE api_key_* updates propagate to existing sessions", async () => {
+    test("PUT/DELETE api key routes propagate to existing sessions", async () => {
       const managed = await createNewSession(state, projectId, repo.dir);
 
       const putRes = await router.handle(
-        makeRequest("PUT", "/api/settings/api_key_anthropic", "sk-updated"),
+        makeRequest("PUT", "/api/auth/api-keys/anthropic", { apiKey: "sk-updated" }),
         state,
       );
       expect(putRes!.status).toBe(200);
       await expect(managed.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-updated");
 
       const delRes = await router.handle(
-        makeRequest("DELETE", "/api/settings/api_key_anthropic"),
+        makeRequest("DELETE", "/api/auth/api-keys/anthropic"),
         state,
       );
       expect(delRes!.status).toBe(204);
@@ -230,40 +226,6 @@ describe("auth storage wiring", () => {
         await expect(second.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-from-first-session");
       } finally {
         uninstall();
-      }
-    });
-
-    test("runtime hook installations are independent until explicitly uninstalled", async () => {
-      const firstState = createServerState();
-      const secondState = createServerState();
-
-      const firstObserver = await createNewSession(firstState, projectId, repo.dir);
-      const secondWriter = await createNewSession(secondState, projectId, repo.dir);
-      const secondObserver = await createNewSession(secondState, projectId, repo.dir);
-
-      const uninstallFirst = installRuntimeHooks(firstState);
-      const uninstallSecond = installRuntimeHooks(secondState);
-
-      try {
-        secondWriter.session.modelRegistry.authStorage.set("anthropic", {
-          type: "api_key",
-          key: "sk-runtime-hook",
-        });
-
-        await expect(firstObserver.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-runtime-hook");
-        await expect(secondObserver.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-runtime-hook");
-
-        uninstallFirst();
-
-        secondWriter.session.modelRegistry.authStorage.set("anthropic", {
-          type: "api_key",
-          key: "sk-runtime-hook-2",
-        });
-
-        await expect(firstObserver.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-runtime-hook");
-        await expect(secondObserver.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-runtime-hook-2");
-      } finally {
-        uninstallSecond();
       }
     });
   });

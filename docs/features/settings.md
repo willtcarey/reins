@@ -13,13 +13,17 @@ The **Default Model** setting controls which model new sessions use.
 
 You can change the default model from the settings panel in the sidebar using a single provider/model picker.
 
-## API keys
+## Auth credentials
 
-Provider API keys can also be managed from the settings panel.
+Provider auth credentials are stored separately from general settings.
 
-- Keys stored in the database are encrypted at rest.
-- Environment variables like `ANTHROPIC_API_KEY` still work as provider-key fallbacks.
-- Database-managed keys take precedence over environment variables.
+- The `settings` table keeps app settings like `default_model`.
+- API keys and OAuth credentials live in the `auth_credentials` table.
+- Stored credentials are encrypted at rest.
+- Environment variables like `ANTHROPIC_API_KEY` still work as fallbacks when no database credential is configured.
+- Database-managed API keys take precedence over environment variables.
+
+API keys are managed through dedicated auth endpoints under `/api/auth/api-keys/*`, while OAuth login continues to use `/api/oauth/*`.
 
 ## Per-session model changes
 

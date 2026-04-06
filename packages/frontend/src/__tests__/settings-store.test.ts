@@ -86,13 +86,13 @@ describe("SettingsStore", () => {
     expect(store.availableOAuthProviders.map((provider) => provider.id)).toEqual(["openrouter"]);
   });
 
-  test("saveApiKey persists the key and reloads provider state", async () => {
+  test("saveApiKey persists the key via auth API endpoints and reloads provider state", async () => {
     let saved = false;
     const requests: Array<{ url: string; init?: RequestInit }> = [];
 
     mockFetch((url, init) => {
       requests.push({ url, init });
-      if (url === "/api/settings/api_key_openai" && init?.method === "PUT") {
+      if (url === "/api/auth/api-keys/openai" && init?.method === "PUT") {
         saved = true;
         return new Response(null, { status: 200 });
       }
@@ -128,9 +128,48 @@ describe("SettingsStore", () => {
         keySources: ["db"],
       },
     ]);
-    const saveRequest = requests.find((request) => request.url === "/api/settings/api_key_openai");
+    const saveRequest = requests.find((request) => request.url === "/api/auth/api-keys/openai");
     expect(saveRequest?.init?.method).toBe("PUT");
-    expect(saveRequest?.init?.body).toBe(JSON.stringify("sk-live"));
+    expect(saveRequest?.init?.body).toBe(JSON.stringify({ apiKey: "sk-live" }));
+  });
+
+  test("deleteApiKey removes the key via auth API endpoints and reloads provider state", async () => {
+    let deleted = false;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+
+    mockFetch((url, init) => {
+      requests.push({ url, init });
+      if (url === "/api/auth/api-keys/openai" && init?.method === "DELETE") {
+        deleted = true;
+        return new Response(null, { status: 204 });
+      }
+      if (url === "/api/models") {
+        return jsonResponse([
+          {
+            provider: "openai",
+            hasKey: !deleted,
+            keySource: deleted ? null : "db",
+            keySources: deleted ? [] : ["db"],
+            models: [{ id: "gpt-4.1", name: "GPT-4.1", reasoning: false }],
+          },
+        ]);
+      }
+      if (url === "/api/settings/default_model") {
+        return new Response(null, { status: 404 });
+      }
+      if (url === "/api/oauth/providers") {
+        return jsonResponse([]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    const result = await store.deleteApiKey("openai");
+
+    expect(result).toEqual({ ok: true });
+    expect(store.apiKeySaving).toBe(false);
+    expect(store.apiKeys).toEqual([]);
+    const deleteRequest = requests.find((request) => request.url === "/api/auth/api-keys/openai");
+    expect(deleteRequest?.init?.method).toBe("DELETE");
   });
 
   test("startOAuthLogin stores the auth URL and instructions", async () => {

@@ -1,10 +1,3 @@
-/**
- * Route Composition
- *
- * Builds the full router by registering all resource routes.
- * This file gives a birds-eye view of the entire API surface.
- */
-
 import { existsSync } from "fs";
 import { createRouter } from "../router.js";
 import type { RouteContext, Middleware } from "../router.js";
@@ -28,16 +21,10 @@ import { registerUploadRoutes } from "./upload.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerModelsRoutes } from "./models.js";
 import { registerOAuthRoutes } from "./oauth.js";
+import { registerAuthRoutes } from "./auth.js";
 
-/** Context available to handlers inside the project group (after project middleware). */
 export type ProjectRouteContext = RouteContext & { project: ProjectModel };
 
-// ---- Project middleware ----------------------------------------------------
-
-/**
- * Resolves the :id param to a project, validates the directory exists,
- * and attaches a ProjectModel to the context for downstream handlers.
- */
 const projectMiddleware: Middleware<{ project: ProjectModel }> = (ctx) => {
   const projectId = parseIntParam(ctx.params, "id");
   const project = getProject(projectId);
@@ -52,8 +39,6 @@ const projectMiddleware: Middleware<{ project: ProjectModel }> = (ctx) => {
   });
 };
 
-// ---- Build router ----------------------------------------------------------
-
 export function buildRouter() {
   const router = createRouter();
 
@@ -62,6 +47,7 @@ export function buildRouter() {
   registerPaletteRoutes(router);
   registerSettingsRoutes(router);
   registerModelsRoutes(router);
+  registerAuthRoutes(router);
   registerOAuthRoutes(router);
   router.group(API.sessions, (r) => {
     registerSessionRoutes(r);

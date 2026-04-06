@@ -1,15 +1,3 @@
-/**
- * Database Migrations
- *
- * Append-only list of migrations. Each entry is [name, sql].
- * They run in order, once each, tracked in a `migrations` table.
- * Never modify or reorder existing entries — only append new ones.
- *
- * Migrations are for schema changes and product-wide data fixes only.
- * Do NOT add instance-specific data repairs (e.g. fixing a single user's
- * corrupted session). Use a one-off SQL script for those instead.
- */
-
 import type { Database } from "bun:sqlite";
 
 const MIGRATIONS: [name: string, sql: string][] = [
@@ -80,9 +68,7 @@ const MIGRATIONS: [name: string, sql: string][] = [
   ],
   [
     "009_timestamps_utc_suffix",
-    `-- Fix existing timestamps that lack a timezone suffix by appending 'Z'.
-     -- Only touches rows where the value doesn't already end with 'Z'.
-     UPDATE projects SET created_at = created_at || 'Z' WHERE created_at NOT LIKE '%Z';
+    `UPDATE projects SET created_at = created_at || 'Z' WHERE created_at NOT LIKE '%Z';
      UPDATE projects SET last_opened_at = last_opened_at || 'Z' WHERE last_opened_at NOT LIKE '%Z';
      UPDATE sessions SET created_at = created_at || 'Z' WHERE created_at NOT LIKE '%Z';
      UPDATE sessions SET updated_at = updated_at || 'Z' WHERE updated_at NOT LIKE '%Z';
@@ -114,6 +100,27 @@ const MIGRATIONS: [name: string, sql: string][] = [
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
   ],
+  [
+    "015_create_auth_credentials",
+    `CREATE TABLE auth_credentials (
+       provider TEXT NOT NULL,
+       type TEXT NOT NULL CHECK(type IN ('api_key', 'oauth')),
+       value TEXT NOT NULL,
+       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+       PRIMARY KEY (provider, type)
+     );
+     INSERT INTO auth_credentials (provider, type, value, updated_at)
+     SELECT substr(key, 9), 'api_key', value, updated_at
+     FROM settings
+     WHERE key LIKE 'api_key_%'
+     ON CONFLICT(provider, type) DO NOTHING;
+     INSERT INTO auth_credentials (provider, type, value, updated_at)
+     SELECT substr(key, 7), 'oauth', value, updated_at
+     FROM settings
+     WHERE key LIKE 'oauth_%'
+     ON CONFLICT(provider, type) DO NOTHING;
+     DELETE FROM settings WHERE key LIKE 'api_key_%' OR key LIKE 'oauth_%'`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {
@@ -126,7 +133,7 @@ export function runMigrations(db: Database): void {
 
   const applied = new Set(
     db.query<{ name: string }, []>("SELECT name FROM migrations").all()
-      .map((r) => r.name),
+      .map((row) => row.name),
   );
 
   for (const [name, sql] of MIGRATIONS) {

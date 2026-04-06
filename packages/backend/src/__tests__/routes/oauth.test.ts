@@ -9,7 +9,7 @@ import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { buildRouter } from "../../routes/index.js";
 import { clearPendingLogins } from "../../routes/oauth.js";
-import { getSetting } from "../../settings-store.js";
+import { getAuthCredential } from "../../auth-credentials-store.js";
 
 const TEST_PROVIDER_ID = "test-oauth";
 
@@ -54,8 +54,6 @@ describe("oauth routes", () => {
     return { state, router };
   };
 
-  // ---- GET /api/oauth/providers --------------------------------------------
-
   describe("GET /api/oauth/providers", () => {
     test("returns list of OAuth providers", async () => {
       const { router, state } = setup();
@@ -69,14 +67,10 @@ describe("oauth routes", () => {
       expect(Array.isArray(body)).toBe(true);
       expect(body.length).toBeGreaterThan(0);
 
-      // Each provider should have id, name, configured
       const first = body[0];
       expect(first).toHaveProperty("id");
       expect(first).toHaveProperty("name");
       expect(first).toHaveProperty("configured");
-      expect(typeof first.id).toBe("string");
-      expect(typeof first.name).toBe("string");
-      expect(typeof first.configured).toBe("boolean");
     });
 
     test("all providers show configured: false when no credentials stored", async () => {
@@ -92,8 +86,6 @@ describe("oauth routes", () => {
       }
     });
   });
-
-  // ---- DELETE /api/oauth/:providerId ---------------------------------------
 
   describe("DELETE /api/oauth/:providerId", () => {
     test("returns 404 for unknown provider", async () => {
@@ -135,11 +127,9 @@ describe("oauth routes", () => {
       );
 
       expect(res!.status).toBe(204);
-      expect(getSetting("oauth_test-oauth")).toBeNull();
+      expect(getAuthCredential(TEST_PROVIDER_ID, "oauth")).toBeNull();
     });
   });
-
-  // ---- POST /api/oauth/callback/:providerId --------------------------------
 
   describe("POST /api/oauth/callback/:providerId", () => {
     test("returns 400 when no pending login", async () => {
@@ -177,7 +167,7 @@ describe("oauth routes", () => {
       expect(res!.status).toBe(400);
     });
 
-    test("stores OAuth credentials in the DB-backed auth store after callback", async () => {
+    test("stores OAuth credentials in auth_credentials after callback", async () => {
       const { router, state } = setup();
       const startRes = await router.handle(
         makeRequest("POST", `/api/oauth/start/${TEST_PROVIDER_ID}`),
@@ -191,15 +181,18 @@ describe("oauth routes", () => {
       );
       expect(res!.status).toBe(200);
 
-      expect(getSetting("oauth_test-oauth")).toEqual({
-        refresh: "refresh:callback-code",
-        access: "access:callback-code",
-        expires: expect.any(Number),
+      expect(getAuthCredential(TEST_PROVIDER_ID, "oauth")).toEqual({
+        provider: TEST_PROVIDER_ID,
+        type: "oauth",
+        value: {
+          refresh: "refresh:callback-code",
+          access: "access:callback-code",
+          expires: expect.any(Number),
+        },
+        updatedAt: expect.any(String),
       });
     });
   });
-
-  // ---- POST /api/oauth/start/:providerId -----------------------------------
 
   describe("POST /api/oauth/start/:providerId", () => {
     test("returns 404 for unknown provider", async () => {

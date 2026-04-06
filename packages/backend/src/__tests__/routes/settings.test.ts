@@ -14,8 +14,6 @@ describe("settings routes", () => {
     return { state, router };
   };
 
-  // ---- GET /api/settings ---------------------------------------------------
-
   describe("GET /api/settings", () => {
     test("returns empty array when no settings", async () => {
       const { router, state } = setup();
@@ -24,27 +22,23 @@ describe("settings routes", () => {
       expect(await res!.json()).toEqual([]);
     });
 
-    test("returns redacted values after setting API keys", async () => {
+    test("returns stored settings", async () => {
       const { router, state } = setup();
 
-      setSetting("api_key_anthropic", "sk-secret");
       setSetting("default_model", { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" });
 
       const res = await router.handle(makeRequest("GET", "/api/settings"), state);
       const body = await res!.json();
 
-      expect(body).toHaveLength(2);
-      const apiKey = body.find((e: any) => e.key === "api_key_anthropic");
-      expect(apiKey.value).toBe("********");
-      expect(apiKey.redacted).toBe(true);
-
-      const model = body.find((e: any) => e.key === "default_model");
-      expect(model.value).toEqual({ provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" });
-      expect(model.redacted).toBe(false);
+      expect(body).toEqual([
+        {
+          key: "default_model",
+          value: { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" },
+          redacted: false,
+        },
+      ]);
     });
   });
-
-  // ---- GET /api/settings/:key ----------------------------------------------
 
   describe("GET /api/settings/:key", () => {
     test("returns 404 for missing key", async () => {
@@ -60,29 +54,15 @@ describe("settings routes", () => {
 
       const res = await router.handle(makeRequest("GET", "/api/settings/default_model"), state);
       expect(res!.status).toBe(200);
-      const body = await res!.json();
-      expect(body).toEqual({ key: "default_model", value: model });
-    });
-
-    test("returns configured: true for API keys (redacted)", async () => {
-      const { router, state } = setup();
-      setSetting("api_key_anthropic", "sk-secret");
-
-      const res = await router.handle(makeRequest("GET", "/api/settings/api_key_anthropic"), state);
-      expect(res!.status).toBe(200);
-      const body = await res!.json();
-      expect(body).toEqual({ key: "api_key_anthropic", configured: true });
-      expect(body.value).toBeUndefined();
+      expect(await res!.json()).toEqual({ key: "default_model", value: model });
     });
 
     test("returns 400 for unknown key", async () => {
       const { router, state } = setup();
-      const res = await router.handle(makeRequest("GET", "/api/settings/bogus_key"), state);
+      const res = await router.handle(makeRequest("GET", "/api/settings/api_key_anthropic"), state);
       expect(res!.status).toBe(400);
     });
   });
-
-  // ---- PUT /api/settings/:key ----------------------------------------------
 
   describe("PUT /api/settings/:key", () => {
     test("round-trips with GET", async () => {
@@ -99,26 +79,13 @@ describe("settings routes", () => {
         makeRequest("GET", "/api/settings/default_model"),
         state,
       );
-      const body = await getRes!.json();
-      expect(body.value).toEqual(model);
-    });
-
-    test("persists api_key_* settings to the DB-backed auth store", async () => {
-      const { router, state } = setup();
-
-      const res = await router.handle(
-        makeRequest("PUT", "/api/settings/api_key_anthropic", "sk-secret"),
-        state,
-      );
-
-      expect(res!.status).toBe(200);
-      expect(getSetting("api_key_anthropic")).toBe("sk-secret");
+      expect(await getRes!.json()).toEqual({ key: "default_model", value: model });
     });
 
     test("returns 400 for unknown key", async () => {
       const { router, state } = setup();
       const res = await router.handle(
-        makeRequest("PUT", "/api/settings/bogus_key", "value"),
+        makeRequest("PUT", "/api/settings/api_key_anthropic", "value"),
         state,
       );
       expect(res!.status).toBe(400);
@@ -126,7 +93,6 @@ describe("settings routes", () => {
 
     test("returns 400 for invalid value shape", async () => {
       const { router, state } = setup();
-      // default_model expects an object, not a string
       const res = await router.handle(
         makeRequest("PUT", "/api/settings/default_model", "not-an-object"),
         state,
@@ -145,8 +111,6 @@ describe("settings routes", () => {
       expect(res!.status).toBe(400);
     });
   });
-
-  // ---- DELETE /api/settings/:key -------------------------------------------
 
   describe("DELETE /api/settings/:key", () => {
     test("GET returns 404 after delete", async () => {
@@ -167,29 +131,26 @@ describe("settings routes", () => {
       expect(getRes!.status).toBe(404);
     });
 
-    test("removes api_key_* from the DB-backed auth store", async () => {
+    test("returns 400 for unknown key", async () => {
       const { router, state } = setup();
-      await router.handle(
-        makeRequest("PUT", "/api/settings/api_key_anthropic", "sk-secret"),
-        state,
-      );
-
       const res = await router.handle(
         makeRequest("DELETE", "/api/settings/api_key_anthropic"),
         state,
       );
-
-      expect(res!.status).toBe(204);
-      expect(getSetting("api_key_anthropic")).toBeNull();
+      expect(res!.status).toBe(400);
     });
 
-    test("returns 400 for unknown key", async () => {
+    test("removes persisted settings", async () => {
       const { router, state } = setup();
+      setSetting("default_model", { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" });
+
       const res = await router.handle(
-        makeRequest("DELETE", "/api/settings/bogus_key"),
+        makeRequest("DELETE", "/api/settings/default_model"),
         state,
       );
-      expect(res!.status).toBe(400);
+
+      expect(res!.status).toBe(204);
+      expect(getSetting("default_model")).toBeNull();
     });
   });
 });

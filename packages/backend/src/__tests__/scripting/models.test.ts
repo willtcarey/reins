@@ -6,8 +6,8 @@
 
 import { describe, test, expect } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
-import "../helpers/server-state.js"; // side-effect: initializes encryption secret
-import { setSetting } from "../../settings-store.js";
+import "../helpers/server-state.js";
+import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { buildProviderList, type ProviderInfo } from "../../models-store.js";
 import { MODEL_FUNCTIONS } from "../../scripting/models.js";
 import type { ApiContext } from "../../scripting/api-registry.js";
@@ -54,7 +54,6 @@ describe("models.list", () => {
     expect(anthropic).toBeDefined();
     expect(anthropic!.models.length).toBeGreaterThan(0);
 
-    // Check model structure
     const model = anthropic!.models[0];
     expect(model).toHaveProperty("id");
     expect(model).toHaveProperty("name");
@@ -65,9 +64,7 @@ describe("models.list", () => {
 
   test("reflects DB-configured keys", () => {
     const ctx = makeCtx();
-
-    // Set a DB key for anthropic
-    setSetting("api_key_anthropic", "sk-test-key");
+    setApiKeyCredential("anthropic", "sk-test-key");
 
     const result = listFn.execute({}, ctx) as ProviderInfo[];
     const anthropic = result.find((p) => p.provider === "anthropic");
