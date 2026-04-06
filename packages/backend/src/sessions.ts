@@ -18,6 +18,7 @@ import {
   loadMessagesForLLM,
   updateSessionMeta,
   type SessionListItem,
+  type SessionRow,
 } from "./session-store.js";
 import { getTask, touchTask, type TaskRow } from "./task-store.js";
 import { createDbBackedAuthStorage } from "./auth-storage.js";
@@ -26,11 +27,10 @@ import { checkoutBranch } from "./git.js";
 import { createCustomTools } from "./tools/index.js";
 import type { CreateSessionOpts } from "./tools/delegate.js";
 import { createBroadcast, type Broadcast } from "./models/broadcast.js";
-import { getSetting } from "./settings-store.js";
 import { type Api, type Model } from "@mariozechner/pi-ai";
 import type { ThinkingLevel } from "./thinking-level.js";
 import { parseThinkingLevel } from "./thinking-level.js";
-import { resolveModel, resolveModelSetting } from "./model-settings.js";
+import { resolveModel, resolveModelSettingWithConfig } from "./models/model-settings.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -103,13 +103,13 @@ async function resolveTask(
 }
 
 function resolveConfiguredSessionDefaults(): { model: Model<Api>; thinkingLevel: ThinkingLevel } | undefined {
-  const dbDefault = getSetting("default_model");
-  if (!dbDefault) return undefined;
+  const configured = resolveModelSettingWithConfig("default_model");
+  if (!configured) return undefined;
 
-  const model = resolveConfiguredModel();
-  if (!model) return undefined;
-
-  return { model, thinkingLevel: dbDefault.thinkingLevel };
+  return {
+    model: configured.model,
+    thinkingLevel: configured.config.thinkingLevel,
+  };
 }
 
 function resolveRequestedSessionModel(opts?: CreateSessionOpts): Model<Api> | undefined {
@@ -126,13 +126,35 @@ function resolveRequestedSessionModel(opts?: CreateSessionOpts): Model<Api> | un
   return model;
 }
 
+function resolvePersistedSessionDefaults(row?: SessionRow | null): {
+  hasPersistedModel: boolean;
+  hasPersistedThinkingLevel: boolean;
+  model?: Model<Api>;
+  thinkingLevel?: ThinkingLevel;
+} {
+  const hasPersistedModel = !!(row?.model_provider && row?.model_id);
+  const model = hasPersistedModel ? resolveModel(row!.model_provider!, row!.model_id!) : undefined;
+
+  const hasPersistedThinkingLevel = typeof row?.thinking_level === "string" && row.thinking_level.length > 0;
+  const thinkingLevel = row?.thinking_level && row.thinking_level !== "off"
+    ? parseThinkingLevel(row.thinking_level)
+    : undefined;
+
+  return {
+    hasPersistedModel,
+    hasPersistedThinkingLevel,
+    model,
+    thinkingLevel,
+  };
+}
+
 /**
  * Resolve the globally configured default model from settings.
  * Returns undefined when no valid default is configured, allowing the pi SDK
  * to fall back to its built-in default.
  */
 export function resolveConfiguredModel(): Model<Api> | undefined {
-  return resolveModelSetting("default_model");
+  return resolveModelSettingWithConfig("default_model")?.model;
 }
 
 /**
@@ -149,8 +171,9 @@ async function buildSessionOpts(params: {
   task: TaskRow | null;
   includeDelegateTool: boolean;
   createOpts?: CreateSessionOpts;
+  persistedSession?: SessionRow | null;
 }) {
-  const { state, projectId, projectDir, sessionId, task, includeDelegateTool, createOpts } = params;
+  const { state, projectId, projectDir, sessionId, task, includeDelegateTool, createOpts, persistedSession } = params;
   const sessionManager = SessionManager.inMemory();
   const tools = createCodingTools(projectDir);
   const broadcast = createBroadcast(state.clients);
@@ -186,8 +209,9 @@ async function buildSessionOpts(params: {
   });
   await resourceLoader.reload();
 
-  // Resolve model: explicit override → DB default → SDK default
+  // Resolve model: explicit override → persisted session metadata → DB default → SDK default
   const configuredDefaults = resolveConfiguredSessionDefaults();
+  const persistedDefaults = resolvePersistedSessionDefaults(persistedSession);
   const requestedModel = resolveRequestedSessionModel(createOpts);
   const requestedThinkingLevel = createOpts?.thinkingLevel
     ? parseThinkingLevel(createOpts.thinkingLevel)
@@ -199,8 +223,12 @@ async function buildSessionOpts(params: {
     customTools,
     sessionManager,
     resourceLoader,
-    model: requestedModel ?? configuredDefaults?.model,
-    configuredThinkingLevel: requestedThinkingLevel ?? configuredDefaults?.thinkingLevel,
+    model: requestedModel
+      ?? persistedDefaults.model
+      ?? (persistedDefaults.hasPersistedModel ? undefined : configuredDefaults?.model),
+    configuredThinkingLevel: requestedThinkingLevel
+      ?? persistedDefaults.thinkingLevel
+      ?? (persistedDefaults.hasPersistedThinkingLevel ? undefined : configuredDefaults?.thinkingLevel),
     authStorage: createDbBackedAuthStorage(),
   };
 }
@@ -318,10 +346,22 @@ export async function resumeSession(
     sessionId,
     task,
     includeDelegateTool,
+    persistedSession: row,
   });
   const result = await createAgentSession(sessionOpts);
 
   const agentSession = result.session;
+
+  if (sessionOpts.configuredThinkingLevel) {
+    try {
+      agentSession.setThinkingLevel(sessionOpts.configuredThinkingLevel);
+    } catch (err) {
+      console.warn(
+        `  Failed to apply configured thinking level '${sessionOpts.configuredThinkingLevel}' for resumed session ${sessionId}:`,
+        err,
+      );
+    }
+  }
 
   // Load post-compaction messages (from the last compactionSummary onwards).
   // We populate both the SessionManager's entry tree (so compaction can read

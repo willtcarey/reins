@@ -43,6 +43,44 @@ describe("createDelegateTool", () => {
     expect(tool.parameters.properties.thinkingLevel).toBeDefined();
   });
 
+  test("inherits the parent session model and thinking level when no override is provided", async () => {
+    const captured: CreateSessionOpts[] = [];
+    const managed = await createTestManagedSession("child-session");
+    managed.session.prompt = async () => {};
+    managed.session.dispose = () => {};
+    managed.session.abort = async () => {};
+    Object.defineProperty(managed.session, "messages", {
+      value: [{ role: "assistant", content: [{ type: "text", text: "done" }] }],
+      configurable: true,
+    });
+
+    const tool = createDelegateTool(
+      parentSessionId,
+      async (_projectId, _projectDir, opts) => {
+        captured.push(opts ?? {});
+        return managed;
+      },
+      deleteSession,
+    );
+
+    const result = await tool.execute("call-1", {
+      prompt: "Investigate this",
+    }, undefined, undefined, strictCtx);
+
+    expect(result.details).toEqual({ sessionId: "child-session", messageCount: 1 });
+    expect(captured).toEqual([
+      {
+        taskId,
+        delegateDepth: 1,
+        parentSessionId,
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-20250514",
+        thinkingLevel: "high",
+      },
+    ]);
+    expect(deleteSession).toHaveBeenCalledWith("child-session");
+  });
+
   test("passes model and thinking overrides when creating the sub-session", async () => {
     const captured: CreateSessionOpts[] = [];
     const managed = await createTestManagedSession("child-session");

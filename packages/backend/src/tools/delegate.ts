@@ -178,15 +178,25 @@ export function createDelegateTool(
             throw new DOMException("Aborted", "AbortError");
           }
 
+          const inheritedModelProvider = sessionRow.model_provider ?? undefined;
+          const inheritedModelId = sessionRow.model_id ?? undefined;
+          const inheritedThinkingLevel = sessionRow.thinking_level !== "off"
+            ? sessionRow.thinking_level
+            : undefined;
+
+          if ((params.modelProvider && !params.modelId) || (!params.modelProvider && params.modelId)) {
+            throw new Error("Both modelProvider and modelId are required when overriding a delegate session model.");
+          }
+
           const fullPrompt = AUTONOMY_PREAMBLE + params.prompt;
 
           const managed = await createSession(sessionRow.project_id, project.path, {
             taskId: sessionRow.task_id,
             delegateDepth: depth + 1,
             parentSessionId: sessionId,
-            modelProvider: params.modelProvider,
-            modelId: params.modelId,
-            thinkingLevel: params.thinkingLevel,
+            modelProvider: params.modelProvider ?? inheritedModelProvider,
+            modelId: params.modelId ?? inheritedModelId,
+            thinkingLevel: params.thinkingLevel ?? inheritedThinkingLevel,
           });
 
           const subSession = managed.session;

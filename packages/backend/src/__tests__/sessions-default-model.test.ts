@@ -3,9 +3,9 @@ import { useTestDb } from "./helpers/test-db.js";
 import { useTestRepo } from "./helpers/test-repo.js";
 import { createServerState } from "./helpers/server-state.js";
 import { createProject } from "../project-store.js";
-import { getSession } from "../session-store.js";
+import { createSession, getSession } from "../session-store.js";
 import { setSetting, deleteSetting } from "../settings-store.js";
-import { createNewSession, resolveConfiguredModel } from "../sessions.js";
+import { createNewSession, resumeSession, resolveConfiguredModel } from "../sessions.js";
 
 describe("resolveConfiguredModel", () => {
   useTestDb();
@@ -102,5 +102,56 @@ describe("createNewSession", () => {
     await expect(createNewSession(state, project.id, repo.dir, {
       modelProvider: "anthropic",
     })).rejects.toThrow(/Both modelProvider and modelId are required/);
+  });
+});
+
+describe("resumeSession", () => {
+  useTestDb();
+  const repo = useTestRepo();
+
+  test("uses the persisted session model and thinking level instead of the current default", async () => {
+    const state = createServerState();
+    const project = createProject("Test Project", repo.dir, "main");
+
+    createSession("resume-model-test", project.id, {
+      modelProvider: "anthropic",
+      modelId: "claude-haiku-4-5",
+      thinkingLevel: "minimal",
+    });
+
+    setSetting("default_model", {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-20250514",
+      thinkingLevel: "high",
+    });
+
+    const managed = await resumeSession(state, "resume-model-test", repo.dir);
+
+    expect(managed.session.model?.provider).toBe("anthropic");
+    expect(managed.session.model?.id).toBe("claude-haiku-4-5");
+    expect(managed.session.thinkingLevel).toBe("minimal");
+  });
+
+  test("preserves a persisted non-minimal thinking level when resuming even when the global default is also high", async () => {
+    const state = createServerState();
+    const project = createProject("Test Project", repo.dir, "main");
+
+    createSession("resume-thinking-test", project.id, {
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-20250514",
+      thinkingLevel: "high",
+    });
+
+    setSetting("default_model", {
+      provider: "anthropic",
+      modelId: "claude-haiku-4-5",
+      thinkingLevel: "high",
+    });
+
+    const managed = await resumeSession(state, "resume-thinking-test", repo.dir);
+
+    expect(managed.session.model?.provider).toBe("anthropic");
+    expect(managed.session.model?.id).toBe("claude-sonnet-4-20250514");
+    expect(managed.session.thinkingLevel).toBe("high");
   });
 });
