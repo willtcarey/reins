@@ -2,7 +2,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import { providerLabel } from "../../models/settings.js";
-import { ModelCatalogStore, type ApiKeyState } from "../../models/stores/model-catalog-store.js";
+import { ModelRegistryStore, type ApiKeyState } from "../../models/stores/model-registry-store.js";
 import { SettingsStore } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
 
@@ -13,7 +13,7 @@ export class SettingsApiKeysSection extends LitElement {
   }
 
   private _storeCtrl = new StoreController<SettingsStore>(this);
-  private _catalogStoreCtrl = new StoreController<ModelCatalogStore>(this);
+  private _registryStoreCtrl = new StoreController<ModelRegistryStore>(this);
 
   @property({ attribute: false })
   set store(store: SettingsStore | null) {
@@ -25,12 +25,12 @@ export class SettingsApiKeysSection extends LitElement {
   }
 
   @property({ attribute: false })
-  set catalogStore(store: ModelCatalogStore | null) {
-    this._catalogStoreCtrl.store = store;
+  set registryStore(store: ModelRegistryStore | null) {
+    this._registryStoreCtrl.store = store;
   }
 
-  get catalogStore(): ModelCatalogStore | null {
-    return this._catalogStoreCtrl.store;
+  get registryStore(): ModelRegistryStore | null {
+    return this._registryStoreCtrl.store;
   }
 
   @state() private _addKeyProvider = "";
@@ -43,10 +43,10 @@ export class SettingsApiKeysSection extends LitElement {
     this._oauthCallbackValue = "";
   }
 
-  private async _reloadCatalog(): Promise<boolean> {
-    const result = await this.catalogStore?.load();
+  private async _reloadRegistry(): Promise<boolean> {
+    const result = await this.registryStore?.load();
     if (result && "error" in result) {
-      showToast(`Failed to refresh model catalog: ${result.error}`, "error");
+      showToast(`Failed to refresh model registry: ${result.error}`, "error");
       return false;
     }
 
@@ -65,7 +65,7 @@ export class SettingsApiKeysSection extends LitElement {
       return;
     }
 
-    await this._reloadCatalog();
+    await this._reloadRegistry();
     this._resetLocalState();
     showToast(`${providerLabel(provider)} API key saved`, "success");
   }
@@ -80,7 +80,7 @@ export class SettingsApiKeysSection extends LitElement {
       return;
     }
 
-    await this._reloadCatalog();
+    await this._reloadRegistry();
     this._resetLocalState();
     showToast(`${providerLabel(provider)} API key removed`, "success");
   }
@@ -114,7 +114,7 @@ export class SettingsApiKeysSection extends LitElement {
       return;
     }
 
-    await this._reloadCatalog();
+    await this._reloadRegistry();
     this._resetLocalState();
     showToast(`${providerLabel(providerId)} connected via OAuth`, "success");
   }
@@ -129,7 +129,7 @@ export class SettingsApiKeysSection extends LitElement {
       return;
     }
 
-    await this._reloadCatalog();
+    await this._reloadRegistry();
     this._resetLocalState();
     showToast(`${providerLabel(providerId)} disconnected`, "success");
   }
@@ -267,10 +267,10 @@ export class SettingsApiKeysSection extends LitElement {
 
   private _renderAddProviderTrigger() {
     const store = this.store;
-    const catalogStore = this.catalogStore;
-    if (!store || !catalogStore) return nothing;
+    const registryStore = this.registryStore;
+    if (!store || !registryStore) return nothing;
 
-    const unconfigured = catalogStore.unconfiguredProviders;
+    const unconfigured = registryStore.unconfiguredProviders;
     if (unconfigured.length === 0) return nothing;
 
     return html`
@@ -346,8 +346,8 @@ export class SettingsApiKeysSection extends LitElement {
 
   override render() {
     const store = this.store;
-    const catalogStore = this.catalogStore;
-    if (!store || !catalogStore) return nothing;
+    const registryStore = this.registryStore;
+    if (!store || !registryStore) return nothing;
 
     return html`
       <div class="space-y-2">
@@ -355,10 +355,10 @@ export class SettingsApiKeysSection extends LitElement {
           <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider">API Keys</h3>
           ${this._renderAddProviderTrigger()}
         </div>
-        ${catalogStore.apiKeys.length > 0
+        ${registryStore.apiKeys.length > 0
           ? html`
             <div class="divide-y divide-zinc-700/50">
-              ${catalogStore.apiKeys.map((key) => this._renderConfiguredKey(key))}
+              ${registryStore.apiKeys.map((key) => this._renderConfiguredKey(key))}
             </div>
           `
           : html`<p class="text-[10px] text-zinc-500 py-1">No API keys configured.</p>`}

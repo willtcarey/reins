@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions -- mock session & execute() returns unknown */
-
 /**
  * Tests for sessions.setModel scripting API function.
  */
@@ -7,28 +5,19 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
+import { createTestManagedSession } from "../helpers/test-pi.js";
 import { createProject, type Project } from "../../project-store.js";
 import { createSession, getSession } from "../../session-store.js";
-import { SESSION_FUNCTIONS } from "../../scripting/sessions.js";
+import { SESSION_FUNCTIONS, sessionsSetModelFunction } from "../../scripting/sessions.js";
 import type { ApiContext } from "../../scripting/api-registry.js";
 import type { ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 
-// Find the setModel function
-const setModelFn = SESSION_FUNCTIONS.find((f) => f.name === "sessions.setModel")!;
-
-/** Create a mock ManagedSession with the methods sessions.setModel needs. */
-function createMockManagedSession(sessionId: string): ManagedSession {
-  return {
-    id: sessionId,
-    lastActivity: Date.now(),
-    session: {
-      setModel: mock(() => Promise.resolve()),
-      setThinkingLevel: mock(() => {}),
-      thinkingLevel: "medium",
-      model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
-    } as any,
-  };
+async function createMockManagedSession(sessionId: string): Promise<ManagedSession> {
+  const managed = await createTestManagedSession(sessionId);
+  managed.session.setModel = mock<typeof managed.session.setModel>(async () => {});
+  managed.session.setThinkingLevel = mock<typeof managed.session.setThinkingLevel>(() => {});
+  return managed;
 }
 
 describe("sessions.setModel", () => {
@@ -67,14 +56,14 @@ describe("sessions.setModel", () => {
     });
 
     // Create mock managed session
-    const managed = createMockManagedSession("sess-1");
+    const managed = await createMockManagedSession("sess-1");
     sessions.set("sess-1", managed);
 
     const ctx = makeCtx();
-    const result = await setModelFn.execute(
+    const result = await sessionsSetModelFunction.execute(
       { sessionId: "sess-1", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
       ctx,
-    ) as any;
+    );
 
     // Check DB was updated
     const updated = getSession("sess-1");
@@ -88,11 +77,11 @@ describe("sessions.setModel", () => {
 
   test("calls pi SDK setModel", async () => {
     createSession("sess-2", project.id);
-    const managed = createMockManagedSession("sess-2");
+    const managed = await createMockManagedSession("sess-2");
     sessions.set("sess-2", managed);
 
     const ctx = makeCtx();
-    await setModelFn.execute(
+    await sessionsSetModelFunction.execute(
       { sessionId: "sess-2", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
       ctx,
     );
@@ -102,11 +91,11 @@ describe("sessions.setModel", () => {
 
   test("sets thinking level when provided", async () => {
     createSession("sess-3", project.id);
-    const managed = createMockManagedSession("sess-3");
+    const managed = await createMockManagedSession("sess-3");
     sessions.set("sess-3", managed);
 
     const ctx = makeCtx();
-    await setModelFn.execute(
+    await sessionsSetModelFunction.execute(
       { sessionId: "sess-3", provider: "anthropic", modelId: "claude-sonnet-4-20250514", thinkingLevel: "high" },
       ctx,
     );
@@ -120,11 +109,11 @@ describe("sessions.setModel", () => {
 
   test("thinkingLevel is optional — uses session's current level", async () => {
     createSession("sess-4", project.id, { thinkingLevel: "medium" });
-    const managed = createMockManagedSession("sess-4");
+    const managed = await createMockManagedSession("sess-4");
     sessions.set("sess-4", managed);
 
     const ctx = makeCtx();
-    await setModelFn.execute(
+    await sessionsSetModelFunction.execute(
       { sessionId: "sess-4", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
       ctx,
     );
@@ -139,11 +128,11 @@ describe("sessions.setModel", () => {
 
   test("broadcasts session_updated event when a session model changes", async () => {
     createSession("sess-5", project.id);
-    const managed = createMockManagedSession("sess-5");
+    const managed = await createMockManagedSession("sess-5");
     sessions.set("sess-5", managed);
 
     const ctx = makeCtx();
-    await setModelFn.execute(
+    await sessionsSetModelFunction.execute(
       { sessionId: "sess-5", provider: "anthropic", modelId: "claude-sonnet-4-20250514", thinkingLevel: "high" },
       ctx,
     );
@@ -161,10 +150,10 @@ describe("sessions.setModel", () => {
     createSession("sess-5b", project.id, { thinkingLevel: "low" });
 
     const ctx = makeCtx();
-    const result = await setModelFn.execute(
+    const result = await sessionsSetModelFunction.execute(
       { sessionId: "sess-5b", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
       ctx,
-    ) as any;
+    );
 
     const updated = getSession("sess-5b");
     expect(updated!.model_provider).toBe("anthropic");
@@ -184,12 +173,12 @@ describe("sessions.setModel", () => {
 
   test("throws for unknown provider", async () => {
     createSession("sess-6", project.id);
-    const managed = createMockManagedSession("sess-6");
+    const managed = await createMockManagedSession("sess-6");
     sessions.set("sess-6", managed);
 
     const ctx = makeCtx();
     await expect(
-      setModelFn.execute(
+      sessionsSetModelFunction.execute(
         { sessionId: "sess-6", provider: "nonexistent", modelId: "some-model" },
         ctx,
       ),
@@ -198,12 +187,12 @@ describe("sessions.setModel", () => {
 
   test("throws for invalid model ID", async () => {
     createSession("sess-7", project.id);
-    const managed = createMockManagedSession("sess-7");
+    const managed = await createMockManagedSession("sess-7");
     sessions.set("sess-7", managed);
 
     const ctx = makeCtx();
     await expect(
-      setModelFn.execute(
+      sessionsSetModelFunction.execute(
         { sessionId: "sess-7", provider: "anthropic", modelId: "nonexistent-model" },
         ctx,
       ),
@@ -214,12 +203,12 @@ describe("sessions.setModel", () => {
     // Create session in a different project
     const otherProject = createProject("Other Project", "/tmp/other-project", "main");
     createSession("sess-8", otherProject.id);
-    const managed = createMockManagedSession("sess-8");
+    const managed = await createMockManagedSession("sess-8");
     sessions.set("sess-8", managed);
 
     const ctx = makeCtx(); // ctx.projectId = project.id (different from otherProject)
     await expect(
-      setModelFn.execute(
+      sessionsSetModelFunction.execute(
         { sessionId: "sess-8", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
         ctx,
       ),
@@ -232,7 +221,7 @@ describe("sessions.setModel", () => {
 
     const ctx = makeCtx();
     await expect(
-      setModelFn.execute(
+      sessionsSetModelFunction.execute(
         { sessionId: "sess-9", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
         ctx,
       ),
@@ -253,12 +242,15 @@ describe("sessions.setModel", () => {
 
   test("throws for invalid thinking level", async () => {
     createSession("sess-10", project.id);
-    const managed = createMockManagedSession("sess-10");
+    const managed = await createMockManagedSession("sess-10");
     sessions.set("sess-10", managed);
+
+    const rawSetModelFunction = SESSION_FUNCTIONS.find((fn) => fn.name === "sessions.setModel");
+    expect(rawSetModelFunction).toBeDefined();
 
     const ctx = makeCtx();
     await expect(
-      setModelFn.execute(
+      rawSetModelFunction!.execute(
         { sessionId: "sess-10", provider: "anthropic", modelId: "claude-sonnet-4-20250514", thinkingLevel: "invalid-level" },
         ctx,
       ),

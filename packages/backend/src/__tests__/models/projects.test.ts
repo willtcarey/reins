@@ -9,9 +9,28 @@ import {
   PathTraversalError,
   FileNotFoundError,
 } from "../../models/projects.js";
+import { ProjectSessions } from "../../models/sessions.js";
 import { detectMimeType } from "../../mime.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
+
+describe("ProjectModel.sessions", () => {
+  let model: ProjectModel;
+
+  useTestDb();
+  const repo = useTestRepo();
+
+  beforeEach(() => {
+    const project = createProject("Test", repo.dir, "main");
+    const broadcastSpy: Broadcast = mock<(msg: ServerMessage) => void>();
+    const sessions = new Map<string, ManagedSession>();
+    model = new ProjectModel(project.id, sessions, broadcastSpy);
+  });
+
+  test("returns a ProjectSessions instance", () => {
+    expect(Reflect.get(model, "sessions")).toBeInstanceOf(ProjectSessions);
+  });
+});
 
 describe("ProjectModel.serveFile", () => {
   let model: ProjectModel;

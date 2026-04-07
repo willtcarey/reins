@@ -10,7 +10,7 @@ import {
   loadMessages,
 } from "../session-store.js";
 import { ProjectSessions } from "../models/sessions.js";
-import { ThinkingLevelSchema } from "../thinking-level.js";
+import { ThinkingLevelSchema } from "../models/model-settings.js";
 import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------
@@ -47,81 +47,93 @@ export const MessageSchema = Type.Object({
 // Function definitions
 // ---------------------------------------------------------------------------
 
+export const sessionsListFunction = defineFunction({
+  name: "sessions.list",
+  description: "List scratch sessions (non-task) for the current project.",
+  parameters: Type.Object({}),
+  returns: Type.Array(SessionSchema),
+  tags: ["sessions", "list", "query", "read", "scratch"],
+  execute: (_params, ctx) => listSessionRows(ctx.projectId),
+});
+
+export const sessionsListForTaskFunction = defineFunction({
+  name: "sessions.listForTask",
+  description: "List sessions belonging to a specific task.",
+  parameters: Type.Object({ taskId: Type.Number() }),
+  returns: Type.Array(SessionSchema),
+  tags: ["sessions", "list", "query", "read", "task"],
+  execute: (params, _ctx) => listTaskSessionRows(params.taskId),
+});
+
+export const sessionsCurrentFunction = defineFunction({
+  name: "sessions.current",
+  description: "Get the current session (the one running this script). No ID needed.",
+  parameters: Type.Object({}),
+  returns: SessionSchema,
+  tags: ["sessions", "current", "read", "self", "context"],
+  execute: (_params, ctx) => {
+    const session = getSession(ctx.sessionId);
+    if (!session) throw new Error(`Session ${ctx.sessionId} not found`);
+    return session;
+  },
+});
+
+export const sessionsGetFunction = defineFunction({
+  name: "sessions.get",
+  description: "Get a single session by ID. Throws if not found.",
+  parameters: Type.Object({ sessionId: Type.String() }),
+  returns: SessionSchema,
+  tags: ["sessions", "get", "read", "lookup"],
+  execute: (params, ctx) => {
+    const session = getSession(params.sessionId);
+    if (!session || session.project_id !== ctx.projectId) {
+      throw new Error(`Session ${params.sessionId} not found`);
+    }
+    return session;
+  },
+});
+
+export const sessionsMessagesFunction = defineFunction({
+  name: "sessions.messages",
+  description: "Load all persisted messages for a session, ordered by sequence number.",
+  parameters: Type.Object({ sessionId: Type.String() }),
+  returns: Type.Array(MessageSchema),
+  tags: ["sessions", "messages", "read", "history", "conversation"],
+  execute: (params, ctx) => {
+    // Verify session belongs to this project before loading messages
+    const session = getSession(params.sessionId);
+    if (!session || session.project_id !== ctx.projectId) {
+      throw new Error(`Session ${params.sessionId} not found`);
+    }
+    return loadMessages(params.sessionId);
+  },
+});
+
+export const sessionsSetModelFunction = defineFunction({
+  name: "sessions.setModel",
+  description:
+    "Change the AI model for a session. Takes effect on the next LLM turn. " +
+    "Use models.list() to discover available providers and model IDs. " +
+    "The thinkingLevel parameter is optional and defaults to the session's current level.",
+  parameters: Type.Object({
+    sessionId: Type.String({ description: "Session ID to update." }),
+    provider: Type.String({ description: "Provider name (e.g. 'anthropic', 'openai')." }),
+    modelId: Type.String({ description: "Model ID (e.g. 'claude-sonnet-4-20250514')." }),
+    thinkingLevel: Type.Optional(ThinkingLevelSchema),
+  }),
+  returns: SessionSchema,
+  async: true,
+  tags: ["sessions", "model", "set", "write", "switch", "provider"],
+  execute: async (params, ctx) => {
+    return sessionModel(ctx).setModel(params);
+  },
+});
+
 export const SESSION_FUNCTIONS: ApiFunctionDef[] = [
-  defineFunction({
-    name: "sessions.list",
-    description: "List scratch sessions (non-task) for the current project.",
-    parameters: Type.Object({}),
-    returns: Type.Array(SessionSchema),
-    tags: ["sessions", "list", "query", "read", "scratch"],
-    execute: (_params, ctx) => listSessionRows(ctx.projectId),
-  }),
-  defineFunction({
-    name: "sessions.listForTask",
-    description: "List sessions belonging to a specific task.",
-    parameters: Type.Object({ taskId: Type.Number() }),
-    returns: Type.Array(SessionSchema),
-    tags: ["sessions", "list", "query", "read", "task"],
-    execute: (params, _ctx) => listTaskSessionRows(params.taskId),
-  }),
-  defineFunction({
-    name: "sessions.current",
-    description: "Get the current session (the one running this script). No ID needed.",
-    parameters: Type.Object({}),
-    returns: SessionSchema,
-    tags: ["sessions", "current", "read", "self", "context"],
-    execute: (_params, ctx) => {
-      const session = getSession(ctx.sessionId);
-      if (!session) throw new Error(`Session ${ctx.sessionId} not found`);
-      return session;
-    },
-  }),
-  defineFunction({
-    name: "sessions.get",
-    description: "Get a single session by ID. Throws if not found.",
-    parameters: Type.Object({ sessionId: Type.String() }),
-    returns: SessionSchema,
-    tags: ["sessions", "get", "read", "lookup"],
-    execute: (params, ctx) => {
-      const session = getSession(params.sessionId);
-      if (!session || session.project_id !== ctx.projectId) {
-        throw new Error(`Session ${params.sessionId} not found`);
-      }
-      return session;
-    },
-  }),
-  defineFunction({
-    name: "sessions.messages",
-    description: "Load all persisted messages for a session, ordered by sequence number.",
-    parameters: Type.Object({ sessionId: Type.String() }),
-    returns: Type.Array(MessageSchema),
-    tags: ["sessions", "messages", "read", "history", "conversation"],
-    execute: (params, ctx) => {
-      // Verify session belongs to this project before loading messages
-      const session = getSession(params.sessionId);
-      if (!session || session.project_id !== ctx.projectId) {
-        throw new Error(`Session ${params.sessionId} not found`);
-      }
-      return loadMessages(params.sessionId);
-    },
-  }),
-  defineFunction({
-    name: "sessions.setModel",
-    description:
-      "Change the AI model for a session. Takes effect on the next LLM turn. " +
-      "Use models.list() to discover available providers and model IDs. " +
-      "The thinkingLevel parameter is optional and defaults to the session's current level.",
-    parameters: Type.Object({
-      sessionId: Type.String({ description: "Session ID to update." }),
-      provider: Type.String({ description: "Provider name (e.g. 'anthropic', 'openai')." }),
-      modelId: Type.String({ description: "Model ID (e.g. 'claude-sonnet-4-20250514')." }),
-      thinkingLevel: Type.Optional(ThinkingLevelSchema),
-    }),
-    returns: SessionSchema,
-    async: true,
-    tags: ["sessions", "model", "set", "write", "switch", "provider"],
-    execute: async (params, ctx) => {
-      return sessionModel(ctx).setModel(params);
-    },
-  }),
+  sessionsListFunction,
+  sessionsListForTaskFunction,
+  sessionsCurrentFunction,
+  sessionsGetFunction,
+  sessionsMessagesFunction,
+  sessionsSetModelFunction,
 ];

@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions -- execute() returns unknown; tests need type access */
-
 /**
  * Tests for the models scripting API functions.
  */
@@ -8,8 +6,8 @@ import { describe, test, expect } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import "../helpers/server-state.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
-import { buildProviderList, type ProviderInfo } from "../../models-store.js";
-import { MODEL_FUNCTIONS } from "../../scripting/models.js";
+import { buildProviderList } from "../../pi/models-registry.js";
+import { modelsListFunction, modelsListProvidersFunction } from "../../scripting/models.js";
 import type { ApiContext } from "../../scripting/api-registry.js";
 import type { ManagedSession } from "../../state.js";
 
@@ -29,11 +27,9 @@ function makeCtx(overrides?: Partial<ApiContext>): ApiContext {
 describe("models.list", () => {
   useTestDb();
 
-  const listFn = MODEL_FUNCTIONS.find((f) => f.name === "models.list")!;
-
-  test("returns expected shape", () => {
+  test("returns expected shape", async () => {
     const ctx = makeCtx();
-    const result = listFn.execute({}, ctx) as ProviderInfo[];
+    const result = await modelsListFunction.execute({}, ctx);
 
     expect(Array.isArray(result)).toBe(true);
     expect(result.length).toBeGreaterThan(0);
@@ -46,9 +42,9 @@ describe("models.list", () => {
     expect(Array.isArray(first.models)).toBe(true);
   });
 
-  test("includes anthropic provider with models", () => {
+  test("includes anthropic provider with models", async () => {
     const ctx = makeCtx();
-    const result = listFn.execute({}, ctx) as ProviderInfo[];
+    const result = await modelsListFunction.execute({}, ctx);
 
     const anthropic = result.find((p) => p.provider === "anthropic");
     expect(anthropic).toBeDefined();
@@ -62,11 +58,11 @@ describe("models.list", () => {
     expect(model).toHaveProperty("maxTokens");
   });
 
-  test("reflects DB-configured keys", () => {
+  test("reflects DB-configured keys", async () => {
     const ctx = makeCtx();
     setApiKeyCredential("anthropic", "sk-test-key");
 
-    const result = listFn.execute({}, ctx) as ProviderInfo[];
+    const result = await modelsListFunction.execute({}, ctx);
     const anthropic = result.find((p) => p.provider === "anthropic");
     expect(anthropic!.hasKey).toBe(true);
     expect(anthropic!.keySource).toBe("db");
@@ -88,11 +84,9 @@ describe("buildProviderList", () => {
 });
 
 describe("models.listProviders", () => {
-  const listProvidersFn = MODEL_FUNCTIONS.find((f) => f.name === "models.listProviders")!;
-
-  test("returns string array of provider names", () => {
+  test("returns string array of provider names", async () => {
     const ctx = makeCtx();
-    const result = listProvidersFn.execute({}, ctx) as string[];
+    const result = await modelsListProvidersFunction.execute({}, ctx);
 
     expect(Array.isArray(result)).toBe(true);
     expect(result.length).toBeGreaterThan(0);

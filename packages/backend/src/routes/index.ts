@@ -47,8 +47,12 @@ export function buildRouter() {
   registerPaletteRoutes(router);
   registerSettingsRoutes(router);
   registerModelsRoutes(router);
-  registerAuthRoutes(router);
-  registerOAuthRoutes(router);
+  router.group(API.auth, (r) => {
+    registerAuthRoutes(r);
+  });
+  router.group(API.oauth, (r) => {
+    registerOAuthRoutes(r);
+  });
   router.group(API.sessions, (r) => {
     registerSessionRoutes(r);
   });

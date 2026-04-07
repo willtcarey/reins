@@ -24,7 +24,7 @@ describe("SettingsStore", () => {
     restoreFetch();
   });
 
-  test("load populates settings and oauth state without fetching the model catalog", async () => {
+  test("load populates settings and oauth state without fetching the model registry", async () => {
     const requests: string[] = [];
 
     mockFetch((url) => {

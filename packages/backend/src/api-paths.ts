@@ -8,10 +8,6 @@ export const API = {
   upload: "/api/projects/:id/upload",
   settings: "/api/settings",
   models: "/api/models",
-  authApiKeys: "/api/auth/api-keys",
-  authApiKey: "/api/auth/api-keys/:provider",
-  oauthProviders: "/api/oauth/providers",
-  oauthStart: "/api/oauth/start/:providerId",
-  oauthCallback: "/api/oauth/callback/:providerId",
-  oauthCredential: "/api/oauth/:providerId",
+  auth: "/api/auth",
+  oauth: "/api/oauth",
 } as const;

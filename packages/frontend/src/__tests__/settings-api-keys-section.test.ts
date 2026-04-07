@@ -1,40 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { nothing, type TemplateResult } from "lit";
 import { SettingsApiKeysSection } from "../components/settings/api-keys-section.js";
-import { ModelCatalogStore } from "../models/stores/model-catalog-store.js";
+import { ModelRegistryStore } from "../models/stores/model-registry-store.js";
 import { SettingsStore } from "../models/stores/settings-store.js";
-
-function isTemplateResult(value: unknown): value is TemplateResult {
-  return typeof value === "object" && value !== null && "strings" in value && "values" in value;
-}
-
-function templateToString(value: unknown): string {
-  if (value == null || value === false || value === nothing) return "";
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => templateToString(entry)).join("");
-  }
-  if (isTemplateResult(value)) {
-    const template: TemplateResult = value;
-    let output = "";
-    for (let index = 0; index < template.strings.length; index += 1) {
-      output += template.strings[index] ?? "";
-      if (index < template.values.length) {
-        output += templateToString(template.values[index]);
-      }
-    }
-    return output;
-  }
-  return "";
-}
+import { templateToString } from "./helpers/lit-template.js";
 
 describe("SettingsApiKeysSection", () => {
   test("renders the API Keys header inline with the + trigger", () => {
     const store = new SettingsStore();
-    const catalogStore = new ModelCatalogStore();
-    catalogStore.providers = [
+    const registryStore = new ModelRegistryStore();
+    registryStore.providers = [
       {
         provider: "anthropic",
         hasKey: true,
@@ -53,7 +27,7 @@ describe("SettingsApiKeysSection", () => {
 
     const el = new SettingsApiKeysSection();
     el.store = store;
-    el.catalogStore = catalogStore;
+    el.registryStore = registryStore;
 
     const output = templateToString(el.render());
 

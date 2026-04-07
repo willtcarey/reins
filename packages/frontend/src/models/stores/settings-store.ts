@@ -2,8 +2,8 @@
  * Settings Store
  *
  * Owns server-backed state for settings values, OAuth provider metadata,
- * and settings-related mutations. Model/provider catalog data lives in
- * ModelCatalogStore.
+ * and settings-related mutations. Model/provider registry data lives in
+ * ModelRegistryStore.
  */
 
 export interface OAuthProviderInfo {

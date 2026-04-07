@@ -1,24 +1,17 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions -- mock session & execute() returns unknown */
-
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
+import { createTestManagedSession } from "../helpers/test-pi.js";
 import { createProject, type Project } from "../../project-store.js";
 import { createSession, getSession } from "../../session-store.js";
 import { ProjectSessions } from "../../models/sessions.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 
-function createMockManagedSession(sessionId: string): ManagedSession {
-  return {
-    id: sessionId,
-    lastActivity: Date.now(),
-    session: {
-      setModel: mock(() => Promise.resolve()),
-      setThinkingLevel: mock(() => {}),
-      thinkingLevel: "medium",
-      model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
-    } as any,
-  };
+async function createMockManagedSession(sessionId: string): Promise<ManagedSession> {
+  const managed = await createTestManagedSession(sessionId);
+  managed.session.setModel = mock<typeof managed.session.setModel>(async () => {});
+  managed.session.setThinkingLevel = mock<typeof managed.session.setThinkingLevel>(() => {});
+  return managed;
 }
 
 describe("ProjectSessions.setModel", () => {
@@ -40,7 +33,7 @@ describe("ProjectSessions.setModel", () => {
 
   test("updates an open session live, persists metadata, and broadcasts a session update", async () => {
     createSession("sess-1", project.id, { thinkingLevel: "medium" });
-    const managed = createMockManagedSession("sess-1");
+    const managed = await createMockManagedSession("sess-1");
     sessions.set("sess-1", managed);
 
     const result = await model.setModel({

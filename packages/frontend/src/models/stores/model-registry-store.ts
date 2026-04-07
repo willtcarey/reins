@@ -8,16 +8,16 @@ export interface ApiKeyState {
   keySources: ("db" | "env" | "oauth")[];
 }
 
-export type ModelCatalogStoreResult = { ok: true } | { error: string };
-export type ModelCatalogStoreListener = () => void;
+export type ModelRegistryStoreResult = { ok: true } | { error: string };
+export type ModelRegistryStoreListener = () => void;
 
-export class ModelCatalogStore {
+export class ModelRegistryStore {
   loading = false;
   providers: ProviderInfo[] = [];
 
-  private _listeners = new Set<ModelCatalogStoreListener>();
+  private _listeners = new Set<ModelRegistryStoreListener>();
 
-  subscribe(fn: ModelCatalogStoreListener): () => void {
+  subscribe(fn: ModelRegistryStoreListener): () => void {
     this._listeners.add(fn);
     return () => this._listeners.delete(fn);
   }
@@ -57,7 +57,7 @@ export class ModelCatalogStore {
     return this.getModelsForProvider(providerName).find((model) => model.id === modelId) ?? null;
   }
 
-  async load(): Promise<ModelCatalogStoreResult> {
+  async load(): Promise<ModelRegistryStoreResult> {
     this.loading = true;
     this.notify();
 

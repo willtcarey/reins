@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { ModelCatalogStore } from "../models/stores/model-catalog-store.js";
+import { ModelRegistryStore } from "../models/stores/model-registry-store.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 
 function jsonResponse(data: unknown, ok = true): Response {
@@ -9,11 +9,11 @@ function jsonResponse(data: unknown, ok = true): Response {
   });
 }
 
-describe("ModelCatalogStore", () => {
-  let store: ModelCatalogStore;
+describe("ModelRegistryStore", () => {
+  let store: ModelRegistryStore;
 
   beforeEach(() => {
-    store = new ModelCatalogStore();
+    store = new ModelRegistryStore();
     restoreFetch();
   });
 
@@ -21,7 +21,7 @@ describe("ModelCatalogStore", () => {
     restoreFetch();
   });
 
-  test("load populates provider and model catalog state from /api/models", async () => {
+  test("load populates provider and model registry state from /api/models", async () => {
     mockFetch((url) => {
       if (url === "/api/models") {
         return jsonResponse([

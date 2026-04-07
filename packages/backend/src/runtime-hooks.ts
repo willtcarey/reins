@@ -1,11 +1,6 @@
 import type { ServerState } from "./state.js";
-import { subscribeAuthStorageChanges } from "./auth-storage.js";
-
-function reloadSessionAuthStorage(state: ServerState): void {
-  for (const managed of state.sessions.values()) {
-    managed.session.modelRegistry.authStorage.reload();
-  }
-}
+import { subscribeAuthStorageChanges } from "./pi/auth-storage.js";
+import { reloadManagedSessionAuthStorage } from "./models/auth-credentials.js";
 
 /**
  * Install auth-storage runtime hooks for a server instance.
@@ -13,6 +8,6 @@ function reloadSessionAuthStorage(state: ServerState): void {
  */
 export function installRuntimeHooks(state: ServerState): () => void {
   return subscribeAuthStorageChanges(() => {
-    reloadSessionAuthStorage(state);
+    reloadManagedSessionAuthStorage(state.sessions);
   });
 }

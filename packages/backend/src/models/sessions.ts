@@ -14,7 +14,7 @@ import {
 } from "../session-store.js";
 import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
-import { parseThinkingLevel } from "../thinking-level.js";
+import { parseThinkingLevel } from "./model-settings.js";
 
 export interface SetSessionModelParams {
   sessionId: string;

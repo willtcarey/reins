@@ -1,82 +1,59 @@
+import { Type } from "@sinclair/typebox";
 import type { RouteContext, RouterGroup } from "../router.js";
-import { API } from "../api-paths.js";
 import { badRequest } from "../errors.js";
 import {
-  deleteAuthCredential,
-  hasAuthCredential,
-  listAuthProviders,
-  setApiKeyCredential,
-} from "../auth-credentials-store.js";
+  deleteApiKey,
+  hasStoredAuthCredential,
+  listConfiguredApiKeyProviders,
+  setApiKey,
+} from "../models/auth-credentials.js";
+import { parseBody } from "./validate.js";
 
-function reloadActiveSessionAuth(ctx: RouteContext): void {
-  for (const managed of ctx.state.sessions.values()) {
-    managed.session.modelRegistry.authStorage.reload();
-  }
-}
-
-function readApiKeyBody(body: unknown): string | null {
-  if (!body || typeof body !== "object") return null;
-  if (!("apiKey" in body)) return null;
-  const { apiKey } = body;
-  return typeof apiKey === "string" ? apiKey : null;
-}
+const ApiKeyBodySchema = Type.Object({
+  apiKey: Type.String(),
+});
 
 export function registerAuthRoutes(router: RouterGroup) {
-  router.get(API.authApiKeys, async (_ctx: RouteContext) => {
+  router.get("/api-keys", async (_ctx: RouteContext) => {
     return Response.json(
-      listAuthProviders()
-        .filter((provider) => hasAuthCredential(provider, "api_key"))
-        .map((provider) => ({ provider, configured: true })),
+      listConfiguredApiKeyProviders().map((provider) => ({ provider, configured: true })),
     );
   });
 
-  router.get(API.authApiKey, async (ctx: RouteContext) => {
+  router.get("/api-keys/:provider", async (ctx: RouteContext) => {
     const { provider } = ctx.params;
     try {
       return Response.json({
         provider,
-        configured: hasAuthCredential(provider, "api_key"),
+        configured: hasStoredAuthCredential(provider, "api_key"),
       });
     } catch (error) {
       badRequest(error instanceof Error ? error.message : "Invalid auth credential");
     }
   });
 
-  router.put(API.authApiKey, async (ctx: RouteContext) => {
+  router.put("/api-keys/:provider", async (ctx: RouteContext) => {
     const { provider } = ctx.params;
-
-    let body: unknown;
-    try {
-      body = await ctx.req.json();
-    } catch {
-      badRequest("Invalid JSON in request body");
-    }
-
-    const apiKey = readApiKeyBody(body);
-    if (apiKey === null) {
-      badRequest("Body must be an object with an apiKey string");
-    }
+    const { apiKey } = await parseBody(ApiKeyBodySchema, ctx.req);
 
     try {
-      setApiKeyCredential(provider, apiKey);
+      setApiKey(provider, apiKey, ctx.state.sessions);
     } catch (error) {
       badRequest(error instanceof Error ? error.message : "Invalid auth credential");
     }
 
-    reloadActiveSessionAuth(ctx);
     return Response.json({ ok: true });
   });
 
-  router.delete(API.authApiKey, async (ctx: RouteContext) => {
+  router.delete("/api-keys/:provider", async (ctx: RouteContext) => {
     const { provider } = ctx.params;
 
     try {
-      deleteAuthCredential(provider, "api_key");
+      deleteApiKey(provider, ctx.state.sessions);
     } catch (error) {
       badRequest(error instanceof Error ? error.message : "Invalid auth credential");
     }
 
-    reloadActiveSessionAuth(ctx);
     return new Response(null, { status: 204 });
   });
 }

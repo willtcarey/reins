@@ -36,6 +36,7 @@ import {
 } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
+import { ProjectSessions } from "./sessions.js";
 import { ProjectTasks } from "./tasks.js";
 
 // ---------------------------------------------------------------------------
@@ -115,7 +116,7 @@ export class ProjectModel {
 
   constructor(
     readonly projectId: number,
-    private sessions: Map<string, ManagedSession>,
+    private sessionRegistry: Map<string, ManagedSession>,
     private broadcast: Broadcast,
   ) {
     const project = getProject(projectId);
@@ -125,10 +126,23 @@ export class ProjectModel {
   }
 
   /**
+   * Project-scoped session operations.
+   */
+  get sessions(): ProjectSessions {
+    return new ProjectSessions(this.projectId, this.sessionRegistry, this.broadcast);
+  }
+
+  /**
    * Return a ProjectTasks instance for task lifecycle operations.
    */
   tasks(): ProjectTasks {
-    return new ProjectTasks(this.projectId, this.projectDir, this.baseBranch, this.sessions, this.broadcast);
+    return new ProjectTasks(
+      this.projectId,
+      this.projectDir,
+      this.baseBranch,
+      this.sessionRegistry,
+      this.broadcast,
+    );
   }
 
   /**

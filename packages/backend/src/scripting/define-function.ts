@@ -51,6 +51,13 @@ export interface ApiFunctionDef {
   execute(params: Record<string, unknown>, ctx: ApiContext): unknown;
 }
 
+export interface TypedApiFunctionDef<P extends TObject<TProperties>, R extends TSchema>
+  extends ApiFunctionDef {
+  parameters: P;
+  returns: R;
+  execute(params: Static<P>, ctx: ApiContext): Static<R> | Promise<Static<R>>;
+}
+
 /**
  * Define a single API function with full type inference.
  *
@@ -58,9 +65,8 @@ export interface ApiFunctionDef {
  * - `execute` receives correctly-typed params (from the parameter schema)
  * - `execute` must return a value matching the return schema
  *
- * The result is widened to `ApiFunctionDef` for storage in arrays.
- * This works without type assertions because ApiFunctionDef.execute
- * uses method syntax (bivariant parameter checking).
+ * The returned definition keeps the precise execute signature for direct use,
+ * while remaining assignable to `ApiFunctionDef` for storage in arrays.
  */
 export function defineFunction<P extends TObject<TProperties>, R extends TSchema>(def: {
   name: string;
@@ -70,6 +76,6 @@ export function defineFunction<P extends TObject<TProperties>, R extends TSchema
   async?: boolean;
   tags: string[];
   execute: (params: Static<P>, ctx: ApiContext) => Static<R> | Promise<Static<R>>;
-}): ApiFunctionDef {
+}): TypedApiFunctionDef<P, R> {
   return def;
 }

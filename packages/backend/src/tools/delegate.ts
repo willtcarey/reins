@@ -12,7 +12,7 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { ManagedSession } from "../state.js";
 import { getSession } from "../session-store.js";
 import { getProject } from "../project-store.js";
-import { ThinkingLevelSchema } from "../thinking-level.js";
+import { ThinkingLevelSchema } from "../models/model-settings.js";
 
 // ---------------------------------------------------------------------------
 // Per-project mutex for delegation

@@ -1,5 +1,28 @@
 import { getModels, getProviders, type Api, type Model } from "@mariozechner/pi-ai";
+import { Type } from "@sinclair/typebox";
+import type { Static } from "@sinclair/typebox";
 import { getSetting, type ModelSettingsKey, type ModelSetting } from "../settings-store.js";
+
+export const THINKING_LEVEL_VALUES = ["minimal", "low", "medium", "high", "xhigh"] as const;
+
+export const ThinkingLevelSchema = Type.Union(
+  THINKING_LEVEL_VALUES.map((level) => Type.Literal(level)),
+  { description: `Thinking level (${THINKING_LEVEL_VALUES.join(", ")})` },
+);
+
+export type ThinkingLevel = Static<typeof ThinkingLevelSchema>;
+
+export function isThinkingLevel(value: string): value is ThinkingLevel {
+  return THINKING_LEVEL_VALUES.some((candidate) => candidate === value);
+}
+
+export function parseThinkingLevel(value: string): ThinkingLevel {
+  if (isThinkingLevel(value)) return value;
+
+  throw new Error(
+    `Invalid thinking level '${value}'. Valid levels: ${THINKING_LEVEL_VALUES.join(", ")}`,
+  );
+}
 
 export function resolveModel(providerName: string, modelId: string): Model<Api> | undefined {
   const provider = getProviders().find((candidate) => candidate === providerName);
@@ -16,7 +39,11 @@ export function resolveModelSettingWithConfig(key: ModelSettingsKey): {
   if (!config) return undefined;
 
   const model = resolveModel(config.provider, config.modelId);
-  if (!model) return undefined;
+  if (!model) {
+    throw new Error(
+      `Configured ${key} is invalid: ${config.provider}/${config.modelId}. Update it in Settings.`,
+    );
+  }
 
   return { config, model };
 }

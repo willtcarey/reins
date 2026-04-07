@@ -10,9 +10,9 @@ import { Type } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import type { RouteContext } from "../router.js";
 import { badRequest, notFound } from "../errors.js";
-import { getSession as dbGetSession } from "../session-store.js";
 import { ProjectSessions } from "../models/sessions.js";
-import { serializeSession, serializeSessionFromDb } from "../sessions.js";
+import { getSession as dbGetSession } from "../session-store.js";
+import { serializeSession, serializeSessionFromDb } from "../pi/sessions.js";
 import { parseBody } from "./validate.js";
 
 const SessionModelBody = Type.Object({

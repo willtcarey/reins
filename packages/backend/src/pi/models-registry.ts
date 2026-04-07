@@ -8,7 +8,7 @@ import {
 } from "@mariozechner/pi-ai/oauth";
 import {
   hasAuthCredential,
-} from "./auth-credentials-store.js";
+} from "../auth-credentials-store.js";
 
 export type KeySourceType = "db" | "env" | "oauth";
 

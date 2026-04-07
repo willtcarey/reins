@@ -1,8 +1,13 @@
 import { describe, test, expect } from "bun:test";
-import { useTestDb } from "./helpers/test-db.js";
-import { deleteSetting, setSetting } from "../settings-store.js";
-import { resolveConfiguredModel } from "../sessions.js";
-import { resolveModelSetting, resolveUtilityModel } from "../models/model-settings.js";
+import { useTestDb } from "../helpers/test-db.js";
+import { deleteSetting, setSetting } from "../../settings-store.js";
+import { resolveConfiguredModel } from "../../pi/sessions.js";
+import {
+  THINKING_LEVEL_VALUES,
+  parseThinkingLevel,
+  resolveModelSetting,
+  resolveUtilityModel,
+} from "../../models/model-settings.js";
 
 describe("model settings resolution", () => {
   useTestDb();
@@ -24,6 +29,16 @@ describe("model settings resolution", () => {
     deleteSetting("default_model");
 
     expect(resolveConfiguredModel()).toBeUndefined();
+  });
+
+  test("parses valid thinking levels", () => {
+    for (const level of THINKING_LEVEL_VALUES) {
+      expect(parseThinkingLevel(level)).toBe(level);
+    }
+  });
+
+  test("rejects invalid thinking levels", () => {
+    expect(() => parseThinkingLevel("off")).toThrow(/Invalid thinking level/);
   });
 
   test("ignores REINS_PROVIDER/REINS_MODEL env vars when no default model is configured", () => {
@@ -57,6 +72,16 @@ describe("model settings resolution", () => {
 
     expect(model?.provider).toBe("anthropic");
     expect(model?.id).toBe("claude-haiku-4-5");
+  });
+
+  test("throws when a configured utility model cannot be resolved", () => {
+    setSetting("utility_model", {
+      provider: "anthropic",
+      modelId: "does-not-exist",
+      thinkingLevel: "minimal",
+    });
+
+    expect(() => resolveModelSetting("utility_model")).toThrow(/Configured utility_model is invalid/);
   });
 
   test("utility model falls back to default_model when unset", () => {

@@ -1,5 +1,4 @@
 import type { RouterGroup, RouteContext } from "../router.js";
-import { API } from "../api-paths.js";
 import { badRequest, notFound } from "../errors.js";
 import {
   getOAuthProviders,
@@ -7,10 +6,10 @@ import {
   type OAuthCredentials,
 } from "@mariozechner/pi-ai/oauth";
 import {
-  deleteAuthCredential,
-  getAuthCredential,
-  setOAuthCredential,
-} from "../auth-credentials-store.js";
+  deleteOAuthCredential,
+  hasStoredAuthCredential,
+  setOAuthCredentialValue,
+} from "../models/auth-credentials.js";
 
 interface PendingLogin {
   resolveManualCode: (code: string) => void;
@@ -25,24 +24,18 @@ export function clearPendingLogins(): void {
   pendingLogins.clear();
 }
 
-function reloadActiveSessionAuth(ctx: RouteContext): void {
-  for (const managed of ctx.state.sessions.values()) {
-    managed.session.modelRegistry.authStorage.reload();
-  }
-}
-
 export function registerOAuthRoutes(router: RouterGroup) {
-  router.get(API.oauthProviders, async (_ctx: RouteContext) => {
+  router.get("/providers", async (_ctx: RouteContext) => {
     return Response.json(
       getOAuthProviders().map((provider) => ({
         id: provider.id,
         name: provider.name,
-        configured: getAuthCredential(provider.id, "oauth") !== null,
+        configured: hasStoredAuthCredential(provider.id, "oauth"),
       })),
     );
   });
 
-  router.post(API.oauthStart, async (ctx: RouteContext) => {
+  router.post("/start/:providerId", async (ctx: RouteContext) => {
     const { providerId } = ctx.params;
     const provider = getOAuthProvider(providerId);
     if (!provider) {
@@ -94,7 +87,7 @@ export function registerOAuthRoutes(router: RouterGroup) {
     return Response.json({ url: authUrl, instructions: authInstructions });
   });
 
-  router.post(API.oauthCallback, async (ctx: RouteContext) => {
+  router.post("/callback/:providerId", async (ctx: RouteContext) => {
     const { providerId } = ctx.params;
     const pending = pendingLogins.get(providerId);
     if (!pending) {
@@ -125,8 +118,7 @@ export function registerOAuthRoutes(router: RouterGroup) {
         badRequest("OAuth login failed: provider returned invalid credentials");
       }
 
-      setOAuthCredential(providerId, credentials);
-      reloadActiveSessionAuth(ctx);
+      setOAuthCredentialValue(providerId, credentials, ctx.state.sessions);
       return Response.json({ ok: true });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -136,15 +128,14 @@ export function registerOAuthRoutes(router: RouterGroup) {
     }
   });
 
-  router.delete(API.oauthCredential, async (ctx: RouteContext) => {
+  router.delete("/:providerId", async (ctx: RouteContext) => {
     const { providerId } = ctx.params;
     const provider = getOAuthProvider(providerId);
     if (!provider) {
       notFound(`Unknown OAuth provider: ${providerId}`);
     }
 
-    deleteAuthCredential(providerId, "oauth");
-    reloadActiveSessionAuth(ctx);
+    deleteOAuthCredential(providerId, ctx.state.sessions);
     return new Response(null, { status: 204 });
   });
 }

@@ -10,7 +10,7 @@
  */
 
 import type { ServerState, WsClient, WebSocketLike } from "./state.js";
-import { ensureSessionOpen, runManualCompaction } from "./sessions.js";
+import { ensureSessionOpen, runManualCompaction } from "./pi/sessions.js";
 import { getSession } from "./session-store.js";
 import { getProject } from "./project-store.js";
 import { createBroadcastExcluding } from "./models/broadcast.js";

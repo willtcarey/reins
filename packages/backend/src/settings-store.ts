@@ -1,12 +1,20 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { getDb } from "./db.js";
-import { ThinkingLevelSchema } from "./thinking-level.js";
+
+// Keep this local to avoid a circular dependency with models/model-settings.ts,
+// which resolves persisted settings by calling back into this store.
+const MODEL_SETTING_THINKING_LEVEL_VALUES = ["minimal", "low", "medium", "high", "xhigh"] as const;
+
+const ModelSettingThinkingLevelSchema = Type.Union(
+  MODEL_SETTING_THINKING_LEVEL_VALUES.map((level) => Type.Literal(level)),
+  { description: `Thinking level (${MODEL_SETTING_THINKING_LEVEL_VALUES.join(", ")})` },
+);
 
 export const ModelSettingSchema = Type.Object({
   provider: Type.String(),
   modelId: Type.String(),
-  thinkingLevel: ThinkingLevelSchema,
+  thinkingLevel: ModelSettingThinkingLevelSchema,
 });
 
 export const SETTINGS_SCHEMA = {

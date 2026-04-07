@@ -65,6 +65,9 @@ describe("auth api key routes", () => {
     );
 
     expect(res!.status).toBe(400);
+    expect(await res!.json()).toEqual({
+      error: "Invalid request body: apiKey: Expected required property",
+    });
   });
 
   test("DELETE /api/auth/api-keys/:provider removes only the API key credential", async () => {

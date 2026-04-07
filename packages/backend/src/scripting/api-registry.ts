@@ -32,7 +32,7 @@ import { UI_FUNCTIONS } from "./ui.js";
 import { MODEL_FUNCTIONS } from "./models.js";
 
 // Re-export core types from define-function.ts for backward compatibility
-export type { ApiContext, ApiFunctionDef } from "./define-function.js";
+export type { ApiContext, ApiFunctionDef, TypedApiFunctionDef } from "./define-function.js";
 export { defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------

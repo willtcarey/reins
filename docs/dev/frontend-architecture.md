@@ -200,15 +200,15 @@ Standalone store for the file browser overlay. Manages:
 
 Shared by `<file-search>` (palette) and `<file-browser>` (viewer overlay). Both components and `<app-shell>` hold a reference to the same store instance.
 
-### ModelCatalogStore (`models/stores/model-catalog-store.ts`)
+### ModelRegistryStore (`models/stores/model-registry-store.ts`)
 
-Standalone store for the shared `/api/models` catalog. Manages:
+Standalone store for the shared `/api/models` registry. Manages:
 
-- **Provider/model loading** — Fetches the provider catalog, including key availability and model metadata.
-- **Derived catalog helpers** — Exposes configured/unconfigured providers, API-key badges, and provider/model lookup helpers for UI components.
+- **Provider/model loading** — Fetches the provider registry, including key availability and model metadata.
+- **Derived registry helpers** — Exposes configured/unconfigured providers, API-key badges, and provider/model lookup helpers for UI components.
 - **Shared model metadata** — Keeps model naming and option lists decoupled from settings form state.
 
-Used by `<settings-panel>` and `<session-model-picker>` so both flows read from the same dedicated catalog boundary.
+Used by `<settings-panel>` and `<session-model-picker>` so both flows read from the same dedicated registry boundary.
 
 ### SettingsStore (`models/stores/settings-store.ts`)
 
@@ -218,7 +218,7 @@ Standalone store for persisted settings and auth-related mutations. Manages:
 - **Settings mutations** — Saves/removes API keys, starts/completes OAuth flows, and updates model settings.
 - **Panel state boundary** — Holds stored settings state and async action flags; the component keeps only overlay visibility and ephemeral input values.
 
-Used alongside `ModelCatalogStore` via `StoreController` so the view renders from store state instead of calling `fetch()` directly.
+Used alongside `ModelRegistryStore` via `StoreController` so the view renders from store state instead of calling `fetch()` directly.
 
 ### Subscription model
 

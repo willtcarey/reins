@@ -1,7 +1,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
-import { ModelCatalogStore } from "../../models/stores/model-catalog-store.js";
+import { ModelRegistryStore } from "../../models/stores/model-registry-store.js";
 import { SettingsStore, type ModelSettingKey } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
 import "./model-selector-controls.js";
@@ -13,7 +13,7 @@ export class SettingsModelSettingSection extends LitElement {
   }
 
   private _storeCtrl = new StoreController<SettingsStore>(this);
-  private _catalogStoreCtrl = new StoreController<ModelCatalogStore>(this);
+  private _registryStoreCtrl = new StoreController<ModelRegistryStore>(this);
 
   @property({ attribute: false })
   set store(store: SettingsStore | null) {
@@ -25,12 +25,12 @@ export class SettingsModelSettingSection extends LitElement {
   }
 
   @property({ attribute: false })
-  set catalogStore(store: ModelCatalogStore | null) {
-    this._catalogStoreCtrl.store = store;
+  set registryStore(store: ModelRegistryStore | null) {
+    this._registryStoreCtrl.store = store;
   }
 
-  get catalogStore(): ModelCatalogStore | null {
-    return this._catalogStoreCtrl.store;
+  get registryStore(): ModelRegistryStore | null {
+    return this._registryStoreCtrl.store;
   }
 
   @property()
@@ -112,12 +112,12 @@ export class SettingsModelSettingSection extends LitElement {
 
   override render() {
     const store = this.store;
-    const catalogStore = this.catalogStore;
-    if (!store || !catalogStore) return nothing;
+    const registryStore = this.registryStore;
+    if (!store || !registryStore) return nothing;
 
     return html`
       <model-selector-controls
-        .providers=${catalogStore.availableProviders}
+        .providers=${registryStore.availableProviders}
         .selectedProvider=${this._selected.provider}
         .selectedModel=${this._selected.modelId}
         .selectedThinking=${this._selected.thinkingLevel}

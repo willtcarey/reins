@@ -27,7 +27,7 @@ import {
   loadMessages,
   loadMessagesForLLM,
 } from "../session-store.js";
-import { hydrateSessionManager } from "../sessions.js";
+import { hydrateSessionManager } from "../pi/sessions.js";
 
 let projectId: number;
 

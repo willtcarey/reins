@@ -7,7 +7,7 @@
 
 import { createAgentSession, createCodingTools, SessionManager, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
-import type { ServerState, ManagedSession } from "./state.js";
+import type { ServerState, ManagedSession } from "../state.js";
 import {
   createSession as dbCreateSession,
   getSession as dbGetSession,
@@ -19,18 +19,21 @@ import {
   updateSessionMeta,
   type SessionListItem,
   type SessionRow,
-} from "./session-store.js";
-import { getTask, touchTask, type TaskRow } from "./task-store.js";
+} from "../session-store.js";
+import { getTask, touchTask, type TaskRow } from "../task-store.js";
 import { createDbBackedAuthStorage } from "./auth-storage.js";
-import { getProject } from "./project-store.js";
-import { checkoutBranch } from "./git.js";
-import { createCustomTools } from "./tools/index.js";
-import type { CreateSessionOpts } from "./tools/delegate.js";
-import { createBroadcast, type Broadcast } from "./models/broadcast.js";
+import { getProject } from "../project-store.js";
+import { checkoutBranch } from "../git.js";
+import { createCustomTools } from "../tools/index.js";
+import type { CreateSessionOpts } from "../tools/delegate.js";
+import { createBroadcast, type Broadcast } from "../models/broadcast.js";
 import { type Api, type Model } from "@mariozechner/pi-ai";
-import type { ThinkingLevel } from "./thinking-level.js";
-import { parseThinkingLevel } from "./thinking-level.js";
-import { resolveModel, resolveModelSettingWithConfig } from "./models/model-settings.js";
+import {
+  parseThinkingLevel,
+  resolveModel,
+  resolveModelSettingWithConfig,
+  type ThinkingLevel,
+} from "../models/model-settings.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

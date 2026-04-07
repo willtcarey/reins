@@ -1,37 +1,8 @@
 import { describe, expect, test, afterEach } from "bun:test";
-import { nothing, type PropertyValues, type TemplateResult } from "lit";
+import { type PropertyValues } from "lit";
 import { SessionModelPicker } from "../components/session-model-picker.js";
+import { collectTemplateValues, templateToString } from "./helpers/lit-template.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
-
-function isTemplateResult(value: unknown): value is TemplateResult {
-  return typeof value === "object" && value !== null && "strings" in value && "values" in value;
-}
-
-function templateToString(value: unknown): string {
-  if (value == null || value === false || value === nothing) return "";
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => templateToString(entry)).join("");
-  }
-  if (isTemplateResult(value)) {
-    let output = "";
-    for (let index = 0; index < value.strings.length; index += 1) {
-      output += value.strings[index] ?? "";
-      if (index < value.values.length) {
-        output += templateToString(value.values[index]);
-      }
-    }
-    return output;
-  }
-  return "";
-}
-
-function collectTemplateValues(value: unknown): unknown[] {
-  if (!isTemplateResult(value)) return [];
-  return value.values.flatMap((entry) => [entry, ...collectTemplateValues(entry)]);
-}
 
 function jsonResponse(data: unknown, ok = true): Response {
   return new Response(JSON.stringify(data), {
@@ -104,7 +75,7 @@ describe("SessionModelPicker", () => {
     expect(getPrivate<string>(el, "_selectedThinking")).toBe("high");
   });
 
-  test("loads the model catalog separately and keeps the current session selection bound in the picker", async () => {
+  test("loads the model registry separately and keeps the current session selection bound in the picker", async () => {
     const el = buildPicker();
     callWillUpdate(el);
     const requests: string[] = [];
@@ -131,8 +102,8 @@ describe("SessionModelPicker", () => {
 
     expect(requests).toEqual(["/api/models"]);
 
-    const catalogStore = getPrivate<{ availableProviders: Array<{ provider: string }> }>(el, "_catalogStore");
-    expect(catalogStore.availableProviders.map((provider) => provider.provider)).toEqual(["anthropic"]);
+    const registryStore = getPrivate<{ availableProviders: Array<{ provider: string }> }>(el, "_registryStore");
+    expect(registryStore.availableProviders.map((provider) => provider.provider)).toEqual(["anthropic"]);
     expect(await callPrivate<string>(el, "_currentLabel")).toBe("Claude Sonnet 4");
 
     const output = templateToString(await callPrivate(el, "renderPopoverContent"));

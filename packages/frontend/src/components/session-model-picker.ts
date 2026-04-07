@@ -3,7 +3,7 @@ import type { PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { SessionData } from "../models/ws-client.js";
 import { formatModelSettingLabel } from "../models/settings.js";
-import { ModelCatalogStore } from "../models/stores/model-catalog-store.js";
+import { ModelRegistryStore } from "../models/stores/model-registry-store.js";
 import type { ModelSetting } from "../models/stores/settings-store.js";
 import { showToast } from "./toast.js";
 import "./popover-menu.js";
@@ -24,7 +24,7 @@ export class SessionModelPicker extends LitElement {
   @property({ attribute: false })
   updateSessionModel: ((update: { provider: string; modelId: string; thinkingLevel: string }) => Promise<{ ok: true } | { error: string }>) | null = null;
 
-  @state() private _catalogStore = new ModelCatalogStore();
+  @state() private _registryStore = new ModelRegistryStore();
   @state() private _loading = false;
   @state() private _saving = false;
   @state() private _selectedProvider = "";
@@ -44,14 +44,14 @@ export class SessionModelPicker extends LitElement {
   }
 
   private async _ensureLoaded() {
-    if (this._catalogStore.providers.length > 0) return;
+    if (this._registryStore.providers.length > 0) return;
 
     this._loading = true;
-    const catalogResult = await this._catalogStore.load();
+    const registryResult = await this._registryStore.load();
     this._loading = false;
 
-    if ("error" in catalogResult) {
-      showToast(`Failed to load models: ${catalogResult.error}`, "error");
+    if ("error" in registryResult) {
+      showToast(`Failed to load models: ${registryResult.error}`, "error");
     }
   }
 
@@ -70,7 +70,7 @@ export class SessionModelPicker extends LitElement {
     if (!current) return "Session model";
 
     return formatModelSettingLabel({
-      providers: this._catalogStore.providers,
+      providers: this._registryStore.providers,
       model: current,
       defaultThinkingLevel: "high",
     });
@@ -133,7 +133,7 @@ export class SessionModelPicker extends LitElement {
           <div class="text-[10px] text-zinc-500 mt-1">Changes apply to this session only.</div>
         </div>
         <model-selector-controls
-          .providers=${this._catalogStore.availableProviders}
+          .providers=${this._registryStore.availableProviders}
           .selectedProvider=${this._selectedProvider}
           .selectedModel=${this._selectedModel}
           .selectedThinking=${this._selectedThinking}

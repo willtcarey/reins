@@ -18,7 +18,7 @@ Thin HTTP adapters. Parse requests, call model functions, format responses. Erro
 
 ### Tools (`src/tools/`)
 
-Agent tool definitions using the pi SDK `customTools` mechanism. Each tool file exports a factory that returns a `ToolDefinition`. The barrel `tools/index.ts` exports `createCustomTools()` which is the single integration point for `sessions.ts`.
+Agent tool definitions using the pi SDK `customTools` mechanism. Each tool file exports a factory that returns a `ToolDefinition`. The barrel `tools/index.ts` exports `createCustomTools()` which is the single integration point for `pi/sessions.ts`.
 
 Tool factories receive stable references (server state, session ID) at factory time and look up project context from the DB at execution time.
 
@@ -49,6 +49,12 @@ Thin SQLite access. CRUD operations and queries. No git, no broadcasts, no busin
 
 Stateless helpers that don't depend on other layers.
 
+### Pi integration (`src/pi/`)
+
+Adapters that bind Reins runtime behavior to the pi SDK live under `src/pi/`.
+Keep SDK-specific session lifecycle, auth bridges, and model/provider discovery there.
+Server-only orchestration that merely reacts to app state changes should stay at the backend root.
+
 ## Dependency rules
 
 - Stores don't import git, models, routes, or tools.
@@ -63,5 +69,6 @@ The models layer covers all route handlers and some backend domain helpers:
 - `models/tasks.ts` — task create/update/delete with branch orchestration, list with diff stats
 - `models/projects.ts` — project creation, remote sync + task reconciliation, file content reads
 - `models/sessions.ts` — session model mutations and related broadcast behavior
-- `models/model-settings.ts` — resolves stored model settings into concrete pi model objects
+- `models/auth-credentials.ts` — auth credential mutations plus live session auth reload orchestration
+- `models/model-settings.ts` — thinking-level schema/parsing plus resolution of stored model settings into concrete pi model objects
 - `models/broadcast.ts` — typed broadcast abstraction over WS clients

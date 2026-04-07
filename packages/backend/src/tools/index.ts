@@ -5,6 +5,8 @@
  * Returns a ToolDefinition[] array for use in createAgentSession().
  */
 
+import type { TSchema } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
@@ -28,28 +30,40 @@ export interface CustomToolsOpts {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolDefinition is invariant in TParams; any is needed for heterogeneous arrays
-export function createCustomTools(opts: CustomToolsOpts): ToolDefinition<any>[] {
-  const tools: ToolDefinition<any>[] = [
-    createTaskTool({
+function widenTool<TParams extends TSchema, TDetails>(tool: ToolDefinition<TParams, TDetails>): ToolDefinition<TSchema, TDetails> {
+  return {
+    ...tool,
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      const parsedParams = Value.Parse(tool.parameters, params);
+      return tool.execute(toolCallId, parsedParams, signal, onUpdate, ctx);
+    },
+    renderCall: tool.renderCall
+      ? (args, theme) => tool.renderCall!(Value.Parse(tool.parameters, args), theme)
+      : undefined,
+  };
+}
+
+export function createCustomTools(opts: CustomToolsOpts): ToolDefinition[] {
+  const tools: ToolDefinition[] = [
+    widenTool(createTaskTool({
       projectId: opts.projectId,
       broadcast: opts.broadcast,
       sessions: opts.sessions,
       createSession: opts.createSession,
-    }),
-    createSearchTool(),
-    createExecuteTool({
+    })),
+    widenTool(createSearchTool()),
+    widenTool(createExecuteTool({
       projectId: opts.projectId,
       sessionId: opts.sessionId,
       taskId: opts.taskId,
       broadcast: opts.broadcast,
       sessions: opts.sessions,
-    }),
+    })),
   ];
 
   // Delegate tool is only available in task sessions
   if (opts.delegate) {
-    tools.push(createDelegateTool(opts.delegate.sessionId, opts.createSession, opts.delegate.deleteSession));
+    tools.push(widenTool(createDelegateTool(opts.delegate.sessionId, opts.createSession, opts.delegate.deleteSession)));
   }
 
   return tools;

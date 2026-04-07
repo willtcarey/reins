@@ -7,11 +7,11 @@ import { createServerState } from "./helpers/server-state.js";
 import { makeRequest } from "./helpers/request.js";
 import { buildRouter } from "../routes/index.js";
 import { createProject } from "../project-store.js";
-import { createNewSession } from "../sessions.js";
+import { createNewSession } from "../pi/sessions.js";
 import {
   DbAuthStorageBackend,
   createDbBackedAuthStorage,
-} from "../auth-storage.js";
+} from "../pi/auth-storage.js";
 import { installRuntimeHooks } from "../runtime-hooks.js";
 import { clearPendingLogins } from "../routes/oauth.js";
 import {

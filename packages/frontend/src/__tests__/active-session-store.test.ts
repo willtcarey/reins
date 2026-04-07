@@ -1,21 +1,24 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ActiveSessionStore } from "../models/stores/active-session-store.js";
-
-const originalFetch = globalThis.fetch;
+import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 
 describe("ActiveSessionStore.updateSessionModel", () => {
-
   beforeEach(() => {
-    const mockedFetch: typeof fetch = Object.assign(
-      mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-        if (String(input) === "/api/sessions/sess-1/model" && init?.method === "PUT") {
-          return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } });
-        }
-        throw new Error(`Unexpected fetch: ${String(input)}`);
-      }),
-      { preconnect(_url: string | URL) {} },
-    );
-    globalThis.fetch = mockedFetch;
+    restoreFetch();
+
+    mockFetch((url, init) => {
+      if (url === "/api/sessions/sess-1/model" && init?.method === "PUT") {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+  });
+
+  afterEach(() => {
+    restoreFetch();
   });
 
   test("persists the session model and updates local session state", async () => {
@@ -43,8 +46,4 @@ describe("ActiveSessionStore.updateSessionModel", () => {
     expect(store.sessionData?.state.model).toEqual({ provider: "openai", id: "gpt-5" });
     expect(store.sessionData?.state.thinkingLevel).toBe("medium");
   });
-});
-
-afterAll(() => {
-  globalThis.fetch = originalFetch;
 });

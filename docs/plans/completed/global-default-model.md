@@ -1,6 +1,6 @@
 # Global Default Model & API Key Management
 
-Status: **in progress**
+Status: **completed**
 
 ## Goal
 
@@ -159,11 +159,6 @@ At this point the UI is fully functional for viewing and saving settings, but se
 1. Update `README.md` — document settings UI and `REINS_SECRET`.
 2. Add `docs/features/settings.md` covering API key management and default model selection.
 3. Move this plan to `docs/plans/completed/`.
-
-## Follow-up / TODO
-
-- Add a UI affordance for changing a single session's model directly. This is needed as a recovery path when the current model is degraded or unavailable and can't successfully use `sessions.setModel()` via scripting.
-- Investigate active-run session refreshes that temporarily hide the optimistic user message and current tool call until the run completes when revisiting a session mid-run. A likely mitigation is to decouple chat message loading from the rest of session state with a dedicated messages endpoint / store so transient session metadata refreshes do not replace in-flight chat history.
 
 ## Out of scope
 
