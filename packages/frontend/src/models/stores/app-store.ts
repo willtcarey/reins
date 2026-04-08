@@ -9,10 +9,10 @@
  */
 
 import type { IAppClient } from "../ws-client.js";
-import { ActiveSessionStore, type SessionModelUpdate } from "./active-session-store.js";
+import { ActiveSessionStore } from "./active-session-store.js";
 import { ProjectCollectionStore } from "./project-collection-store.js";
 import { DiffStore } from "./diff-store.js";
-import type { ProjectInfo, SessionData } from "../ws-client.js";
+import type { ProjectInfo } from "../ws-client.js";
 import { openInBrowserEvent } from "../../components/events.js";
 
 /** Activity state for a session: running, finished, or absent (no entry). */
@@ -26,7 +26,7 @@ export type AppStoreListener = () => void;
 export class AppStore {
   // ---- Delegates ------------------------------------------------------------
 
-  private _activeSession = new ActiveSessionStore();
+  private _activeSession: ActiveSessionStore;
   private _client: IAppClient;
 
   // ---- Sub-stores -----------------------------------------------------------
@@ -58,6 +58,7 @@ export class AppStore {
 
   constructor(client: IAppClient) {
     this._client = client;
+    this._activeSession = new ActiveSessionStore(client);
 
     // Forward sub-store notifications to our subscribers
     this._unsubChildren = this._children.map((s) => s.subscribe(() => this.notify()));
@@ -73,7 +74,7 @@ export class AppStore {
         // Refresh all loaded project stores (any expanded in the sidebar)
         // so session/task lists catch up on missed events
         this.projectCollectionStore.refreshAll();
-        // Re-fetch the active session's messages to catch up
+        // Refresh active-session metadata without replacing chat messages mid-turn
         if (this._activeSession.sessionId) {
           this._activeSession.refreshSession();
         }
@@ -142,9 +143,9 @@ export class AppStore {
 
   // ---- ActiveSessionStore delegate accessors ---------------------------------
 
+  get activeSessionStore(): ActiveSessionStore { return this._activeSession; }
   get projectId() { return this._activeSession.projectId; }
   get sessionId() { return this._activeSession.sessionId; }
-  get sessionData(): SessionData | null { return this._activeSession.sessionData; }
 
   // ---- Activity state accessors ---------------------------------------------
 
@@ -245,14 +246,6 @@ export class AppStore {
 
     // After route is applied, resolve the branch for the diff store
     this._updateDiffBranch();
-  }
-
-  async refreshSession() {
-    return this._activeSession.refreshSession();
-  }
-
-  async updateSessionModel(update: SessionModelUpdate): Promise<{ ok: true } | { error: string }> {
-    return this._activeSession.updateSessionModel(update);
   }
 
   async updateTask(
@@ -375,13 +368,6 @@ export class AppStore {
 
   private notify() {
     for (const fn of this._listeners) fn();
-  }
-
-  // ---- Client access (for commands) -----------------------------------------
-
-  /** The underlying WebSocket client — for sending commands (prompt, steer, abort). */
-  get client(): IAppClient {
-    return this._client;
   }
 
   // ---- Lifecycle ------------------------------------------------------------

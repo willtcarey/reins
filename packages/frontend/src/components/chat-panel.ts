@@ -8,7 +8,8 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
-import type { IAppClient, FrontendEvent, SessionData } from "../models/ws-client.js";
+import type { FrontendEvent } from "../models/ws-client.js";
+import type { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import "./markdown-content.js";
 import "./session-model-picker.js";
 import { getToolRenderer } from "./tools/index.js";
@@ -35,16 +36,7 @@ export class ChatPanel extends LitElement {
   }
 
   @property({ attribute: false })
-  client: IAppClient | null = null;
-
-  @property({ type: String })
-  sessionId = "";
-
-  @property({ attribute: false })
-  sessionData: SessionData | null = null;
-
-  @property({ attribute: false })
-  updateSessionModel: ((update: { provider: string; modelId: string; thinkingLevel: string }) => Promise<{ ok: true } | { error: string }>) | null = null;
+  store: ActiveSessionStore | null = null;
 
   /** Whether this panel is currently visible (active tab). */
   @property({ type: Boolean })
@@ -62,17 +54,23 @@ export class ChatPanel extends LitElement {
   @query("textarea") private textarea!: HTMLTextAreaElement;
 
   private unsubscribeEvent?: () => void;
+  private unsubscribeStore?: () => void;
   private scrollContainer: HTMLElement | null = null;
   private shouldAutoScroll = true;
+  private lastSessionData: ActiveSessionStore["sessionData"] | undefined;
+  private lastSessionMessages: AgentMessage[] = [];
 
   override connectedCallback() {
     super.connectedCallback();
-    this.wireClient();
+    this.subscribeToStore();
+    this.wireStoreEvents();
+    this.syncFromStore();
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     this.unsubscribeEvent?.();
+    this.unsubscribeStore?.();
     if (this.errorTimeout) clearTimeout(this.errorTimeout);
   }
 
@@ -83,27 +81,12 @@ export class ChatPanel extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>) {
-    if (changed.has("client")) {
-      this.wireClient();
-    }
-    // Autofocus the textarea when switching sessions or returning to chat tab (desktop only)
-    if ((changed.has("sessionId") && this.sessionId) || (changed.has("visible") && this.visible)) {
+    // Autofocus the textarea when returning to chat tab (desktop only).
+    // Session switches remount the component via keyed(sessionId).
+    if (changed.has("visible") && this.visible) {
       this.focusInput();
     }
-    // Load messages from session data when it changes
-    if (changed.has("sessionData")) {
-      if (this.sessionData) {
-        this.messages = this.sessionData.messages ?? [];
-        this.isStreaming = this.sessionData.state.isStreaming;
-        this.streamingBlocks = [];
 
-      } else {
-        // Session cleared (e.g. project switch) — reset everything
-        this.messages = [];
-        this.isStreaming = false;
-        this.streamingBlocks = [];
-      }
-    }
     // Auto-scroll after render
     this.autoScroll();
   }
@@ -114,18 +97,48 @@ export class ChatPanel extends LitElement {
     requestAnimationFrame(() => this.textarea?.focus());
   }
 
-  private wireClient() {
-    this.unsubscribeEvent?.();
-    if (!this.client) return;
+  private subscribeToStore() {
+    this.unsubscribeStore?.();
+    this.unsubscribeStore = this.store?.subscribe(() => {
+      this.syncFromStore();
+      this.requestUpdate();
+    }) ?? undefined;
+  }
 
-    this.unsubscribeEvent = this.client.onEvent((sessionId, _projectId, event) => {
+  private syncFromStore() {
+    const sessionData = this.store?.sessionData;
+    if (sessionData && sessionData !== this.lastSessionData) {
+      this.lastSessionData = sessionData;
+      this.isStreaming = sessionData.state.isStreaming;
+    }
+
+    const sessionMessages = this.store?.sessionMessages ?? [];
+    if (sessionMessages !== this.lastSessionMessages) {
+      this.lastSessionMessages = sessionMessages;
+      // Session switches remount the component via keyed(sessionId), so the
+      // only time we reuse persisted messages is when this panel is empty or
+      // when no in-flight streaming UI needs to be preserved.
+      if (
+        this.messages.length === 0
+        || (!this.isStreaming && this.streamingBlocks.length === 0)
+      ) {
+        this.messages = sessionMessages;
+      }
+    }
+  }
+
+  private wireStoreEvents() {
+    this.unsubscribeEvent?.();
+    if (!this.store) return;
+
+    this.unsubscribeEvent = this.store.onEvent((sessionId, _projectId, event) => {
       // WS-level errors (e.g. command failures) arrive with empty sessionId
       if (event.type === "ws_error") {
         this.handleAgentEvent(event);
         return;
       }
       // Only handle session events for our session
-      if (sessionId !== this.sessionId) return;
+      if (sessionId !== this.store?.sessionId) return;
       this.handleAgentEvent(event);
     });
   }
@@ -168,15 +181,14 @@ export class ChatPanel extends LitElement {
 
   private handleSend() {
     const text = this.inputText.trim();
-    if (!text || !this.client || !this.sessionId) return;
+    const sessionId = this.store?.sessionId ?? "";
+    if (!text || !sessionId || !this.store) return;
 
     const isSlashCommand = text.startsWith("/");
-
-    if (this.isStreaming) {
-      this.client.steer(this.sessionId, text);
-    } else {
-      this.client.prompt(this.sessionId, text);
-    }
+    const sent = this.isStreaming
+      ? this.store.steer(text)
+      : this.store.prompt(text);
+    if (!sent) return;
 
     // Slash commands (e.g. /compact) are handled server-side;
     // don't show them as user message bubbles.
@@ -196,9 +208,7 @@ export class ChatPanel extends LitElement {
   }
 
   private handleStop() {
-    if (this.sessionId) {
-      this.client?.abort(this.sessionId);
-    }
+    this.store?.abort();
   }
 
   private handleKeyDown(e: KeyboardEvent) {
@@ -389,6 +399,9 @@ export class ChatPanel extends LitElement {
   }
 
   override render() {
+    const sessionId = this.store?.sessionId ?? "";
+    const sessionData = this.store?.sessionData;
+
     return html`
       <div class="flex flex-col h-full">
         <!-- Messages area -->
@@ -414,12 +427,12 @@ export class ChatPanel extends LitElement {
               <button class="text-red-400 hover:text-red-200 cursor-pointer" @click=${() => { this.errorMessage = ""; }}>✕</button>
             </div>
           ` : nothing}
-          ${this.sessionData?.state.model ? html`
+          ${sessionData?.state.model ? html`
             <div class="mb-2 flex items-center justify-start leading-none">
               <session-model-picker
-                .sessionId=${this.sessionId}
-                .sessionData=${this.sessionData}
-                .updateSessionModel=${this.updateSessionModel}
+                .sessionId=${sessionId}
+                .sessionData=${sessionData}
+                .updateSessionModel=${this.store?.updateSessionModel.bind(this.store) ?? null}
               ></session-model-picker>
             </div>
           ` : nothing}

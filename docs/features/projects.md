@@ -32,7 +32,7 @@ All projects appear in the sidebar simultaneously as collapsible sections. Click
 Each expanded project contains:
 
 - **Assistant** — the project's long-lived conversation. The ⋮ menu provides access to previous conversations and creating a new one.
-- **Tasks** — active tasks with their branch names and diff stats. The + button creates a new task. Expanding a task shows its sessions.
+- **Tasks** — active tasks with their branch names and diff stats. The + button creates a new task. Expanding a task shows its sessions, and loaded session rows refresh automatically as turns complete so first-message labels and message counts stay current.
 - **Completed tasks** — closed tasks, collapsed by default.
 
 Clicking a session navigates to it and sets that project as the active diff context.

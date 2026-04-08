@@ -173,4 +173,48 @@ describe("ProjectStore", () => {
 
     expect(urls).toContain("/api/tasks/7/sessions");
   });
+
+  test("fetchLists refreshes already-loaded task session lists", async () => {
+    store.taskSessions = new Map([
+      [
+        7,
+        [{ id: "s-old", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null }],
+      ],
+    ]);
+
+    mockFetch((url) => {
+      if (url === "/api/projects/42/tasks") {
+        return jsonResponse([
+          {
+            id: 7,
+            project_id: 42,
+            title: "Task 7",
+            description: null,
+            branch_name: "task/task-7",
+            status: "open" as const,
+            created_at: "",
+            updated_at: "",
+            session_count: 1,
+            session_ids: ["s-new"],
+            diffStats: null,
+          },
+        ]);
+      }
+      if (url === "/api/projects/42/sessions") {
+        return jsonResponse([]);
+      }
+      if (url === "/api/tasks/7/sessions") {
+        return jsonResponse([
+          { id: "s-new", name: null, created_at: "", updated_at: "", message_count: 2, first_message: "Hello", parent_session_id: null },
+        ]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    await store.fetchLists();
+
+    expect(store.taskSessions.get(7)).toEqual([
+      { id: "s-new", name: null, created_at: "", updated_at: "", message_count: 2, first_message: "Hello", parent_session_id: null },
+    ]);
+  });
 });

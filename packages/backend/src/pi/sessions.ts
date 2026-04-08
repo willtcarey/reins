@@ -549,22 +549,21 @@ export async function ensureSessionOpen(
 
 /**
  * Serialize a live ManagedSession for API responses.
- * Uses SQLite messages (full history including compaction markers)
- * rather than pi's in-memory array (which only has post-compaction messages).
+ * Metadata only — persisted chat history is fetched from the dedicated
+ * messages endpoint so metadata refreshes cannot clobber in-flight UI state.
  */
 export function serializeSession(managed: ManagedSession) {
   const s = managed.session;
   const row = dbGetSession(managed.id);
-  const messages = loadMessages(managed.id);
+  const messageCount = loadMessages(managed.id).length;
   return {
     id: managed.id,
     task_id: row?.task_id ?? null,
-    messages,
     state: {
       model: s.model ? { provider: s.model.provider, id: s.model.id } : null,
       thinkingLevel: s.thinkingLevel,
       isStreaming: s.isStreaming,
-      messageCount: messages.length,
+      messageCount,
     },
   };
 }
@@ -575,18 +574,17 @@ export function serializeSession(managed: ManagedSession) {
 export function serializeSessionFromDb(sessionId: string) {
   const row = dbGetSession(sessionId);
   if (!row) return null;
-  const messages = loadMessages(sessionId);
+  const messageCount = loadMessages(sessionId).length;
   return {
     id: row.id,
     task_id: row.task_id,
-    messages,
     state: {
       model: row.model_provider && row.model_id
         ? { provider: row.model_provider, id: row.model_id }
         : null,
       thinkingLevel: row.thinking_level,
       isStreaming: false,
-      messageCount: messages.length,
+      messageCount,
     },
   };
 }

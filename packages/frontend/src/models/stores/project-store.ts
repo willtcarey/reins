@@ -58,6 +58,11 @@ export class ProjectStore {
 
       if (tasksResp.ok) this.tasks = await tasksResp.json();
       if (sessionsResp.ok) this.sessions = await sessionsResp.json();
+      if (this.taskSessions.size > 0) {
+        await Promise.all(
+          [...this.taskSessions.keys()].map((taskId) => this.fetchTaskSessions(taskId)),
+        );
+      }
       this.loaded = true;
     } catch {
       // silent — leave loaded as-is (false if first attempt)

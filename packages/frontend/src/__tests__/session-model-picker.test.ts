@@ -46,7 +46,6 @@ describe("SessionModelPicker", () => {
     el.sessionData = {
       id: "sess-1",
       task_id: null,
-      messages: [],
       state: {
         model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
         thinkingLevel: "high",

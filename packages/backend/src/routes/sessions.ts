@@ -11,7 +11,7 @@ import type { RouterGroup } from "../router.js";
 import type { RouteContext } from "../router.js";
 import { badRequest, notFound } from "../errors.js";
 import { ProjectSessions } from "../models/sessions.js";
-import { getSession as dbGetSession } from "../session-store.js";
+import { getSession as dbGetSession, loadMessages } from "../session-store.js";
 import { serializeSession, serializeSessionFromDb } from "../pi/sessions.js";
 import { parseBody } from "./validate.js";
 
@@ -42,6 +42,16 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
       }
       badRequest(message);
     }
+  });
+
+  router.get("/:sessionId/messages", async (ctx) => {
+    const sessionId = ctx.params.sessionId;
+    const row = dbGetSession(sessionId);
+    if (!row) {
+      return new Response("Session not found", { status: 404 });
+    }
+
+    return Response.json(loadMessages(sessionId));
   });
 
   // Get a session by its globally-unique ID

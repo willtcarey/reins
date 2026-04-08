@@ -135,6 +135,7 @@ All server communication — fetching, WebSocket event handling, polling, and in
                            │  - tasks + taskSessions│
                            │  - sessions            │
                            │  - sessionData         │
+                           │  - sessionMessages     │
                            │  - activity (per-      │
                            │    session running/     │
                            │    finished)            │
@@ -157,7 +158,10 @@ The central store. Constructed with an `AppClient` (WebSocket client) and intern
 
 - **Owns all HTTP fetches** — projects, tasks, sessions, session data, task generation, project CRUD. No component calls `fetch()` directly.
 - **Handles WS events internally** — `agent_start` / `agent_end` update activity state and trigger refetches. `task_updated` refreshes the task list. `session_updated` refreshes the active session and project lists. `tool_execution_end` for file-modifying tools refreshes the diff. Views don't participate in these decisions.
-- **Manages reconnect** — On WebSocket reconnect, refetches the project list and active session data to catch up on missed events.
+- **Manages reconnect** — On WebSocket reconnect, refetches the project list and active session metadata to catch up on missed events.
+- **Splits active session state** — Session metadata (`sessionData`) and persisted history (`sessionMessages`) are fetched separately so metadata refreshes can't clobber in-flight chat rendering.
+- **Uses blank session metadata while loading** — `ActiveSessionStore` keeps `sessionData` as a placeholder object for the active `sessionId` until the metadata request completes, so views don't need null checks for the selected session.
+- **Exposes the active session store directly to the chat view** — `chat-panel` receives `ActiveSessionStore`, reads `sessionData` / `sessionMessages` from it, and sends prompt/steer/abort/model-update intents back through the same store.
 - **Coordinates sub-stores** — When the session or project changes, AppStore updates DiffStore's branch and project. When an agent completes, AppStore tells DiffStore to refresh.
 - **Tracks activity** — Per-session running/finished state (absorbed from the former ActivityTracker). Used for title badge counts and sidebar indicators.
 
@@ -274,7 +278,7 @@ Hash-based routing with a single pattern:
 - `#/session/:sessionId` — View a specific session
 - (empty hash) — No session selected, show empty state
 
-`components/app.ts` listens for `hashchange`, parses the route, and calls `store.setRoute()`. The store fetches the session data (which includes `project_id`) and derives the active project from it.
+`components/app.ts` listens for `hashchange`, parses the route, and calls `store.setRoute()`. The store fetches the session data (which includes `project_id`) and derives the active project from it. The chat panel is rendered with `keyed(store.sessionId, ...)` so switching sessions remounts the component and clears any per-session ephemeral UI state.
 
 ## Component structure
 
