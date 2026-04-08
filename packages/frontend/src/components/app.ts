@@ -18,7 +18,6 @@ import { AppClient } from "../models/ws-client.js";
 import type { DiffPanel } from "./changes/diff-panel.js";
 import { FileTreeState } from "../models/changes/file-tree-state.js";
 import { AppStore } from "../models/stores/app-store.js";
-import type { SessionModelUpdate } from "../models/stores/active-session-store.js";
 import { parseHash } from "../models/router.js";
 import type { Route } from "../models/router.js";
 
@@ -135,8 +134,8 @@ export class AppShell extends LitElement {
       store.diffStore.refresh();
     }
     // Clear activity notification when viewing a session
-    if (store.sessionData) {
-      store.clearActivity(store.sessionData.id);
+    if (store.sessionId) {
+      store.clearActivity(store.sessionId);
     }
     // Track session visit for quick-open recency ordering
     if (store.sessionId) {
@@ -338,14 +337,11 @@ export class AppShell extends LitElement {
 
               <!-- Tab content -->
               <div class="flex-1 flex min-h-0 ${this.activeTab === "chat" ? "" : "hidden"}">
-                <chat-panel
+                ${keyed(store.sessionId, html`<chat-panel
                   class="flex-1 min-h-0 min-w-0"
-                  .client=${store.client}
-                  .sessionId=${store.sessionId}
-                  .sessionData=${store.sessionData}
-                  .updateSessionModel=${(update: SessionModelUpdate) => store.updateSessionModel(update)}
+                  .store=${store.activeSessionStore}
                   ?visible=${this.activeTab === "chat"}
-                ></chat-panel>
+                ></chat-panel>`)}
                 <!-- File tree sidebar (chat tab, wide screens only) -->
                 <div class="w-60 border-l border-zinc-700 shrink-0 hidden lg:block">
                   <diff-file-tree

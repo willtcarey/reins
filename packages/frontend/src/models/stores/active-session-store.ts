@@ -9,7 +9,8 @@
  * Mutations go through action methods which call the backend API.
  */
 
-import type { SessionData } from "../ws-client.js";
+import type { AgentMessage } from "../chat-state.js";
+import type { EventListener, IAppClient, SessionData } from "../ws-client.js";
 
 export interface SessionModelUpdate {
   provider: string;
@@ -19,17 +20,33 @@ export interface SessionModelUpdate {
 
 export type ActiveSessionStoreListener = () => void;
 
+function blankSessionData(sessionId = ""): SessionData {
+  return {
+    id: sessionId,
+    task_id: null,
+    state: {
+      model: null,
+      thinkingLevel: "high",
+      isStreaming: false,
+      messageCount: 0,
+    },
+  };
+}
+
 export class ActiveSessionStore {
   // ---- Public reactive state ------------------------------------------------
 
   projectId: number | null = null;
-  sessionId: string = "";
-  sessionData: SessionData | null = null;
+  sessionId = "";
+  sessionData: SessionData = blankSessionData();
+  sessionMessages: AgentMessage[] = [];
 
   // ---- Private state --------------------------------------------------------
 
   private _listeners = new Set<ActiveSessionStoreListener>();
   private _fetchId = 0; // guards against stale session fetches
+
+  constructor(private _client: IAppClient | null = null) {}
 
   // ---- Subscription ---------------------------------------------------------
 
@@ -40,6 +57,10 @@ export class ActiveSessionStore {
 
   private notify() {
     for (const fn of this._listeners) fn();
+  }
+
+  onEvent(listener: EventListener): () => void {
+    return this._client?.onEvent(listener) ?? (() => {});
   }
 
   // ---- Route changes --------------------------------------------------------
@@ -57,27 +78,57 @@ export class ActiveSessionStore {
       // No session — clear everything
       this.projectId = null;
       this.sessionId = "";
-      this.sessionData = null;
+      this.sessionData = blankSessionData();
+      this.sessionMessages = [];
       this.notify();
       return;
     }
 
     this.sessionId = newSessionId;
-    this.sessionData = null;
+    this.sessionData = blankSessionData(newSessionId);
+    this.sessionMessages = [];
     this.notify();
 
-    // Fetch session via top-level endpoint (includes project_id)
-    await this.fetchSession(newSessionId);
+    await this.fetchSessionWithMessages(newSessionId);
   }
 
   // ---- Actions --------------------------------------------------------------
 
+  prompt(message: string): boolean {
+    if (!this._client || !this.sessionId) return false;
+    this._client.prompt(this.sessionId, message);
+    return true;
+  }
+
+  steer(message: string): boolean {
+    if (!this._client || !this.sessionId) return false;
+    this._client.steer(this.sessionId, message);
+    return true;
+  }
+
+  abort(): boolean {
+    if (!this._client || !this.sessionId) return false;
+    this._client.abort(this.sessionId);
+    return true;
+  }
+
   /**
-   * Re-fetch the active session's data. Call on WebSocket reconnect.
+   * Re-fetch the active session's metadata. Call on WebSocket reconnect.
+   * Messages are intentionally kept separate so metadata refreshes do not
+   * clobber in-flight chat UI state mid-turn.
    */
   async refreshSession() {
     if (this.sessionId) {
-      await this.fetchSession(this.sessionId);
+      // Reuse the current route fetch ID so metadata refreshes don't invalidate
+      // an in-flight message load for the same session on initial page load.
+      await this.fetchSessionMetadata(this.sessionId, this._fetchId);
+    }
+  }
+
+  /** Load persisted messages for the active session. */
+  async refreshMessages() {
+    if (this.sessionId) {
+      await this.fetchSessionMessages(this.sessionId);
     }
   }
 
@@ -104,7 +155,7 @@ export class ActiveSessionStore {
   }
 
   applySessionModelChange(sessionId: string, update: SessionModelUpdate): void {
-    if (sessionId !== this.sessionId || !this.sessionData?.state) return;
+    if (sessionId !== this.sessionId) return;
 
     this.sessionData = {
       ...this.sessionData,
@@ -120,23 +171,50 @@ export class ActiveSessionStore {
   // ---- Internal fetching ----------------------------------------------------
 
   /**
+   * Fetch session metadata and persisted messages in parallel. Keeping them
+   * separate lets the chat UI ignore metadata-only refreshes while a run is
+   * still streaming.
+   */
+  private async fetchSessionWithMessages(sessionId: string): Promise<void> {
+    const fetchId = ++this._fetchId;
+    await Promise.all([
+      this.fetchSessionMetadata(sessionId, fetchId),
+      this.fetchSessionMessages(sessionId, fetchId),
+    ]);
+  }
+
+  /**
    * Fetch a session via the top-level endpoint (not project-scoped).
    * Updates sessionData and derives projectId from the response.
    */
-  private async fetchSession(sessionId: string): Promise<void> {
-    const fetchId = ++this._fetchId;
+  private async fetchSessionMetadata(sessionId: string, fetchId = ++this._fetchId): Promise<boolean> {
     try {
       const resp = await fetch(
         `/api/sessions/${encodeURIComponent(sessionId)}`,
       );
-      if (!resp.ok) return;
-      if (fetchId !== this._fetchId) return; // stale
+      if (!resp.ok) return false;
+      if (fetchId !== this._fetchId) return false; // stale
       const data = await resp.json();
       this.sessionData = data;
       this.projectId = data.project_id;
       this.notify();
+      return true;
     } catch {
-      // silent
+      return false;
+    }
+  }
+
+  private async fetchSessionMessages(sessionId: string, fetchId = this._fetchId): Promise<boolean> {
+    try {
+      const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
+      if (!resp.ok) return false;
+      if (fetchId !== this._fetchId) return false; // stale
+      const data: AgentMessage[] = await resp.json();
+      this.sessionMessages = data;
+      this.notify();
+      return true;
+    } catch {
+      return false;
     }
   }
 }

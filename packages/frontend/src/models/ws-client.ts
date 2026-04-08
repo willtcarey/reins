@@ -21,7 +21,6 @@ export interface SessionState {
 export interface SessionData {
   id: string;
   task_id: number | null;
-  messages: any[];
   state: SessionState;
 }
 

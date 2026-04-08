@@ -4,7 +4,7 @@ Agents have two tools for scriptable access to Reins internals.
 
 ## `search` — Discover the API
 
-The `search` tool returns function signatures, descriptions, and type definitions rendered from TypeBox schemas. Query by category, function name, or description.
+The `search` tool returns function signatures, descriptions, and return shapes. Query by category, function name, or description.
 
 ```
 search({ query: "sessions" })       → session-related functions + types
@@ -12,7 +12,7 @@ search({ query: "tasks.create" })   → create signature with param types
 search({ query: "" })               → full API surface
 ```
 
-Results include referenced domain types (Task, Session, Project, etc.) so the agent can understand the shape of returned data.
+Results include the related data shapes (Task, Session, Project, etc.) so the agent can understand what each function returns.
 
 ## `execute` — Run scripts against Reins
 
@@ -35,12 +35,11 @@ execute({
 | `api.tasks` | `list(status?)`, `get(taskId)`, `current()`, `create(title, description, branchName?)`, `update(taskId, updates)`, `close(taskId)`, `reopen(taskId)` |
 | `api.sessions` | `list()`, `listForTask(taskId)`, `get(sessionId)`, `current()`, `messages(sessionId)` |
 | `api.projects` | `list()`, `get(projectId)`, `current()` |
+| `api.models` | `list()`, `listProviders()` |
 
-### Design
+### Behavior
 
-- **Schema-driven** — domain types (Task, Session, Project, etc.) are defined as TypeBox schemas. Function signatures and type docs are rendered from these schemas automatically — no hand-maintained strings.
-- **Domain types** — separate from store types (TaskRow, SessionRow) even though they map 1:1 today. The domain types are the agent-facing contract.
-- **Read-heavy** — most operations are reads. Writes go through the model layer (e.g., `tasks.create` handles git branch creation).
+- **Read-heavy** — most operations are reads. Writes go through the app's normal task/session flows.
 - **Scoped to current project** — `tasks.list()`, `sessions.list()`, and `projects.current()` operate on the session's project.
 - **30-second timeout** — runaway scripts are killed after 30s.
 - **No imports** — only the `api` object is available. No `require`, `import`, or filesystem access.

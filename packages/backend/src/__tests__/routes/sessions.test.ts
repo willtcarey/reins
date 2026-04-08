@@ -41,7 +41,7 @@ describe("session routes (top-level)", () => {
       expect(body.state.isStreaming).toBe(false);
     });
 
-    test("returns session from DB with project_id", async () => {
+    test("returns metadata-only session from DB with project_id", async () => {
       const sessionId = "lookup-db";
       createSession(sessionId, projectId, {});
       persistMessages(sessionId, [
@@ -57,7 +57,8 @@ describe("session routes (top-level)", () => {
       expect(body.id).toBe(sessionId);
       expect(body.project_id).toBe(projectId);
       expect(body.state.isStreaming).toBe(false);
-      expect(body.messages).toBeArray();
+      expect(body.state.messageCount).toBe(1);
+      expect(body).not.toHaveProperty("messages");
     });
 
     test("returns 404 for nonexistent session", async () => {
@@ -65,6 +66,58 @@ describe("session routes (top-level)", () => {
         makeRequest("GET", `/api/sessions/nonexistent`),
         state,
       );
+      expect(res!.status).toBe(404);
+    });
+  });
+
+  describe("GET /api/sessions/:sessionId/messages", () => {
+    test("returns persisted messages for an existing session", async () => {
+      const sessionId = "messages-existing";
+      createSession(sessionId, projectId, {});
+      persistMessages(sessionId, [
+        { role: "user", content: "hello", timestamp: 1000 },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "hi" }],
+          timestamp: 2000,
+        },
+      ]);
+
+      const res = await router.handle(
+        makeRequest("GET", `/api/sessions/${sessionId}/messages`),
+        state,
+      );
+
+      expect(res!.status).toBe(200);
+      expect(await res!.json()).toEqual([
+        { role: "user", content: "hello", timestamp: 1000 },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "hi" }],
+          timestamp: 2000,
+        },
+      ]);
+    });
+
+    test("returns [] for an existing session with no messages", async () => {
+      const sessionId = "messages-empty";
+      createSession(sessionId, projectId, {});
+
+      const res = await router.handle(
+        makeRequest("GET", `/api/sessions/${sessionId}/messages`),
+        state,
+      );
+
+      expect(res!.status).toBe(200);
+      expect(await res!.json()).toEqual([]);
+    });
+
+    test("returns 404 for nonexistent session", async () => {
+      const res = await router.handle(
+        makeRequest("GET", `/api/sessions/nonexistent/messages`),
+        state,
+      );
+
       expect(res!.status).toBe(404);
     });
   });

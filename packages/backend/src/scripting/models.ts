@@ -23,7 +23,7 @@ const KeySourceSchema = Type.Union([
   Type.Literal("oauth"),
 ]);
 
-const ModelInfoSchema = Type.Object({
+export const ModelInfoSchema = Type.Object({
   id: Type.String(),
   name: Type.String(),
   reasoning: Type.Boolean(),
@@ -31,7 +31,7 @@ const ModelInfoSchema = Type.Object({
   maxTokens: Type.Number(),
 });
 
-const ProviderInfoSchema = Type.Object({
+export const ProviderInfoSchema = Type.Object({
   provider: Type.String(),
   hasKey: Type.Boolean(),
   keySource: Type.Union([KeySourceSchema, Type.Null()]),

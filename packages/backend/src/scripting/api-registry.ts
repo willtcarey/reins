@@ -29,7 +29,7 @@ import { TASK_FUNCTIONS, TaskSchema } from "./tasks.js";
 import { SESSION_FUNCTIONS, SessionSchema, MessageSchema } from "./sessions.js";
 import { PROJECT_FUNCTIONS, ProjectSchema } from "./projects.js";
 import { UI_FUNCTIONS } from "./ui.js";
-import { MODEL_FUNCTIONS } from "./models.js";
+import { MODEL_FUNCTIONS, ProviderInfoSchema, ModelInfoSchema } from "./models.js";
 
 // Re-export core types from define-function.ts for backward compatibility
 export type { ApiContext, ApiFunctionDef, TypedApiFunctionDef } from "./define-function.js";
@@ -63,6 +63,8 @@ export const DOMAIN_TYPES: NamedType[] = [
   { name: "Session", schema: SessionSchema },
   { name: "Message", schema: MessageSchema },
   { name: "Project", schema: ProjectSchema },
+  { name: "ProviderInfo", schema: ProviderInfoSchema },
+  { name: "ModelInfo", schema: ModelInfoSchema },
 ];
 
 // ---------------------------------------------------------------------------
