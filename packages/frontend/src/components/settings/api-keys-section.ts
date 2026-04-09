@@ -159,6 +159,7 @@ export class SettingsApiKeysSection extends LitElement {
     const hasEnv = sources.includes("env");
     const hasDb = sources.includes("db");
     const hasOAuth = sources.includes("oauth");
+    const hasLocal = sources.includes("local");
 
     return html`
       <div class="flex items-center gap-2 py-1.5">
@@ -172,6 +173,9 @@ export class SettingsApiKeysSection extends LitElement {
           : nothing}
         ${hasOAuth
           ? html`<span class="text-[10px] text-blue-400/70 bg-blue-900/30 px-1.5 py-0.5 rounded">oauth</span>`
+          : nothing}
+        ${hasLocal
+          ? html`<span class="text-[10px] text-purple-400/70 bg-purple-900/30 px-1.5 py-0.5 rounded">local</span>`
           : nothing}
         <span class="ml-auto flex items-center gap-2">
           ${hasDb

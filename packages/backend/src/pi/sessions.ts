@@ -5,8 +5,12 @@
  * Pi runs with SessionManager.inMemory(); we own persistence.
  */
 
-import { createAgentSession, createCodingTools, SessionManager, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
-import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import {
+  createAgentSession,
+  createCodingTools,
+  SessionManager,
+} from "@mariozechner/pi-coding-agent";
+import { type AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import type { ServerState, ManagedSession } from "../state.js";
 import {
   createSession as dbCreateSession,
@@ -21,19 +25,19 @@ import {
   type SessionRow,
 } from "../session-store.js";
 import { getTask, touchTask, type TaskRow } from "../task-store.js";
-import { createDbBackedAuthStorage } from "./auth-storage.js";
+import { createPiRuntimeForCwd } from "./runtime.js";
+import { buildReinsSystemPrompt } from "./system-prompt.js";
 import { getProject } from "../project-store.js";
 import { checkoutBranch } from "../git.js";
 import { createCustomTools } from "../tools/index.js";
 import type { CreateSessionOpts } from "../tools/delegate.js";
 import { createBroadcast, type Broadcast } from "../models/broadcast.js";
-import { type Api, type Model } from "@mariozechner/pi-ai";
+import { parseThinkingLevel } from "../models/model-settings.js";
 import {
-  parseThinkingLevel,
-  resolveModel,
-  resolveModelSettingWithConfig,
-  type ThinkingLevel,
-} from "../models/model-settings.js";
+  resolveConfiguredSessionDefaults,
+  resolvePersistedSessionDefaults,
+  resolveRequestedSessionModel,
+} from "./session-models.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -78,18 +82,6 @@ export function hydrateSessionManager(sm: any, messages: any[]): void {
 }
 
 /**
- * Build a task system prompt prefix for injection.
- */
-function buildTaskPromptPrefix(task: { title: string; description: string | null }): string {
-  let prompt = `## Task\nTitle: ${task.title}`;
-  if (task.description) {
-    prompt += `\nDescription: ${task.description}`;
-  }
-  prompt += "\n\nYou are working on this task.";
-  return prompt;
-}
-
-/**
  * Resolve a task by ID and check out its branch.
  * Returns null for non-task sessions (no taskId).
  * Throws if a taskId is provided but the task doesn't exist.
@@ -105,59 +97,30 @@ async function resolveTask(
   return task;
 }
 
-function resolveConfiguredSessionDefaults(): { model: Model<Api>; thinkingLevel: ThinkingLevel } | undefined {
-  const configured = resolveModelSettingWithConfig("default_model");
-  if (!configured) return undefined;
+type StreamFnLike = (...args: any[]) => unknown;
 
-  return {
-    model: configured.model,
-    thinkingLevel: configured.config.thinkingLevel,
+export function wrapStreamFnWithCwd(
+  streamFn: StreamFnLike,
+  cwd: string,
+): StreamFnLike {
+  const wrapped: StreamFnLike = (model, context, options?: Record<string, unknown>) => {
+    const mergedOptions = options ? { ...options, cwd } : { cwd };
+    return streamFn(model, context, mergedOptions);
   };
+
+  return wrapped;
 }
 
-function resolveRequestedSessionModel(opts?: CreateSessionOpts): Model<Api> | undefined {
-  if (!opts?.modelProvider && !opts?.modelId) return undefined;
-  if (!opts?.modelProvider || !opts?.modelId) {
-    throw new Error("Both modelProvider and modelId are required when overriding a session model.");
-  }
+function ensureSessionStreamFnUsesCwd(
+  agentSession: { agent: { streamFn: StreamFnLike } },
+  cwd: string,
+): void {
+  const currentStreamFn = agentSession.agent.streamFn;
+  if (Reflect.get(currentStreamFn, "__reinsInjectsCwd") === true) return;
 
-  const model = resolveModel(opts.modelProvider, opts.modelId);
-  if (!model) {
-    throw new Error(`Unknown model override: ${opts.modelProvider}/${opts.modelId}`);
-  }
-
-  return model;
-}
-
-function resolvePersistedSessionDefaults(row?: SessionRow | null): {
-  hasPersistedModel: boolean;
-  hasPersistedThinkingLevel: boolean;
-  model?: Model<Api>;
-  thinkingLevel?: ThinkingLevel;
-} {
-  const hasPersistedModel = !!(row?.model_provider && row?.model_id);
-  const model = hasPersistedModel ? resolveModel(row!.model_provider!, row!.model_id!) : undefined;
-
-  const hasPersistedThinkingLevel = typeof row?.thinking_level === "string" && row.thinking_level.length > 0;
-  const thinkingLevel = row?.thinking_level && row.thinking_level !== "off"
-    ? parseThinkingLevel(row.thinking_level)
-    : undefined;
-
-  return {
-    hasPersistedModel,
-    hasPersistedThinkingLevel,
-    model,
-    thinkingLevel,
-  };
-}
-
-/**
- * Resolve the globally configured default model from settings.
- * Returns undefined when no valid default is configured, allowing the pi SDK
- * to fall back to its built-in default.
- */
-export function resolveConfiguredModel(): Model<Api> | undefined {
-  return resolveModelSettingWithConfig("default_model")?.model;
+  const wrapped = wrapStreamFnWithCwd(currentStreamFn, cwd);
+  Reflect.set(wrapped, "__reinsInjectsCwd", true);
+  agentSession.agent.streamFn = wrapped;
 }
 
 /**
@@ -198,24 +161,23 @@ async function buildSessionOpts(params: {
       : undefined,
   });
 
-  const resourceLoader = new DefaultResourceLoader({
+  const allTools = [...tools, ...customTools];
+
+  const { authStorage, resourceLoader, modelRegistry } = await createPiRuntimeForCwd({
     cwd: projectDir,
-    appendSystemPromptOverride: (base) => [
-      ...base,
-      "The bash tool already executes in the current working directory. Do not prefix commands with `cd` to the project root.",
-      ...(task
-        ? [buildTaskPromptPrefix(task)]
-        : [
-            "When the user describes a problem or asks a question, focus on analysis and explanation first. Only make code changes when the user clearly indicates they want changes made. Implementation work should go in tasks.",
-          ]),
-    ],
+    resourceLoaderOptions: {
+      systemPromptOverride: () => buildReinsSystemPrompt({
+        tools: allTools,
+        task: task ?? undefined,
+        isScratchSession: !task,
+      }),
+    },
   });
-  await resourceLoader.reload();
 
   // Resolve model: explicit override → persisted session metadata → DB default → SDK default
-  const configuredDefaults = resolveConfiguredSessionDefaults();
-  const persistedDefaults = resolvePersistedSessionDefaults(persistedSession);
-  const requestedModel = resolveRequestedSessionModel(createOpts);
+  const configuredDefaults = resolveConfiguredSessionDefaults(modelRegistry);
+  const persistedDefaults = resolvePersistedSessionDefaults(modelRegistry, persistedSession);
+  const requestedModel = resolveRequestedSessionModel(modelRegistry, createOpts);
   const requestedThinkingLevel = createOpts?.thinkingLevel
     ? parseThinkingLevel(createOpts.thinkingLevel)
     : undefined;
@@ -226,13 +188,14 @@ async function buildSessionOpts(params: {
     customTools,
     sessionManager,
     resourceLoader,
+    modelRegistry,
     model: requestedModel
       ?? persistedDefaults.model
       ?? (persistedDefaults.hasPersistedModel ? undefined : configuredDefaults?.model),
     configuredThinkingLevel: requestedThinkingLevel
       ?? persistedDefaults.thinkingLevel
       ?? (persistedDefaults.hasPersistedThinkingLevel ? undefined : configuredDefaults?.thinkingLevel),
-    authStorage: createDbBackedAuthStorage(),
+    authStorage,
   };
 }
 
@@ -271,6 +234,11 @@ export async function createNewSession(
 
   const result = await createAgentSession(sessionOpts);
   const agentSession = result.session;
+  ensureSessionStreamFnUsesCwd(agentSession, projectDir);
+
+  if (result.extensionsResult.errors.length > 0) {
+    console.warn("  Pi extension load errors:", result.extensionsResult.errors);
+  }
 
   if (result.modelFallbackMessage) {
     console.warn(`  Model fallback: ${result.modelFallbackMessage}`);
@@ -352,6 +320,11 @@ export async function resumeSession(
     persistedSession: row,
   });
   const result = await createAgentSession(sessionOpts);
+  ensureSessionStreamFnUsesCwd(result.session, projectDir);
+
+  if (result.extensionsResult.errors.length > 0) {
+    console.warn("  Pi extension load errors:", result.extensionsResult.errors);
+  }
 
   const agentSession = result.session;
 

@@ -6,8 +6,9 @@
  * unavailable or returns invalid output.
  */
 
-import { createAgentSession, SessionManager, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
-import { resolveUtilityModel } from "./models/model-settings.js";
+import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
+import { resolveUtilityModelForCwd } from "./models/model-settings.js";
+import { createPiResourceLoader } from "./pi/resource-loader.js";
 
 const BRANCH_PATTERN = /^task\/[a-z0-9][a-z0-9-]*$/;
 const TIMEOUT_MS = 10_000;
@@ -23,18 +24,21 @@ const SYSTEM_PROMPT =
  */
 export async function generateBranchName(title: string): Promise<string> {
   try {
-    const resourceLoader = new DefaultResourceLoader({
+    const cwd = process.cwd();
+    const resourceLoader = createPiResourceLoader({
+      cwd,
       systemPrompt: SYSTEM_PROMPT,
-      noExtensions: true,
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,
     });
     await resourceLoader.reload();
 
+    const model = await resolveUtilityModelForCwd(cwd);
     const { session } = await createAgentSession({
+      cwd,
       tools: [],
-      model: resolveUtilityModel(),
+      model,
       sessionManager: SessionManager.inMemory(),
       resourceLoader,
     });

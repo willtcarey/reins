@@ -4,8 +4,8 @@ import { providerLabel } from "../settings.js";
 export interface ApiKeyState {
   provider: string;
   label: string;
-  keySource: "db" | "env" | "oauth" | null;
-  keySources: ("db" | "env" | "oauth")[];
+  keySource: "db" | "env" | "oauth" | "local" | null;
+  keySources: ("db" | "env" | "oauth" | "local")[];
 }
 
 export type ModelRegistryStoreResult = { ok: true } | { error: string };

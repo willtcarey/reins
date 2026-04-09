@@ -5,9 +5,10 @@
  * into a structured task (title, description, branch name).
  */
 
-import { createAgentSession, SessionManager, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
 import { slugifyBranchName } from "./branch-namer.js";
-import { resolveUtilityModel } from "./models/model-settings.js";
+import { resolveUtilityModelForCwd } from "./models/model-settings.js";
+import { createPiResourceLoader } from "./pi/resource-loader.js";
 
 export interface GeneratedTask {
   title: string;
@@ -30,18 +31,21 @@ Return ONLY valid JSON. No markdown fences, no explanation, no extra text.`;
  */
 export async function generateTask(prompt: string): Promise<GeneratedTask> {
   try {
-    const resourceLoader = new DefaultResourceLoader({
+    const cwd = process.cwd();
+    const resourceLoader = createPiResourceLoader({
+      cwd,
       systemPrompt: SYSTEM_PROMPT,
-      noExtensions: true,
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,
     });
     await resourceLoader.reload();
 
+    const model = await resolveUtilityModelForCwd(cwd);
     const { session } = await createAgentSession({
+      cwd,
       tools: [],
-      model: resolveUtilityModel(),
+      model,
       sessionManager: SessionManager.inMemory(),
       resourceLoader,
     });

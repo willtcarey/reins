@@ -6,7 +6,6 @@
  * and WebSocket broadcasts.
  */
 
-import { getModels, getProviders } from "@mariozechner/pi-ai";
 import {
   getSession,
   updateSessionMeta,
@@ -15,6 +14,8 @@ import {
 import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
+import { getProject } from "../project-store.js";
+import { createPiRuntimeForCwd } from "../pi/runtime.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -44,21 +45,27 @@ export class ProjectSessions {
     }
 
     const managed = this.sessions.get(params.sessionId);
+    const project = getProject(this.projectId);
+    if (!project) {
+      throw new Error(`Project ${this.projectId} not found`);
+    }
 
-    const providers = getProviders();
-    const provider = providers.find((p) => p === params.provider);
-    if (!provider) {
+    const { modelRegistry } = await createPiRuntimeForCwd({
+      cwd: project.path,
+    });
+    const providers = Array.from(new Set(modelRegistry.getAll().map((candidate) => candidate.provider))).toSorted();
+    if (!providers.includes(params.provider)) {
       throw new Error(
         `Unknown provider '${params.provider}'. Available providers: ${providers.join(", ")}`,
       );
     }
 
-    const models = getModels(provider);
-    const model = models.find((m) => m.id === params.modelId);
+    const models = modelRegistry.getAll().filter((candidate) => candidate.provider === params.provider);
+    const model = models.find((candidate) => candidate.id === params.modelId);
     if (!model) {
       throw new Error(
         `Model '${params.modelId}' not found for provider '${params.provider}'. ` +
-          `Available models: ${models.map((m) => m.id).join(", ")}`,
+        `Available models: ${models.map((candidate) => candidate.id).join(", ")}`,
       );
     }
 

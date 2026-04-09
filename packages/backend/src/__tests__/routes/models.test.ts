@@ -154,4 +154,21 @@ describe("GET /api/models", () => {
       }
     }
   });
+
+  test("includes extension-registered providers that rely on local auth", async () => {
+    const { router, state } = setup();
+
+    const res = await router.handle(
+      makeRequest("/api/models"),
+      state,
+    );
+    const body = await res!.json();
+    const claudeAgentSdk = body.find((p: any) => p.provider === "claude-agent-sdk");
+
+    expect(claudeAgentSdk).toBeDefined();
+    expect(claudeAgentSdk.hasKey).toBe(true);
+    expect(claudeAgentSdk.keySource).toBe("local");
+    expect(claudeAgentSdk.keySources).toContain("local");
+    expect(claudeAgentSdk.models.length).toBeGreaterThan(0);
+  });
 });

@@ -3,7 +3,6 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { getProviders } from "@mariozechner/pi-ai";
 import { buildProviderList } from "../pi/models-registry.js";
 import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 
@@ -21,6 +20,7 @@ const KeySourceSchema = Type.Union([
   Type.Literal("db"),
   Type.Literal("env"),
   Type.Literal("oauth"),
+  Type.Literal("local"),
 ]);
 
 export const ModelInfoSchema = Type.Object({
@@ -42,8 +42,8 @@ export const ProviderInfoSchema = Type.Object({
 export const modelsListFunction = defineFunction({
   name: "models.list",
   description:
-    "List all available AI providers with their models, including whether an API key " +
-    "is configured and the key source (db or env). Each provider includes its models " +
+    "List all available AI providers with their models, including whether authentication " +
+    "is configured and the key source (db, env, oauth, or local). Each provider includes its models " +
     "with id, name, reasoning capability, context window, and max tokens.",
   parameters: Type.Object({}),
   returns: Type.Array(ProviderInfoSchema),
@@ -57,7 +57,7 @@ export const modelsListProvidersFunction = defineFunction({
   parameters: Type.Object({}),
   returns: Type.Array(Type.String()),
   tags: ["models", "providers", "list", "read", "names"],
-  execute: () => [...getProviders()],
+  execute: async () => (await buildProviderList()).map((provider) => provider.provider),
 });
 
 export const MODEL_FUNCTIONS: ApiFunctionDef[] = [
