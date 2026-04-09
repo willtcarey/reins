@@ -8,6 +8,7 @@ import { pascalCase } from "change-case";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { jsonSchemaToZodShape } from "./claude-agent-sdk-custom-tools.js";
 
 const PROVIDER_ID = "claude-agent-sdk";
 
@@ -379,7 +380,7 @@ function buildCustomToolServers(customTools: Tool[]): Record<string, ReturnType<
 	const mcpTools = customTools.map((tool) => ({
 		name: tool.name,
 		description: tool.description,
-		inputSchema: tool.parameters as unknown,
+		inputSchema: jsonSchemaToZodShape(tool.parameters as Record<string, unknown>),
 		handler: async () => ({
 			content: [{ type: "text" as const, text: TOOL_EXECUTION_DENIED_MESSAGE }],
 			isError: true,
