@@ -547,6 +547,9 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 				tools: sdkTools,
 				permissionMode: "dontAsk",
 				includePartialMessages: true,
+				settings: {
+					includeCoAuthoredBy: false,
+				},
 				canUseTool: async () => ({
 					behavior: "deny",
 					message: TOOL_EXECUTION_DENIED_MESSAGE,
