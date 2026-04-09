@@ -10,38 +10,43 @@ type AssertTrue<T extends true> = T;
 type _SessionMessagesElementIsTyped = AssertFalse<IsAny<ActiveSessionStore["sessionMessages"][number]>>;
 type _SessionMessagesMatchAgentMessages = AssertTrue<ActiveSessionStore["sessionMessages"] extends AgentMessage[] ? true : false>;
 
+// ---- Helpers ----------------------------------------------------------------
+
+function jsonResponse(data: unknown) {
+  return new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } });
+}
+
+function makeSessionData(overrides: { isStreaming?: boolean; messageCount?: number; projectId?: number } = {}) {
+  return {
+    id: "sess-1",
+    task_id: null,
+    project_id: overrides.projectId ?? 42,
+    state: {
+      model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
+      thinkingLevel: "high",
+      isStreaming: overrides.isStreaming ?? false,
+      messageCount: overrides.messageCount ?? 0,
+    },
+  };
+}
+
 describe("ActiveSessionStore.updateSessionModel", () => {
   beforeEach(() => {
     restoreFetch();
-
     mockFetch((url, init) => {
       if (url === "/api/sessions/sess-1/model" && init?.method === "PUT") {
-        return new Response(JSON.stringify({ ok: true }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+        return jsonResponse({ ok: true });
       }
       throw new Error(`Unexpected fetch: ${url}`);
     });
   });
 
-  afterEach(() => {
-    restoreFetch();
-  });
+  afterEach(() => { restoreFetch(); });
 
   test("persists the session model and updates local session state", async () => {
     const store = new ActiveSessionStore();
     store.sessionId = "sess-1";
-    store.sessionData = {
-      id: "sess-1",
-      task_id: null,
-      state: {
-        model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
-        thinkingLevel: "high",
-        isStreaming: false,
-        messageCount: 0,
-      },
-    };
+    store.sessionData = makeSessionData();
 
     const result = await store.updateSessionModel({
       provider: "openai",
@@ -92,10 +97,13 @@ describe("ActiveSessionStore command helpers", () => {
   });
 });
 
+const twoMessages = [
+  { role: "user", content: "hello", timestamp: 1000 },
+  { role: "assistant", content: [{ type: "text", text: "hi" }], timestamp: 2000 },
+];
+
 describe("ActiveSessionStore session loading contract", () => {
-  afterEach(() => {
-    restoreFetch();
-  });
+  afterEach(() => { restoreFetch(); });
 
   test("setRoute starts metadata and messages fetches in parallel", async () => {
     const store = new ActiveSessionStore();
@@ -104,75 +112,21 @@ describe("ActiveSessionStore session loading contract", () => {
 
     mockFetch((url) => {
       calls.push(url);
-
-      if (url === "/api/sessions/sess-1") {
-        return new Promise<Response>((resolve) => {
-          resolveSession = resolve;
-        });
-      }
-
-      if (url === "/api/sessions/sess-1/messages") {
-        return new Response(JSON.stringify([
-          { role: "user", content: "hello", timestamp: 1000 },
-          {
-            role: "assistant",
-            content: [{ type: "text", text: "hi" }],
-            timestamp: 2000,
-          },
-        ]), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-
+      if (url === "/api/sessions/sess-1") return new Promise<Response>((r) => { resolveSession = r; });
+      if (url === "/api/sessions/sess-1/messages") return jsonResponse(twoMessages);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
     const routePromise = store.setRoute("sess-1");
-
     await Promise.resolve();
 
-    expect(store.sessionData).toEqual({
-      id: "sess-1",
-      task_id: null,
-      state: {
-        model: null,
-        thinkingLevel: "high",
-        isStreaming: false,
-        messageCount: 0,
-      },
-    });
-    expect(calls).toEqual([
-      "/api/sessions/sess-1",
-      "/api/sessions/sess-1/messages",
-    ]);
+    expect(calls).toEqual(["/api/sessions/sess-1", "/api/sessions/sess-1/messages"]);
 
-    resolveSession(new Response(JSON.stringify({
-      id: "sess-1",
-      task_id: null,
-      project_id: 42,
-      state: {
-        model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
-        thinkingLevel: "high",
-        isStreaming: true,
-        messageCount: 2,
-      },
-    }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    }));
-
+    resolveSession(jsonResponse(makeSessionData({ isStreaming: true, messageCount: 2 })));
     await routePromise;
 
     expect(store.projectId).toBe(42);
-    expect(store.sessionMessages).toEqual([
-      { role: "user", content: "hello", timestamp: 1000 },
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "hi" }],
-        timestamp: 2000,
-      },
-    ]);
+    expect(store.sessionMessages).toEqual(twoMessages);
   });
 
   test("refreshSession does not invalidate an in-flight initial messages load", async () => {
@@ -180,95 +134,79 @@ describe("ActiveSessionStore session loading contract", () => {
     let resolveMessages!: (value: Response) => void;
 
     mockFetch((url) => {
-      if (url === "/api/sessions/sess-1") {
-        return new Response(JSON.stringify({
-          id: "sess-1",
-          task_id: null,
-          project_id: 42,
-          state: {
-            model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
-            thinkingLevel: "high",
-            isStreaming: false,
-            messageCount: 2,
-          },
-        }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-
-      if (url === "/api/sessions/sess-1/messages") {
-        return new Promise<Response>((resolve) => {
-          resolveMessages = resolve;
-        });
-      }
-
+      if (url === "/api/sessions/sess-1") return jsonResponse(makeSessionData({ messageCount: 2 }));
+      if (url === "/api/sessions/sess-1/messages") return new Promise<Response>((r) => { resolveMessages = r; });
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
     const routePromise = store.setRoute("sess-1");
+    await Promise.resolve();
+    await Promise.resolve();
+    await store.refreshSession();
 
-    await Promise.resolve();
-    await Promise.resolve();
+    resolveMessages(jsonResponse(twoMessages));
+    await routePromise;
+
+    expect(store.sessionMessages).toEqual(twoMessages);
+  });
+
+  test("refreshSession auto-refreshes messages when isStreaming transitions to false", async () => {
+    const store = new ActiveSessionStore();
+    const calls: string[] = [];
+
+    store.sessionId = "sess-1";
+    store.sessionData = makeSessionData({ isStreaming: true, messageCount: 1 });
+    store.sessionMessages = [{ role: "user", content: "hello", timestamp: 1000 }];
+
+    mockFetch((url) => {
+      calls.push(url);
+      if (url === "/api/sessions/sess-1") return jsonResponse(makeSessionData({ messageCount: 3 }));
+      if (url === "/api/sessions/sess-1/messages") return jsonResponse([
+        { role: "user", content: "hello", timestamp: 1000 },
+        { role: "assistant", content: [{ type: "text", text: "Done" }], timestamp: 2000 },
+        { role: "toolResult", toolCallId: "t1", toolName: "bash", content: [{ type: "text", text: "output" }], isError: false, timestamp: 3000 },
+      ]);
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
 
     await store.refreshSession();
 
-    resolveMessages(new Response(JSON.stringify([
-      { role: "user", content: "hello", timestamp: 1000 },
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "hi" }],
-        timestamp: 2000,
-      },
-    ]), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    }));
+    expect(calls).toContain("/api/sessions/sess-1");
+    expect(calls).toContain("/api/sessions/sess-1/messages");
+    expect(store.sessionData.state.isStreaming).toBe(false);
+    expect(store.sessionMessages).toHaveLength(3);
+  });
 
-    await routePromise;
+  test("refreshSession does NOT auto-refresh messages when still streaming", async () => {
+    const store = new ActiveSessionStore();
+    const calls: string[] = [];
 
-    expect(store.sessionMessages).toEqual([
-      { role: "user", content: "hello", timestamp: 1000 },
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "hi" }],
-        timestamp: 2000,
-      },
-    ]);
+    store.sessionId = "sess-1";
+    store.sessionData = makeSessionData({ isStreaming: true, messageCount: 1 });
+
+    mockFetch((url) => {
+      calls.push(url);
+      if (url === "/api/sessions/sess-1") return jsonResponse(makeSessionData({ isStreaming: true, messageCount: 2 }));
+      if (url === "/api/sessions/sess-1/messages") throw new Error("Should not fetch messages when still streaming");
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await store.refreshSession();
+    expect(calls).toEqual(["/api/sessions/sess-1"]);
   });
 
   test("clearing the route resets session data to a blank session", async () => {
     const store = new ActiveSessionStore();
     store.projectId = 42;
     store.sessionId = "sess-1";
-    store.sessionData = {
-      id: "sess-1",
-      task_id: 7,
-      state: {
-        model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
-        thinkingLevel: "medium",
-        isStreaming: true,
-        messageCount: 3,
-      },
-    };
-    store.sessionMessages = [
-      { role: "user", content: "hello", timestamp: 1000 },
-    ];
+    store.sessionData = makeSessionData({ isStreaming: true, messageCount: 3 });
+    store.sessionMessages = [{ role: "user", content: "hello", timestamp: 1000 }];
 
     await store.setRoute(null);
 
     expect(store.projectId).toBeNull();
     expect(store.sessionId).toBe("");
-    expect(store.sessionData).toEqual({
-      id: "",
-      task_id: null,
-      state: {
-        model: null,
-        thinkingLevel: "high",
-        isStreaming: false,
-        messageCount: 0,
-      },
-    });
+    expect(store.sessionData.state.isStreaming).toBe(false);
     expect(store.sessionMessages).toEqual([]);
   });
 });

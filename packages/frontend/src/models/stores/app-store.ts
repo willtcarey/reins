@@ -74,9 +74,13 @@ export class AppStore {
         // Refresh all loaded project stores (any expanded in the sidebar)
         // so session/task lists catch up on missed events
         this.projectCollectionStore.refreshAll();
-        // Refresh active-session metadata without replacing chat messages mid-turn
+        // Refresh active-session metadata and messages. refreshSession()
+        // auto-triggers a message refresh when it detects streaming ended
+        // (missed agent_end during disconnect). We also always refresh
+        // messages to catch any events missed during the disconnection.
         if (this._activeSession.sessionId) {
           this._activeSession.refreshSession();
+          this._activeSession.refreshMessages();
         }
       }
     });

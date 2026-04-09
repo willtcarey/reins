@@ -107,13 +107,24 @@ export class ChatPanel extends LitElement {
 
   private syncFromStore() {
     const sessionData = this.store?.sessionData;
+    // Track whether streaming just ended via metadata so we can reconcile
+    // stale in-flight blocks that were never cleaned up by a missed agent_end.
+    let streamingJustEnded = false;
     if (sessionData && sessionData !== this.lastSessionData) {
+      const wasStreaming = this.isStreaming;
       this.lastSessionData = sessionData;
       this.isStreaming = sessionData.state.isStreaming;
+
+      if (wasStreaming && !this.isStreaming) {
+        // Streaming ended while we weren't watching (missed agent_end).
+        // Clear stale streaming blocks so persisted messages can load.
+        this.streamingBlocks = [];
+        streamingJustEnded = true;
+      }
     }
 
     const sessionMessages = this.store?.sessionMessages ?? [];
-    if (sessionMessages !== this.lastSessionMessages) {
+    if (sessionMessages !== this.lastSessionMessages || streamingJustEnded) {
       this.lastSessionMessages = sessionMessages;
       // Session switches remount the component via keyed(sessionId), so the
       // only time we reuse persisted messages is when this panel is empty or

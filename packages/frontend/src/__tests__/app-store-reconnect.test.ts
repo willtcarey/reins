@@ -30,6 +30,32 @@ describe("AppStore reconnect catch-up", () => {
     expect(calls).toContain("refreshAll");
   });
 
+  test("reconnect refreshes active session messages", () => {
+    store.projectCollectionStore.fetchProjects = mock(async () => {});
+    store.projectCollectionStore.refreshAll = mock(async () => {});
+
+    // Set up an active session
+    const activeStore = store.activeSessionStore;
+    activeStore.sessionId = "sess-1";
+    activeStore.sessionData = {
+      id: "sess-1",
+      task_id: null,
+      state: {
+        model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
+        thinkingLevel: "high",
+        isStreaming: false,
+        messageCount: 2,
+      },
+    };
+
+    const refreshMessagesSpy = mock(async () => {});
+    activeStore.refreshMessages = refreshMessagesSpy;
+
+    client.fireConnection(true);
+
+    expect(refreshMessagesSpy).toHaveBeenCalled();
+  });
+
   test("reconnect does not call refreshAll when disconnecting", () => {
     const refreshAllSpy = mock(async () => {});
     store.projectCollectionStore.refreshAll = refreshAllSpy;

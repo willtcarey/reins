@@ -119,9 +119,15 @@ export class ActiveSessionStore {
    */
   async refreshSession() {
     if (this.sessionId) {
+      const wasStreaming = this.sessionData.state.isStreaming;
       // Reuse the current route fetch ID so metadata refreshes don't invalidate
       // an in-flight message load for the same session on initial page load.
       await this.fetchSessionMetadata(this.sessionId, this._fetchId);
+      // If streaming just ended (missed agent_end during disconnect/navigation),
+      // also refresh messages to pick up the completed turn's results.
+      if (wasStreaming && !this.sessionData.state.isStreaming) {
+        await this.fetchSessionMessages(this.sessionId);
+      }
     }
   }
 
