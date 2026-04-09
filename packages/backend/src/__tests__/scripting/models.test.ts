@@ -72,8 +72,8 @@ describe("models.list", () => {
 describe("buildProviderList", () => {
   useTestDb();
 
-  test("returns same shape as models.list", () => {
-    const result = buildProviderList();
+  test("returns same shape as models.list", async () => {
+    const result = await buildProviderList();
 
     expect(Array.isArray(result)).toBe(true);
     expect(result.length).toBeGreaterThan(0);
@@ -84,6 +84,8 @@ describe("buildProviderList", () => {
 });
 
 describe("models.listProviders", () => {
+  useTestDb();
+
   test("returns string array of provider names", async () => {
     const ctx = makeCtx();
     const result = await modelsListProvidersFunction.execute({}, ctx);

@@ -55,6 +55,12 @@ Adapters that bind Reins runtime behavior to the pi SDK live under `src/pi/`.
 Keep SDK-specific session lifecycle, auth bridges, and model/provider discovery there.
 Server-only orchestration that merely reacts to app state changes should stay at the backend root.
 
+Key entry points:
+
+- `pi/runtime.ts` — centralized, cwd-scoped pi runtime builder (`resourceLoader` + `modelRegistry` + extension provider registrations).
+- `pi/sessions.ts` — live session create/resume lifecycle and event wiring.
+- `pi/models-registry.ts` — provider listing/auth-source metadata built on top of the runtime builder.
+
 ## Dependency rules
 
 - Stores don't import git, models, routes, or tools.

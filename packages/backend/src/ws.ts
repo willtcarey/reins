@@ -63,12 +63,14 @@ async function handleWsCommand(
   switch (cmd.type) {
     case "prompt": {
       if (!cmd.message) { sendToWs(client.ws, { type: "error", error: "Missing message field" }); return; }
+      const sessionId = cmd.sessionId;
+      const message = cmd.message;
       try {
-        const row = getSession(cmd.sessionId);
+        const row = getSession(sessionId);
         if (!row) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
         const project = getProject(row.project_id);
         if (!project) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
-        const managed = await ensureSessionOpen(state, cmd.sessionId, project.path);
+        const managed = await ensureSessionOpen(state, sessionId, project.path);
         sendToWs(client.ws, { type: "ack", command: "prompt" });
 
         // Broadcast user message to other clients so other devices see what was typed
@@ -76,37 +78,39 @@ async function handleWsCommand(
         const broadcast = createBroadcastExcluding(state.clients, client);
         broadcast({
           type: "user_message",
-          sessionId: cmd.sessionId,
+          sessionId,
           projectId: row.project_id,
           message: cmd.message,
         });
 
         // Handle /compact as a slash command
-        const compactMatch = cmd.message.match(/^\/compact\s*(.*)?$/);
+        const compactMatch = message.match(/^\/compact\s*(.*)?$/);
         if (compactMatch) {
           const instructions = compactMatch[1]?.trim() || undefined;
-          await runManualCompaction(state, managed, cmd.sessionId, row.project_id, instructions);
+          await runManualCompaction(state, managed, sessionId, row.project_id, instructions);
         } else {
-          await managed.session.prompt(cmd.message);
+          await managed.session.prompt(message);
         }
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        sendToWs(client.ws, { type: "error", error: `prompt failed: ${message}` });
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        sendToWs(client.ws, { type: "error", error: `prompt failed: ${errorMessage}` });
       }
       break;
     }
 
     case "steer": {
       if (!cmd.message) { sendToWs(client.ws, { type: "error", error: "Missing message field" }); return; }
+      const sessionId = cmd.sessionId;
+      const message = cmd.message;
       try {
-        const projectDir = resolveProjectDir(cmd.sessionId);
+        const projectDir = resolveProjectDir(sessionId);
         if (!projectDir) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
-        const managed = await ensureSessionOpen(state, cmd.sessionId, projectDir);
+        const managed = await ensureSessionOpen(state, sessionId, projectDir);
         sendToWs(client.ws, { type: "ack", command: "steer" });
-        await managed.session.steer(cmd.message);
+        await managed.session.steer(message);
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        sendToWs(client.ws, { type: "error", error: `steer failed: ${message}` });
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        sendToWs(client.ws, { type: "error", error: `steer failed: ${errorMessage}` });
       }
       break;
     }

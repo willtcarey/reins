@@ -13,7 +13,7 @@ export type { ProviderInfo, ModelInfo } from "../pi/models-registry.js";
 
 export function registerModelsRoutes(router: RouterGroup) {
   router.get(API.models, async (_ctx: RouteContext) => {
-    const result = buildProviderList();
+    const result = await buildProviderList();
     return Response.json(result);
   });
 }

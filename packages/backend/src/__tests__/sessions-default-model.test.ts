@@ -5,7 +5,8 @@ import { createServerState } from "./helpers/server-state.js";
 import { createProject } from "../project-store.js";
 import { createSession, getSession } from "../session-store.js";
 import { setSetting, deleteSetting } from "../settings-store.js";
-import { createNewSession, resumeSession, resolveConfiguredModel } from "../pi/sessions.js";
+import { createNewSession, resumeSession } from "../pi/sessions.js";
+import { resolveConfiguredModel } from "../pi/session-models.js";
 
 describe("resolveConfiguredModel", () => {
   useTestDb();
@@ -173,6 +174,21 @@ describe("resumeSession", () => {
 
     await expect(resumeSession(state, "resume-invalid-default", repo.dir)).rejects.toThrow(
       /Configured default_model is invalid/,
+    );
+  });
+
+  test("throws when a resumed session has an invalid persisted model instead of silently falling back", async () => {
+    const state = createServerState();
+    const project = createProject("Test Project", repo.dir, "main");
+
+    createSession("resume-invalid-persisted-model", project.id, {
+      modelProvider: "claude-agent-sdk",
+      modelId: "does-not-exist",
+      thinkingLevel: "high",
+    });
+
+    await expect(resumeSession(state, "resume-invalid-persisted-model", repo.dir)).rejects.toThrow(
+      /Persisted session model is invalid/,
     );
   });
 

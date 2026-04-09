@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { deleteSetting, setSetting } from "../../settings-store.js";
-import { resolveConfiguredModel } from "../../pi/sessions.js";
+import { resolveConfiguredModel } from "../../pi/session-models.js";
 import {
   THINKING_LEVEL_VALUES,
   parseThinkingLevel,

@@ -36,6 +36,18 @@ Provider auth credentials are stored separately from general settings.
 
 API keys and OAuth sign-in are managed from the app's authentication flows.
 
+### Claude Agent SDK / Claude Code provider
+
+Reins also exposes the `claude-agent-sdk` provider through an embedded pi extension.
+
+- It appears in model lists with a `local` auth badge.
+- `local` means Reins is not managing the credential itself; authentication is expected to exist on the machine where Reins is running.
+- For local/thick-node execution, authenticate one of these ways on that machine:
+  - **Claude Code login**: run `npx @anthropic-ai/claude-code` and sign in.
+  - **Anthropic API key**: set `ANTHROPIC_API_KEY` in the Reins process environment.
+- When using Claude Code login, the provider may be selectable even though no API key is stored in Reins.
+- If Reins runs on a different machine from your browser, the auth must exist on the Reins host, not just on the client device.
+
 ## Per-session model changes
 
 Each chat session has its own **Session model** control near the message composer.
