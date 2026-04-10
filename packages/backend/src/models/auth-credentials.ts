@@ -1,5 +1,5 @@
 import type { ManagedSession } from "../state.js";
-import { getPiSession } from "../runtimes/pi/runtime.js";
+import { isPiRuntime } from "../runtimes/pi/runtime.js";
 import {
   deleteAuthCredential,
   hasAuthCredential,
@@ -12,7 +12,8 @@ import {
 
 export function reloadManagedSessionAuthStorage(sessions: Map<string, ManagedSession>): void {
   for (const managed of sessions.values()) {
-    getPiSession(managed.runtime).modelRegistry.authStorage.reload();
+    if (!isPiRuntime(managed.runtime)) continue;
+    managed.runtime.session.modelRegistry.authStorage.reload();
   }
 }
 

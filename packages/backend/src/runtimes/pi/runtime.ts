@@ -30,8 +30,12 @@ export class PiAgentRuntime implements AgentRuntime {
   }
 }
 
+export function isPiRuntime(runtime: AgentRuntime): runtime is PiAgentRuntime {
+  return runtime instanceof PiAgentRuntime;
+}
+
 export function getPiSession(runtime: AgentRuntime): AgentSession {
-  if (!(runtime instanceof PiAgentRuntime)) {
+  if (!isPiRuntime(runtime)) {
     throw new Error("Runtime is not a pi runtime");
   }
   return runtime.session;
