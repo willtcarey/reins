@@ -2,7 +2,7 @@
 
 ## Goal
 
-Integrate the Claude Agent SDK as a parallel agent loop provider in Reins, alongside the existing pi-backed sessions. The SDK handles auth, API transport, tool execution, session persistence, and turn management. Reins provides the UI, custom tools, system prompt, and session metadata.
+Integrate the Claude Agent SDK as a first-class agent runtime in Reins, alongside the existing pi runtime. The SDK handles auth, API transport, tool execution, session persistence, and turn management. Reins provides the UI, custom tools, system prompt, and session metadata.
 
 ## Background
 
@@ -20,25 +20,106 @@ The new approach lets the SDK own the full agent loop while Reins wraps it.
 
 ## Architecture
 
-### Provider-based routing
+### Model identity vs execution runtime
 
-When a user selects a model, the provider determines the execution backend:
+Session model selection and runtime are separate concerns and should be stored separately:
+
+- **Model identity**: `model_provider` + `model_id` (what model is selected)
+- **Execution runtime**: `agent_runtime_type` (how turns execute)
+
+Naming convention:
+- In code: `AgentRuntime` interface (live runtime object)
+- In DB: `agent_runtime_type` column (persisted runtime discriminator)
+
+This avoids overloading provider names with runtime behavior. Example:
+
+- Anthropic model through pi API path: `model_provider=anthropic`, `agent_runtime_type=pi`
+- Anthropic model through Claude Code SDK path: `model_provider=anthropic`, `agent_runtime_type=claude_agent_sdk`
+
+### Runtime-based routing
+
+When a session starts/resumes, Reins resolves the session row and dispatches by `agent_runtime_type`:
 
 ```
-provider: "anthropic"          → pi AgentSession (direct API, existing path)
-provider: "claude-agent-sdk"   → SdkSession (SDK manages loop + tools)
+agent_runtime_type: "pi"                → PiAgentRuntime
+agent_runtime_type: "claude_agent_sdk"  → ClaudeSdkAgentRuntime
 ```
 
-The frontend doesn't change — both providers appear in the model picker. Session creation branches based on the provider.
+`agent_runtime_type` is persisted on the session row and is immutable for the life of the session. Runtime routing should always use this persisted value as the source of truth (no inference from provider/model IDs).
+
+The frontend model picker still works in terms of provider/model selection, but for an existing session it must be scoped to models exposed by that session's runtime.
+
+### Runtime adapters own model resolution
+
+Not all runtimes will source models from the same registry. Reins should treat `model_provider` + `model_id` as the only cross-runtime model primitive, and let each runtime adapter resolve that pair into its own native model type.
+
+Proposed adapter contract:
+
+```typescript
+interface AgentRuntimeAdapter {
+  runtimeType: AgentRuntimeType;
+  listModels(params: { cwd: string }): Promise<ProviderInfo[]>;
+  resolveModel(params: { cwd: string; provider: string; modelId: string }): Promise<ResolvedRuntimeModel>;
+  createRuntime(params: {
+    sessionId: string;
+    projectId: number;
+    projectDir: string;
+    taskId: number | null;
+    model: { provider: string; modelId: string } | null;
+    thinkingLevel: ThinkingLevel;
+  }): Promise<AgentRuntime>;
+}
+```
+
+Shared model catalog contract for runtime adapters:
+
+```typescript
+interface ProviderInfo {
+  provider: string;
+  isAvailable: boolean;
+  availabilitySource: "db" | "env" | "oauth" | "local" | null;
+  availabilitySources: ("db" | "env" | "oauth" | "local")[];
+  models: ModelInfo[];
+}
+
+interface ModelInfo {
+  id: string;
+  name: string;
+  reasoning: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+}
+```
+
+Notes:
+- `ResolvedRuntimeModel` is intentionally runtime-specific/opaque (e.g. pi `Model<Api>`, SDK-native model handle, etc.).
+- Session orchestration persists only provider/id/runtime type; it does not persist runtime-native model objects.
+- `listModels()` is runtime-local, so model discovery can come from pi registry, Claude SDK APIs, or other sources without coupling.
+- `ProviderInfo`/`ModelInfo` for `listModels()` should be owned by `runtimes/registry.ts` (shared runtime contract), not by the pi runtime package.
+- Rename provider availability fields to runtime-agnostic naming: `hasKey` → `isAvailable`, `keySource` → `availabilitySource`, `keySources` → `availabilitySources`.
+
+### Runtime code organization
+
+Organize runtime implementations under `packages/backend/src/runtimes/`:
+
+- `runtimes/pi/` — pi runtime adapter + runtime implementation
+- `runtimes/claude_agent_sdk/` — Claude Code SDK runtime adapter + runtime implementation
+- `runtimes/registry.ts` — adapter registration + lookup by `agent_runtime_type`
+
+`registry.ts` should:
+- export `AgentRuntimeType`
+- export `AgentRuntimeAdapter`
+- maintain a single adapter map (runtime type → adapter)
+- expose helper APIs like `getRuntimeAdapter(type)` and `createAgentRuntime(...)`
 
 ### What each layer owns
 
-| Concern | Pi sessions | SDK sessions |
+| Concern | Pi runtime | Claude SDK runtime |
 |---|---|---|
 | Agent loop | Pi's `agentLoop` | SDK's `query()` |
 | Tool execution | Pi's `AgentTool.execute()` | SDK built-ins (Read/Write/Edit/Bash/Grep/Glob) + MCP for custom tools |
 | Session persistence | Reins SQLite (messages) | SDK JSONL files (`~/.claude/projects/`) |
-| Session metadata | Reins SQLite | Reins SQLite (project/task links, model config) |
+| Session metadata | Reins SQLite | Reins SQLite (project/task links, model config, runtime) |
 | Session resume | `hydrateSessionManager` + `replaceMessages` | SDK's `resume: sessionId` option |
 | System prompt | Pi's `buildReinsSystemPrompt()` | Same prompt, passed via SDK's `systemPrompt` option |
 | Events → frontend | `AgentSessionEvent` via `agentSession.subscribe()` | `SDKMessage` mapped to compatible broadcast format |
@@ -47,30 +128,36 @@ The frontend doesn't change — both providers appear in the model picker. Sessi
 
 ### Session interface
 
-`ManagedSession` becomes polymorphic. Both pi and SDK sessions implement a common interface:
+`ManagedSession` should be runtime-agnostic. Keep only lifecycle metadata and a runtime handle:
 
 ```typescript
+interface AgentRuntime {
+  prompt(text: string): Promise<void>;
+  steer(text: string): Promise<void>;
+  abort(): Promise<void>;
+  subscribe(listener: (event: SessionEvent) => void): () => void;
+  getMessages(): Promise<ReinsMessage[]>;
+  close(): Promise<void>;
+}
+
 interface ManagedSession {
   id: string;
   lastActivity: number;
-  kind: "pi" | "sdk";
-
-  // Pi sessions: AgentSession instance
-  // SDK sessions: SdkSession wrapper
-  session: AgentSession | SdkSession;
+  runtime: AgentRuntime;
 }
 ```
 
-The WebSocket handler (`ws.ts`) dispatches commands through a unified interface:
-- `prompt(text)` → pi: `agentSession.prompt()` / SDK: send message to `query()`
-- `steer(text)` → pi: `agentSession.steer()` / SDK: `query.interrupt()` + new message
-- `abort()` → pi: `agentSession.abort()` / SDK: `query.interrupt()` or `query.close()`
+Implementation classes:
+- `PiAgentRuntime`
+- `ClaudeSdkAgentRuntime`
+
+`ws.ts` calls `managed.runtime.prompt/steer/abort` without runtime-specific branching.
 
 ### Tool registration
 
 **Built-in tools** (Read, Write, Edit, Bash, Grep, Glob): SDK executes these natively via Claude Code's CLI. No pi involvement.
 
-**Custom tools** (create_task, delegate, search, execute): Registered via `createSdkMcpServer()` with handlers that call the actual tool executors. The model sees these as `mcp__custom-tools__<name>` (e.g., `mcp__custom-tools__create_task`). The system prompt references these prefixed names.
+**Custom tools** (create_task, delegate, search, execute): Registered via `createSdkMcpServer()` with handlers that call the actual tool executors. The model sees these as `mcp__custom-tools__<name>` (e.g., `mcp__custom-tools__create_task`) because MCP naming is SDK-defined. Reins should normalize tool names back to canonical Reins names at the message persistence/API boundary so stored/displayed tool calls remain runtime-agnostic (`create_task`, `delegate`, etc.).
 
 ```typescript
 const mcpTools = customTools.map(tool => ({
@@ -155,73 +242,91 @@ query({
 
 **Create:**
 1. Generate session UUID
-2. Create SQLite row with metadata (project, task, model, thinking level)
-3. Start SDK `query()` with `sessionId: uuid`
-4. Start streaming events → broadcast to WebSocket clients
+2. Create SQLite row with metadata (project, task, model, thinking level, runtime type)
+3. Build runtime via `createAgentRuntime({ agentRuntimeType, ...context })`
+4. Start runtime loop and stream events → broadcast to WebSocket clients
 5. On `result` or abort → update SQLite metadata
 
 **Resume:**
-1. Look up session in SQLite → get session UUID and project
-2. Start SDK `query()` with `resume: sessionId`
+1. Look up session in SQLite → get session UUID, project, and `agent_runtime_type`
+2. Build runtime via `createAgentRuntime(...)`
 3. Resume streaming events
-4. For message history display: `getSessionMessages(sessionId)` from SDK
+4. For message history display: `managed.runtime.getMessages()`
+
+**Idle eviction:**
+1. Session remains warm in memory for a short inactivity window (same pattern as pi)
+2. On eviction, call `managed.runtime.close()` to clean up runtime resources
+3. Remove session from in-memory registry
+4. Later prompts recreate runtime via normal resume flow
 
 **Display messages:**
-- SDK sessions: call `getSessionMessages(sessionId)` → transform to Reins' message format
-- Pi sessions: load from SQLite (existing path)
+- Claude SDK runtime: `getSessionMessages(sessionId)` → transform to Reins' message format
+- Pi runtime: load from SQLite (existing path)
 
 ## Implementation phases
 
-### Phase 1: SdkSession wrapper
+### Phase 1: Agent runtime interface + Claude SDK runtime
 
-Create `packages/backend/src/sdk/` with:
+Create `packages/backend/src/runtimes/claude_agent_sdk/` with:
 
-- `sdk-session.ts` — `SdkSession` class wrapping SDK `query()`:
-  - `prompt(text)` → send user message
-  - `abort()` → interrupt query
+- `adapter.ts` — `ClaudeSdkRuntimeAdapter` implementing `AgentRuntimeAdapter`
+- `runtime.ts` — `ClaudeSdkAgentRuntime` class wrapping a long-lived SDK `query()` handle:
+  - `prompt(text)` → send first user message, then use `streamInput()` for follow-ups while the runtime is warm
+  - `steer(text)` → best-effort interrupt and queue/inject follow-up input in-order
+  - `abort()` → interrupt active query
   - `subscribe(listener)` → event mapping from SDK to Reins format
+  - `getMessages()` → SDK session message fetch + transform
   - `close()` → cleanup
+- `tools.ts` — Wire Reins' custom tools into `createSdkMcpServer()` with real handlers
+- `events.ts` — Event mapping: `SDKMessage` → Reins broadcast event format
 
-- `sdk-tools.ts` — Wire Reins' custom tools into `createSdkMcpServer()` with real handlers
+In parallel, create `packages/backend/src/runtimes/registry.ts` with shared runtime types/interfaces and adapter registration.
 
-- `sdk-events.ts` — Event mapping: `SDKMessage` → Reins broadcast event format
+### Phase 2: Runtime adapter registry + session routing
 
-### Phase 2: Session routing
-
-- Update `ManagedSession` in `state.ts` to support both `kind: "pi"` and `kind: "sdk"`
+- Update `ManagedSession` in `state.ts` to use `runtime: AgentRuntime`
+- Introduce runtime adapter registry + runtime creation helper (`createAgentRuntime`) keyed by `agent_runtime_type`
+- Move shared model catalog types (`ProviderInfo`/`ModelInfo`) to `runtimes/registry.ts` and update `/api/models` to use runtime-adapter `listModels()` output
+- Add/extend session row field to persist `agent_runtime_type`
 - Update `sessions.ts`:
-  - `createNewSession()` branches based on provider
-  - `resumeSession()` branches based on session kind
-  - New `createSdkSession()` / `resumeSdkSession()` functions
+  - `createNewSession()` resolves model selection through the selected runtime adapter and persists model identity + runtime type
+  - `resumeSession()` loads runtime type from DB and creates the proper runtime instance
+  - Enforce runtime immutability for existing sessions (no runtime changes after create)
+  - Update `PUT /sessions/:id/model` validation so model updates are only allowed within the session's existing runtime; return `400` on cross-runtime attempts
 - Update `ws.ts`:
-  - Command dispatch works with either session type
-  - Unified interface for prompt/steer/abort
+  - Command dispatch only uses `managed.runtime.*`
+  - Remove direct branching on concrete session implementation types
 
-### Phase 3: Message display
+### Phase 3: Message display + compatibility
 
-- Add route or extend existing route to fetch SDK session messages via `getSessionMessages()`
-- Transform SDK `SessionMessage` format to Reins' frontend message format
-- Frontend may need minor updates to handle SDK-specific message shapes (tool_use/tool_result blocks vs pi's toolCall/toolResult)
+- Add route or extend existing route to fetch messages through runtime abstraction (`managed.runtime.getMessages()`)
+- Ensure runtime-layer normalization keeps frontend message/event shapes unchanged (including tool call/result blocks)
+- Add Claude SDK compaction UI notice when a compact boundary is observed (italic informational message)
+- Update frontend model catalog types/usages for `hasKey` → `isAvailable`, `keySource` → `availabilitySource`, and `keySources` → `availabilitySources`
+- Keep a single model picker UI, grouped/labeled by runtime section (e.g., "Claude Code", "Direct")
+- Scope session model picker options to the session's runtime so users cannot select cross-runtime models
 
 ### Phase 4: Polish
 
 - Thinking level mapping for SDK models
 - Error handling for SDK subprocess failures
-- Session cleanup (SDK session files)
-- Model switching mid-session (if supported)
+- Document current SDK session file behavior (`~/.claude/projects/`) and track follow-up migration to SDK pluggable storage adapter
+- Improve user-facing error messages for invalid model update attempts (including cross-runtime rejection)
 
-## Risks and open questions
+## Decisions and tracked considerations
 
-1. **SDK subprocess per session**: Each `query()` spawns a Claude Code CLI process. Resource usage with many concurrent sessions needs monitoring.
+1. **SDK process lifecycle** *(resolved approach)*: Keep one long-lived SDK query handle per active Reins session and send follow-up user messages via `streamInput()` instead of starting a new query per turn. Reins idle eviction should call `managed.runtime.close()` (delegating to SDK query `.close()`) before removing the in-memory session. Resource usage should still be monitored under high concurrency, but this avoids per-turn process churn.
 
-2. **Custom tool naming**: Tools appear as `mcp__custom-tools__<name>`. The system prompt must reference these prefixed names. This affects the model's tool selection behavior.
+2. **Custom tool naming** *(resolved approach)*: Keep MCP-prefixed tool names at execution time (`mcp__custom-tools__<name>`) as required by the SDK, and map them back to canonical Reins tool names (`create_task`, `delegate`, etc.) for session message storage and API responses.
 
-3. **Steering semantics**: Pi has sophisticated steering (interrupt mid-tool, queue follow-ups). SDK's `interrupt()` is simpler — need to verify it handles mid-execution interrupts cleanly.
+3. **Steering semantics** *(resolved approach)*: Reins' user-facing contract is "sending a message while streaming" (WS `steer`), which behaves like a queued follow-up input rather than a hard preemption guarantee. Claude SDK runtime should implement compatible behavior (best-effort interrupt + ordered follow-up delivery) without promising pi-specific mid-tool interruption semantics.
 
-4. **Compaction visibility**: SDK handles compaction internally. Reins won't know when/if compaction happens unless we monitor for `SDKCompactBoundaryMessage` events.
+4. **Compaction visibility** *(resolved approach)*: Monitor `SDKCompactBoundaryMessage` events to detect when Claude Code compaction occurs. We do not get pi-style compaction summary text from the SDK; in the UI, show an italic informational message (for example: "Claude Code compacted and we don’t have visibility into the summary.").
 
-5. **Session file cleanup**: SDK persists sessions to `~/.claude/projects/`. Need a strategy for cleaning up old session files when sessions are deleted in Reins.
+5. **Session file cleanup** *(resolved for now)*: Leave SDK-managed session files in `~/.claude/projects/` as-is for now. Reins will duplicate session/message data into SQLite for querying and UI needs. Track future migration to the SDK's planned pluggable storage adapter so Reins SQLite can become the primary backing store for SDK sessions.
 
-6. **`process.cwd()` assumption**: The SDK extension uses `process.cwd()` for project-local resource paths. Need to verify the `cwd` option properly overrides this for all code paths.
+6. **`process.cwd()` assumption** *(resolved approach)*: Reins disables Claude Code settings file loading (`settingSources: []`) to keep runtime behavior Reins-controlled and session-like. Given this, `cwd`-sensitive Claude settings discovery is not a blocker for this integration (and this is already how Reins runs today).
 
-7. **Frontend message format**: SDK stores messages as Anthropic API format (`tool_use`/`tool_result`). Pi stores them in its own format (`toolCall`/`toolResult`). The frontend may need to handle both, or we transform at the API boundary.
+7. **Frontend message format** *(resolved approach)*: Runtime implementations own message/event normalization into Reins' existing frontend format. Pi runtime can pass through near-native structures; Claude SDK runtime must transform `SDKMessage`/session message shapes (including `tool_use`/`tool_result`) into Reins-compatible `toolCall`/`toolResult`-style events and message payloads at the runtime boundary.
+
+8. **Model/runtime mapping UX** *(resolved approach)*: Keep a single model picker for now, grouped/labeled by runtime sections (e.g., "Claude Code" for `claude_agent_sdk`, "Direct" for `pi`). Do not add a separate runtime selector in this phase. For existing sessions, continue enforcing runtime immutability and only allow/show models from that session's runtime.
