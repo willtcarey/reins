@@ -32,7 +32,7 @@ describe("ProjectSessions.setModel", () => {
   });
 
   test("updates an open session live, persists metadata, and broadcasts a session update", async () => {
-    createSession("sess-1", project.id, { thinkingLevel: "medium" });
+    createSession("sess-1", project.id, {  agentRuntimeType: "pi",thinkingLevel: "medium" });
     const managed = await createMockManagedSession("sess-1");
     sessions.set("sess-1", managed);
 
@@ -62,7 +62,7 @@ describe("ProjectSessions.setModel", () => {
   });
 
   test("updates an inactive session in the DB and broadcasts a session update", async () => {
-    createSession("sess-2", project.id, { thinkingLevel: "low" });
+    createSession("sess-2", project.id, {  agentRuntimeType: "pi",thinkingLevel: "low" });
 
     const result = await model.setModel({
       sessionId: "sess-2",
@@ -84,7 +84,7 @@ describe("ProjectSessions.setModel", () => {
 
   test("throws when the session does not belong to the project", async () => {
     const otherProject = createProject("Other Project", "/tmp/other-project", "main");
-    createSession("sess-3", otherProject.id);
+    createSession("sess-3", otherProject.id, { agentRuntimeType: "pi" });
 
     await expect(
       model.setModel({
@@ -96,7 +96,7 @@ describe("ProjectSessions.setModel", () => {
   });
 
   test("throws for invalid thinking level", async () => {
-    createSession("sess-4", project.id);
+    createSession("sess-4", project.id, { agentRuntimeType: "pi" });
 
     await expect(
       model.setModel({
@@ -109,7 +109,7 @@ describe("ProjectSessions.setModel", () => {
   });
 
   test("accepts extension-registered providers", async () => {
-    createSession("sess-5", project.id, { thinkingLevel: "low" });
+    createSession("sess-5", project.id, {  agentRuntimeType: "pi",thinkingLevel: "low" });
 
     const result = await model.setModel({
       sessionId: "sess-5",

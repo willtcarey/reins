@@ -66,8 +66,8 @@ describe("task-store", () => {
 
     test("includes session_count and session_ids", () => {
       const t = createTask(projectId, "T1", null, "task/t1");
-      createSession("sess-1", projectId, { taskId: t.id });
-      createSession("sess-2", projectId, { taskId: t.id });
+      createSession("sess-1", projectId, {  agentRuntimeType: "pi",taskId: t.id });
+      createSession("sess-2", projectId, {  agentRuntimeType: "pi",taskId: t.id });
 
       const list = listTasks(projectId);
       expect(list).toHaveLength(1);
@@ -123,7 +123,7 @@ describe("task-store", () => {
 
     test("cascades to sessions and messages", () => {
       const t = createTask(projectId, "T", null, "task/t");
-      createSession("sess-1", projectId, { taskId: t.id });
+      createSession("sess-1", projectId, {  agentRuntimeType: "pi",taskId: t.id });
       persistMessages("sess-1", [
         { role: "user", content: [{ type: "text", text: "hello" }] },
       ]);
@@ -200,8 +200,8 @@ describe("task-store", () => {
   describe("getTaskSessionIds", () => {
     test("returns session IDs for a task", () => {
       const t = createTask(projectId, "T", null, "task/t");
-      createSession("sess-a", projectId, { taskId: t.id });
-      createSession("sess-b", projectId, { taskId: t.id });
+      createSession("sess-a", projectId, {  agentRuntimeType: "pi",taskId: t.id });
+      createSession("sess-b", projectId, {  agentRuntimeType: "pi",taskId: t.id });
 
       const ids = getTaskSessionIds(t.id);
       expect(ids).toHaveLength(2);

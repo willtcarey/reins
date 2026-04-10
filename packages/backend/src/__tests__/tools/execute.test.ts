@@ -156,7 +156,7 @@ describe("createExecuteTool", () => {
 
     test("tasks.current() returns the task for the current session", async () => {
       const task = createTask(project.id, "Current Task", "desc", "task/current", null);
-      storeCreateSession("task-sess", project.id, { taskId: task.id });
+      storeCreateSession("task-sess", project.id, { agentRuntimeType: "pi", taskId: task.id });
       const tool = makeTool("task-sess", task.id);
 
       const result = await tool.execute("c-tc", {
@@ -221,8 +221,8 @@ describe("createExecuteTool", () => {
 
   describe("sessions API", () => {
     test("sessions.list() returns scratch sessions", async () => {
-      storeCreateSession("sess-1", project.id);
-      storeCreateSession("sess-2", project.id);
+      storeCreateSession("sess-1", project.id, { agentRuntimeType: "pi" });
+      storeCreateSession("sess-2", project.id, { agentRuntimeType: "pi" });
 
       const tool = makeTool();
       const result = await tool.execute("c9", {
@@ -236,8 +236,8 @@ describe("createExecuteTool", () => {
 
     test("sessions.listForTask() returns task sessions", async () => {
       const task = createTask(project.id, "T", "d", "task/t", null);
-      storeCreateSession("tsess-1", project.id, { taskId: task.id });
-      storeCreateSession("tsess-2", project.id, { taskId: task.id });
+      storeCreateSession("tsess-1", project.id, { agentRuntimeType: "pi", taskId: task.id });
+      storeCreateSession("tsess-2", project.id, { agentRuntimeType: "pi", taskId: task.id });
 
       const tool = makeTool();
       const result = await tool.execute("c10", {
@@ -250,7 +250,7 @@ describe("createExecuteTool", () => {
     });
 
     test("sessions.current() returns the current session", async () => {
-      storeCreateSession("current-sess", project.id);
+      storeCreateSession("current-sess", project.id, { agentRuntimeType: "pi" });
       const tool = makeTool("current-sess");
 
       const result = await tool.execute("c-sc", {
@@ -262,7 +262,7 @@ describe("createExecuteTool", () => {
     });
 
     test("sessions.get() returns a session by ID", async () => {
-      storeCreateSession("sess-x", project.id);
+      storeCreateSession("sess-x", project.id, { agentRuntimeType: "pi" });
 
       const tool = makeTool();
       const result = await tool.execute("c11", {
@@ -274,7 +274,7 @@ describe("createExecuteTool", () => {
     });
 
     test("sessions.messages() returns persisted messages", async () => {
-      storeCreateSession("sess-m", project.id);
+      storeCreateSession("sess-m", project.id, { agentRuntimeType: "pi" });
       persistMessages("sess-m", [
         { role: "user", content: [{ type: "text", text: "Hello" }] },
         { role: "assistant", content: [{ type: "text", text: "Hi there" }] },

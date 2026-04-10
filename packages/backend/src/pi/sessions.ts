@@ -261,6 +261,7 @@ export async function createNewSession(
     modelProvider: model?.provider,
     modelId: model?.id,
     thinkingLevel: agentSession.thinkingLevel,
+    agentRuntimeType: "pi",
     taskId: opts?.taskId,
     parentSessionId: opts?.parentSessionId,
   });

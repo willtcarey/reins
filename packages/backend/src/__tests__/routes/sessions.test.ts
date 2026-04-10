@@ -26,7 +26,7 @@ describe("session routes (top-level)", () => {
   describe("GET /api/sessions/:sessionId", () => {
     test("returns session from memory with project_id", async () => {
       const sessionId = "lookup-memory";
-      createSession(sessionId, projectId, {});
+      createSession(sessionId, projectId, { agentRuntimeType: "pi",});
 
       state.sessions.set(sessionId, await createTestManagedSession(sessionId));
 
@@ -43,7 +43,7 @@ describe("session routes (top-level)", () => {
 
     test("returns metadata-only session from DB with project_id", async () => {
       const sessionId = "lookup-db";
-      createSession(sessionId, projectId, {});
+      createSession(sessionId, projectId, { agentRuntimeType: "pi",});
       persistMessages(sessionId, [
         { role: "user", content: "test" },
       ]);
@@ -73,7 +73,7 @@ describe("session routes (top-level)", () => {
   describe("GET /api/sessions/:sessionId/messages", () => {
     test("returns persisted messages for an existing session", async () => {
       const sessionId = "messages-existing";
-      createSession(sessionId, projectId, {});
+      createSession(sessionId, projectId, { agentRuntimeType: "pi",});
       persistMessages(sessionId, [
         { role: "user", content: "hello", timestamp: 1000 },
         {
@@ -101,7 +101,7 @@ describe("session routes (top-level)", () => {
 
     test("returns [] for an existing session with no messages", async () => {
       const sessionId = "messages-empty";
-      createSession(sessionId, projectId, {});
+      createSession(sessionId, projectId, { agentRuntimeType: "pi",});
 
       const res = await router.handle(
         makeRequest("GET", `/api/sessions/${sessionId}/messages`),

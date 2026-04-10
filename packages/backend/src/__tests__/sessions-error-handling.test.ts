@@ -103,7 +103,7 @@ describe("persistMessages — error filtering integration", () => {
   });
 
   test("does not persist empty error assistant messages", () => {
-    createSession("sess-err", projectId);
+    createSession("sess-err", projectId, { agentRuntimeType: "pi" });
 
     const messages = [
       { role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1000 },
@@ -124,7 +124,7 @@ describe("persistMessages — error filtering integration", () => {
   });
 
   test("preserves valid messages when error messages are filtered", () => {
-    createSession("sess-err2", projectId);
+    createSession("sess-err2", projectId, { agentRuntimeType: "pi" });
 
     const messages = [
       { role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1000 },

@@ -24,7 +24,7 @@ describe("createDelegateTool", () => {
     taskId = createTask(projectId, "Test Task", "Task description", "task/test-task").id;
     parentSessionId = "parent-session";
     dbCreateSession(parentSessionId, projectId, {
-      taskId,
+       agentRuntimeType: "pi",taskId,
       modelProvider: "anthropic",
       modelId: "claude-sonnet-4-20250514",
       thinkingLevel: "high",

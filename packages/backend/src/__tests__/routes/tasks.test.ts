@@ -156,7 +156,7 @@ describe("task routes", () => {
     test("returns 409 when task has active streaming sessions", async () => {
       const task = createTask(projectId, "Active", null, "task/active");
       const sessionId = "session-1";
-      createSession(sessionId, projectId, { taskId: task.id });
+      createSession(sessionId, projectId, {  agentRuntimeType: "pi",taskId: task.id });
 
       // Add a streaming session to state
       state.sessions.set(sessionId, await createTestManagedSession(sessionId, { isStreaming: true }));
@@ -176,7 +176,7 @@ describe("task routes", () => {
       await proc.exited;
 
       const task = createTask(projectId, "Cascade", null, "task/cascade");
-      createSession("s1", projectId, { taskId: task.id });
+      createSession("s1", projectId, {  agentRuntimeType: "pi",taskId: task.id });
 
       const res = await router.handle(
         makeRequest("DELETE", `/api/projects/${projectId}/tasks/${task.id}`),

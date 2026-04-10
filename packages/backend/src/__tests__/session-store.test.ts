@@ -41,7 +41,7 @@ describe("session-store", () => {
 
   describe("createSession", () => {
     test("returns full row with defaults", () => {
-      const s = createSession("sess-1", projectId);
+      const s = createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       expect(s.id).toBe("sess-1");
       expect(s.project_id).toBe(projectId);
       expect(s.name).toBeNull();
@@ -57,7 +57,7 @@ describe("session-store", () => {
 
     test("accepts optional fields", () => {
       // Create parent session first (FK constraint)
-      createSession("sess-parent", projectId);
+      createSession("sess-parent", projectId, { agentRuntimeType: "pi" });
       const s = createSession("sess-2", projectId, {
         modelProvider: "anthropic",
         modelId: "claude-3",
@@ -75,14 +75,14 @@ describe("session-store", () => {
 
     test("can be linked to a task", () => {
       const task = createTask(projectId, "T", null, "task/t");
-      const s = createSession("sess-t", projectId, { taskId: task.id });
+      const s = createSession("sess-t", projectId, {  agentRuntimeType: "pi",taskId: task.id });
       expect(s.task_id).toBe(task.id);
     });
   });
 
   describe("getSession", () => {
     test("returns the session by id", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       const fetched = getSession("sess-1");
       expect(fetched).not.toBeNull();
       expect(fetched!.id).toBe("sess-1");
@@ -95,9 +95,9 @@ describe("session-store", () => {
 
   describe("listSessions", () => {
     test("returns project-scoped sessions excluding task sessions", () => {
-      createSession("free-1", projectId);
+      createSession("free-1", projectId, { agentRuntimeType: "pi" });
       const task = createTask(projectId, "T", null, "task/t");
-      createSession("task-1", projectId, { taskId: task.id });
+      createSession("task-1", projectId, {  agentRuntimeType: "pi",taskId: task.id });
 
       const list = listSessions(projectId);
       expect(list).toHaveLength(1);
@@ -105,7 +105,7 @@ describe("session-store", () => {
     });
 
     test("includes message_count and first_message", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
         { role: "user", content: [{ type: "text", text: "Hello world" }] },
         { role: "assistant", content: [{ type: "text", text: "Hi" }] },
@@ -118,8 +118,8 @@ describe("session-store", () => {
     });
 
     test("ordered by updated_at DESC", () => {
-      createSession("older", projectId);
-      createSession("newer", projectId);
+      createSession("older", projectId, { agentRuntimeType: "pi" });
+      createSession("newer", projectId, { agentRuntimeType: "pi" });
 
       // Touch 'older' to make it more recent
       persistMessages("older", [
@@ -138,9 +138,9 @@ describe("session-store", () => {
   describe("listTaskSessions", () => {
     test("returns sessions scoped to a task", () => {
       const task = createTask(projectId, "T", null, "task/t");
-      createSession("task-sess-1", projectId, { taskId: task.id });
-      createSession("task-sess-2", projectId, { taskId: task.id });
-      createSession("free-sess", projectId);
+      createSession("task-sess-1", projectId, {  agentRuntimeType: "pi",taskId: task.id });
+      createSession("task-sess-2", projectId, {  agentRuntimeType: "pi",taskId: task.id });
+      createSession("free-sess", projectId, { agentRuntimeType: "pi" });
 
       const list = listTaskSessions(task.id);
       expect(list).toHaveLength(2);
@@ -152,7 +152,7 @@ describe("session-store", () => {
 
   describe("updateSessionMeta", () => {
     test("applies partial updates", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       updateSessionMeta("sess-1", { name: "My Session" });
       const s = getSession("sess-1")!;
       expect(s.name).toBe("My Session");
@@ -160,7 +160,7 @@ describe("session-store", () => {
     });
 
     test("can update model fields", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       updateSessionMeta("sess-1", {
         modelProvider: "openai",
         modelId: "gpt-4",
@@ -180,7 +180,7 @@ describe("session-store", () => {
 
   describe("persistMessages", () => {
     test("inserts messages with correct seq ordering", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       const msgs = [
         { role: "user", content: [{ type: "text", text: "Hello" }] },
         { role: "assistant", content: [{ type: "text", text: "Hi" }] },
@@ -194,7 +194,7 @@ describe("session-store", () => {
     });
 
     test("is idempotent — re-calling with same messages inserts nothing new", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       const msgs = [
         { role: "user", content: [{ type: "text", text: "Hello" }] },
       ];
@@ -206,7 +206,7 @@ describe("session-store", () => {
     });
 
     test("appends only new messages on subsequent calls", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       const batch1 = [
         { role: "user", content: [{ type: "text", text: "Hello" }] },
       ];
@@ -225,12 +225,12 @@ describe("session-store", () => {
 
   describe("loadMessages", () => {
     test("returns empty array for session with no messages", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       expect(loadMessages("sess-1")).toEqual([]);
     });
 
     test("returns messages ordered by seq", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
         { role: "user", content: "first" },
         { role: "assistant", content: "second" },
@@ -245,7 +245,7 @@ describe("session-store", () => {
     });
 
     test("includes compaction markers", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
         { role: "user", content: "before compaction" },
         { role: "assistant", content: "reply" },
@@ -265,7 +265,7 @@ describe("session-store", () => {
 
   describe("loadMessagesForLLM", () => {
     test("returns all messages when no compaction has occurred", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
         { role: "user", content: "hello" },
         { role: "assistant", content: "hi" },
@@ -276,7 +276,7 @@ describe("session-store", () => {
     });
 
     test("returns compactionSummary and post-compaction messages", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
         { role: "user", content: "old message" },
         { role: "assistant", content: "old reply" },
@@ -297,7 +297,7 @@ describe("session-store", () => {
     });
 
     test("excludes pre-compaction messages from LLM context", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
         { role: "user", content: "old" },
         { role: "assistant", content: "old reply" },
@@ -317,7 +317,7 @@ describe("session-store", () => {
 
   describe("compaction", () => {
     test("persistMessages detects compactionSummary and creates boundary", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
         { role: "user", content: "old" },
         { role: "assistant", content: "old reply" },
@@ -337,7 +337,7 @@ describe("session-store", () => {
     });
 
     test("preserves summary text from compactionSummary message", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
         { role: "user", content: "old" },
         { role: "assistant", content: "old reply" },
@@ -356,7 +356,7 @@ describe("session-store", () => {
     });
 
     test("prunes tool result content from pre-compaction messages", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
         { role: "user", content: "question" },
         { role: "toolResult", content: [{ type: "text", text: "big result data" }] },
@@ -375,7 +375,7 @@ describe("session-store", () => {
     });
 
     test("new messages persist correctly after compaction", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
         { role: "user", content: "msg 1" },
         { role: "assistant", content: "reply 1" },
@@ -409,7 +409,7 @@ describe("session-store", () => {
     });
 
     test("handles multiple compactions", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
         { role: "user", content: "batch 1" },
         { role: "assistant", content: "reply 1" },
@@ -450,7 +450,7 @@ describe("session-store", () => {
     });
 
     test("re-compaction does not duplicate messages", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
 
       // Initial messages
       persistMessages("sess-1", [
@@ -504,7 +504,7 @@ describe("session-store", () => {
     });
 
     test("re-compaction prunes tool results from all pre-compaction messages", () => {
-      createSession("sess-1", projectId);
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
 
       // Messages with tool results
       persistMessages("sess-1", [
@@ -546,12 +546,12 @@ describe("session-store", () => {
     test("returns sessions across multiple projects", () => {
       const project2 = createProject("Project Two", "/tmp/project-two");
 
-      createSession("sess-p1", projectId);
+      createSession("sess-p1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-p1", [
         { role: "user", content: [{ type: "text", text: "Hello from p1" }] },
       ]);
 
-      createSession("sess-p2", project2.id);
+      createSession("sess-p2", project2.id, { agentRuntimeType: "pi" });
       persistMessages("sess-p2", [
         { role: "user", content: [{ type: "text", text: "Hello from p2" }] },
       ]);
@@ -565,7 +565,7 @@ describe("session-store", () => {
 
     test("includes project name and task title", () => {
       const task = createTask(projectId, "Fix the bug", null, "task/fix-bug");
-      createSession("sess-task", projectId, { taskId: task.id });
+      createSession("sess-task", projectId, {  agentRuntimeType: "pi",taskId: task.id });
       persistMessages("sess-task", [
         { role: "user", content: [{ type: "text", text: "Working on bug" }] },
       ]);
@@ -578,8 +578,8 @@ describe("session-store", () => {
     });
 
     test("excludes sessions with no messages", () => {
-      createSession("sess-empty", projectId);
-      createSession("sess-with-msgs", projectId);
+      createSession("sess-empty", projectId, { agentRuntimeType: "pi" });
+      createSession("sess-with-msgs", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-with-msgs", [
         { role: "user", content: [{ type: "text", text: "Has content" }] },
       ]);
@@ -590,12 +590,12 @@ describe("session-store", () => {
     });
 
     test("excludes sub-sessions (parent_session_id not null)", () => {
-      createSession("sess-parent", projectId);
+      createSession("sess-parent", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-parent", [
         { role: "user", content: [{ type: "text", text: "Parent" }] },
       ]);
 
-      createSession("sess-child", projectId, { parentSessionId: "sess-parent" });
+      createSession("sess-child", projectId, {  agentRuntimeType: "pi",parentSessionId: "sess-parent" });
       persistMessages("sess-child", [
         { role: "user", content: [{ type: "text", text: "Child" }] },
       ]);
@@ -609,12 +609,12 @@ describe("session-store", () => {
       const task1 = createTask(projectId, "Task A", null, "task/a");
       const task2 = createTask(projectId, "Task B", null, "task/b");
 
-      createSession("sess-old", projectId, { taskId: task1.id });
+      createSession("sess-old", projectId, {  agentRuntimeType: "pi",taskId: task1.id });
       persistMessages("sess-old", [
         { role: "user", content: [{ type: "text", text: "Old" }] },
       ]);
 
-      createSession("sess-new", projectId, { taskId: task2.id });
+      createSession("sess-new", projectId, {  agentRuntimeType: "pi",taskId: task2.id });
       persistMessages("sess-new", [
         { role: "user", content: [{ type: "text", text: "New" }] },
       ]);
@@ -631,12 +631,12 @@ describe("session-store", () => {
     });
 
     test("only shows most recent assistant session per project", () => {
-      createSession("sess-older", projectId);
+      createSession("sess-older", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-older", [
         { role: "user", content: [{ type: "text", text: "Older chat" }] },
       ]);
 
-      createSession("sess-newer", projectId);
+      createSession("sess-newer", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-newer", [
         { role: "user", content: [{ type: "text", text: "Newer chat" }] },
       ]);
@@ -654,7 +654,7 @@ describe("session-store", () => {
     });
 
     test("returns firstMessage correctly", () => {
-      createSession("sess-msg", projectId);
+      createSession("sess-msg", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-msg", [
         { role: "user", content: [{ type: "text", text: "My first question" }] },
         { role: "assistant", content: [{ type: "text", text: "Response" }] },
@@ -667,7 +667,7 @@ describe("session-store", () => {
     });
 
     test("returns null taskTitle for non-task sessions", () => {
-      createSession("sess-free", projectId);
+      createSession("sess-free", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-free", [
         { role: "user", content: [{ type: "text", text: "Hello" }] },
       ]);

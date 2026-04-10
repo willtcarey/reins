@@ -24,7 +24,7 @@ describe("PUT /api/sessions/:sessionId/model", () => {
 
   test("updates the session model and thinking level", async () => {
     const sessionId = "session-model-route";
-    createSession(sessionId, projectId, { thinkingLevel: "medium" });
+    createSession(sessionId, projectId, {  agentRuntimeType: "pi",thinkingLevel: "medium" });
     state.sessions.set(sessionId, await createTestManagedSession(sessionId));
 
     const res = await router.handle(
@@ -62,7 +62,7 @@ describe("PUT /api/sessions/:sessionId/model", () => {
 
   test("returns 400 for an invalid body", async () => {
     const sessionId = "session-model-invalid";
-    createSession(sessionId, projectId, {});
+    createSession(sessionId, projectId, { agentRuntimeType: "pi",});
 
     const res = await router.handle(
       makeRequest("PUT", `/api/sessions/${sessionId}/model`, {

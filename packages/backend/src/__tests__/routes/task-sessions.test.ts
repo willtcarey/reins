@@ -26,7 +26,7 @@ describe("task session routes (top-level)", () => {
   describe("GET /api/tasks/:taskId/sessions", () => {
     test("returns sessions for a task", async () => {
       const task = createTask(projectId, "With Sessions", null, "task/with-sessions");
-      createSession("s1", projectId, { taskId: task.id });
+      createSession("s1", projectId, {  agentRuntimeType: "pi",taskId: task.id });
 
       const res = await router.handle(
         makeRequest("GET", `/api/tasks/${task.id}/sessions`),

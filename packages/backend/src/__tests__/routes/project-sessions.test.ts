@@ -33,7 +33,7 @@ describe("project session routes", () => {
     });
 
     test("returns scratch sessions (excludes task sessions)", async () => {
-      createSession("scratch-1", projectId, {});
+      createSession("scratch-1", projectId, { agentRuntimeType: "pi",});
 
       const res = await router.handle(
         makeRequest("GET", `/api/projects/${projectId}/sessions`),

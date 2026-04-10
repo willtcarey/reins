@@ -140,7 +140,7 @@ describe("resumeSession", () => {
     const project = createProject("Test Project", repo.dir, "main");
 
     createSession("resume-model-test", project.id, {
-      modelProvider: "anthropic",
+       agentRuntimeType: "pi",modelProvider: "anthropic",
       modelId: "claude-haiku-4-5",
       thinkingLevel: "minimal",
     });
@@ -163,7 +163,7 @@ describe("resumeSession", () => {
     const project = createProject("Test Project", repo.dir, "main");
 
     createSession("resume-invalid-default", project.id, {
-      thinkingLevel: "off",
+       agentRuntimeType: "pi",thinkingLevel: "off",
     });
 
     setSetting("default_model", {
@@ -182,7 +182,7 @@ describe("resumeSession", () => {
     const project = createProject("Test Project", repo.dir, "main");
 
     createSession("resume-invalid-persisted-model", project.id, {
-      modelProvider: "claude-agent-sdk",
+       agentRuntimeType: "pi",modelProvider: "claude-agent-sdk",
       modelId: "does-not-exist",
       thinkingLevel: "high",
     });
@@ -197,7 +197,7 @@ describe("resumeSession", () => {
     const project = createProject("Test Project", repo.dir, "main");
 
     createSession("resume-thinking-test", project.id, {
-      modelProvider: "anthropic",
+       agentRuntimeType: "pi",modelProvider: "anthropic",
       modelId: "claude-sonnet-4-20250514",
       thinkingLevel: "high",
     });

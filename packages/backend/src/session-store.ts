@@ -55,18 +55,16 @@ export interface SessionMessageRow {
   created_at: string;
 }
 
-const DEFAULT_AGENT_RUNTIME_TYPE = "pi";
-
 // ---- Session CRUD ----------------------------------------------------------
 
 export function createSession(
   id: string,
   projectId: number,
-  opts?: {
+  opts: {
     modelProvider?: string;
     modelId?: string;
     thinkingLevel?: string;
-    agentRuntimeType?: string;
+    agentRuntimeType: string;
     taskId?: number;
     parentSessionId?: string;
   },
@@ -81,12 +79,12 @@ export function createSession(
     .get(
       id,
       projectId,
-      opts?.modelProvider ?? null,
-      opts?.modelId ?? null,
-      opts?.thinkingLevel ?? "off",
-      opts?.agentRuntimeType ?? DEFAULT_AGENT_RUNTIME_TYPE,
-      opts?.taskId ?? null,
-      opts?.parentSessionId ?? null,
+      opts.modelProvider ?? null,
+      opts.modelId ?? null,
+      opts.thinkingLevel ?? "off",
+      opts.agentRuntimeType,
+      opts.taskId ?? null,
+      opts.parentSessionId ?? null,
     )!;
 }
 

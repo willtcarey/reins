@@ -51,7 +51,7 @@ describe("sessions.setModel", () => {
   test("updates DB row with new model", async () => {
     // Create session in DB
     createSession("sess-1", project.id, {
-      modelProvider: "anthropic",
+       agentRuntimeType: "pi",modelProvider: "anthropic",
       modelId: "claude-sonnet-4-20250514",
     });
 
@@ -76,7 +76,7 @@ describe("sessions.setModel", () => {
   });
 
   test("calls pi SDK setModel", async () => {
-    createSession("sess-2", project.id);
+    createSession("sess-2", project.id, { agentRuntimeType: "pi" });
     const managed = await createMockManagedSession("sess-2");
     sessions.set("sess-2", managed);
 
@@ -90,7 +90,7 @@ describe("sessions.setModel", () => {
   });
 
   test("sets thinking level when provided", async () => {
-    createSession("sess-3", project.id);
+    createSession("sess-3", project.id, { agentRuntimeType: "pi" });
     const managed = await createMockManagedSession("sess-3");
     sessions.set("sess-3", managed);
 
@@ -108,7 +108,7 @@ describe("sessions.setModel", () => {
   });
 
   test("thinkingLevel is optional — uses session's current level", async () => {
-    createSession("sess-4", project.id, { thinkingLevel: "medium" });
+    createSession("sess-4", project.id, {  agentRuntimeType: "pi",thinkingLevel: "medium" });
     const managed = await createMockManagedSession("sess-4");
     sessions.set("sess-4", managed);
 
@@ -127,7 +127,7 @@ describe("sessions.setModel", () => {
   });
 
   test("broadcasts session_updated event when a session model changes", async () => {
-    createSession("sess-5", project.id);
+    createSession("sess-5", project.id, { agentRuntimeType: "pi" });
     const managed = await createMockManagedSession("sess-5");
     sessions.set("sess-5", managed);
 
@@ -147,7 +147,7 @@ describe("sessions.setModel", () => {
   });
 
   test("updates DB and still broadcasts when session is not open in memory", async () => {
-    createSession("sess-5b", project.id, { thinkingLevel: "low" });
+    createSession("sess-5b", project.id, {  agentRuntimeType: "pi",thinkingLevel: "low" });
 
     const ctx = makeCtx();
     const result = await sessionsSetModelFunction.execute(
@@ -172,7 +172,7 @@ describe("sessions.setModel", () => {
   });
 
   test("throws for unknown provider", async () => {
-    createSession("sess-6", project.id);
+    createSession("sess-6", project.id, { agentRuntimeType: "pi" });
     const managed = await createMockManagedSession("sess-6");
     sessions.set("sess-6", managed);
 
@@ -186,7 +186,7 @@ describe("sessions.setModel", () => {
   });
 
   test("throws for invalid model ID", async () => {
-    createSession("sess-7", project.id);
+    createSession("sess-7", project.id, { agentRuntimeType: "pi" });
     const managed = await createMockManagedSession("sess-7");
     sessions.set("sess-7", managed);
 
@@ -202,7 +202,7 @@ describe("sessions.setModel", () => {
   test("throws when session not in this project", async () => {
     // Create session in a different project
     const otherProject = createProject("Other Project", "/tmp/other-project", "main");
-    createSession("sess-8", otherProject.id);
+    createSession("sess-8", otherProject.id, { agentRuntimeType: "pi" });
     const managed = await createMockManagedSession("sess-8");
     sessions.set("sess-8", managed);
 
@@ -216,7 +216,7 @@ describe("sessions.setModel", () => {
   });
 
   test("updates inactive sessions without calling the pi SDK", async () => {
-    createSession("sess-9", project.id, { thinkingLevel: "medium" });
+    createSession("sess-9", project.id, {  agentRuntimeType: "pi",thinkingLevel: "medium" });
     // Don't add to sessions map
 
     const ctx = makeCtx();
@@ -241,7 +241,7 @@ describe("sessions.setModel", () => {
   });
 
   test("throws for invalid thinking level", async () => {
-    createSession("sess-10", project.id);
+    createSession("sess-10", project.id, { agentRuntimeType: "pi" });
     const managed = await createMockManagedSession("sess-10");
     sessions.set("sess-10", managed);
 
