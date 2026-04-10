@@ -16,7 +16,7 @@ import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
 import { getProject } from "../project-store.js";
 import { createPiRuntimeForCwd } from "../pi/runtime.js";
-import { getPiSession } from "../runtimes/pi/runtime.js";
+import { isPiRuntime } from "../runtimes/pi/runtime.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -76,7 +76,11 @@ export class ProjectSessions {
     const liveThinkingLevel = params.thinkingLevel ? parseThinkingLevel(params.thinkingLevel) : null;
 
     if (managed) {
-      const session = getPiSession(managed.runtime);
+      if (!isPiRuntime(managed.runtime) || !managed.runtime.session) {
+        throw new Error("Live model updates are not supported for this runtime.");
+      }
+
+      const session = managed.runtime.session;
       await session.setModel(model);
       if (liveThinkingLevel) {
         session.setThinkingLevel(liveThinkingLevel);

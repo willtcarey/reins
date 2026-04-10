@@ -2,6 +2,8 @@ import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import type { AgentRuntime } from "../registry.js";
 
 export class PiAgentRuntime implements AgentRuntime {
+  readonly runtimeType = "pi" as const;
+
   constructor(public readonly session: AgentSession) {}
 
   async prompt(text: string): Promise<void> {
@@ -34,8 +36,14 @@ export class PiAgentRuntime implements AgentRuntime {
   }
 }
 
-export function isPiRuntime(runtime: AgentRuntime): runtime is PiAgentRuntime {
-  return runtime instanceof PiAgentRuntime;
+type PiRuntimeLike = AgentRuntime & {
+  runtimeType?: string;
+  session: AgentSession;
+};
+
+export function isPiRuntime(runtime: AgentRuntime): runtime is PiRuntimeLike {
+  const candidate: Partial<PiRuntimeLike> = runtime;
+  return !!candidate.session && (candidate.runtimeType === undefined || candidate.runtimeType === "pi");
 }
 
 export function getPiSession(runtime: AgentRuntime): AgentSession {

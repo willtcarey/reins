@@ -37,7 +37,6 @@ import {
 } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
-import { getPiSession } from "../runtimes/pi/runtime.js";
 
 // ---------------------------------------------------------------------------
 // Domain errors
@@ -222,7 +221,7 @@ export class ProjectTasks {
     for (const sid of sessionIds) {
       const managed = this.sessions.get(sid);
       if (!managed) continue;
-      if (getPiSession(managed.runtime).isStreaming) {
+      if (managed.runtime.isStreaming()) {
         activeSessions.push(sid);
       }
     }
