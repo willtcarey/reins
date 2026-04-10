@@ -277,42 +277,47 @@ We will not do a big-bang switch. The rollout is intentionally additive and shou
 
 ### Phase 1: Additive runtime metadata
 
-- Add `agent_runtime_type` to `sessions` with default `"pi"`.
-- Backfill existing rows to `"pi"`.
-- Update session store types to include runtime type, with `"pi"` fallback for old rows during rollout.
-- Keep all runtime execution behavior unchanged.
+Status: ✅ Complete
+
+- [x] Add `agent_runtime_type` to `sessions` with default `"pi"`.
+- [x] Backfill existing rows to `"pi"`.
+- [x] Update session store types to include runtime type.
+- [x] Keep all runtime execution behavior unchanged.
 
 Checkpoint:
-- Backend boots cleanly after migration.
-- Existing sessions can resume/prompt normally on the pi path.
+- [x] Backend boots cleanly after migration.
+- [x] Existing sessions can resume/prompt normally on the pi path.
 
 ### Phase 2: Runtime abstraction with pi compatibility first
 
-- Create `packages/backend/src/runtimes/registry.ts` with shared runtime types/interfaces:
-  - `AgentRuntimeType`
-  - `AgentRuntimeAdapter`
-  - `ProviderInfo`/`ModelInfo`
-  - runtime adapter registration + lookup helpers
-- Introduce a `PiRuntimeAdapter` and `PiAgentRuntime` wrapper around current session behavior.
-- Transition `ManagedSession` to runtime-based orchestration with a compatibility step that keeps restart risk low during call-site migration.
+Status: 🟡 In progress (core seam complete)
+
+- [x] Create `packages/backend/src/runtimes/registry.ts` with runtime adapter registration + lookup helpers.
+- [x] Introduce a `PiRuntimeAdapter` and `PiAgentRuntime` wrapper around current session behavior.
+- [x] Transition `ManagedSession` to runtime-based orchestration.
+- [x] Move active orchestration paths behind `managed.runtime.*` (prompt/steer/abort, idle eviction, health/task streaming checks).
+- [ ] Add shared runtime model catalog types (`ProviderInfo`/`ModelInfo`) to registry.
 
 Checkpoint:
-- All active code paths still execute through pi behavior, now behind `managed.runtime.*`.
-- No user-visible change in pi session behavior.
+- [x] All active code paths still execute through pi behavior, now behind `managed.runtime.*`.
+- [x] No user-visible change in pi session behavior.
 
 ### Phase 3: Session routing + model catalog through adapters (pi-only traffic)
 
+Status: 🟡 In progress (partial)
+
 - Update `sessions.ts`:
-  - `createNewSession()` resolves and persists model identity + runtime type via adapter
-  - `resumeSession()` routes by persisted `agent_runtime_type`
-  - enforce runtime immutability for existing sessions
-- Update `ws.ts` command dispatch to only call `managed.runtime.prompt/steer/abort`.
-- Update `/api/models` to use runtime-adapter `listModels()` output.
-- Update `PUT /sessions/:id/model` validation so updates are only allowed within the session runtime; return `400` on cross-runtime attempts.
+  - [x] `createNewSession()` persists model identity + runtime type (`agent_runtime_type="pi"`).
+  - [ ] `createNewSession()` resolves model/runtime through adapter contracts (not hardcoded pi path).
+  - [ ] `resumeSession()` routes by persisted `agent_runtime_type`.
+  - [ ] enforce runtime immutability for existing sessions.
+- [x] Update `ws.ts` command dispatch to only call `managed.runtime.prompt/steer/abort`.
+- [ ] Update `/api/models` to use runtime-adapter `listModels()` output.
+- [ ] Update `PUT /sessions/:id/model` validation so updates are only allowed within the session runtime; return `400` on cross-runtime attempts.
 
 Checkpoint:
-- Restart and smoke-test all session APIs/WS commands with pi sessions.
-- Confirm no cross-runtime selection is possible for existing sessions.
+- [x] Restart and smoke-test all session APIs/WS commands with pi sessions.
+- [ ] Confirm no cross-runtime selection is possible for existing sessions.
 
 ### Phase 4: Claude SDK runtime implementation (opt-in path)
 
