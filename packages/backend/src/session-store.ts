@@ -57,19 +57,6 @@ export interface SessionMessageRow {
 
 const DEFAULT_AGENT_RUNTIME_TYPE = "pi";
 
-type RawSessionRow = Omit<SessionRow, "agent_runtime_type"> & {
-  agent_runtime_type?: string | null;
-};
-
-function normalizeSessionRow(row: RawSessionRow): SessionRow {
-  return {
-    ...row,
-    agent_runtime_type: row.agent_runtime_type && row.agent_runtime_type.length > 0
-      ? row.agent_runtime_type
-      : DEFAULT_AGENT_RUNTIME_TYPE,
-  };
-}
-
 // ---- Session CRUD ----------------------------------------------------------
 
 export function createSession(
@@ -85,8 +72,8 @@ export function createSession(
   },
 ): SessionRow {
   const db = getDb();
-  const row = db
-    .query<RawSessionRow, [string, number, string | null, string | null, string, string, number | null, string | null]>(
+  return db
+    .query<SessionRow, [string, number, string | null, string | null, string, string, number | null, string | null]>(
       `INSERT INTO sessions (id, project_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
@@ -101,14 +88,11 @@ export function createSession(
       opts?.taskId ?? null,
       opts?.parentSessionId ?? null,
     )!;
-
-  return normalizeSessionRow(row);
 }
 
 export function getSession(id: string): SessionRow | null {
   const db = getDb();
-  const row = db.query<RawSessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(id);
-  return row ? normalizeSessionRow(row) : null;
+  return db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(id) ?? null;
 }
 
 export function listSessions(projectId: number): SessionListItem[] {
@@ -171,22 +155,20 @@ export function listTaskSessions(taskId: number): SessionListItem[] {
 
 export function listSessionRows(projectId: number): SessionRow[] {
   const db = getDb();
-  const rows = db
-    .query<RawSessionRow, [number]>(
+  return db
+    .query<SessionRow, [number]>(
       `SELECT * FROM sessions WHERE project_id = ? AND task_id IS NULL ORDER BY updated_at DESC`,
     )
     .all(projectId);
-  return rows.map(normalizeSessionRow);
 }
 
 export function listTaskSessionRows(taskId: number): SessionRow[] {
   const db = getDb();
-  const rows = db
-    .query<RawSessionRow, [number]>(
+  return db
+    .query<SessionRow, [number]>(
       `SELECT * FROM sessions WHERE task_id = ? ORDER BY updated_at DESC`,
     )
     .all(taskId);
-  return rows.map(normalizeSessionRow);
 }
 
 export function listPaletteItems(): PaletteItem[] {

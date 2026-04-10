@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { resetDb, setDb } from "../db.js";
+import { resetDb } from "../db.js";
 import { runMigrations } from "../migrations.js";
-import { getSession, listSessionRows } from "../session-store.js";
 
 const PRE_RUNTIME_MIGRATIONS = [
   "001_create_projects",
@@ -78,49 +77,3 @@ describe("session runtime metadata migration", () => {
   });
 });
 
-describe("session runtime metadata read fallback", () => {
-  test("returns pi when reading sessions from legacy schema without agent_runtime_type", () => {
-    const db = new Database(":memory:");
-    db.exec("PRAGMA foreign_keys = OFF");
-    db.exec(`
-      CREATE TABLE sessions (
-        id TEXT PRIMARY KEY,
-        project_id INTEGER NOT NULL,
-        name TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        model_provider TEXT,
-        model_id TEXT,
-        thinking_level TEXT DEFAULT 'off',
-        task_id INTEGER,
-        parent_session_id TEXT
-      );
-    `);
-
-    db.query(
-      `INSERT INTO sessions (id, project_id, name, created_at, updated_at, model_provider, model_id, thinking_level, task_id, parent_session_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      "legacy-session",
-      7,
-      null,
-      "2026-01-01T00:00:00.000Z",
-      "2026-01-01T00:00:00.000Z",
-      null,
-      null,
-      "off",
-      null,
-      null,
-    );
-
-    setDb(db);
-
-    const single = getSession("legacy-session");
-    expect(single).not.toBeNull();
-    expect(single?.agent_runtime_type).toBe("pi");
-
-    const listed = listSessionRows(7);
-    expect(listed).toHaveLength(1);
-    expect(listed[0].agent_runtime_type).toBe("pi");
-  });
-});
