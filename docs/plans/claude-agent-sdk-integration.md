@@ -265,7 +265,56 @@ query({
 
 ## Implementation phases
 
-### Phase 1: Agent runtime interface + Claude SDK runtime
+### Delivery strategy: non-breaking migration with restart-safe checkpoints
+
+We will not do a big-bang switch. The rollout is intentionally additive and should stay bootable after every phase:
+
+- Keep `pi` as the default runtime path while refactoring.
+- Keep schema changes additive (add columns/tables; avoid destructive renames/drops in this migration).
+- Migrate call sites incrementally so server restarts can be verified at each checkpoint.
+- Preserve runtime immutability per session so existing sessions cannot be accidentally rerouted.
+- Treat "server boots + pi sessions still work" as a hard gate before introducing Claude-runtime traffic.
+
+### Phase 1: Additive runtime metadata
+
+- Add `agent_runtime_type` to `sessions` with default `"pi"`.
+- Backfill existing rows to `"pi"`.
+- Update session store types to include runtime type, with `"pi"` fallback for old rows during rollout.
+- Keep all runtime execution behavior unchanged.
+
+Checkpoint:
+- Backend boots cleanly after migration.
+- Existing sessions can resume/prompt normally on the pi path.
+
+### Phase 2: Runtime abstraction with pi compatibility first
+
+- Create `packages/backend/src/runtimes/registry.ts` with shared runtime types/interfaces:
+  - `AgentRuntimeType`
+  - `AgentRuntimeAdapter`
+  - `ProviderInfo`/`ModelInfo`
+  - runtime adapter registration + lookup helpers
+- Introduce a `PiRuntimeAdapter` and `PiAgentRuntime` wrapper around current session behavior.
+- Transition `ManagedSession` to runtime-based orchestration with a compatibility step that keeps restart risk low during call-site migration.
+
+Checkpoint:
+- All active code paths still execute through pi behavior, now behind `managed.runtime.*`.
+- No user-visible change in pi session behavior.
+
+### Phase 3: Session routing + model catalog through adapters (pi-only traffic)
+
+- Update `sessions.ts`:
+  - `createNewSession()` resolves and persists model identity + runtime type via adapter
+  - `resumeSession()` routes by persisted `agent_runtime_type`
+  - enforce runtime immutability for existing sessions
+- Update `ws.ts` command dispatch to only call `managed.runtime.prompt/steer/abort`.
+- Update `/api/models` to use runtime-adapter `listModels()` output.
+- Update `PUT /sessions/:id/model` validation so updates are only allowed within the session runtime; return `400` on cross-runtime attempts.
+
+Checkpoint:
+- Restart and smoke-test all session APIs/WS commands with pi sessions.
+- Confirm no cross-runtime selection is possible for existing sessions.
+
+### Phase 4: Claude SDK runtime implementation (opt-in path)
 
 Create `packages/backend/src/runtimes/claude_agent_sdk/` with:
 
@@ -280,38 +329,24 @@ Create `packages/backend/src/runtimes/claude_agent_sdk/` with:
 - `tools.ts` — Wire Reins' custom tools into `createSdkMcpServer()` with real handlers
 - `events.ts` — Event mapping: `SDKMessage` → Reins broadcast event format
 
-In parallel, create `packages/backend/src/runtimes/registry.ts` with shared runtime types/interfaces and adapter registration.
+Also in this phase:
+- Add route support to fetch messages via `managed.runtime.getMessages()` where applicable.
+- Ensure runtime-layer normalization keeps frontend message/event shapes unchanged (including tool call/result blocks).
+- Add Claude SDK compaction UI notice when a compact boundary is observed (italic informational message).
 
-### Phase 2: Runtime adapter registry + session routing
+Checkpoint:
+- Pi sessions remain unaffected.
+- Claude runtime only engages for sessions explicitly created with `agent_runtime_type="claude_agent_sdk"`.
 
-- Update `ManagedSession` in `state.ts` to use `runtime: AgentRuntime`
-- Introduce runtime adapter registry + runtime creation helper (`createAgentRuntime`) keyed by `agent_runtime_type`
-- Move shared model catalog types (`ProviderInfo`/`ModelInfo`) to `runtimes/registry.ts` and update `/api/models` to use runtime-adapter `listModels()` output
-- Add/extend session row field to persist `agent_runtime_type`
-- Update `sessions.ts`:
-  - `createNewSession()` resolves model selection through the selected runtime adapter and persists model identity + runtime type
-  - `resumeSession()` loads runtime type from DB and creates the proper runtime instance
-  - Enforce runtime immutability for existing sessions (no runtime changes after create)
-  - Update `PUT /sessions/:id/model` validation so model updates are only allowed within the session's existing runtime; return `400` on cross-runtime attempts
-- Update `ws.ts`:
-  - Command dispatch only uses `managed.runtime.*`
-  - Remove direct branching on concrete session implementation types
+### Phase 5: Frontend/runtime UX + polish
 
-### Phase 3: Message display + compatibility
-
-- Add route or extend existing route to fetch messages through runtime abstraction (`managed.runtime.getMessages()`)
-- Ensure runtime-layer normalization keeps frontend message/event shapes unchanged (including tool call/result blocks)
-- Add Claude SDK compaction UI notice when a compact boundary is observed (italic informational message)
-- Update frontend model catalog types/usages for `hasKey` → `isAvailable`, `keySource` → `availabilitySource`, and `keySources` → `availabilitySources`
-- Keep a single model picker UI, grouped/labeled by runtime section (e.g., "Claude Code", "Direct")
-- Scope session model picker options to the session's runtime so users cannot select cross-runtime models
-
-### Phase 4: Polish
-
-- Thinking level mapping for SDK models
-- Error handling for SDK subprocess failures
-- Document current SDK session file behavior (`~/.claude/projects/`) and track follow-up migration to SDK pluggable storage adapter
-- Improve user-facing error messages for invalid model update attempts (including cross-runtime rejection)
+- Update frontend model catalog types/usages for `hasKey` → `isAvailable`, `keySource` → `availabilitySource`, and `keySources` → `availabilitySources`.
+- Keep a single model picker UI, grouped/labeled by runtime section (e.g., "Claude Code", "Direct").
+- Scope session model picker options to the session's runtime so users cannot select cross-runtime models.
+- Thinking level mapping for SDK models.
+- Error handling for SDK subprocess failures.
+- Document current SDK session file behavior (`~/.claude/projects/`) and track follow-up migration to SDK pluggable storage adapter.
+- Improve user-facing error messages for invalid model update attempts (including cross-runtime rejection).
 
 ## Decisions and tracked considerations
 
