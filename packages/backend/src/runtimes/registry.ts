@@ -6,6 +6,7 @@ export interface AgentRuntime {
   abort(): Promise<void>;
   subscribe(listener: (event: any) => void): () => void;
   getMessages(): Promise<any[]>;
+  isStreaming(): boolean;
   close(): Promise<void>;
 }
 

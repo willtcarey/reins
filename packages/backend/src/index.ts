@@ -13,7 +13,6 @@ import { watch } from "fs";
 import { resolve, join } from "path";
 import { mkdirSync, existsSync } from "fs";
 import type { ServerState, ManagedSession, WsClient } from "./state.js";
-import { getPiSession } from "./runtimes/pi/runtime.js";
 
 // We import the handler types but load via dynamic import so we can reload
 import type * as RoutesModule from "./handler.js";
@@ -43,8 +42,7 @@ const state: ServerState = {
 setInterval(() => {
   const now = Date.now();
   for (const [id, managed] of state.sessions) {
-    const session = getPiSession(managed.runtime);
-    if (session.isStreaming) continue;
+    if (managed.runtime.isStreaming()) continue;
     if (now - managed.lastActivity > IDLE_TIMEOUT_MS) {
       managed.runtime.close().catch((err) => {
         console.warn(`  Failed to close runtime for ${id}:`, err);

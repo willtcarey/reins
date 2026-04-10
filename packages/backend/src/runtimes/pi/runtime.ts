@@ -25,6 +25,10 @@ export class PiAgentRuntime implements AgentRuntime {
     return this.session.messages;
   }
 
+  isStreaming(): boolean {
+    return this.session.isStreaming;
+  }
+
   async close(): Promise<void> {
     this.session.dispose();
   }

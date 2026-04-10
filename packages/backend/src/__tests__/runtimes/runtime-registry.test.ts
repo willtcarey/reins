@@ -18,6 +18,7 @@ describe("runtime registry", () => {
       abort: async () => {},
       subscribe: () => () => {},
       getMessages: async () => [],
+      isStreaming: () => false,
       close: async () => {},
     };
 
@@ -42,6 +43,7 @@ describe("runtime registry", () => {
       abort: async () => {},
       subscribe: () => () => {},
       getMessages: async () => [],
+      isStreaming: () => false,
       close: async () => {},
     };
 
