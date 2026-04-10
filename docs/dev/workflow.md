@@ -23,6 +23,7 @@ When changing existing behavior, update the test first to reflect the new contra
 - Tests describe **contracts** (inputs → outputs), not implementation details.
 - Use **real dependencies** where cheap — SQLite in-memory is instant, temp git repos are fast.
 - Only **mock expensive externals** (LLM calls, pi SDK sessions).
+- Do **not** add defensive compatibility layers (fallback reads, dual-schema handling, etc.) unless explicitly requested by the user.
 
 ## Before You Finish
 
