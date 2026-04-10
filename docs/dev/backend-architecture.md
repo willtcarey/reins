@@ -49,17 +49,26 @@ Thin SQLite access. CRUD operations and queries. No git, no broadcasts, no busin
 
 Stateless helpers that don't depend on other layers.
 
+### Runtime adapters (`src/runtimes/`)
+
+Agent execution is routed through a runtime abstraction:
+
+- `runtimes/registry.ts` — runtime contracts (`AgentRuntime`, `AgentRuntimeAdapter`) and adapter registration/lookup
+- `runtimes/pi/` — pi runtime adapter + runtime wrapper (`PiRuntimeAdapter`, `PiAgentRuntime`)
+
+`ManagedSession` holds a runtime handle (`managed.runtime`) instead of a raw pi session.
+Current behavior is still pi-only; this seam exists to add additional runtimes without rewriting WS/session orchestration.
+
 ### Pi integration (`src/pi/`)
 
-Adapters that bind Reins runtime behavior to the pi SDK live under `src/pi/`.
+Pi-specific setup and orchestration still lives under `src/pi/`.
 Keep SDK-specific session lifecycle, auth bridges, and model/provider discovery there.
-Server-only orchestration that merely reacts to app state changes should stay at the backend root.
 
 Key entry points:
 
-- `pi/runtime.ts` — centralized, cwd-scoped pi runtime builder (`resourceLoader` + `modelRegistry` + extension provider registrations).
-- `pi/sessions.ts` — live session create/resume lifecycle and event wiring.
-- `pi/models-registry.ts` — provider listing/auth-source metadata built on top of the runtime builder.
+- `pi/runtime.ts` — centralized, cwd-scoped pi runtime builder (`resourceLoader` + `modelRegistry` + extension provider registrations)
+- `pi/sessions.ts` — pi session create/resume lifecycle + persistence/event wiring, now storing `PiAgentRuntime` in `ManagedSession`
+- `pi/models-registry.ts` — provider listing/auth-source metadata built on top of the runtime builder
 
 ## Dependency rules
 

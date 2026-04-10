@@ -16,6 +16,7 @@ import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
 import { getProject } from "../project-store.js";
 import { createPiRuntimeForCwd } from "../pi/runtime.js";
+import { getPiSession } from "../runtimes/pi/runtime.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -75,9 +76,10 @@ export class ProjectSessions {
     const liveThinkingLevel = params.thinkingLevel ? parseThinkingLevel(params.thinkingLevel) : null;
 
     if (managed) {
-      await managed.session.setModel(model);
+      const session = getPiSession(managed.runtime);
+      await session.setModel(model);
       if (liveThinkingLevel) {
-        managed.session.setThinkingLevel(liveThinkingLevel);
+        session.setThinkingLevel(liveThinkingLevel);
       }
     }
 

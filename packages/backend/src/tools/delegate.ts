@@ -199,20 +199,20 @@ export function createDelegateTool(
             thinkingLevel: params.thinkingLevel ?? inheritedThinkingLevel,
           });
 
-          const subSession = managed.session;
+          const subRuntime = managed.runtime;
           const subSessionId = managed.id;
 
           // Wire up abort propagation
           const onAbort = () => {
-            subSession.abort().catch(() => {});
+            subRuntime.abort().catch(() => {});
           };
           signal?.addEventListener("abort", onAbort, { once: true });
 
           try {
-            await subSession.prompt(fullPrompt);
+            await subRuntime.prompt(fullPrompt);
 
             // Extract the final assistant message
-            const messages = subSession.messages;
+            const messages = await subRuntime.getMessages();
             let summary = "(No response from sub-session)";
             for (let i = messages.length - 1; i >= 0; i--) {
               const msg = messages[i];
@@ -239,9 +239,9 @@ export function createDelegateTool(
             };
           } finally {
             signal?.removeEventListener("abort", onAbort);
-            // Always clean up: dispose pi session and remove from in-memory state
+            // Always clean up: close runtime and remove from in-memory state
             // (already persisted to SQLite via turn_end/agent_end events)
-            subSession.dispose();
+            await subRuntime.close();
             deleteSession(subSessionId);
           }
         } finally {

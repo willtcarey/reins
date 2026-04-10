@@ -6,11 +6,13 @@ import { createSession, getSession } from "../../session-store.js";
 import { ProjectSessions } from "../../models/sessions.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
+import { getPiSession } from "../../runtimes/pi/runtime.js";
 
 async function createMockManagedSession(sessionId: string): Promise<ManagedSession> {
   const managed = await createTestManagedSession(sessionId);
-  managed.session.setModel = mock<typeof managed.session.setModel>(async () => {});
-  managed.session.setThinkingLevel = mock<typeof managed.session.setThinkingLevel>(() => {});
+  const session = getPiSession(managed.runtime);
+  session.setModel = mock<typeof session.setModel>(async () => {});
+  session.setThinkingLevel = mock<typeof session.setThinkingLevel>(() => {});
   return managed;
 }
 
@@ -43,8 +45,9 @@ describe("ProjectSessions.setModel", () => {
       thinkingLevel: "high",
     });
 
-    expect(managed.session.setModel).toHaveBeenCalledTimes(1);
-    expect(managed.session.setThinkingLevel).toHaveBeenCalledWith("high");
+    const session = getPiSession(managed.runtime);
+    expect(session.setModel).toHaveBeenCalledTimes(1);
+    expect(session.setThinkingLevel).toHaveBeenCalledWith("high");
 
     const updated = getSession("sess-1");
     expect(updated!.model_provider).toBe("anthropic");

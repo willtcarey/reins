@@ -6,6 +6,7 @@ import { createDelegateTool, type CreateSessionOpts } from "../../tools/delegate
 import { createStrictExtensionContext, createTestManagedSession } from "../helpers/test-pi.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
+import { getPiSession } from "../../runtimes/pi/runtime.js";
 
 const strictCtx = createStrictExtensionContext();
 
@@ -24,7 +25,8 @@ describe("createDelegateTool", () => {
     taskId = createTask(projectId, "Test Task", "Task description", "task/test-task").id;
     parentSessionId = "parent-session";
     dbCreateSession(parentSessionId, projectId, {
-       agentRuntimeType: "pi",taskId,
+      agentRuntimeType: "pi",
+      taskId,
       modelProvider: "anthropic",
       modelId: "claude-sonnet-4-20250514",
       thinkingLevel: "high",
@@ -46,10 +48,11 @@ describe("createDelegateTool", () => {
   test("inherits the parent session model and thinking level when no override is provided", async () => {
     const captured: CreateSessionOpts[] = [];
     const managed = await createTestManagedSession("child-session");
-    managed.session.prompt = async () => {};
-    managed.session.dispose = () => {};
-    managed.session.abort = async () => {};
-    Object.defineProperty(managed.session, "messages", {
+    const session = getPiSession(managed.runtime);
+    session.prompt = async () => {};
+    session.dispose = () => {};
+    session.abort = async () => {};
+    Object.defineProperty(session, "messages", {
       value: [{ role: "assistant", content: [{ type: "text", text: "done" }] }],
       configurable: true,
     });
@@ -84,10 +87,11 @@ describe("createDelegateTool", () => {
   test("passes model and thinking overrides when creating the sub-session", async () => {
     const captured: CreateSessionOpts[] = [];
     const managed = await createTestManagedSession("child-session");
-    managed.session.prompt = async () => {};
-    managed.session.dispose = () => {};
-    managed.session.abort = async () => {};
-    Object.defineProperty(managed.session, "messages", {
+    const session = getPiSession(managed.runtime);
+    session.prompt = async () => {};
+    session.dispose = () => {};
+    session.abort = async () => {};
+    Object.defineProperty(session, "messages", {
       value: [{ role: "assistant", content: [{ type: "text", text: "done" }] }],
       configurable: true,
     });

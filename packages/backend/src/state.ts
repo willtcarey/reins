@@ -11,10 +11,10 @@
  *           receive `prompt`, `steer`, `abort` (each with explicit sessionId).
  */
 
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import type { AgentRuntime } from "./runtimes/registry.js";
 
 export interface ManagedSession {
-  session: AgentSession;
+  runtime: AgentRuntime;
   id: string;
   lastActivity: number;
 }

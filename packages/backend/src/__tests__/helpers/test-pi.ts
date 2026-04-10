@@ -16,6 +16,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { getModel } from "@mariozechner/pi-ai";
 import type { ManagedSession } from "../../state.js";
+import { PiAgentRuntime } from "../../runtimes/pi/runtime.js";
 
 const defaultModel = getModel("anthropic", "claude-sonnet-4-20250514");
 
@@ -63,7 +64,11 @@ export async function createTestManagedSession(
     });
   }
 
-  return { session, id, lastActivity: Date.now() };
+  return {
+    runtime: new PiAgentRuntime(session),
+    id,
+    lastActivity: Date.now(),
+  };
 }
 
 /**

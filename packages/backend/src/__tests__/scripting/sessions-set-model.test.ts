@@ -12,11 +12,13 @@ import { SESSION_FUNCTIONS, sessionsSetModelFunction } from "../../scripting/ses
 import type { ApiContext } from "../../scripting/api-registry.js";
 import type { ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
+import { getPiSession } from "../../runtimes/pi/runtime.js";
 
 async function createMockManagedSession(sessionId: string): Promise<ManagedSession> {
   const managed = await createTestManagedSession(sessionId);
-  managed.session.setModel = mock<typeof managed.session.setModel>(async () => {});
-  managed.session.setThinkingLevel = mock<typeof managed.session.setThinkingLevel>(() => {});
+  const session = getPiSession(managed.runtime);
+  session.setModel = mock<typeof session.setModel>(async () => {});
+  session.setThinkingLevel = mock<typeof session.setThinkingLevel>(() => {});
   return managed;
 }
 
@@ -86,7 +88,7 @@ describe("sessions.setModel", () => {
       ctx,
     );
 
-    expect(managed.session.setModel).toHaveBeenCalledTimes(1);
+    expect(getPiSession(managed.runtime).setModel).toHaveBeenCalledTimes(1);
   });
 
   test("sets thinking level when provided", async () => {
@@ -100,8 +102,8 @@ describe("sessions.setModel", () => {
       ctx,
     );
 
-    expect(managed.session.setThinkingLevel).toHaveBeenCalledTimes(1);
-    expect(managed.session.setThinkingLevel).toHaveBeenCalledWith("high");
+    expect(getPiSession(managed.runtime).setThinkingLevel).toHaveBeenCalledTimes(1);
+    expect(getPiSession(managed.runtime).setThinkingLevel).toHaveBeenCalledWith("high");
 
     const updated = getSession("sess-3");
     expect(updated!.thinking_level).toBe("high");
@@ -119,7 +121,7 @@ describe("sessions.setModel", () => {
     );
 
     // setThinkingLevel should NOT be called since no level was provided
-    expect(managed.session.setThinkingLevel).not.toHaveBeenCalled();
+    expect(getPiSession(managed.runtime).setThinkingLevel).not.toHaveBeenCalled();
 
     // DB should keep the session's current thinking level
     const updated = getSession("sess-4");

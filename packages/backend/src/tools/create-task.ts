@@ -73,7 +73,7 @@ export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition<typeof 
         if (params.prompt && createSession) {
           createSession(projectId, projectModel.projectDir, { taskId: task.id })
             .then((managed) => {
-              managed.session.prompt(params.prompt!).catch((err: any) => {
+              managed.runtime.prompt(params.prompt!).catch((err: any) => {
                 console.error(`  Failed to prompt task session ${managed.id}:`, err);
               });
             })

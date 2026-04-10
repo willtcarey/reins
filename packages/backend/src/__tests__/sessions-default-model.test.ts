@@ -7,6 +7,7 @@ import { createSession, getSession } from "../session-store.js";
 import { setSetting, deleteSetting } from "../settings-store.js";
 import { createNewSession, resumeSession } from "../pi/sessions.js";
 import { resolveConfiguredModel } from "../pi/session-models.js";
+import { getPiSession } from "../runtimes/pi/runtime.js";
 
 describe("resolveConfiguredModel", () => {
   useTestDb();
@@ -72,19 +73,20 @@ describe("createNewSession", () => {
     const project = createProject("Test Project", repo.dir, "main");
 
     const baseline = await createNewSession(state, project.id, repo.dir);
-    expect(baseline.session.model).not.toBeNull();
+    const baselineSession = getPiSession(baseline.runtime);
+    expect(baselineSession.model).not.toBeNull();
 
-    const configuredThinkingLevel = baseline.session.thinkingLevel === "medium" ? "high" : "medium";
+    const configuredThinkingLevel = baselineSession.thinkingLevel === "medium" ? "high" : "medium";
 
     setSetting("default_model", {
-      provider: baseline.session.model!.provider,
-      modelId: baseline.session.model!.id,
+      provider: baselineSession.model!.provider,
+      modelId: baselineSession.model!.id,
       thinkingLevel: configuredThinkingLevel,
     });
 
     const managed = await createNewSession(state, project.id, repo.dir);
 
-    expect(managed.session.thinkingLevel).toBe(configuredThinkingLevel);
+    expect(getPiSession(managed.runtime).thinkingLevel).toBe(configuredThinkingLevel);
     expect(getSession(managed.id)?.thinking_level).toBe(configuredThinkingLevel);
   });
 
@@ -113,9 +115,9 @@ describe("createNewSession", () => {
       thinkingLevel: "minimal",
     });
 
-    expect(managed.session.model?.provider).toBe("anthropic");
-    expect(managed.session.model?.id).toBe("claude-haiku-4-5");
-    expect(managed.session.thinkingLevel).toBe("minimal");
+    expect(getPiSession(managed.runtime).model?.provider).toBe("anthropic");
+    expect(getPiSession(managed.runtime).model?.id).toBe("claude-haiku-4-5");
+    expect(getPiSession(managed.runtime).thinkingLevel).toBe("minimal");
     expect(getSession(managed.id)?.model_provider).toBe("anthropic");
     expect(getSession(managed.id)?.model_id).toBe("claude-haiku-4-5");
     expect(getSession(managed.id)?.thinking_level).toBe("minimal");
@@ -153,9 +155,9 @@ describe("resumeSession", () => {
 
     const managed = await resumeSession(state, "resume-model-test", repo.dir);
 
-    expect(managed.session.model?.provider).toBe("anthropic");
-    expect(managed.session.model?.id).toBe("claude-haiku-4-5");
-    expect(managed.session.thinkingLevel).toBe("minimal");
+    expect(getPiSession(managed.runtime).model?.provider).toBe("anthropic");
+    expect(getPiSession(managed.runtime).model?.id).toBe("claude-haiku-4-5");
+    expect(getPiSession(managed.runtime).thinkingLevel).toBe("minimal");
   });
 
   test("throws when a resumed session needs an invalid configured default model", async () => {
@@ -210,8 +212,8 @@ describe("resumeSession", () => {
 
     const managed = await resumeSession(state, "resume-thinking-test", repo.dir);
 
-    expect(managed.session.model?.provider).toBe("anthropic");
-    expect(managed.session.model?.id).toBe("claude-sonnet-4-20250514");
-    expect(managed.session.thinkingLevel).toBe("high");
+    expect(getPiSession(managed.runtime).model?.provider).toBe("anthropic");
+    expect(getPiSession(managed.runtime).model?.id).toBe("claude-sonnet-4-20250514");
+    expect(getPiSession(managed.runtime).thinkingLevel).toBe("high");
   });
 });

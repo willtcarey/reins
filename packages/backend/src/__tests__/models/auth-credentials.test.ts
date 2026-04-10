@@ -2,6 +2,7 @@ import { describe, test, expect, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 import type { ManagedSession } from "../../state.js";
+import { getPiSession } from "../../runtimes/pi/runtime.js";
 import {
   deleteApiKey,
   deleteOAuthCredential,
@@ -17,7 +18,8 @@ import {
 
 async function createMockManagedSession(sessionId: string): Promise<ManagedSession> {
   const managed = await createTestManagedSession(sessionId);
-  managed.session.modelRegistry.authStorage.reload = mock<typeof managed.session.modelRegistry.authStorage.reload>(() => {});
+  const session = getPiSession(managed.runtime);
+  session.modelRegistry.authStorage.reload = mock<typeof session.modelRegistry.authStorage.reload>(() => {});
   return managed;
 }
 
@@ -51,8 +53,8 @@ describe("auth credentials model", () => {
       value: "sk-updated",
       updatedAt: expect.any(String),
     });
-    expect(first.session.modelRegistry.authStorage.reload).toHaveBeenCalledTimes(1);
-    expect(second.session.modelRegistry.authStorage.reload).toHaveBeenCalledTimes(1);
+    expect(getPiSession(first.runtime).modelRegistry.authStorage.reload).toHaveBeenCalledTimes(1);
+    expect(getPiSession(second.runtime).modelRegistry.authStorage.reload).toHaveBeenCalledTimes(1);
   });
 
   test("deleteApiKey removes only the API key, preserves OAuth, and reloads sessions", async () => {
@@ -79,7 +81,7 @@ describe("auth credentials model", () => {
       },
       updatedAt: expect.any(String),
     });
-    expect(managed.session.modelRegistry.authStorage.reload).toHaveBeenCalledTimes(1);
+    expect(getPiSession(managed.runtime).modelRegistry.authStorage.reload).toHaveBeenCalledTimes(1);
   });
 
   test("OAuth mutations store/remove credentials and reload session auth", async () => {
@@ -106,6 +108,6 @@ describe("auth credentials model", () => {
     deleteOAuthCredential("test-oauth", sessions);
 
     expect(getAuthCredential("test-oauth", "oauth")).toBeNull();
-    expect(managed.session.modelRegistry.authStorage.reload).toHaveBeenCalledTimes(2);
+    expect(getPiSession(managed.runtime).modelRegistry.authStorage.reload).toHaveBeenCalledTimes(2);
   });
 });

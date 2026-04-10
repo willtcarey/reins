@@ -13,6 +13,7 @@ import {
   createDbBackedAuthStorage,
 } from "../pi/auth-storage.js";
 import { installRuntimeHooks } from "../runtime-hooks.js";
+import { getPiSession } from "../runtimes/pi/runtime.js";
 import { clearPendingLogins } from "../routes/oauth.js";
 import {
   getAuthCredential,
@@ -166,7 +167,7 @@ describe("auth storage wiring", () => {
       const first = await createNewSession(state, projectId, repo.dir);
       const second = await createNewSession(state, projectId, repo.dir);
 
-      expect(first.session.modelRegistry.authStorage).not.toBe(second.session.modelRegistry.authStorage);
+      expect(getPiSession(first.runtime).modelRegistry.authStorage).not.toBe(getPiSession(second.runtime).modelRegistry.authStorage);
     });
 
     test("PUT/DELETE api key routes propagate to existing sessions", async () => {
@@ -177,14 +178,14 @@ describe("auth storage wiring", () => {
         state,
       );
       expect(putRes!.status).toBe(200);
-      await expect(managed.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-updated");
+      await expect(getPiSession(managed.runtime).modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-updated");
 
       const delRes = await router.handle(
         makeRequest("DELETE", "/api/auth/api-keys/anthropic"),
         state,
       );
       expect(delRes!.status).toBe(204);
-      await expect(managed.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBeUndefined();
+      await expect(getPiSession(managed.runtime).modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBeUndefined();
     });
 
     test("OAuth callback/delete updates propagate to existing sessions", async () => {
@@ -201,14 +202,14 @@ describe("auth storage wiring", () => {
         state,
       );
       expect(callbackRes!.status).toBe(200);
-      await expect(managed.session.modelRegistry.authStorage.getApiKey(TEST_PROVIDER_ID)).resolves.toBe("access:session-code");
+      await expect(getPiSession(managed.runtime).modelRegistry.authStorage.getApiKey(TEST_PROVIDER_ID)).resolves.toBe("access:session-code");
 
       const deleteRes = await router.handle(
         makeRequest("DELETE", `/api/oauth/${TEST_PROVIDER_ID}`),
         state,
       );
       expect(deleteRes!.status).toBe(204);
-      await expect(managed.session.modelRegistry.authStorage.getApiKey(TEST_PROVIDER_ID)).resolves.toBeUndefined();
+      await expect(getPiSession(managed.runtime).modelRegistry.authStorage.getApiKey(TEST_PROVIDER_ID)).resolves.toBeUndefined();
     });
 
     test("DB-backed auth writes notify runtime hooks so other sessions can reload", async () => {
@@ -218,12 +219,12 @@ describe("auth storage wiring", () => {
       const uninstall = installRuntimeHooks(state);
 
       try {
-        first.session.modelRegistry.authStorage.set("anthropic", {
+        getPiSession(first.runtime).modelRegistry.authStorage.set("anthropic", {
           type: "api_key",
           key: "sk-from-first-session",
         });
 
-        await expect(second.session.modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-from-first-session");
+        await expect(getPiSession(second.runtime).modelRegistry.authStorage.getApiKey("anthropic")).resolves.toBe("sk-from-first-session");
       } finally {
         uninstall();
       }

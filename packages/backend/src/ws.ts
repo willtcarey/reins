@@ -89,7 +89,7 @@ async function handleWsCommand(
           const instructions = compactMatch[1]?.trim() || undefined;
           await runManualCompaction(state, managed, sessionId, row.project_id, instructions);
         } else {
-          await managed.session.prompt(message);
+          await managed.runtime.prompt(message);
         }
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -107,7 +107,7 @@ async function handleWsCommand(
         if (!projectDir) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
         const managed = await ensureSessionOpen(state, sessionId, projectDir);
         sendToWs(client.ws, { type: "ack", command: "steer" });
-        await managed.session.steer(message);
+        await managed.runtime.steer(message);
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         sendToWs(client.ws, { type: "error", error: `steer failed: ${errorMessage}` });
@@ -121,7 +121,7 @@ async function handleWsCommand(
       managed.lastActivity = Date.now();
       sendToWs(client.ws, { type: "ack", command: "abort" });
       try {
-        await managed.session.abort();
+        await managed.runtime.abort();
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         sendToWs(client.ws, { type: "error", error: `abort failed: ${message}` });

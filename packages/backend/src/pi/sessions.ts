@@ -13,6 +13,12 @@ import {
 import { type AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import type { ServerState, ManagedSession } from "../state.js";
 import {
+  createAgentRuntime,
+  registerRuntimeAdapter,
+} from "../runtimes/registry.js";
+import { PiRuntimeAdapter } from "../runtimes/pi/adapter.js";
+import { PiAgentRuntime, getPiSession } from "../runtimes/pi/runtime.js";
+import {
   createSession as dbCreateSession,
   getSession as dbGetSession,
   listSessions as dbListSessions,
@@ -42,6 +48,10 @@ import {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function ensurePiRuntimeRegistered(): void {
+  registerRuntimeAdapter(new PiRuntimeAdapter());
+}
 
 /**
  * Filter out empty assistant messages with stopReason: "error".
@@ -235,6 +245,11 @@ export async function createNewSession(
   const result = await createAgentSession(sessionOpts);
   const agentSession = result.session;
   ensureSessionStreamFnUsesCwd(agentSession, projectDir);
+  ensurePiRuntimeRegistered();
+  const runtime = await createAgentRuntime("pi", { session: agentSession });
+  if (!(runtime instanceof PiAgentRuntime)) {
+    throw new Error("Runtime adapter returned a non-pi runtime for type 'pi'");
+  }
 
   if (result.extensionsResult.errors.length > 0) {
     console.warn("  Pi extension load errors:", result.extensionsResult.errors);
@@ -271,7 +286,7 @@ export async function createNewSession(
     touchTask(opts.taskId);
   }
 
-  const managed = wireSession(state, agentSession, sessionId, projectId);
+  const managed = wireSession(state, runtime, sessionId, projectId);
   console.log(`  Session created: ${sessionId}${task ? ` (task: ${task.title})` : ""} (total: ${state.sessions.size})`);
 
   // Notify frontend clients about the new session
@@ -322,6 +337,11 @@ export async function resumeSession(
   });
   const result = await createAgentSession(sessionOpts);
   ensureSessionStreamFnUsesCwd(result.session, projectDir);
+  ensurePiRuntimeRegistered();
+  const runtime = await createAgentRuntime("pi", { session: result.session });
+  if (!(runtime instanceof PiAgentRuntime)) {
+    throw new Error("Runtime adapter returned a non-pi runtime for type 'pi'");
+  }
 
   if (result.extensionsResult.errors.length > 0) {
     console.warn("  Pi extension load errors:", result.extensionsResult.errors);
@@ -349,7 +369,7 @@ export async function resumeSession(
     agentSession.agent.replaceMessages(messages);
   }
 
-  const managed = wireSession(state, agentSession, sessionId, row.project_id);
+  const managed = wireSession(state, runtime, sessionId, row.project_id);
   console.log(`  Session resumed: ${sessionId} (${messages.length} messages for LLM, total: ${state.sessions.size})`);
   return managed;
 }
@@ -429,14 +449,15 @@ export async function runManualCompaction(
     projectId,
     event: { type: "compaction_start", reason: "manual" },
   });
+  const session = getPiSession(managed.runtime);
   try {
-    logCompactionState(sessionId, managed.session);
-    const result = await managed.session.compact(instructions);
-    handleCompactionEnd(sessionId, managed.session, { result, aborted: false }, broadcast, projectId);
+    logCompactionState(sessionId, session);
+    const result = await session.compact(instructions);
+    handleCompactionEnd(sessionId, session, { result, aborted: false }, broadcast, projectId);
   } catch (err: any) {
     handleCompactionEnd(
       sessionId,
-      managed.session,
+      session,
       { result: undefined, aborted: false, errorMessage: `Manual compaction failed: ${err.message}` },
       broadcast,
       projectId,
@@ -447,19 +468,20 @@ export async function runManualCompaction(
 
 function wireSession(
   state: ServerState,
-  agentSession: any,
+  runtime: PiAgentRuntime,
   sessionId: string,
   projectId: number,
 ): ManagedSession {
+  const agentSession = runtime.session;
   const managed: ManagedSession = {
-    session: agentSession,
+    runtime,
     id: sessionId,
     lastActivity: Date.now(),
   };
 
   const broadcast = createBroadcast(state.clients);
 
-  agentSession.subscribe((event: AgentSessionEvent) => {
+  runtime.subscribe((event: AgentSessionEvent) => {
     // Intercept pi's auto_compaction_* events and re-emit as our own
     // compaction_start / compaction_end so the frontend gets a unified
     // event regardless of whether compaction was manual or automatic.
@@ -527,16 +549,16 @@ export async function ensureSessionOpen(
  * messages endpoint so metadata refreshes cannot clobber in-flight UI state.
  */
 export function serializeSession(managed: ManagedSession) {
-  const s = managed.session;
+  const session = getPiSession(managed.runtime);
   const row = dbGetSession(managed.id);
   const messageCount = loadMessages(managed.id).length;
   return {
     id: managed.id,
     task_id: row?.task_id ?? null,
     state: {
-      model: s.model ? { provider: s.model.provider, id: s.model.id } : null,
-      thinkingLevel: s.thinkingLevel,
-      isStreaming: s.isStreaming,
+      model: session.model ? { provider: session.model.provider, id: session.model.id } : null,
+      thinkingLevel: session.thinkingLevel,
+      isStreaming: session.isStreaming,
       messageCount,
     },
   };
