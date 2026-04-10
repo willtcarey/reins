@@ -48,6 +48,7 @@ describe("session-store", () => {
       expect(s.model_provider).toBeNull();
       expect(s.model_id).toBeNull();
       expect(s.thinking_level).toBe("off");
+      expect(s.agent_runtime_type).toBe("pi");
       expect(s.task_id).toBeNull();
       expect(s.parent_session_id).toBeNull();
       expect(s.created_at).toBeString();
@@ -61,12 +62,14 @@ describe("session-store", () => {
         modelProvider: "anthropic",
         modelId: "claude-3",
         thinkingLevel: "high",
+        agentRuntimeType: "claude_agent_sdk",
         taskId: undefined,
         parentSessionId: "sess-parent",
       });
       expect(s.model_provider).toBe("anthropic");
       expect(s.model_id).toBe("claude-3");
       expect(s.thinking_level).toBe("high");
+      expect(s.agent_runtime_type).toBe("claude_agent_sdk");
       expect(s.parent_session_id).toBe("sess-parent");
     });
 

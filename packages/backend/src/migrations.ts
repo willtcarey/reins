@@ -121,6 +121,13 @@ const MIGRATIONS: [name: string, sql: string][] = [
      ON CONFLICT(provider, type) DO NOTHING;
      DELETE FROM settings WHERE key LIKE 'api_key_%' OR key LIKE 'oauth_%'`,
   ],
+  [
+    "016_add_session_agent_runtime_type",
+    `ALTER TABLE sessions ADD COLUMN agent_runtime_type TEXT NOT NULL DEFAULT 'pi';
+     UPDATE sessions
+     SET agent_runtime_type = 'pi'
+     WHERE agent_runtime_type IS NULL OR agent_runtime_type = ''`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

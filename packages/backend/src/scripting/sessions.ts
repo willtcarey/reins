@@ -34,6 +34,7 @@ export const SessionSchema = Type.Object({
   model_provider: Type.Union([Type.String(), Type.Null()]),
   model_id: Type.Union([Type.String(), Type.Null()]),
   thinking_level: Type.String(),
+  agent_runtime_type: Type.String(),
   task_id: Type.Union([Type.Number(), Type.Null()]),
   parent_session_id: Type.Union([Type.String(), Type.Null()]),
 });

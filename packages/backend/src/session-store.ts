@@ -21,6 +21,7 @@ export interface SessionRow {
   model_provider: string | null;
   model_id: string | null;
   thinking_level: string;
+  agent_runtime_type: string;
   task_id: number | null;
   parent_session_id: string | null;
 }
@@ -54,18 +55,40 @@ export interface SessionMessageRow {
   created_at: string;
 }
 
+const DEFAULT_AGENT_RUNTIME_TYPE = "pi";
+
+type RawSessionRow = Omit<SessionRow, "agent_runtime_type"> & {
+  agent_runtime_type?: string | null;
+};
+
+function normalizeSessionRow(row: RawSessionRow): SessionRow {
+  return {
+    ...row,
+    agent_runtime_type: row.agent_runtime_type && row.agent_runtime_type.length > 0
+      ? row.agent_runtime_type
+      : DEFAULT_AGENT_RUNTIME_TYPE,
+  };
+}
+
 // ---- Session CRUD ----------------------------------------------------------
 
 export function createSession(
   id: string,
   projectId: number,
-  opts?: { modelProvider?: string; modelId?: string; thinkingLevel?: string; taskId?: number; parentSessionId?: string },
+  opts?: {
+    modelProvider?: string;
+    modelId?: string;
+    thinkingLevel?: string;
+    agentRuntimeType?: string;
+    taskId?: number;
+    parentSessionId?: string;
+  },
 ): SessionRow {
   const db = getDb();
-  return db
-    .query<SessionRow, [string, number, string | null, string | null, string, number | null, string | null]>(
-      `INSERT INTO sessions (id, project_id, model_provider, model_id, thinking_level, task_id, parent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  const row = db
+    .query<RawSessionRow, [string, number, string | null, string | null, string, string, number | null, string | null]>(
+      `INSERT INTO sessions (id, project_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
     )
     .get(
@@ -74,14 +97,18 @@ export function createSession(
       opts?.modelProvider ?? null,
       opts?.modelId ?? null,
       opts?.thinkingLevel ?? "off",
+      opts?.agentRuntimeType ?? DEFAULT_AGENT_RUNTIME_TYPE,
       opts?.taskId ?? null,
       opts?.parentSessionId ?? null,
     )!;
+
+  return normalizeSessionRow(row);
 }
 
 export function getSession(id: string): SessionRow | null {
   const db = getDb();
-  return db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(id) ?? null;
+  const row = db.query<RawSessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(id);
+  return row ? normalizeSessionRow(row) : null;
 }
 
 export function listSessions(projectId: number): SessionListItem[] {
@@ -144,20 +171,22 @@ export function listTaskSessions(taskId: number): SessionListItem[] {
 
 export function listSessionRows(projectId: number): SessionRow[] {
   const db = getDb();
-  return db
-    .query<SessionRow, [number]>(
+  const rows = db
+    .query<RawSessionRow, [number]>(
       `SELECT * FROM sessions WHERE project_id = ? AND task_id IS NULL ORDER BY updated_at DESC`,
     )
     .all(projectId);
+  return rows.map(normalizeSessionRow);
 }
 
 export function listTaskSessionRows(taskId: number): SessionRow[] {
   const db = getDb();
-  return db
-    .query<SessionRow, [number]>(
+  const rows = db
+    .query<RawSessionRow, [number]>(
       `SELECT * FROM sessions WHERE task_id = ? ORDER BY updated_at DESC`,
     )
     .all(taskId);
+  return rows.map(normalizeSessionRow);
 }
 
 export function listPaletteItems(): PaletteItem[] {
