@@ -78,9 +78,6 @@ export function registerRuntimeAdapter(adapter: AgentRuntimeAdapter): void {
   runtimeAdapters.set(adapter.runtimeType, adapter);
 }
 
-export function isRuntimeAdapterRegistered(runtimeType: string): boolean {
-  return runtimeAdapters.has(runtimeType);
-}
 
 export function getRuntimeAdapter(runtimeType: string): AgentRuntimeAdapter {
   const adapter = runtimeAdapters.get(runtimeType);

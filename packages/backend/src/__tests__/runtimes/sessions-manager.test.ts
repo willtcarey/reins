@@ -262,7 +262,7 @@ describe("runtime sessions manager", () => {
     createSession("sess-unsupported", project.id, { agentRuntimeType: "unknown" });
 
     await expect(ensureSessionOpen(state, "sess-unsupported")).rejects.toThrow(
-      "Unsupported runtime type: unknown",
+      "Runtime adapter 'unknown' is not registered",
     );
   });
 
