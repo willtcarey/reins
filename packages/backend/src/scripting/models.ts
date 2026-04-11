@@ -3,7 +3,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { ensureRuntimeAdapterRegistered, listAllRuntimeProviders } from "../runtimes/registry.js";
+import { listAllRuntimeProviders } from "../runtimes/registry.js";
 import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 export type {
@@ -41,7 +41,6 @@ export const ProviderInfoSchema = Type.Object({
 });
 
 async function listProvidersAcrossRuntimes() {
-  await ensureRuntimeAdapterRegistered("pi");
   return listAllRuntimeProviders();
 }
 

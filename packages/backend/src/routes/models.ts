@@ -7,13 +7,12 @@
 
 import type { RouterGroup, RouteContext } from "../router.js";
 import { API } from "../api-paths.js";
-import { ensureRuntimeAdapterRegistered, listAllRuntimeProviders } from "../runtimes/registry.js";
+import { listAllRuntimeProviders } from "../runtimes/registry.js";
 
 export type { RuntimeProviderInfo as ProviderInfo, ModelInfo } from "../runtimes/registry.js";
 
 export function registerModelsRoutes(router: RouterGroup) {
   router.get(API.models, async (_ctx: RouteContext) => {
-    await ensureRuntimeAdapterRegistered("pi");
     const result = await listAllRuntimeProviders();
     return Response.json(result);
   });

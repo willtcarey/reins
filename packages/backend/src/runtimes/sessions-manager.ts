@@ -11,7 +11,7 @@ import { createCustomTools } from "../tools/index.js";
 import type { CreateSessionOpts } from "../tools/delegate.js";
 import {
   createAgentRuntime,
-  ensureRuntimeAdapterRegistered,
+  isRuntimeAdapterRegistered,
   ModelNotFoundError,
   type CreateAgentRuntimeParams,
   type RuntimeSessionTools,
@@ -86,8 +86,7 @@ async function createManagedSessionRuntime(params: {
     thinkingLevel,
   } = params;
 
-  const supported = await ensureRuntimeAdapterRegistered(runtimeType);
-  if (!supported) {
+  if (!isRuntimeAdapterRegistered(runtimeType)) {
     throw new Error(`Unsupported runtime type: ${runtimeType}`);
   }
 

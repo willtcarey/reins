@@ -78,22 +78,8 @@ export function registerRuntimeAdapter(adapter: AgentRuntimeAdapter): void {
   runtimeAdapters.set(adapter.runtimeType, adapter);
 }
 
-function hasRuntimeAdapter(runtimeType: string): boolean {
+export function isRuntimeAdapterRegistered(runtimeType: string): boolean {
   return runtimeAdapters.has(runtimeType);
-}
-
-export async function ensureRuntimeAdapterRegistered(runtimeType: string): Promise<boolean> {
-  if (hasRuntimeAdapter(runtimeType)) return true;
-
-  switch (runtimeType) {
-    case "pi": {
-      const { PiRuntimeAdapter } = await import("./pi/session.js");
-      registerRuntimeAdapter(new PiRuntimeAdapter());
-      return true;
-    }
-    default:
-      return false;
-  }
 }
 
 export function getRuntimeAdapter(runtimeType: string): AgentRuntimeAdapter {
