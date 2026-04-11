@@ -7,10 +7,11 @@
 
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
+import { createNewSession } from "../runtimes/sessions-manager.js";
 import {
-  createNewSession, serializeSession,
+  serializeSession,
   serializeSessionList,
-} from "../pi/sessions.js";
+} from "../runtimes/sessions-manager.js";
 import { touchProject } from "../project-store.js";
 
 export function registerProjectSessionRoutes(router: RouterGroup<ProjectRouteContext>) {

@@ -1,4 +1,5 @@
 import { describe, test, expect, mock } from "bun:test";
+import { createServerState } from "../helpers/server-state.js";
 import {
   registerRuntimeAdapter,
   getRuntimeAdapter,
@@ -32,6 +33,8 @@ describe("runtime registry", () => {
     registerRuntimeAdapter(adapter);
 
     expect(getRuntimeAdapter("pi")).toBe(adapter);
+
+    clearRuntimeAdapters();
   });
 
   test("createAgentRuntime delegates to the registered adapter", async () => {
@@ -47,8 +50,17 @@ describe("runtime registry", () => {
       close: async () => {},
     };
 
+    const runtimeParams = {
+      state: createServerState(),
+      projectId: 1,
+      projectDir: "/tmp/project-a",
+      sessionId: "sess-1",
+      taskId: null,
+    };
+
     const createRuntime = mock<AgentRuntimeAdapter["createRuntime"]>(async (params) => {
-      expect(params).toEqual({ session: { id: "session-1" } });
+      expect(params).toEqual(runtimeParams);
+      expect(params).not.toHaveProperty("mode");
       return runtime;
     });
 
@@ -57,9 +69,11 @@ describe("runtime registry", () => {
       createRuntime,
     });
 
-    const created = await createAgentRuntime("pi", { session: { id: "session-1" } });
+    const created = await createAgentRuntime("pi", runtimeParams);
 
     expect(created).toBe(runtime);
     expect(createRuntime).toHaveBeenCalledTimes(1);
+
+    clearRuntimeAdapters();
   });
 });

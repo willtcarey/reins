@@ -195,24 +195,19 @@ export class ChatPanel extends LitElement {
     const sessionId = this.store?.sessionId ?? "";
     if (!text || !sessionId || !this.store) return;
 
-    const isSlashCommand = text.startsWith("/");
     const sent = this.isStreaming
       ? this.store.steer(text)
       : this.store.prompt(text);
     if (!sent) return;
 
-    // Slash commands (e.g. /compact) are handled server-side;
-    // don't show them as user message bubbles.
-    if (!isSlashCommand) {
-      this.messages = [
-        ...this.messages,
-        {
-          role: "user",
-          content: text,
-          timestamp: Date.now(),
-        },
-      ];
-    }
+    this.messages = [
+      ...this.messages,
+      {
+        role: "user",
+        content: text,
+        timestamp: Date.now(),
+      },
+    ];
 
     this.inputText = "";
     this.shouldAutoScroll = true;

@@ -93,6 +93,11 @@ export function getSession(id: string): SessionRow | null {
   return db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(id) ?? null;
 }
 
+export function deleteSession(id: string): void {
+  const db = getDb();
+  db.query("DELETE FROM sessions WHERE id = ?").run(id);
+}
+
 export function listSessions(projectId: number): SessionListItem[] {
   const db = getDb();
   return db

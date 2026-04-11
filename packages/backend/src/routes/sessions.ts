@@ -12,7 +12,7 @@ import type { RouteContext } from "../router.js";
 import { badRequest, notFound } from "../errors.js";
 import { ProjectSessions } from "../models/sessions.js";
 import { getSession as dbGetSession, loadMessages } from "../session-store.js";
-import { serializeSession, serializeSessionFromDb } from "../pi/sessions.js";
+import { serializeSession, serializeSessionFromDb } from "../runtimes/sessions-manager.js";
 import { parseBody } from "./validate.js";
 
 const SessionModelBody = Type.Object({

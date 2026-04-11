@@ -76,8 +76,10 @@ describe("createDelegateTool", () => {
         taskId,
         delegateDepth: 1,
         parentSessionId,
-        modelProvider: "anthropic",
-        modelId: "claude-sonnet-4-20250514",
+        model: {
+          provider: "anthropic",
+          modelId: "claude-sonnet-4-20250514",
+        },
         thinkingLevel: "high",
       },
     ]);
@@ -118,8 +120,10 @@ describe("createDelegateTool", () => {
         taskId,
         delegateDepth: 1,
         parentSessionId,
-        modelProvider: "anthropic",
-        modelId: "claude-haiku-4-5",
+        model: {
+          provider: "anthropic",
+          modelId: "claude-haiku-4-5",
+        },
         thinkingLevel: "minimal",
       },
     ]);

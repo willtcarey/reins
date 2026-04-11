@@ -18,7 +18,7 @@ Thin HTTP adapters. Parse requests, call model functions, format responses. Erro
 
 ### Tools (`src/tools/`)
 
-Agent tool definitions using the pi SDK `customTools` mechanism. Each tool file exports a factory that returns a `ToolDefinition`. The barrel `tools/index.ts` exports `createCustomTools()` which is the single integration point for `pi/sessions.ts`.
+Agent tool definitions using the pi SDK `customTools` mechanism. Each tool file exports a factory that returns a `ToolDefinition`. Session materialization (`runtimes/sessions-manager.ts`) resolves canonical custom tools (including task/delegate gating) once per session; runtimes consume that shared set and only map built-ins to their native wiring.
 
 Tool factories receive stable references (server state, session ID) at factory time and look up project context from the DB at execution time.
 
@@ -53,21 +53,21 @@ Stateless helpers that don't depend on other layers.
 
 Agent execution is routed through a runtime abstraction:
 
+- `runtimes/sessions-manager.ts` — runtime-agnostic session open/create orchestration
 - `runtimes/registry.ts` — runtime contracts (`AgentRuntime`, `AgentRuntimeAdapter`) and adapter registration/lookup
-- `runtimes/pi/` — pi runtime adapter + runtime wrapper (`PiRuntimeAdapter`, `PiAgentRuntime`)
+- `runtimes/pi/` — pi runtime adapter + runtime wrapper (`PiRuntimeAdapter`, `PiAgentRuntime`) and pi runtime materialization/wiring
 
 `ManagedSession` holds a runtime handle (`managed.runtime`) instead of a raw pi session.
 Current behavior is still pi-only; this seam exists to add additional runtimes without rewriting WS/session orchestration.
 
 ### Pi integration (`src/pi/`)
 
-Pi-specific setup and orchestration still lives under `src/pi/`.
-Keep SDK-specific session lifecycle, auth bridges, and model/provider discovery there.
+Pi-specific runtime boot/reopen behavior now lives under `src/runtimes/pi/`.
+The remaining `src/pi/` modules focus on pi SDK setup and integrations.
 
 Key entry points:
 
 - `pi/runtime.ts` — centralized, cwd-scoped pi runtime builder (`resourceLoader` + `modelRegistry` + extension provider registrations)
-- `pi/sessions.ts` — pi session create/resume lifecycle + persistence/event wiring, now storing `PiAgentRuntime` in `ManagedSession`
 - `pi/models-registry.ts` — provider listing/auth-source metadata built on top of the runtime builder
 
 ## Dependency rules

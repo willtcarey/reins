@@ -11,7 +11,8 @@ import { notFound } from "../errors.js";
 import { getTask } from "../task-store.js";
 import { getProject } from "../project-store.js";
 import { touchProject } from "../project-store.js";
-import { serializeTaskSessionList, createNewSession, serializeSession } from "../pi/sessions.js";
+import { createNewSession } from "../runtimes/sessions-manager.js";
+import { serializeTaskSessionList, serializeSession } from "../runtimes/sessions-manager.js";
 import { parseIntParam } from "./validate.js";
 
 export function registerTaskSessionRoutes(router: RouterGroup<RouteContext>) {

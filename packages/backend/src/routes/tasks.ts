@@ -14,7 +14,7 @@ import {
   TaskNotFoundError,
   TaskHasActiveSessionsError,
 } from "../models/tasks.js";
-import { serializeTaskSessionList } from "../pi/sessions.js";
+import { serializeTaskSessionList } from "../runtimes/sessions-manager.js";
 import { parseBody, parseIntParam } from "./validate.js";
 
 const GenerateTaskBody = Type.Object({

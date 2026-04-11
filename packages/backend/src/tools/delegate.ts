@@ -40,8 +40,7 @@ export interface CreateSessionOpts {
   taskId?: number;
   delegateDepth?: number;
   parentSessionId?: string;
-  modelProvider?: string;
-  modelId?: string;
+  model?: { provider: string; modelId: string };
   thinkingLevel?: string;
 }
 
@@ -190,12 +189,16 @@ export function createDelegateTool(
 
           const fullPrompt = AUTONOMY_PREAMBLE + params.prompt;
 
+          const selectedProvider = params.modelProvider ?? inheritedModelProvider;
+          const selectedModelId = params.modelId ?? inheritedModelId;
+
           const managed = await createSession(sessionRow.project_id, project.path, {
             taskId: sessionRow.task_id,
             delegateDepth: depth + 1,
             parentSessionId: sessionId,
-            modelProvider: params.modelProvider ?? inheritedModelProvider,
-            modelId: params.modelId ?? inheritedModelId,
+            model: selectedProvider && selectedModelId
+              ? { provider: selectedProvider, modelId: selectedModelId }
+              : undefined,
             thinkingLevel: params.thinkingLevel ?? inheritedThinkingLevel,
           });
 

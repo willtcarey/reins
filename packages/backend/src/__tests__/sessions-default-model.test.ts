@@ -5,7 +5,7 @@ import { createServerState } from "./helpers/server-state.js";
 import { createProject } from "../project-store.js";
 import { createSession, getSession } from "../session-store.js";
 import { setSetting, deleteSetting } from "../settings-store.js";
-import { createNewSession, resumeSession } from "../pi/sessions.js";
+import { createNewSession, ensureSessionOpen } from "../runtimes/sessions-manager.js";
 import { resolveConfiguredModel } from "../pi/session-models.js";
 import { getPiSession } from "../runtimes/pi/runtime.js";
 
@@ -110,8 +110,10 @@ describe("createNewSession", () => {
     const project = createProject("Test Project", repo.dir, "main");
 
     const managed = await createNewSession(state, project.id, repo.dir, {
-      modelProvider: "anthropic",
-      modelId: "claude-haiku-4-5",
+      model: {
+        provider: "anthropic",
+        modelId: "claude-haiku-4-5",
+      },
       thinkingLevel: "minimal",
     });
 
@@ -123,14 +125,6 @@ describe("createNewSession", () => {
     expect(getSession(managed.id)?.thinking_level).toBe("minimal");
   });
 
-  test("rejects partial model overrides", async () => {
-    const state = createServerState();
-    const project = createProject("Test Project", repo.dir, "main");
-
-    await expect(createNewSession(state, project.id, repo.dir, {
-      modelProvider: "anthropic",
-    })).rejects.toThrow(/Both modelProvider and modelId are required/);
-  });
 });
 
 describe("resumeSession", () => {
@@ -153,7 +147,7 @@ describe("resumeSession", () => {
       thinkingLevel: "high",
     });
 
-    const managed = await resumeSession(state, "resume-model-test", repo.dir);
+    const managed = await ensureSessionOpen(state, "resume-model-test");
 
     expect(getPiSession(managed.runtime).model?.provider).toBe("anthropic");
     expect(getPiSession(managed.runtime).model?.id).toBe("claude-haiku-4-5");
@@ -174,12 +168,14 @@ describe("resumeSession", () => {
       thinkingLevel: "high",
     });
 
-    await expect(resumeSession(state, "resume-invalid-default", repo.dir)).rejects.toThrow(
+    await expect(
+      ensureSessionOpen(state, "resume-invalid-default"),
+    ).rejects.toThrow(
       /Configured default_model is invalid/,
     );
   });
 
-  test("throws when a resumed session has an invalid persisted model instead of silently falling back", async () => {
+  test("throws a generic invalid model error when a resumed session has an invalid persisted model", async () => {
     const state = createServerState();
     const project = createProject("Test Project", repo.dir, "main");
 
@@ -189,8 +185,10 @@ describe("resumeSession", () => {
       thinkingLevel: "high",
     });
 
-    await expect(resumeSession(state, "resume-invalid-persisted-model", repo.dir)).rejects.toThrow(
-      /Persisted session model is invalid/,
+    await expect(
+      ensureSessionOpen(state, "resume-invalid-persisted-model"),
+    ).rejects.toThrow(
+      /Selected session model is invalid/,
     );
   });
 
@@ -210,7 +208,7 @@ describe("resumeSession", () => {
       thinkingLevel: "high",
     });
 
-    const managed = await resumeSession(state, "resume-thinking-test", repo.dir);
+    const managed = await ensureSessionOpen(state, "resume-thinking-test");
 
     expect(getPiSession(managed.runtime).model?.provider).toBe("anthropic");
     expect(getPiSession(managed.runtime).model?.id).toBe("claude-sonnet-4-20250514");

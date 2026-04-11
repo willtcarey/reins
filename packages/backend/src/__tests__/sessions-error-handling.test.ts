@@ -12,7 +12,7 @@ import {
   persistMessages,
   loadMessages,
 } from "../session-store.js";
-import { filterErrorMessages } from "../pi/sessions.js";
+import { filterErrorMessages } from "../runtimes/pi/session.js";
 
 let projectId: number;
 

@@ -7,7 +7,7 @@ import { createServerState } from "./helpers/server-state.js";
 import { makeRequest } from "./helpers/request.js";
 import { buildRouter } from "../routes/index.js";
 import { createProject } from "../project-store.js";
-import { createNewSession } from "../pi/sessions.js";
+import { createNewSession } from "../runtimes/sessions-manager.js";
 import {
   DbAuthStorageBackend,
   createDbBackedAuthStorage,

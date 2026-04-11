@@ -4,7 +4,9 @@ import type { AgentRuntime } from "../registry.js";
 export class PiAgentRuntime implements AgentRuntime {
   readonly runtimeType = "pi" as const;
 
-  constructor(public readonly session: AgentSession) {}
+  constructor(
+    public readonly session: AgentSession,
+  ) {}
 
   async prompt(text: string): Promise<void> {
     await this.session.prompt(text);

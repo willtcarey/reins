@@ -10,9 +10,8 @@
  */
 
 import type { ServerState, WsClient, WebSocketLike } from "./state.js";
-import { ensureSessionOpen, runManualCompaction } from "./pi/sessions.js";
+import { ensureSessionOpen } from "./runtimes/sessions-manager.js";
 import { getSession } from "./session-store.js";
-import { getProject } from "./project-store.js";
 import { createBroadcastExcluding } from "./models/broadcast.js";
 
 /** Maps raw WebSocket objects to their WsClient wrappers. */
@@ -24,16 +23,6 @@ function sendToWs(ws: WebSocketLike, data: unknown): void {
   } catch {
     // ignore send errors on closed sockets
   }
-}
-
-/**
- * Resolve the project directory for a session ID.
- */
-function resolveProjectDir(sessionId: string): string | null {
-  const row = getSession(sessionId);
-  if (!row) return null;
-  const project = getProject(row.project_id);
-  return project?.path ?? null;
 }
 
 async function handleWsCommand(
@@ -68,9 +57,7 @@ async function handleWsCommand(
       try {
         const row = getSession(sessionId);
         if (!row) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
-        const project = getProject(row.project_id);
-        if (!project) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
-        const managed = await ensureSessionOpen(state, sessionId, project.path);
+        const managed = await ensureSessionOpen(state, sessionId);
         sendToWs(client.ws, { type: "ack", command: "prompt" });
 
         // Broadcast user message to other clients so other devices see what was typed
@@ -83,14 +70,7 @@ async function handleWsCommand(
           message: cmd.message,
         });
 
-        // Handle /compact as a slash command
-        const compactMatch = message.match(/^\/compact\s*(.*)?$/);
-        if (compactMatch) {
-          const instructions = compactMatch[1]?.trim() || undefined;
-          await runManualCompaction(state, managed, sessionId, row.project_id, instructions);
-        } else {
-          await managed.runtime.prompt(message);
-        }
+        await managed.runtime.prompt(message);
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         sendToWs(client.ws, { type: "error", error: `prompt failed: ${errorMessage}` });
@@ -103,9 +83,8 @@ async function handleWsCommand(
       const sessionId = cmd.sessionId;
       const message = cmd.message;
       try {
-        const projectDir = resolveProjectDir(sessionId);
-        if (!projectDir) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
-        const managed = await ensureSessionOpen(state, sessionId, projectDir);
+        if (!getSession(sessionId)) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
+        const managed = await ensureSessionOpen(state, sessionId);
         sendToWs(client.ws, { type: "ack", command: "steer" });
         await managed.runtime.steer(message);
       } catch (err: unknown) {

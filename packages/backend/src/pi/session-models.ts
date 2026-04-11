@@ -29,14 +29,11 @@ export function resolveRequestedSessionModel(
   modelRegistry: Pick<ModelRegistry, "find">,
   opts?: CreateSessionOpts,
 ): Model<Api> | undefined {
-  if (!opts?.modelProvider && !opts?.modelId) return undefined;
-  if (!opts?.modelProvider || !opts?.modelId) {
-    throw new Error("Both modelProvider and modelId are required when overriding a session model.");
-  }
+  if (!opts?.model) return undefined;
 
-  const model = resolveModel(opts.modelProvider, opts.modelId, modelRegistry);
+  const model = resolveModel(opts.model.provider, opts.model.modelId, modelRegistry);
   if (!model) {
-    throw new Error(`Unknown model override: ${opts.modelProvider}/${opts.modelId}`);
+    throw new Error(`Unknown model override: ${opts.model.provider}/${opts.model.modelId}`);
   }
 
   return model;
