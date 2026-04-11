@@ -3,10 +3,12 @@ import { useTestDb } from "../helpers/test-db.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 import { createProject, type Project } from "../../project-store.js";
 import { createSession, getSession } from "../../session-store.js";
-import { ProjectSessions } from "../../models/sessions.js";
+import { Sessions } from "../../models/sessions.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 import { getPiSession } from "../../runtimes/pi/runtime.js";
+import { clearRuntimeAdapters, registerRuntimeAdapter } from "../../runtimes/registry.js";
+import { registerBuiltinRuntimeAdapters } from "../../runtimes/register-builtins.js";
 
 async function createMockManagedSession(sessionId: string): Promise<ManagedSession> {
   const managed = await createTestManagedSession(sessionId);
@@ -16,21 +18,24 @@ async function createMockManagedSession(sessionId: string): Promise<ManagedSessi
   return managed;
 }
 
-describe("ProjectSessions.setModel", () => {
+describe("Sessions.setModel", () => {
   useTestDb();
 
   let project: Project;
   let broadcastSpy: ReturnType<typeof mock<(msg: ServerMessage) => void>>;
   let broadcast: Broadcast;
   let sessions: Map<string, ManagedSession>;
-  let model: ProjectSessions;
+  let model: Sessions;
 
   beforeEach(() => {
+    clearRuntimeAdapters();
+    registerBuiltinRuntimeAdapters();
+
     project = createProject("Test Project", "/tmp/test-project", "main");
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
     sessions = new Map();
-    model = new ProjectSessions(project.id, sessions, broadcast);
+    model = new Sessions(sessions, broadcast);
   });
 
   test("updates an open session live, persists metadata, and broadcasts a session update", async () => {
@@ -92,6 +97,7 @@ describe("ProjectSessions.setModel", () => {
     await expect(
       model.setModel({
         sessionId: "sess-3",
+        projectId: project.id,
         provider: "anthropic",
         modelId: "claude-sonnet-4-20250514",
       }),
@@ -109,6 +115,65 @@ describe("ProjectSessions.setModel", () => {
         thinkingLevel: "invalid-level",
       }),
     ).rejects.toThrow(/Invalid thinking level/);
+  });
+
+  test("updates live model via AgentRuntime.setModel for non-pi runtimes", async () => {
+    const setModel = mock(async () => {});
+
+    registerRuntimeAdapter({
+      runtimeType: "test_runtime",
+      listModels: async () => [{
+        provider: "anthropic",
+        hasKey: true,
+        keySource: "env",
+        keySources: ["env"],
+        models: [{
+          id: "claude-sonnet-4-20250514",
+          name: "Claude Sonnet 4",
+          reasoning: true,
+          contextWindow: 200_000,
+          maxTokens: 8_192,
+        }],
+      }],
+      ask: async () => "",
+      createRuntime: async () => {
+        throw new Error("not used in this test");
+      },
+    });
+
+    createSession("sess-runtime", project.id, { agentRuntimeType: "test_runtime", thinkingLevel: "medium" });
+
+    sessions.set("sess-runtime", {
+      id: "sess-runtime",
+      lastActivity: Date.now(),
+      runtime: {
+        prompt: async () => {},
+        steer: async () => {},
+        abort: async () => {},
+        setModel,
+        subscribe: () => () => {},
+        getMessages: async () => [],
+        isStreaming: () => false,
+        close: async () => {},
+      },
+    });
+
+    const result = await model.setModel({
+      sessionId: "sess-runtime",
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-20250514",
+      thinkingLevel: "high",
+    });
+
+    expect(setModel).toHaveBeenCalledWith({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-20250514",
+      thinkingLevel: "high",
+    });
+
+    expect(result.model_provider).toBe("anthropic");
+    expect(result.model_id).toBe("claude-sonnet-4-20250514");
+    expect(result.thinking_level).toBe("high");
   });
 
   test("rejects unknown providers", async () => {

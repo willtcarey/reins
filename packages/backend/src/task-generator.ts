@@ -1,14 +1,12 @@
 /**
  * Task Generator
  *
- * Uses a lightweight Pi agent session to parse a freeform user intent
- * into a structured task (title, description, branch name).
+ * Uses the runtime adapter one-shot ask path (currently the pi adapter)
+ * to parse a freeform user intent into a structured task.
  */
 
-import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
 import { slugifyBranchName } from "./branch-namer.js";
-import { resolveUtilityModelForCwd } from "./models/model-settings.js";
-import { createPiResourceLoader } from "./runtimes/pi/resource-loader.js";
+import { getRuntimeAdapter } from "./runtimes/registry.js";
 
 export interface GeneratedTask {
   title: string;
@@ -31,37 +29,12 @@ Return ONLY valid JSON. No markdown fences, no explanation, no extra text.`;
  */
 export async function generateTask(prompt: string): Promise<GeneratedTask> {
   try {
-    const cwd = process.cwd();
-    const resourceLoader = createPiResourceLoader({
-      cwd,
+    const text = await getRuntimeAdapter("pi").ask({
+      cwd: process.cwd(),
+      prompt,
       systemPrompt: SYSTEM_PROMPT,
-      noSkills: true,
-      noPromptTemplates: true,
-      noThemes: true,
+      timeoutMs: TIMEOUT_MS,
     });
-    await resourceLoader.reload();
-
-    const model = await resolveUtilityModelForCwd(cwd);
-    const { session } = await createAgentSession({
-      cwd,
-      tools: [],
-      model,
-      sessionManager: SessionManager.inMemory(),
-      resourceLoader,
-    });
-
-    const result = await Promise.race([
-      session.prompt(prompt, { expandPromptTemplates: false }),
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), TIMEOUT_MS)),
-    ]);
-
-    if (result === "timeout") {
-      session.dispose();
-      return fallback(prompt);
-    }
-
-    const text = session.getLastAssistantText()?.trim() ?? "";
-    session.dispose();
 
     // Strip markdown fences if present
     const cleaned = text.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/, "").trim();

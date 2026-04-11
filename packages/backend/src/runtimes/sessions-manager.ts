@@ -17,13 +17,8 @@ import {
 } from "./registry.js";
 import { getSetting } from "../settings-store.js";
 import { parseThinkingLevel } from "../models/model-settings.js";
-
-export {
-  serializeSession,
-  serializeSessionFromDb,
-  serializeSessionList,
-  serializeTaskSessionList,
-} from "./session-serialization.js";
+import { attachRuntimeBroadcastObserver } from "./runtime-broadcast-observer.js";
+import { attachRuntimePersistenceObserver } from "./runtime-persistence-observer.js";
 
 function createSessionFactory(state: ServerState) {
   return (projectId: number, projectDir: string, opts?: CreateSessionOpts) =>
@@ -131,6 +126,16 @@ async function createManagedSessionRuntime(params: {
     lastActivity: Date.now(),
   };
 
+  attachRuntimeBroadcastObserver({
+    sessionId,
+    projectId,
+    runtime,
+    clients: state.clients,
+  });
+  attachRuntimePersistenceObserver({
+    sessionId,
+    runtime,
+  });
   state.sessions.set(sessionId, managed);
 
   return managed;

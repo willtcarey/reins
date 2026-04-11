@@ -9,7 +9,7 @@ import {
   PathTraversalError,
   FileNotFoundError,
 } from "../../models/projects.js";
-import { ProjectSessions } from "../../models/sessions.js";
+import { Sessions } from "../../models/sessions.js";
 import { detectMimeType } from "../../mime.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
@@ -27,8 +27,8 @@ describe("ProjectModel.sessions", () => {
     model = new ProjectModel(project.id, sessions, broadcastSpy);
   });
 
-  test("returns a ProjectSessions instance", () => {
-    expect(Reflect.get(model, "sessions")).toBeInstanceOf(ProjectSessions);
+  test("returns a Sessions instance", () => {
+    expect(Reflect.get(model, "sessions")).toBeInstanceOf(Sessions);
   });
 });
 

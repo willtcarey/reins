@@ -1,3 +1,4 @@
+import type { AgentSessionEvent, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { ServerState } from "../state.js";
 
 export class ModelNotFoundError extends Error {
@@ -40,8 +41,17 @@ export type RuntimeCustomToolName = "create_task" | "delegate" | "search" | "exe
 
 export interface RuntimeSessionTools {
   builtins: RuntimeBuiltinToolName[];
-  customTools: any[];
+  customTools: ToolDefinition[];
 }
+
+export type RuntimeCompactionEvent =
+  | { type: "compaction_start"; reason: string }
+  | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean; errorMessage?: string };
+
+export type AgentRuntimeEvent =
+  | Exclude<AgentSessionEvent, { type: "auto_compaction_start" } | { type: "auto_compaction_end" }>
+  | RuntimeCompactionEvent;
+
 
 export interface CreateAgentRuntimeParams {
   state: ServerState;
@@ -54,14 +64,34 @@ export interface CreateAgentRuntimeParams {
   sessionTools?: RuntimeSessionTools;
 }
 
+export interface RuntimeAskParams {
+  cwd: string;
+  prompt: string;
+  model?: { provider: string; modelId: string } | null;
+  thinkingLevel?: string | null;
+  systemPrompt?: string;
+  timeoutMs?: number;
+}
+
 export type AgentRuntimeType = string;
+
+export interface SetRuntimeModelParams {
+  provider: string;
+  modelId: string;
+  thinkingLevel?: string | null;
+}
 
 export interface AgentRuntime {
   prompt(text: string): Promise<void>;
   steer(text: string): Promise<void>;
   abort(): Promise<void>;
-  subscribe(listener: (event: any) => void): () => void;
+  setModel(params: SetRuntimeModelParams): Promise<void>;
+  subscribe(listener: (event: AgentRuntimeEvent) => void): () => void;
   getMessages(): Promise<any[]>;
+  getSessionMetadata?(): {
+    model?: { provider: string; modelId: string } | null;
+    thinkingLevel?: string | null;
+  };
   isStreaming(): boolean;
   close(): Promise<void>;
 }
@@ -69,6 +99,7 @@ export interface AgentRuntime {
 export interface AgentRuntimeAdapter {
   runtimeType: AgentRuntimeType;
   listModels(): Promise<ProviderInfo[]>;
+  ask(params: RuntimeAskParams): Promise<string>;
   createRuntime(params: CreateAgentRuntimeParams): Promise<AgentRuntime>;
 }
 

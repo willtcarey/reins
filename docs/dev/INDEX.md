@@ -15,4 +15,5 @@
 | [reactive-controllers.md](reactive-controllers.md) | frontend | Using Lit Reactive Controllers to extract testable logic from components |
 | [tool-renderers.md](tool-renderers.md) | frontend | Tool renderer registry, per-tool rendering tiers, adding new renderers |
 | [lit-conventions.md](lit-conventions.md) | frontend | Lit gotchas: cross-component template `this` binding, conventions |
+| [runtime-event-compatibility.md](runtime-event-compatibility.md) | backend | Runtime adapter event compatibility contract for persistence, WS broadcast, and normalization |
 

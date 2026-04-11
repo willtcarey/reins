@@ -12,7 +12,7 @@ import { getTask } from "../task-store.js";
 import { getProject } from "../project-store.js";
 import { touchProject } from "../project-store.js";
 import { createNewSession } from "../runtimes/sessions-manager.js";
-import { serializeTaskSessionList, serializeSession } from "../runtimes/sessions-manager.js";
+import { Sessions } from "../models/sessions.js";
 import { parseIntParam } from "./validate.js";
 
 export function registerTaskSessionRoutes(router: RouterGroup<RouteContext>) {
@@ -22,7 +22,8 @@ export function registerTaskSessionRoutes(router: RouterGroup<RouteContext>) {
     const task = getTask(taskId);
     if (!task) notFound("Task not found");
 
-    return Response.json(serializeTaskSessionList(taskId));
+    const sessions = new Sessions(ctx.state.sessions);
+    return Response.json(sessions.listByTask(taskId));
   });
 
   // Create a session under a task
@@ -36,6 +37,9 @@ export function registerTaskSessionRoutes(router: RouterGroup<RouteContext>) {
 
     touchProject(project.id);
     const managed = await createNewSession(ctx.state, project.id, project.path, { taskId });
-    return Response.json(serializeSession(managed), { status: 201 });
+    const sessions = new Sessions(ctx.state.sessions);
+    const data = sessions.get(managed.id);
+    if (!data) throw new Error(`Failed to load created session: ${managed.id}`);
+    return Response.json(data, { status: 201 });
   });
 }

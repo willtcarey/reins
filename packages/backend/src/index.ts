@@ -58,8 +58,7 @@ setInterval(() => {
 // ---------------------------------------------------------------------------
 
 const SRC_DIR = resolve(import.meta.dirname!, ".");
-const ROUTES_PATH = resolve(SRC_DIR, "handler.ts");
-const WS_PATH = resolve(SRC_DIR, "ws.ts");
+const DEV_ENTRY_PATH = resolve(SRC_DIR, "dev-entry.ts");
 
 let routes: typeof RoutesModule;
 let ws: typeof WsModule;
@@ -87,7 +86,7 @@ async function loadHandlers(): Promise<void> {
     if (!existsSync(DEV_BUILD_DIR)) mkdirSync(DEV_BUILD_DIR, { recursive: true });
 
     const result = await Bun.build({
-      entrypoints: [ROUTES_PATH, WS_PATH],
+      entrypoints: [DEV_ENTRY_PATH],
       outdir: DEV_BUILD_DIR,
       target: "bun",
       format: "esm",
@@ -101,10 +100,9 @@ async function loadHandlers(): Promise<void> {
 
     // Cache-bust the bundled output so Bun imports the fresh version
     const t = Date.now();
-    const routesMod: typeof RoutesModule = await import(`${join(DEV_BUILD_DIR, "handler.js")}?t=${t}`);
-    const wsMod: typeof WsModule = await import(`${join(DEV_BUILD_DIR, "ws.js")}?t=${t}`);
-    routes = routesMod;
-    ws = wsMod;
+    const mod = await import(`${join(DEV_BUILD_DIR, "dev-entry.js")}?t=${t}`);
+    routes = mod.routes as typeof RoutesModule;
+    ws = mod.ws as typeof WsModule;
   } else {
     [routes, ws] = await Promise.all([
       import("./handler.js"),

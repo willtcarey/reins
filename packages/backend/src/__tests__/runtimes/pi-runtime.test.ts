@@ -39,9 +39,39 @@ describe("PiAgentRuntime", () => {
     expect(prompt).toHaveBeenCalledWith("hi");
     expect(steer).toHaveBeenCalledWith("course-correct");
     expect(abort).toHaveBeenCalledTimes(1);
-    expect(subscribe).toHaveBeenCalledWith(listener);
+    expect(subscribe).toHaveBeenCalledTimes(1);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  test("normalizes pi auto compaction events before notifying listeners", async () => {
+    const session = await createTestAgentSession();
+    let capturedListener: ((event: any) => void) | undefined;
+    const subscribe = mock<(listener: (event: any) => void) => () => void>((candidate) => {
+      capturedListener = candidate;
+      return () => {};
+    });
+    session.subscribe = subscribe;
+
+    const runtime = new PiAgentRuntime(session);
+    const listener = mock<(event: any) => void>(() => {});
+    runtime.subscribe(listener);
+
+    expect(capturedListener).toBeDefined();
+    const emit = capturedListener!;
+
+    emit({ type: "auto_compaction_start", reason: "threshold" });
+    emit({
+      type: "auto_compaction_end",
+      result: { summary: "done" },
+      aborted: false,
+      willRetry: false,
+    });
+
+    expect(listener.mock.calls).toEqual([
+      [{ type: "compaction_start", reason: "threshold" }],
+      [{ type: "compaction_end", result: { summary: "done" }, aborted: false, errorMessage: undefined }],
+    ]);
   });
 
   test("exposes the wrapped pi session", async () => {

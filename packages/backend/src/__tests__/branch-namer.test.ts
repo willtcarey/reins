@@ -1,5 +1,45 @@
-import { describe, test, expect } from "bun:test";
-import { slugifyBranchName } from "../branch-namer.js";
+import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { generateBranchName, slugifyBranchName } from "../branch-namer.js";
+import { clearRuntimeAdapters, registerRuntimeAdapter } from "../runtimes/registry.js";
+
+describe("generateBranchName", () => {
+  beforeEach(() => {
+    clearRuntimeAdapters();
+  });
+
+  test("uses runtime adapter ask output when it returns a valid branch name", async () => {
+    const ask = mock(async () => "task/from-adapter");
+
+    registerRuntimeAdapter({
+      runtimeType: "pi",
+      listModels: async () => [],
+      ask,
+      createRuntime: async () => {
+        throw new Error("not used");
+      },
+    });
+
+    await expect(generateBranchName("Add dark mode support")).resolves.toBe("task/from-adapter");
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(ask).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: "Add dark mode support",
+      cwd: process.cwd(),
+    }));
+  });
+
+  test("falls back to slugify when runtime adapter returns invalid output", async () => {
+    registerRuntimeAdapter({
+      runtimeType: "pi",
+      listModels: async () => [],
+      ask: async () => "not-a-valid-branch",
+      createRuntime: async () => {
+        throw new Error("not used");
+      },
+    });
+
+    await expect(generateBranchName("Add dark mode support")).resolves.toBe("task/add-dark-mode-support");
+  });
+});
 
 describe("slugifyBranchName", () => {
   test("converts a normal title to task/<slug>", () => {

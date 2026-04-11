@@ -29,6 +29,7 @@ function createNonPiManagedSession(sessionId: string): ManagedSession {
     prompt: async () => {},
     steer: async () => {},
     abort: async () => {},
+    setModel: async () => {},
     subscribe: () => () => {},
     getMessages: async () => [],
     isStreaming: () => false,

@@ -36,7 +36,7 @@ import {
 } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
-import { ProjectSessions } from "./sessions.js";
+import { Sessions } from "./sessions.js";
 import { ProjectTasks } from "./tasks.js";
 
 // ---------------------------------------------------------------------------
@@ -128,8 +128,8 @@ export class ProjectModel {
   /**
    * Project-scoped session operations.
    */
-  get sessions(): ProjectSessions {
-    return new ProjectSessions(this.projectId, this.sessionRegistry, this.broadcast);
+  get sessions(): Sessions {
+    return new Sessions(this.sessionRegistry, this.broadcast);
   }
 
   /**

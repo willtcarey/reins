@@ -1,6 +1,6 @@
 import { describe, test, expect, mock } from "bun:test";
 import { createProject } from "../../project-store.js";
-import { createSession, getSession } from "../../session-store.js";
+import { createSession, getSession, loadMessages } from "../../session-store.js";
 import { createTask } from "../../task-store.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
@@ -16,10 +16,26 @@ import {
   type AgentRuntimeAdapter,
 } from "../../runtimes/registry.js";
 import { setSetting } from "../../settings-store.js";
+import type { WsClient } from "../../state.js";
 
 describe("runtime sessions manager", () => {
   useTestDb();
   const repo = useTestRepo();
+
+  function createCapturingWsClient() {
+    const sent: any[] = [];
+    return {
+      client: {
+        ws: {
+          send(payload: string) {
+            sent.push(JSON.parse(payload));
+            return payload.length;
+          },
+        },
+      },
+      sent,
+    };
+  }
 
   test("createNewSession persists runtime metadata via sessions manager orchestration", async () => {
     const state = createServerState();
@@ -39,6 +55,7 @@ describe("runtime sessions manager", () => {
       prompt: async () => {},
       steer: async () => {},
       abort: async () => {},
+      setModel: async () => {},
       subscribe: () => () => {},
       getMessages: async () => [],
       isStreaming: () => false,
@@ -48,6 +65,7 @@ describe("runtime sessions manager", () => {
     registerRuntimeAdapter({
       runtimeType: "pi",
       listModels: async () => [],
+      ask: async () => "",
       createRuntime: async () => runtime,
     });
 
@@ -89,6 +107,7 @@ describe("runtime sessions manager", () => {
         prompt: async () => {},
         steer: async () => {},
         abort: async () => {},
+        setModel: async () => {},
         subscribe: () => () => {},
         getMessages: async () => [],
         isStreaming: () => false,
@@ -111,6 +130,7 @@ describe("runtime sessions manager", () => {
         prompt: async () => {},
         steer: async () => {},
         abort: async () => {},
+        setModel: async () => {},
         subscribe: () => () => {},
         getMessages: async () => [],
         isStreaming: () => false,
@@ -120,6 +140,7 @@ describe("runtime sessions manager", () => {
     registerRuntimeAdapter({
       runtimeType: "test_runtime",
       listModels: async () => [],
+      ask: async () => "",
       createRuntime,
     });
 
@@ -141,6 +162,199 @@ describe("runtime sessions manager", () => {
     expect(state.sessions.get("sess-runtime-create")).toBe(managed);
   });
 
+  test("ensureSessionOpen persists by observing runtime events", async () => {
+    clearRuntimeAdapters();
+
+    const listeners = new Set<(event: any) => void>();
+    let messages: any[] = [];
+
+    registerRuntimeAdapter({
+      runtimeType: "test_runtime",
+      listModels: async () => [],
+      ask: async () => "",
+      createRuntime: async (params) => {
+        expect(params).not.toHaveProperty("persistenceHooks");
+
+        return {
+          prompt: async () => {},
+          steer: async () => {},
+          abort: async () => {},
+          setModel: async () => {},
+          subscribe: (candidate) => {
+            listeners.add(candidate);
+            return () => {
+              listeners.delete(candidate);
+            };
+          },
+          getMessages: async () => messages,
+          getSessionMetadata: () => ({
+            model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+            thinkingLevel: "high",
+          }),
+          isStreaming: () => false,
+          close: async () => {},
+        };
+      },
+    });
+
+    const state = createServerState();
+    const project = createProject("Reins", repo.dir);
+    createSession("sess-checkpoints", project.id, { agentRuntimeType: "test_runtime" });
+
+    await ensureSessionOpen(state, "sess-checkpoints");
+
+    const emit = (event: any) => {
+      for (const listener of listeners) {
+        listener(event);
+      }
+    };
+
+    messages = [{ role: "assistant", content: [{ type: "text", text: "turn output" }] }];
+    emit({ type: "turn_end" });
+    await Bun.sleep(0);
+
+    messages = [
+      { role: "assistant", content: [{ type: "text", text: "turn output" }] },
+      { role: "assistant", content: [{ type: "text", text: "post compaction" }] },
+    ];
+    emit({ type: "compaction_end", aborted: false });
+    await Bun.sleep(0);
+
+    messages = [
+      { role: "assistant", content: [{ type: "text", text: "turn output" }] },
+      { role: "assistant", content: [{ type: "text", text: "post compaction" }] },
+      { role: "assistant", content: [{ type: "text", text: "done" }] },
+    ];
+    emit({ type: "agent_end" });
+    await Bun.sleep(0);
+
+    const persisted = loadMessages("sess-checkpoints");
+    expect(persisted).toEqual([
+      { role: "assistant", content: [{ type: "text", text: "turn output" }] },
+      { role: "assistant", content: [{ type: "text", text: "post compaction" }] },
+      { role: "assistant", content: [{ type: "text", text: "done" }] },
+    ]);
+
+    const row = getSession("sess-checkpoints");
+    expect(row?.model_provider).toBe("anthropic");
+    expect(row?.model_id).toBe("claude-sonnet-4-5");
+    expect(row?.thinking_level).toBe("high");
+  });
+
+  test("ensureSessionOpen skips persistence on aborted compaction_end", async () => {
+    clearRuntimeAdapters();
+
+    const listeners = new Set<(event: any) => void>();
+
+    registerRuntimeAdapter({
+      runtimeType: "test_runtime",
+      listModels: async () => [],
+      ask: async () => "",
+      createRuntime: async () => ({
+        prompt: async () => {},
+        steer: async () => {},
+        abort: async () => {},
+        setModel: async () => {},
+        subscribe: (candidate) => {
+          listeners.add(candidate);
+          return () => {
+            listeners.delete(candidate);
+          };
+        },
+        getMessages: async () => [{ role: "assistant", content: [{ type: "text", text: "should not persist" }] }],
+        isStreaming: () => false,
+        close: async () => {},
+      }),
+    });
+
+    const state = createServerState();
+    const project = createProject("Reins", repo.dir);
+    createSession("sess-aborted-compaction", project.id, { agentRuntimeType: "test_runtime" });
+
+    await ensureSessionOpen(state, "sess-aborted-compaction");
+
+    const emit = (event: any) => {
+      for (const listener of listeners) {
+        listener(event);
+      }
+    };
+
+    emit({ type: "compaction_end", aborted: true });
+    await Bun.sleep(0);
+
+    expect(loadMessages("sess-aborted-compaction")).toEqual([]);
+  });
+
+  test("ensureSessionOpen broadcasts runtime events from observer layer without remapping", async () => {
+    clearRuntimeAdapters();
+
+    const listeners = new Set<(event: any) => void>();
+
+    registerRuntimeAdapter({
+      runtimeType: "test_runtime",
+      listModels: async () => [],
+      ask: async () => "",
+      createRuntime: async () => ({
+        prompt: async () => {},
+        steer: async () => {},
+        abort: async () => {},
+        setModel: async () => {},
+        subscribe: (candidate) => {
+          listeners.add(candidate);
+          return () => {
+            listeners.delete(candidate);
+          };
+        },
+        getMessages: async () => [],
+        isStreaming: () => false,
+        close: async () => {},
+      }),
+    });
+
+    const wsClient = createCapturingWsClient();
+    const state = createServerState({ clients: new Set<WsClient>([wsClient.client]) });
+    const project = createProject("Reins", repo.dir);
+    createSession("sess-broadcast-observer", project.id, { agentRuntimeType: "test_runtime" });
+
+    await ensureSessionOpen(state, "sess-broadcast-observer");
+
+    const emit = (event: any) => {
+      for (const listener of listeners) {
+        listener(event);
+      }
+    };
+
+    emit({ type: "turn_end", output: "ok" });
+    emit({ type: "compaction_start", reason: "auto" });
+    emit({ type: "compaction_end", result: { summary: "done" }, aborted: true, errorMessage: "oops" });
+
+    expect(wsClient.sent).toEqual([
+      {
+        type: "event",
+        sessionId: "sess-broadcast-observer",
+        projectId: project.id,
+        event: { type: "turn_end", output: "ok" },
+      },
+      {
+        type: "event",
+        sessionId: "sess-broadcast-observer",
+        projectId: project.id,
+        event: { type: "compaction_start", reason: "auto" },
+      },
+      {
+        type: "event",
+        sessionId: "sess-broadcast-observer",
+        projectId: project.id,
+        event: {
+          type: "compaction_end",
+          result: { summary: "done" },
+          aborted: true,
+          errorMessage: "oops",
+        },
+      },
+    ]);
+  });
+
   test("ensureSessionOpen resolves session tools during runtime creation", async () => {
     clearRuntimeAdapters();
 
@@ -148,6 +362,7 @@ describe("runtime sessions manager", () => {
         prompt: async () => {},
         steer: async () => {},
         abort: async () => {},
+        setModel: async () => {},
         subscribe: () => () => {},
         getMessages: async () => [],
         isStreaming: () => false,
@@ -157,6 +372,7 @@ describe("runtime sessions manager", () => {
     registerRuntimeAdapter({
       runtimeType: "test_runtime",
       listModels: async () => [],
+      ask: async () => "",
       createRuntime,
     });
 
@@ -183,6 +399,7 @@ describe("runtime sessions manager", () => {
         prompt: async () => {},
         steer: async () => {},
         abort: async () => {},
+        setModel: async () => {},
         subscribe: () => () => {},
         getMessages: async () => [],
         isStreaming: () => false,
@@ -192,6 +409,7 @@ describe("runtime sessions manager", () => {
     registerRuntimeAdapter({
       runtimeType: "test_runtime",
       listModels: async () => [],
+      ask: async () => "",
       createRuntime,
     });
 
@@ -212,6 +430,7 @@ describe("runtime sessions manager", () => {
     registerRuntimeAdapter({
       runtimeType: "test_runtime",
       listModels: async () => [],
+      ask: async () => "",
       createRuntime: async () => {
         throw new ModelNotFoundError("anthropic", "does-not-exist");
       },
@@ -238,6 +457,7 @@ describe("runtime sessions manager", () => {
     registerRuntimeAdapter({
       runtimeType: "test_runtime",
       listModels: async () => [],
+      ask: async () => "",
       createRuntime: async () => {
         throw new ModelNotFoundError("anthropic", "does-not-exist");
       },

@@ -41,6 +41,28 @@ describe("session routes (top-level)", () => {
       expect(body.state.isStreaming).toBe(false);
     });
 
+    test("uses DB model metadata and overlays in-memory streaming state", async () => {
+      const sessionId = "lookup-memory-db-first";
+      createSession(sessionId, projectId, {
+        agentRuntimeType: "pi",
+        modelProvider: "openai",
+        modelId: "gpt-5",
+        thinkingLevel: "minimal",
+      });
+
+      state.sessions.set(sessionId, await createTestManagedSession(sessionId, { isStreaming: true }));
+
+      const res = await router.handle(
+        makeRequest("GET", `/api/sessions/${sessionId}`),
+        state,
+      );
+      expect(res!.status).toBe(200);
+      const body = await res!.json();
+      expect(body.state.model).toEqual({ provider: "openai", id: "gpt-5" });
+      expect(body.state.thinkingLevel).toBe("minimal");
+      expect(body.state.isStreaming).toBe(true);
+    });
+
     test("returns metadata-only session from DB with project_id", async () => {
       const sessionId = "lookup-db";
       createSession(sessionId, projectId, { agentRuntimeType: "pi",});

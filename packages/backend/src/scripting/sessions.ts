@@ -9,7 +9,7 @@ import {
   listTaskSessionRows,
   loadMessages,
 } from "../session-store.js";
-import { ProjectSessions } from "../models/sessions.js";
+import { Sessions } from "../models/sessions.js";
 import { ThinkingLevelSchema } from "../models/model-settings.js";
 import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";
 
@@ -18,7 +18,7 @@ import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-f
 // ---------------------------------------------------------------------------
 
 function sessionModel(ctx: ApiContext) {
-  return new ProjectSessions(ctx.projectId, ctx.sessions, ctx.broadcast);
+  return new Sessions(ctx.sessions, ctx.broadcast);
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ export const sessionsSetModelFunction = defineFunction({
   async: true,
   tags: ["sessions", "model", "set", "write", "switch", "provider"],
   execute: async (params, ctx) => {
-    return sessionModel(ctx).setModel(params);
+    return sessionModel(ctx).setModel({ ...params, projectId: ctx.projectId });
   },
 });
 

@@ -18,6 +18,7 @@ describe("runtime registry", () => {
       prompt: async () => {},
       steer: async () => {},
       abort: async () => {},
+      setModel: async () => {},
       subscribe: () => () => {},
       getMessages: async () => [],
       isStreaming: () => false,
@@ -29,6 +30,7 @@ describe("runtime registry", () => {
     const adapter: AgentRuntimeAdapter = {
       runtimeType: "pi",
       listModels: async () => [],
+      ask: async () => "",
       createRuntime,
     };
 
@@ -46,6 +48,7 @@ describe("runtime registry", () => {
       prompt: async () => {},
       steer: async () => {},
       abort: async () => {},
+      setModel: async () => {},
       subscribe: () => () => {},
       getMessages: async () => [],
       isStreaming: () => false,
@@ -69,6 +72,7 @@ describe("runtime registry", () => {
     registerRuntimeAdapter({
       runtimeType: "pi",
       listModels: async () => [],
+      ask: async () => "",
       createRuntime,
     });
 
@@ -106,10 +110,12 @@ describe("runtime registry", () => {
     registerRuntimeAdapter({
       runtimeType: "runtime-a",
       listModels: aListModels,
+      ask: async () => "",
       createRuntime: async () => ({
         prompt: async () => {},
         steer: async () => {},
         abort: async () => {},
+        setModel: async () => {},
         subscribe: () => () => {},
         getMessages: async () => [],
         isStreaming: () => false,
@@ -120,10 +126,12 @@ describe("runtime registry", () => {
     registerRuntimeAdapter({
       runtimeType: "runtime-b",
       listModels: bListModels,
+      ask: async () => "",
       createRuntime: async () => ({
         prompt: async () => {},
         steer: async () => {},
         abort: async () => {},
+        setModel: async () => {},
         subscribe: () => () => {},
         getMessages: async () => [],
         isStreaming: () => false,

@@ -14,7 +14,7 @@ import {
   TaskNotFoundError,
   TaskHasActiveSessionsError,
 } from "../models/tasks.js";
-import { serializeTaskSessionList } from "../runtimes/sessions-manager.js";
+import { Sessions } from "../models/sessions.js";
 import { parseBody, parseIntParam } from "./validate.js";
 
 const GenerateTaskBody = Type.Object({
@@ -63,7 +63,7 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
     const task = getTask(taskId);
     if (!task) notFound("Task not found");
 
-    const sessions = serializeTaskSessionList(task.id);
+    const sessions = new Sessions(ctx.state.sessions).listByTask(task.id);
     return Response.json({ ...task, sessions });
   });
 

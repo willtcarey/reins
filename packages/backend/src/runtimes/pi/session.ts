@@ -3,14 +3,8 @@ import {
   createCodingTools,
   SessionManager,
   type AgentSession,
-  type AgentSessionEvent,
 } from "@mariozechner/pi-coding-agent";
-import type { ServerState } from "../../state.js";
-import {
-  loadMessagesForLLM,
-  persistMessages,
-  updateSessionMeta,
-} from "../../session-store.js";
+import { loadMessagesForLLM } from "../../session-store.js";
 import { getTask, type TaskRow } from "../../task-store.js";
 import { checkoutBranch } from "../../git.js";
 import { buildReinsSystemPrompt } from "../system-prompt.js";
@@ -18,13 +12,14 @@ import { createPiContext } from "./factory.js";
 import {
   parseThinkingLevel,
   resolveModel,
+  resolveModelSettingWithConfigInRegistry,
 } from "../../models/model-settings.js";
-import { createBroadcast, type Broadcast } from "../../models/broadcast.js";
 import {
   ModelNotFoundError,
   type AgentRuntime,
   type AgentRuntimeAdapter,
   type CreateAgentRuntimeParams,
+  type RuntimeAskParams,
 } from "../registry.js";
 import { PiAgentRuntime } from "./runtime.js";
 import { buildProviderList } from "./models-registry.js";
@@ -126,117 +121,30 @@ async function buildSessionOpts(params: {
   };
 }
 
-function logCompactionState(sessionId: string, session: AgentSession): void {
-  try {
-    const sm = session.sessionManager;
-    const branch = sm.getBranch();
-    const entries = branch.map((entry) => {
-      if (entry.type === "message") {
-        const message = entry.message as { role?: string; content?: unknown; summary?: string };
-        return {
-          type: entry.type,
-          role: message.role,
-          contentPreview: JSON.stringify(message.content ?? message.summary)?.slice(0, 100),
-        };
-      }
-
-      return {
-        type: entry.type,
-        role: undefined,
-        contentPreview: entry.type === "compaction" ? entry.summary?.slice(0, 100) : undefined,
-      };
-    });
-    console.log(`  Compaction starting for ${sessionId}:`);
-    console.log(`    SessionManager branch: ${branch.length} entries`);
-    console.log(`    Agent messages: ${session.messages?.length ?? "N/A"}`);
-    console.log("    Entries:", JSON.stringify(entries, null, 2));
-  } catch (err) {
-    console.error(`  Failed to log compaction state for ${sessionId}:`, err);
-  }
-}
-
-function handleCompactionEnd(
-  sessionId: string,
+async function ephemeralPrompt(
   session: AgentSession,
-  event: { aborted?: boolean; result?: { summary?: string }; errorMessage?: string },
-  broadcast: Broadcast,
-  projectId: number,
-): void {
-  if (!event.aborted) {
-    try {
-      const filtered = filterErrorMessages(session.messages);
-      persistMessages(sessionId, filtered);
-      console.log(`  Compaction persisted for ${sessionId} (${filtered.length} post-compaction messages)`);
-    } catch (err) {
-      console.error(`  Failed to persist compaction for ${sessionId}:`, err);
+  params: { prompt: string; timeoutMs?: number },
+): Promise<string> {
+  const { prompt, timeoutMs } = params;
+
+  if (timeoutMs && timeoutMs > 0) {
+    const result = await Promise.race([
+      session.prompt(prompt, { expandPromptTemplates: false }),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), timeoutMs)),
+    ]);
+
+    if (result === "timeout") {
+      return "";
     }
+  } else {
+    await session.prompt(prompt, { expandPromptTemplates: false });
   }
-  broadcast({
-    type: "event",
-    sessionId,
-    projectId,
-    event: {
-      type: "compaction_end",
-      result: event.result,
-      aborted: event.aborted,
-      errorMessage: event.errorMessage,
-    },
-  });
-}
 
-function wirePiRuntimeEvents(
-  state: ServerState,
-  session: AgentSession,
-  sessionId: string,
-  projectId: number,
-): void {
-  const broadcast = createBroadcast(state.clients);
-
-  session.subscribe((event: AgentSessionEvent) => {
-    if (event.type === "auto_compaction_start") {
-      logCompactionState(sessionId, session);
-      broadcast({
-        type: "event",
-        sessionId,
-        projectId,
-        event: { type: "compaction_start", reason: event.reason ?? "auto" },
-      });
-      return;
-    }
-
-    if (event.type === "auto_compaction_end") {
-      handleCompactionEnd(sessionId, session, event, broadcast, projectId);
-      return;
-    }
-
-    broadcast({ type: "event", sessionId, projectId, event });
-
-    if (event.type === "turn_end" || event.type === "agent_end") {
-      try {
-        const filtered = filterErrorMessages(session.messages);
-        persistMessages(sessionId, filtered);
-
-        if (event.type === "agent_end") {
-          const model = session.model;
-          if (model) {
-            updateSessionMeta(sessionId, {
-              modelProvider: model.provider,
-              modelId: model.id,
-              thinkingLevel: session.thinkingLevel,
-            });
-          }
-        }
-      } catch (err) {
-        console.error(`  Failed to persist messages for ${sessionId}:`, err);
-      }
-    }
-  });
+  return session.getLastAssistantText()?.trim() ?? "";
 }
 
 async function createPiSessionRuntime(params: CreateAgentRuntimeParams): Promise<AgentRuntime> {
   const {
-    state,
-    projectId,
     projectDir,
     sessionId,
     taskId,
@@ -282,10 +190,8 @@ async function createPiSessionRuntime(params: CreateAgentRuntimeParams): Promise
   if (messages.length > 0) {
     hydrateSessionManager(agentSession.sessionManager, messages);
     agentSession.agent.replaceMessages(messages);
-    console.log(`  Session hydrated: ${sessionId} (${messages.length} messages for LLM, total: ${state.sessions.size})`);
+    console.log(`  Session hydrated: ${sessionId} (${messages.length} messages for LLM)`);
   }
-
-  wirePiRuntimeEvents(state, agentSession, sessionId, projectId);
 
   return runtime;
 }
@@ -295,6 +201,56 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
 
   async listModels() {
     return buildProviderList();
+  }
+
+  async ask(params: RuntimeAskParams): Promise<string> {
+    const {
+      cwd,
+      prompt,
+      model,
+      thinkingLevel,
+      systemPrompt,
+      timeoutMs,
+    } = params;
+
+    const { authStorage, modelRegistry, resourceLoader } = await createPiContext({
+      cwd,
+      resourceLoaderOptions: {
+        systemPrompt,
+        noSkills: true,
+        noPromptTemplates: true,
+        noThemes: true,
+      },
+    });
+
+    const resolvedModel = model
+      ? resolveModel(model.provider, model.modelId, modelRegistry)
+      : resolveModelSettingWithConfigInRegistry("utility_model", modelRegistry)?.model
+        ?? resolveModelSettingWithConfigInRegistry("default_model", modelRegistry)?.model;
+
+    if (model && !resolvedModel) {
+      throw new ModelNotFoundError(model.provider, model.modelId);
+    }
+
+    const { session } = await createAgentSession({
+      cwd,
+      tools: [],
+      model: resolvedModel,
+      authStorage,
+      modelRegistry,
+      sessionManager: SessionManager.inMemory(),
+      resourceLoader,
+    });
+
+    try {
+      if (thinkingLevel) {
+        session.setThinkingLevel(parseThinkingLevel(thinkingLevel));
+      }
+
+      return ephemeralPrompt(session, { prompt, timeoutMs });
+    } finally {
+      session.dispose();
+    }
   }
 
   async createRuntime(params: CreateAgentRuntimeParams): Promise<AgentRuntime> {

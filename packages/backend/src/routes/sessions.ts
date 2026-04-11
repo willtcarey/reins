@@ -10,9 +10,7 @@ import { Type } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import type { RouteContext } from "../router.js";
 import { badRequest, notFound } from "../errors.js";
-import { ProjectSessions } from "../models/sessions.js";
-import { getSession as dbGetSession, loadMessages } from "../session-store.js";
-import { serializeSession, serializeSessionFromDb } from "../runtimes/sessions-manager.js";
+import { Sessions } from "../models/sessions.js";
 import { parseBody } from "./validate.js";
 
 const SessionModelBody = Type.Object({
@@ -24,15 +22,10 @@ const SessionModelBody = Type.Object({
 export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   router.put("/:sessionId/model", async (ctx) => {
     const sessionId = ctx.params.sessionId;
-    const row = dbGetSession(sessionId);
-    if (!row) {
-      notFound(`Session not found: ${sessionId}`);
-    }
-
     const body = await parseBody(SessionModelBody, ctx.req);
 
     try {
-      const sessions = new ProjectSessions(row.project_id, ctx.state.sessions, () => {});
+      const sessions = new Sessions(ctx.state.sessions);
       const updated = await sessions.setModel({ sessionId, ...body });
       return Response.json(updated);
     } catch (err: unknown) {
@@ -46,37 +39,24 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
 
   router.get("/:sessionId/messages", async (ctx) => {
     const sessionId = ctx.params.sessionId;
-    const row = dbGetSession(sessionId);
-    if (!row) {
+    const sessions = new Sessions(ctx.state.sessions);
+    const messages = sessions.getMessages(sessionId);
+    if (!messages) {
       return new Response("Session not found", { status: 404 });
     }
 
-    return Response.json(loadMessages(sessionId));
+    return Response.json(messages);
   });
 
   // Get a session by its globally-unique ID
   router.get("/:sessionId", async (ctx) => {
     const sessionId = ctx.params.sessionId;
 
-    // Check in-memory sessions first (includes isStreaming state)
-    const existing = ctx.state.sessions.get(sessionId);
-    if (existing) {
-      const data = serializeSession(existing);
-      const row = dbGetSession(sessionId);
-      return Response.json({ ...data, project_id: row?.project_id ?? null });
-    }
-
-    // Otherwise read from SQLite
-    const row = dbGetSession(sessionId);
-    if (!row) {
-      return new Response("Session not found", { status: 404 });
-    }
-
-    const data = serializeSessionFromDb(sessionId);
+    const data = new Sessions(ctx.state.sessions).get(sessionId);
     if (!data) {
       return new Response("Session not found", { status: 404 });
     }
 
-    return Response.json({ ...data, project_id: row.project_id });
+    return Response.json(data);
   });
 }
