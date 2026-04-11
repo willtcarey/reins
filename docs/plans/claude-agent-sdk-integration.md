@@ -11,12 +11,12 @@ Currently Reins uses pi's agent loop exclusively:
 - Pi's `agentLoop` manages the turn cycle: LLM call → tool execution → feed results → repeat
 - Pi handles tool execution, message persistence, compaction, steering
 
-The existing `claude-agent-sdk` v1 extension (at `packages/backend/src/pi/vendor/claude-agent-sdk-pi.ts`) uses the SDK purely as an inference backend within pi's turn loop. It serializes the full conversation as text into a single prompt, denies all SDK tool execution, and maps stream events back to pi's format. This has limitations:
-- Tool results are text-serialized (no structured `tool_result` messages)
-- Each turn spawns a new `query()` — no session continuity in the SDK
+The previous `claude-agent-sdk` v1 extension (formerly at `packages/backend/src/pi/vendor/claude-agent-sdk-pi.ts`) used the SDK purely as an inference backend within pi's turn loop. It serialized the full conversation as text into a single prompt, denied all SDK tool execution, and mapped stream events back to pi's format. That approach had limitations:
+- Tool results were text-serialized (no structured `tool_result` messages)
+- Each turn spawned a new `query()` — no session continuity in the SDK
 - MCP workarounds for custom tool schemas
 
-The new approach lets the SDK own the full agent loop while Reins wraps it.
+That legacy extension has now been removed from Reins. The new approach lets the SDK own the full agent loop while Reins wraps it.
 
 ## Architecture
 
@@ -58,7 +58,7 @@ Proposed adapter contract:
 ```typescript
 interface AgentRuntimeAdapter {
   runtimeType: AgentRuntimeType;
-  listModels(params: { cwd: string }): Promise<ProviderInfo[]>;
+  listModels(): Promise<ProviderInfo[]>;
   resolveModel(params: { cwd: string; provider: string; modelId: string }): Promise<ResolvedRuntimeModel>;
   createRuntime(params: {
     sessionId: string;
@@ -296,7 +296,7 @@ Status: 🟡 In progress (core seam complete)
 - [x] Introduce a `PiRuntimeAdapter` and `PiAgentRuntime` wrapper around current session behavior.
 - [x] Transition `ManagedSession` to runtime-based orchestration.
 - [x] Move active orchestration paths behind `managed.runtime.*` (prompt/steer/abort, idle eviction, health/task streaming checks).
-- [ ] Add shared runtime model catalog types (`ProviderInfo`/`ModelInfo`) to registry.
+- [x] Add shared runtime model catalog types (`ProviderInfo`/`ModelInfo`) to registry.
 
 Checkpoint:
 - [x] All active code paths still execute through pi behavior, now behind `managed.runtime.*`.
@@ -312,7 +312,7 @@ Status: 🟡 In progress (partial)
   - [ ] `resumeSession()` routes by persisted `agent_runtime_type`.
   - [ ] enforce runtime immutability for existing sessions.
 - [x] Update `ws.ts` command dispatch to only call `managed.runtime.prompt/steer/abort`.
-- [ ] Update `/api/models` to use runtime-adapter `listModels()` output.
+- [x] Update `/api/models` to use runtime-adapter `listModels()` output.
 - [ ] Update `PUT /sessions/:id/model` validation so updates are only allowed within the session runtime; return `400` on cross-runtime attempts.
 
 Checkpoint:

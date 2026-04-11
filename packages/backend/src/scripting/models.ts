@@ -3,14 +3,14 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { buildProviderList } from "../pi/models-registry.js";
+import { ensureRuntimeAdapterRegistered, listAllRuntimeProviders } from "../runtimes/registry.js";
 import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 export type {
   KeySourceType,
-  ProviderInfo,
+  RuntimeProviderInfo as ProviderInfo,
   ModelInfo,
-} from "../pi/models-registry.js";
+} from "../runtimes/registry.js";
 
 // ---------------------------------------------------------------------------
 // Function definitions
@@ -32,12 +32,18 @@ export const ModelInfoSchema = Type.Object({
 });
 
 export const ProviderInfoSchema = Type.Object({
+  runtimeType: Type.String(),
   provider: Type.String(),
   hasKey: Type.Boolean(),
   keySource: Type.Union([KeySourceSchema, Type.Null()]),
   keySources: Type.Array(KeySourceSchema),
   models: Type.Array(ModelInfoSchema),
 });
+
+async function listProvidersAcrossRuntimes() {
+  await ensureRuntimeAdapterRegistered("pi");
+  return listAllRuntimeProviders();
+}
 
 export const modelsListFunction = defineFunction({
   name: "models.list",
@@ -48,7 +54,7 @@ export const modelsListFunction = defineFunction({
   parameters: Type.Object({}),
   returns: Type.Array(ProviderInfoSchema),
   tags: ["models", "providers", "list", "read", "ai", "configuration"],
-  execute: () => buildProviderList(),
+  execute: () => listProvidersAcrossRuntimes(),
 });
 
 export const modelsListProvidersFunction = defineFunction({
@@ -57,7 +63,7 @@ export const modelsListProvidersFunction = defineFunction({
   parameters: Type.Object({}),
   returns: Type.Array(Type.String()),
   tags: ["models", "providers", "list", "read", "names"],
-  execute: async () => (await buildProviderList()).map((provider) => provider.provider),
+  execute: async () => (await listProvidersAcrossRuntimes()).map((provider) => provider.provider),
 });
 
 export const MODEL_FUNCTIONS: ApiFunctionDef[] = [

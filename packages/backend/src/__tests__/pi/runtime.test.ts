@@ -1,14 +1,13 @@
 import { describe, test, expect } from "bun:test";
-import { createPiRuntimeForCwd } from "../../pi/runtime.js";
+import { createPiContext } from "../../runtimes/pi/factory.js";
 
 describe("pi runtime", () => {
-  test("builds a cwd-scoped runtime with extension-registered providers", async () => {
-    const runtime = await createPiRuntimeForCwd({
+  test("builds a cwd-scoped runtime with built-in providers", async () => {
+    const runtime = await createPiContext({
       cwd: "/tmp/reins-pi-runtime",
     });
 
-    expect(runtime.extensionErrors).toEqual([]);
-    expect(runtime.providerRegistrations.some((registration) => registration.name === "claude-agent-sdk")).toBe(true);
-    expect(runtime.modelRegistry.find("claude-agent-sdk", "claude-opus-4-5")).toBeDefined();
+    expect(runtime.modelRegistry.getAll().length).toBeGreaterThan(0);
+    expect(runtime.modelRegistry.find("anthropic", "claude-sonnet-4-20250514")).toBeDefined();
   });
 });

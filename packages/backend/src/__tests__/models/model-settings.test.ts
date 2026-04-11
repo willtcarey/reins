@@ -1,7 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { deleteSetting, setSetting } from "../../settings-store.js";
-import { resolveConfiguredModel } from "../../pi/session-models.js";
 import {
   THINKING_LEVEL_VALUES,
   parseThinkingLevel,
@@ -19,7 +18,7 @@ describe("model settings resolution", () => {
       thinkingLevel: "medium",
     });
 
-    const model = resolveConfiguredModel();
+    const model = resolveModelSetting("default_model");
 
     expect(model?.provider).toBe("anthropic");
     expect(model?.id).toBe("claude-sonnet-4-20250514");
@@ -28,7 +27,7 @@ describe("model settings resolution", () => {
   test("returns undefined when no default model is configured", () => {
     deleteSetting("default_model");
 
-    expect(resolveConfiguredModel()).toBeUndefined();
+    expect(resolveModelSetting("default_model")).toBeUndefined();
   });
 
   test("parses valid thinking levels", () => {
@@ -51,7 +50,7 @@ describe("model settings resolution", () => {
       process.env.REINS_PROVIDER = "anthropic";
       process.env.REINS_MODEL = "claude-sonnet-4-20250514";
 
-      expect(resolveConfiguredModel()).toBeUndefined();
+      expect(resolveModelSetting("default_model")).toBeUndefined();
     } finally {
       if (prevProvider === undefined) delete process.env.REINS_PROVIDER;
       else process.env.REINS_PROVIDER = prevProvider;

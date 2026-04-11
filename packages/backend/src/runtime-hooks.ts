@@ -1,5 +1,5 @@
 import type { ServerState } from "./state.js";
-import { subscribeAuthStorageChanges } from "./pi/auth-storage.js";
+import { subscribeAuthStorageChanges } from "./runtimes/pi/auth-storage.js";
 import { reloadManagedSessionAuthStorage } from "./models/auth-credentials.js";
 
 /**

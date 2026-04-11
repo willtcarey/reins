@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildReinsSystemPrompt } from "../../pi/system-prompt.js";
+import { buildReinsSystemPrompt } from "../../runtimes/system-prompt.js";
 
 describe("buildReinsSystemPrompt", () => {
   test("includes REINS identity and tool list", () => {

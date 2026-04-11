@@ -62,7 +62,7 @@ const MAX_DEPTH = 3;
 /**
  * Preamble prepended to sub-session prompts to enforce autonomous execution.
  */
-export const AUTONOMY_PREAMBLE = `You are a sub-agent working on a delegated piece of work. Do not ask clarifying questions — work with what you have, and if you get stuck or need more context, say so in your final message so the caller can help.
+const AUTONOMY_PREAMBLE = `You are a sub-agent working on a delegated piece of work. Do not ask clarifying questions — work with what you have, and if you get stuck or need more context, say so in your final message so the caller can help.
 
 ---
 

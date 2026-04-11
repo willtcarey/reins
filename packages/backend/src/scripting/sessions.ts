@@ -48,7 +48,7 @@ export const MessageSchema = Type.Object({
 // Function definitions
 // ---------------------------------------------------------------------------
 
-export const sessionsListFunction = defineFunction({
+const sessionsListFunction = defineFunction({
   name: "sessions.list",
   description: "List scratch sessions (non-task) for the current project.",
   parameters: Type.Object({}),
@@ -57,7 +57,7 @@ export const sessionsListFunction = defineFunction({
   execute: (_params, ctx) => listSessionRows(ctx.projectId),
 });
 
-export const sessionsListForTaskFunction = defineFunction({
+const sessionsListForTaskFunction = defineFunction({
   name: "sessions.listForTask",
   description: "List sessions belonging to a specific task.",
   parameters: Type.Object({ taskId: Type.Number() }),
@@ -66,7 +66,7 @@ export const sessionsListForTaskFunction = defineFunction({
   execute: (params, _ctx) => listTaskSessionRows(params.taskId),
 });
 
-export const sessionsCurrentFunction = defineFunction({
+const sessionsCurrentFunction = defineFunction({
   name: "sessions.current",
   description: "Get the current session (the one running this script). No ID needed.",
   parameters: Type.Object({}),
@@ -79,7 +79,7 @@ export const sessionsCurrentFunction = defineFunction({
   },
 });
 
-export const sessionsGetFunction = defineFunction({
+const sessionsGetFunction = defineFunction({
   name: "sessions.get",
   description: "Get a single session by ID. Throws if not found.",
   parameters: Type.Object({ sessionId: Type.String() }),
@@ -94,7 +94,7 @@ export const sessionsGetFunction = defineFunction({
   },
 });
 
-export const sessionsMessagesFunction = defineFunction({
+const sessionsMessagesFunction = defineFunction({
   name: "sessions.messages",
   description: "Load all persisted messages for a session, ordered by sequence number.",
   parameters: Type.Object({ sessionId: Type.String() }),

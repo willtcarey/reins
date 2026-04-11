@@ -6,10 +6,10 @@ import { createProject } from "../project-store.js";
 import { createSession, getSession } from "../session-store.js";
 import { setSetting, deleteSetting } from "../settings-store.js";
 import { createNewSession, ensureSessionOpen } from "../runtimes/sessions-manager.js";
-import { resolveConfiguredModel } from "../pi/session-models.js";
+import { resolveModelSetting } from "../models/model-settings.js";
 import { getPiSession } from "../runtimes/pi/runtime.js";
 
-describe("resolveConfiguredModel", () => {
+describe("resolveModelSetting(default_model)", () => {
   useTestDb();
 
   test("returns the configured default model from settings", () => {
@@ -19,7 +19,7 @@ describe("resolveConfiguredModel", () => {
       thinkingLevel: "medium",
     });
 
-    const model = resolveConfiguredModel();
+    const model = resolveModelSetting("default_model");
 
     expect(model?.provider).toBe("anthropic");
     expect(model?.id).toBe("claude-sonnet-4-20250514");
@@ -28,7 +28,7 @@ describe("resolveConfiguredModel", () => {
   test("returns undefined when no default model is configured", () => {
     deleteSetting("default_model");
 
-    expect(resolveConfiguredModel()).toBeUndefined();
+    expect(resolveModelSetting("default_model")).toBeUndefined();
   });
 
   test("throws when a configured default model cannot be resolved", () => {
@@ -38,7 +38,7 @@ describe("resolveConfiguredModel", () => {
       thinkingLevel: "medium",
     });
 
-    expect(() => resolveConfiguredModel()).toThrow(/Configured default_model is invalid/);
+    expect(() => resolveModelSetting("default_model")).toThrow(/Configured default_model is invalid/);
   });
 
   test("ignores REINS_PROVIDER/REINS_MODEL env vars when no default model is configured", () => {
@@ -51,7 +51,7 @@ describe("resolveConfiguredModel", () => {
       process.env.REINS_PROVIDER = "anthropic";
       process.env.REINS_MODEL = "claude-sonnet-4-20250514";
 
-      expect(resolveConfiguredModel()).toBeUndefined();
+      expect(resolveModelSetting("default_model")).toBeUndefined();
     } finally {
       if (prevProvider === undefined) delete process.env.REINS_PROVIDER;
       else process.env.REINS_PROVIDER = prevProvider;

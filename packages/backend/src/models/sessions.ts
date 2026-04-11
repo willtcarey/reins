@@ -15,7 +15,7 @@ import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
 import { getProject } from "../project-store.js";
-import { createPiRuntimeForCwd } from "../pi/runtime.js";
+import { createPiContext } from "../runtimes/pi/factory.js";
 import { isPiRuntime } from "../runtimes/pi/runtime.js";
 
 export interface SetSessionModelParams {
@@ -51,7 +51,7 @@ export class ProjectSessions {
       throw new Error(`Project ${this.projectId} not found`);
     }
 
-    const { modelRegistry } = await createPiRuntimeForCwd({
+    const { modelRegistry } = await createPiContext({
       cwd: project.path,
     });
     const providers = Array.from(new Set(modelRegistry.getAll().map((candidate) => candidate.provider))).toSorted();

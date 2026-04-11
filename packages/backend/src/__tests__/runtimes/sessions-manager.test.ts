@@ -47,6 +47,7 @@ describe("runtime sessions manager", () => {
 
     registerRuntimeAdapter({
       runtimeType: "pi",
+      listModels: async () => [],
       createRuntime: async () => runtime,
     });
 
@@ -118,6 +119,7 @@ describe("runtime sessions manager", () => {
 
     registerRuntimeAdapter({
       runtimeType: "test_runtime",
+      listModels: async () => [],
       createRuntime,
     });
 
@@ -154,6 +156,7 @@ describe("runtime sessions manager", () => {
 
     registerRuntimeAdapter({
       runtimeType: "test_runtime",
+      listModels: async () => [],
       createRuntime,
     });
 
@@ -188,6 +191,7 @@ describe("runtime sessions manager", () => {
 
     registerRuntimeAdapter({
       runtimeType: "test_runtime",
+      listModels: async () => [],
       createRuntime,
     });
 
@@ -207,6 +211,7 @@ describe("runtime sessions manager", () => {
 
     registerRuntimeAdapter({
       runtimeType: "test_runtime",
+      listModels: async () => [],
       createRuntime: async () => {
         throw new ModelNotFoundError("anthropic", "does-not-exist");
       },
@@ -232,6 +237,7 @@ describe("runtime sessions manager", () => {
 
     registerRuntimeAdapter({
       runtimeType: "test_runtime",
+      listModels: async () => [],
       createRuntime: async () => {
         throw new ModelNotFoundError("anthropic", "does-not-exist");
       },

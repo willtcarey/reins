@@ -27,6 +27,7 @@ describe("GET /api/models", () => {
     expect(body.length).toBeGreaterThan(0);
 
     const first = body[0];
+    expect(first).toHaveProperty("runtimeType");
     expect(first).toHaveProperty("provider");
     expect(first).toHaveProperty("hasKey");
     expect(first).toHaveProperty("keySource");
@@ -155,7 +156,7 @@ describe("GET /api/models", () => {
     }
   });
 
-  test("includes extension-registered providers that rely on local auth", async () => {
+  test("does not expose local-only extension providers", async () => {
     const { router, state } = setup();
 
     const res = await router.handle(
@@ -163,12 +164,8 @@ describe("GET /api/models", () => {
       state,
     );
     const body = await res!.json();
-    const claudeAgentSdk = body.find((p: any) => p.provider === "claude-agent-sdk");
 
-    expect(claudeAgentSdk).toBeDefined();
-    expect(claudeAgentSdk.hasKey).toBe(true);
-    expect(claudeAgentSdk.keySource).toBe("local");
-    expect(claudeAgentSdk.keySources).toContain("local");
-    expect(claudeAgentSdk.models.length).toBeGreaterThan(0);
+    expect(body.some((p: any) => p.keySource === "local")).toBe(false);
+    expect(body.some((p: any) => p.keySources.includes("local"))).toBe(false);
   });
 });

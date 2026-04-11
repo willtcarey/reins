@@ -111,19 +111,15 @@ describe("ProjectSessions.setModel", () => {
     ).rejects.toThrow(/Invalid thinking level/);
   });
 
-  test("accepts extension-registered providers", async () => {
-    createSession("sess-5", project.id, {  agentRuntimeType: "pi",thinkingLevel: "low" });
+  test("rejects unknown providers", async () => {
+    createSession("sess-5", project.id, { agentRuntimeType: "pi", thinkingLevel: "low" });
 
-    const result = await model.setModel({
-      sessionId: "sess-5",
-      provider: "claude-agent-sdk",
-      modelId: "claude-opus-4-5",
-    });
-
-    const updated = getSession("sess-5");
-    expect(updated!.model_provider).toBe("claude-agent-sdk");
-    expect(updated!.model_id).toBe("claude-opus-4-5");
-    expect(result.model_provider).toBe("claude-agent-sdk");
-    expect(result.model_id).toBe("claude-opus-4-5");
+    await expect(
+      model.setModel({
+        sessionId: "sess-5",
+        provider: "claude-agent-sdk",
+        modelId: "claude-opus-4-5",
+      }),
+    ).rejects.toThrow(/Unknown provider/);
   });
 });

@@ -6,7 +6,7 @@ import { describe, test, expect } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import "../helpers/server-state.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
-import { buildProviderList } from "../../pi/models-registry.js";
+import { buildProviderList } from "../../runtimes/pi/models-registry.js";
 import { modelsListFunction, modelsListProvidersFunction } from "../../scripting/models.js";
 import type { ApiContext } from "../../scripting/api-registry.js";
 import type { ManagedSession } from "../../state.js";
@@ -35,6 +35,7 @@ describe("models.list", () => {
     expect(result.length).toBeGreaterThan(0);
 
     const first = result[0];
+    expect(first).toHaveProperty("runtimeType");
     expect(first).toHaveProperty("provider");
     expect(first).toHaveProperty("hasKey");
     expect(first).toHaveProperty("keySource");

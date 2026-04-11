@@ -12,6 +12,28 @@ export class ModelNotFoundError extends Error {
   }
 }
 
+export type KeySourceType = "db" | "env" | "oauth" | "local";
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  reasoning: boolean;
+  contextWindow: number;
+  maxTokens: number;
+}
+
+export interface ProviderInfo {
+  provider: string;
+  hasKey: boolean;
+  keySource: KeySourceType | null;
+  keySources: KeySourceType[];
+  models: ModelInfo[];
+}
+
+export interface RuntimeProviderInfo extends ProviderInfo {
+  runtimeType: AgentRuntimeType;
+}
+
 export type RuntimeBuiltinToolName = "read" | "write" | "edit" | "bash";
 
 export type RuntimeCustomToolName = "create_task" | "delegate" | "search" | "execute";
@@ -46,6 +68,7 @@ export interface AgentRuntime {
 
 export interface AgentRuntimeAdapter {
   runtimeType: AgentRuntimeType;
+  listModels(): Promise<ProviderInfo[]>;
   createRuntime(params: CreateAgentRuntimeParams): Promise<AgentRuntime>;
 }
 
@@ -55,7 +78,7 @@ export function registerRuntimeAdapter(adapter: AgentRuntimeAdapter): void {
   runtimeAdapters.set(adapter.runtimeType, adapter);
 }
 
-export function hasRuntimeAdapter(runtimeType: string): boolean {
+function hasRuntimeAdapter(runtimeType: string): boolean {
   return runtimeAdapters.has(runtimeType);
 }
 
@@ -87,6 +110,19 @@ export async function createAgentRuntime(
 ): Promise<AgentRuntime> {
   const adapter = getRuntimeAdapter(runtimeType);
   return adapter.createRuntime(params);
+}
+
+export async function listAllRuntimeProviders(): Promise<RuntimeProviderInfo[]> {
+  const result: RuntimeProviderInfo[] = [];
+
+  for (const adapter of runtimeAdapters.values()) {
+    const providers = await adapter.listModels();
+    for (const provider of providers) {
+      result.push({ runtimeType: adapter.runtimeType, ...provider });
+    }
+  }
+
+  return result;
 }
 
 export function clearRuntimeAdapters(): void {

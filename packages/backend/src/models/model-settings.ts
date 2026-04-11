@@ -3,7 +3,7 @@ import { type ModelRegistry } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 import { getSetting, type ModelSettingsKey, type ModelSetting } from "../settings-store.js";
-import { createPiRuntimeForCwd } from "../pi/runtime.js";
+import { createPiContext } from "../runtimes/pi/factory.js";
 
 export const THINKING_LEVEL_VALUES = ["minimal", "low", "medium", "high", "xhigh"] as const;
 
@@ -47,7 +47,7 @@ export async function resolveModelFromPiRegistry(
   providerName: string,
   modelId: string,
 ): Promise<Model<Api> | undefined> {
-  const { modelRegistry } = await createPiRuntimeForCwd({ cwd });
+  const { modelRegistry } = await createPiContext({ cwd });
   return resolveModel(providerName, modelId, modelRegistry);
 }
 
@@ -92,7 +92,7 @@ export async function resolveModelSettingWithConfigForCwd(cwd: string, key: Mode
   config: ModelSetting;
   model: Model<Api>;
 } | undefined> {
-  const { modelRegistry } = await createPiRuntimeForCwd({ cwd });
+  const { modelRegistry } = await createPiContext({ cwd });
 
   return resolveModelSettingWithConfigInRegistry(key, modelRegistry);
 }
@@ -110,7 +110,7 @@ export function resolveUtilityModel(): Model<Api> | undefined {
 }
 
 export async function resolveUtilityModelForCwd(cwd: string): Promise<Model<Api> | undefined> {
-  const { modelRegistry } = await createPiRuntimeForCwd({ cwd });
+  const { modelRegistry } = await createPiContext({ cwd });
 
   return resolveModelSettingWithConfigInRegistry("utility_model", modelRegistry)?.model
     ?? resolveModelSettingWithConfigInRegistry("default_model", modelRegistry)?.model;

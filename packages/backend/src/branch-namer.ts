@@ -8,7 +8,7 @@
 
 import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
 import { resolveUtilityModelForCwd } from "./models/model-settings.js";
-import { createPiResourceLoader } from "./pi/resource-loader.js";
+import { createPiResourceLoader } from "./runtimes/pi/resource-loader.js";
 
 const BRANCH_PATTERN = /^task\/[a-z0-9][a-z0-9-]*$/;
 const TIMEOUT_MS = 10_000;

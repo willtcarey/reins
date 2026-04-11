@@ -13,8 +13,8 @@ import {
 } from "../../session-store.js";
 import { getTask, type TaskRow } from "../../task-store.js";
 import { checkoutBranch } from "../../git.js";
-import { buildReinsSystemPrompt } from "../../pi/system-prompt.js";
-import { createPiRuntimeForCwd } from "../../pi/runtime.js";
+import { buildReinsSystemPrompt } from "../system-prompt.js";
+import { createPiContext } from "./factory.js";
 import {
   parseThinkingLevel,
   resolveModel,
@@ -27,6 +27,7 @@ import {
   type CreateAgentRuntimeParams,
 } from "../registry.js";
 import { PiAgentRuntime } from "./runtime.js";
+import { buildProviderList } from "./models-registry.js";
 
 export function filterErrorMessages(messages: any[]): any[] {
   return messages.filter((m) => {
@@ -89,7 +90,7 @@ async function buildSessionOpts(params: {
   const customTools = sessionTools?.customTools ?? [];
   const allTools = [...tools, ...customTools];
 
-  const { authStorage, resourceLoader, modelRegistry } = await createPiRuntimeForCwd({
+  const { authStorage, resourceLoader, modelRegistry } = await createPiContext({
     cwd: projectDir,
     resourceLoaderOptions: {
       systemPromptOverride: () => buildReinsSystemPrompt({
@@ -232,7 +233,7 @@ function wirePiRuntimeEvents(
   });
 }
 
-export async function createPiSessionRuntime(params: CreateAgentRuntimeParams): Promise<AgentRuntime> {
+async function createPiSessionRuntime(params: CreateAgentRuntimeParams): Promise<AgentRuntime> {
   const {
     state,
     projectId,
@@ -291,6 +292,10 @@ export async function createPiSessionRuntime(params: CreateAgentRuntimeParams): 
 
 export class PiRuntimeAdapter implements AgentRuntimeAdapter {
   readonly runtimeType = "pi";
+
+  async listModels() {
+    return buildProviderList();
+  }
 
   async createRuntime(params: CreateAgentRuntimeParams): Promise<AgentRuntime> {
     return createPiSessionRuntime(params);

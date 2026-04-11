@@ -11,7 +11,7 @@ import { createNewSession } from "../runtimes/sessions-manager.js";
 import {
   DbAuthStorageBackend,
   createDbBackedAuthStorage,
-} from "../pi/auth-storage.js";
+} from "../runtimes/pi/auth-storage.js";
 import { installRuntimeHooks } from "../runtime-hooks.js";
 import { getPiSession } from "../runtimes/pi/runtime.js";
 import { clearPendingLogins } from "../routes/oauth.js";

@@ -5,6 +5,7 @@ import {
   getRuntimeAdapter,
   createAgentRuntime,
   clearRuntimeAdapters,
+  listAllRuntimeProviders,
   type AgentRuntime,
   type AgentRuntimeAdapter,
 } from "../../runtimes/registry.js";
@@ -27,6 +28,7 @@ describe("runtime registry", () => {
 
     const adapter: AgentRuntimeAdapter = {
       runtimeType: "pi",
+      listModels: async () => [],
       createRuntime,
     };
 
@@ -66,6 +68,7 @@ describe("runtime registry", () => {
 
     registerRuntimeAdapter({
       runtimeType: "pi",
+      listModels: async () => [],
       createRuntime,
     });
 
@@ -73,6 +76,84 @@ describe("runtime registry", () => {
 
     expect(created).toBe(runtime);
     expect(createRuntime).toHaveBeenCalledTimes(1);
+
+    clearRuntimeAdapters();
+  });
+
+  test("listAllRuntimeProviders aggregates provider lists across registered runtimes", async () => {
+    clearRuntimeAdapters();
+
+    const aListModels = mock<AgentRuntimeAdapter["listModels"]>(async () => {
+      return [{
+        provider: "anthropic",
+        hasKey: true,
+        keySource: "env",
+        keySources: ["env"],
+        models: [],
+      }];
+    });
+
+    const bListModels = mock<AgentRuntimeAdapter["listModels"]>(async () => {
+      return [{
+        provider: "openai",
+        hasKey: false,
+        keySource: null,
+        keySources: [],
+        models: [],
+      }];
+    });
+
+    registerRuntimeAdapter({
+      runtimeType: "runtime-a",
+      listModels: aListModels,
+      createRuntime: async () => ({
+        prompt: async () => {},
+        steer: async () => {},
+        abort: async () => {},
+        subscribe: () => () => {},
+        getMessages: async () => [],
+        isStreaming: () => false,
+        close: async () => {},
+      }),
+    });
+
+    registerRuntimeAdapter({
+      runtimeType: "runtime-b",
+      listModels: bListModels,
+      createRuntime: async () => ({
+        prompt: async () => {},
+        steer: async () => {},
+        abort: async () => {},
+        subscribe: () => () => {},
+        getMessages: async () => [],
+        isStreaming: () => false,
+        close: async () => {},
+      }),
+    });
+
+    const providers = await listAllRuntimeProviders();
+
+    expect(providers).toEqual([
+      {
+        runtimeType: "runtime-a",
+        provider: "anthropic",
+        hasKey: true,
+        keySource: "env",
+        keySources: ["env"],
+        models: [],
+      },
+      {
+        runtimeType: "runtime-b",
+        provider: "openai",
+        hasKey: false,
+        keySource: null,
+        keySources: [],
+        models: [],
+      },
+    ]);
+
+    expect(aListModels).toHaveBeenCalledTimes(1);
+    expect(bListModels).toHaveBeenCalledTimes(1);
 
     clearRuntimeAdapters();
   });

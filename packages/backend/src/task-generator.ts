@@ -8,7 +8,7 @@
 import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
 import { slugifyBranchName } from "./branch-namer.js";
 import { resolveUtilityModelForCwd } from "./models/model-settings.js";
-import { createPiResourceLoader } from "./pi/resource-loader.js";
+import { createPiResourceLoader } from "./runtimes/pi/resource-loader.js";
 
 export interface GeneratedTask {
   title: string;

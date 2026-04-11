@@ -3,14 +3,14 @@ import {
   type AuthCredential,
   type AuthStorageBackend,
 } from "@mariozechner/pi-coding-agent";
-import { getDb } from "../db.js";
+import { getDb } from "../../db.js";
 import {
   deleteAllAuthCredentials,
   getPreferredAuthCredential,
   listAuthProviders,
   setApiKeyCredential,
   setOAuthCredential,
-} from "../auth-credentials-store.js";
+} from "../../auth-credentials-store.js";
 
 type DbAuthStorageData = Record<string, AuthCredential>;
 type AuthStorageChangeListener = () => void;
