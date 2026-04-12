@@ -12,9 +12,9 @@ describe("settings helpers", () => {
   const providers = [
     {
       provider: "anthropic",
-      hasKey: true,
-      keySource: "db" as const,
-      keySources: ["db" as const],
+      isAvailable: true,
+      availabilitySource: "db" as const,
+      availabilitySources: ["db" as const],
       models: [
         { id: "shared-model", name: "Claude Sonnet 4", reasoning: true },
         { id: "unique-model", name: "Claude Haiku 4.5", reasoning: true },
@@ -22,9 +22,9 @@ describe("settings helpers", () => {
     },
     {
       provider: "openai",
-      hasKey: true,
-      keySource: "db" as const,
-      keySources: ["db" as const],
+      isAvailable: true,
+      availabilitySource: "db" as const,
+      availabilitySources: ["db" as const],
       models: [
         { id: "shared-model", name: "GPT Shared", reasoning: false },
       ],

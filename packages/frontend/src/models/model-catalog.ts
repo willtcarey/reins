@@ -6,8 +6,8 @@ export interface ModelInfo {
 
 export interface ProviderInfo {
   provider: string;
-  hasKey: boolean;
-  keySource: "db" | "env" | "oauth" | "local" | null;
-  keySources: ("db" | "env" | "oauth" | "local")[];
+  isAvailable: boolean;
+  availabilitySource: "db" | "env" | "oauth" | "local" | null;
+  availabilitySources: ("db" | "env" | "oauth" | "local")[];
   models: ModelInfo[];
 }

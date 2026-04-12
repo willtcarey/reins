@@ -11,16 +11,16 @@ describe("SettingsApiKeysSection", () => {
     registryStore.providers = [
       {
         provider: "anthropic",
-        hasKey: true,
-        keySource: "db",
-        keySources: ["db"],
+        isAvailable: true,
+        availabilitySource: "db",
+        availabilitySources: ["db"],
         models: [],
       },
       {
         provider: "openai",
-        hasKey: false,
-        keySource: null,
-        keySources: [],
+        isAvailable: false,
+        availabilitySource: null,
+        availabilitySources: [],
         models: [],
       },
     ];

@@ -155,7 +155,7 @@ export class SettingsApiKeysSection extends LitElement {
   }
 
   private _renderConfiguredKey(keyState: ApiKeyState) {
-    const sources = keyState.keySources;
+    const sources = keyState.availabilitySources;
     const hasEnv = sources.includes("env");
     const hasDb = sources.includes("db");
     const hasOAuth = sources.includes("oauth");

@@ -4,8 +4,8 @@ import { providerLabel } from "../settings.js";
 export interface ApiKeyState {
   provider: string;
   label: string;
-  keySource: "db" | "env" | "oauth" | "local" | null;
-  keySources: ("db" | "env" | "oauth" | "local")[];
+  availabilitySource: "db" | "env" | "oauth" | "local" | null;
+  availabilitySources: ("db" | "env" | "oauth" | "local")[];
 }
 
 export type ModelRegistryStoreResult = { ok: true } | { error: string };
@@ -28,21 +28,21 @@ export class ModelRegistryStore {
 
   get apiKeys(): ApiKeyState[] {
     return this.providers
-      .filter((providerInfo) => providerInfo.hasKey)
+      .filter((providerInfo) => providerInfo.isAvailable)
       .map((providerInfo) => ({
         provider: providerInfo.provider,
         label: providerLabel(providerInfo.provider),
-        keySource: providerInfo.keySource,
-        keySources: providerInfo.keySources ?? (providerInfo.keySource ? [providerInfo.keySource] : []),
+        availabilitySource: providerInfo.availabilitySource,
+        availabilitySources: providerInfo.availabilitySources,
       }));
   }
 
   get unconfiguredProviders(): ProviderInfo[] {
-    return this.providers.filter((provider) => !provider.hasKey);
+    return this.providers.filter((provider) => !provider.isAvailable);
   }
 
   get availableProviders(): ProviderInfo[] {
-    return this.providers.filter((provider) => provider.hasKey);
+    return this.providers.filter((provider) => provider.isAvailable);
   }
 
   getModelsForProvider(providerName: string): ModelInfo[] {

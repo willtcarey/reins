@@ -27,16 +27,16 @@ describe("ModelRegistryStore", () => {
         return jsonResponse([
           {
             provider: "anthropic",
-            hasKey: true,
-            keySource: "env",
-            keySources: ["env"],
+            isAvailable: true,
+            availabilitySource: "env",
+            availabilitySources: ["env"],
             models: [{ id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true }],
           },
           {
             provider: "openai",
-            hasKey: false,
-            keySource: null,
-            keySources: [],
+            isAvailable: false,
+            availabilitySource: null,
+            availabilitySources: [],
             models: [{ id: "gpt-4.1", name: "GPT-4.1", reasoning: false }],
           },
         ]);
@@ -52,8 +52,8 @@ describe("ModelRegistryStore", () => {
       {
         provider: "anthropic",
         label: "Anthropic",
-        keySource: "env",
-        keySources: ["env"],
+        availabilitySource: "env",
+        availabilitySources: ["env"],
       },
     ]);
     expect(store.unconfiguredProviders.map((provider) => provider.provider)).toEqual(["openai"]);
