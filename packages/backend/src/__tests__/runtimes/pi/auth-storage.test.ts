@@ -1,25 +1,25 @@
 import { describe, test, expect, beforeEach, beforeAll, afterAll, afterEach } from "bun:test";
 import { AuthStorage } from "@mariozechner/pi-coding-agent";
 import { registerOAuthProvider, unregisterOAuthProvider, type OAuthProviderInterface } from "@mariozechner/pi-ai/oauth";
-import { useTestDb } from "./helpers/test-db.js";
-import { useTestRepo } from "./helpers/test-repo.js";
-import { createServerState } from "./helpers/server-state.js";
-import { makeRequest } from "./helpers/request.js";
-import { buildRouter } from "../routes/index.js";
-import { createProject } from "../project-store.js";
-import { createNewSession } from "../runtimes/sessions-manager.js";
+import { useTestDb } from "../../helpers/test-db.js";
+import { useTestRepo } from "../../helpers/test-repo.js";
+import { createServerState } from "../../helpers/server-state.js";
+import { makeRequest } from "../../helpers/request.js";
+import { buildRouter } from "../../../routes/index.js";
+import { createProject } from "../../../project-store.js";
+import { createNewSession } from "../../../runtimes/sessions-manager.js";
 import {
   DbAuthStorageBackend,
   createDbBackedAuthStorage,
-} from "../runtimes/pi/auth-storage.js";
-import { installRuntimeHooks } from "../runtime-hooks.js";
-import { getPiSession } from "../runtimes/pi/runtime.js";
-import { clearPendingLogins } from "../routes/oauth.js";
+} from "../../../runtimes/pi/auth-storage.js";
+import { installRuntimeHooks } from "../../../runtime-hooks.js";
+import { getPiSession } from "../../../runtimes/pi/runtime.js";
+import { clearPendingLogins } from "../../../routes/oauth.js";
 import {
   getAuthCredential,
   setApiKeyCredential,
   setOAuthCredential,
-} from "../auth-credentials-store.js";
+} from "../../../auth-credentials-store.js";
 
 const TEST_PROVIDER_ID = "test-oauth-wiring";
 

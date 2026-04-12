@@ -90,9 +90,9 @@ describe("runtime registry", () => {
     const aListModels = mock<AgentRuntimeAdapter["listModels"]>(async () => {
       return [{
         provider: "anthropic",
-        hasKey: true,
-        keySource: "env",
-        keySources: ["env"],
+        isAvailable: true,
+        availabilitySource: "env",
+        availabilitySources: ["env"],
         models: [],
       }];
     });
@@ -100,9 +100,9 @@ describe("runtime registry", () => {
     const bListModels = mock<AgentRuntimeAdapter["listModels"]>(async () => {
       return [{
         provider: "openai",
-        hasKey: false,
-        keySource: null,
-        keySources: [],
+        isAvailable: false,
+        availabilitySource: null,
+        availabilitySources: [],
         models: [],
       }];
     });
@@ -145,17 +145,17 @@ describe("runtime registry", () => {
       {
         runtimeType: "runtime-a",
         provider: "anthropic",
-        hasKey: true,
-        keySource: "env",
-        keySources: ["env"],
+        isAvailable: true,
+        availabilitySource: "env",
+        availabilitySources: ["env"],
         models: [],
       },
       {
         runtimeType: "runtime-b",
         provider: "openai",
-        hasKey: false,
-        keySource: null,
-        keySources: [],
+        isAvailable: false,
+        availabilitySource: null,
+        availabilitySources: [],
         models: [],
       },
     ]);

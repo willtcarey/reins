@@ -18,6 +18,8 @@ Every new feature, behavior change, or bug fix starts with a failing test. No ex
 
 When changing existing behavior, update the test first to reflect the new contract (red), then update the code (green).
 
+For where tests should live, follow [testing-structure.md](testing-structure.md): tests should mirror the app/source folder structure.
+
 ### Philosophy
 
 - Tests describe **contracts** (inputs → outputs), not implementation details.

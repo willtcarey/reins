@@ -9,7 +9,7 @@ src/
 ├── models/          Pure logic — no LitElement, no html``
 ├── components/      Lit components — rendering + interaction
 ├── controllers/     Lit reactive controllers (glue between models + components)
-├── __tests__/       All test files (flat)
+├── __tests__/       Tests mirroring app structure
 └── index.ts         Entry point
 ```
 

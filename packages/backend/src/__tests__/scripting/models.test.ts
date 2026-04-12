@@ -2,11 +2,12 @@
  * Tests for the models scripting API functions.
  */
 
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import "../helpers/server-state.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
-import { buildProviderList } from "../../runtimes/pi/models-registry.js";
+import { clearRuntimeAdapters } from "../../runtimes/registry.js";
+import { registerBuiltinRuntimeAdapters } from "../../runtimes/register-builtins.js";
 import { modelsListFunction, modelsListProvidersFunction } from "../../scripting/models.js";
 import type { ApiContext } from "../../scripting/api-registry.js";
 import type { ManagedSession } from "../../state.js";
@@ -27,6 +28,11 @@ function makeCtx(overrides?: Partial<ApiContext>): ApiContext {
 describe("models.list", () => {
   useTestDb();
 
+  beforeEach(() => {
+    clearRuntimeAdapters();
+    registerBuiltinRuntimeAdapters();
+  });
+
   test("returns expected shape", async () => {
     const ctx = makeCtx();
     const result = await modelsListFunction.execute({}, ctx);
@@ -37,8 +43,8 @@ describe("models.list", () => {
     const first = result[0];
     expect(first).toHaveProperty("runtimeType");
     expect(first).toHaveProperty("provider");
-    expect(first).toHaveProperty("hasKey");
-    expect(first).toHaveProperty("keySource");
+    expect(first).toHaveProperty("isAvailable");
+    expect(first).toHaveProperty("availabilitySource");
     expect(first).toHaveProperty("models");
     expect(Array.isArray(first.models)).toBe(true);
   });
@@ -65,27 +71,18 @@ describe("models.list", () => {
 
     const result = await modelsListFunction.execute({}, ctx);
     const anthropic = result.find((p) => p.provider === "anthropic");
-    expect(anthropic!.hasKey).toBe(true);
-    expect(anthropic!.keySource).toBe("db");
-  });
-});
-
-describe("buildProviderList", () => {
-  useTestDb();
-
-  test("returns same shape as models.list", async () => {
-    const result = await buildProviderList();
-
-    expect(Array.isArray(result)).toBe(true);
-    expect(result.length).toBeGreaterThan(0);
-
-    const anthropic = result.find((p) => p.provider === "anthropic");
-    expect(anthropic).toBeDefined();
+    expect(anthropic!.isAvailable).toBe(true);
+    expect(anthropic!.availabilitySource).toBe("db");
   });
 });
 
 describe("models.listProviders", () => {
   useTestDb();
+
+  beforeEach(() => {
+    clearRuntimeAdapters();
+    registerBuiltinRuntimeAdapters();
+  });
 
   test("returns string array of provider names", async () => {
     const ctx = makeCtx();

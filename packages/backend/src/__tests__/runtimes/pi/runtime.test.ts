@@ -1,6 +1,6 @@
 import { describe, test, expect, mock } from "bun:test";
-import { PiAgentRuntime, getPiSession } from "../../runtimes/pi/runtime.js";
-import { createTestAgentSession } from "../helpers/test-pi.js";
+import { PiAgentRuntime, getPiSession } from "../../../runtimes/pi/runtime.js";
+import { createTestAgentSession } from "../../helpers/test-pi.js";
 
 describe("PiAgentRuntime", () => {
   test("delegates prompt, steer, abort, subscribe, getMessages, and close", async () => {

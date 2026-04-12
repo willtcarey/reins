@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { createPiContext } from "../../runtimes/pi/factory.js";
+import { createPiContext } from "../../../runtimes/pi/factory.js";
 
 describe("pi runtime", () => {
   test("builds a cwd-scoped runtime with built-in providers", async () => {
