@@ -12,6 +12,8 @@ import {
 
 export function reloadManagedSessionAuthStorage(sessions: Map<string, ManagedSession>): void {
   for (const managed of sessions.values()) {
+    // Intentional runtime-specific behavior: only pi runtimes expose mutable
+    // auth storage that needs an explicit reload after credential updates.
     if (!isPiRuntime(managed.runtime)) continue;
     managed.runtime.session.modelRegistry.authStorage.reload();
   }
