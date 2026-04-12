@@ -209,7 +209,10 @@ describe("runtime sessions manager", () => {
       }
     };
 
-    messages = [{ role: "assistant", content: [{ type: "text", text: "turn output" }] }];
+    messages = [
+      { role: "assistant", stopReason: "error", content: [] },
+      { role: "assistant", content: [{ type: "text", text: "turn output" }] },
+    ];
     emit({ type: "turn_end" });
     await Bun.sleep(0);
 
@@ -222,6 +225,7 @@ describe("runtime sessions manager", () => {
 
     messages = [
       { role: "assistant", content: [{ type: "text", text: "turn output" }] },
+      { role: "assistant", stopReason: "error", content: [] },
       { role: "assistant", content: [{ type: "text", text: "post compaction" }] },
       { role: "assistant", content: [{ type: "text", text: "done" }] },
     ];
@@ -353,6 +357,47 @@ describe("runtime sessions manager", () => {
         },
       },
     ]);
+  });
+
+  test("ensureSessionOpen unsubscribes observer listeners when runtime closes", async () => {
+    clearRuntimeAdapters();
+
+    const listeners = new Set<(event: any) => void>();
+    let unsubscribeCount = 0;
+
+    registerRuntimeAdapter({
+      runtimeType: "test_runtime",
+      listModels: async () => [],
+      ask: async () => "",
+      createRuntime: async () => ({
+        prompt: async () => {},
+        steer: async () => {},
+        abort: async () => {},
+        setModel: async () => {},
+        subscribe: (candidate) => {
+          listeners.add(candidate);
+          return () => {
+            unsubscribeCount += 1;
+            listeners.delete(candidate);
+          };
+        },
+        getMessages: async () => [],
+        isStreaming: () => false,
+        close: async () => {},
+      }),
+    });
+
+    const state = createServerState();
+    const project = createProject("Reins", repo.dir);
+    createSession("sess-observer-cleanup", project.id, { agentRuntimeType: "test_runtime" });
+
+    const managed = await ensureSessionOpen(state, "sess-observer-cleanup");
+    expect(listeners.size).toBe(2);
+
+    await managed.runtime.close();
+
+    expect(listeners.size).toBe(0);
+    expect(unsubscribeCount).toBe(2);
   });
 
   test("ensureSessionOpen resolves session tools during runtime creation", async () => {

@@ -3,7 +3,6 @@ import {
   ModelRegistry,
   type AuthStorage,
 } from "@mariozechner/pi-coding-agent";
-import { createPiResourceLoader } from "./resource-loader.js";
 import { createDbBackedAuthStorage } from "./auth-storage.js";
 
 type DefaultResourceLoaderOptions = ConstructorParameters<typeof DefaultResourceLoader>[0];
@@ -18,7 +17,7 @@ export async function createPiContext(params: {
   cwd: string;
   resourceLoaderOptions?: Omit<DefaultResourceLoaderOptions, "cwd">;
 }): Promise<PiContext> {
-  const resourceLoader = createPiResourceLoader({
+  const resourceLoader = new DefaultResourceLoader({
     ...params.resourceLoaderOptions,
     cwd: params.cwd,
   });

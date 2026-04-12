@@ -1,7 +1,5 @@
 import { persistMessages, updateSessionMeta } from "../session-store.js";
-import { getPiSession, isPiRuntime } from "./pi/runtime.js";
-import { filterErrorMessages } from "./pi/session.js";
-import type { AgentRuntime, AgentRuntimeEvent } from "./registry.js";
+import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeMessage } from "./registry.js";
 
 function shouldPersistForRuntimeEvent(event: AgentRuntimeEvent): boolean {
   if (!event || typeof event !== "object") return false;
@@ -17,11 +15,18 @@ function shouldPersistForRuntimeEvent(event: AgentRuntimeEvent): boolean {
   return false;
 }
 
-function normalizeRuntimeMessagesForPersistence(runtime: AgentRuntime, messages: unknown[]): unknown[] {
-  if (isPiRuntime(runtime)) {
-    return filterErrorMessages(messages);
-  }
-  return messages;
+function normalizeRuntimeMessagesForPersistence(messages: AgentRuntimeMessage[]): AgentRuntimeMessage[] {
+  return messages.filter((message) => {
+    if (
+      message.role === "assistant"
+      && message.stopReason === "error"
+      && Array.isArray(message.content)
+      && message.content.length === 0
+    ) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function deriveRuntimeSessionMetadata(runtime: AgentRuntime): {
@@ -30,27 +35,15 @@ function deriveRuntimeSessionMetadata(runtime: AgentRuntime): {
   thinkingLevel?: string;
 } | null {
   const metadata = runtime.getSessionMetadata?.();
-  if (metadata?.model?.provider && metadata.model.modelId) {
-    return {
-      modelProvider: metadata.model.provider,
-      modelId: metadata.model.modelId,
-      thinkingLevel: metadata.thinkingLevel ?? undefined,
-    };
+  if (!metadata?.model?.provider || !metadata.model.modelId) {
+    return null;
   }
 
-  if (isPiRuntime(runtime)) {
-    const session = getPiSession(runtime);
-    const model = session.model;
-    if (model) {
-      return {
-        modelProvider: model.provider,
-        modelId: model.id,
-        thinkingLevel: session.thinkingLevel ?? undefined,
-      };
-    }
-  }
-
-  return null;
+  return {
+    modelProvider: metadata.model.provider,
+    modelId: metadata.model.modelId,
+    thinkingLevel: metadata.thinkingLevel ?? undefined,
+  };
 }
 
 async function persistRuntimeStateFromRuntime(params: {
@@ -63,7 +56,7 @@ async function persistRuntimeStateFromRuntime(params: {
   if (!shouldPersistForRuntimeEvent(event)) return;
 
   const messages = await runtime.getMessages();
-  const normalized = normalizeRuntimeMessagesForPersistence(runtime, messages);
+  const normalized = normalizeRuntimeMessagesForPersistence(messages);
   persistMessages(sessionId, normalized);
 
   if (event.type !== "agent_end") return;

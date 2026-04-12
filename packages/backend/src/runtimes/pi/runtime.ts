@@ -1,6 +1,12 @@
 import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import { parseThinkingLevel } from "../../models/model-settings.js";
-import type { AgentRuntime, AgentRuntimeEvent, RuntimeCompactionEvent, SetRuntimeModelParams } from "../registry.js";
+import type {
+  AgentRuntime,
+  AgentRuntimeEvent,
+  AgentRuntimeMessage,
+  RuntimeCompactionEvent,
+  SetRuntimeModelParams,
+} from "../registry.js";
 
 function normalizePiSessionEvent(event: AgentSessionEvent): AgentRuntimeEvent {
   if (event.type === "auto_compaction_start") {
@@ -73,8 +79,8 @@ export class PiAgentRuntime implements AgentRuntime {
     return typeof unsubscribe === "function" ? unsubscribe : () => {};
   }
 
-  async getMessages(): Promise<any[]> {
-    return this.session.messages;
+  async getMessages(): Promise<AgentRuntimeMessage[]> {
+    return this.session.messages as unknown as AgentRuntimeMessage[];
   }
 
   getSessionMetadata(): { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null } {

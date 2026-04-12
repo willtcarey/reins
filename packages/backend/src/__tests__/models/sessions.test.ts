@@ -124,9 +124,9 @@ describe("Sessions.setModel", () => {
       runtimeType: "test_runtime",
       listModels: async () => [{
         provider: "anthropic",
-        hasKey: true,
-        keySource: "env",
-        keySources: ["env"],
+        isAvailable: true,
+        availabilitySource: "env",
+        availabilitySources: ["env"],
         models: [{
           id: "claude-sonnet-4-20250514",
           name: "Claude Sonnet 4",

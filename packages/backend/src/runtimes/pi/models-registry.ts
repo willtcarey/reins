@@ -8,7 +8,7 @@ import {
   hasAuthCredential,
 } from "../../auth-credentials-store.js";
 import type {
-  KeySourceType,
+  AvailabilitySourceType,
   ProviderInfo,
 } from "../registry.js";
 import {
@@ -16,7 +16,7 @@ import {
   type PiContext,
 } from "./factory.js";
 
-export type { KeySourceType, ProviderInfo, ModelInfo } from "../registry.js";
+export type { AvailabilitySourceType, ProviderInfo, ModelInfo } from "../registry.js";
 
 export type PiModelRegistryResult = PiContext;
 
@@ -39,16 +39,16 @@ export async function buildProviderList(cwd = process.cwd()): Promise<ProviderIn
     const hasEnvKey = !!getEnvApiKey(provider);
     const hasOAuth = oauthProviderIds.has(provider) && hasAuthCredential(provider, "oauth");
 
-    const keySources: KeySourceType[] = [];
-    if (hasDbApiKey) keySources.push("db");
-    if (hasEnvKey) keySources.push("env");
-    if (hasOAuth) keySources.push("oauth");
+    const availabilitySources: AvailabilitySourceType[] = [];
+    if (hasDbApiKey) availabilitySources.push("db");
+    if (hasEnvKey) availabilitySources.push("env");
+    if (hasOAuth) availabilitySources.push("oauth");
 
     return {
       provider,
-      hasKey: keySources.length > 0,
-      keySource: keySources[0] ?? null,
-      keySources,
+      isAvailable: availabilitySources.length > 0,
+      availabilitySource: availabilitySources[0] ?? null,
+      availabilitySources,
       models: modelRegistry.getAll()
         .filter((model) => model.provider === provider)
         .map((model) => ({

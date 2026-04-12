@@ -121,20 +121,32 @@ async function buildSessionOpts(params: {
   };
 }
 
-async function ephemeralPrompt(
+export async function ephemeralPrompt(
   session: AgentSession,
   params: { prompt: string; timeoutMs?: number },
 ): Promise<string> {
   const { prompt, timeoutMs } = params;
 
   if (timeoutMs && timeoutMs > 0) {
-    const result = await Promise.race([
-      session.prompt(prompt, { expandPromptTemplates: false }),
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), timeoutMs)),
-    ]);
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const promptPromise = session.prompt(prompt, { expandPromptTemplates: false });
+    const timeoutPromise = new Promise<"timeout">((resolve) => {
+      timeoutHandle = setTimeout(() => resolve("timeout"), timeoutMs);
+    });
 
-    if (result === "timeout") {
-      return "";
+    try {
+      const result = await Promise.race([
+        promptPromise.then(() => "completed" as const),
+        timeoutPromise,
+      ]);
+
+      if (result === "timeout") {
+        void session.abort().catch(() => undefined);
+        void promptPromise.catch(() => undefined);
+        return "";
+      }
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
     }
   } else {
     await session.prompt(prompt, { expandPromptTemplates: false });

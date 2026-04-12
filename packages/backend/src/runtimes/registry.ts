@@ -13,7 +13,7 @@ export class ModelNotFoundError extends Error {
   }
 }
 
-export type KeySourceType = "db" | "env" | "oauth" | "local";
+export type AvailabilitySourceType = "db" | "env" | "oauth" | "local";
 
 export interface ModelInfo {
   id: string;
@@ -25,9 +25,9 @@ export interface ModelInfo {
 
 export interface ProviderInfo {
   provider: string;
-  hasKey: boolean;
-  keySource: KeySourceType | null;
-  keySources: KeySourceType[];
+  isAvailable: boolean;
+  availabilitySource: AvailabilitySourceType | null;
+  availabilitySources: AvailabilitySourceType[];
   models: ModelInfo[];
 }
 
@@ -52,6 +52,23 @@ export type AgentRuntimeEvent =
   | Exclude<AgentSessionEvent, { type: "auto_compaction_start" } | { type: "auto_compaction_end" }>
   | RuntimeCompactionEvent;
 
+/**
+ * Runtime-agnostic persisted message shape.
+ *
+ * This intentionally reflects the current pi-backed persistence contract:
+ * - all persisted items have a `role`
+ * - messages may contain block `content`
+ * - assistant errors may include `stopReason`
+ * - compaction markers use role `compactionSummary` + optional `summary`
+ * - additional role-specific fields are preserved as opaque properties
+ */
+export interface AgentRuntimeMessage {
+  role: string;
+  content?: unknown[];
+  stopReason?: string;
+  summary?: string;
+  [key: string]: unknown;
+}
 
 export interface CreateAgentRuntimeParams {
   state: ServerState;
@@ -87,7 +104,7 @@ export interface AgentRuntime {
   abort(): Promise<void>;
   setModel(params: SetRuntimeModelParams): Promise<void>;
   subscribe(listener: (event: AgentRuntimeEvent) => void): () => void;
-  getMessages(): Promise<any[]>;
+  getMessages(): Promise<AgentRuntimeMessage[]>;
   getSessionMetadata?(): {
     model?: { provider: string; modelId: string } | null;
     thinkingLevel?: string | null;

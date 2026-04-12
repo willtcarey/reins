@@ -7,7 +7,7 @@ import { listAllRuntimeProviders } from "../runtimes/registry.js";
 import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 export type {
-  KeySourceType,
+  AvailabilitySourceType,
   RuntimeProviderInfo as ProviderInfo,
   ModelInfo,
 } from "../runtimes/registry.js";
@@ -16,7 +16,7 @@ export type {
 // Function definitions
 // ---------------------------------------------------------------------------
 
-const KeySourceSchema = Type.Union([
+const AvailabilitySourceSchema = Type.Union([
   Type.Literal("db"),
   Type.Literal("env"),
   Type.Literal("oauth"),
@@ -34,9 +34,9 @@ export const ModelInfoSchema = Type.Object({
 export const ProviderInfoSchema = Type.Object({
   runtimeType: Type.String(),
   provider: Type.String(),
-  hasKey: Type.Boolean(),
-  keySource: Type.Union([KeySourceSchema, Type.Null()]),
-  keySources: Type.Array(KeySourceSchema),
+  isAvailable: Type.Boolean(),
+  availabilitySource: Type.Union([AvailabilitySourceSchema, Type.Null()]),
+  availabilitySources: Type.Array(AvailabilitySourceSchema),
   models: Type.Array(ModelInfoSchema),
 });
 
@@ -47,8 +47,8 @@ async function listProvidersAcrossRuntimes() {
 export const modelsListFunction = defineFunction({
   name: "models.list",
   description:
-    "List all available AI providers with their models, including whether authentication " +
-    "is configured and the key source (db, env, oauth, or local). Each provider includes its models " +
+    "List all available AI providers with their models, including whether each provider is available " +
+    "and the availability source (db, env, oauth, or local). Each provider includes its models " +
     "with id, name, reasoning capability, context window, and max tokens.",
   parameters: Type.Object({}),
   returns: Type.Array(ProviderInfoSchema),

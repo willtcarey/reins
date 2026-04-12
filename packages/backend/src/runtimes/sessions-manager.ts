@@ -120,22 +120,37 @@ async function createManagedSessionRuntime(params: {
     throw err;
   }
 
+  const detachRuntimeBroadcastObserver = attachRuntimeBroadcastObserver({
+    sessionId,
+    projectId,
+    runtime,
+    clients: state.clients,
+  });
+  const detachRuntimePersistenceObserver = attachRuntimePersistenceObserver({
+    sessionId,
+    runtime,
+  });
+
+  let observersDetached = false;
+  const detachRuntimeObservers = () => {
+    if (observersDetached) return;
+    observersDetached = true;
+    detachRuntimeBroadcastObserver();
+    detachRuntimePersistenceObserver();
+  };
+
+  const originalClose = runtime.close.bind(runtime);
+  runtime.close = async () => {
+    detachRuntimeObservers();
+    return originalClose();
+  };
+
   const managed: ManagedSession = {
     id: sessionId,
     runtime,
     lastActivity: Date.now(),
   };
 
-  attachRuntimeBroadcastObserver({
-    sessionId,
-    projectId,
-    runtime,
-    clients: state.clients,
-  });
-  attachRuntimePersistenceObserver({
-    sessionId,
-    runtime,
-  });
   state.sessions.set(sessionId, managed);
 
   return managed;
