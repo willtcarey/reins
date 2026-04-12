@@ -58,7 +58,7 @@ setInterval(() => {
 // ---------------------------------------------------------------------------
 
 const SRC_DIR = resolve(import.meta.dirname!, ".");
-const DEV_ENTRY_PATH = resolve(SRC_DIR, "dev-entry.ts");
+const SERVER_ENTRY_PATH = resolve(SRC_DIR, "server.ts");
 
 let routes: typeof RoutesModule;
 let ws: typeof WsModule;
@@ -86,7 +86,7 @@ async function loadHandlers(): Promise<void> {
     if (!existsSync(DEV_BUILD_DIR)) mkdirSync(DEV_BUILD_DIR, { recursive: true });
 
     const result = await Bun.build({
-      entrypoints: [DEV_ENTRY_PATH],
+      entrypoints: [SERVER_ENTRY_PATH],
       outdir: DEV_BUILD_DIR,
       target: "bun",
       format: "esm",
@@ -100,7 +100,7 @@ async function loadHandlers(): Promise<void> {
 
     // Cache-bust the bundled output so Bun imports the fresh version
     const t = Date.now();
-    const mod = await import(`${join(DEV_BUILD_DIR, "dev-entry.js")}?t=${t}`);
+    const mod = await import(`${join(DEV_BUILD_DIR, "server.js")}?t=${t}`);
     routes = mod.routes as typeof RoutesModule;
     ws = mod.ws as typeof WsModule;
   } else {
