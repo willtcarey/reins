@@ -175,6 +175,18 @@ describe("GET /api/models", () => {
     expect(claudeProvider.models.some((model: any) => model.id === "claude-sonnet-4-6")).toBe(true);
   });
 
+  test("returns providers sorted by provider name", async () => {
+    const { router, state } = setup();
+    const res = await router.handle(
+      makeRequest("/api/models"),
+      state,
+    );
+    const body = await res!.json();
+    const providerNames = body.map((p: any) => p.provider);
+    const sorted = [...providerNames].sort((a: string, b: string) => a.localeCompare(b));
+    expect(providerNames).toEqual(sorted);
+  });
+
   test("does not expose local availability sources outside Claude SDK runtime", async () => {
     const { router, state } = setup();
 

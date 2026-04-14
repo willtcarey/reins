@@ -198,6 +198,8 @@ export async function listAllRuntimeProviders(): Promise<RuntimeProviderInfo[]> 
     }
   }
 
+  result.sort((a, b) => a.provider.localeCompare(b.provider));
+
   return result;
 }
 
