@@ -21,6 +21,9 @@ export class ModelSelectorControls extends LitElement {
   providers: ProviderInfo[] = [];
 
   @property({ type: String })
+  selectedRuntimeType = "";
+
+  @property({ type: String })
   selectedProvider = "";
 
   @property({ type: String })
@@ -87,7 +90,11 @@ export class ModelSelectorControls extends LitElement {
   }
 
   private _isSelectedModelReasoning(): boolean {
-    const provider = this.providers.find((candidate) => candidate.provider === this.selectedProvider);
+    const provider = this.providers.find(
+      (candidate) =>
+        candidate.runtimeType === this.selectedRuntimeType
+        && candidate.provider === this.selectedProvider,
+    );
     const model = provider?.models.find((candidate) => candidate.id === this.selectedModel);
     return model?.reasoning ?? false;
   }
@@ -95,6 +102,7 @@ export class ModelSelectorControls extends LitElement {
   override updated(changed: PropertyValues<this>) {
     if (
       changed.has("providers")
+      || changed.has("selectedRuntimeType")
       || changed.has("selectedProvider")
       || changed.has("selectedModel")
       || changed.has("selectedThinking")
@@ -103,7 +111,11 @@ export class ModelSelectorControls extends LitElement {
       const selects = Array.from(this.querySelectorAll("select"));
       const modelSelect = selects[0] instanceof HTMLSelectElement ? selects[0] : null;
       const thinkingSelect = selects[1] instanceof HTMLSelectElement ? selects[1] : null;
-      const expectedModelValue = encodeModelSelection(this.selectedProvider, this.selectedModel);
+      const expectedModelValue = encodeModelSelection(
+        this.selectedRuntimeType,
+        this.selectedProvider,
+        this.selectedModel,
+      );
       const modelOptionValues = modelSelect ? Array.from(modelSelect.options).map((option) => option.value) : [];
       const hasExpectedModelOption = !!expectedModelValue && modelOptionValues.includes(expectedModelValue);
 
@@ -122,7 +134,11 @@ export class ModelSelectorControls extends LitElement {
       return html`<p class="text-xs text-zinc-500 py-2">${this.emptyMessage}</p>`;
     }
 
-    const selectedValue = encodeModelSelection(this.selectedProvider, this.selectedModel);
+    const selectedValue = encodeModelSelection(
+      this.selectedRuntimeType,
+      this.selectedProvider,
+      this.selectedModel,
+    );
     const isReasoning = this._isSelectedModelReasoning();
     const selectClass =
       "w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 outline-none focus:border-blue-500 transition-colors cursor-pointer appearance-none";
@@ -141,7 +157,7 @@ export class ModelSelectorControls extends LitElement {
             ${this.providers.flatMap((provider) =>
               provider.models.map(
                 (model) => html`
-                  <option value=${encodeModelSelection(provider.provider, model.id)}>
+                  <option value=${encodeModelSelection(provider.runtimeType, provider.provider, model.id)}>
                     ${formatModelSelectionOptionLabel(provider.provider, model.name)}
                   </option>
                 `,

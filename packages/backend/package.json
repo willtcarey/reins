@@ -7,7 +7,9 @@
     "dev": "bun --watch src/index.ts",
     "test": "bun test",
     "test:watch": "bun test --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "repro:claude-missing-final-text": "bun scripts/claude-sdk-missing-final-text-smoke.ts",
+    "capture:claude-sdk-trace": "bun scripts/capture-claude-sdk-trace.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.32",
@@ -19,6 +21,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-code": "^2.1.104",
     "@types/bun": "^1.3.11",
     "typescript": "^5.9.3"
   }

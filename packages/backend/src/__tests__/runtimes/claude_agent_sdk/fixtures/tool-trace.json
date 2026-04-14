@@ -1,0 +1,1094 @@
+{
+  "version": 2,
+  "capturedAt": "2026-04-13T16:35:45.048Z",
+  "cwd": "/home/will/Workspaces/reins/packages/backend",
+  "sessionId": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+  "model": "claude-sonnet-4-6",
+  "prompt": "Use the Read tool to read the file `package.json`.\nThen use the Bash tool to run exactly this command: `pwd`.\nAfter both tools complete, respond with a single short sentence that mentions what file you read and the bash output.\nDo not skip the tools, and do not answer before both tool calls are complete.",
+  "toolPlan": {
+    "readPath": "package.json",
+    "bashCommand": "pwd"
+  },
+  "sdkMessages": [
+    {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/home/will/Workspaces/reins/packages/backend",
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "tools": [
+        "Bash",
+        "Read"
+      ],
+      "mcp_servers": [],
+      "model": "claude-sonnet-4-6",
+      "permissionMode": "bypassPermissions",
+      "slash_commands": [
+        "update-config",
+        "debug",
+        "simplify",
+        "batch",
+        "loop",
+        "schedule",
+        "claude-api",
+        "compact",
+        "context",
+        "cost",
+        "heapdump",
+        "init",
+        "review",
+        "security-review",
+        "extra-usage",
+        "insights"
+      ],
+      "apiKeySource": "none",
+      "claude_code_version": "2.1.96",
+      "output_style": "default",
+      "agents": [
+        "general-purpose",
+        "statusline-setup",
+        "Explore",
+        "Plan"
+      ],
+      "skills": [
+        "update-config",
+        "debug",
+        "simplify",
+        "batch",
+        "loop",
+        "schedule",
+        "claude-api"
+      ],
+      "plugins": [],
+      "uuid": "60505cd8-0959-4bc6-86a8-4ff6b293d350",
+      "fast_mode_state": "off"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "message_start",
+        "message": {
+          "model": "claude-sonnet-4-6",
+          "id": "msg_01ENUtYiPrRvSfZxEMTrzDsf",
+          "type": "message",
+          "role": "assistant",
+          "content": [],
+          "stop_reason": null,
+          "stop_sequence": null,
+          "stop_details": null,
+          "usage": {
+            "input_tokens": 3,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 4470,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 8,
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          }
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "f0671c70-c1fb-467b-b460-636966a82008"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_start",
+        "index": 0,
+        "content_block": {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "fa1a7028-7b7c-49d8-b224-6d791201fd42"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "thinking_delta",
+          "thinking": "The"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "126772f3-1d88-4c8d-96ab-62553e650f2b"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "thinking_delta",
+          "thinking": " user wants me to use the Read tool to read package.json and the Bash tool to run `pwd` in parallel,"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "76d2a418-8447-43d5-9aa8-0a7a1a4e9405"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "thinking_delta",
+          "thinking": " then respond after both complete."
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "49554548-b22d-4523-84c9-571a15c66e5f"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "signature_delta",
+          "signature": "EscCClsIDBgCKkDDF4p+LAHNHd4aZZX8eRUAC3nvXoVvEHeYhX/6VI2Rc4vRZluozxtm3YrD8lTjBIu7UcWn5zDLGVki/T5rm78kMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgy4TUH1yho322KYEigaDMADtGaoQwEZxP6Z0yIwqKZ00chc8DPZrxFgBo+TJn24GuHD/Sav4AWNKgzjL4OxCxa46laNN15Nx7PyT0JEKpkBrdgJIeV/urImspiDD1trEtp6gp2snvOfuVm9msBvP1ftV8+KouuB0Spq7d0jRH+ngKsAE9PtOJg+TqL1HMK2Jp/VRhkyg/CJUjFDikJkS9PRzRfBRrNZyNeiWnT2IK539MtWuIEJMHfaB4NQTgTXJXp8F9q20NZHMItdQY+D2aH4K9ni1Tom35MxITr6vneDVGJUxhbBLyAQGAE="
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "05393298-c710-4c69-80d6-a68ae1f79cbf"
+    },
+    {
+      "type": "assistant",
+      "message": {
+        "model": "claude-sonnet-4-6",
+        "id": "msg_01ENUtYiPrRvSfZxEMTrzDsf",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "The user wants me to use the Read tool to read package.json and the Bash tool to run `pwd` in parallel, then respond after both complete.",
+            "signature": "EscCClsIDBgCKkDDF4p+LAHNHd4aZZX8eRUAC3nvXoVvEHeYhX/6VI2Rc4vRZluozxtm3YrD8lTjBIu7UcWn5zDLGVki/T5rm78kMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgy4TUH1yho322KYEigaDMADtGaoQwEZxP6Z0yIwqKZ00chc8DPZrxFgBo+TJn24GuHD/Sav4AWNKgzjL4OxCxa46laNN15Nx7PyT0JEKpkBrdgJIeV/urImspiDD1trEtp6gp2snvOfuVm9msBvP1ftV8+KouuB0Spq7d0jRH+ngKsAE9PtOJg+TqL1HMK2Jp/VRhkyg/CJUjFDikJkS9PRzRfBRrNZyNeiWnT2IK539MtWuIEJMHfaB4NQTgTXJXp8F9q20NZHMItdQY+D2aH4K9ni1Tom35MxITr6vneDVGJUxhbBLyAQGAE="
+          }
+        ],
+        "stop_reason": null,
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+          "input_tokens": 3,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 4470,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          },
+          "output_tokens": 8,
+          "service_tier": "standard",
+          "inference_geo": "not_available"
+        },
+        "context_management": null
+      },
+      "parent_tool_use_id": null,
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "uuid": "77e5e9bc-6b4c-47dd-9cde-7cdd0288e03f"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_stop",
+        "index": 0
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "f2d4c7b9-ab6f-412e-9568-91683b4222e0"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_start",
+        "index": 1,
+        "content_block": {
+          "type": "text",
+          "text": ""
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "524ec206-9f87-4472-a217-54696c916a44"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 1,
+        "delta": {
+          "type": "text_delta",
+          "text": "I'll run both tools at"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "9d19ec31-f6d1-45e1-b128-985740fb6404"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 1,
+        "delta": {
+          "type": "text_delta",
+          "text": " the same time!"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "fa830a9b-27fc-43de-b9ed-62622297fccc"
+    },
+    {
+      "type": "assistant",
+      "message": {
+        "model": "claude-sonnet-4-6",
+        "id": "msg_01ENUtYiPrRvSfZxEMTrzDsf",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "I'll run both tools at the same time!"
+          }
+        ],
+        "stop_reason": null,
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+          "input_tokens": 3,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 4470,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          },
+          "output_tokens": 8,
+          "service_tier": "standard",
+          "inference_geo": "not_available"
+        },
+        "context_management": null
+      },
+      "parent_tool_use_id": null,
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "uuid": "410c9568-be3e-4cd0-9126-375e70bc0eba"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_stop",
+        "index": 1
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "9260e13c-2684-441d-8d25-06cfd400a796"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_start",
+        "index": 2,
+        "content_block": {
+          "type": "tool_use",
+          "id": "toolu_01Agzfh39hET4cWnVJYGJ7Qx",
+          "name": "Read",
+          "input": {},
+          "caller": {
+            "type": "direct"
+          }
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "a56337fc-2ac1-41b1-a058-9d137b67828f"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 2,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": ""
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "655575b7-2736-48e1-92e6-ffbf12e87f00"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 2,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "{\"f"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "7b47334b-dc03-4722-9df1-1c8cd86f65b2"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 2,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "il"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "c76523d6-e261-4ce5-8b36-25b5b5f909c6"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 2,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "e_path\""
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "210abdb8-ab95-4a86-94d1-c0895938bed3"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 2,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": ": \"/home"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "147a3765-21d0-40c5-8c3d-bc20f247dcf4"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 2,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "/will/Work"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "200dfbb2-d1c2-4596-ac80-8c4ef4d32989"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 2,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "spaces/reins"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "1aa67d10-80da-4d98-9beb-a6a945b84aaf"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 2,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "/packa"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "778c0b56-9c53-4b91-8fa5-31332077dfc5"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 2,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "ge.json\"}"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "92b82986-9fca-4d22-ab30-6be875cf3da1"
+    },
+    {
+      "type": "assistant",
+      "message": {
+        "model": "claude-sonnet-4-6",
+        "id": "msg_01ENUtYiPrRvSfZxEMTrzDsf",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "toolu_01Agzfh39hET4cWnVJYGJ7Qx",
+            "name": "Read",
+            "input": {
+              "file_path": "/home/will/Workspaces/reins/package.json"
+            },
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "stop_reason": null,
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+          "input_tokens": 3,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 4470,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          },
+          "output_tokens": 8,
+          "service_tier": "standard",
+          "inference_geo": "not_available"
+        },
+        "context_management": null
+      },
+      "parent_tool_use_id": null,
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "uuid": "325b8cc9-ddc5-423f-81aa-c5c38f831537"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_stop",
+        "index": 2
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "bbde186a-7e00-4ef9-b9e2-300bb248ce25"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_start",
+        "index": 3,
+        "content_block": {
+          "type": "tool_use",
+          "id": "toolu_01UWz987Gu61RzhMbH2A8VCS",
+          "name": "Bash",
+          "input": {},
+          "caller": {
+            "type": "direct"
+          }
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "355d5dc4-dda2-492d-8f1f-e29626a944da"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 3,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": ""
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "a5e2249f-ea21-4878-be3a-82d447f6741b"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 3,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "{\"comm"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "92b2d308-78c0-49d0-a862-6545c1edf26b"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 3,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "and\": "
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "7ef8b8d1-31dd-4731-a0cc-43f4a7b0e933"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 3,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "\"pwd\""
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "30590652-3bef-4c7f-8f8f-b11a7c3416d3"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 3,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": ", "
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "c5abb42d-d253-47ff-8ee7-810c65e318d9"
+    },
+    {
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "tool_use_id": "toolu_01Agzfh39hET4cWnVJYGJ7Qx",
+            "type": "tool_result",
+            "content": "1\t{\n2\t  \"name\": \"reins\",\n3\t  \"private\": true,\n4\t  \"workspaces\": [\"packages/*\"],\n5\t  \"scripts\": {\n6\t    \"build\": \"bun run --filter '@reins/frontend' build\",\n7\t    \"dev\": \"bun run --filter '@reins/frontend' dev & bun packages/backend/dev.ts\",\n8\t    \"test\": \"bun run --filter '@reins/backend' test\",\n9\t    \"typecheck\": \"bun run --filter '@reins/*' typecheck\",\n10\t    \"lint\": \"oxlint -c .oxlintrc.json packages/backend/src packages/frontend/src\"\n11\t  },\n12\t  \"devDependencies\": {\n13\t    \"oxlint\": \"^1.56.0\"\n14\t  }\n15\t}\n16\t"
+          }
+        ]
+      },
+      "parent_tool_use_id": null,
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "uuid": "22d9a4f1-238c-4227-9da5-6cf51171a71e",
+      "timestamp": "2026-04-13T16:35:42.808Z",
+      "tool_use_result": {
+        "type": "text",
+        "file": {
+          "filePath": "/home/will/Workspaces/reins/package.json",
+          "content": "{\n  \"name\": \"reins\",\n  \"private\": true,\n  \"workspaces\": [\"packages/*\"],\n  \"scripts\": {\n    \"build\": \"bun run --filter '@reins/frontend' build\",\n    \"dev\": \"bun run --filter '@reins/frontend' dev & bun packages/backend/dev.ts\",\n    \"test\": \"bun run --filter '@reins/backend' test\",\n    \"typecheck\": \"bun run --filter '@reins/*' typecheck\",\n    \"lint\": \"oxlint -c .oxlintrc.json packages/backend/src packages/frontend/src\"\n  },\n  \"devDependencies\": {\n    \"oxlint\": \"^1.56.0\"\n  }\n}\n",
+          "numLines": 16,
+          "startLine": 1,
+          "totalLines": 16
+        }
+      }
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 3,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "\"description"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "f5a6f980-3be1-4cd5-aaaa-61a867ef35ae"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 3,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "\": \"Prin"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "dcf1434a-f97a-4069-9a65-87473512a658"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 3,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "t wor"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "af9c83f3-7526-4166-a50b-30fbbd1ded5c"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 3,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "king d"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "697ee3a0-1bfb-4c1e-a751-5835e6c22a72"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 3,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "irectory"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "a81821d4-b054-4a8b-970f-d1259bb7eae2"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 3,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "\"}"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "99d0090e-85c2-465c-b0f9-5f3d0cca734b"
+    },
+    {
+      "type": "assistant",
+      "message": {
+        "model": "claude-sonnet-4-6",
+        "id": "msg_01ENUtYiPrRvSfZxEMTrzDsf",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "toolu_01UWz987Gu61RzhMbH2A8VCS",
+            "name": "Bash",
+            "input": {
+              "command": "pwd",
+              "description": "Print working directory"
+            },
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ],
+        "stop_reason": null,
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+          "input_tokens": 3,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 4470,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          },
+          "output_tokens": 8,
+          "service_tier": "standard",
+          "inference_geo": "not_available"
+        },
+        "context_management": null
+      },
+      "parent_tool_use_id": null,
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "uuid": "b24db382-21f2-4752-ace7-4b0c51d67aa6"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_stop",
+        "index": 3
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "c1bc9aee-3643-4239-bbe0-5ab351808de4"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "message_delta",
+        "delta": {
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "stop_details": null
+        },
+        "usage": {
+          "input_tokens": 3,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 4470,
+          "output_tokens": 181
+        },
+        "context_management": {
+          "applied_edits": []
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "4e5ba4ec-d5c9-41bb-a7c1-840c22516886"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "message_stop"
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "978326b0-e4b7-4f54-be89-1e6159ce3d13"
+    },
+    {
+      "type": "rate_limit_event",
+      "rate_limit_info": {
+        "status": "allowed",
+        "resetsAt": 1776103200,
+        "rateLimitType": "five_hour",
+        "overageStatus": "rejected",
+        "overageDisabledReason": "org_level_disabled",
+        "isUsingOverage": false
+      },
+      "uuid": "f04263ec-c44a-4de1-ae8d-ee0f73774a53",
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b"
+    },
+    {
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "tool_use_id": "toolu_01UWz987Gu61RzhMbH2A8VCS",
+            "type": "tool_result",
+            "content": "/home/will/Workspaces/reins/packages/backend",
+            "is_error": false
+          }
+        ]
+      },
+      "parent_tool_use_id": null,
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "uuid": "8c04998d-08ef-4600-aefe-2c0883d4bf9f",
+      "timestamp": "2026-04-13T16:35:42.901Z",
+      "tool_use_result": {
+        "stdout": "/home/will/Workspaces/reins/packages/backend",
+        "stderr": "",
+        "interrupted": false,
+        "isImage": false,
+        "noOutputExpected": false
+      }
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "message_start",
+        "message": {
+          "model": "claude-sonnet-4-6",
+          "id": "msg_01DH9C1iW5vhLgXWzsh94MN7",
+          "type": "message",
+          "role": "assistant",
+          "content": [],
+          "stop_reason": null,
+          "stop_sequence": null,
+          "stop_details": null,
+          "usage": {
+            "input_tokens": 1,
+            "cache_creation_input_tokens": 473,
+            "cache_read_input_tokens": 4470,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 473
+            },
+            "output_tokens": 1,
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          }
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "1fefe9e7-d28f-4f93-9f51-4e36863813b8"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_start",
+        "index": 0,
+        "content_block": {
+          "type": "text",
+          "text": ""
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "7ec8e2fe-a64c-4448-943a-334fe0b9594b"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "text_delta",
+          "text": "I"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "f0a1e489-1cef-4cff-9636-de7bf05e0076"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "text_delta",
+          "text": " read `package.json` (the root workspace config for"
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "fa673ba0-3ff9-43c0-8914-b21d6a02ef13"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "text_delta",
+          "text": " the \"reins\" project) and the current working directory is `/home/will/Workspaces/reins/packages/backend`."
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "93ac1082-08ba-4fac-a0bb-109c355007c7"
+    },
+    {
+      "type": "assistant",
+      "message": {
+        "model": "claude-sonnet-4-6",
+        "id": "msg_01DH9C1iW5vhLgXWzsh94MN7",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "I read `package.json` (the root workspace config for the \"reins\" project) and the current working directory is `/home/will/Workspaces/reins/packages/backend`."
+          }
+        ],
+        "stop_reason": null,
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+          "input_tokens": 1,
+          "cache_creation_input_tokens": 473,
+          "cache_read_input_tokens": 4470,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 473
+          },
+          "output_tokens": 1,
+          "service_tier": "standard",
+          "inference_geo": "not_available"
+        },
+        "context_management": null
+      },
+      "parent_tool_use_id": null,
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "uuid": "52c1f2d4-9f55-40d1-a780-af536acf68e2"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "content_block_stop",
+        "index": 0
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "7dbc66a7-32c7-4e83-af80-84bcd29b1467"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "message_delta",
+        "delta": {
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "stop_details": null
+        },
+        "usage": {
+          "input_tokens": 1,
+          "cache_creation_input_tokens": 473,
+          "cache_read_input_tokens": 4470,
+          "output_tokens": 46
+        },
+        "context_management": {
+          "applied_edits": []
+        }
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "9e6e3f3a-2543-4175-8826-e89ca77dd0ce"
+    },
+    {
+      "type": "stream_event",
+      "event": {
+        "type": "message_stop"
+      },
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "parent_tool_use_id": null,
+      "uuid": "752e949a-86b3-4ba9-8918-1fd099ce1427"
+    },
+    {
+      "type": "result",
+      "subtype": "success",
+      "is_error": false,
+      "duration_ms": 4725,
+      "duration_api_ms": 4625,
+      "num_turns": 3,
+      "result": "I read `package.json` (the root workspace config for the \"reins\" project) and the current working directory is `/home/will/Workspaces/reins/packages/backend`.",
+      "stop_reason": "end_turn",
+      "session_id": "50bfc78c-94e3-4452-977e-0f8a4644bb0b",
+      "total_cost_usd": 0.00787275,
+      "usage": {
+        "input_tokens": 4,
+        "cache_creation_input_tokens": 473,
+        "cache_read_input_tokens": 8940,
+        "output_tokens": 227,
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 473,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "",
+        "iterations": [],
+        "speed": "standard"
+      },
+      "modelUsage": {
+        "claude-sonnet-4-6": {
+          "inputTokens": 4,
+          "outputTokens": 227,
+          "cacheReadInputTokens": 8940,
+          "cacheCreationInputTokens": 473,
+          "webSearchRequests": 0,
+          "costUSD": 0.00787275,
+          "contextWindow": 200000,
+          "maxOutputTokens": 32000
+        }
+      },
+      "permission_denials": [],
+      "terminal_reason": "completed",
+      "fast_mode_state": "off",
+      "uuid": "433ce749-ec1c-4131-9e87-b664a6823a87"
+    }
+  ],
+  "error": null,
+  "summary": {
+    "sdkMessageTypes": [
+      "system.init",
+      "stream_event.message_start",
+      "stream_event.content_block_start",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "assistant",
+      "stream_event.content_block_stop",
+      "stream_event.content_block_start",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "assistant",
+      "stream_event.content_block_stop",
+      "stream_event.content_block_start",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "assistant",
+      "stream_event.content_block_stop",
+      "stream_event.content_block_start",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "user",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "assistant",
+      "stream_event.content_block_stop",
+      "stream_event.message_delta",
+      "stream_event.message_stop",
+      "rate_limit_event",
+      "user",
+      "stream_event.message_start",
+      "stream_event.content_block_start",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "stream_event.content_block_delta",
+      "assistant",
+      "stream_event.content_block_stop",
+      "stream_event.message_delta",
+      "stream_event.message_stop",
+      "result.success"
+    ],
+    "toolCallIds": [
+      "toolu_01Agzfh39hET4cWnVJYGJ7Qx",
+      "toolu_01UWz987Gu61RzhMbH2A8VCS"
+    ],
+    "assistantSnapshotCount": 5,
+    "userToolResultCount": 2,
+    "resultSubtype": "success",
+    "finalResultText": "I read `package.json` (the root workspace config for the \"reins\" project) and the current working directory is `/home/will/Workspaces/reins/packages/backend`."
+  }
+}

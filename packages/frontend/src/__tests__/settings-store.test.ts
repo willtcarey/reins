@@ -36,6 +36,7 @@ describe("SettingsStore", () => {
             value: {
               provider: "anthropic",
               modelId: "claude-sonnet-4",
+              runtimeType: "pi",
               thinkingLevel: "medium",
             },
             redacted: false,
@@ -45,6 +46,7 @@ describe("SettingsStore", () => {
             value: {
               provider: "anthropic",
               modelId: "claude-haiku-4-5",
+              runtimeType: "pi",
               thinkingLevel: "minimal",
             },
             redacted: false,
@@ -67,21 +69,25 @@ describe("SettingsStore", () => {
     expect(store.getStoredModelSetting("default_model")).toEqual({
       provider: "anthropic",
       modelId: "claude-sonnet-4",
+      runtimeType: "pi",
       thinkingLevel: "medium",
     });
     expect(store.getSelectedModelSetting("default_model")).toEqual({
       provider: "anthropic",
       modelId: "claude-sonnet-4",
+      runtimeType: "pi",
       thinkingLevel: "medium",
     });
     expect(store.getStoredModelSetting("utility_model")).toEqual({
       provider: "anthropic",
       modelId: "claude-haiku-4-5",
+      runtimeType: "pi",
       thinkingLevel: "minimal",
     });
     expect(store.getSelectedModelSetting("utility_model")).toEqual({
       provider: "anthropic",
       modelId: "claude-haiku-4-5",
+      runtimeType: "pi",
       thinkingLevel: "minimal",
     });
     expect(store.oauthProviders.map((provider) => provider.id)).toEqual(["openrouter"]);
@@ -178,27 +184,30 @@ describe("SettingsStore", () => {
       return jsonResponse({}, false);
     });
 
-    await store.selectModelSetting("default_model", "anthropic", "claude-sonnet-4");
+    await store.selectModelSetting("default_model", "anthropic", "claude-sonnet-4", "pi");
     await store.selectModelSettingThinkingLevel("default_model", "medium");
     requests.length = 0;
 
-    const result = await store.selectModelSetting("default_model", "openai", "gpt-4.1");
+    const result = await store.selectModelSetting("default_model", "openai", "gpt-4.1", "pi");
 
     expect(result).toEqual({ ok: true });
     expect(store.getSelectedModelSetting("default_model")).toEqual({
       provider: "openai",
       modelId: "gpt-4.1",
+      runtimeType: "pi",
       thinkingLevel: "high",
     });
     expect(store.getStoredModelSetting("default_model")).toEqual({
       provider: "openai",
       modelId: "gpt-4.1",
+      runtimeType: "pi",
       thinkingLevel: "high",
     });
     expect(requests).toHaveLength(1);
     expect(requests[0]?.init?.body).toBe(JSON.stringify({
       provider: "openai",
       modelId: "gpt-4.1",
+      runtimeType: "pi",
       thinkingLevel: "high",
     }));
   });
@@ -213,23 +222,26 @@ describe("SettingsStore", () => {
       return jsonResponse({}, false);
     });
 
-    const result = await store.selectModelSetting("utility_model", "anthropic", "claude-haiku-4-5");
+    const result = await store.selectModelSetting("utility_model", "anthropic", "claude-haiku-4-5", "pi");
 
     expect(result).toEqual({ ok: true });
     expect(store.getSelectedModelSetting("utility_model")).toEqual({
       provider: "anthropic",
       modelId: "claude-haiku-4-5",
+      runtimeType: "pi",
       thinkingLevel: "minimal",
     });
     expect(store.getStoredModelSetting("utility_model")).toEqual({
       provider: "anthropic",
       modelId: "claude-haiku-4-5",
+      runtimeType: "pi",
       thinkingLevel: "minimal",
     });
     expect(requests).toHaveLength(1);
     expect(requests[0]?.init?.body).toBe(JSON.stringify({
       provider: "anthropic",
       modelId: "claude-haiku-4-5",
+      runtimeType: "pi",
       thinkingLevel: "minimal",
     }));
   });
@@ -245,7 +257,7 @@ describe("SettingsStore", () => {
       return jsonResponse({}, false);
     });
 
-    await store.selectModelSetting("default_model", "anthropic", "claude-sonnet-4");
+    await store.selectModelSetting("default_model", "anthropic", "claude-sonnet-4", "pi");
     await store.selectModelSettingThinkingLevel("default_model", "medium");
 
     const result = await store.clearModelSetting("default_model");
@@ -255,6 +267,7 @@ describe("SettingsStore", () => {
     expect(store.getSelectedModelSetting("default_model")).toEqual({
       provider: "",
       modelId: "",
+      runtimeType: "",
       thinkingLevel: "high",
     });
     expect(store.savingModel).toBe(false);

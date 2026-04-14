@@ -22,11 +22,12 @@ export class SessionModelPicker extends LitElement {
   sessionData: SessionData | null = null;
 
   @property({ attribute: false })
-  updateSessionModel: ((update: { provider: string; modelId: string; thinkingLevel: string }) => Promise<{ ok: true } | { error: string }>) | null = null;
+  updateSessionModel: ((update: { runtimeType: string; provider: string; modelId: string; thinkingLevel: string }) => Promise<{ ok: true } | { error: string }>) | null = null;
 
   @state() private _registryStore = new ModelRegistryStore();
   @state() private _loading = false;
   @state() private _saving = false;
+  @state() private _selectedRuntimeType = "";
   @state() private _selectedProvider = "";
   @state() private _selectedModel = "";
   @state() private _selectedThinking = "high";
@@ -40,6 +41,13 @@ export class SessionModelPicker extends LitElement {
   private _syncSelectionFromSession() {
     this._selectedProvider = this.sessionData?.state.model?.provider ?? "";
     this._selectedModel = this.sessionData?.state.model?.id ?? "";
+    this._selectedRuntimeType = this.sessionData?.runtimeType
+      ?? this._registryStore.providers.find(
+        (provider) =>
+          provider.provider === this._selectedProvider
+          && provider.models.some((model) => model.id === this._selectedModel),
+      )?.runtimeType
+      ?? "";
     this._selectedThinking = this.sessionData?.state.thinkingLevel ?? "high";
   }
 
@@ -52,7 +60,10 @@ export class SessionModelPicker extends LitElement {
 
     if ("error" in registryResult) {
       showToast(`Failed to load models: ${registryResult.error}`, "error");
+      return;
     }
+
+    this._syncSelectionFromSession();
   }
 
   private _currentModel(): ModelSetting | null {
@@ -61,6 +72,7 @@ export class SessionModelPicker extends LitElement {
     return {
       provider: model.provider,
       modelId: model.id,
+      runtimeType: this.sessionData?.runtimeType ?? this._selectedRuntimeType,
       thinkingLevel: this.sessionData?.state.thinkingLevel ?? "high",
     };
   }
@@ -76,12 +88,28 @@ export class SessionModelPicker extends LitElement {
     });
   }
 
-  private async _saveModel(provider: string, modelId: string, thinkingLevel: string): Promise<{ ok: true } | { error: string } | undefined> {
+  private get _pickerProviders() {
+    const providers = this._registryStore.availableProviders;
+    if ((this.sessionData?.state.messageCount ?? 0) === 0) {
+      return providers;
+    }
+
+    const runtimeType = this.sessionData?.runtimeType ?? this._selectedRuntimeType;
+    if (!runtimeType) return providers;
+    return providers.filter((provider) => provider.runtimeType === runtimeType);
+  }
+
+  private async _saveModel(
+    runtimeType: string,
+    provider: string,
+    modelId: string,
+    thinkingLevel: string,
+  ): Promise<{ ok: true } | { error: string } | undefined> {
     if (!this.updateSessionModel || !this.sessionId) return undefined;
 
     this._saving = true;
     try {
-      const result = await this.updateSessionModel({ provider, modelId, thinkingLevel });
+      const result = await this.updateSessionModel({ runtimeType, provider, modelId, thinkingLevel });
       if ("error" in result) {
         return { error: result.error };
       }
@@ -93,17 +121,25 @@ export class SessionModelPicker extends LitElement {
     }
   }
 
-  private async _handleSelectionChange(e: CustomEvent<{ provider: string; modelId: string }>) {
+  private async _handleSelectionChange(e: CustomEvent<{ runtimeType: string; provider: string; modelId: string }>) {
     const previous = {
+      runtimeType: this._selectedRuntimeType,
       provider: this._selectedProvider,
       model: this._selectedModel,
     };
 
+    this._selectedRuntimeType = e.detail.runtimeType;
     this._selectedProvider = e.detail.provider;
     this._selectedModel = e.detail.modelId;
 
-    const result = await this._saveModel(this._selectedProvider, this._selectedModel, this._selectedThinking);
+    const result = await this._saveModel(
+      this._selectedRuntimeType,
+      this._selectedProvider,
+      this._selectedModel,
+      this._selectedThinking,
+    );
     if (result && "error" in result) {
+      this._selectedRuntimeType = previous.runtimeType;
       this._selectedProvider = previous.provider;
       this._selectedModel = previous.model;
       showToast(`Failed to update session model: ${result.error}`, "error");
@@ -114,7 +150,12 @@ export class SessionModelPicker extends LitElement {
     const previousThinking = this._selectedThinking;
     this._selectedThinking = e.detail.thinkingLevel;
 
-    const result = await this._saveModel(this._selectedProvider, this._selectedModel, this._selectedThinking);
+    const result = await this._saveModel(
+      this._selectedRuntimeType,
+      this._selectedProvider,
+      this._selectedModel,
+      this._selectedThinking,
+    );
     if (result && "error" in result) {
       this._selectedThinking = previousThinking;
       showToast(`Failed to update session model: ${result.error}`, "error");
@@ -133,7 +174,8 @@ export class SessionModelPicker extends LitElement {
           <div class="text-[10px] text-zinc-500 mt-1">Changes apply to this session only.</div>
         </div>
         <model-selector-controls
-          .providers=${this._registryStore.availableProviders}
+          .providers=${this._pickerProviders}
+          .selectedRuntimeType=${this._selectedRuntimeType}
           .selectedProvider=${this._selectedProvider}
           .selectedModel=${this._selectedModel}
           .selectedThinking=${this._selectedThinking}
@@ -141,7 +183,7 @@ export class SessionModelPicker extends LitElement {
           .showClear=${false}
           .showCurrent=${false}
           emptyMessage="Configure at least one API key in settings to change the model."
-          @selection-change=${(e: CustomEvent<{ provider: string; modelId: string }>) => this._handleSelectionChange(e)}
+          @selection-change=${(e: CustomEvent<{ runtimeType: string; provider: string; modelId: string }>) => this._handleSelectionChange(e)}
           @thinking-change=${(e: CustomEvent<{ thinkingLevel: string }>) => this._handleThinkingChange(e)}
         ></model-selector-controls>
       </div>

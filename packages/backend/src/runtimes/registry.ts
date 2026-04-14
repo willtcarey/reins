@@ -1,5 +1,8 @@
-import type { AgentSessionEvent, ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import { getTask as storeGetTask, type TaskRow } from "../task-store.js";
 import type { ServerState } from "../state.js";
+import { checkoutBranch } from "../git.js";
+import { TaskNotFoundError } from "../models/tasks.js";
 
 export class ModelNotFoundError extends Error {
   readonly provider: string;
@@ -48,8 +51,35 @@ export type RuntimeCompactionEvent =
   | { type: "compaction_start"; reason: string }
   | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean; errorMessage?: string };
 
+/**
+ * Streaming delta event for assistant messages. Intentionally loose so both
+ * pi (rich AssistantMessageEvent) and Claude SDK (minimal text_delta) can
+ * satisfy the type without casting. Consumers only read `type` + `delta`.
+ */
+export type RuntimeAssistantDelta = {
+  type: string;
+  delta?: string;
+  [key: string]: unknown;
+};
+
+/**
+ * Runtime-agnostic event union emitted by all AgentRuntime implementations.
+ * Fully owned by the runtime layer — not derived from any vendor-specific
+ * event types — so every runtime can construct events without casting.
+ */
 export type AgentRuntimeEvent =
-  | Exclude<AgentSessionEvent, { type: "auto_compaction_start" } | { type: "auto_compaction_end" }>
+  | { type: "agent_start" }
+  | { type: "agent_end"; messages: AgentRuntimeMessage[] }
+  | { type: "turn_start" }
+  | { type: "turn_end"; message: AgentRuntimeMessage; toolResults: AgentRuntimeMessage[] }
+  | { type: "message_start"; message: AgentRuntimeMessage }
+  | { type: "message_update"; message: AgentRuntimeMessage; assistantMessageEvent: RuntimeAssistantDelta }
+  | { type: "message_end"; message: AgentRuntimeMessage }
+  | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
+  | { type: "tool_execution_update"; toolCallId: string; toolName: string; args: Record<string, unknown>; partialResult: unknown }
+  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: unknown; isError: boolean }
+  | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
+  | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
   | RuntimeCompactionEvent;
 
 /**
@@ -64,7 +94,8 @@ export type AgentRuntimeEvent =
  */
 export interface AgentRuntimeMessage {
   role: string;
-  content?: unknown[];
+  /** Array for assistant/user/toolResult messages, string for compactionSummary. */
+  content?: unknown[] | string;
   stopReason?: string;
   summary?: string;
   [key: string]: unknown;
@@ -75,10 +106,11 @@ export interface CreateAgentRuntimeParams {
   projectId: number;
   projectDir: string;
   sessionId: string;
-  taskId: number | null;
+  task: TaskRow | null;
   model?: { provider: string; modelId: string } | null;
   thinkingLevel?: string | null;
   sessionTools?: RuntimeSessionTools;
+  resume?: boolean;
 }
 
 export interface RuntimeAskParams {
@@ -135,12 +167,25 @@ export function getRuntimeAdapter(runtimeType: string): AgentRuntimeAdapter {
   return adapter;
 }
 
+export interface CreateAgentRuntimeInput extends Omit<CreateAgentRuntimeParams, "task"> {
+  taskId: number | null;
+}
+
 export async function createAgentRuntime(
   runtimeType: string,
-  params: CreateAgentRuntimeParams,
+  params: CreateAgentRuntimeInput,
 ): Promise<AgentRuntime> {
+  const { taskId, ...rest } = params;
+
+  let task: TaskRow | null = null;
+  if (taskId) {
+    task = storeGetTask(taskId);
+    if (!task) throw new TaskNotFoundError(`Task not found: ${taskId}`);
+    await checkoutBranch(params.projectDir, task.branch_name);
+  }
+
   const adapter = getRuntimeAdapter(runtimeType);
-  return adapter.createRuntime(params);
+  return adapter.createRuntime({ ...rest, task });
 }
 
 export async function listAllRuntimeProviders(): Promise<RuntimeProviderInfo[]> {

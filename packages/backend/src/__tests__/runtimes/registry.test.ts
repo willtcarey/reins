@@ -55,7 +55,7 @@ describe("runtime registry", () => {
       close: async () => {},
     };
 
-    const runtimeParams = {
+    const inputParams = {
       state: createServerState(),
       projectId: 1,
       projectDir: "/tmp/project-a",
@@ -63,8 +63,11 @@ describe("runtime registry", () => {
       taskId: null,
     };
 
+    const { taskId: _taskId, ...expectedRuntimeParams } = inputParams;
+
     const createRuntime = mock<AgentRuntimeAdapter["createRuntime"]>(async (params) => {
-      expect(params).toEqual(runtimeParams);
+      expect(params).toEqual({ ...expectedRuntimeParams, task: null });
+      expect(params).not.toHaveProperty("taskId");
       expect(params).not.toHaveProperty("mode");
       return runtime;
     });
@@ -76,7 +79,7 @@ describe("runtime registry", () => {
       createRuntime,
     });
 
-    const created = await createAgentRuntime("pi", runtimeParams);
+    const created = await createAgentRuntime("pi", inputParams);
 
     expect(created).toBe(runtime);
     expect(createRuntime).toHaveBeenCalledTimes(1);

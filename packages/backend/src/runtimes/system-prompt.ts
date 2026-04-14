@@ -1,6 +1,9 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { ContextFile, Skill } from "./resource-loader.js";
+import { formatContextFilesForPrompt, formatSkillsForPrompt } from "./resource-loader.js";
+
 const BUILTIN_TOOL_SNIPPETS: Record<string, string> = {
   read: "Read file contents",
   bash: "Execute bash commands (ls, grep, find, etc.). Already executes in the project's working directory — do not prefix commands with `cd` to the project root.",
@@ -28,6 +31,10 @@ interface ReinsSystemPromptOptions {
   task?: TaskInfo;
   /** When true, includes scratch session guidance (analysis-first, defer implementation to tasks). */
   isScratchSession?: boolean;
+  /** Context files (AGENTS.md) discovered from project + global dirs. */
+  contextFiles?: readonly ContextFile[];
+  /** Discovered skills to include in the prompt. */
+  skills?: readonly Skill[];
 }
 
 function resolveReinsDocsPaths() {
@@ -83,6 +90,14 @@ REINS documentation (read only when the user asks about REINS itself):
     prompt += "\n\nYou are working on this task.";
   } else if (options.isScratchSession) {
     prompt += "\n\nWhen the user describes a problem or asks a question, focus on analysis and explanation first. Only make code changes when the user clearly indicates they want changes made. Implementation work should go in tasks.";
+  }
+
+  if (options.contextFiles && options.contextFiles.length > 0) {
+    prompt += formatContextFilesForPrompt(options.contextFiles);
+  }
+
+  if (options.skills && options.skills.length > 0) {
+    prompt += formatSkillsForPrompt(options.skills);
   }
 
   return prompt;

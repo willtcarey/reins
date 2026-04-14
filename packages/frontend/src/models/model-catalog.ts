@@ -5,6 +5,7 @@ export interface ModelInfo {
 }
 
 export interface ProviderInfo {
+  runtimeType: string;
   provider: string;
   isAvailable: boolean;
   availabilitySource: "db" | "env" | "oauth" | "local" | null;

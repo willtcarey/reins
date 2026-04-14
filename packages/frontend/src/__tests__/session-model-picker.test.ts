@@ -40,17 +40,18 @@ describe("SessionModelPicker", () => {
     restoreFetch();
   });
 
-  function buildPicker() {
+  function buildPicker(messageCount = 0) {
     const el = new SessionModelPicker();
     el.sessionId = "sess-1";
     el.sessionData = {
       id: "sess-1",
       task_id: null,
+      runtimeType: "pi",
       state: {
         model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
         thinkingLevel: "high",
         isStreaming: false,
-        messageCount: 0,
+        messageCount,
       },
     };
     return el;
@@ -71,6 +72,7 @@ describe("SessionModelPicker", () => {
 
     expect(getPrivate<string>(el, "_selectedProvider")).toBe("anthropic");
     expect(getPrivate<string>(el, "_selectedModel")).toBe("claude-sonnet-4-20250514");
+    expect(getPrivate<string>(el, "_selectedRuntimeType")).toBe("pi");
     expect(getPrivate<string>(el, "_selectedThinking")).toBe("high");
   });
 
@@ -85,6 +87,7 @@ describe("SessionModelPicker", () => {
       if (url === "/api/models") {
         return jsonResponse([
           {
+            runtimeType: "pi",
             provider: "anthropic",
             isAvailable: true,
             availabilitySource: "env",
@@ -114,6 +117,109 @@ describe("SessionModelPicker", () => {
     expect(values).toContain("claude-sonnet-4-20250514");
   });
 
+  test("allows selecting models from any runtime before the first message", async () => {
+    const el = buildPicker(0);
+    callWillUpdate(el);
+
+    mockFetch((url) => {
+      if (url === "/api/models") {
+        return jsonResponse([
+          {
+            runtimeType: "pi",
+            provider: "anthropic",
+            isAvailable: true,
+            availabilitySource: "env",
+            availabilitySources: ["env"],
+            models: [{ id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", reasoning: true }],
+          },
+          {
+            runtimeType: "claude_agent_sdk",
+            provider: "claude_agent_sdk",
+            isAvailable: true,
+            availabilitySource: "local",
+            availabilitySources: ["local"],
+            models: [{ id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", reasoning: true }],
+          },
+        ]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    await callPrivate(el, "_ensureLoaded");
+    const providers = getPrivate<any[]>(el, "_pickerProviders");
+    expect(providers).toHaveLength(2);
+  });
+
+  test("scopes model choices to the session runtime after messages exist", async () => {
+    const el = buildPicker(1);
+    callWillUpdate(el);
+
+    mockFetch((url) => {
+      if (url === "/api/models") {
+        return jsonResponse([
+          {
+            runtimeType: "pi",
+            provider: "anthropic",
+            isAvailable: true,
+            availabilitySource: "env",
+            availabilitySources: ["env"],
+            models: [{ id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", reasoning: true }],
+          },
+          {
+            runtimeType: "claude_agent_sdk",
+            provider: "claude_agent_sdk",
+            isAvailable: true,
+            availabilitySource: "local",
+            availabilitySources: ["local"],
+            models: [{ id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", reasoning: true }],
+          },
+        ]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    await callPrivate(el, "_ensureLoaded");
+    const providers = getPrivate<Array<{ runtimeType: string }>>(el, "_pickerProviders");
+    expect(providers).toHaveLength(1);
+    expect(providers[0]?.runtimeType).toBe("pi");
+  });
+
+  test("sends runtimeType when saving a model change", async () => {
+    const el = buildPicker();
+    callWillUpdate(el);
+
+    const previousDocument = globalThis.document;
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: {
+        createElement: () => ({ add() {} }),
+        body: { appendChild() {} },
+      },
+    });
+
+    try {
+      let saved: unknown = null;
+      el.updateSessionModel = async (update) => {
+        saved = update;
+        return { ok: true };
+      };
+
+      await callPrivate(el, "_saveModel", "claude_agent_sdk", "claude_agent_sdk", "claude-sonnet-4-20250514", "medium");
+
+      expect(saved).toEqual({
+        runtimeType: "claude_agent_sdk",
+        provider: "claude_agent_sdk",
+        modelId: "claude-sonnet-4-20250514",
+        thinkingLevel: "medium",
+      });
+    } finally {
+      Object.defineProperty(globalThis, "document", {
+        configurable: true,
+        value: previousDocument,
+      });
+    }
+  });
+
   test("does not revert the selected thinking level to stale session data after save", async () => {
     const el = buildPicker();
     el.sessionData = {
@@ -138,7 +244,7 @@ describe("SessionModelPicker", () => {
       setPrivate(el, "_selectedThinking", "medium");
       el.updateSessionModel = async () => ({ ok: true });
 
-      await callPrivate(el, "_saveModel", "anthropic", "claude-sonnet-4-20250514", "medium");
+      await callPrivate(el, "_saveModel", "pi", "anthropic", "claude-sonnet-4-20250514", "medium");
 
       expect(getPrivate<string>(el, "_selectedThinking")).toBe("medium");
     } finally {

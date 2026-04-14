@@ -10,6 +10,7 @@ describe("SettingsApiKeysSection", () => {
     const registryStore = new ModelRegistryStore();
     registryStore.providers = [
       {
+        runtimeType: "pi",
         provider: "anthropic",
         isAvailable: true,
         availabilitySource: "db",
@@ -17,6 +18,7 @@ describe("SettingsApiKeysSection", () => {
         models: [],
       },
       {
+        runtimeType: "pi",
         provider: "openai",
         isAvailable: false,
         availabilitySource: null,

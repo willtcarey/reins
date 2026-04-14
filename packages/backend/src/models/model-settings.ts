@@ -105,6 +105,10 @@ export async function resolveModelSettingForCwd(cwd: string, key: ModelSettingsK
   return (await resolveModelSettingWithConfigForCwd(cwd, key))?.model;
 }
 
+export function resolveUtilityModelConfig(): ModelSetting | undefined {
+  return getSetting("utility_model") ?? getSetting("default_model") ?? undefined;
+}
+
 export function resolveUtilityModel(): Model<Api> | undefined {
   return resolveModelSetting("utility_model") ?? resolveModelSetting("default_model");
 }

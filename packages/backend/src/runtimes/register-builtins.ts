@@ -1,4 +1,5 @@
 import { PiRuntimeAdapter } from "./pi/session.js";
+import { ClaudeSdkRuntimeAdapter } from "./claude_agent_sdk/adapter.js";
 import { registerRuntimeAdapter } from "./registry.js";
 
 /**
@@ -7,4 +8,5 @@ import { registerRuntimeAdapter } from "./registry.js";
  */
 export function registerBuiltinRuntimeAdapters(): void {
   registerRuntimeAdapter(new PiRuntimeAdapter());
+  registerRuntimeAdapter(new ClaudeSdkRuntimeAdapter());
 }

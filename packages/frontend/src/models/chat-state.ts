@@ -90,6 +90,7 @@ export type ChatEvent =
   | { type: "agent_start" }
   | { type: "message_update"; assistantMessageEvent?: { type: string; delta?: string } }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
+  | { type: "tool_execution_update"; toolCallId: string; toolName: string; args: Record<string, unknown>; partialResult?: Record<string, unknown> }
   | { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: StreamingToolBlock["result"]; isError?: boolean }
   | { type: "agent_end"; messages?: AgentMessage[] }
   | { type: "message_end" }
@@ -148,7 +149,22 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
       return state;
     }
 
-    case "tool_execution_start":
+    case "tool_execution_start": {
+      const existingIdx = state.streamingBlocks.findIndex(
+        (b) => b.type === "tool" && b.id === event.toolCallId,
+      );
+
+      if (existingIdx !== -1) {
+        // Tool block already exists (e.g. created by an earlier
+        // tool_execution_update) — update args and name in place.
+        const blocks = [...state.streamingBlocks];
+        const existing = blocks[existingIdx];
+        if (existing && existing.type === "tool") {
+          blocks[existingIdx] = { ...existing, args: event.args, name: event.toolName };
+        }
+        return { ...state, streamingBlocks: blocks };
+      }
+
       return {
         ...state,
         streamingBlocks: [
@@ -162,6 +178,39 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
           },
         ],
       };
+    }
+
+    case "tool_execution_update": {
+      const idx = state.streamingBlocks.findIndex((b) => b.type === "tool" && b.id === event.toolCallId);
+
+      if (idx === -1) {
+        return {
+          ...state,
+          streamingBlocks: [
+            ...state.streamingBlocks,
+            {
+              type: "tool",
+              id: event.toolCallId,
+              name: event.toolName,
+              args: event.args,
+              status: "running" as const,
+            },
+          ],
+        };
+      }
+
+      const blocks = [...state.streamingBlocks];
+      const existing = blocks[idx];
+      if (!existing || existing.type !== "tool") return state;
+
+      blocks[idx] = {
+        ...existing,
+        name: event.toolName || existing.name,
+        args: { ...existing.args, ...event.args },
+      };
+
+      return { ...state, streamingBlocks: blocks };
+    }
 
     case "tool_execution_end": {
       const blocks = state.streamingBlocks.map((b) =>

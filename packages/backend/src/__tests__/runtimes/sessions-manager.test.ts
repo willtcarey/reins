@@ -1,6 +1,6 @@
 import { describe, test, expect, mock } from "bun:test";
 import { createProject } from "../../project-store.js";
-import { createSession, getSession, loadMessages } from "../../session-store.js";
+import { createSession, getSession, loadMessages, persistMessages } from "../../session-store.js";
 import { createTask } from "../../task-store.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
@@ -81,6 +81,74 @@ describe("runtime sessions manager", () => {
     expect(row?.model_provider).toBe("anthropic");
     expect(row?.model_id).toBe("claude-sonnet-4-5");
     expect(row?.thinking_level).toBe("high");
+    expect(row?.agent_runtime_type).toBe("pi");
+
+    clearRuntimeAdapters();
+  });
+
+  test("createNewSession selects claude_agent_sdk runtime when selected model provider is claude_agent_sdk", async () => {
+    const state = createServerState();
+    const project = createProject("Reins", repo.dir);
+
+    const managed = await createNewSession(state, project.id, repo.dir, {
+      model: { provider: "claude_agent_sdk", modelId: "claude-sonnet-4-6" },
+    });
+
+    const row = getSession(managed.id);
+    expect(row?.model_provider).toBe("claude_agent_sdk");
+    expect(row?.model_id).toBe("claude-sonnet-4-6");
+    expect(row?.agent_runtime_type).toBe("claude_agent_sdk");
+  });
+
+  test("createNewSession uses default_model.runtimeType for runtime routing", async () => {
+    setSetting("default_model", {
+      provider: "claude_agent_sdk",
+      modelId: "claude-sonnet-4-6",
+      runtimeType: "claude_agent_sdk",
+      thinkingLevel: "high",
+    });
+
+    const state = createServerState();
+    const project = createProject("Reins", repo.dir);
+    const managed = await createNewSession(state, project.id, repo.dir);
+
+    const row = getSession(managed.id);
+    expect(row?.agent_runtime_type).toBe("claude_agent_sdk");
+    expect(row?.model_provider).toBe("claude_agent_sdk");
+  });
+
+  test("createNewSession does not infer runtime from default_model provider", async () => {
+    clearRuntimeAdapters();
+    registerRuntimeAdapter({
+      runtimeType: "test_runtime",
+      listModels: async () => [],
+      ask: async () => "",
+      createRuntime: async () => ({
+        prompt: async () => {},
+        steer: async () => {},
+        abort: async () => {},
+        setModel: async () => {},
+        subscribe: () => () => {},
+        getMessages: async () => [],
+        isStreaming: () => false,
+        close: async () => {},
+      }),
+    });
+
+    setSetting("default_model", {
+      provider: "claude_agent_sdk",
+      modelId: "claude-sonnet-4-6",
+      runtimeType: "test_runtime",
+      thinkingLevel: "high",
+    });
+
+    const state = createServerState();
+    const project = createProject("Reins", repo.dir);
+    const managed = await createNewSession(state, project.id, repo.dir);
+
+    const row = getSession(managed.id);
+    expect(row?.agent_runtime_type).toBe("test_runtime");
+    expect(row?.model_provider).toBe("claude_agent_sdk");
 
     clearRuntimeAdapters();
   });
@@ -156,10 +224,51 @@ describe("runtime sessions manager", () => {
       projectId: project.id,
       projectDir: repo.dir,
       sessionId: "sess-runtime-create",
-      taskId: null,
+      task: null,
+      resume: false,
     });
     expect(createRuntimeParams).not.toHaveProperty("mode");
     expect(state.sessions.get("sess-runtime-create")).toBe(managed);
+  });
+
+  test("ensureSessionOpen uses resume=true only when the session has persisted messages", async () => {
+    clearRuntimeAdapters();
+
+    const createRuntime = mock<AgentRuntimeAdapter["createRuntime"]>(async () => ({
+      prompt: async () => {},
+      steer: async () => {},
+      abort: async () => {},
+      setModel: async () => {},
+      subscribe: () => () => {},
+      getMessages: async () => [],
+      isStreaming: () => false,
+      close: async () => {},
+    }));
+
+    const state = createServerState();
+    registerRuntimeAdapter({
+      runtimeType: "claude_agent_sdk",
+      listModels: async () => [],
+      ask: async () => "",
+      createRuntime,
+    });
+
+    const project = createProject("Reins", repo.dir);
+    createSession("sess-runtime-resume", project.id, {
+      agentRuntimeType: "claude_agent_sdk",
+      modelProvider: "claude_agent_sdk",
+      modelId: "claude-sonnet-4-20250514",
+    });
+    persistMessages("sess-runtime-resume", [{ role: "user", content: [{ type: "text", text: "hello" }] }]);
+
+    await ensureSessionOpen(state, "sess-runtime-resume");
+
+    expect(createRuntime).toHaveBeenCalledTimes(1);
+    const createRuntimeParams = createRuntime.mock.calls[0]?.[0];
+    expect(createRuntimeParams).toMatchObject({
+      sessionId: "sess-runtime-resume",
+      resume: true,
+    });
   });
 
   test("ensureSessionOpen persists by observing runtime events", async () => {
@@ -423,6 +532,10 @@ describe("runtime sessions manager", () => {
 
     const state = createServerState();
     const project = createProject("Reins", repo.dir);
+
+    // Create the branch so checkoutBranch succeeds when opening the session
+    await Bun.spawn(["git", "branch", "task/runtime-tools"], { cwd: repo.dir }).exited;
+
     const task = createTask(project.id, "Runtime tools", null, "task/runtime-tools");
     createSession("sess-tools", project.id, { agentRuntimeType: "test_runtime", taskId: task.id });
 
@@ -488,6 +601,7 @@ describe("runtime sessions manager", () => {
     setSetting("default_model", {
       provider: "anthropic",
       modelId: "does-not-exist",
+      runtimeType: "test_runtime",
       thinkingLevel: "high",
     });
 

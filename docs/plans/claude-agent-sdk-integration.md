@@ -22,6 +22,8 @@ That legacy extension has now been removed from Reins. The new approach lets the
 
 ### Model identity vs execution runtime
 
+Status update (2026-04-12): `default_model` and `utility_model` settings now persist explicit `runtimeType` alongside provider/model/thinking, and session creation uses that persisted runtime type (no provider-based inference on settings-based selection).
+
 Session model selection and runtime are separate concerns and should be stored separately:
 
 - **Model identity**: `model_provider` + `model_id` (what model is selected)
@@ -45,7 +47,7 @@ agent_runtime_type: "pi"                → PiAgentRuntime
 agent_runtime_type: "claude_agent_sdk"  → ClaudeSdkAgentRuntime
 ```
 
-`agent_runtime_type` is persisted on the session row and is immutable for the life of the session. Runtime routing should always use this persisted value as the source of truth (no inference from provider/model IDs).
+`agent_runtime_type` is persisted on the session row and is immutable once the session has any persisted messages. Empty sessions may switch runtime before the first message is sent. Runtime routing should always use the persisted value on the session row as the source of truth (no inference from provider/model IDs).
 
 The frontend model picker still works in terms of provider/model selection, but for an existing session it must be scoped to models exposed by that session's runtime.
 
@@ -313,7 +315,7 @@ Status: 🟡 In progress (partial)
   - [ ] enforce runtime immutability for existing sessions.
 - [x] Update `ws.ts` command dispatch to only call `managed.runtime.prompt/steer/abort`.
 - [x] Update `/api/models` to use runtime-adapter `listModels()` output.
-- [ ] Update `PUT /sessions/:id/model` validation so updates are only allowed within the session runtime; return `400` on cross-runtime attempts.
+- [ ] Update `PUT /sessions/:id/model` validation so cross-runtime updates are only allowed for empty, non-streaming sessions; return `400` once the session has messages or is streaming.
 
 Checkpoint:
 - [x] Restart and smoke-test all session APIs/WS commands with pi sessions.
@@ -321,23 +323,35 @@ Checkpoint:
 
 ### Phase 4: Claude SDK runtime implementation (opt-in path)
 
+Status: 🟡 In progress
+
 Create `packages/backend/src/runtimes/claude_agent_sdk/` with:
 
-- `adapter.ts` — `ClaudeSdkRuntimeAdapter` implementing `AgentRuntimeAdapter`
-- `runtime.ts` — `ClaudeSdkAgentRuntime` class wrapping a long-lived SDK `query()` handle:
-  - `prompt(text)` → send first user message, then use `streamInput()` for follow-ups while the runtime is warm
-  - `steer(text)` → best-effort interrupt and queue/inject follow-up input in-order
-  - `abort()` → interrupt active query
-  - `subscribe(listener)` → event mapping from SDK to Reins format
-  - `getMessages()` → SDK session message fetch + transform
-  - `close()` → cleanup
-- `tools.ts` — Wire Reins' custom tools into `createSdkMcpServer()` with real handlers
-- `events.ts` — Event mapping: `SDKMessage` → Reins broadcast event format
+- [x] `adapter.ts` — `ClaudeSdkRuntimeAdapter` implementing `AgentRuntimeAdapter`
+- [x] `runtime.ts` — `ClaudeSdkAgentRuntime` class wrapping a long-lived SDK `query()` handle:
+  - [x] `prompt(text)` → keep a single long-lived async input stream per active runtime and enqueue each user prompt onto it (including follow-ups while warm)
+  - [x] `steer(text)` → currently unsupported (temporary); returns a clear error instructing users to wait for completion or abort and send a new prompt
+  - [x] `abort()` → interrupt active query
+  - [x] `subscribe(listener)` → event mapping from SDK to Reins format
+  - [x] `getMessages()` → SDK session message fetch + transform
+  - [x] `close()` → cleanup
+- [x] `tools.ts` — Wire Reins' custom tools into `createSdkMcpServer()` with real handlers
+- [x] `events.ts` — Event mapping: `SDKMessage` → Reins broadcast event format
 
 Also in this phase:
-- Add route support to fetch messages via `managed.runtime.getMessages()` where applicable.
-- Ensure runtime-layer normalization keeps frontend message/event shapes unchanged (including tool call/result blocks).
-- Add Claude SDK compaction UI notice when a compact boundary is observed (italic informational message).
+- [x] Add route support to fetch messages via `managed.runtime.getMessages()` where applicable.
+- [x] Add Claude SDK compaction UI notice when a compact boundary is observed (italic informational message).
+- [ ] Ensure runtime-layer normalization keeps frontend message/event shapes unchanged (including tool call/result blocks) for all edge cases.
+
+Backend compatibility instructions (derived from `docs/dev/runtime-event-compatibility.md` and pi runtime behavior):
+- Runtime event mapping must preserve persistence semantics:
+  - emit `turn_end` and/or `agent_end` for checkpoint persistence,
+  - normalize compaction to `compaction_start`/`compaction_end`,
+  - only persist compaction when `compaction_end.aborted !== true`.
+- Tool lifecycle events must keep stable `toolCallId` across start/update/end and normalize names to canonical Reins names at the runtime boundary.
+- Runtime message normalization should output pi-compatible message shapes (`assistant` with `content` blocks, `toolResult`, `compactionSummary`) so the existing frontend reducer and session-store contract continue to work.
+- For Claude runtime sessions, message APIs should source from `managed.runtime.getMessages()` (SDK-backed) rather than assuming SQLite is the source of truth.
+- Keep routing runtime-agnostic in WS/observer layers: runtime emits compatible events, shared observers handle broadcast/persistence exactly as on pi.
 
 Checkpoint:
 - Pi sessions remain unaffected.
@@ -355,11 +369,11 @@ Checkpoint:
 
 ## Decisions and tracked considerations
 
-1. **SDK process lifecycle** *(resolved approach)*: Keep one long-lived SDK query handle per active Reins session and send follow-up user messages via `streamInput()` instead of starting a new query per turn. Reins idle eviction should call `managed.runtime.close()` (delegating to SDK query `.close()`) before removing the in-memory session. Resource usage should still be monitored under high concurrency, but this avoids per-turn process churn.
+1. **SDK process lifecycle** *(resolved approach)*: Keep one long-lived SDK query handle per active Reins session with a single long-lived async input stream. Reins enqueues each user prompt onto that stream instead of calling `streamInput()` repeatedly (the SDK ends input after each `streamInput()` call, which makes follow-up writes fail with transport-not-ready errors). Reins idle eviction should call `managed.runtime.close()` (delegating to SDK query `.close()`) before removing the in-memory session. Resource usage should still be monitored under high concurrency, but this avoids per-turn process churn.
 
 2. **Custom tool naming** *(resolved approach)*: Keep MCP-prefixed tool names at execution time (`mcp__custom-tools__<name>`) as required by the SDK, and map them back to canonical Reins tool names (`create_task`, `delegate`, etc.) for session message storage and API responses.
 
-3. **Steering semantics** *(resolved approach)*: Reins' user-facing contract is "sending a message while streaming" (WS `steer`), which behaves like a queued follow-up input rather than a hard preemption guarantee. Claude SDK runtime should implement compatible behavior (best-effort interrupt + ordered follow-up delivery) without promising pi-specific mid-tool interruption semantics.
+3. **Steering semantics** *(temporary limitation)*: Reins' WS `steer` contract does not currently map cleanly to Claude SDK runtime behavior. For now, Claude runtime returns a clear unsupported error for `steer` ("Steering is not supported on Claude runtime yet. Wait for completion or abort and send a new prompt."). Follow-up prompts should be sent after completion, or users can abort and then send a new prompt.
 
 4. **Compaction visibility** *(resolved approach)*: Monitor `SDKCompactBoundaryMessage` events to detect when Claude Code compaction occurs. We do not get pi-style compaction summary text from the SDK; in the UI, show an italic informational message (for example: "Claude Code compacted and we don’t have visibility into the summary.").
 

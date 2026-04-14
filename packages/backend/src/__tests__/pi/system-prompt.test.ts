@@ -26,7 +26,6 @@ describe("buildReinsSystemPrompt", () => {
     });
 
     expect(prompt).toContain("REINS documentation (read only when the user asks about REINS itself)");
-    expect(prompt).toContain("AGENTS.md");
     expect(prompt).toContain("docs/dev");
     expect(prompt).toContain("docs/features");
     expect(prompt).toContain("docs/features/skills.md");
@@ -34,5 +33,49 @@ describe("buildReinsSystemPrompt", () => {
     expect(prompt).not.toContain("extensions");
     expect(prompt).not.toContain("themes");
     expect(prompt).not.toContain("TUI");
+  });
+
+  test("appends context files when provided", () => {
+    const prompt = buildReinsSystemPrompt({
+      tools: [{ name: "read" }],
+      includePiDocs: false,
+      contextFiles: [
+        { path: "/project/AGENTS.md", content: "Follow these rules." },
+      ],
+    });
+
+    expect(prompt).toContain("# Project Context");
+    expect(prompt).toContain("## /project/AGENTS.md");
+    expect(prompt).toContain("Follow these rules.");
+  });
+
+  test("appends skills when provided", () => {
+    const prompt = buildReinsSystemPrompt({
+      tools: [{ name: "read" }],
+      includePiDocs: false,
+      skills: [{
+        name: "test-skill",
+        description: "A test skill.",
+        filePath: "/skills/test-skill/SKILL.md",
+        baseDir: "/skills/test-skill",
+        source: "project",
+        disableModelInvocation: false,
+      }],
+    });
+
+    expect(prompt).toContain("<available_skills>");
+    expect(prompt).toContain("<name>test-skill</name>");
+    expect(prompt).toContain("<description>A test skill.</description>");
+    expect(prompt).toContain("</available_skills>");
+  });
+
+  test("does not append skills or context files when not provided", () => {
+    const prompt = buildReinsSystemPrompt({
+      tools: [{ name: "read" }],
+      includePiDocs: false,
+    });
+
+    expect(prompt).not.toContain("# Project Context");
+    expect(prompt).not.toContain("<available_skills>");
   });
 });

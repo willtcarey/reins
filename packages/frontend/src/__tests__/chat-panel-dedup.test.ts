@@ -222,6 +222,29 @@ describe("applyChatEvent — other event types", () => {
     });
   });
 
+  test("tool_execution_update updates args for running tool block", () => {
+    let state = applyEvents(initialChatState(), [
+      { type: "agent_start" },
+      { type: "tool_execution_start", toolCallId: "tc1", toolName: "bash", args: {} },
+    ]);
+
+    state = applyChatEvent(state, {
+      type: "tool_execution_update",
+      toolCallId: "tc1",
+      toolName: "bash",
+      args: { command: "ls -la" },
+      partialResult: {},
+    });
+
+    expect(state.streamingBlocks[0]).toMatchObject({
+      type: "tool",
+      id: "tc1",
+      name: "bash",
+      args: { command: "ls -la" },
+      status: "running",
+    });
+  });
+
   test("tool_execution_end marks tool block done", () => {
     let state = applyEvents(initialChatState(), [
       { type: "agent_start" },

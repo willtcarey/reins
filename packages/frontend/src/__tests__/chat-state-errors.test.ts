@@ -125,6 +125,63 @@ describe("applyChatEvent — agent_end error handling", () => {
   });
 });
 
+describe("applyChatEvent — tool_execution_start idempotency", () => {
+  test("updates existing tool block when tool_execution_start arrives after tool_execution_update", () => {
+    let state = applyChatEvent(initialChatState(), { type: "agent_start" });
+
+    // tool_execution_update arrives first (e.g. from tool_progress before content_block_stop)
+    state = applyChatEvent(state, {
+      type: "tool_execution_update",
+      toolCallId: "tc1",
+      toolName: "bash",
+      args: {},
+      partialResult: { elapsedTimeSeconds: 0.5 },
+    });
+
+    expect(state.streamingBlocks).toHaveLength(1);
+    expect(state.streamingBlocks[0]).toEqual(expect.objectContaining({
+      type: "tool",
+      id: "tc1",
+      args: {},
+    }));
+
+    // tool_execution_start arrives with full args
+    state = applyChatEvent(state, {
+      type: "tool_execution_start",
+      toolCallId: "tc1",
+      toolName: "bash",
+      args: { command: "ls -la" },
+    });
+
+    // Should NOT create a duplicate — should update the existing block
+    expect(state.streamingBlocks).toHaveLength(1);
+    expect(state.streamingBlocks[0]).toEqual(expect.objectContaining({
+      type: "tool",
+      id: "tc1",
+      name: "bash",
+      args: { command: "ls -la" },
+    }));
+  });
+
+  test("creates new tool block when no existing block with same ID", () => {
+    let state = applyChatEvent(initialChatState(), { type: "agent_start" });
+
+    state = applyChatEvent(state, {
+      type: "tool_execution_start",
+      toolCallId: "tc1",
+      toolName: "bash",
+      args: { command: "echo hello" },
+    });
+
+    expect(state.streamingBlocks).toHaveLength(1);
+    expect(state.streamingBlocks[0]).toEqual(expect.objectContaining({
+      type: "tool",
+      id: "tc1",
+      args: { command: "echo hello" },
+    }));
+  });
+});
+
 describe("applyChatEvent — auto_retry events", () => {
   test("auto_retry_start sets errorMessage with retry info", () => {
     let state = applyChatEvent(initialChatState(), { type: "agent_start" });

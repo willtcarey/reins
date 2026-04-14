@@ -36,6 +36,10 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 - HTTP responses are not compressed. Bun's built-in server doesn't apply gzip/br automatically. Currently fine (largest JSON response is ~13KB for file listings), but will matter if payloads grow (e.g. large repos with thousands of files, or bulk API responses). Add response compression middleware or use Bun's `Bun.gzipSync` for JSON responses above a size threshold.
 
+## Tests
+
+- Test files are organized by concept rather than mirroring the source file structure. For example, `__tests__/runtimes/claude_agent_sdk/` has `events.test.ts` and `stream-processor.test.ts` but there are also test files like `sessions-manager.test.ts` that cover multiple source files. Reorganize tests to mirror the `src/` directory structure so each source file has a corresponding test file, making it easier to find and maintain tests.
+
 ## Cross-cutting
 
 - Frontend duplicates backend types (`ProjectInfo`, `SessionListItem`, `TaskListItem`, `SessionData` in `ws-client.ts`) and API path strings (hardcoded in stores). These can drift. Use TypeScript `paths` mapping (`"@backend/*": ["../backend/src/*"]`) so the frontend can `import type` directly from backend source files — `tsc` resolves them for type checking, `bun build` erases them completely. Runtime values like `API` path constants would need a zero-dependency shared file or stay duplicated.

@@ -14,6 +14,7 @@ import { Sessions } from "../models/sessions.js";
 import { parseBody } from "./validate.js";
 
 const SessionModelBody = Type.Object({
+  runtimeType: Type.Optional(Type.String()),
   provider: Type.String(),
   modelId: Type.String(),
   thinkingLevel: Type.Optional(Type.String()),

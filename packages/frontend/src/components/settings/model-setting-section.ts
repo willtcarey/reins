@@ -51,13 +51,18 @@ export class SettingsModelSettingSection extends LitElement {
   @property()
   clearSuccessLabel = "Model setting cleared";
 
-  private async _handleProviderModelChange(e: CustomEvent<{ provider: string; modelId: string }>) {
+  private async _handleProviderModelChange(e: CustomEvent<{ runtimeType: string; provider: string; modelId: string }>) {
     const store = this.store;
     if (!store) return;
 
     const selection = e.detail;
 
-    const result = await store.selectModelSetting(this.settingKey, selection.provider, selection.modelId);
+    const result = await store.selectModelSetting(
+      this.settingKey,
+      selection.provider,
+      selection.modelId,
+      selection.runtimeType,
+    );
     if ("error" in result) {
       showToast(`Failed to save model setting: ${result.error}`, "error");
       return;
@@ -106,6 +111,7 @@ export class SettingsModelSettingSection extends LitElement {
     return this.store?.getSelectedModelSetting(this.settingKey) ?? {
       provider: "",
       modelId: "",
+      runtimeType: "",
       thinkingLevel: "high",
     };
   }
@@ -118,6 +124,7 @@ export class SettingsModelSettingSection extends LitElement {
     return html`
       <model-selector-controls
         .providers=${registryStore.availableProviders}
+        .selectedRuntimeType=${this._selected.runtimeType}
         .selectedProvider=${this._selected.provider}
         .selectedModel=${this._selected.modelId}
         .selectedThinking=${this._selected.thinkingLevel}

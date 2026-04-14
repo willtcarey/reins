@@ -70,9 +70,21 @@ describe("models.list", () => {
     setApiKeyCredential("anthropic", "sk-test-key");
 
     const result = await modelsListFunction.execute({}, ctx);
-    const anthropic = result.find((p) => p.provider === "anthropic");
+    const anthropic = result.find((p) => p.runtimeType === "pi" && p.provider === "anthropic");
     expect(anthropic!.isAvailable).toBe(true);
     expect(anthropic!.availabilitySource).toBe("db");
+  });
+
+  test("marks Claude SDK provider as locally available without configured keys", async () => {
+    const ctx = makeCtx();
+    const result = await modelsListFunction.execute({}, ctx);
+
+    const claudeProvider = result.find((p) => p.runtimeType === "claude_agent_sdk" && p.provider === "claude_agent_sdk");
+    expect(claudeProvider).toBeDefined();
+    expect(claudeProvider!.isAvailable).toBe(true);
+    expect(claudeProvider!.availabilitySource).toBe("local");
+    expect(claudeProvider!.availabilitySources).toEqual(["local"]);
+    expect(claudeProvider!.models.some((model) => model.id === "claude-sonnet-4-6")).toBe(true);
   });
 });
 

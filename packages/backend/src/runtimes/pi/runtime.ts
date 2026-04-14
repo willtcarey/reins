@@ -4,30 +4,27 @@ import type {
   AgentRuntime,
   AgentRuntimeEvent,
   AgentRuntimeMessage,
-  RuntimeCompactionEvent,
   SetRuntimeModelParams,
 } from "../registry.js";
 
 function normalizePiSessionEvent(event: AgentSessionEvent): AgentRuntimeEvent {
   if (event.type === "auto_compaction_start") {
-    const normalized: RuntimeCompactionEvent = {
+    return {
       type: "compaction_start",
       reason: event.reason ?? "auto",
     };
-    return normalized;
   }
 
   if (event.type === "auto_compaction_end") {
-    const normalized: RuntimeCompactionEvent = {
+    return {
       type: "compaction_end",
       result: event.result,
       aborted: event.aborted,
       errorMessage: event.errorMessage,
     };
-    return normalized;
   }
 
-  return event;
+  return event as unknown as AgentRuntimeEvent;
 }
 
 export class PiAgentRuntime implements AgentRuntime {

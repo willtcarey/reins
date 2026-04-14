@@ -273,28 +273,38 @@ export class ChatPanel extends LitElement {
   }
 
   private renderAssistantMessage(msg: AssistantMessage) {
-    const textParts: string[] = [];
-    const toolCalls: ToolCall[] = [];
+    const parts: unknown[] = [];
+    const textBuffer: string[] = [];
+
+    const flushText = () => {
+      if (textBuffer.length === 0) return;
+      const text = textBuffer.join("\n");
+      textBuffer.length = 0;
+      parts.push(html`
+        <div class="bg-zinc-800 border-l-2 border-blue-400/60 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm">
+          <markdown-content .text=${text}></markdown-content>
+        </div>
+      `);
+    };
 
     for (const block of msg.content) {
       if (block.type === "text") {
-        textParts.push(block.text);
-      } else if (block.type === "toolCall") {
-        toolCalls.push(block);
+        textBuffer.push(block.text);
+        continue;
+      }
+
+      if (block.type === "toolCall") {
+        flushText();
+        parts.push(this.renderToolCall(block));
       }
       // Skip thinking blocks in the UI
     }
 
-    const text = textParts.join("\n");
+    flushText();
 
     return html`
       <div class="mb-3">
-        ${text ? html`
-          <div class="bg-zinc-800 border-l-2 border-blue-400/60 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm">
-            <markdown-content .text=${text}></markdown-content>
-          </div>
-        ` : nothing}
-        ${toolCalls.map((tc) => this.renderToolCall(tc))}
+        ${parts}
       </div>
     `;
   }

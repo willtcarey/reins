@@ -11,6 +11,7 @@ import {
 describe("settings helpers", () => {
   const providers = [
     {
+      runtimeType: "pi",
       provider: "anthropic",
       isAvailable: true,
       availabilitySource: "db" as const,
@@ -21,6 +22,7 @@ describe("settings helpers", () => {
       ],
     },
     {
+      runtimeType: "pi",
       provider: "openai",
       isAvailable: true,
       availabilitySource: "db" as const,
@@ -36,9 +38,10 @@ describe("settings helpers", () => {
     expect(providerLabel("open-router")).toBe("Open Router");
   });
 
-  test("model selection encoding round-trips provider and model", () => {
-    const value = encodeModelSelection("anthropic", "claude-sonnet-4");
+  test("model selection encoding round-trips runtime, provider, and model", () => {
+    const value = encodeModelSelection("pi", "anthropic", "claude-sonnet-4");
     expect(decodeModelSelection(value)).toEqual({
+      runtimeType: "pi",
       provider: "anthropic",
       modelId: "claude-sonnet-4",
     });
@@ -59,6 +62,7 @@ describe("settings helpers", () => {
       model: {
         provider: "anthropic",
         modelId: "unique-model",
+        runtimeType: "pi",
         thinkingLevel: "high",
       },
     })).toBe("Claude Haiku 4.5");
@@ -70,6 +74,7 @@ describe("settings helpers", () => {
       model: {
         provider: "anthropic",
         modelId: "shared-model",
+        runtimeType: "pi",
         thinkingLevel: "high",
       },
     })).toBe("Anthropic / Claude Sonnet 4");
@@ -81,6 +86,7 @@ describe("settings helpers", () => {
       model: {
         provider: "anthropic",
         modelId: "unique-model",
+        runtimeType: "pi",
         thinkingLevel: "minimal",
       },
       defaultThinkingLevel: "high",

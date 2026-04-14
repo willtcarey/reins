@@ -13,6 +13,7 @@ import type { AgentMessage } from "../chat-state.js";
 import type { EventListener, IAppClient, SessionData } from "../ws-client.js";
 
 export interface SessionModelUpdate {
+  runtimeType?: string;
   provider: string;
   modelId: string;
   thinkingLevel: string;
@@ -24,6 +25,7 @@ function blankSessionData(sessionId = ""): SessionData {
   return {
     id: sessionId,
     task_id: null,
+    runtimeType: undefined,
     state: {
       model: null,
       thinkingLevel: "high",
@@ -165,6 +167,7 @@ export class ActiveSessionStore {
 
     this.sessionData = {
       ...this.sessionData,
+      runtimeType: update.runtimeType ?? this.sessionData.runtimeType,
       state: {
         ...this.sessionData.state,
         model: { provider: update.provider, id: update.modelId },

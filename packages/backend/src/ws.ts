@@ -70,7 +70,10 @@ async function handleWsCommand(
           message: cmd.message,
         });
 
-        await managed.runtime.prompt(message);
+        void managed.runtime.prompt(message).catch((err: unknown) => {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          sendToWs(client.ws, { type: "error", error: `prompt failed: ${errorMessage}` });
+        });
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         sendToWs(client.ws, { type: "error", error: `prompt failed: ${errorMessage}` });

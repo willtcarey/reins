@@ -11,20 +11,15 @@
  * broadcast payload shape — keep it in sync when adding new messages.
  */
 
-import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import type { AgentRuntimeEvent } from "../runtimes/registry.js";
 import type { WsClient } from "../state.js";
 
 // ---------------------------------------------------------------------------
 // Message types
 // ---------------------------------------------------------------------------
 
-/** Compaction events emitted by our backend (unified for manual + auto). */
-export type CompactionEvent =
-  | { type: "compaction_start"; reason: string }
-  | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean; errorMessage?: string };
-
 export type ServerMessage =
-  | { type: "event"; sessionId: string; projectId: number; event: AgentSessionEvent | CompactionEvent }
+  | { type: "event"; sessionId: string; projectId: number; event: AgentRuntimeEvent }
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null }
   | { type: "session_updated"; sessionId: string; projectId: number }

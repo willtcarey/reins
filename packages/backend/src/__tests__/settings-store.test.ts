@@ -31,14 +31,14 @@ describe("settings-store", () => {
     });
 
     test("returns typed object for default_model", () => {
-      const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" } as const;
+      const model = { provider: "anthropic", modelId: "claude-4", runtimeType: "pi", thinkingLevel: "high" } as const;
       setSetting("default_model", model);
 
       expect(getSetting("default_model")).toEqual(model);
     });
 
     test("returns typed object for utility_model", () => {
-      const model = { provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" } as const;
+      const model = { provider: "anthropic", modelId: "claude-haiku-4-5", runtimeType: "pi", thinkingLevel: "minimal" } as const;
       setSetting("utility_model", model);
 
       expect(getSetting("utility_model")).toEqual(model);
@@ -66,17 +66,18 @@ describe("settings-store", () => {
 
   describe("setSetting", () => {
     test("round-trips with getSetting for default_model", () => {
-      const model = { provider: "openai", modelId: "gpt-5", thinkingLevel: "minimal" } as const;
+      const model = { provider: "openai", modelId: "gpt-5", runtimeType: "pi", thinkingLevel: "minimal" } as const;
       setSetting("default_model", model);
       expect(getSetting("default_model")).toEqual(model);
     });
 
     test("upserts on second call", () => {
-      setSetting("default_model", { provider: "a", modelId: "b", thinkingLevel: "minimal" });
-      setSetting("default_model", { provider: "x", modelId: "y", thinkingLevel: "high" });
+      setSetting("default_model", { provider: "a", modelId: "b", runtimeType: "pi", thinkingLevel: "minimal" });
+      setSetting("default_model", { provider: "x", modelId: "y", runtimeType: "pi", thinkingLevel: "high" });
       expect(getSetting("default_model")).toEqual({
         provider: "x",
         modelId: "y",
+        runtimeType: "pi",
         thinkingLevel: "high",
       });
     });
@@ -84,14 +85,14 @@ describe("settings-store", () => {
     test("rejects invalid data", () => {
       expect(() => validateSettingValue("default_model", "not-an-object")).toThrow(/Invalid value/);
       expect(() => validateSettingValue("default_model", { provider: "a" })).toThrow(/Invalid value/);
-      expect(() => validateSettingValue("default_model", { provider: 123, modelId: "b", thinkingLevel: "medium" })).toThrow(/Invalid value/);
+      expect(() => validateSettingValue("default_model", { provider: 123, modelId: "b", runtimeType: "pi", thinkingLevel: "medium" })).toThrow(/Invalid value/);
       expect(() => validateSettingValue("default_model", { provider: "a", modelId: "b", thinkingLevel: "off" })).toThrow(/Invalid value/);
     });
   });
 
   describe("deleteSetting", () => {
     test("get returns null after delete", () => {
-      setSetting("default_model", { provider: "a", modelId: "b", thinkingLevel: "minimal" });
+      setSetting("default_model", { provider: "a", modelId: "b", runtimeType: "pi", thinkingLevel: "minimal" });
       deleteSetting("default_model");
       expect(getSetting("default_model")).toBeNull();
     });
@@ -103,8 +104,8 @@ describe("settings-store", () => {
     });
 
     test("returns stored settings", () => {
-      const defaultModel = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" } as const;
-      const utilityModel = { provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" } as const;
+      const defaultModel = { provider: "anthropic", modelId: "claude-4", runtimeType: "pi", thinkingLevel: "high" } as const;
+      const utilityModel = { provider: "anthropic", modelId: "claude-haiku-4-5", runtimeType: "pi", thinkingLevel: "minimal" } as const;
       setSetting("default_model", defaultModel);
       setSetting("utility_model", utilityModel);
 
@@ -121,8 +122,8 @@ describe("settings-store", () => {
     });
 
     test("returns a filtered subset for the requested keys", () => {
-      const defaultModel = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" } as const;
-      const utilityModel = { provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" } as const;
+      const defaultModel = { provider: "anthropic", modelId: "claude-4", runtimeType: "pi", thinkingLevel: "high" } as const;
+      const utilityModel = { provider: "anthropic", modelId: "claude-haiku-4-5", runtimeType: "pi", thinkingLevel: "minimal" } as const;
       setSetting("default_model", defaultModel);
       setSetting("utility_model", utilityModel);
 
@@ -139,7 +140,7 @@ describe("settings-store", () => {
     });
 
     test("returns an empty array when filtering by no valid keys", () => {
-      setSetting("default_model", { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" });
+      setSetting("default_model", { provider: "anthropic", modelId: "claude-4", runtimeType: "pi", thinkingLevel: "high" });
 
       expect(listSettings([])).toEqual([]);
     });

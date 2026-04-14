@@ -220,9 +220,13 @@ export function createDelegateTool(
             for (let i = messages.length - 1; i >= 0; i--) {
               const msg = messages[i];
               if (msg.role === "assistant") {
-                const textParts = (msg.content || [])
-                  .filter((c: any) => c.type === "text")
-                  .map((c: any) => c.text);
+                const blocks = Array.isArray(msg.content) ? msg.content : [];
+                const textParts: string[] = [];
+                for (const block of blocks) {
+                  if (block && typeof block === "object" && "type" in block && block.type === "text" && "text" in block) {
+                    textParts.push(String(block.text));
+                  }
+                }
                 if (textParts.length > 0) {
                   summary = textParts.join("\n");
                   break;

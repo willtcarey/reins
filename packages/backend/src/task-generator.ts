@@ -1,10 +1,11 @@
 /**
  * Task Generator
  *
- * Uses the runtime adapter one-shot ask path (currently the pi adapter)
+ * Uses the configured utility/default model runtime adapter one-shot ask path
  * to parse a freeform user intent into a structured task.
  */
 
+import { resolveUtilityModelConfig } from "./models/model-settings.js";
 import { slugifyBranchName } from "./branch-namer.js";
 import { getRuntimeAdapter } from "./runtimes/registry.js";
 
@@ -29,9 +30,17 @@ Return ONLY valid JSON. No markdown fences, no explanation, no extra text.`;
  */
 export async function generateTask(prompt: string): Promise<GeneratedTask> {
   try {
-    const text = await getRuntimeAdapter("pi").ask({
+    const configuredModel = resolveUtilityModelConfig();
+    const runtimeType = configuredModel?.runtimeType ?? "pi";
+
+    const text = await getRuntimeAdapter(runtimeType).ask({
       cwd: process.cwd(),
       prompt,
+      model: configuredModel ? {
+        provider: configuredModel.provider,
+        modelId: configuredModel.modelId,
+      } : undefined,
+      thinkingLevel: configuredModel?.thinkingLevel,
       systemPrompt: SYSTEM_PROMPT,
       timeoutMs: TIMEOUT_MS,
     });

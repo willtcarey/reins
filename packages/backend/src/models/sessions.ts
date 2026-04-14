@@ -22,6 +22,7 @@ import { getRuntimeAdapter } from "../runtimes/registry.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
+  runtimeType?: string;
   provider: string;
   modelId: string;
   thinkingLevel?: string;
@@ -32,6 +33,7 @@ export interface SessionView {
   id: string;
   project_id: number;
   task_id: number | null;
+  runtimeType: string;
   state: {
     model: { provider: string; id: string } | null;
     thinkingLevel: string;
@@ -56,6 +58,7 @@ export class Sessions {
       id: row.id,
       project_id: row.project_id,
       task_id: row.task_id,
+      runtimeType: row.agent_runtime_type,
       state: {
         model: row.model_provider && row.model_id
           ? { provider: row.model_provider, id: row.model_id }
@@ -95,7 +98,20 @@ export class Sessions {
     }
 
     const managed = this.sessions.get(params.sessionId);
-    const runtimeAdapter = getRuntimeAdapter(sessionRow.agent_runtime_type);
+    const nextRuntimeType = params.runtimeType ?? sessionRow.agent_runtime_type;
+    const isRuntimeSwitch = nextRuntimeType !== sessionRow.agent_runtime_type;
+    const messageCount = loadMessages(params.sessionId).length;
+
+    if (isRuntimeSwitch) {
+      if (messageCount > 0) {
+        throw new Error("Session runtime can only be changed before any messages are sent");
+      }
+      if (managed?.runtime.isStreaming()) {
+        throw new Error("Session runtime cannot be changed while the session is streaming");
+      }
+    }
+
+    const runtimeAdapter = getRuntimeAdapter(nextRuntimeType);
     const providers = await runtimeAdapter.listModels();
     const provider = providers.find((candidate) => candidate.provider === params.provider);
     if (!provider) {
@@ -115,7 +131,10 @@ export class Sessions {
     const liveThinkingLevel = params.thinkingLevel ? parseThinkingLevel(params.thinkingLevel) : null;
     const thinkingLevel = liveThinkingLevel ?? sessionRow.thinking_level;
 
-    if (managed) {
+    if (managed && isRuntimeSwitch) {
+      await managed.runtime.close();
+      this.sessions.delete(params.sessionId);
+    } else if (managed) {
       await managed.runtime.setModel({
         provider: params.provider,
         modelId: params.modelId,
@@ -127,6 +146,7 @@ export class Sessions {
       modelProvider: params.provider,
       modelId: params.modelId,
       thinkingLevel,
+      agentRuntimeType: nextRuntimeType,
     });
 
     this.broadcast({

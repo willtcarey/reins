@@ -1,11 +1,12 @@
 /**
  * Branch Name Generation
  *
- * Uses the runtime adapter one-shot ask path (currently the pi adapter)
+ * Uses the configured utility/default model runtime adapter one-shot ask path
  * to generate clean git branch names from task titles. Falls back to simple
  * slugification if the LLM is unavailable or returns invalid output.
  */
 
+import { resolveUtilityModelConfig } from "./models/model-settings.js";
 import { getRuntimeAdapter } from "./runtimes/registry.js";
 
 const BRANCH_PATTERN = /^task\/[a-z0-9][a-z0-9-]*$/;
@@ -21,9 +22,17 @@ const SYSTEM_PROMPT =
  */
 export async function generateBranchName(title: string): Promise<string> {
   try {
-    const text = (await getRuntimeAdapter("pi").ask({
+    const configuredModel = resolveUtilityModelConfig();
+    const runtimeType = configuredModel?.runtimeType ?? "pi";
+
+    const text = (await getRuntimeAdapter(runtimeType).ask({
       cwd: process.cwd(),
       prompt: title,
+      model: configuredModel ? {
+        provider: configuredModel.provider,
+        modelId: configuredModel.modelId,
+      } : undefined,
+      thinkingLevel: configuredModel?.thinkingLevel,
       systemPrompt: SYSTEM_PROMPT,
       timeoutMs: TIMEOUT_MS,
     }))

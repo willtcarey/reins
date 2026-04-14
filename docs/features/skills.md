@@ -6,14 +6,10 @@ A skill is usually a directory containing a `SKILL.md` file plus optional script
 
 ## Where to put a skill so REINS discovers it
 
-REINS uses pi's resource loader for skill discovery. In practice, this means skills are discovered from the same default locations pi uses:
+REINS has its own resource loader for skill discovery. Skills are discovered from:
 
-- Global locations:
-  - `~/.agents/skills/`
-  - `~/.pi/agent/skills/`
-- Project locations (starting from the project cwd used by REINS):
-  - `.agents/skills/`
-  - `.pi/skills/`
+- Global: `~/.agents/skills/`
+- Project: `<cwd>/.agents/skills/`
 
 For project-local skills, put them in your repo, for example:
 

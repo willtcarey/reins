@@ -1,17 +1,73 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { generateBranchName, slugifyBranchName } from "../branch-namer.js";
 import { clearRuntimeAdapters, registerRuntimeAdapter } from "../runtimes/registry.js";
+import { deleteSetting, setSetting } from "../settings-store.js";
+import { useTestDb } from "./helpers/test-db.js";
 
 describe("generateBranchName", () => {
+  useTestDb();
+
   beforeEach(() => {
     clearRuntimeAdapters();
+    deleteSetting("utility_model");
+    deleteSetting("default_model");
   });
 
-  test("uses runtime adapter ask output when it returns a valid branch name", async () => {
-    const ask = mock(async () => "task/from-adapter");
+  test("uses the configured utility model runtime for branch generation", async () => {
+    const piAsk = mock(async () => "task/wrong-runtime");
+    const claudeAsk = mock(async () => '"task/from-claude-runtime"');
 
     registerRuntimeAdapter({
       runtimeType: "pi",
+      listModels: async () => [],
+      ask: piAsk,
+      createRuntime: async () => {
+        throw new Error("not used");
+      },
+    });
+
+    registerRuntimeAdapter({
+      runtimeType: "claude_agent_sdk",
+      listModels: async () => [],
+      ask: claudeAsk,
+      createRuntime: async () => {
+        throw new Error("not used");
+      },
+    });
+
+    setSetting("default_model", {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-20250514",
+      runtimeType: "pi",
+      thinkingLevel: "medium",
+    });
+    setSetting("utility_model", {
+      provider: "anthropic",
+      modelId: "claude-haiku-4-5",
+      runtimeType: "claude_agent_sdk",
+      thinkingLevel: "minimal",
+    });
+
+    await expect(generateBranchName("Add dark mode support")).resolves.toBe("task/from-claude-runtime");
+
+    expect(claudeAsk).toHaveBeenCalledTimes(1);
+    expect(claudeAsk).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: "Add dark mode support",
+      cwd: process.cwd(),
+      model: {
+        provider: "anthropic",
+        modelId: "claude-haiku-4-5",
+      },
+      thinkingLevel: "minimal",
+    }));
+    expect(piAsk).not.toHaveBeenCalled();
+  });
+
+  test("falls back to default model runtime when utility model is unset", async () => {
+    const ask = mock(async () => "task/from-default-runtime");
+
+    registerRuntimeAdapter({
+      runtimeType: "claude_agent_sdk",
       listModels: async () => [],
       ask,
       createRuntime: async () => {
@@ -19,11 +75,22 @@ describe("generateBranchName", () => {
       },
     });
 
-    await expect(generateBranchName("Add dark mode support")).resolves.toBe("task/from-adapter");
+    setSetting("default_model", {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-20250514",
+      runtimeType: "claude_agent_sdk",
+      thinkingLevel: "medium",
+    });
+
+    await expect(generateBranchName("Add dark mode support")).resolves.toBe("task/from-default-runtime");
+
     expect(ask).toHaveBeenCalledTimes(1);
     expect(ask).toHaveBeenCalledWith(expect.objectContaining({
-      prompt: "Add dark mode support",
-      cwd: process.cwd(),
+      model: {
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-20250514",
+      },
+      thinkingLevel: "medium",
     }));
   });
 
@@ -62,10 +129,8 @@ describe("slugifyBranchName", () => {
   test("caps length at 50 chars (slug portion)", () => {
     const longTitle = "this is a very long task title that should be truncated to fifty characters";
     const result = slugifyBranchName(longTitle);
-    // The slug portion (after "task/") should be at most 50 chars
     const slug = result.replace("task/", "");
     expect(slug.length).toBeLessThanOrEqual(50);
-    // Should not end with a hyphen after truncation
     expect(slug).not.toMatch(/-$/);
   });
 

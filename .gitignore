@@ -3,6 +3,7 @@
 .dev-build/
 node_modules/
 dist/
+tmp/
 .env
 
 # Xcode

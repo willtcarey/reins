@@ -134,6 +134,39 @@ describe("session routes (top-level)", () => {
       expect(await res!.json()).toEqual([]);
     });
 
+    test("returns persisted messages for non-pi sessions", async () => {
+      const sessionId = "messages-runtime";
+      createSession(sessionId, projectId, { agentRuntimeType: "claude_agent_sdk" });
+      persistMessages(sessionId, [
+        { role: "assistant", content: [{ type: "text", text: "from db" }] },
+      ]);
+
+      state.sessions.set(sessionId, {
+        id: sessionId,
+        lastActivity: Date.now(),
+        runtime: {
+          prompt: async () => {},
+          steer: async () => {},
+          abort: async () => {},
+          setModel: async () => {},
+          subscribe: () => () => {},
+          getMessages: async () => [{ role: "assistant", content: [{ type: "text", text: "from runtime" }] }],
+          isStreaming: () => false,
+          close: async () => {},
+        },
+      });
+
+      const res = await router.handle(
+        makeRequest("GET", `/api/sessions/${sessionId}/messages`),
+        state,
+      );
+
+      expect(res!.status).toBe(200);
+      expect(await res!.json()).toEqual([
+        { role: "assistant", content: [{ type: "text", text: "from db" }] },
+      ]);
+    });
+
     test("returns 404 for nonexistent session", async () => {
       const res = await router.handle(
         makeRequest("GET", `/api/sessions/nonexistent/messages`),

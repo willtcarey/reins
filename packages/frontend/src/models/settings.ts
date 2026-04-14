@@ -12,23 +12,24 @@ export function formatModelSelectionOptionLabel(provider: string, modelName: str
   return `${providerLabel(provider)} / ${modelName}`;
 }
 
-export function encodeModelSelection(provider: string, modelId: string): string {
-  if (!provider || !modelId) return "";
-  return JSON.stringify([provider, modelId]);
+export function encodeModelSelection(runtimeType: string, provider: string, modelId: string): string {
+  if (!runtimeType || !provider || !modelId) return "";
+  return JSON.stringify([runtimeType, provider, modelId]);
 }
 
-export function decodeModelSelection(value: string): { provider: string; modelId: string } | null {
+export function decodeModelSelection(value: string): { runtimeType: string; provider: string; modelId: string } | null {
   if (!value) return null;
 
   try {
     const parsed = JSON.parse(value);
     if (
       Array.isArray(parsed)
-      && parsed.length === 2
+      && parsed.length === 3
       && typeof parsed[0] === "string"
       && typeof parsed[1] === "string"
+      && typeof parsed[2] === "string"
     ) {
-      return { provider: parsed[0], modelId: parsed[1] };
+      return { runtimeType: parsed[0], provider: parsed[1], modelId: parsed[2] };
     }
   } catch {
     return null;

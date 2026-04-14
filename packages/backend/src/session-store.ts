@@ -227,6 +227,7 @@ export function updateSessionMeta(
     modelProvider?: string;
     modelId?: string;
     thinkingLevel?: string;
+    agentRuntimeType?: string;
   },
 ): void {
   const db = getDb();
@@ -235,13 +236,14 @@ export function updateSessionMeta(
 
   db.query(
     `UPDATE sessions
-     SET name = ?, model_provider = ?, model_id = ?, thinking_level = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     SET name = ?, model_provider = ?, model_id = ?, thinking_level = ?, agent_runtime_type = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id = ?`,
   ).run(
     updates.name ?? session.name,
     updates.modelProvider ?? session.model_provider,
     updates.modelId ?? session.model_id,
     updates.thinkingLevel ?? session.thinking_level,
+    updates.agentRuntimeType ?? session.agent_runtime_type,
     id,
   );
 }

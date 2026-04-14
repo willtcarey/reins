@@ -15,6 +15,7 @@ export interface OAuthProviderInfo {
 export interface ModelSetting {
   provider: string;
   modelId: string;
+  runtimeType: string;
   thinkingLevel: string;
 }
 
@@ -25,6 +26,7 @@ export type ModelSettingKey = "default_model" | "utility_model";
 type ModelSelection = {
   provider: string;
   modelId: string;
+  runtimeType: string;
   thinkingLevel: string;
 };
 
@@ -39,11 +41,13 @@ const MODEL_SETTING_DEFAULTS: Record<ModelSettingKey, ModelSelection> = {
   default_model: {
     provider: "",
     modelId: "",
+    runtimeType: "",
     thinkingLevel: "high",
   },
   utility_model: {
     provider: "",
     modelId: "",
+    runtimeType: "",
     thinkingLevel: "minimal",
   },
 };
@@ -266,16 +270,24 @@ export class SettingsStore {
     this.notify();
   }
 
-  async selectModelSetting(settingKey: ModelSettingKey, provider: string, modelId: string): Promise<SettingsStoreResult> {
+  async selectModelSetting(
+    settingKey: ModelSettingKey,
+    provider: string,
+    modelId: string,
+    runtimeType: string,
+  ): Promise<SettingsStoreResult> {
     const selection = this.getSelectedModelSetting(settingKey);
     this._setSelectedModelSetting(settingKey, {
       provider,
       modelId,
-      ...(selection.provider !== provider ? { thinkingLevel: this.defaultThinkingLevel(settingKey) } : {}),
+      runtimeType,
+      ...(selection.provider !== provider || selection.runtimeType !== runtimeType
+        ? { thinkingLevel: this.defaultThinkingLevel(settingKey) }
+        : {}),
     });
     this.notify();
 
-    if (!provider || !modelId) {
+    if (!provider || !modelId || !runtimeType) {
       return { ok: true };
     }
 
@@ -287,7 +299,7 @@ export class SettingsStore {
     this.notify();
 
     const selection = this.getSelectedModelSetting(settingKey);
-    if (!selection.provider || !selection.modelId) {
+    if (!selection.provider || !selection.modelId || !selection.runtimeType) {
       return { ok: true };
     }
 

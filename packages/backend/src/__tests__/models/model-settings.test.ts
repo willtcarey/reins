@@ -15,6 +15,7 @@ describe("model settings resolution", () => {
     setSetting("default_model", {
       provider: "anthropic",
       modelId: "claude-sonnet-4-20250514",
+      runtimeType: "pi",
       thinkingLevel: "medium",
     });
 
@@ -64,6 +65,7 @@ describe("model settings resolution", () => {
     setSetting("utility_model", {
       provider: "anthropic",
       modelId: "claude-haiku-4-5",
+      runtimeType: "pi",
       thinkingLevel: "minimal",
     });
 
@@ -77,6 +79,7 @@ describe("model settings resolution", () => {
     setSetting("utility_model", {
       provider: "anthropic",
       modelId: "does-not-exist",
+      runtimeType: "pi",
       thinkingLevel: "minimal",
     });
 
@@ -88,6 +91,7 @@ describe("model settings resolution", () => {
     setSetting("default_model", {
       provider: "anthropic",
       modelId: "claude-sonnet-4-20250514",
+      runtimeType: "pi",
       thinkingLevel: "high",
     });
 

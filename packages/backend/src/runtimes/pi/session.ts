@@ -5,8 +5,7 @@ import {
   type AgentSession,
 } from "@mariozechner/pi-coding-agent";
 import { loadMessagesForLLM } from "../../session-store.js";
-import { getTask, type TaskRow } from "../../task-store.js";
-import { checkoutBranch } from "../../git.js";
+import type { TaskRow } from "../../task-store.js";
 import { buildReinsSystemPrompt } from "../system-prompt.js";
 import { createPiContext } from "./factory.js";
 import {
@@ -46,17 +45,6 @@ export function hydrateSessionManager(sm: SessionManager, messages: any[]): void
       sm.appendMessage(msg);
     }
   }
-}
-
-async function resolveTask(
-  taskId: number | null,
-  projectDir: string,
-): Promise<TaskRow | null> {
-  if (!taskId) return null;
-  const task = getTask(taskId);
-  if (!task) throw new Error(`Task not found: ${taskId}`);
-  await checkoutBranch(projectDir, task.branch_name);
-  return task;
 }
 
 async function buildSessionOpts(params: {
@@ -159,13 +147,11 @@ async function createPiSessionRuntime(params: CreateAgentRuntimeParams): Promise
   const {
     projectDir,
     sessionId,
-    taskId,
+    task,
     model,
     thinkingLevel,
     sessionTools,
   } = params;
-
-  const task = await resolveTask(taskId, projectDir);
 
   const sessionOpts = await buildSessionOpts({
     projectDir,

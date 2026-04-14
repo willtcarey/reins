@@ -25,8 +25,8 @@ describe("settings routes", () => {
     test("returns stored settings", async () => {
       const { router, state } = setup();
 
-      setSetting("default_model", { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" });
-      setSetting("utility_model", { provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" });
+      setSetting("default_model", { provider: "anthropic", modelId: "claude-4", runtimeType: "pi", thinkingLevel: "high" });
+      setSetting("utility_model", { provider: "anthropic", modelId: "claude-haiku-4-5", runtimeType: "pi", thinkingLevel: "minimal" });
 
       const res = await router.handle(makeRequest("GET", "/api/settings"), state);
       const body = await res!.json();
@@ -34,11 +34,11 @@ describe("settings routes", () => {
       expect(body).toEqual([
         {
           key: "default_model",
-          value: { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" },
+          value: { provider: "anthropic", modelId: "claude-4", runtimeType: "pi", thinkingLevel: "high" },
         },
         {
           key: "utility_model",
-          value: { provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" },
+          value: { provider: "anthropic", modelId: "claude-haiku-4-5", runtimeType: "pi", thinkingLevel: "minimal" },
         },
       ]);
     });
@@ -46,8 +46,8 @@ describe("settings routes", () => {
     test("returns only requested keys when key query params are provided", async () => {
       const { router, state } = setup();
 
-      setSetting("default_model", { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" });
-      setSetting("utility_model", { provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" });
+      setSetting("default_model", { provider: "anthropic", modelId: "claude-4", runtimeType: "pi", thinkingLevel: "high" });
+      setSetting("utility_model", { provider: "anthropic", modelId: "claude-haiku-4-5", runtimeType: "pi", thinkingLevel: "minimal" });
 
       const res = await router.handle(
         makeRequest("GET", "/api/settings?key=utility_model&key=default_model"),
@@ -58,18 +58,18 @@ describe("settings routes", () => {
       expect(await res!.json()).toEqual([
         {
           key: "default_model",
-          value: { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" },
+          value: { provider: "anthropic", modelId: "claude-4", runtimeType: "pi", thinkingLevel: "high" },
         },
         {
           key: "utility_model",
-          value: { provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" },
+          value: { provider: "anthropic", modelId: "claude-haiku-4-5", runtimeType: "pi", thinkingLevel: "minimal" },
         },
       ]);
     });
 
     test("ignores unknown requested keys", async () => {
       const { router, state } = setup();
-      setSetting("default_model", { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" });
+      setSetting("default_model", { provider: "anthropic", modelId: "claude-4", runtimeType: "pi", thinkingLevel: "high" });
 
       const res = await router.handle(makeRequest("GET", "/api/settings?key=default_model&key=nope"), state);
 
@@ -77,14 +77,14 @@ describe("settings routes", () => {
       expect(await res!.json()).toEqual([
         {
           key: "default_model",
-          value: { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" },
+          value: { provider: "anthropic", modelId: "claude-4", runtimeType: "pi", thinkingLevel: "high" },
         },
       ]);
     });
 
     test("returns an empty array when only unknown keys are requested", async () => {
       const { router, state } = setup();
-      setSetting("default_model", { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" });
+      setSetting("default_model", { provider: "anthropic", modelId: "claude-4", runtimeType: "pi", thinkingLevel: "high" });
 
       const res = await router.handle(makeRequest("GET", "/api/settings?key=nope"), state);
 
@@ -102,7 +102,7 @@ describe("settings routes", () => {
 
     test("returns value for default_model", async () => {
       const { router, state } = setup();
-      const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" } as const;
+      const model = { provider: "anthropic", modelId: "claude-4", runtimeType: "pi", thinkingLevel: "high" } as const;
       setSetting("default_model", model);
 
       const res = await router.handle(makeRequest("GET", "/api/settings/default_model"), state);
@@ -112,7 +112,7 @@ describe("settings routes", () => {
 
     test("returns value for utility_model", async () => {
       const { router, state } = setup();
-      const model = { provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" } as const;
+      const model = { provider: "anthropic", modelId: "claude-haiku-4-5", runtimeType: "pi", thinkingLevel: "minimal" } as const;
       setSetting("utility_model", model);
 
       const res = await router.handle(makeRequest("GET", "/api/settings/utility_model"), state);
@@ -130,7 +130,7 @@ describe("settings routes", () => {
   describe("PUT /api/settings/:key", () => {
     test("round-trips with GET", async () => {
       const { router, state } = setup();
-      const model = { provider: "openai", modelId: "gpt-5", thinkingLevel: "medium" } as const;
+      const model = { provider: "openai", modelId: "gpt-5", runtimeType: "pi", thinkingLevel: "medium" } as const;
 
       const putRes = await router.handle(
         makeRequest("PUT", "/api/settings/default_model", model),
@@ -163,6 +163,19 @@ describe("settings routes", () => {
       expect(res!.status).toBe(400);
     });
 
+    test("returns 400 when runtimeType is missing", async () => {
+      const { router, state } = setup();
+      const res = await router.handle(
+        makeRequest("PUT", "/api/settings/default_model", {
+          provider: "anthropic",
+          modelId: "claude-4",
+          thinkingLevel: "high",
+        }),
+        state,
+      );
+      expect(res!.status).toBe(400);
+    });
+
     test("returns 400 for invalid JSON body", async () => {
       const { router, state } = setup();
       const req = makeRequest("/api/settings/default_model", {
@@ -178,7 +191,7 @@ describe("settings routes", () => {
   describe("DELETE /api/settings/:key", () => {
     test("GET returns 404 after delete", async () => {
       const { router, state } = setup();
-      const model = { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" } as const;
+      const model = { provider: "anthropic", modelId: "claude-4", runtimeType: "pi", thinkingLevel: "high" } as const;
       setSetting("default_model", model);
 
       const delRes = await router.handle(
@@ -205,7 +218,7 @@ describe("settings routes", () => {
 
     test("removes persisted settings", async () => {
       const { router, state } = setup();
-      setSetting("default_model", { provider: "anthropic", modelId: "claude-4", thinkingLevel: "high" });
+      setSetting("default_model", { provider: "anthropic", modelId: "claude-4", runtimeType: "pi", thinkingLevel: "high" });
 
       const res = await router.handle(
         makeRequest("DELETE", "/api/settings/default_model"),

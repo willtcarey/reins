@@ -14,6 +14,7 @@ const ModelSettingThinkingLevelSchema = Type.Union(
 export const ModelSettingSchema = Type.Object({
   provider: Type.String(),
   modelId: Type.String(),
+  runtimeType: Type.String(),
   thinkingLevel: ModelSettingThinkingLevelSchema,
 });
 

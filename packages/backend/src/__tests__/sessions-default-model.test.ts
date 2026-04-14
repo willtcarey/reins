@@ -16,6 +16,7 @@ describe("resolveModelSetting(default_model)", () => {
     setSetting("default_model", {
       provider: "anthropic",
       modelId: "claude-sonnet-4-20250514",
+      runtimeType: "pi",
       thinkingLevel: "medium",
     });
 
@@ -35,6 +36,7 @@ describe("resolveModelSetting(default_model)", () => {
     setSetting("default_model", {
       provider: "anthropic",
       modelId: "does-not-exist",
+      runtimeType: "pi",
       thinkingLevel: "medium",
     });
 
@@ -81,6 +83,7 @@ describe("createNewSession", () => {
     setSetting("default_model", {
       provider: baselineSession.model!.provider,
       modelId: baselineSession.model!.id,
+      runtimeType: "pi",
       thinkingLevel: configuredThinkingLevel,
     });
 
@@ -97,6 +100,7 @@ describe("createNewSession", () => {
     setSetting("default_model", {
       provider: "anthropic",
       modelId: "does-not-exist",
+      runtimeType: "pi",
       thinkingLevel: "high",
     });
 
@@ -136,7 +140,8 @@ describe("resumeSession", () => {
     const project = createProject("Test Project", repo.dir, "main");
 
     createSession("resume-model-test", project.id, {
-       agentRuntimeType: "pi",modelProvider: "anthropic",
+      agentRuntimeType: "pi",
+      modelProvider: "anthropic",
       modelId: "claude-haiku-4-5",
       thinkingLevel: "minimal",
     });
@@ -144,6 +149,7 @@ describe("resumeSession", () => {
     setSetting("default_model", {
       provider: "anthropic",
       modelId: "claude-sonnet-4-20250514",
+      runtimeType: "pi",
       thinkingLevel: "high",
     });
 
@@ -165,6 +171,7 @@ describe("resumeSession", () => {
     setSetting("default_model", {
       provider: "anthropic",
       modelId: "does-not-exist",
+      runtimeType: "pi",
       thinkingLevel: "high",
     });
 
@@ -180,7 +187,8 @@ describe("resumeSession", () => {
     const project = createProject("Test Project", repo.dir, "main");
 
     createSession("resume-invalid-persisted-model", project.id, {
-       agentRuntimeType: "pi",modelProvider: "claude-agent-sdk",
+      agentRuntimeType: "pi",
+      modelProvider: "claude-agent-sdk",
       modelId: "does-not-exist",
       thinkingLevel: "high",
     });
@@ -205,6 +213,7 @@ describe("resumeSession", () => {
     setSetting("default_model", {
       provider: "anthropic",
       modelId: "claude-haiku-4-5",
+      runtimeType: "pi",
       thinkingLevel: "high",
     });
 

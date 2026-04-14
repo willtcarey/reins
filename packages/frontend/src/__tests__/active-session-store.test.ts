@@ -16,11 +16,12 @@ function jsonResponse(data: unknown) {
   return new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
-function makeSessionData(overrides: { isStreaming?: boolean; messageCount?: number; projectId?: number } = {}) {
+function makeSessionData(overrides: { isStreaming?: boolean; messageCount?: number; projectId?: number; runtimeType?: string } = {}) {
   return {
     id: "sess-1",
     task_id: null,
     project_id: overrides.projectId ?? 42,
+    runtimeType: overrides.runtimeType ?? "pi",
     state: {
       model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
       thinkingLevel: "high",
@@ -52,11 +53,13 @@ describe("ActiveSessionStore.updateSessionModel", () => {
       provider: "openai",
       modelId: "gpt-5",
       thinkingLevel: "medium",
+      runtimeType: "pi",
     });
 
     expect(result).toEqual({ ok: true });
     expect(store.sessionData?.state.model).toEqual({ provider: "openai", id: "gpt-5" });
     expect(store.sessionData?.state.thinkingLevel).toBe("medium");
+    expect(store.sessionData?.runtimeType).toBe("pi");
   });
 });
 
@@ -97,7 +100,7 @@ describe("ActiveSessionStore command helpers", () => {
   });
 });
 
-const twoMessages = [
+const twoMessages: AgentMessage[] = [
   { role: "user", content: "hello", timestamp: 1000 },
   { role: "assistant", content: [{ type: "text", text: "hi" }], timestamp: 2000 },
 ];

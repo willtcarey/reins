@@ -3,6 +3,7 @@ import {
   createSession as dbCreateSession,
   deleteSession as dbDeleteSession,
   getSession as dbGetSession,
+  loadMessages as dbLoadMessages,
 } from "../session-store.js";
 import { getProject } from "../project-store.js";
 import { touchTask } from "../task-store.js";
@@ -68,6 +69,7 @@ async function createManagedSessionRuntime(params: {
   taskId: number | null;
   model?: CreateAgentRuntimeParams["model"];
   thinkingLevel?: CreateAgentRuntimeParams["thinkingLevel"];
+  resume?: boolean;
 }): Promise<ManagedSession> {
   const {
     state,
@@ -78,6 +80,7 @@ async function createManagedSessionRuntime(params: {
     taskId,
     model,
     thinkingLevel,
+    resume,
   } = params;
 
   const sessionTools = resolveSessionTools({
@@ -99,11 +102,13 @@ async function createManagedSessionRuntime(params: {
       model,
       thinkingLevel,
       sessionTools,
+      resume,
     });
   } catch (err) {
     if (err instanceof ModelNotFoundError) {
       const configuredDefaultModel = getSetting("default_model");
       const selectedIsConfiguredDefault = configuredDefaultModel
+        && configuredDefaultModel.runtimeType === runtimeType
         && configuredDefaultModel.provider === err.provider
         && configuredDefaultModel.modelId === err.modelId;
 
@@ -159,6 +164,11 @@ async function createManagedSessionRuntime(params: {
 /**
  * Create a brand-new session with runtime-agnostic persistence orchestration.
  */
+function resolveRuntimeTypeForModel(model: { provider: string; modelId: string } | null | undefined): string {
+  if (model?.provider === "claude_agent_sdk") return "claude_agent_sdk";
+  return "pi";
+}
+
 export async function createNewSession(
   state: ServerState,
   projectId: number,
@@ -170,7 +180,6 @@ export async function createNewSession(
     throw new Error(`Project not found: ${projectId}`);
   }
 
-  const runtimeType = "pi";
   const sessionId = crypto.randomUUID();
 
   const defaultModel = getSetting("default_model");
@@ -179,6 +188,9 @@ export async function createNewSession(
       provider: defaultModel.provider,
       modelId: defaultModel.modelId,
     });
+  const runtimeType = opts?.model
+    ? resolveRuntimeTypeForModel(opts.model)
+    : (defaultModel?.runtimeType ?? "pi");
   const selectedCreateThinkingLevel = opts?.thinkingLevel
     ? parseThinkingLevel(opts.thinkingLevel)
     : defaultModel?.thinkingLevel ?? null;
@@ -203,6 +215,7 @@ export async function createNewSession(
       taskId: opts?.taskId ?? null,
       model: selectedCreateModel,
       thinkingLevel: selectedCreateThinkingLevel,
+      resume: false,
     });
   } catch (err) {
     dbDeleteSession(sessionId);
@@ -253,16 +266,21 @@ export async function ensureSessionOpen(
       provider: row.model_provider,
       modelId: row.model_id,
     }
-    : (defaultModel && {
-      provider: defaultModel.provider,
-      modelId: defaultModel.modelId,
-    });
+    : (defaultModel && defaultModel.runtimeType === row.agent_runtime_type
+      ? {
+        provider: defaultModel.provider,
+        modelId: defaultModel.modelId,
+      }
+      : null);
 
   const selectedResumeThinkingLevel = row.thinking_level === "off"
     ? null
     : (row.thinking_level
       ? parseThinkingLevel(row.thinking_level)
-      : defaultModel?.thinkingLevel ?? null);
+      : (defaultModel && defaultModel.runtimeType === row.agent_runtime_type
+        ? defaultModel.thinkingLevel
+        : null));
+  const hasPersistedMessages = dbLoadMessages(sessionId).length > 0;
 
   return createManagedSessionRuntime({
     state,
@@ -273,5 +291,6 @@ export async function ensureSessionOpen(
     taskId: row.task_id,
     model: selectedResumeModel,
     thinkingLevel: selectedResumeThinkingLevel,
+    resume: hasPersistedMessages,
   });
 }

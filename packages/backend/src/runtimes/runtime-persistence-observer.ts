@@ -46,6 +46,30 @@ function deriveRuntimeSessionMetadata(runtime: AgentRuntime): {
   };
 }
 
+async function persistRuntimeSnapshot(params: {
+  sessionId: string;
+  runtime: AgentRuntime;
+  event: AgentRuntimeEvent;
+  updateMetadata: boolean;
+}): Promise<void> {
+  const { sessionId, runtime, event, updateMetadata } = params;
+
+  const messages = await runtime.getMessages();
+  const normalized = normalizeRuntimeMessagesForPersistence(messages);
+  persistMessages(sessionId, normalized);
+
+  if (!updateMetadata || event.type !== "agent_end") return;
+
+  const metadata = deriveRuntimeSessionMetadata(runtime);
+  if (!metadata?.modelProvider || !metadata.modelId) return;
+
+  updateSessionMeta(sessionId, {
+    modelProvider: metadata.modelProvider,
+    modelId: metadata.modelId,
+    thinkingLevel: metadata.thinkingLevel,
+  });
+}
+
 async function persistRuntimeStateFromRuntime(params: {
   sessionId: string;
   runtime: AgentRuntime;
@@ -55,19 +79,11 @@ async function persistRuntimeStateFromRuntime(params: {
 
   if (!shouldPersistForRuntimeEvent(event)) return;
 
-  const messages = await runtime.getMessages();
-  const normalized = normalizeRuntimeMessagesForPersistence(messages);
-  persistMessages(sessionId, normalized);
-
-  if (event.type !== "agent_end") return;
-
-  const metadata = deriveRuntimeSessionMetadata(runtime);
-  if (!metadata?.modelProvider || !metadata.modelId) return;
-
-  updateSessionMeta(sessionId, {
-    modelProvider: metadata.modelProvider,
-    modelId: metadata.modelId,
-    thinkingLevel: metadata.thinkingLevel,
+  await persistRuntimeSnapshot({
+    sessionId,
+    runtime,
+    event,
+    updateMetadata: true,
   });
 }
 
