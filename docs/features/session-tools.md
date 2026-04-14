@@ -29,3 +29,12 @@ These tools let the agent interact with Reins itself:
 When the agent uses a tool, you'll see a compact inline block in the conversation. Each tool has its own visual style — file paths for read/edit/write, a terminal prompt for bash, colored cards for create_task and delegate.
 
 Click on a tool block to expand it and see full details (file contents, command output, diff, etc.). Click again to collapse.
+
+## Tool Execution by Runtime
+
+The same set of tools is available regardless of which [runtime](runtimes.md) powers the session. How they're executed differs:
+
+- **Direct runtime**: Reins executes all tools directly.
+- **Claude Code runtime**: The SDK executes coding tools (read, write, edit, bash) natively. App tools (create_task, delegate, search, execute) are provided to the SDK via an MCP server.
+
+Tool names and UI presentation are consistent across runtimes.

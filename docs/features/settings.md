@@ -9,6 +9,7 @@ The **Default Model** setting controls which model new sessions use.
 - It is global to the server, not per-project.
 - It applies to newly created sessions only.
 - Existing sessions keep their current model unless changed explicitly.
+- Choosing a model also selects its [runtime](runtimes.md) — the engine that powers the agent loop.
 - If no default model is configured, REINS uses its built-in fallback.
 - If a default model is configured but no longer exists, new sessions fail with an error until you update the setting.
 
@@ -36,17 +37,9 @@ Provider auth credentials are stored separately from general settings.
 
 API keys and OAuth sign-in are managed from the app's authentication flows.
 
-### Claude Agent SDK / Claude Code provider
+### Claude Code runtime
 
-Reins also exposes the `claude-agent-sdk` provider through an embedded pi extension.
-
-- It appears in model lists with a `local` auth badge.
-- `local` means Reins is not managing the credential itself; authentication is expected to exist on the machine where Reins is running.
-- For local/thick-node execution, authenticate one of these ways on that machine:
-  - **Claude Code login**: run `npx @anthropic-ai/claude-code` and sign in.
-  - **Anthropic API key**: set `ANTHROPIC_API_KEY` in the Reins process environment.
-- When using Claude Code login, the provider may be selectable even though no API key is stored in Reins.
-- If Reins runs on a different machine from your browser, the auth must exist on the Reins host, not just on the client device.
+The Claude Code runtime uses host-level authentication rather than Reins-managed API keys. It appears in model lists with a `local` auth badge. See [Runtimes](runtimes.md) for authentication details and how it differs from the Direct runtime.
 
 ## Per-session model changes
 
