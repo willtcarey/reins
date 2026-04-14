@@ -14,6 +14,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { openInBrowserEvent } from "./events.js";
 import type { FileBrowserStore } from "../models/stores/file-browser-store.js";
+import { fuzzyMatch } from "../models/stores/quick-open-store.js";
 import "./search-palette.js";
 import type { SearchPalette } from "./search-palette.js";
 
@@ -109,24 +110,39 @@ export class FileSearch extends LitElement {
 
   /**
    * Highlight the matching characters of a file path based on the current query.
+   * When the query matches the basename, highlights only within the basename
+   * portion to stay consistent with how results are scored.
    */
   private highlightPath(path: string): unknown {
     if (!this._query.trim()) return path;
 
     const q = this._query.toLowerCase();
+
+    // If the query matches the basename, highlight only in the basename portion.
+    const slashIdx = path.lastIndexOf("/");
+    const basename = path.slice(slashIdx + 1);
+    const basenameMatches = fuzzyMatch(q, basename) !== null;
+
+    const startIdx = basenameMatches ? slashIdx + 1 : 0;
     const lower = path.toLowerCase();
-    const chars = path.split("");
     let qi = 0;
 
     const parts: Array<{ text: string; match: boolean }> = [];
     let current = "";
     let currentMatch = false;
 
-    for (let i = 0; i < chars.length && qi <= q.length; i++) {
+    // Emit prefix before the match region unchanged
+    if (startIdx > 0) {
+      parts.push({ text: path.slice(0, startIdx), match: false });
+    }
+
+    for (let i = startIdx; i < path.length && qi <= q.length; i++) {
       const isMatch = qi < q.length && lower[i] === q[qi];
       if (isMatch) qi++;
 
       if (parts.length === 0 && current === "") {
+        currentMatch = isMatch;
+      } else if (current === "") {
         currentMatch = isMatch;
       }
 
@@ -135,7 +151,7 @@ export class FileSearch extends LitElement {
         current = "";
         currentMatch = isMatch;
       }
-      current += chars[i];
+      current += path[i];
     }
     if (current) parts.push({ text: current, match: currentMatch });
 

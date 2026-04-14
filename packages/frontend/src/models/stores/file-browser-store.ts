@@ -197,16 +197,29 @@ export class FileBrowserStore {
 
   // ---- Filtering ------------------------------------------------------------
 
-  /** Filter files by fuzzy match. Returns at most `limit` results. */
+  /** Filter files by fuzzy match. Returns at most `limit` results.
+   *  Scores against both the full path and the basename, giving basename
+   *  matches a significant bonus so that e.g. "format" prefers
+   *  `src/utils/format.ts` over `src/scripting/api-scheme-formatter.ts`. */
   filter(query: string, limit = 50): string[] {
     if (!query.trim()) return this.files.slice(0, limit);
 
     const results: { file: string; score: number }[] = [];
     for (const file of this.files) {
-      const score = fuzzyMatch(query, file);
-      if (score !== null) {
-        results.push({ file, score });
-      }
+      const pathScore = fuzzyMatch(query, file);
+      if (pathScore === null) continue;
+
+      const slashIdx = file.lastIndexOf("/");
+      const basename = file.slice(slashIdx + 1);
+      const baseScore = fuzzyMatch(query, basename);
+      // When the query matches the basename, use that score with a large
+      // bonus (subtracted because lower is better). Add the leftover
+      // basename length so shorter/tighter basenames win ties.
+      const score =
+        baseScore !== null
+          ? baseScore - 1000 + (basename.length - query.length)
+          : pathScore;
+      results.push({ file, score });
     }
     results.sort((a, b) => a.score - b.score);
     return results.slice(0, limit).map((r) => r.file);

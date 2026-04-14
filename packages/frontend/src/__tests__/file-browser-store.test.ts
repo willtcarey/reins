@@ -49,6 +49,37 @@ describe("FileBrowserStore", () => {
       store.files = ["src/app.ts", "src/index.ts"];
       expect(store.filter("zzz")).toEqual([]);
     });
+
+    test("prefers basename matches over deep path matches", () => {
+      const store = new FileBrowserStore();
+      store.files = [
+        "src/scripting/api-scheme-formatter.ts",
+        "src/utils/format.ts",
+      ];
+      const results = store.filter("format");
+      expect(results[0]).toBe("src/utils/format.ts");
+    });
+
+    test("prefers exact basename over basename substring", () => {
+      const store = new FileBrowserStore();
+      store.files = [
+        "src/components/formatted-output.ts",
+        "src/utils/format.ts",
+      ];
+      const results = store.filter("format");
+      expect(results[0]).toBe("src/utils/format.ts");
+    });
+
+    test("basename bias still allows full-path-only matches", () => {
+      const store = new FileBrowserStore();
+      store.files = [
+        "src/utils/helpers.ts",
+        "src/components/widget.ts",
+      ];
+      // "shelp" matches "src/utils/helpers.ts" across path, no basename-only match
+      const results = store.filter("shelp");
+      expect(results).toContain("src/utils/helpers.ts");
+    });
   });
 
   describe("reset", () => {
