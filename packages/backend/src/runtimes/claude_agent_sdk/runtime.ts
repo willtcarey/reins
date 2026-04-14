@@ -261,6 +261,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
       persistSession: true,
+      settings: { includeCoAuthoredBy: false },
       settingSources: [],
       strictMcpConfig: true,
       systemPrompt: this.params.systemPrompt,

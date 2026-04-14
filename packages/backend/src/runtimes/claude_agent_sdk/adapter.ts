@@ -42,6 +42,7 @@ export class ClaudeSdkRuntimeAdapter implements AgentRuntimeAdapter {
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         persistSession: false,
+        settings: { includeCoAuthoredBy: false },
         settingSources: [],
         strictMcpConfig: true,
         ...(params.systemPrompt ? { systemPrompt: params.systemPrompt } : {}),
