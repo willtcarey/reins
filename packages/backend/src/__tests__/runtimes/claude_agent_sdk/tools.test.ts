@@ -6,6 +6,12 @@ import {
   typeboxToZodShape,
 } from "../../../runtimes/claude_agent_sdk/tools.js";
 
+/** Returns the input value typed as `any` — test-only escape hatch to avoid `as` assertions. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function untyped(value: unknown): any { return value; }
+
+type ToolHandler = (args: Record<string, unknown>, extra?: unknown) => Promise<unknown>;
+
 describe("typeboxToZodShape", () => {
   test("converts required string properties", () => {
     const schema = Type.Object({
@@ -138,7 +144,7 @@ describe("typeboxToZodShape", () => {
     let currentController = new AbortController();
 
     const server = createClaudeCustomToolsServer({
-      customTools: [{
+      customTools: untyped([{
         name: "delegate",
         description: "Run delegated work",
         parameters: Type.Object({ prompt: Type.String() }),
@@ -146,14 +152,14 @@ describe("typeboxToZodShape", () => {
           if (signal) observedSignals.push(signal);
           return { content: [{ type: "text" as const, text: signal?.aborted ? "aborted" : "running" }] };
         },
-      } as any],
+      }]),
       getSignal: () => currentController.signal,
     });
 
     expect(server).not.toBeNull();
 
-    const registeredTools = (server!.instance as any)._registeredTools;
-    const handler = registeredTools.delegate.handler as (args: Record<string, unknown>, extra?: unknown) => Promise<unknown>;
+    const registeredTools = Reflect.get(server!.instance, "_registeredTools");
+    const handler: ToolHandler = registeredTools.delegate.handler;
 
     await handler({ prompt: "first" });
     expect(observedSignals).toHaveLength(1);
@@ -178,7 +184,7 @@ describe("typeboxToZodShape", () => {
     const mcpController = new AbortController();
 
     const server = createClaudeCustomToolsServer({
-      customTools: [{
+      customTools: untyped([{
         name: "delegate",
         description: "Run delegated work",
         parameters: Type.Object({ prompt: Type.String() }),
@@ -186,12 +192,12 @@ describe("typeboxToZodShape", () => {
           if (signal) observedSignals.push(signal);
           return { content: [{ type: "text" as const, text: signal?.aborted ? "aborted" : "running" }] };
         },
-      } as any],
+      }]),
       getSignal: () => runtimeController.signal,
     });
 
-    const registeredTools = (server!.instance as any)._registeredTools;
-    const handler = registeredTools.delegate.handler as (args: Record<string, unknown>, extra?: unknown) => Promise<unknown>;
+    const registeredTools = Reflect.get(server!.instance, "_registeredTools");
+    const handler: ToolHandler = registeredTools.delegate.handler;
 
     await handler({ prompt: "first" }, { signal: mcpController.signal });
 
@@ -210,7 +216,7 @@ describe("typeboxToZodShape", () => {
     const mcpController = new AbortController();
 
     const server = createClaudeCustomToolsServer({
-      customTools: [{
+      customTools: untyped([{
         name: "delegate",
         description: "Run delegated work",
         parameters: Type.Object({ prompt: Type.String() }),
@@ -218,12 +224,12 @@ describe("typeboxToZodShape", () => {
           if (signal) observedSignals.push(signal);
           return { content: [{ type: "text" as const, text: signal?.aborted ? "aborted" : "running" }] };
         },
-      } as any],
+      }]),
       getSignal: () => runtimeController.signal,
     });
 
-    const registeredTools = (server!.instance as any)._registeredTools;
-    const handler = registeredTools.delegate.handler as (args: Record<string, unknown>, extra?: unknown) => Promise<unknown>;
+    const registeredTools = Reflect.get(server!.instance, "_registeredTools");
+    const handler: ToolHandler = registeredTools.delegate.handler;
 
     await handler({ prompt: "first" }, { signal: mcpController.signal });
     expect(observedSignals).toHaveLength(1);

@@ -101,8 +101,8 @@ async function loadHandlers(): Promise<void> {
     // Cache-bust the bundled output so Bun imports the fresh version
     const t = Date.now();
     const mod = await import(`${join(DEV_BUILD_DIR, "server.js")}?t=${t}`);
-    routes = mod.routes as typeof RoutesModule;
-    ws = mod.ws as typeof WsModule;
+    routes = mod.routes;
+    ws = mod.ws;
   } else {
     [routes, ws] = await Promise.all([
       import("./handler.js"),

@@ -421,7 +421,7 @@ function loadSkillsFromDir(
         try { isFile = statSync(fullPath).isFile(); } catch { continue; }
       }
 
-      const relPath = toPosixPath(relative(root, fullPath));
+      const _relPath = toPosixPath(relative(root, fullPath));
       if (!isFile || shouldIgnore(entry.name, ignorePatterns)) continue;
 
       const result = loadSkillFromFile(fullPath, source);

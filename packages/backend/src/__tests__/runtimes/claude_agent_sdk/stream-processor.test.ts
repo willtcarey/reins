@@ -11,7 +11,8 @@ import { COMPACTION_NOTICE } from "../../../runtimes/claude_agent_sdk/events.js"
  * uuid/session_id is unused and safely omitted.
  */
 function sdkMsg(partial: Record<string, unknown>): SDKMessage {
-  return partial as SDKMessage;
+  // JSON round-trip returns `any`, which satisfies the return type without an `as` assertion.
+  return JSON.parse(JSON.stringify(partial));
 }
 
 /**
@@ -664,7 +665,7 @@ interface TraceFixture {
     readPath: string;
     bashCommand: string;
   };
-  sdkMessages: unknown[];
+  sdkMessages: SDKMessage[];
   summary: {
     sdkMessageTypes: string[];
     toolCallIds: string[];
@@ -681,7 +682,7 @@ async function loadFixture(): Promise<TraceFixture> {
 }
 
 interface ReplayEntry {
-  sdkMessage: unknown;
+  sdkMessage: SDKMessage;
   sdkType: string;
   events: AgentRuntimeEvent[];
 }
@@ -692,7 +693,7 @@ function replayFixture(fixture: TraceFixture): ReplayEntry[] {
   return fixture.sdkMessages.map((sdkMessage, i) => ({
     sdkMessage,
     sdkType: fixture.summary.sdkMessageTypes[i] ?? "unknown",
-    events: processor.process(sdkMessage as SDKMessage),
+    events: processor.process(sdkMessage),
   }));
 }
 
@@ -730,10 +731,9 @@ describe("trace fixture replay", () => {
     let agentEndCount = 0;
 
     for (const sdkMessage of fixture.sdkMessages) {
-      const typedMessage = sdkMessage as { type?: string };
-      if (typedMessage.type === "result") sawResult = true;
+      if (sdkMessage.type === "result") sawResult = true;
 
-      const events = processor.process(sdkMessage as SDKMessage);
+      const events = processor.process(sdkMessage);
       for (const event of events) {
         if (event.type !== "agent_end") continue;
         agentEndCount += 1;
@@ -748,11 +748,11 @@ describe("trace fixture replay", () => {
     const fixture = await loadFixture();
     const perMessage = replayFixture(fixture);
 
-    const assistantEntries = perMessage.filter(({ sdkMessage }) => (sdkMessage as { type?: string }).type === "assistant");
+    const assistantEntries = perMessage.filter(({ sdkMessage }) => sdkMessage.type === "assistant");
     expect(assistantEntries).toHaveLength(fixture.summary.assistantSnapshotCount);
     expect(assistantEntries.every(({ events }) => events.length === 0)).toBe(true);
 
-    const userEntries = perMessage.filter(({ sdkMessage }) => (sdkMessage as { type?: string }).type === "user");
+    const userEntries = perMessage.filter(({ sdkMessage }) => sdkMessage.type === "user");
     expect(userEntries).toHaveLength(fixture.summary.userToolResultCount);
     expect(userEntries.map(({ events }) => events.map((event) => event.type))).toEqual([
       ["tool_execution_end"],
@@ -765,10 +765,9 @@ describe("trace fixture replay", () => {
     const perMessage = replayFixture(fixture);
 
     const inputJsonEntries = perMessage.filter(({ sdkMessage }) => {
-      const typed = sdkMessage as { type?: string; event?: { type?: string; delta?: { type?: string } } };
-      return typed.type === "stream_event"
-        && typed.event?.type === "content_block_delta"
-        && typed.event?.delta?.type === "input_json_delta";
+      if (sdkMessage.type !== "stream_event") return false;
+      if (sdkMessage.event.type !== "content_block_delta") return false;
+      return sdkMessage.event.delta.type === "input_json_delta";
     });
 
     expect(inputJsonEntries.length).toBeGreaterThan(0);
@@ -777,8 +776,8 @@ describe("trace fixture replay", () => {
     const toolStartEntries = perMessage.filter(({ events }) => events.some((event) => event.type === "tool_execution_start"));
     expect(toolStartEntries).toHaveLength(2);
     expect(toolStartEntries.every(({ sdkMessage }) => {
-      const typed = sdkMessage as { type?: string; event?: { type?: string } };
-      return typed.type === "stream_event" && typed.event?.type === "content_block_stop";
+      if (sdkMessage.type !== "stream_event") return false;
+      return sdkMessage.event.type === "content_block_stop";
     })).toBe(true);
 
     type ToolStartEvent = Extract<import("../../../runtimes/registry.js").AgentRuntimeEvent, { type: "tool_execution_start" }>;
@@ -839,8 +838,9 @@ describe("trace fixture replay", () => {
     expect(intermediateTurnEnd.message.role).toBe("assistant");
     const content = intermediateTurnEnd.message.content;
     expect(Array.isArray(content)).toBe(true);
-    const toolCalls = (content as unknown[]).filter(
-      (b: unknown) => (b as Record<string, unknown>).type === "toolCall",
+    if (!Array.isArray(content)) return;
+    const toolCalls = content.filter(
+      (b: unknown) => typeof b === "object" && b !== null && "type" in b && b.type === "toolCall",
     );
     expect(toolCalls).toHaveLength(2);
   });
@@ -865,8 +865,9 @@ describe("trace fixture replay", () => {
     expect(agentEnd.messages[0].role).toBe("assistant");
     const turn1Content = agentEnd.messages[0].content;
     expect(Array.isArray(turn1Content)).toBe(true);
-    const turn1ToolCalls = (turn1Content as unknown[]).filter(
-      (b: unknown) => (b as Record<string, unknown>).type === "toolCall",
+    if (!Array.isArray(turn1Content)) return;
+    const turn1ToolCalls = turn1Content.filter(
+      (b: unknown) => typeof b === "object" && b !== null && "type" in b && b.type === "toolCall",
     );
     expect(turn1ToolCalls).toHaveLength(2);
 
@@ -878,13 +879,15 @@ describe("trace fixture replay", () => {
     expect(agentEnd.messages[3].role).toBe("assistant");
     const turn2Content = agentEnd.messages[3].content;
     expect(Array.isArray(turn2Content)).toBe(true);
-    const textBlocks = (turn2Content as unknown[]).filter(
-      (b: unknown) => (b as Record<string, unknown>).type === "text",
+    if (!Array.isArray(turn2Content)) return;
+    const textBlocks = turn2Content.filter(
+      (b: unknown) => typeof b === "object" && b !== null && "type" in b && b.type === "text",
     );
     expect(textBlocks.length).toBeGreaterThan(0);
     // The final text should mention the file and bash output
-    const finalText = (textBlocks[0] as { text: string }).text;
-    expect(finalText).toContain(fixture.summary.finalResultText.slice(0, 20));
+    expect(textBlocks[0]).toMatchObject({
+      text: expect.stringContaining(fixture.summary.finalResultText.slice(0, 20)),
+    });
   });
 
   test("replay full event timeline follows correct lifecycle ordering", async () => {

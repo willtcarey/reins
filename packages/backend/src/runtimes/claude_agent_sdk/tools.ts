@@ -2,6 +2,7 @@ import { createSdkMcpServer, type McpSdkServerConfigWithInstance } from "@anthro
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { z } from "zod/v4";
 import type { TSchema } from "@sinclair/typebox";
+import { isRecord, toRecord } from "./type-guards.js";
 
 /**
  * Convert a TypeBox TObject schema (JSON Schema format) to a Zod v4 raw shape.
@@ -12,11 +13,16 @@ import type { TSchema } from "@sinclair/typebox";
  * validation (via `safeParseAsync`) works correctly.
  */
 export function typeboxToZodShape(schema: TSchema): z.core.$ZodShape {
-  const properties = (schema as any).properties ?? {};
-  const required: string[] = (schema as any).required ?? [];
+  const schemaObj = toRecord(schema);
+  const properties = toRecord(schemaObj.properties);
+  const rawRequired = schemaObj.required;
+  const required: string[] = Array.isArray(rawRequired)
+    ? rawRequired.filter((x): x is string => typeof x === "string")
+    : [];
 
-  const shape: z.core.$ZodShape = {};
-  for (const [key, prop] of Object.entries<any>(properties)) {
+  const shape: Record<string, z.ZodType> = {};
+  for (const [key, rawProp] of Object.entries(properties)) {
+    const prop = toRecord(rawProp);
     let zodType: z.ZodType;
     switch (prop.type) {
       case "number":
@@ -46,13 +52,12 @@ export function typeboxToZodShape(schema: TSchema): z.core.$ZodShape {
 }
 
 function formatToolResult(result: unknown): string {
-  if (!result || typeof result !== "object") return "";
-  const typed = result as Record<string, unknown>;
+  if (!isRecord(result)) return "";
 
-  if (Array.isArray(typed.content)) {
-    const text = typed.content
-      .filter((block) => block && typeof block === "object" && (block as any).type === "text")
-      .map((block) => String((block as any).text ?? ""))
+  if (Array.isArray(result.content)) {
+    const text = result.content
+      .filter((block): block is Record<string, unknown> => isRecord(block) && block.type === "text")
+      .map((block) => String(block.text ?? ""))
       .join("\n");
     if (text.trim().length > 0) return text;
   }
@@ -61,8 +66,8 @@ function formatToolResult(result: unknown): string {
 }
 
 function getMcpSignal(extra: unknown): AbortSignal | undefined {
-  if (!extra || typeof extra !== "object") return undefined;
-  const signal = (extra as { signal?: unknown }).signal;
+  if (!isRecord(extra)) return undefined;
+  const signal = extra.signal;
   return signal instanceof AbortSignal ? signal : undefined;
 }
 
@@ -91,7 +96,7 @@ export function createClaudeCustomToolsServer(params: {
       inputSchema: typeboxToZodShape(tool.parameters),
       handler: async (args: Record<string, unknown>, extra: unknown) => {
         const toolCallId = crypto.randomUUID();
-        const result = await tool.execute(toolCallId, args, resolveToolSignal(getSignal(), extra), undefined, {} as any);
+        const result = await tool.execute(toolCallId, args, resolveToolSignal(getSignal(), extra), undefined, Object.create(null));
         return {
           content: [{ type: "text", text: formatToolResult(result) }],
           isError: false,

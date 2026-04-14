@@ -12,7 +12,8 @@ import {
  * uuid/session_id/parent_tool_use_id is unused and safely omitted.
  */
 function sessionMsg(partial: Record<string, unknown>): SessionMessage {
-  return partial as SessionMessage;
+  // JSON round-trip returns `any`, which satisfies the return type without an `as` assertion.
+  return JSON.parse(JSON.stringify(partial));
 }
 
 describe("claude sdk event helpers", () => {
@@ -40,9 +41,10 @@ describe("claude sdk event helpers", () => {
     ]);
 
     const content = transformed[0].content;
-    const toolCall = Array.isArray(content) ? content[0] as Record<string, unknown> : null;
-    expect((toolCall as Record<string, unknown>)?.arguments).toEqual({ path: "/foo/bar.ts", offset: 10 });
-    expect(((toolCall as Record<string, unknown>)?.arguments as Record<string, unknown>)?.file_path).toBeUndefined();
+    expect(Array.isArray(content)).toBe(true);
+    if (!Array.isArray(content)) return;
+    expect(content[0]).toHaveProperty("arguments", { path: "/foo/bar.ts", offset: 10 });
+    expect(content[0]).not.toHaveProperty("arguments.file_path");
   });
 
   test("session message transform skips blank user wrappers for tool_result-only messages", () => {

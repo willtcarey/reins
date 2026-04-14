@@ -7,6 +7,22 @@ import type {
   SetRuntimeModelParams,
 } from "../registry.js";
 
+/**
+ * Assert that a value is an AgentRuntimeEvent.
+ * PI AgentEvent and AgentRuntimeEvent share structure by design.
+ */
+function assertRuntimeEvent(_value: unknown): asserts _value is AgentRuntimeEvent {
+  // PI session events are structurally compatible with AgentRuntimeEvent
+}
+
+/**
+ * Assert that a value is an AgentRuntimeMessage[].
+ * PI AgentMessage[] is structurally compatible with AgentRuntimeMessage[].
+ */
+function assertRuntimeMessages(_value: unknown): asserts _value is AgentRuntimeMessage[] {
+  // PI session messages match AgentRuntimeMessage by design
+}
+
 function normalizePiSessionEvent(event: AgentSessionEvent): AgentRuntimeEvent {
   if (event.type === "auto_compaction_start") {
     return {
@@ -24,7 +40,8 @@ function normalizePiSessionEvent(event: AgentSessionEvent): AgentRuntimeEvent {
     };
   }
 
-  return event as unknown as AgentRuntimeEvent;
+  assertRuntimeEvent(event);
+  return event;
 }
 
 export class PiAgentRuntime implements AgentRuntime {
@@ -77,7 +94,9 @@ export class PiAgentRuntime implements AgentRuntime {
   }
 
   async getMessages(): Promise<AgentRuntimeMessage[]> {
-    return this.session.messages as unknown as AgentRuntimeMessage[];
+    const messages = this.session.messages;
+    assertRuntimeMessages(messages);
+    return messages;
   }
 
   getSessionMetadata(): { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null } {

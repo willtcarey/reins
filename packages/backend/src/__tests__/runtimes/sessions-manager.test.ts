@@ -18,24 +18,24 @@ import {
 import { setSetting } from "../../settings-store.js";
 import type { WsClient } from "../../state.js";
 
+function createCapturingWsClient() {
+  const sent: any[] = [];
+  return {
+    client: {
+      ws: {
+        send(payload: string) {
+          sent.push(JSON.parse(payload));
+          return payload.length;
+        },
+      },
+    },
+    sent,
+  };
+}
+
 describe("runtime sessions manager", () => {
   useTestDb();
   const repo = useTestRepo();
-
-  function createCapturingWsClient() {
-    const sent: any[] = [];
-    return {
-      client: {
-        ws: {
-          send(payload: string) {
-            sent.push(JSON.parse(payload));
-            return payload.length;
-          },
-        },
-      },
-      sent,
-    };
-  }
 
   test("createNewSession persists runtime metadata via sessions manager orchestration", async () => {
     const state = createServerState();

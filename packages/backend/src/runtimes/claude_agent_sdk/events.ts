@@ -1,5 +1,6 @@
 import type { SessionMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentRuntimeMessage } from "../registry.js";
+import { isRecord, toRecord } from "./type-guards.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -33,18 +34,18 @@ export function transformClaudeSessionMessages(messages: SessionMessage[]): Agen
 
   for (const entry of messages) {
     if (entry.type === "assistant") {
-      const message = (entry.message ?? {}) as Record<string, unknown>;
+      const message = toRecord(entry.message);
       out.push({
         role: "assistant",
         content: mapAssistantContent(message.content),
-        stopReason: mapStopReason(message.stop_reason as string | null | undefined),
+        stopReason: mapStopReason(typeof message.stop_reason === "string" ? message.stop_reason : undefined),
         timestamp: nowTs(),
       });
       continue;
     }
 
     if (entry.type === "user") {
-      const message = (entry.message ?? {}) as Record<string, unknown>;
+      const message = toRecord(entry.message);
 
       // SDK compaction: the compacted history summary is stored as a user
       // message with plain string content. Reins always sends array content
@@ -75,7 +76,7 @@ export function transformClaudeSessionMessages(messages: SessionMessage[]): Agen
     if (entry.type === "system") {
       // SessionMessage doesn't expose `subtype` — detect compact_boundary
       // via the presence of `compact_metadata` on the raw entry.
-      const raw = entry as Record<string, unknown>;
+      const raw = toRecord(entry);
       if (raw.subtype === "compact_boundary" || raw.compact_metadata) {
         out.push({
           role: "compactionSummary",
@@ -144,10 +145,9 @@ export function toTextContent(content: unknown): { type: "text"; text: string }[
 
   const out: { type: "text"; text: string }[] = [];
   for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    const typed = block as Record<string, unknown>;
-    if (typed.type === "text" && typeof typed.text === "string") {
-      out.push({ type: "text", text: typed.text });
+    if (!isRecord(block)) continue;
+    if (block.type === "text" && typeof block.text === "string") {
+      out.push({ type: "text", text: block.text });
     }
   }
 
@@ -164,26 +164,25 @@ function mapAssistantContent(content: unknown): unknown[] {
 
   const out: unknown[] = [];
   for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    const typed = block as Record<string, unknown>;
+    if (!isRecord(block)) continue;
 
-    if (typed.type === "text") {
-      out.push({ type: "text", text: typeof typed.text === "string" ? typed.text : "" });
+    if (block.type === "text") {
+      out.push({ type: "text", text: typeof block.text === "string" ? block.text : "" });
       continue;
     }
 
-    if (typed.type === "thinking") {
-      out.push({ type: "thinking", thinking: typeof typed.thinking === "string" ? typed.thinking : "" });
+    if (block.type === "thinking") {
+      out.push({ type: "thinking", thinking: typeof block.thinking === "string" ? block.thinking : "" });
       continue;
     }
 
-    if (typed.type === "tool_use") {
-      const toolName = normalizeClaudeToolName(typeof typed.name === "string" ? typed.name : "tool");
+    if (block.type === "tool_use") {
+      const toolName = normalizeClaudeToolName(typeof block.name === "string" ? block.name : "tool");
       out.push({
         type: "toolCall",
-        id: typed.id,
+        id: block.id,
         name: toolName,
-        arguments: normalizeToolArgs(toolName, (typed.input ?? {}) as Record<string, unknown>),
+        arguments: normalizeToolArgs(toolName, toRecord(block.input)),
       });
     }
   }
@@ -196,7 +195,7 @@ function mapUserContent(content: unknown): unknown[] {
   if (!Array.isArray(content)) return [];
 
   return content
-    .filter((block): block is Record<string, unknown> => !!block && typeof block === "object" && (block as Record<string, unknown>).type === "text")
+    .filter((block): block is Record<string, unknown> => isRecord(block) && block.type === "text")
     .map((block) => ({ type: "text", text: String(block.text ?? "") }));
 }
 
@@ -204,7 +203,7 @@ function mapToolResultBlocks(content: unknown): AgentRuntimeMessage[] {
   if (!Array.isArray(content)) return [];
 
   return content
-    .filter((block): block is Record<string, unknown> => !!block && typeof block === "object" && (block as Record<string, unknown>).type === "tool_result")
+    .filter((block): block is Record<string, unknown> => isRecord(block) && block.type === "tool_result")
     .map((block) => ({
       role: "toolResult",
       toolCallId: String(block.tool_use_id ?? ""),

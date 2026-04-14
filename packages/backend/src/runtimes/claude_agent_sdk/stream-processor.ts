@@ -14,6 +14,7 @@ import {
   mapStopReason,
   nowTs,
 } from "./events.js";
+import { isRecord } from "./type-guards.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -358,14 +359,13 @@ export class ClaudeStreamProcessor {
     const blocks = message.message?.content;
     if (Array.isArray(blocks)) {
       for (const block of blocks) {
-        if (!block || typeof block !== "object") continue;
-        const typed = block as Record<string, unknown>;
-        if (typed.type !== "tool_result") continue;
+        if (!isRecord(block)) continue;
+        if (block.type !== "tool_result") continue;
 
         toolResults.push({
-          toolCallId: String(typed.tool_use_id ?? ""),
-          content: typed.content,
-          isError: Boolean(typed.is_error),
+          toolCallId: String(block.tool_use_id ?? ""),
+          content: block.content,
+          isError: Boolean(block.is_error),
         });
       }
     }

@@ -151,7 +151,7 @@ describe("ClaudeSdkAgentRuntime", () => {
     const events: Array<{ type: string; messages?: unknown[] }> = [];
     runtime.subscribe((event) => {
       if (event.type === "agent_end") {
-        events.push({ type: event.type, messages: event.messages as unknown[] | undefined });
+        events.push({ type: event.type, messages: [...event.messages] });
         return;
       }
       events.push({ type: event.type });

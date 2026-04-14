@@ -1,5 +1,5 @@
 import { createCodingTools } from "@mariozechner/pi-coding-agent";
-import { query, type SDKResultSuccess } from "@anthropic-ai/claude-agent-sdk";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { buildReinsSystemPrompt } from "../system-prompt.js";
 import { ReinsResourceLoader } from "../resource-loader.js";
 import {
@@ -15,7 +15,7 @@ import CLAUDE_SDK_MODELS from "./models.json";
 
 function resolvePromptTools(projectDir: string, params: CreateAgentRuntimeParams): import("@mariozechner/pi-coding-agent").ToolDefinition[] {
   const builtinNames = new Set(params.sessionTools?.builtins ?? ["read", "write", "edit", "bash"]);
-  const builtins = createCodingTools(projectDir).filter((tool) => builtinNames.has(tool.name as any));
+  const builtins = createCodingTools(projectDir).filter((tool) => builtinNames.has(tool.name));
   return [...builtins, ...(params.sessionTools?.customTools ?? [])];
 }
 
@@ -54,8 +54,8 @@ export class ClaudeSdkRuntimeAdapter implements AgentRuntimeAdapter {
 
     let resultText = "";
     for await (const message of handle) {
-      if (message.type === "result" && message.subtype === "success") {
-        resultText = (message as SDKResultSuccess).result;
+      if (message.type === "result" && message.subtype === "success" && "result" in message) {
+        resultText = String(message.result);
       }
     }
 
