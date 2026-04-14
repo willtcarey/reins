@@ -28,8 +28,8 @@ export class ActivityDot extends LitElement {
 
     const classes =
       this.state === "running"
-        ? "w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"
-        : "w-2 h-2 rounded-full bg-amber-500 shrink-0";
+        ? "block w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"
+        : "block w-2 h-2 rounded-full bg-amber-500 shrink-0";
     const title = this.state === "running" ? "Running" : "New activity";
 
     return html`<span class="${classes}" title="${title}"></span>`;

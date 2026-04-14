@@ -232,6 +232,7 @@ export async function createNewSession(
     projectId,
     sessionId: managed.id,
     taskId: opts?.taskId ?? null,
+    parentSessionId: opts?.parentSessionId ?? null,
   });
 
   return managed;

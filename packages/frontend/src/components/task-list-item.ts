@@ -90,15 +90,10 @@ export class TaskListItemElement extends LitElement {
     let hasFinished = false;
     for (const id of ids) {
       const state = this.activityMap.get(id);
-      if (state === "running") {
-        console.log(`[activity] task ${this.task.title}: session ${id.slice(0, 8)} is RUNNING, mapSize=${this.activityMap.size}`);
-        return "running";
-      }
+      if (state === "running") return "running";
       if (state === "finished") hasFinished = true;
     }
-    const result = hasFinished ? "finished" : undefined;
-    if (result) console.log(`[activity] task ${this.task.title}: ${result}, mapSize=${this.activityMap.size}`);
-    return result;
+    return hasFinished ? "finished" : undefined;
   }
 
   private renderActivityDot() {

@@ -183,7 +183,7 @@ describe("GET /api/models", () => {
     );
     const body = await res!.json();
     const providerNames = body.map((p: any) => p.provider);
-    const sorted = [...providerNames].sort((a: string, b: string) => a.localeCompare(b));
+    const sorted = providerNames.toSorted((a: string, b: string) => a.localeCompare(b));
     expect(providerNames).toEqual(sorted);
   });
 

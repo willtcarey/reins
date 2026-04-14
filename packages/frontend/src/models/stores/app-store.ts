@@ -42,6 +42,9 @@ export class AppStore {
   private _activityStates = new Map<string, { state: ActivityState; projectId: number }>();
   private _activityMapCache: Map<string, ActivityState> | null = null;
 
+  /** Sessions created via the delegate tool (have a parent session). */
+  private _delegateSessions = new Set<string>();
+
   // ---- Connection state -----------------------------------------------------
 
   connected = false;
@@ -105,6 +108,9 @@ export class AppStore {
 
       // Handle session_created broadcast (server-side session creation, e.g. delegate)
       if (event.type === "session_created") {
+        if (event.parentSessionId) {
+          this._delegateSessions.add(event.sessionId);
+        }
         this.projectCollectionStore.refresh(event.projectId);
         if (event.taskId) {
           this.projectCollectionStore.peekStore(event.projectId)?.fetchTaskSessions(event.taskId);
@@ -211,16 +217,15 @@ export class AppStore {
 
   private _setRunning(sessionId: string, projectId: number): void {
     if (this._activityStates.get(sessionId)?.state === "running") return;
-    console.log(`[activity] setRunning: session=${sessionId.slice(0, 8)} project=${projectId}`);
     this._activityStates.set(sessionId, { state: "running", projectId });
     this._activityMapCache = null;
     this.notify();
   }
 
   private _setFinished(sessionId: string, projectId: number, activeSessionId: string): void {
-    console.log(`[activity] setFinished: session=${sessionId.slice(0, 8)} project=${projectId} active=${activeSessionId.slice(0, 8)} isActive=${sessionId === activeSessionId}`);
-    if (sessionId === activeSessionId) {
+    if (sessionId === activeSessionId || this._delegateSessions.has(sessionId)) {
       this.clearActivity(sessionId);
+      this._delegateSessions.delete(sessionId);
       return;
     }
     this._activityStates.set(sessionId, { state: "finished", projectId });

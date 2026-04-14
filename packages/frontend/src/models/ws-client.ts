@@ -64,7 +64,7 @@ import type { ChatEvent } from "./chat-state.js";
 export type ServerMessage =
   | { type: "event"; sessionId: string; projectId: number; event: ChatEvent }
   | { type: "task_updated"; projectId: number }
-  | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null }
+  | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number }
   | { type: "user_message"; sessionId: string; projectId: number; message: string }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
@@ -79,7 +79,7 @@ export type ServerMessage =
 export type FrontendEvent =
   | ChatEvent
   | { type: "task_updated"; projectId: number }
-  | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null }
+  | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
   | { type: "ws_ack"; command: string }
@@ -278,6 +278,7 @@ export class AppClient implements IAppClient {
             projectId: msg.projectId,
             sessionId: msg.sessionId,
             taskId: msg.taskId,
+            parentSessionId: msg.parentSessionId,
           });
         }
         break;

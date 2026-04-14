@@ -89,4 +89,39 @@ describe("AppStore activity tracking", () => {
 
     expect(activeSession.refreshSession).toHaveBeenCalledTimes(1);
   });
+
+  test("delegate sessions are auto-cleared on agent_end instead of showing finished", () => {
+    // Simulate session_created for a delegate (has parentSessionId)
+    client.fireEvent("", 42, {
+      type: "session_created",
+      projectId: 42,
+      sessionId: "delegate-1",
+      taskId: 1,
+      parentSessionId: "parent-1",
+    });
+
+    // Delegate starts running
+    client.fireEvent("delegate-1", 42, { type: "agent_start" });
+    expect(store.getActivity("delegate-1")).toBe("running");
+
+    // Delegate finishes — should be auto-cleared, not "finished"
+    client.fireEvent("delegate-1", 42, { type: "agent_end" });
+    expect(store.getActivity("delegate-1")).toBeUndefined();
+  });
+
+  test("non-delegate sessions still show finished on agent_end", () => {
+    // Simulate session_created without parentSessionId
+    client.fireEvent("", 42, {
+      type: "session_created",
+      projectId: 42,
+      sessionId: "task-session-1",
+      taskId: 1,
+      parentSessionId: null,
+    });
+
+    client.fireEvent("task-session-1", 42, { type: "agent_start" });
+    client.fireEvent("task-session-1", 42, { type: "agent_end" });
+
+    expect(store.getActivity("task-session-1")).toBe("finished");
+  });
 });
