@@ -1,5 +1,7 @@
 # Token Usage Tracking
 
+Status: **early thinking** — not ready for implementation.
+
 Track per-turn token usage and cost across both runtimes so we can display aggregate stats and charts in the UI.
 
 ## Current State
