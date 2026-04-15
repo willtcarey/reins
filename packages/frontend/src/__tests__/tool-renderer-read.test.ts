@@ -33,14 +33,14 @@ describe("getReadSummary", () => {
 describe("getReadPreview", () => {
   test("returns first 2 lines of result text", () => {
     const block = makeToolBlock({
-      result: makeReadResult("line one\nline two\nline three\nline four"),
+      result: makeReadResult("     1\tline one\n     2\tline two\n     3\tline three\n     4\tline four"),
     });
     expect(getReadPreview(block)).toBe("line one\nline two");
   });
 
   test("returns single line if result has only one line", () => {
     const block = makeToolBlock({
-      result: makeReadResult("only line"),
+      result: makeReadResult("     1\tonly line"),
     });
     expect(getReadPreview(block)).toBe("only line");
   });
@@ -63,7 +63,7 @@ describe("getReadPreview", () => {
   });
 
   test("truncates long lines to 200 chars", () => {
-    const longLine = "x".repeat(300);
+    const longLine = "     1\t" + "x".repeat(300);
     const block = makeToolBlock({ result: makeReadResult(longLine) });
     const preview = getReadPreview(block);
     expect(preview.length).toBeLessThanOrEqual(203); // 200 + "…"
@@ -74,35 +74,40 @@ describe("getReadPreview", () => {
     const block = makeToolBlock({
       result: {
         content: [
-          { type: "text", text: "first block line 1\nfirst block line 2" },
-          { type: "text", text: "second block line 1" },
+          { type: "text", text: "     1\tfirst block line 1\n     2\tfirst block line 2" },
+          { type: "text", text: "     3\tsecond block line 1" },
         ],
       },
     });
-    // Joined text: "first block line 1\nfirst block line 2\nsecond block line 1"
-    // First 2 lines: "first block line 1\nfirst block line 2"
     expect(getReadPreview(block)).toBe("first block line 1\nfirst block line 2");
   });
 
   test("configurable maxLines", () => {
     const block = makeToolBlock({
-      result: makeReadResult("a\nb\nc\nd"),
+      result: makeReadResult("     1\ta\n     2\tb\n     3\tc\n     4\td"),
     });
     expect(getReadPreview(block, 3)).toBe("a\nb\nc");
+  });
+
+  test("strips cat -n line number prefixes", () => {
+    const block = makeToolBlock({
+      result: makeReadResult("     1\tconst x = 1;\n     2\tconst y = 2;"),
+    });
+    expect(getReadPreview(block)).toBe("const x = 1;\nconst y = 2;");
   });
 });
 
 describe("getReadContent", () => {
-  test("returns full content text", () => {
+  test("returns full content text with line numbers stripped", () => {
     const block = makeToolBlock({
-      result: makeReadResult("line one\nline two\nline three"),
+      result: makeReadResult("     1\tline one\n     2\tline two\n     3\tline three"),
     });
     expect(getReadContent(block)).toBe("line one\nline two\nline three");
   });
 
   test("truncates to maxLen", () => {
     const block = makeToolBlock({
-      result: makeReadResult("x".repeat(6000)),
+      result: makeReadResult("     1\t" + "x".repeat(6000)),
     });
     expect(getReadContent(block)).toHaveLength(5000);
   });
@@ -114,7 +119,7 @@ describe("getReadContent", () => {
 
   test("content excludes the trailing metadata line", () => {
     const block = makeToolBlock({
-      result: makeReadResult("line one\nline two\n\n[163 more lines in file. Use offset=51 to continue.]"),
+      result: makeReadResult("     1\tline one\n     2\tline two\n\n[163 more lines in file. Use offset=51 to continue.]"),
     });
     expect(getReadContent(block)).toBe("line one\nline two");
   });
@@ -123,14 +128,14 @@ describe("getReadContent", () => {
 describe("getReadLineCount", () => {
   test("returns line count of result text", () => {
     const block = makeToolBlock({
-      result: makeReadResult("a\nb\nc\nd"),
+      result: makeReadResult("     1\ta\n     2\tb\n     3\tc\n     4\td"),
     });
     expect(getReadLineCount(block)).toBe(4);
   });
 
   test("returns 1 for single line", () => {
     const block = makeToolBlock({
-      result: makeReadResult("only line"),
+      result: makeReadResult("     1\tonly line"),
     });
     expect(getReadLineCount(block)).toBe(1);
   });
@@ -147,7 +152,7 @@ describe("getReadLineCount", () => {
 
   test("line count excludes the trailing metadata line", () => {
     const block = makeToolBlock({
-      result: makeReadResult("a\nb\nc\n\n[50 more lines in file. Use offset=10 to continue.]"),
+      result: makeReadResult("     1\ta\n     2\tb\n     3\tc\n\n[50 more lines in file. Use offset=10 to continue.]"),
     });
     expect(getReadLineCount(block)).toBe(3);
   });
@@ -174,14 +179,14 @@ describe("getReadRange", () => {
 describe("getReadTrailer", () => {
   test("extracts trailer from result text", () => {
     const block = makeToolBlock({
-      result: makeReadResult("line one\nline two\n\n[163 more lines in file. Use offset=51 to continue.]"),
+      result: makeReadResult("     1\tline one\n     2\tline two\n\n[163 more lines in file. Use offset=51 to continue.]"),
     });
     expect(getReadTrailer(block)).toBe("163 more lines in file. Use offset=51 to continue.");
   });
 
   test("returns empty string when no trailer", () => {
     const block = makeToolBlock({
-      result: makeReadResult("line one\nline two"),
+      result: makeReadResult("     1\tline one\n     2\tline two"),
     });
     expect(getReadTrailer(block)).toBe("");
   });

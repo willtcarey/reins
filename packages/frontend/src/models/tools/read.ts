@@ -11,12 +11,18 @@ const TRAILER_RE = /\n*\[(\d+ more lines in file\. Use offset=\d+ to continue.*)
 /** Number of preview lines to show when collapsed. */
 export const PREVIEW_LINES = 4;
 
-/** Get the raw joined text from a Read tool block's result. */
+/** Strip `cat -n` line-number prefixes (e.g. "     1\t") from each line. */
+function stripLineNumbers(text: string): string {
+  return text.replace(/^\s*\d+\t/gm, "");
+}
+
+/** Get the joined text from a Read tool block's result, with `cat -n` prefixes stripped. */
 function getRawText(block: ToolBlockData): string {
-  return block.result?.content
+  const joined = block.result?.content
     ?.filter((c): c is { type: "text"; text: string } => c.type === "text")
     .map((c) => c.text)
     .join("\n") ?? "";
+  return stripLineNumbers(joined);
 }
 
 /** Strip the trailing metadata line (e.g. "[163 more lines...]") from result text. */
