@@ -417,7 +417,7 @@ export class SessionSidebar extends LitElement {
         @toggle-collapse=${this.toggleCollapse}
       >
         <!-- Header: collapse toggle + quick-open -->
-        <div class="flex items-center border-b border-zinc-700 shrink-0 ${this.collapsed ? "justify-center" : ""}">
+        <div class="flex items-center border-b border-zinc-700 shrink-0 ${this.collapsed ? "justify-center" : "py-0.5"}">
           ${this.collapsed ? html`
             <!-- Collapsed: expand chevron + search icon -->
             <div class="flex flex-col items-center gap-1 py-1">
@@ -434,15 +434,15 @@ export class SessionSidebar extends LitElement {
             </div>
           ` : html`
             <!-- Expanded: search button + settings gear + collapse chevron -->
-            <nav-icon icon="search" label="Search sessions (Cmd+K)" @click=${this._openQuickOpen}></nav-icon>
-            <nav-icon icon="settings" label="Settings" @click=${this._openSettings}></nav-icon>
+            <nav-icon icon="search" label="Search sessions (Cmd+K)" .size=${18} @click=${this._openQuickOpen}></nav-icon>
+            <nav-icon icon="settings" label="Settings" .size=${18} @click=${this._openSettings}></nav-icon>
             <div class="flex-1 min-w-0"></div>
             <button
               class="p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors shrink-0"
               @click=${this.toggleCollapse}
               title="Hide sidebar"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
             </button>
           `}
         </div>
