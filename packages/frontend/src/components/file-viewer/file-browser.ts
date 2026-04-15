@@ -53,14 +53,19 @@ export class FileBrowser extends LitElement {
     }
   }
 
-  /** Open the overlay to a specific file, or switch files if already open. */
-  openFile(path: string, lineRange?: { startLine: number; endLine: number }) {
+  /** Open the overlay (tree + viewer) without selecting a file. */
+  open() {
     if (!this._open) {
       this.store?.reset();
       this._open = true;
       this._mobileTreeOpen = false;
       this.store?.fetchFiles();
     }
+  }
+
+  /** Open the overlay to a specific file, or switch files if already open. */
+  openFile(path: string, lineRange?: { startLine: number; endLine: number }) {
+    this.open();
     this._viewer?.resetHighlight();
     this._pendingHighlight = lineRange ?? null;
     this.store?.selectFile(path);
