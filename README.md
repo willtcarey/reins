@@ -32,14 +32,13 @@ Requires [Bun](https://bun.sh) (v1.0+) and Git.
 
 ```sh
 bun install
-bun run build
-bun packages/backend/src/index.ts
+bun run start
 ```
 
 To keep the server running in the background:
 
 ```sh
-tmux new-session -d -s reins 'bun packages/backend/src/index.ts'
+tmux new-session -d -s reins 'bun run start'
 ```
 
 For the macOS app, see [docs/dev/macos.md](docs/dev/macos.md).
