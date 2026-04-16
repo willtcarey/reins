@@ -103,11 +103,10 @@ export class AssistantSession extends LitElement {
       const isActive = assistant.id === this.activeSessionId;
       return html`
         <div class="border-b border-zinc-700 group/assistant">
-          <div class="flex items-center">
+          <div class="flex items-center transition-colors ${isActive ? "bg-blue-500/15" : "hover:bg-zinc-700/30"}">
             <button
               data-session-id=${assistant.id}
-              class="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 cursor-pointer text-left transition-colors hover:bg-zinc-700/30
-                ${isActive ? "bg-blue-500/15" : ""}"
+              class="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 cursor-pointer text-left"
               @click=${() => this.handleSelectSession(assistant.id)}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-zinc-500"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

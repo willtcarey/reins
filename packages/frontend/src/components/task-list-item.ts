@@ -121,16 +121,22 @@ export class TaskListItemElement extends LitElement {
     `;
   }
 
+  private isTaskActive(): boolean {
+    if (!this.activeSessionId) return false;
+    return this.task.session_ids.includes(this.activeSessionId);
+  }
+
   override render() {
     const task = this.task;
     const isExpanded = this.expanded;
     const sessions = this.sessions;
     const date = formatRelativeDate(task.updated_at);
     const isClosed = task.status === "closed";
+    const isActive = this.isTaskActive();
 
     return html`
       <div class="border-b border-zinc-700/50 group/task ${isClosed ? "opacity-50" : ""}">
-        <div class="flex items-start transition-colors hover:bg-zinc-700/30">
+        <div class="flex items-start transition-colors ${isActive && !isExpanded ? "bg-blue-500/15" : "hover:bg-zinc-700/30"}">
           <button
             class="flex-1 text-left px-3 py-2.5 cursor-pointer flex items-start gap-2 min-w-0"
             @click=${() => this.handleExpand()}
@@ -138,7 +144,7 @@ export class TaskListItemElement extends LitElement {
             <span class="text-zinc-500 text-[10px] mt-0.5 shrink-0">${isClosed ? "✓" : isExpanded ? "▼" : "▶"}</span>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-1.5">
-                <div class="text-xs ${isClosed ? "text-zinc-400" : "text-zinc-200"} truncate">${task.title}</div>
+                <div class="text-xs ${isClosed ? "text-zinc-400" : isActive && !isExpanded ? "text-blue-300" : "text-zinc-200"} truncate">${task.title}</div>
                 ${this.renderActivityDot()}
               </div>
               ${this.renderBranchInfo()}
@@ -146,6 +152,13 @@ export class TaskListItemElement extends LitElement {
                 ${date} · ${task.session_count} session${task.session_count !== 1 ? "s" : ""}
               </div>
             </div>
+          </button>
+          <button
+            class="p-1.5 text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors shrink-0 md:opacity-0 md:group-hover/task:opacity-100"
+            title="New session"
+            @click=${(e: Event) => this.handleNewTaskSession(e)}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
           </button>
           <popover-menu
             triggerClass="md:opacity-0 md:group-hover/task:opacity-100"
@@ -166,14 +179,14 @@ export class TaskListItemElement extends LitElement {
           ></popover-menu>
         </div>
 
-        ${isExpanded ? html`
-          <div class="pl-5 bg-zinc-800/30">
-            ${(() => {
-              const childMap = buildChildMap(sessions);
-              const topLevel = sessions.filter(s => !s.parent_session_id);
-              return topLevel.length === 0 && sessions.length === 0
-                ? html`<div class="px-3 py-2 text-[10px] text-zinc-500">No sessions yet</div>`
-                : topLevel.map(s => html`
+        <div class="grid transition-[grid-template-rows] duration-200 ease-out ${isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}">
+          <div class="overflow-hidden">
+            ${sessions.length > 0 ? html`
+              <div class="border-l border-zinc-600/30 ml-3">
+                ${(() => {
+                  const childMap = buildChildMap(sessions);
+                  const topLevel = sessions.filter(s => !s.parent_session_id);
+                  return topLevel.map(s => html`
                     <session-list-item
                       .session=${s}
                       .active=${s.id === this.activeSessionId}
@@ -184,17 +197,15 @@ export class TaskListItemElement extends LitElement {
                       .projectId=${this.projectId}
                     ></session-list-item>
                   `);
-            })()}
-            <div class="px-3 py-1.5">
-              <button
-                class="w-full py-1 text-[10px] text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
-                @click=${(e: Event) => this.handleNewTaskSession(e)}
-              >
-                + New Session
-              </button>
-            </div>
+                })()}
+              </div>
+            ` : isExpanded && task.session_count > 0 ? html`
+              <div class="border-l border-zinc-600/30 ml-3">
+                <div class="px-3 py-2 text-[10px] text-zinc-500">Loading…</div>
+              </div>
+            ` : nothing}
           </div>
-        ` : nothing}
+        </div>
       </div>
     `;
   }

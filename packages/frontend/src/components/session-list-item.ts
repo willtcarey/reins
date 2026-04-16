@@ -61,11 +61,10 @@ export class SessionListItem extends LitElement {
     const childCount = this.childSessions.length;
 
     return html`
-      <div class="border-b border-zinc-700/50 flex items-center">
+      <div class="border-b border-zinc-700/50 flex items-center transition-colors ${this.active ? "bg-blue-500/15" : "hover:bg-zinc-700/30"}">
         <button
           data-session-id=${s.id}
-          class="flex-1 min-w-0 text-left px-3 py-2 cursor-pointer transition-colors
-            ${this.active ? "bg-blue-500/15" : "hover:bg-zinc-700/30"}"
+          class="flex-1 min-w-0 text-left px-3 py-2 cursor-pointer"
           @click=${this.handleClick}
         >
           <div class="flex items-center gap-1.5">
