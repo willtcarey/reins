@@ -29,8 +29,9 @@ Skill expansion happens in the backend before calling `runtime.prompt()`. The fl
 1. Scan the message for standalone `/name` tokens (word boundary before the `/`, whitespace or end after the name).
 2. Match each against `resourceLoader.skills` by name.
 3. For each match: read the SKILL.md file, strip frontmatter, wrap in a `<skill>` block.
-4. Remove the `/name` tokens from the user's message text.
-5. Hoist all skill blocks to the top, followed by the cleaned user text.
+4. Hoist all skill blocks to the top, followed by the **original user message unchanged**.
+
+The `/name` tokens are left in the user's message — they don't need to be stripped. The model sees the user's exact text plus the skill content above it. The `/dip` token in the message acts as a natural reference to the hoisted skill block. This avoids regex replacement edge cases and keeps the user's intent intact.
 
 Result sent to the model:
 
@@ -47,7 +48,7 @@ References are relative to /home/user/.agents/skills/tmux.
 [SKILL.md body]
 </skill>
 
-start the rails server and check the logs
+/dip /tmux start the rails server and check the logs
 ```
 
 This is consistent with how PI expands skills (same `<skill>` tag format) but handled at the Reins layer so it works for both runtimes.
@@ -73,9 +74,7 @@ Optimize later if token cost becomes a concern. Possible future strategy: track 
 
 ### Frontend display
 
-The backend broadcasts the user message to other clients without the expanded skill content (just the original text). The frontend stores metadata about which skills were injected.
-
-For display, the frontend renders a small collapsible pill/badge for each injected skill (e.g., "dip" with the skill description on expand). The full SKILL.md content is never shown in the conversation.
+The backend broadcasts the original user message to other clients (without the expanded skill content). The frontend stores metadata about which skills were injected and renders a small collapsible pill/badge for each (e.g., "dip" with the skill description on expand). The user's message text displays as-is, including the `/name` tokens. The full SKILL.md content is never shown in the conversation.
 
 ## Alternatives Considered
 
@@ -87,8 +86,14 @@ For display, the frontend renders a small collapsible pill/badge for each inject
 
 **Extend `prompt()` with structured options** — unnecessary complexity since both runtimes accept plain strings and the `<skill>` tag format works inline.
 
-## Open Questions
+### Tab-completion
 
-- Do we need tab-completion or suggestions for available skill names in the frontend input?
-- Should skills injected via slash command also suppress the `<available_skills>` listing for that skill in the system prompt, to avoid redundancy?
-- Escaping: if someone types `/dip` meaning the literal text, how do they prevent expansion? (`\/dip`, backtick-wrap, etc.)
+The frontend input should suggest available skill names as the user types `/`. This requires the frontend to know the list of available skills — the backend already has this via the resource loader and can serve it over the WS or as a REST endpoint.
+
+## Future Enhancements
+
+- **Inline skill pills** — render `/dip` in the user message as a styled pill/badge. Clicking it opens a popover showing the skill content that was injected. Not necessary for v1 — the raw `/dip` text is clear enough.
+
+## Resolved Questions
+
+- **Should skills injected via slash command suppress the `<available_skills>` listing?** — No. Skills are only excluded from the system prompt listing when they have the `disable-model-invocation` flag in their SKILL.md frontmatter. Slash command injection is independent — a skill can appear in `<available_skills>` (so the model can invoke it on its own) and also be explicitly injected by the user via `/name`.
