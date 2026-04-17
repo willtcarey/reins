@@ -65,7 +65,7 @@ describe("settings helpers", () => {
         runtimeType: "pi",
         thinkingLevel: "high",
       },
-    })).toBe("Claude Haiku 4.5");
+    })).toBe("Claude Haiku 4.5 · High");
   });
 
   test("formatModelSettingLabel includes provider when model id is ambiguous", () => {
@@ -77,10 +77,10 @@ describe("settings helpers", () => {
         runtimeType: "pi",
         thinkingLevel: "high",
       },
-    })).toBe("Anthropic / Claude Sonnet 4");
+    })).toBe("Anthropic / Claude Sonnet 4 · High");
   });
 
-  test("formatModelSettingLabel includes non-default thinking level", () => {
+  test("formatModelSettingLabel always includes thinking level", () => {
     expect(formatModelSettingLabel({
       providers,
       model: {
@@ -89,7 +89,6 @@ describe("settings helpers", () => {
         runtimeType: "pi",
         thinkingLevel: "minimal",
       },
-      defaultThinkingLevel: "high",
     })).toBe("Claude Haiku 4.5 · Minimal");
   });
 });

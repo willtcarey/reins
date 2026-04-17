@@ -84,7 +84,6 @@ export class SessionModelPicker extends LitElement {
     return formatModelSettingLabel({
       providers: this._registryStore.providers,
       model: current,
-      defaultThinkingLevel: "high",
     });
   }
 

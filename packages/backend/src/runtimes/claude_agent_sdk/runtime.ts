@@ -26,10 +26,9 @@ export function isThinkingDisabled(level: string | null | undefined): boolean {
   return !level || level === "off";
 }
 
-export function mapThinkingEffort(level: string | null | undefined): "low" | "medium" | "high" | "max" {
-  if (level === "minimal" || level === "low") return "low";
-  if (level === "medium") return "medium";
-  if (level === "xhigh") return "max";
+export function mapThinkingEffort(level: string | null | undefined): "low" | "medium" | "high" | "xhigh" | "max" {
+  if (level === "minimal") return "low";
+  if (level === "low" || level === "medium" || level === "high" || level === "xhigh" || level === "max") return level;
   return "high";
 }
 

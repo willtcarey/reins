@@ -106,7 +106,7 @@ describe("SessionModelPicker", () => {
 
     const registryStore = getPrivate<{ availableProviders: Array<{ provider: string }> }>(el, "_registryStore");
     expect(registryStore.availableProviders.map((provider) => provider.provider)).toEqual(["anthropic"]);
-    expect(await callPrivate<string>(el, "_currentLabel")).toBe("Claude Sonnet 4");
+    expect(await callPrivate<string>(el, "_currentLabel")).toBe("Claude Sonnet 4 · High");
 
     const output = templateToString(await callPrivate(el, "renderPopoverContent"));
     expect(output).toContain("Changes apply to this session only.");

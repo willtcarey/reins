@@ -20,6 +20,7 @@
   { "id": "claude-opus-4-5", "name": "Claude Opus 4.5 (latest)", "reasoning": true, "contextWindow": 200000, "maxTokens": 64000 },
   { "id": "claude-opus-4-5-20251101", "name": "Claude Opus 4.5", "reasoning": true, "contextWindow": 200000, "maxTokens": 64000 },
   { "id": "claude-opus-4-6", "name": "Claude Opus 4.6", "reasoning": true, "contextWindow": 1000000, "maxTokens": 128000 },
+  { "id": "claude-opus-4-7", "name": "Claude Opus 4.7", "reasoning": true, "contextWindow": 1000000, "maxTokens": 128000 },
   { "id": "claude-haiku-4-5", "name": "Claude Haiku 4.5 (latest)", "reasoning": true, "contextWindow": 200000, "maxTokens": 64000 },
   { "id": "claude-haiku-4-5-20251001", "name": "Claude Haiku 4.5", "reasoning": true, "contextWindow": 200000, "maxTokens": 64000 }
 ]

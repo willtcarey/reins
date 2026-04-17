@@ -5,7 +5,7 @@ import type { Static } from "@sinclair/typebox";
 import { getSetting, type ModelSettingsKey, type ModelSetting } from "../settings-store.js";
 import { createPiContext } from "../runtimes/pi/factory.js";
 
-export const THINKING_LEVEL_VALUES = ["minimal", "low", "medium", "high", "xhigh"] as const;
+export const THINKING_LEVEL_VALUES = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 export const ThinkingLevelSchema = Type.Union(
   THINKING_LEVEL_VALUES.map((level) => Type.Literal(level)),

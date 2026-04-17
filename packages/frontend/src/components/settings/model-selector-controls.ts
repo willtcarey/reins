@@ -192,7 +192,6 @@ export class ModelSelectorControls extends LitElement {
                 ${this.currentLabel}: ${formatModelSettingLabel({
                   providers: this.providers,
                   model: this.currentModel,
-                  defaultThinkingLevel: this.thinkingDefault,
                   includeProviderWhenAmbiguous: true,
                 })}
               </span>

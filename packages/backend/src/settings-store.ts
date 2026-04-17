@@ -4,7 +4,7 @@ import { getDb } from "./db.js";
 
 // Keep this local to avoid a circular dependency with models/model-settings.ts,
 // which resolves persisted settings by calling back into this store.
-const MODEL_SETTING_THINKING_LEVEL_VALUES = ["minimal", "low", "medium", "high", "xhigh"] as const;
+const MODEL_SETTING_THINKING_LEVEL_VALUES = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 const ModelSettingThinkingLevelSchema = Type.Union(
   MODEL_SETTING_THINKING_LEVEL_VALUES.map((level) => Type.Literal(level)),

@@ -1,5 +1,6 @@
 import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import { parseThinkingLevel } from "../../models/model-settings.js";
+import { toPiThinkingLevel } from "./session.js";
 import type {
   AgentRuntime,
   AgentRuntimeEvent,
@@ -82,7 +83,7 @@ export class PiAgentRuntime implements AgentRuntime {
 
     await this.session.setModel(model);
     if (params.thinkingLevel) {
-      this.session.setThinkingLevel(parseThinkingLevel(params.thinkingLevel));
+      this.session.setThinkingLevel(parseThinkingLevel(toPiThinkingLevel(params.thinkingLevel)));
     }
   }
 

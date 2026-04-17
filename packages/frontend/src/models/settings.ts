@@ -46,13 +46,11 @@ export function findModelInfo(providers: ProviderInfo[], providerName: string, m
 export function formatModelSettingLabel(params: {
   providers: ProviderInfo[];
   model: ModelSetting;
-  defaultThinkingLevel?: string;
   includeProviderWhenAmbiguous?: boolean;
 }): string {
   const {
     providers,
     model,
-    defaultThinkingLevel = "high",
     includeProviderWhenAmbiguous = true,
   } = params;
 
@@ -65,10 +63,7 @@ export function formatModelSettingLabel(params: {
 
   const thinking = THINKING_LEVELS.find((level) => level.value === model.thinkingLevel)?.label ?? model.thinkingLevel;
   const parts = [providerNeeded ? formatModelSelectionOptionLabel(model.provider, modelName) : modelName];
-
-  if (model.thinkingLevel !== defaultThinkingLevel) {
-    parts.push(thinking);
-  }
+  parts.push(thinking);
 
   return parts.join(" · ");
 }
@@ -79,4 +74,5 @@ export const THINKING_LEVELS = [
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
   { value: "xhigh", label: "Extra High" },
+  { value: "max", label: "Max" },
 ] as const;

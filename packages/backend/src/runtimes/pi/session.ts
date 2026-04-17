@@ -13,6 +13,11 @@ import {
   resolveModel,
   resolveModelSettingWithConfigInRegistry,
 } from "../../models/model-settings.js";
+
+/** Map a Reins thinking level to one PI supports (PI's max is "xhigh"). */
+export function toPiThinkingLevel(level: string): string {
+  return level === "max" ? "xhigh" : level;
+}
 import {
   ModelNotFoundError,
   type AgentRuntime,
@@ -93,7 +98,7 @@ async function buildSessionOpts(params: {
   }
 
   const configuredThinkingLevel = thinkingLevel
-    ? parseThinkingLevel(thinkingLevel)
+    ? parseThinkingLevel(toPiThinkingLevel(thinkingLevel))
     : undefined;
 
   return {
@@ -242,7 +247,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
 
     try {
       if (thinkingLevel) {
-        session.setThinkingLevel(parseThinkingLevel(thinkingLevel));
+        session.setThinkingLevel(parseThinkingLevel(toPiThinkingLevel(thinkingLevel)));
       }
 
       return ephemeralPrompt(session, { prompt, timeoutMs });
