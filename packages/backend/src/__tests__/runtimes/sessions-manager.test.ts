@@ -5,6 +5,7 @@ import { createTask } from "../../task-store.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
+import { createTestResourceLoader } from "../helpers/test-pi.js";
 import {
   createNewSession,
   ensureSessionOpen,
@@ -181,6 +182,7 @@ describe("runtime sessions manager", () => {
         isStreaming: () => false,
         close: async () => {},
       },
+      resourceLoader: createTestResourceLoader(),
     };
 
     const state = createServerState({ sessions: new Map([[managed.id, managed]]) });

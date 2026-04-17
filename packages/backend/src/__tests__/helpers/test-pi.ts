@@ -17,6 +17,7 @@ import {
 import { getModel } from "@mariozechner/pi-ai";
 import type { ManagedSession } from "../../state.js";
 import { PiAgentRuntime } from "../../runtimes/pi/runtime.js";
+import { ReinsResourceLoader } from "../../runtimes/resource-loader.js";
 
 const defaultModel = getModel("anthropic", "claude-sonnet-4-20250514");
 
@@ -68,7 +69,18 @@ export async function createTestManagedSession(
     runtime: new PiAgentRuntime(session),
     id,
     lastActivity: Date.now(),
+    resourceLoader: createTestResourceLoader(),
   };
+}
+
+/** Construct a ReinsResourceLoader pointed at a nonexistent dir for tests. */
+export function createTestResourceLoader(): ReinsResourceLoader {
+  const loader = new ReinsResourceLoader({
+    cwd: "/tmp/reins-nonexistent-cwd",
+    agentDir: "/tmp/reins-nonexistent-agent-dir",
+  });
+  loader.load();
+  return loader;
 }
 
 /**

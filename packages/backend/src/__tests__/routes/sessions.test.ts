@@ -6,7 +6,7 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createSession, persistMessages } from "../../session-store.js";
-import { createTestManagedSession } from "../helpers/test-pi.js";
+import { createTestManagedSession, createTestResourceLoader } from "../helpers/test-pi.js";
 
 describe("session routes (top-level)", () => {
   let state: ReturnType<typeof createServerState>;
@@ -154,6 +154,7 @@ describe("session routes (top-level)", () => {
           isStreaming: () => false,
           close: async () => {},
         },
+        resourceLoader: createTestResourceLoader(),
       });
 
       const res = await router.handle(

@@ -1,6 +1,6 @@
 import { describe, test, expect, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
-import { createTestManagedSession } from "../helpers/test-pi.js";
+import { createTestManagedSession, createTestResourceLoader } from "../helpers/test-pi.js";
 import type { ManagedSession } from "../../state.js";
 import type { AgentRuntime } from "../../runtimes/registry.js";
 import { getPiSession } from "../../runtimes/pi/runtime.js";
@@ -40,6 +40,7 @@ function createNonPiManagedSession(sessionId: string): ManagedSession {
     id: sessionId,
     lastActivity: Date.now(),
     runtime,
+    resourceLoader: createTestResourceLoader(),
   };
 }
 

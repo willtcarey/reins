@@ -157,6 +157,16 @@ export class AppStore {
   get projectId() { return this._activeSession.projectId; }
   get sessionId() { return this._activeSession.sessionId; }
 
+  /**
+   * Skills available for tab-completion in the active project's chat input.
+   * Returns an empty list when no project is active or its store hasn't loaded.
+   */
+  get availableSkills() {
+    const projectId = this._activeSession.projectId;
+    if (projectId == null) return [];
+    return this.projectCollectionStore.peekStore(projectId)?.skills ?? [];
+  }
+
   // ---- Activity state accessors ---------------------------------------------
 
   /** Get the activity state for a session (undefined = normal/no activity). */

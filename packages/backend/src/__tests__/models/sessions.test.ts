@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
-import { createTestManagedSession } from "../helpers/test-pi.js";
+import { createTestManagedSession, createTestResourceLoader } from "../helpers/test-pi.js";
 import { createProject, type Project } from "../../project-store.js";
 import { createSession, getSession } from "../../session-store.js";
 import { Sessions } from "../../models/sessions.js";
@@ -156,6 +156,7 @@ describe("Sessions.setModel", () => {
         isStreaming: () => false,
         close: async () => {},
       },
+      resourceLoader: createTestResourceLoader(),
     });
 
     const result = await model.setModel({

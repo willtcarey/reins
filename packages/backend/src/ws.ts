@@ -13,6 +13,7 @@ import type { ServerState, WsClient, WebSocketLike } from "./state.js";
 import { ensureSessionOpen } from "./runtimes/sessions-manager.js";
 import { getSession } from "./session-store.js";
 import { createBroadcastExcluding } from "./models/broadcast.js";
+import { expandPrompt } from "./runtimes/prompt.js";
 
 /** Maps raw WebSocket objects to their WsClient wrappers. */
 const wsClientMap = new WeakMap<WebSocketLike, WsClient>();
@@ -58,19 +59,26 @@ async function handleWsCommand(
         const row = getSession(sessionId);
         if (!row) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
         const managed = await ensureSessionOpen(state, sessionId);
-        sendToWs(client.ws, { type: "ack", command: "prompt" });
 
-        // Broadcast user message to other clients so other devices see what was typed
-        // (the sender already appended it optimistically)
+        // Refresh skills so newly added ones are pickable mid-session
+        managed.resourceLoader.load();
+        const { expanded, injected } = expandPrompt(message, managed.resourceLoader.skills);
+        const skillsForWire = injected.map(({ name, description }) => ({ name, description }));
+
+        sendToWs(client.ws, { type: "ack", command: "prompt", skills: skillsForWire });
+
+        // Broadcast the raw user message to other clients so other devices see
+        // what was typed. Skill content is not expanded into the visible copy.
         const broadcast = createBroadcastExcluding(state.clients, client);
         broadcast({
           type: "user_message",
           sessionId,
           projectId: row.project_id,
           message: cmd.message,
+          skills: skillsForWire,
         });
 
-        void managed.runtime.prompt(message).catch((err: unknown) => {
+        void managed.runtime.prompt(expanded).catch((err: unknown) => {
           const errorMessage = err instanceof Error ? err.message : String(err);
           sendToWs(client.ws, { type: "error", error: `prompt failed: ${errorMessage}` });
         });
@@ -88,8 +96,13 @@ async function handleWsCommand(
       try {
         if (!getSession(sessionId)) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
         const managed = await ensureSessionOpen(state, sessionId);
-        sendToWs(client.ws, { type: "ack", command: "steer" });
-        await managed.runtime.steer(message);
+
+        managed.resourceLoader.load();
+        const { expanded, injected } = expandPrompt(message, managed.resourceLoader.skills);
+        const skillsForWire = injected.map(({ name, description }) => ({ name, description }));
+
+        sendToWs(client.ws, { type: "ack", command: "steer", skills: skillsForWire });
+        await managed.runtime.steer(expanded);
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         sendToWs(client.ws, { type: "error", error: `steer failed: ${errorMessage}` });

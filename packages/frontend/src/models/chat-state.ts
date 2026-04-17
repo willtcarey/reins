@@ -34,10 +34,43 @@ export interface AssistantMessage {
   errorMessage?: string;
 }
 
+export interface InjectedSkill {
+  name: string;
+  description: string;
+}
+
+/**
+ * Strip leading `<skill ...>...</skill>` blocks from a persisted user message
+ * body and extract skill names from each block. Used to reconstruct pill
+ * metadata when loading historical messages (where `injectedSkills` wasn't
+ * captured on the live wire).
+ */
+export function parseLeadingSkillBlocks(
+  text: string,
+): { visible: string; skills: InjectedSkill[] } {
+  const skills: InjectedSkill[] = [];
+  let rest = text;
+  // Match one `<skill ...>...</skill>` followed by optional whitespace.
+  const blockRe = /^<skill\b([^>]*)>([\s\S]*?)<\/skill>\s*/;
+  while (true) {
+    const match = rest.match(blockRe);
+    if (!match) break;
+    const attrs = match[1] ?? "";
+    const nameMatch = attrs.match(/\bname="([^"]*)"/);
+    if (nameMatch) {
+      skills.push({ name: nameMatch[1], description: "" });
+    }
+    rest = rest.slice(match[0].length);
+  }
+  return { visible: rest, skills };
+}
+
 export interface UserMessage {
   role: "user";
   content: string | (TextContent | { type: "image"; data: string; mimeType: string })[];
   timestamp: number;
+  /** Skills injected at the top of this message via `/name` slash commands. */
+  injectedSkills?: InjectedSkill[];
 }
 
 export interface ToolResultMessage {
@@ -98,7 +131,7 @@ export type ChatEvent =
   | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean }
   | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
   | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
-  | { type: "user_message"; message: string };
+  | { type: "user_message"; message: string; skills?: InjectedSkill[] };
 
 // ---- State ------------------------------------------------------------------
 
@@ -320,6 +353,7 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
             role: "user" as const,
             content: event.message,
             timestamp: Date.now(),
+            injectedSkills: event.skills,
           },
         ],
       };
