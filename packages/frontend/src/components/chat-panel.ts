@@ -10,8 +10,10 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { FrontendEvent } from "../models/ws-client.js";
 import type { ActiveSessionStore } from "../models/stores/active-session-store.js";
+import type { ProjectStore } from "../models/stores/project-store.js";
 import "./markdown-content.js";
 import "./session-model-picker.js";
+import "./skill-suggest.js";
 import { getToolRenderer } from "./tools/index.js";
 import {
   applyChatEvent,
@@ -25,6 +27,7 @@ import {
   type ToolBlockData,
   type StreamingBlock,
 } from "../models/chat-state.js";
+import type { SkillSuggest, SkillInsertDetail } from "./skill-suggest.js";
 
 // ---- Component --------------------------------------------------------------
 
@@ -38,6 +41,11 @@ export class ChatPanel extends LitElement {
   @property({ attribute: false })
   store: ActiveSessionStore | null = null;
 
+  /** Per-project store for the active session's project. Passed through to
+   *  `<skill-suggest>` so it can read the available skills. */
+  @property({ attribute: false })
+  projectStore: ProjectStore | null = null;
+
   /** Whether this panel is currently visible (active tab). */
   @property({ type: Boolean })
   visible = false;
@@ -49,9 +57,11 @@ export class ChatPanel extends LitElement {
   @state() private expandedSections = new Set<string>();
   @state() private isCompacting = false;
   @state() private errorMessage = "";
+
   private errorTimeout?: ReturnType<typeof setTimeout>;
 
   @query("textarea") private textarea!: HTMLTextAreaElement;
+  @query("skill-suggest") private skillSuggest?: SkillSuggest;
 
   private unsubscribeEvent?: () => void;
   private unsubscribeStore?: () => void;
@@ -156,7 +166,7 @@ export class ChatPanel extends LitElement {
 
   private handleAgentEvent(event: FrontendEvent) {
     // ws_error is handled locally (needs DOM method); non-chat events
-    // (task_updated, session_created, ws_ack) are ignored by this component.
+    // (task_updated, session_created, ws_ack, etc.) are ignored by this component.
     if (event.type === "ws_error") {
       this.showError(event.error || "Something went wrong");
       return;
@@ -211,6 +221,7 @@ export class ChatPanel extends LitElement {
 
     this.inputText = "";
     this.shouldAutoScroll = true;
+    this.skillSuggest?.close();
   }
 
   private handleStop() {
@@ -218,16 +229,51 @@ export class ChatPanel extends LitElement {
   }
 
   private handleKeyDown(e: KeyboardEvent) {
+    if (this.skillSuggest?.handleKey(e)) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       this.handleSend();
     }
   }
 
+  /**
+   * Range of the `/name` token the caret is currently inside, tracked so we
+   * can replace it when `skill-suggest` emits an insertion. `null` when the
+   * caret is not in a completable token.
+   */
+  private skillTokenRange: { start: number; end: number } | null = null;
+
   private handleInput(e: Event) {
-    if (e.target instanceof HTMLTextAreaElement) {
-      this.inputText = e.target.value;
+    if (!(e.target instanceof HTMLTextAreaElement)) return;
+    this.inputText = e.target.value;
+    const caret = e.target.selectionStart ?? this.inputText.length;
+
+    const token = findSkillTokenAt(this.inputText, caret);
+    if (token === null) {
+      this.skillTokenRange = null;
+      this.skillSuggest?.search(null);
+      return;
     }
+    this.skillTokenRange = { start: token.start, end: token.end };
+    this.skillSuggest?.search(token.query);
+  }
+
+  private handleSkillInsert(e: CustomEvent<SkillInsertDetail>) {
+    const range = this.skillTokenRange;
+    if (!range) return;
+    const insertion = `/${e.detail.name} `;
+    const before = this.inputText.slice(0, range.start);
+    const after = this.inputText.slice(range.end);
+    this.inputText = before + insertion + after;
+    const caret = range.start + insertion.length;
+    this.skillTokenRange = null;
+
+    // Restore caret after the DOM reflects the new value.
+    queueMicrotask(() => {
+      if (!this.textarea) return;
+      this.textarea.focus();
+      this.textarea.setSelectionRange(caret, caret);
+    });
   }
 
   private handleScroll(e: Event) {
@@ -452,14 +498,20 @@ export class ChatPanel extends LitElement {
               ></session-model-picker>
             </div>
           ` : nothing}
-          <div class="flex gap-2 items-end">
-            <textarea
+          <div class="relative">
+            <skill-suggest
+              .store=${this.projectStore}
+              @skill-insert=${this.handleSkillInsert}
+            ></skill-suggest>
+            <div class="flex gap-2 items-end">
+              <textarea
               class="flex-1 bg-zinc-800 text-zinc-100 rounded-lg px-3 py-2 text-base resize-none outline-none focus:ring-1 focus:ring-blue-500 placeholder-zinc-500"
               rows="1"
               placeholder="${this.isStreaming ? "Send a steering message..." : "Type a message..."}"
               .value=${this.inputText}
               @input=${this.handleInput}
               @keydown=${this.handleKeyDown}
+              @blur=${() => setTimeout(() => this.skillSuggest?.close(), 100)}
             ></textarea>
             ${this.isStreaming ? html`
               <button
@@ -476,11 +528,41 @@ export class ChatPanel extends LitElement {
             >
               Send
             </button>
+            </div>
           </div>
         </div>
       </div>
     `;
   }
+}
+
+/**
+ * If the caret sits inside a `/name` skill token (at the start of the input
+ * or immediately after whitespace), return the token's range in `text` and
+ * the partial name typed so far. Returns `null` if no completable token is
+ * under the caret.
+ */
+function findSkillTokenAt(
+  text: string,
+  caret: number,
+): { start: number; end: number; query: string } | null {
+  // Walk left from the caret to find the `/` that opened the token.
+  let start = -1;
+  for (let i = caret - 1; i >= 0; i--) {
+    const ch = text[i];
+    if (ch === "/") { start = i; break; }
+    if (!/[a-z0-9-]/i.test(ch)) return null;
+  }
+  if (start === -1) return null;
+
+  // The `/` must be at the start of input or directly follow whitespace.
+  const prev = start === 0 ? "" : text[start - 1];
+  if (prev !== "" && !/\s/.test(prev)) return null;
+
+  const query = text.slice(start + 1, caret);
+  if (!/^[a-z0-9-]*$/i.test(query)) return null;
+
+  return { start, end: start + 1 + query.length, query };
 }
 
 declare global {

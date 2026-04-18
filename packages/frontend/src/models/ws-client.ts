@@ -60,6 +60,11 @@ export interface ProjectInfo {
 
 import type { ChatEvent } from "./chat-state.js";
 
+export interface InjectedSkillInfo {
+  name: string;
+  description: string;
+}
+
 /** Inbound message shapes from the backend */
 export type ServerMessage =
   | { type: "event"; sessionId: string; projectId: number; event: ChatEvent }

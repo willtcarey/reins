@@ -13,6 +13,7 @@ import type { ServerState, WsClient, WebSocketLike } from "./state.js";
 import { ensureSessionOpen } from "./runtimes/sessions-manager.js";
 import { getSession } from "./session-store.js";
 import { createBroadcastExcluding } from "./models/broadcast.js";
+import { expandPrompt } from "./runtimes/prompt.js";
 
 /** Maps raw WebSocket objects to their WsClient wrappers. */
 const wsClientMap = new WeakMap<WebSocketLike, WsClient>();
@@ -58,10 +59,13 @@ async function handleWsCommand(
         const row = getSession(sessionId);
         if (!row) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
         const managed = await ensureSessionOpen(state, sessionId);
+
+        const { expanded } = expandPrompt(message, sessionId);
+
         sendToWs(client.ws, { type: "ack", command: "prompt" });
 
-        // Broadcast user message to other clients so other devices see what was typed
-        // (the sender already appended it optimistically)
+        // Broadcast the raw user message to other clients so other devices see
+        // what was typed. Skill content is not expanded into the visible copy.
         const broadcast = createBroadcastExcluding(state.clients, client);
         broadcast({
           type: "user_message",
@@ -70,7 +74,7 @@ async function handleWsCommand(
           message: cmd.message,
         });
 
-        void managed.runtime.prompt(message).catch((err: unknown) => {
+        void managed.runtime.prompt(expanded).catch((err: unknown) => {
           const errorMessage = err instanceof Error ? err.message : String(err);
           sendToWs(client.ws, { type: "error", error: `prompt failed: ${errorMessage}` });
         });
@@ -88,8 +92,11 @@ async function handleWsCommand(
       try {
         if (!getSession(sessionId)) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
         const managed = await ensureSessionOpen(state, sessionId);
+
+        const { expanded } = expandPrompt(message, sessionId);
+
         sendToWs(client.ws, { type: "ack", command: "steer" });
-        await managed.runtime.steer(message);
+        await managed.runtime.steer(expanded);
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         sendToWs(client.ws, { type: "error", error: `steer failed: ${errorMessage}` });

@@ -7,7 +7,7 @@
  * Components subscribe via `subscribe()` and read public state directly.
  */
 
-import type { SessionListItem, TaskListItem } from "../ws-client.js";
+import type { InjectedSkillInfo, SessionListItem, TaskListItem } from "../ws-client.js";
 
 export type ProjectStoreListener = () => void;
 
@@ -19,6 +19,7 @@ export class ProjectStore {
   tasks: TaskListItem[] = [];
   sessions: SessionListItem[] = [];
   taskSessions: Map<number, SessionListItem[]> = new Map();
+  skills: InjectedSkillInfo[] = [];
   loading = false;
   loaded = false;
 
@@ -51,13 +52,18 @@ export class ProjectStore {
     this.notify();
 
     try {
-      const [tasksResp, sessionsResp] = await Promise.all([
+      const [tasksResp, sessionsResp, skillsResp] = await Promise.all([
         fetch(`/api/projects/${this.projectId}/tasks`),
         fetch(`/api/projects/${this.projectId}/sessions`),
+        fetch(`/api/projects/${this.projectId}/skills`),
       ]);
 
       if (tasksResp.ok) this.tasks = await tasksResp.json();
       if (sessionsResp.ok) this.sessions = await sessionsResp.json();
+      if (skillsResp.ok) {
+        const body = await skillsResp.json().catch(() => null);
+        this.skills = Array.isArray(body?.skills) ? body.skills : [];
+      }
       if (this.taskSessions.size > 0) {
         await Promise.all(
           [...this.taskSessions.keys()].map((taskId) => this.fetchTaskSessions(taskId)),
@@ -131,6 +137,23 @@ export class ProjectStore {
       return { ok: true };
     } catch {
       return { error: "Network error" };
+    }
+  }
+
+  /**
+   * Fetch the list of skills available for tab-completion.
+   * Safe to call repeatedly; updates the `skills` field and notifies subscribers.
+   */
+  async fetchSkills(): Promise<void> {
+    try {
+      const resp = await fetch(`/api/projects/${this.projectId}/skills`);
+      if (!resp.ok) return;
+      const body = await resp.json();
+      const skills: InjectedSkillInfo[] = Array.isArray(body.skills) ? body.skills : [];
+      this.skills = skills;
+      this.notify();
+    } catch {
+      // silent — skill autocomplete is best-effort
     }
   }
 

@@ -18,7 +18,8 @@ import {
 import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
-import { getRuntimeAdapter } from "../runtimes/registry.js";
+import { getRuntimeAdapter, type AgentRuntimeMessage } from "../runtimes/registry.js";
+import { stripLeadingSkillBlocks } from "../runtimes/prompt.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -40,6 +41,47 @@ export interface SessionView {
     isStreaming: boolean;
     messageCount: number;
   };
+}
+
+interface TextBlock {
+  type: "text";
+  text: string;
+  [key: string]: unknown;
+}
+
+function isTextBlock(value: unknown): value is TextBlock {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { type?: unknown }).type === "text" &&
+    typeof (value as { text?: unknown }).text === "string"
+  );
+}
+
+/**
+ * Strip leading `<skill>` blocks from a user message's visible text so
+ * historical messages don't render walls of hoisted skill content. The
+ * expanded form stays in the DB for runtime replay / compaction.
+ */
+function stripUserSkillBlocks(msg: AgentRuntimeMessage): AgentRuntimeMessage {
+  if (msg.role !== "user") return msg;
+  const { content } = msg;
+  if (typeof content === "string") {
+    const stripped = stripLeadingSkillBlocks(content);
+    if (stripped === content) return msg;
+    return { ...msg, content: stripped ?? content };
+  }
+  if (Array.isArray(content)) {
+    const idx = content.findIndex(isTextBlock);
+    if (idx < 0) return msg;
+    const block = content[idx] as TextBlock;
+    const stripped = stripLeadingSkillBlocks(block.text);
+    if (stripped === block.text) return msg;
+    const nextContent = content.slice();
+    nextContent[idx] = { ...block, text: stripped ?? block.text };
+    return { ...msg, content: nextContent };
+  }
+  return msg;
 }
 
 export class Sessions {
@@ -70,10 +112,10 @@ export class Sessions {
     };
   }
 
-  getMessages(sessionId: string): any[] | null {
+  getMessages(sessionId: string): AgentRuntimeMessage[] | null {
     const row = getSession(sessionId);
     if (!row) return null;
-    return loadMessages(sessionId);
+    return (loadMessages(sessionId) as AgentRuntimeMessage[]).map(stripUserSkillBlocks);
   }
 
   listByProject(projectId: number): SessionListItem[] {

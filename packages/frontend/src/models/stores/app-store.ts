@@ -11,6 +11,7 @@
 import type { IAppClient } from "../ws-client.js";
 import { ActiveSessionStore } from "./active-session-store.js";
 import { ProjectCollectionStore } from "./project-collection-store.js";
+import type { ProjectStore } from "./project-store.js";
 import { DiffStore } from "./diff-store.js";
 import type { ProjectInfo } from "../ws-client.js";
 import { openInBrowserEvent } from "../../components/events.js";
@@ -156,6 +157,16 @@ export class AppStore {
   get activeSessionStore(): ActiveSessionStore { return this._activeSession; }
   get projectId() { return this._activeSession.projectId; }
   get sessionId() { return this._activeSession.sessionId; }
+
+  /**
+   * The per-project store for the session currently being viewed, or `null`
+   * when no project is active or its store hasn't been loaded yet.
+   */
+  get activeProjectStore(): ProjectStore | null {
+    const projectId = this._activeSession.projectId;
+    if (projectId == null) return null;
+    return this.projectCollectionStore.peekStore(projectId) ?? null;
+  }
 
   // ---- Activity state accessors ---------------------------------------------
 

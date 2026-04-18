@@ -18,6 +18,7 @@ import { registerTaskRoutes } from "./tasks.js";
 import { registerGitRoutes } from "./git.js";
 import { registerPaletteRoutes } from "./palette.js";
 import { registerUploadRoutes } from "./upload.js";
+import { registerSkillRoutes } from "./skills.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerModelsRoutes } from "./models.js";
 import { registerOAuthRoutes } from "./oauth.js";
@@ -68,6 +69,7 @@ export function buildRouter() {
     registerTaskRoutes(r);
     registerGitRoutes(r);
     registerUploadRoutes(r);
+    registerSkillRoutes(r);
   });
 
   return router;

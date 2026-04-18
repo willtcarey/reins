@@ -229,3 +229,15 @@ textarea {
   field-sizing: content;
   max-height: 200px;
 }
+
+/* Skill suggestion popover enter animation */
+@keyframes skill-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
