@@ -9,6 +9,7 @@
  */
 
 import { getDb } from "./db.js";
+import { stripLeadingSkillBlocks } from "./runtimes/prompt.js";
 
 // ---- Types -----------------------------------------------------------------
 
@@ -124,7 +125,8 @@ export function listSessions(projectId: number): SessionListItem[] {
        WHERE s.project_id = ? AND s.task_id IS NULL
        ORDER BY s.updated_at DESC`,
     )
-    .all(projectId);
+    .all(projectId)
+    .map((r) => ({ ...r, first_message: stripLeadingSkillBlocks(r.first_message) }));
 }
 
 export function listTaskSessions(taskId: number): SessionListItem[] {
@@ -153,7 +155,8 @@ export function listTaskSessions(taskId: number): SessionListItem[] {
        WHERE s.task_id = ?
        ORDER BY s.updated_at DESC`,
     )
-    .all(taskId);
+    .all(taskId)
+    .map((r) => ({ ...r, first_message: stripLeadingSkillBlocks(r.first_message) }));
 }
 
 export function listSessionRows(projectId: number): SessionRow[] {
@@ -217,7 +220,7 @@ export function listPaletteItems(): PaletteItem[] {
        ORDER BY s.updated_at DESC`,
     )
     .all();
-  return rows;
+  return rows.map((r) => ({ ...r, firstMessage: stripLeadingSkillBlocks(r.firstMessage) }));
 }
 
 export function updateSessionMeta(

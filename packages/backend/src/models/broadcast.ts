@@ -23,7 +23,7 @@ export type ServerMessage =
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number }
-  | { type: "user_message"; sessionId: string; projectId: number; message: string; skills?: Array<{ name: string; description: string }> }
+  | { type: "user_message"; sessionId: string; projectId: number; message: string }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number };
 
 // ---------------------------------------------------------------------------

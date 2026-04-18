@@ -336,7 +336,7 @@ export class AppShell extends LitElement {
                 ${keyed(store.sessionId, html`<chat-panel
                   class="flex-1 min-h-0 min-w-0"
                   .store=${store.activeSessionStore}
-                  .availableSkills=${store.availableSkills}
+                  .projectStore=${store.activeProjectStore}
                   ?visible=${this.activeTab === "chat"}
                 ></chat-panel>`)}
                 <!-- File tree sidebar (chat tab, wide screens only) -->

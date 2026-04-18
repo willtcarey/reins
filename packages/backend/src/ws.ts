@@ -60,12 +60,9 @@ async function handleWsCommand(
         if (!row) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
         const managed = await ensureSessionOpen(state, sessionId);
 
-        // Refresh skills so newly added ones are pickable mid-session
-        managed.resourceLoader.load();
-        const { expanded, injected } = expandPrompt(message, managed.resourceLoader.skills);
-        const skillsForWire = injected.map(({ name, description }) => ({ name, description }));
+        const { expanded } = expandPrompt(message, sessionId);
 
-        sendToWs(client.ws, { type: "ack", command: "prompt", skills: skillsForWire });
+        sendToWs(client.ws, { type: "ack", command: "prompt" });
 
         // Broadcast the raw user message to other clients so other devices see
         // what was typed. Skill content is not expanded into the visible copy.
@@ -75,7 +72,6 @@ async function handleWsCommand(
           sessionId,
           projectId: row.project_id,
           message: cmd.message,
-          skills: skillsForWire,
         });
 
         void managed.runtime.prompt(expanded).catch((err: unknown) => {
@@ -97,11 +93,9 @@ async function handleWsCommand(
         if (!getSession(sessionId)) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
         const managed = await ensureSessionOpen(state, sessionId);
 
-        managed.resourceLoader.load();
-        const { expanded, injected } = expandPrompt(message, managed.resourceLoader.skills);
-        const skillsForWire = injected.map(({ name, description }) => ({ name, description }));
+        const { expanded } = expandPrompt(message, sessionId);
 
-        sendToWs(client.ws, { type: "ack", command: "steer", skills: skillsForWire });
+        sendToWs(client.ws, { type: "ack", command: "steer" });
         await managed.runtime.steer(expanded);
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);

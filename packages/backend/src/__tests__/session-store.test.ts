@@ -133,6 +133,28 @@ describe("session-store", () => {
     test("returns empty array when no sessions exist", () => {
       expect(listSessions(projectId)).toEqual([]);
     });
+
+    test("strips leading <skill> blocks from first_message preview", () => {
+      createSession("sess-skill", projectId, { agentRuntimeType: "pi" });
+      const expanded =
+        `<skill name="dip" location="/path/SKILL.md">body content</skill>\n\n` +
+        `<skill name="tmux" location="/other/SKILL.md">more body</skill>\n\n` +
+        `/dip start the server`;
+      persistMessages("sess-skill", [
+        { role: "user", content: [{ type: "text", text: expanded }] },
+      ]);
+
+      const list = listSessions(projectId);
+      expect(list).toHaveLength(1);
+      expect(list[0].first_message).toBe("/dip start the server");
+    });
+
+    test("leaves first_message null when absent", () => {
+      createSession("sess-empty", projectId, { agentRuntimeType: "pi" });
+      const list = listSessions(projectId);
+      expect(list).toHaveLength(1);
+      expect(list[0].first_message).toBeNull();
+    });
   });
 
   describe("listTaskSessions", () => {
@@ -147,6 +169,20 @@ describe("session-store", () => {
       const ids = list.map((s) => s.id);
       expect(ids).toContain("task-sess-1");
       expect(ids).toContain("task-sess-2");
+    });
+
+    test("strips leading <skill> blocks from first_message preview", () => {
+      const task = createTask(projectId, "T", null, "task/t");
+      createSession("task-skill", projectId, { agentRuntimeType: "pi", taskId: task.id });
+      const expanded =
+        `<skill name="dip" location="/path/SKILL.md">body</skill>\n\n/dip run it`;
+      persistMessages("task-skill", [
+        { role: "user", content: [{ type: "text", text: expanded }] },
+      ]);
+
+      const list = listTaskSessions(task.id);
+      expect(list).toHaveLength(1);
+      expect(list[0].first_message).toBe("/dip run it");
     });
   });
 
@@ -664,6 +700,19 @@ describe("session-store", () => {
       const items = listPaletteItems();
       expect(items).toHaveLength(1);
       expect(items[0].firstMessage).toBe("My first question");
+    });
+
+    test("strips leading <skill> blocks from firstMessage preview", () => {
+      createSession("sess-skill", projectId, { agentRuntimeType: "pi" });
+      const expanded =
+        `<skill name="dip" location="/path/SKILL.md">body content</skill>\n\n/dip start the server`;
+      persistMessages("sess-skill", [
+        { role: "user", content: [{ type: "text", text: expanded }] },
+      ]);
+
+      const items = listPaletteItems();
+      expect(items).toHaveLength(1);
+      expect(items[0].firstMessage).toBe("/dip start the server");
     });
 
     test("returns null taskTitle for non-task sessions", () => {

@@ -71,9 +71,9 @@ export type ServerMessage =
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number }
-  | { type: "user_message"; sessionId: string; projectId: number; message: string; skills?: InjectedSkillInfo[] }
+  | { type: "user_message"; sessionId: string; projectId: number; message: string }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
-  | { type: "ack"; command: string; skills?: InjectedSkillInfo[] }
+  | { type: "ack"; command: string }
   | { type: "error"; error: string };
 
 /**
@@ -87,7 +87,7 @@ export type FrontendEvent =
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
-  | { type: "ws_ack"; command: string; skills?: InjectedSkillInfo[] }
+  | { type: "ws_ack"; command: string }
   | { type: "ws_error"; error: string };
 
 export type EventListener = (sessionId: string, projectId: number, event: FrontendEvent) => void;
@@ -303,7 +303,6 @@ export class AppClient implements IAppClient {
           listener(msg.sessionId, msg.projectId, {
             type: "user_message",
             message: msg.message,
-            skills: msg.skills,
           });
         }
         break;

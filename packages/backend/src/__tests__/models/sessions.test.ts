@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
-import { createTestManagedSession, createTestResourceLoader } from "../helpers/test-pi.js";
+import { createTestManagedSession } from "../helpers/test-pi.js";
 import { createProject, type Project } from "../../project-store.js";
-import { createSession, getSession } from "../../session-store.js";
+import { createSession, getSession, persistMessages } from "../../session-store.js";
 import { Sessions } from "../../models/sessions.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
@@ -156,7 +156,6 @@ describe("Sessions.setModel", () => {
         isStreaming: () => false,
         close: async () => {},
       },
-      resourceLoader: createTestResourceLoader(),
     });
 
     const result = await model.setModel({
@@ -175,6 +174,33 @@ describe("Sessions.setModel", () => {
     expect(result.model_provider).toBe("anthropic");
     expect(result.model_id).toBe("claude-sonnet-4-20250514");
     expect(result.thinking_level).toBe("high");
+  });
+
+  test("getMessages strips leading <skill> blocks from user messages", () => {
+    createSession("sess-skills", project.id, { agentRuntimeType: "pi" });
+    const skillBlock = `<skill name="dip" path="/tmp/dip/SKILL.md">\ndip body\n</skill>`;
+    persistMessages("sess-skills", [
+      {
+        role: "user",
+        content: [{ type: "text", text: `${skillBlock}\n\n/dip start` }],
+      },
+      {
+        role: "user",
+        content: "just text",
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: `${skillBlock}\n\nkeep me` }],
+      },
+    ]);
+
+    const messages = model.getMessages("sess-skills")!;
+    expect(messages).toHaveLength(3);
+
+    expect((messages[0]!.content as Array<{ text: string }>)[0]!.text).toBe("/dip start");
+    expect(messages[1]!.content).toBe("just text");
+    // Assistant messages are not stripped.
+    expect((messages[2]!.content as Array<{ text: string }>)[0]!.text).toBe(`${skillBlock}\n\nkeep me`);
   });
 
   test("rejects unknown providers", async () => {

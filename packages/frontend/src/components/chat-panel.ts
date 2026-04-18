@@ -10,16 +10,16 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { FrontendEvent } from "../models/ws-client.js";
 import type { ActiveSessionStore } from "../models/stores/active-session-store.js";
+import type { ProjectStore } from "../models/stores/project-store.js";
 import "./markdown-content.js";
 import "./session-model-picker.js";
+import "./skill-suggest.js";
 import { getToolRenderer } from "./tools/index.js";
 import {
   applyChatEvent,
-  parseLeadingSkillBlocks,
   type AgentMessage,
   type AssistantMessage,
   type CompactionSummaryMessage,
-  type InjectedSkill,
   type UserMessage,
   type ToolResultMessage,
   type TextContent,
@@ -27,7 +27,7 @@ import {
   type ToolBlockData,
   type StreamingBlock,
 } from "../models/chat-state.js";
-import type { InjectedSkillInfo } from "../models/ws-client.js";
+import type { SkillSuggest, SkillInsertDetail } from "./skill-suggest.js";
 
 // ---- Component --------------------------------------------------------------
 
@@ -41,13 +41,14 @@ export class ChatPanel extends LitElement {
   @property({ attribute: false })
   store: ActiveSessionStore | null = null;
 
+  /** Per-project store for the active session's project. Passed through to
+   *  `<skill-suggest>` so it can read the available skills. */
+  @property({ attribute: false })
+  projectStore: ProjectStore | null = null;
+
   /** Whether this panel is currently visible (active tab). */
   @property({ type: Boolean })
   visible = false;
-
-  /** Skills available for tab-completion suggestions. */
-  @property({ attribute: false })
-  availableSkills: InjectedSkillInfo[] = [];
 
   @state() private messages: AgentMessage[] = [];
   @state() private isStreaming = false;
@@ -57,17 +58,10 @@ export class ChatPanel extends LitElement {
   @state() private isCompacting = false;
   @state() private errorMessage = "";
 
-  // ---- Skill autocomplete --------------------------------------------------
-  @state() private skillSuggestOpen = false;
-  @state() private skillSuggestions: InjectedSkillInfo[] = [];
-  @state() private skillSuggestIndex = 0;
-  /** The `/name` token currently being edited (without the leading `/`). */
-  private skillSuggestQuery = "";
-  /** Start index of the `/` that opened the current suggestion. */
-  private skillSuggestStart = -1;
   private errorTimeout?: ReturnType<typeof setTimeout>;
 
   @query("textarea") private textarea!: HTMLTextAreaElement;
+  @query("skill-suggest") private skillSuggest?: SkillSuggest;
 
   private unsubscribeEvent?: () => void;
   private unsubscribeStore?: () => void;
@@ -172,13 +166,9 @@ export class ChatPanel extends LitElement {
 
   private handleAgentEvent(event: FrontendEvent) {
     // ws_error is handled locally (needs DOM method); non-chat events
-    // (task_updated, session_created) are ignored by this component.
+    // (task_updated, session_created, ws_ack, etc.) are ignored by this component.
     if (event.type === "ws_error") {
       this.showError(event.error || "Something went wrong");
-      return;
-    }
-    if (event.type === "ws_ack") {
-      this.handleWsAck(event);
       return;
     }
     if (
@@ -186,6 +176,7 @@ export class ChatPanel extends LitElement {
       || event.type === "session_created"
       || event.type === "session_updated"
       || event.type === "open_file"
+      || event.type === "ws_ack"
     ) {
       return;
     }
@@ -219,41 +210,18 @@ export class ChatPanel extends LitElement {
       : this.store.prompt(text);
     if (!sent) return;
 
-    const timestamp = Date.now();
     this.messages = [
       ...this.messages,
       {
         role: "user",
         content: text,
-        timestamp,
+        timestamp: Date.now(),
       },
     ];
-    // Track the locally-appended user message so we can attach injected skill
-    // metadata when the backend's ack comes back.
-    this._pendingUserMessageTimestamp = timestamp;
 
     this.inputText = "";
     this.shouldAutoScroll = true;
-    this.closeSkillSuggest();
-  }
-
-  /** Timestamp of the most recent optimistically-appended user message. */
-  private _pendingUserMessageTimestamp: number | null = null;
-
-  private handleWsAck(event: { type: "ws_ack"; command: string; skills?: InjectedSkillInfo[] }) {
-    const ts = this._pendingUserMessageTimestamp;
-    if (ts == null) return;
-    if (event.command !== "prompt" && event.command !== "steer") return;
-    this._pendingUserMessageTimestamp = null;
-    if (!event.skills || event.skills.length === 0) return;
-
-    const next = this.messages.map((m) => {
-      if (m.role === "user" && m.timestamp === ts) {
-        return { ...m, injectedSkills: event.skills };
-      }
-      return m;
-    });
-    this.messages = next;
+    this.skillSuggest?.close();
   }
 
   private handleStop() {
@@ -261,93 +229,44 @@ export class ChatPanel extends LitElement {
   }
 
   private handleKeyDown(e: KeyboardEvent) {
-    if (this.skillSuggestOpen && this.skillSuggestions.length > 0) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        this.skillSuggestIndex = (this.skillSuggestIndex + 1) % this.skillSuggestions.length;
-        return;
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        this.skillSuggestIndex =
-          (this.skillSuggestIndex - 1 + this.skillSuggestions.length) % this.skillSuggestions.length;
-        return;
-      }
-      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
-        e.preventDefault();
-        this.acceptSkillSuggestion();
-        return;
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        this.closeSkillSuggest();
-        return;
-      }
-    }
+    if (this.skillSuggest?.handleKey(e)) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       this.handleSend();
     }
   }
 
+  /**
+   * Range of the `/name` token the caret is currently inside, tracked so we
+   * can replace it when `skill-suggest` emits an insertion. `null` when the
+   * caret is not in a completable token.
+   */
+  private skillTokenRange: { start: number; end: number } | null = null;
+
   private handleInput(e: Event) {
-    if (e.target instanceof HTMLTextAreaElement) {
-      this.inputText = e.target.value;
-      this.updateSkillSuggest(e.target);
+    if (!(e.target instanceof HTMLTextAreaElement)) return;
+    this.inputText = e.target.value;
+    const caret = e.target.selectionStart ?? this.inputText.length;
+
+    const token = findSkillTokenAt(this.inputText, caret);
+    if (token === null) {
+      this.skillTokenRange = null;
+      this.skillSuggest?.search(null);
+      return;
     }
+    this.skillTokenRange = { start: token.start, end: token.end };
+    this.skillSuggest?.search(token.query);
   }
 
-  // ---- Skill autocomplete -------------------------------------------------
-
-  private updateSkillSuggest(textarea: HTMLTextAreaElement) {
-    const caret = textarea.selectionStart ?? this.inputText.length;
-    const value = this.inputText;
-    // Find the `/` starting the token the caret is inside.
-    let start = -1;
-    for (let i = caret - 1; i >= 0; i--) {
-      const ch = value[i];
-      if (ch === "/") { start = i; break; }
-      if (!/[a-z0-9-]/i.test(ch)) break;
-    }
-    if (start === -1) { this.closeSkillSuggest(); return; }
-    // Require start-of-string or whitespace before the `/`.
-    const prev = start === 0 ? "" : value[start - 1];
-    if (prev !== "" && !/\s/.test(prev)) { this.closeSkillSuggest(); return; }
-    // Everything after `/` up to caret must be a valid partial name.
-    const partial = value.slice(start + 1, caret);
-    if (!/^[a-z0-9-]*$/i.test(partial)) { this.closeSkillSuggest(); return; }
-
-    const query = partial.toLowerCase();
-    const matches = this.availableSkills.filter((s) => s.name.toLowerCase().startsWith(query));
-    if (matches.length === 0) { this.closeSkillSuggest(); return; }
-
-    this.skillSuggestQuery = partial;
-    this.skillSuggestStart = start;
-    this.skillSuggestions = matches;
-    if (this.skillSuggestIndex >= matches.length) this.skillSuggestIndex = 0;
-    this.skillSuggestOpen = true;
-  }
-
-  private closeSkillSuggest() {
-    if (!this.skillSuggestOpen && this.skillSuggestions.length === 0) return;
-    this.skillSuggestOpen = false;
-    this.skillSuggestions = [];
-    this.skillSuggestIndex = 0;
-    this.skillSuggestStart = -1;
-    this.skillSuggestQuery = "";
-  }
-
-  private acceptSkillSuggestion(index?: number) {
-    const picked = this.skillSuggestions[index ?? this.skillSuggestIndex];
-    if (!picked || this.skillSuggestStart < 0) return;
-    const before = this.inputText.slice(0, this.skillSuggestStart);
-    const afterStart = this.skillSuggestStart + 1 + this.skillSuggestQuery.length;
-    const after = this.inputText.slice(afterStart);
-    const insertion = `/${picked.name} `;
+  private handleSkillInsert(e: CustomEvent<SkillInsertDetail>) {
+    const range = this.skillTokenRange;
+    if (!range) return;
+    const insertion = `/${e.detail.name} `;
+    const before = this.inputText.slice(0, range.start);
+    const after = this.inputText.slice(range.end);
     this.inputText = before + insertion + after;
-
-    const caret = before.length + insertion.length;
-    this.closeSkillSuggest();
+    const caret = range.start + insertion.length;
+    this.skillTokenRange = null;
 
     // Restore caret after the DOM reflects the new value.
     queueMicrotask(() => {
@@ -385,53 +304,16 @@ export class ChatPanel extends LitElement {
 
 
   private renderUserMessage(msg: UserMessage) {
-    const rawText = typeof msg.content === "string"
+    const text = typeof msg.content === "string"
       ? msg.content
       : msg.content
           .filter((c): c is TextContent => c.type === "text")
           .map((c) => c.text)
           .join("\n");
 
-    // Historical messages (loaded from the DB) have the raw `<skill>` blocks
-    // in content. Strip them here and derive pills from the `name="..."`
-    // attributes. Live messages use `injectedSkills` from the ack/broadcast.
-    const { visible, skills: parsedSkills } = parseLeadingSkillBlocks(rawText);
-    const pills: InjectedSkill[] = msg.injectedSkills && msg.injectedSkills.length > 0
-      ? msg.injectedSkills
-      : parsedSkills;
-
     return html`
-      <div class="flex flex-col items-end mb-3">
-        ${pills.length > 0 ? html`
-          <div class="flex flex-wrap gap-1 justify-end mb-1 max-w-[80%]">
-            ${pills.map((skill) => this.renderSkillPill(skill, msg.timestamp))}
-          </div>
-        ` : nothing}
-        <div class="bg-blue-600 text-white rounded-2xl rounded-br-md px-3 py-1.5 max-w-[80%] text-sm whitespace-pre-wrap">${visible}</div>
-      </div>
-    `;
-  }
-
-  private renderSkillPill(skill: InjectedSkill, messageTimestamp: number) {
-    const id = `skill-${messageTimestamp}-${skill.name}`;
-    const expanded = this.expandedSections.has(id);
-    const hasDescription = !!skill.description;
-    return html`
-      <div class="flex flex-col items-end">
-        <button
-          class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-700/80 border border-zinc-600 text-[11px] text-zinc-200 ${hasDescription ? "hover:bg-zinc-600 cursor-pointer" : "cursor-default"}"
-          title="${hasDescription ? (expanded ? "Hide description" : "Show description") : "Skill injected"}"
-          ?disabled=${!hasDescription}
-          @click=${() => hasDescription && this.toggleSection(id)}
-        >
-          <span class="font-mono">/${skill.name}</span>
-          ${hasDescription ? html`<span class="text-zinc-400 font-mono text-[10px]">${expanded ? "▼" : "▶"}</span>` : nothing}
-        </button>
-        ${expanded && hasDescription ? html`
-          <div class="mt-1 max-w-[320px] bg-zinc-800 border border-zinc-600 rounded-md px-2 py-1 text-[11px] text-zinc-300">
-            ${skill.description}
-          </div>
-        ` : nothing}
+      <div class="flex justify-end mb-3">
+        <div class="bg-blue-600 text-white rounded-2xl rounded-br-md px-3 py-1.5 max-w-[80%] text-sm whitespace-pre-wrap">${text}</div>
       </div>
     `;
   }
@@ -578,32 +460,6 @@ export class ChatPanel extends LitElement {
     `;
   }
 
-  private renderSkillSuggestions() {
-    if (!this.skillSuggestOpen || this.skillSuggestions.length === 0) return nothing;
-    return html`
-      <div class="absolute left-0 right-0 bottom-[calc(100%+0.5rem)] z-20 bg-zinc-900 border border-zinc-700 rounded-lg overflow-hidden shadow-2xl shadow-black/60 origin-bottom animate-[skill-popover-in_120ms_ease-out]">
-        <div class="px-3 py-1 bg-blue-500/10 border-b border-blue-500/30 text-[10px] uppercase tracking-wide text-blue-300/80 font-semibold">
-          Skills
-        </div>
-        <div class="max-h-60 overflow-y-auto">
-          ${this.skillSuggestions.map((s, i) => {
-            const selected = i === this.skillSuggestIndex;
-            return html`
-              <button
-                class="flex flex-col w-full items-start gap-0.5 text-left px-3 py-1.5 text-sm border-l-2 cursor-pointer ${selected ? "bg-zinc-800 border-blue-400" : "border-transparent hover:bg-zinc-800/60"}"
-                @mousedown=${(e: Event) => { e.preventDefault(); this.acceptSkillSuggestion(i); }}
-                @mouseenter=${() => { this.skillSuggestIndex = i; }}
-              >
-                <span class="font-mono text-zinc-100">/${s.name}</span>
-                ${s.description ? html`<span class="text-xs text-zinc-400 leading-tight">${s.description}</span>` : nothing}
-              </button>
-            `;
-          })}
-        </div>
-      </div>
-    `;
-  }
-
   override render() {
     const sessionId = this.store?.sessionId ?? "";
     const sessionData = this.store?.sessionData;
@@ -643,7 +499,10 @@ export class ChatPanel extends LitElement {
             </div>
           ` : nothing}
           <div class="relative">
-            ${this.renderSkillSuggestions()}
+            <skill-suggest
+              .store=${this.projectStore}
+              @skill-insert=${this.handleSkillInsert}
+            ></skill-suggest>
             <div class="flex gap-2 items-end">
               <textarea
               class="flex-1 bg-zinc-800 text-zinc-100 rounded-lg px-3 py-2 text-base resize-none outline-none focus:ring-1 focus:ring-blue-500 placeholder-zinc-500"
@@ -652,7 +511,7 @@ export class ChatPanel extends LitElement {
               .value=${this.inputText}
               @input=${this.handleInput}
               @keydown=${this.handleKeyDown}
-              @blur=${() => setTimeout(() => this.closeSkillSuggest(), 100)}
+              @blur=${() => setTimeout(() => this.skillSuggest?.close(), 100)}
             ></textarea>
             ${this.isStreaming ? html`
               <button
@@ -675,6 +534,35 @@ export class ChatPanel extends LitElement {
       </div>
     `;
   }
+}
+
+/**
+ * If the caret sits inside a `/name` skill token (at the start of the input
+ * or immediately after whitespace), return the token's range in `text` and
+ * the partial name typed so far. Returns `null` if no completable token is
+ * under the caret.
+ */
+function findSkillTokenAt(
+  text: string,
+  caret: number,
+): { start: number; end: number; query: string } | null {
+  // Walk left from the caret to find the `/` that opened the token.
+  let start = -1;
+  for (let i = caret - 1; i >= 0; i--) {
+    const ch = text[i];
+    if (ch === "/") { start = i; break; }
+    if (!/[a-z0-9-]/i.test(ch)) return null;
+  }
+  if (start === -1) return null;
+
+  // The `/` must be at the start of input or directly follow whitespace.
+  const prev = start === 0 ? "" : text[start - 1];
+  if (prev !== "" && !/\s/.test(prev)) return null;
+
+  const query = text.slice(start + 1, caret);
+  if (!/^[a-z0-9-]*$/i.test(query)) return null;
+
+  return { start, end: start + 1 + query.length, query };
 }
 
 declare global {

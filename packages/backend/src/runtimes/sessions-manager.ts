@@ -20,7 +20,6 @@ import { getSetting } from "../settings-store.js";
 import { parseThinkingLevel } from "../models/model-settings.js";
 import { attachRuntimeBroadcastObserver } from "./runtime-broadcast-observer.js";
 import { attachRuntimePersistenceObserver } from "./runtime-persistence-observer.js";
-import { ReinsResourceLoader } from "./resource-loader.js";
 
 function createSessionFactory(state: ServerState) {
   return (projectId: number, projectDir: string, opts?: CreateSessionOpts) =>
@@ -151,14 +150,10 @@ async function createManagedSessionRuntime(params: {
     return originalClose();
   };
 
-  const resourceLoader = new ReinsResourceLoader({ cwd: projectDir });
-  resourceLoader.load();
-
   const managed: ManagedSession = {
     id: sessionId,
     runtime,
     lastActivity: Date.now(),
-    resourceLoader,
   };
 
   state.sessions.set(sessionId, managed);
