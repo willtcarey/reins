@@ -194,12 +194,21 @@ export class ProjectTasks {
 
   /**
    * Reopen a closed task and broadcast the change.
+   * Recreates the git branch if it was cleaned up during close.
    * Throws if the task doesn't exist.
    */
-  reopen(taskId: number): TaskRow {
+  async reopen(taskId: number): Promise<TaskRow> {
     if (!this.get(taskId)) throw new TaskNotFoundError();
     const task = setTaskStatus(taskId, "open");
     if (!task) throw new TaskNotFoundError();
+
+    // Recreate the branch if it was deleted during reconciliation
+    const exists = await branchExists(this.projectDir, task.branch_name);
+    if (!exists) {
+      const startPoint = task.base_commit ?? this.baseBranch;
+      await createBranch(this.projectDir, task.branch_name, startPoint);
+    }
+
     this.broadcast({ type: "task_updated", projectId: this.projectId });
     return task;
   }

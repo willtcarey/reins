@@ -122,8 +122,9 @@ export const TASK_FUNCTIONS: ApiFunctionDef[] = [
     description: "Reopen a closed task. Throws if the task is not found.",
     parameters: Type.Object({ taskId: Type.Number() }),
     returns: TaskSchema,
+    async: true,
     tags: ["tasks", "reopen", "write", "status"],
-    execute: (params, ctx) => {
+    execute: async (params, ctx) => {
       return projectModel(ctx).tasks().reopen(params.taskId);
     },
   }),
