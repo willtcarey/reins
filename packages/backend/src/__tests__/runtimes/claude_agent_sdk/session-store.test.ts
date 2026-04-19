@@ -9,21 +9,27 @@ function msg(partial: Record<string, unknown>): AgentRuntimeMessage {
   return partial as AgentRuntimeMessage;
 }
 
+/** Strip uuid/parentUuid from entries so existing assertions stay clean. */
+function stripUuids<T extends Record<string, unknown>>(entry: T): Omit<T, "uuid" | "parentUuid"> {
+  const { uuid, parentUuid, ...rest } = entry;
+  return rest as Omit<T, "uuid" | "parentUuid">;
+}
+
 describe("toSessionStoreEntries", () => {
   test("simple user message", () => {
     const result = toSessionStoreEntries([
       msg({ role: "user", content: [{ type: "text", text: "hello" }] }),
     ]);
 
-    expect(result).toEqual([
-      {
-        type: "user",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: "hello" }],
-        },
+    expect(stripUuids(result[0])).toEqual({
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
       },
-    ]);
+    });
+    expect(result[0].uuid).toEqual(expect.any(String));
+    expect(result[0].parentUuid).toBeUndefined();
   });
 
   test("simple assistant message with text only and end_turn", () => {
@@ -35,16 +41,16 @@ describe("toSessionStoreEntries", () => {
       }),
     ]);
 
-    expect(result).toEqual([
-      {
-        type: "assistant",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "hi there" }],
-          stop_reason: "end_turn",
-        },
+    expect(stripUuids(result[0])).toEqual({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "hi there" }],
+        stop_reason: "end_turn",
       },
-    ]);
+    });
+    expect(result[0].uuid).toEqual(expect.any(String));
+    expect(result[0].parentUuid).toBeUndefined();
   });
 
   test("assistant with builtin tool call — denormalizes tool name and args", () => {
@@ -64,24 +70,22 @@ describe("toSessionStoreEntries", () => {
       }),
     ]);
 
-    expect(result).toEqual([
-      {
-        type: "assistant",
-        message: {
-          role: "assistant",
-          content: [
-            { type: "text", text: "Let me read that." },
-            {
-              type: "tool_use",
-              id: "tc1",
-              name: "Edit",
-              input: { file_path: "/foo/bar.ts", old_string: "abc", new_string: "xyz" },
-            },
-          ],
-          stop_reason: "tool_use",
-        },
+    expect(stripUuids(result[0])).toEqual({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Let me read that." },
+          {
+            type: "tool_use",
+            id: "tc1",
+            name: "Edit",
+            input: { file_path: "/foo/bar.ts", old_string: "abc", new_string: "xyz" },
+          },
+        ],
+        stop_reason: "tool_use",
       },
-    ]);
+    });
   });
 
   test("assistant with custom tool call — adds mcp prefix", () => {
@@ -100,7 +104,7 @@ describe("toSessionStoreEntries", () => {
       }),
     ]);
 
-    expect(result[0]).toEqual({
+    expect(stripUuids(result[0])).toEqual({
       type: "assistant",
       message: {
         role: "assistant",
@@ -127,22 +131,20 @@ describe("toSessionStoreEntries", () => {
       }),
     ]);
 
-    expect(result).toEqual([
-      {
-        type: "user",
-        message: {
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: "tc1",
-              content: "file contents",
-              is_error: false,
-            },
-          ],
-        },
+    expect(stripUuids(result[0])).toEqual({
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "tc1",
+            content: "file contents",
+            is_error: false,
+          },
+        ],
       },
-    ]);
+    });
   });
 
   test("multiple consecutive tool results merged into one user entry", () => {
@@ -168,7 +170,7 @@ describe("toSessionStoreEntries", () => {
     ]);
 
     expect(result).toHaveLength(1);
-    expect(result[0]).toEqual({
+    expect(stripUuids(result[0])).toEqual({
       type: "user",
       message: {
         role: "user",
@@ -190,15 +192,13 @@ describe("toSessionStoreEntries", () => {
       }),
     ]);
 
-    expect(result).toEqual([
-      {
-        type: "user",
-        message: {
-          role: "user",
-          content: "This is the summary.",
-        },
+    expect(stripUuids(result[0])).toEqual({
+      type: "user",
+      message: {
+        role: "user",
+        content: "This is the summary.",
       },
-    ]);
+    });
   });
 
   test("compaction summary falls back to content string", () => {
@@ -209,15 +209,13 @@ describe("toSessionStoreEntries", () => {
       }),
     ]);
 
-    expect(result).toEqual([
-      {
-        type: "user",
-        message: {
-          role: "user",
-          content: "Fallback content.",
-        },
+    expect(stripUuids(result[0])).toEqual({
+      type: "user",
+      message: {
+        role: "user",
+        content: "Fallback content.",
       },
-    ]);
+    });
   });
 
   test("full conversation round-trip", () => {
@@ -252,13 +250,13 @@ describe("toSessionStoreEntries", () => {
     expect(result).toHaveLength(4);
 
     // User message
-    expect(result[0]).toEqual({
+    expect(stripUuids(result[0])).toEqual({
       type: "user",
       message: { role: "user", content: [{ type: "text", text: "Read /foo" }] },
     });
 
     // Assistant with tool call
-    expect(result[1]).toEqual({
+    expect(stripUuids(result[1])).toEqual({
       type: "assistant",
       message: {
         role: "assistant",
@@ -271,7 +269,7 @@ describe("toSessionStoreEntries", () => {
     });
 
     // Tool result
-    expect(result[2]).toEqual({
+    expect(stripUuids(result[2])).toEqual({
       type: "user",
       message: {
         role: "user",
@@ -282,7 +280,7 @@ describe("toSessionStoreEntries", () => {
     });
 
     // Final assistant
-    expect(result[3]).toEqual({
+    expect(stripUuids(result[3])).toEqual({
       type: "assistant",
       message: {
         role: "assistant",
@@ -304,7 +302,7 @@ describe("toSessionStoreEntries", () => {
       }),
     ]);
 
-    expect(result[0]).toEqual({
+    expect(stripUuids(result[0])).toEqual({
       type: "assistant",
       message: {
         role: "assistant",
@@ -313,6 +311,83 @@ describe("toSessionStoreEntries", () => {
           { type: "text", text: "Here's my answer." },
         ],
         stop_reason: "end_turn",
+      },
+    });
+  });
+
+  test("consecutive assistant messages are merged (thinking + tool call)", () => {
+    const result = toSessionStoreEntries([
+      msg({
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "Let me read that file..." }],
+      }),
+      msg({
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "tc1", name: "read", arguments: { path: "/foo" } },
+        ],
+        stopReason: "toolUse",
+      }),
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(stripUuids(result[0])).toEqual({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "Let me read that file..." },
+          { type: "tool_use", id: "tc1", name: "Read", input: { file_path: "/foo" } },
+        ],
+        stop_reason: "tool_use",
+      },
+    });
+  });
+
+  test("split assistant messages produce correct entry count: user → assistant(thinking) → assistant(tool_call) → toolResult → assistant(text) = 4 entries", () => {
+    const result = toSessionStoreEntries([
+      msg({ role: "user", content: [{ type: "text", text: "Read /foo" }] }),
+      msg({
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "I should read the file." }],
+      }),
+      msg({
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "tc1", name: "read", arguments: { path: "/foo" } },
+        ],
+        stopReason: "toolUse",
+      }),
+      msg({
+        role: "toolResult",
+        toolCallId: "tc1",
+        content: [{ type: "text", text: "file contents" }],
+        isError: false,
+      }),
+      msg({
+        role: "assistant",
+        content: [{ type: "text", text: "Here are the contents." }],
+        stopReason: "endTurn",
+      }),
+    ]);
+
+    // 4 entries: user, merged assistant, tool result, final assistant
+    expect(result).toHaveLength(4);
+    expect(result[0].type).toBe("user");
+    expect(result[1].type).toBe("assistant");
+    expect(result[2].type).toBe("user"); // tool result
+    expect(result[3].type).toBe("assistant");
+
+    // The merged assistant entry has both thinking and tool_use blocks
+    expect(stripUuids(result[1])).toEqual({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "I should read the file." },
+          { type: "tool_use", id: "tc1", name: "Read", input: { file_path: "/foo" } },
+        ],
+        stop_reason: "tool_use",
       },
     });
   });
@@ -346,7 +421,7 @@ describe("toSessionStoreEntries", () => {
       }),
     ]);
 
-    expect(result[0]).toEqual({
+    expect(stripUuids(result[0])).toEqual({
       type: "assistant",
       message: {
         role: "assistant",
@@ -376,7 +451,7 @@ describe("toSessionStoreEntries", () => {
       }),
     ]);
 
-    expect(result[0]).toEqual({
+    expect(stripUuids(result[0])).toEqual({
       type: "user",
       message: {
         role: "user",
@@ -411,7 +486,7 @@ describe("toSessionStoreEntries", () => {
       }),
     ]);
 
-    expect(result[0]).toEqual({
+    expect(stripUuids(result[0])).toEqual({
       type: "assistant",
       message: {
         role: "assistant",
@@ -426,6 +501,47 @@ describe("toSessionStoreEntries", () => {
         stop_reason: "tool_use",
       },
     });
+  });
+
+  test("entries have uuid/parentUuid chain", () => {
+    const result = toSessionStoreEntries([
+      msg({ role: "user", content: [{ type: "text", text: "hello" }] }),
+      msg({
+        role: "assistant",
+        content: [
+          { type: "text", text: "Reading..." },
+          { type: "toolCall", id: "tc1", name: "read", arguments: { path: "/foo" } },
+        ],
+        stopReason: "toolUse",
+      }),
+      msg({
+        role: "toolResult",
+        toolCallId: "tc1",
+        content: [{ type: "text", text: "contents" }],
+        isError: false,
+      }),
+      msg({
+        role: "assistant",
+        content: [{ type: "text", text: "Done." }],
+        stopReason: "endTurn",
+      }),
+    ]);
+
+    expect(result).toHaveLength(4);
+
+    // First entry: uuid present, no parentUuid
+    expect(result[0].uuid).toEqual(expect.any(String));
+    expect(result[0].parentUuid).toBeUndefined();
+
+    // Each subsequent entry links back to the previous
+    for (let i = 1; i < result.length; i++) {
+      expect(result[i].uuid).toEqual(expect.any(String));
+      expect(result[i].parentUuid).toBe(result[i - 1].uuid);
+    }
+
+    // All UUIDs are unique
+    const uuids = result.map((e) => e.uuid);
+    expect(new Set(uuids).size).toBe(uuids.length);
   });
 });
 
@@ -458,11 +574,11 @@ describe("createSessionStore", () => {
     const result = await store.load({ projectKey: "test", sessionId: "sess-1" });
     expect(result).not.toBeNull();
     expect(result).toHaveLength(2);
-    expect(result![0]).toEqual({
+    expect(stripUuids(result![0])).toEqual({
       type: "user",
       message: { role: "user", content: [{ type: "text", text: "hello" }] },
     });
-    expect(result![1]).toEqual({
+    expect(stripUuids(result![1])).toEqual({
       type: "assistant",
       message: {
         role: "assistant",
@@ -470,6 +586,11 @@ describe("createSessionStore", () => {
         stop_reason: "end_turn",
       },
     });
+    // Verify UUID chain
+    expect(result![0].uuid).toEqual(expect.any(String));
+    expect(result![0].parentUuid).toBeUndefined();
+    expect(result![1].uuid).toEqual(expect.any(String));
+    expect(result![1].parentUuid).toBe(result![0].uuid);
   });
 
   test("append() is a no-op", async () => {

@@ -39,8 +39,16 @@ export function toSessionStoreEntries(messages: AgentRuntimeMessage[]): SessionS
     }
 
     if (msg.role === "assistant") {
-      out.push(buildAssistantEntry(msg));
+      // Merge consecutive assistant messages into a single entry.
+      // The SDK splits thinking + tool_use into separate messages, but the
+      // JSONL format expects them combined in one assistant turn.
+      const batch: AgentRuntimeMessage[] = [msg];
       i++;
+      while (i < messages.length && messages[i].role === "assistant") {
+        batch.push(messages[i]);
+        i++;
+      }
+      out.push(buildAssistantEntry(batch));
       continue;
     }
 
@@ -65,6 +73,17 @@ export function toSessionStoreEntries(messages: AgentRuntimeMessage[]): SessionS
     i++;
   }
 
+  // Assign uuid/parentUuid chain so the SDK can reconstruct conversation order
+  let prevUuid: string | undefined;
+  for (const entry of out) {
+    const uuid = crypto.randomUUID();
+    entry.uuid = uuid;
+    if (prevUuid !== undefined) {
+      entry.parentUuid = prevUuid;
+    }
+    prevUuid = uuid;
+  }
+
   return out;
 }
 
@@ -82,13 +101,19 @@ function buildUserEntry(msg: AgentRuntimeMessage): SessionStoreEntry {
   };
 }
 
-function buildAssistantEntry(msg: AgentRuntimeMessage): SessionStoreEntry {
+function buildAssistantEntry(msgs: AgentRuntimeMessage[]): SessionStoreEntry {
+  const content = msgs.flatMap((m) =>
+    Array.isArray(m.content) ? m.content.map(denormContentBlock) : [],
+  );
+  // Use the last message's stopReason (e.g. tool_use or end_turn)
+  const lastStop = msgs[msgs.length - 1].stopReason;
+
   return {
     type: "assistant",
     message: {
       role: "assistant",
-      content: Array.isArray(msg.content) ? msg.content.map(denormContentBlock) : [],
-      stop_reason: denormStopReason(msg.stopReason),
+      content,
+      stop_reason: denormStopReason(lastStop),
     },
   };
 }
