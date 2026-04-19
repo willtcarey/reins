@@ -202,11 +202,15 @@ export class ProjectTasks {
     const task = setTaskStatus(taskId, "open");
     if (!task) throw new TaskNotFoundError();
 
-    // Recreate the branch if it was deleted during reconciliation
+    // Recreate the branch if it was deleted during reconciliation,
+    // starting from the current base branch tip and updating base_commit.
     const exists = await branchExists(this.projectDir, task.branch_name);
     if (!exists) {
-      const startPoint = task.base_commit ?? this.baseBranch;
-      await createBranch(this.projectDir, task.branch_name, startPoint);
+      await createBranch(this.projectDir, task.branch_name, this.baseBranch);
+      const newBase = await revParse(this.projectDir, this.baseBranch);
+      const updated = storeUpdateTask(taskId, { base_commit: newBase });
+      this.broadcast({ type: "task_updated", projectId: this.projectId });
+      return updated ?? task;
     }
 
     this.broadcast({ type: "task_updated", projectId: this.projectId });
