@@ -1,6 +1,9 @@
-import { describe, expect, test } from "bun:test";
-import { toSessionStoreEntries } from "../../../runtimes/claude_agent_sdk/session-store.js";
+import { describe, expect, test, beforeEach } from "bun:test";
+import { toSessionStoreEntries, createSessionStore } from "../../../runtimes/claude_agent_sdk/session-store.js";
 import type { AgentRuntimeMessage } from "../../../runtimes/registry.js";
+import { useTestDb } from "../../helpers/test-db.js";
+import { createProject } from "../../../project-store.js";
+import { createSession, persistMessages } from "../../../session-store.js";
 
 function msg(partial: Record<string, unknown>): AgentRuntimeMessage {
   return partial as AgentRuntimeMessage;
@@ -423,5 +426,63 @@ describe("toSessionStoreEntries", () => {
         stop_reason: "tool_use",
       },
     });
+  });
+});
+
+describe("createSessionStore", () => {
+  useTestDb();
+
+  let projectId: number;
+
+  beforeEach(() => {
+    const project = createProject("Test Project", "/tmp/test-project");
+    projectId = project.id;
+  });
+
+  test("load() returns null when no messages exist", async () => {
+    const store = createSessionStore();
+    createSession("sess-empty", projectId, { agentRuntimeType: "claude_agent_sdk" });
+
+    const result = await store.load({ projectKey: "test", sessionId: "sess-empty" });
+    expect(result).toBeNull();
+  });
+
+  test("load() returns translated entries when messages exist", async () => {
+    const store = createSessionStore();
+    createSession("sess-1", projectId, { agentRuntimeType: "claude_agent_sdk" });
+    persistMessages("sess-1", [
+      { role: "user", content: [{ type: "text", text: "hello" }] },
+      { role: "assistant", content: [{ type: "text", text: "hi" }], stopReason: "endTurn" },
+    ]);
+
+    const result = await store.load({ projectKey: "test", sessionId: "sess-1" });
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(2);
+    expect(result![0]).toEqual({
+      type: "user",
+      message: { role: "user", content: [{ type: "text", text: "hello" }] },
+    });
+    expect(result![1]).toEqual({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "hi" }],
+        stop_reason: "end_turn",
+      },
+    });
+  });
+
+  test("append() is a no-op", async () => {
+    const store = createSessionStore();
+    await store.append(
+      { projectKey: "test", sessionId: "sess-1" },
+      [{ type: "user", message: { role: "user", content: "test" } }],
+    );
+  });
+
+  test("listSubkeys() returns empty array", async () => {
+    const store = createSessionStore();
+    const result = await store.listSubkeys!({ projectKey: "test", sessionId: "sess-1" });
+    expect(result).toEqual([]);
   });
 });

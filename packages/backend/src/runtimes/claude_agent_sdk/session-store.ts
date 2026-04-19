@@ -1,5 +1,6 @@
-import type { SessionStoreEntry } from "@anthropic-ai/claude-agent-sdk";
+import type { SessionStore, SessionKey, SessionStoreEntry } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentRuntimeMessage } from "../registry.js";
+import { loadMessagesForLLM } from "../../session-store.js";
 
 // ---------------------------------------------------------------------------
 // Constants — reverse of the maps in events.ts
@@ -212,4 +213,33 @@ function extractToolResultContent(content: unknown): unknown {
     }
   }
   return content;
+}
+
+// ---------------------------------------------------------------------------
+// SessionStore factory
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a SessionStore backed by our SQLite database.
+ *
+ * - load() translates persisted messages into SessionStoreEntry[] for resume.
+ * - append() is a no-op — the SDK's local JSONL files handle bookkeeping.
+ * - listSubkeys() returns [] — we don't use subagent transcripts.
+ */
+export function createSessionStore(): SessionStore {
+  return {
+    async load(key: SessionKey): Promise<SessionStoreEntry[] | null> {
+      const messages = loadMessagesForLLM(key.sessionId);
+      if (messages.length === 0) return null;
+      return toSessionStoreEntries(messages);
+    },
+
+    async append(_key: SessionKey, _entries: SessionStoreEntry[]): Promise<void> {
+      // No-op — the SDK writes its own JSONL files locally.
+    },
+
+    async listSubkeys(_key: { projectKey: string; sessionId: string }): Promise<string[]> {
+      return [];
+    },
+  };
 }
