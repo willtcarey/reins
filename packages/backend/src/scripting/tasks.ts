@@ -90,16 +90,17 @@ export const TASK_FUNCTIONS: ApiFunctionDef[] = [
   }),
   defineFunction({
     name: "tasks.update",
-    description: "Update a task's title and/or description. Throws if the task is not found.",
+    description: "Update a task's title, description, and/or base_commit. Throws if the task is not found.",
     parameters: Type.Object({
       taskId: Type.Number(),
       updates: Type.Object({
         title: Type.Optional(Type.String()),
         description: Type.Optional(Type.String()),
+        base_commit: Type.Optional(Type.String()),
       }),
     }),
     returns: TaskSchema,
-    tags: ["tasks", "update", "write", "edit"],
+    tags: ["tasks", "update", "write", "edit", "base_commit"],
     execute: (params, ctx) => {
       const task = projectModel(ctx).tasks().update(params.taskId, params.updates);
       if (!task) throw new Error(`Task ${params.taskId} not found`);

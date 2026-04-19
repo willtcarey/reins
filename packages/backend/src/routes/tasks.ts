@@ -24,6 +24,7 @@ const GenerateTaskBody = Type.Object({
 const UpdateTaskBody = Type.Object({
   title: Type.Optional(Type.String()),
   description: Type.Optional(Type.String()),
+  base_commit: Type.Optional(Type.String()),
 });
 
 export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {

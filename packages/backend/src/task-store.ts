@@ -83,7 +83,7 @@ export function listTasks(projectId: number, status?: TaskStatus): TaskListItem[
 
 export function updateTask(
   id: number,
-  updates: { title?: string; description?: string },
+  updates: { title?: string; description?: string; base_commit?: string },
 ): TaskRow | null {
   const db = getDb();
   const existing = getTask(id);
@@ -91,10 +91,11 @@ export function updateTask(
 
   const title = updates.title ?? existing.title;
   const description = updates.description !== undefined ? updates.description : existing.description;
+  const baseCommit = updates.base_commit !== undefined ? updates.base_commit : existing.base_commit;
 
   db.query(
-    `UPDATE tasks SET title = ?, description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
-  ).run(title, description, id);
+    `UPDATE tasks SET title = ?, description = ?, base_commit = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
+  ).run(title, description, baseCommit, id);
 
   return getTask(id);
 }

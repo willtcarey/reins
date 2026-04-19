@@ -109,6 +109,13 @@ describe("task-store", () => {
       expect(updated!.description).toBe("new");
     });
 
+    test("can update base_commit", () => {
+      const t = createTask(projectId, "T", null, "task/t", "old-commit");
+      const updated = updateTask(t.id, { base_commit: "new-commit" });
+      expect(updated!.base_commit).toBe("new-commit");
+      expect(updated!.title).toBe("T"); // unchanged
+    });
+
     test("returns null for non-existent id", () => {
       expect(updateTask(999, { title: "X" })).toBeNull();
     });

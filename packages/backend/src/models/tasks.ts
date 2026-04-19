@@ -171,7 +171,7 @@ export class ProjectTasks {
    *
    * Returns the updated row, or null if the task doesn't exist.
    */
-  update(taskId: number, updates: { title?: string; description?: string }): TaskRow | null {
+  update(taskId: number, updates: { title?: string; description?: string; base_commit?: string }): TaskRow | null {
     if (!this.get(taskId)) return null;
     const updated = storeUpdateTask(taskId, updates);
     if (updated) {
