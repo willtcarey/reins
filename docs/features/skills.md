@@ -65,6 +65,7 @@ Use this for ...
 - `description` is required
 - name should be lowercase letters, numbers, and hyphens
 - name should match the skill directory name
+- `disable-model-invocation: true` (optional) — hides the skill from the `<available_skills>` listing in the system prompt, so the model won't load it on its own. The skill can still be injected manually via slash commands.
 
 If description is missing, the skill will not be loaded.
 
@@ -102,6 +103,31 @@ description: Compare two OpenAPI specs and summarize breaking changes. Use when 
 - Request/response schema changes
 - Auth changes
 ~~~
+
+## Using skills
+
+### Automatic (model-driven)
+
+By default, discovered skills appear in the `<available_skills>` block in the system prompt. The model reads this list and decides when to load a skill's `SKILL.md` via the read tool based on the task at hand. You can prevent a skill from appearing in this list by setting `disable-model-invocation: true` in the frontmatter.
+
+### Slash commands (user-driven)
+
+You can explicitly inject a skill by typing `/name` in your message, where `name` matches a skill's name. For example:
+
+```
+/dip start the rails server
+```
+
+This injects the full content of the `dip` skill into the conversation context so the model has the skill's instructions available immediately — no read tool call needed.
+
+Slash commands:
+
+- Work on any turn, not just the first message.
+- Can appear anywhere in the message text.
+- Support multiple skills in one message (e.g., `/dip /tmux start the server and check the logs`).
+- Must be standalone tokens — `/dip` triggers but `docker/dip` does not.
+- Tab-complete in the input as you type.
+- Work for all skills, including those with `disable-model-invocation: true`.
 
 ## Notes
 
