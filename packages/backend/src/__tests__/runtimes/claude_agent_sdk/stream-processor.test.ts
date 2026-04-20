@@ -2,8 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { basename } from "node:path";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentRuntimeEvent } from "../../../runtimes/registry.js";
-import { ClaudeStreamProcessor } from "../../../runtimes/claude_agent_sdk/stream-processor.js";
-import { COMPACTION_NOTICE } from "../../../runtimes/claude_agent_sdk/events.js";
+import { ClaudeStreamProcessor, extractSummaryContent } from "../../../runtimes/claude_agent_sdk/stream-processor.js";
 
 /**
  * Build a partial SDKMessage for testing. The event mapper only reads
@@ -602,8 +601,58 @@ describe("claude stream processor", () => {
 
     expect(events).toEqual([
       { type: "compaction_start", reason: "claude_sdk_compact_boundary" },
-      { type: "compaction_end", result: { summary: COMPACTION_NOTICE }, aborted: false },
+      { type: "compaction_end", result: { summary: "" }, aborted: false },
     ]);
+  });
+
+  test("compact boundary uses summary from PostCompact hook", () => {
+    const processor = new ClaudeStreamProcessor();
+    processor.setCompactSummary("Here is a summary of the conversation so far.");
+
+    const events = processor.process(sdkMsg({
+      type: "system",
+      subtype: "compact_boundary",
+    }));
+
+    expect(events).toEqual([
+      { type: "compaction_start", reason: "claude_sdk_compact_boundary" },
+      { type: "compaction_end", result: { summary: "Here is a summary of the conversation so far." }, aborted: false },
+    ]);
+  });
+
+  test("compact summary is consumed after first boundary", () => {
+    const processor = new ClaudeStreamProcessor();
+    processor.setCompactSummary("Summary v1");
+
+    // First boundary consumes the summary
+    processor.process(sdkMsg({ type: "system", subtype: "compact_boundary" }));
+
+    // Second boundary without a new setCompactSummary should fall back to empty
+    const events = processor.process(sdkMsg({ type: "system", subtype: "compact_boundary" }));
+
+    expect(events).toEqual([
+      { type: "compaction_start", reason: "claude_sdk_compact_boundary" },
+      { type: "compaction_end", result: { summary: "" }, aborted: false },
+    ]);
+  });
+
+  test("setCompactSummary strips analysis and extracts summary tags", () => {
+    const processor = new ClaudeStreamProcessor();
+    const raw = [
+      "<analysis>",
+      "Internal reasoning about the conversation...",
+      "</analysis>",
+      "<summary>",
+      "The user discussed project setup.",
+      "</summary>",
+    ].join("\n");
+
+    processor.setCompactSummary(raw);
+
+    const events = processor.process(sdkMsg({ type: "system", subtype: "compact_boundary" }));
+    expect(events[1]).toEqual(
+      expect.objectContaining({ type: "compaction_end", result: { summary: "The user discussed project setup." } }),
+    );
   });
 
   test("accumulates thinking deltas into a thinking block", () => {
@@ -955,5 +1004,36 @@ describe("trace fixture replay", () => {
 
     // The intermediate turn_end comes before agent_end
     expect(persistIndices[0].i).toBeLessThan(persistIndices[2].i);
+  });
+});
+
+describe("extractSummaryContent", () => {
+  test("extracts content between summary tags", () => {
+    const raw = "<analysis>\nreasoning\n</analysis>\n<summary>\nThe summary.\n</summary>";
+    expect(extractSummaryContent(raw)).toBe("The summary.");
+  });
+
+  test("strips analysis block when no summary tag", () => {
+    const raw = "<analysis>\nreasoning\n</analysis>\nLeftover content here.";
+    expect(extractSummaryContent(raw)).toBe("Leftover content here.");
+  });
+
+  test("returns raw string when no tags present", () => {
+    expect(extractSummaryContent("Plain summary text.")).toBe("Plain summary text.");
+  });
+
+  test("handles empty string", () => {
+    expect(extractSummaryContent("")).toBe("");
+  });
+
+  test("handles multiline summary content", () => {
+    const raw = [
+      "<analysis>thinking</analysis>",
+      "<summary>",
+      "1. First point",
+      "2. Second point",
+      "</summary>",
+    ].join("\n");
+    expect(extractSummaryContent(raw)).toBe("1. First point\n2. Second point");
   });
 });

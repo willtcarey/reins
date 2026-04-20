@@ -3,6 +3,8 @@ import {
   query,
   type Query,
   type SDKUserMessage,
+  type HookInput,
+  type HookJSONOutput,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AgentRuntime,
@@ -269,6 +271,16 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
       env: {
         ...process.env,
         CLAUDE_CODE_DISABLE_1M_CONTEXT: "1",
+      },
+      hooks: {
+        PostCompact: [{
+          hooks: [async (input: HookInput): Promise<HookJSONOutput> => {
+            if (input.hook_event_name === "PostCompact") {
+              this.processor.setCompactSummary(input.compact_summary);
+            }
+            return { continue: true };
+          }],
+        }],
       },
       ...(this.modelId ? { model: this.modelId } : {}),
       ...(mcpServer ? { mcpServers: { "custom-tools": mcpServer } } : {}),

@@ -15,8 +15,6 @@ const BUILTIN_TOOL_NAME_MAP: Record<string, string> = {
   Bash: "bash",
 };
 
-export const COMPACTION_NOTICE = "*Claude Code compacted and we don't have visibility into the summary.*";
-
 // ---------------------------------------------------------------------------
 // Exported functions
 // ---------------------------------------------------------------------------
@@ -52,10 +50,11 @@ export function transformClaudeSessionMessages(messages: SessionMessage[]): Agen
       // via buildUserMessage(), so string content reliably indicates an
       // SDK-side compaction boundary.
       if (typeof message.content === "string") {
+        const summary = message.content;
         out.push({
           role: "compactionSummary",
-          summary: COMPACTION_NOTICE,
-          content: COMPACTION_NOTICE,
+          summary,
+          content: summary,
           timestamp: nowTs(),
         });
         continue;
@@ -76,14 +75,20 @@ export function transformClaudeSessionMessages(messages: SessionMessage[]): Agen
     if (entry.type === "system") {
       // SessionMessage doesn't expose `subtype` — detect compact_boundary
       // via the presence of `compact_metadata` on the raw entry.
+      // The compact_boundary is a structural marker — the actual summary
+      // lives in the preceding user message with string content. Only emit
+      // a compactionSummary here if we haven't already added one.
       const raw = toRecord(entry);
       if (raw.subtype === "compact_boundary" || raw.compact_metadata) {
-        out.push({
-          role: "compactionSummary",
-          summary: COMPACTION_NOTICE,
-          content: COMPACTION_NOTICE,
-          timestamp: nowTs(),
-        });
+        const lastOut = out[out.length - 1];
+        if (!lastOut || lastOut.role !== "compactionSummary") {
+          out.push({
+            role: "compactionSummary",
+            summary: "",
+            content: "",
+            timestamp: nowTs(),
+          });
+        }
       }
     }
   }

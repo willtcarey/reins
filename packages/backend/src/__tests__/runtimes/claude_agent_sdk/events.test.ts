@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionMessage } from "@anthropic-ai/claude-agent-sdk";
 import {
-  COMPACTION_NOTICE,
   normalizeClaudeToolName,
   transformClaudeSessionMessages,
 } from "../../../runtimes/claude_agent_sdk/events.js";
@@ -91,13 +90,14 @@ describe("claude sdk event helpers", () => {
     }));
   });
 
-  test("session message transform detects sdk compaction string wrapper as compactionSummary", () => {
+  test("session message transform uses actual string content as compaction summary", () => {
+    const summaryText = "This session is being continued from a previous conversation.";
     const transformed = transformClaudeSessionMessages([
       sessionMsg({
         type: "user",
         message: {
           role: "user",
-          content: "This session is being continued from a previous conversation.",
+          content: summaryText,
         },
       }),
       sessionMsg({
@@ -118,8 +118,8 @@ describe("claude sdk event helpers", () => {
 
     expect(transformed[0]).toEqual(expect.objectContaining({
       role: "compactionSummary",
-      summary: COMPACTION_NOTICE,
-      content: COMPACTION_NOTICE,
+      summary: summaryText,
+      content: summaryText,
     }));
     expect(typeof transformed[0]?.content).toBe("string");
     expect(transformed.map((message) => message.role)).toEqual([
@@ -129,7 +129,29 @@ describe("claude sdk event helpers", () => {
     ]);
   });
 
-  test("session message transform keeps compact boundary content as a string", () => {
+  test("compact boundary after compaction summary user message does not duplicate", () => {
+    const summaryText = "Summary of earlier conversation.";
+    const transformed = transformClaudeSessionMessages([
+      sessionMsg({
+        type: "user",
+        message: { role: "user", content: summaryText },
+      }),
+      sessionMsg({
+        type: "system",
+        subtype: "compact_boundary",
+      }),
+    ]);
+
+    // Should only produce one compactionSummary, not two
+    expect(transformed).toHaveLength(1);
+    expect(transformed[0]).toEqual(expect.objectContaining({
+      role: "compactionSummary",
+      summary: summaryText,
+      content: summaryText,
+    }));
+  });
+
+  test("standalone compact boundary emits empty compaction summary", () => {
     const transformed = transformClaudeSessionMessages([
       sessionMsg({
         type: "system",
@@ -140,8 +162,8 @@ describe("claude sdk event helpers", () => {
     expect(transformed).toEqual([
       expect.objectContaining({
         role: "compactionSummary",
-        summary: COMPACTION_NOTICE,
-        content: COMPACTION_NOTICE,
+        summary: "",
+        content: "",
       }),
     ]);
     expect(typeof transformed[0]?.content).toBe("string");
