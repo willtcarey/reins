@@ -128,6 +128,14 @@ const MIGRATIONS: [name: string, sql: string][] = [
      SET agent_runtime_type = 'pi'
      WHERE agent_runtime_type IS NULL OR agent_runtime_type = ''`,
   ],
+  [
+    "017_rename_thinking_signature",
+    `UPDATE session_messages
+     SET message_json = REPLACE(message_json, '"signature":', '"thinkingSignature":')
+     WHERE role = 'assistant'
+       AND message_json LIKE '%"signature":%'
+       AND message_json NOT LIKE '%"thinkingSignature":%'`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

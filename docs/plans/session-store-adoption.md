@@ -1,6 +1,6 @@
 # SessionStore Adoption
 
-Status: **research complete** — ready for design decisions.
+Status: **ready to implement** — minimum metadata requirements confirmed, translator approach validated.
 
 The Claude Agent SDK added a `SessionStore` API in 0.2.114 (`@alpha`) that lets us intercept, mirror, and rewrite session transcripts. This plan captures our findings from exploration and lays out how we could use it.
 
@@ -66,7 +66,7 @@ Raw entries from `append()` have rich metadata beyond `type` and `message`:
 
 Non-conversation entries (`queue-operation`, `ai-title`, `last-prompt`) are not required for resume.
 
-**Important (0.2.114):** The metadata fields on entries are required for resume — entries stripped to just `type`, `message`, `uuid`, `parentUuid` fail with "No conversation found". The subprocess uses these fields to validate and reconstruct the session. This was not apparent in earlier 0.2.112 testing.
+**Minimum metadata for resume:** Each entry needs `type`, `message`, `uuid`, `parentUuid`, plus three additional fields: `sessionId`, `cwd`, and `timestamp`. Entries with only `type`/`message`/`uuid`/`parentUuid` fail ("No conversation found"), as does adding `sessionId` alone. The combination of all three additional fields is required. Other metadata (`entrypoint`, `version`, `gitBranch`, `isSidechain`, `permissionMode`, `userType`, `promptId`, `requestId`, `toolUseResult`, `sourceToolAssistantUUID`) is not required. Confirmed via systematic testing across both simple and tool-call conversations (see `packages/backend/scripts/session-store-metadata-test.ts`).
 
 ### 3. UUIDs can be rewritten but not omitted
 
@@ -110,31 +110,9 @@ What we _do_ need is `load()` — the ability to control what the model sees on 
 - `toSessionStoreEntries()` translator: `AgentRuntimeMessage[] → SessionStoreEntry[]` with tool name/arg denormalization, tool result merging, consecutive assistant merging, compaction summary conversion, and UUID chain generation. Fully tested.
 - `createSessionStore()` factory: returns a `SessionStore` with `load()` reading from our SQLite via `loadMessagesForLLM()` → `toSessionStoreEntries()`, no-op `append()`, empty `listSubkeys()`. Tested with real DB.
 - Verification script (`packages/backend/scripts/session-store-load-test.ts`): end-to-end test that runs a session, persists to our format, and resumes via `load()`.
+- Metadata test script (`packages/backend/scripts/session-store-metadata-test.ts`): systematic test of which metadata fields are required for resume.
 
-**Blocked: entries from our translator don't resume correctly.**
-
-The SDK subprocess requires metadata fields on each entry beyond `type`, `message`, `uuid`, and `parentUuid`. Through systematic testing we found:
-
-1. Raw entries from `append()` (with all metadata: `sessionId`, `cwd`, `isSidechain`, `timestamp`, `version`, `gitBranch`, etc.) → **resume works**
-2. Raw entries filtered to only user/assistant types (dropping `queue-operation`, `ai-title`, `last-prompt`) → **resume works** (these non-conversation entries are optional)
-3. Raw entries stripped to just `type` + `message` + `uuid` + `parentUuid` → **fails** ("No conversation found")
-4. Our translated entries with `sessionId` added → **fails** ("No conversation found")
-5. Raw metadata grafted onto our translated `message` objects → **different error** ("400 due to tool use concurrency issues") — gets past session lookup but the message content structure is rejected
-
-This tells us two things:
-- **Metadata fields on entries are required** for the subprocess to find the session
-- **Our `message` objects differ structurally** from what the API expects (likely missing `id`, `model`, `usage` on assistant messages, or subtle differences in tool_result content format)
-
-### Revised approach: store raw entries via append()
-
-Since translating from our format back to SDK format is fighting the opaque internal structure, the simpler path is:
-
-1. **`append()` stores raw entries** — write the SDK's own entries to a new SQLite table (or JSONL column) as opaque blobs, alongside our existing `AgentRuntimeMessage` persistence for display
-2. **`load()` returns stored raw entries** — read them back as-is for resume
-3. **Context pruning operates on raw entries** — modify `message.content` fields in the raw entries (text rewriting, tool result truncation) rather than translating between formats
-4. Keep our existing `AgentRuntimeMessage` persistence for the frontend/display layer
-
-This is a dual-write approach: `append()` stores the SDK's native format for resume, our persistence observer stores our format for display. The `load()` interception point still gives us control over what the model sees.
+**Ready to wire up.** The translator approach works — `toSessionStoreEntries()` just needs to accept `sessionId`, `cwd`, and `timestamp` and include them on each entry. No dual-write or raw entry storage needed.
 
 ### What this enables
 
@@ -147,7 +125,7 @@ The most compelling use case. `load()` is the insertion point for building a "de
 - Truncate large assistant responses
 - Apply cache-aware pruning (keep full content while cache is warm)
 
-The canonical transcript stays in our database; `load()` returns the pruned version. With the revised approach, pruning operates directly on the raw SDK entries rather than translating between formats.
+The canonical transcript stays in our database; `load()` returns the pruned version. Pruning operates on our `AgentRuntimeMessage` data before translation to `SessionStoreEntry[]`.
 
 **B. Cross-session context injection**
 
@@ -163,14 +141,15 @@ Register a `PostCompact` hook to capture `compact_summary` instead of showing a 
 
 2. ~~**Is `@alpha` stability acceptable?**~~ Yes. We only depend on `load()`, and the SDK will always need some way to load conversations — the exact shape may shift but the capability won't disappear.
 
-3. **What's the storage cost of dual-write?** Raw SDK entries include verbose metadata (cwd, version, gitBranch, etc.) on every entry. Need to measure the size overhead vs. our compact `AgentRuntimeMessage` format.
+3. ~~**What's the storage cost of dual-write?**~~ No longer relevant — using the translator approach, no dual-write needed.
 
 ## Suggested Next Steps
 
 1. **Immediate (no SessionStore needed):** Register `PostCompact` hook to capture actual compaction summaries.
-2. **Short term:** Wire up `SessionStore` with `append()` storing raw entries to a new SQLite table and `load()` returning them. This gives us the `load()` interception point without needing format translation.
-3. **Medium term:** Implement context pruning in `load()` — modify raw entries to strip/summarize old tool results before returning them.
+2. **Short term:** Add `sessionId`, `cwd`, and `timestamp` parameters to `toSessionStoreEntries()` and include them on each emitted entry. Wire `sessionStore` into the runtime via `createSessionStore()`.
+3. **Medium term:** Implement context pruning in `load()` — prune `AgentRuntimeMessage[]` before translation, returning a trimmed transcript to the model.
 
-## Test Script
+## Test Scripts
 
-`packages/backend/scripts/session-store-explore.ts` — runnable exploration script that exercises the SessionStore API. Run with `bun run packages/backend/scripts/session-store-explore.ts`.
+- `packages/backend/scripts/session-store-explore.ts` — exploration script that exercises the SessionStore API.
+- `packages/backend/scripts/session-store-metadata-test.ts` — systematic test of minimum metadata fields required for resume (9 scenarios, simple + tool-call sessions).

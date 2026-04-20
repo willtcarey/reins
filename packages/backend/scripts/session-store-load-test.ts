@@ -145,15 +145,20 @@ async function phase2(sessionId: string): Promise<AgentRuntimeMessage[]> {
 // ---------------------------------------------------------------------------
 
 async function phase3(
-  sessionId: string,
+  originalSessionId: string,
   messages: AgentRuntimeMessage[],
-  capturedEntries: SessionStoreEntry[],
   store: SessionStore,
 ): Promise<string> {
   console.log();
   console.log("=== Phase 3: Resume using our SessionStore.load() ===");
 
-  const entries = toSessionStoreEntries(messages);
+  // Use a fresh session ID so the SDK doesn't conflict with its own local
+  // JSONL files from phase 1 (which would bypass our SessionStore).
+  const resumeSessionId = crypto.randomUUID();
+  console.log(`  Original session: ${originalSessionId}`);
+  console.log(`  Resume session:   ${resumeSessionId}`);
+
+  const entries = toSessionStoreEntries(messages, { sessionId: resumeSessionId, cwd: CWD });
 
   console.log(`  toSessionStoreEntries() produced ${entries.length} entries:`);
   for (const entry of entries) {
@@ -176,30 +181,14 @@ async function phase3(
     console.log(`    - type=${entry.type} role=${roleStr} uuid=${entry.uuid} | ${contentPreview}`);
   }
 
-  // Copy all metadata from raw conversation entries onto our translated entries
-  const rawConversation = capturedEntries
-    .filter((e: any) => e.type === "user" || e.type === "assistant");
-
-  console.log(`  Raw conversation entries: ${rawConversation.length}, translated: ${entries.length}`);
-
-  // Graft raw metadata onto translated entries (keep our message, use their metadata)
-  const grafted = entries.map((translated, i) => {
-    const raw = rawConversation[i];
-    if (!raw) return translated;
-    const { message: _rawMsg, ...rawMeta } = raw as any;
-    return { ...rawMeta, message: (translated as any).message };
-  });
-
-  console.log(`  Grafted ${grafted.length} entries (our messages + raw metadata)`);
-
   store.load = async (_key: SessionKey) => {
     console.log(`  [store.load] Called for session ${_key.sessionId}`);
-    console.log(`  [store.load] Returning ${grafted.length} grafted entries`);
-    return grafted;
+    console.log(`  [store.load] Returning ${entries.length} translated entries`);
+    return entries;
   };
 
   console.log();
-  console.log(`  Resuming session ${sessionId}`);
+  console.log(`  Resuming session ${resumeSessionId}`);
   console.log(`  Asking: "What file did you just read? What was the project name?"`);
   console.log();
 
@@ -214,7 +203,7 @@ async function phase3(
       tools: [],
       systemPrompt: SYSTEM_PROMPT,
       permissionMode: "default",
-      resume: sessionId,
+      resume: resumeSessionId,
       sessionStore: store,
       pathToClaudeCodeExecutable: CLAUDE_BINARY,
     },
@@ -240,13 +229,10 @@ async function main() {
   console.log("====================================");
   console.log();
 
-  // Shared store: append captures entries (SDK needs this to track the session),
+  // Shared store: append is a no-op (SDK uses local JSONL for phase 1),
   // load returns null during phase 1, then gets replaced in phase 3.
-  const capturedEntries: SessionStoreEntry[] = [];
   const store: SessionStore = {
-    async append(_key: SessionKey, entries: SessionStoreEntry[]): Promise<void> {
-      capturedEntries.push(...entries);
-    },
+    async append(_key: SessionKey, _entries: SessionStoreEntry[]): Promise<void> {},
     async load(_key: SessionKey): Promise<SessionStoreEntry[] | null> { return null; },
     async listSubkeys(): Promise<string[]> { return []; },
   };
@@ -255,7 +241,7 @@ async function main() {
 
   const messages = await phase2(sessionId);
 
-  const phase3Result = await phase3(sessionId, messages, capturedEntries, store);
+  const phase3Result = await phase3(sessionId, messages, store);
 
   console.log();
   console.log("=== Summary ===");

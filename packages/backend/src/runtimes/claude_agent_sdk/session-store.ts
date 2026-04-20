@@ -1,5 +1,6 @@
 import type { SessionStore, SessionKey, SessionStoreEntry } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentRuntimeMessage } from "../registry.js";
+import type { AgentRuntimeMessage, RuntimeContentBlock } from "../registry.js";
+import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import { loadMessagesForLLM } from "../../session-store.js";
 
 // ---------------------------------------------------------------------------
@@ -21,11 +22,19 @@ const CUSTOM_TOOL_NAMES = new Set(["create_task", "delegate", "search", "execute
 // Public API
 // ---------------------------------------------------------------------------
 
+export type SessionEntryContext = {
+  sessionId: string;
+  cwd: string;
+};
+
 /**
  * Convert persisted AgentRuntimeMessages into SessionStoreEntry[] for the
  * Claude Agent SDK's SessionStore.load() method.
  */
-export function toSessionStoreEntries(messages: AgentRuntimeMessage[]): SessionStoreEntry[] {
+export function toSessionStoreEntries(
+  messages: AgentRuntimeMessage[],
+  context: SessionEntryContext,
+): SessionStoreEntry[] {
   const out: SessionStoreEntry[] = [];
   let i = 0;
 
@@ -39,16 +48,12 @@ export function toSessionStoreEntries(messages: AgentRuntimeMessage[]): SessionS
     }
 
     if (msg.role === "assistant") {
-      // Merge consecutive assistant messages into a single entry.
-      // The SDK splits thinking + tool_use into separate messages, but the
-      // JSONL format expects them combined in one assistant turn.
-      const batch: AgentRuntimeMessage[] = [msg];
+      // Each assistant message becomes its own entry. The SDK expects
+      // thinking and tool_use as separate entries — merging them causes
+      // API errors ("tool use concurrency issues").
+      const entry = buildAssistantEntry([msg]);
+      if (entry) out.push(entry);
       i++;
-      while (i < messages.length && messages[i].role === "assistant") {
-        batch.push(messages[i]);
-        i++;
-      }
-      out.push(buildAssistantEntry(batch));
       continue;
     }
 
@@ -73,7 +78,9 @@ export function toSessionStoreEntries(messages: AgentRuntimeMessage[]): SessionS
     i++;
   }
 
-  // Assign uuid/parentUuid chain so the SDK can reconstruct conversation order
+  // Assign uuid/parentUuid chain and metadata so the SDK can resume.
+  // The SDK requires message.id to properly reconstruct conversations
+  // (it uses this to merge split assistant entries back together).
   let prevUuid: string | undefined;
   for (const entry of out) {
     const uuid = crypto.randomUUID();
@@ -82,6 +89,14 @@ export function toSessionStoreEntries(messages: AgentRuntimeMessage[]): SessionS
       entry.parentUuid = prevUuid;
     }
     prevUuid = uuid;
+    entry.sessionId = context.sessionId;
+    entry.cwd = context.cwd;
+    entry.timestamp = new Date().toISOString();
+    // SDK requires message.id on each entry
+    const msg = entry.message as Record<string, unknown> | undefined;
+    if (msg && !msg.id) {
+      msg.id = `msg_${crypto.randomUUID().replace(/-/g, "")}`;
+    }
   }
 
   return out;
@@ -101,10 +116,14 @@ function buildUserEntry(msg: AgentRuntimeMessage): SessionStoreEntry {
   };
 }
 
-function buildAssistantEntry(msgs: AgentRuntimeMessage[]): SessionStoreEntry {
+function buildAssistantEntry(msgs: AgentRuntimeMessage[]): SessionStoreEntry | null {
   const content = msgs.flatMap((m) =>
-    Array.isArray(m.content) ? m.content.map(denormContentBlock) : [],
+    Array.isArray(m.content) ? m.content.map(translateContentBlockToSDKBlock).filter((b) => b !== null) : [],
   );
+
+  // If all content blocks were stripped (e.g. unsigned thinking), drop the entry
+  if (content.length === 0) return null;
+
   // Use the last message's stopReason (e.g. tool_use or end_turn)
   const lastStop = msgs[msgs.length - 1].stopReason;
 
@@ -150,22 +169,37 @@ function buildCompactionEntry(msg: AgentRuntimeMessage): SessionStoreEntry {
 // Content block transforms
 // ---------------------------------------------------------------------------
 
-function denormContentBlock(block: unknown): unknown {
-  if (!block || typeof block !== "object") return block;
-  const b = block as Record<string, unknown>;
-
-  if (b.type === "toolCall") {
-    const name = denormToolName(b.name as string);
-    return {
-      type: "tool_use",
-      id: b.id,
-      name,
-      input: denormToolArgs(name, b.arguments as Record<string, unknown> | undefined),
-    };
+/**
+ * Translate a normalized content block back to SDK format.
+ * Returns `null` for thinking blocks that should be stripped (no valid signature).
+ */
+function translateContentBlockToSDKBlock(block: RuntimeContentBlock): ContentBlockParam | null {
+  switch (block.type) {
+    case "toolCall": {
+      const name = denormToolName(block.name);
+      return {
+        type: "tool_use",
+        id: block.id,
+        name,
+        input: denormToolArgs(name, block.arguments),
+      };
+    }
+    case "thinking": {
+      // Our persisted format uses `thinkingSignature`; the SDK expects `signature`.
+      if (typeof block.thinkingSignature !== "string") {
+        // Old sessions without any signature — strip the block
+        return null;
+      }
+      return {
+        type: "thinking",
+        thinking: block.thinking,
+        signature: block.thinkingSignature,
+      };
+    }
+    case "text":
+      // Structurally compatible with TextBlockParam
+      return block;
   }
-
-  // thinking and text blocks pass through as-is
-  return block;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,12 +285,12 @@ function extractToolResultContent(content: unknown): unknown {
  * - append() is a no-op — the SDK's local JSONL files handle bookkeeping.
  * - listSubkeys() returns [] — we don't use subagent transcripts.
  */
-export function createSessionStore(): SessionStore {
+export function createSessionStore(cwd: string): SessionStore {
   return {
     async load(key: SessionKey): Promise<SessionStoreEntry[] | null> {
       const messages = loadMessagesForLLM(key.sessionId);
       if (messages.length === 0) return null;
-      return toSessionStoreEntries(messages);
+      return toSessionStoreEntries(messages, { sessionId: key.sessionId, cwd });
     },
 
     async append(_key: SessionKey, _entries: SessionStoreEntry[]): Promise<void> {

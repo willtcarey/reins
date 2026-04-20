@@ -82,6 +82,26 @@ export type AgentRuntimeEvent =
   | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
   | RuntimeCompactionEvent;
 
+export interface RuntimeTextBlock {
+  type: "text";
+  text: string;
+}
+
+export interface RuntimeThinkingBlock {
+  type: "thinking";
+  thinking: string;
+  thinkingSignature?: string;
+}
+
+export interface RuntimeToolCallBlock {
+  type: "toolCall";
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export type RuntimeContentBlock = RuntimeTextBlock | RuntimeThinkingBlock | RuntimeToolCallBlock;
+
 /**
  * Runtime-agnostic persisted message shape.
  *
@@ -95,7 +115,7 @@ export type AgentRuntimeEvent =
 export interface AgentRuntimeMessage {
   role: string;
   /** Array for assistant/user/toolResult messages, string for compactionSummary. */
-  content?: unknown[] | string;
+  content?: RuntimeContentBlock[] | string;
   stopReason?: string;
   summary?: string;
   [key: string]: unknown;

@@ -1,5 +1,5 @@
 import type { SessionMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentRuntimeMessage } from "../registry.js";
+import type { AgentRuntimeMessage, RuntimeContentBlock } from "../registry.js";
 import { isRecord, toRecord } from "./type-guards.js";
 
 // ---------------------------------------------------------------------------
@@ -159,10 +159,10 @@ export function toTextContent(content: unknown): { type: "text"; text: string }[
 // Internal helpers — session message transform
 // ---------------------------------------------------------------------------
 
-function mapAssistantContent(content: unknown): unknown[] {
+function mapAssistantContent(content: unknown): RuntimeContentBlock[] {
   if (!Array.isArray(content)) return [];
 
-  const out: unknown[] = [];
+  const out: RuntimeContentBlock[] = [];
   for (const block of content) {
     if (!isRecord(block)) continue;
 
@@ -172,7 +172,11 @@ function mapAssistantContent(content: unknown): unknown[] {
     }
 
     if (block.type === "thinking") {
-      out.push({ type: "thinking", thinking: typeof block.thinking === "string" ? block.thinking : "" });
+      out.push({
+        type: "thinking",
+        thinking: typeof block.thinking === "string" ? block.thinking : "",
+        ...(typeof block.signature === "string" ? { thinkingSignature: block.signature } : {}),
+      });
       continue;
     }
 
@@ -180,7 +184,7 @@ function mapAssistantContent(content: unknown): unknown[] {
       const toolName = normalizeClaudeToolName(typeof block.name === "string" ? block.name : "tool");
       out.push({
         type: "toolCall",
-        id: block.id,
+        id: typeof block.id === "string" ? block.id : String(block.id ?? ""),
         name: toolName,
         arguments: normalizeToolArgs(toolName, toRecord(block.input)),
       });
@@ -190,13 +194,13 @@ function mapAssistantContent(content: unknown): unknown[] {
   return out;
 }
 
-function mapUserContent(content: unknown): unknown[] {
-  if (typeof content === "string") return [{ type: "text", text: content }];
+function mapUserContent(content: unknown): RuntimeContentBlock[] {
+  if (typeof content === "string") return [{ type: "text" as const, text: content }];
   if (!Array.isArray(content)) return [];
 
   return content
     .filter((block): block is Record<string, unknown> => isRecord(block) && block.type === "text")
-    .map((block) => ({ type: "text", text: String(block.text ?? "") }));
+    .map((block) => ({ type: "text" as const, text: String(block.text ?? "") }));
 }
 
 function mapToolResultBlocks(content: unknown): AgentRuntimeMessage[] {

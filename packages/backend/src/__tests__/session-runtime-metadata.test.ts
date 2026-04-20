@@ -46,6 +46,15 @@ describe("session runtime metadata migration", () => {
         task_id INTEGER,
         parent_session_id TEXT
       );
+      CREATE TABLE session_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        role TEXT NOT NULL,
+        message_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(session_id, seq)
+      );
     `);
 
     const insertMigration = db.query("INSERT INTO migrations (name) VALUES (?)");
