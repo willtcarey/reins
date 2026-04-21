@@ -1,8 +1,9 @@
 import type { SessionStore, SessionKey, SessionStoreEntry } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentRuntimeMessage, RuntimeContentBlock } from "../registry.js";
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
-import { loadMessagesForLLM } from "../../session-store.js";
+import { loadMessagesForLLM, appendMessages } from "../../session-store.js";
 import { toSDKToolName, toSDKToolArgs, toSDKStopReason } from "./mappings.js";
+import { transformClaudeSessionMessages } from "./events.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -79,7 +80,7 @@ export function toSessionStoreEntries(
     entry.cwd = context.cwd;
     entry.timestamp = new Date().toISOString();
     // SDK requires message.id on each entry
-    const msg = entry.message as Record<string, unknown> | undefined;
+    const msg: Record<string, unknown> | undefined = entry.message;
     if (msg && !msg.id) {
       msg.id = `msg_${crypto.randomUUID().replace(/-/g, "")}`;
     }
@@ -126,7 +127,7 @@ function buildAssistantEntry(msgs: AgentRuntimeMessage[]): SessionStoreEntry | n
 function buildToolResultEntry(results: AgentRuntimeMessage[]): SessionStoreEntry {
   const content = results.map((r) => ({
     type: "tool_result" as const,
-    tool_use_id: r.toolCallId as string,
+    tool_use_id: String(r.toolCallId),
     content: extractToolResultContent(r.content),
     is_error: Boolean(r.isError),
   }));
@@ -199,9 +200,10 @@ function translateContentBlockToSDKBlock(block: RuntimeContentBlock): ContentBlo
 function extractToolResultContent(content: unknown): unknown {
   if (!Array.isArray(content)) return content;
   if (content.length === 1) {
-    const block = content[0];
-    if (block && typeof block === "object" && (block as Record<string, unknown>).type === "text") {
-      return (block as Record<string, unknown>).text;
+    const block: unknown = content[0];
+    if (block && typeof block === "object") {
+      const obj: Record<string, unknown> = block;
+      if (obj.type === "text") return obj.text;
     }
   }
   return content;
@@ -215,10 +217,10 @@ function extractToolResultContent(content: unknown): unknown {
  * Create a SessionStore backed by our SQLite database.
  *
  * - load() translates persisted messages into SessionStoreEntry[] for resume.
- * - append() is a no-op — the SDK's local JSONL files handle bookkeeping.
+ * - append() filters message entries, transforms them, and writes to SQLite.
  * - listSubkeys() returns [] — we don't use subagent transcripts.
  */
-export function createSessionStore(cwd: string): SessionStore {
+export function createSessionStore(sessionId: string, cwd: string): SessionStore {
   return {
     async load(key: SessionKey): Promise<SessionStoreEntry[] | null> {
       const messages = loadMessagesForLLM(key.sessionId);
@@ -226,8 +228,32 @@ export function createSessionStore(cwd: string): SessionStore {
       return toSessionStoreEntries(messages, { sessionId: key.sessionId, cwd });
     },
 
-    async append(_key: SessionKey, _entries: SessionStoreEntry[]): Promise<void> {
-      // No-op — the SDK writes its own JSONL files locally.
+    async append(key: SessionKey, entries: SessionStoreEntry[]): Promise<void> {
+      // Ignore subagent transcripts
+      if (key.subpath) return;
+
+      // Filter to message types that carry conversation content
+      type MessageType = "user" | "assistant" | "system";
+      const messageTypes = new Set<string>(["user", "assistant", "system"]);
+      const messageEntries = entries.filter(
+        (e): e is SessionStoreEntry & { type: MessageType } => messageTypes.has(e.type),
+      );
+      if (messageEntries.length === 0) return;
+
+      // Transform SDK entries to AgentRuntimeMessages via the same path
+      // used when reading session history from JSONL
+      const runtimeMessages = transformClaudeSessionMessages(
+        messageEntries.map((e) => ({
+          type: e.type,
+          uuid: e.uuid ?? "",
+          session_id: sessionId,
+          message: e.message,
+          parent_tool_use_id: null,
+        })),
+      );
+      if (runtimeMessages.length === 0) return;
+
+      appendMessages(sessionId, runtimeMessages);
     },
 
     async listSubkeys(_key: { projectKey: string; sessionId: string }): Promise<string[]> {

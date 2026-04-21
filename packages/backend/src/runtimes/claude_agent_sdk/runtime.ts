@@ -1,5 +1,4 @@
 import {
-  getSessionMessages,
   query,
   type Query,
   type SDKUserMessage,
@@ -13,12 +12,11 @@ import type {
   SetRuntimeModelParams,
 } from "../registry.js";
 import { ClaudeStreamProcessor } from "./stream-processor.js";
-import { transformClaudeSessionMessages } from "./events.js";
 import { createClaudeCustomToolsServer } from "./tools.js";
 import { createSessionStore } from "./session-store.js";
+import { loadMessagesForLLM } from "../../session-store.js";
 
 const BUILTIN_TOOLS = ["Read", "Write", "Edit", "Bash"] as const;
-const CLAUDE_SESSION_FLUSH_WAIT_MS = 300;
 
 type PromptDeferred = {
   resolve: () => void;
@@ -98,12 +96,6 @@ class SdkInputStream implements AsyncIterable<SDKUserMessage> {
 
 function toError(error: unknown, fallback = "Claude query failed"): Error {
   return error instanceof Error ? error : new Error(String(error ?? fallback));
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 export class ClaudeSdkAgentRuntime implements AgentRuntime {
@@ -261,7 +253,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
       settingSources: [],
       strictMcpConfig: true,
       systemPrompt: this.params.systemPrompt,
-      sessionStore: createSessionStore(this.params.projectDir),
+      sessionStore: createSessionStore(this.params.sessionId, this.params.projectDir),
       thinking: isThinkingDisabled(this.thinkingLevel) ? { type: "disabled" } : { type: "enabled" },
       ...(isThinkingDisabled(this.thinkingLevel) ? {} : { effort: mapThinkingEffort(this.thinkingLevel) }),
       env: {
@@ -402,16 +394,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
   }
 
   async getMessages(): Promise<AgentRuntimeMessage[]> {
-    // Claude SDK session history can lag slightly behind the streamed `result`
-    // event. Waiting briefly here avoids snapshots that miss the final
-    // assistant text message right after a turn completes.
-    await sleep(CLAUDE_SESSION_FLUSH_WAIT_MS);
-
-    const messages = await getSessionMessages(this.params.sessionId, {
-      includeSystemMessages: true,
-      dir: this.params.projectDir,
-    });
-    return transformClaudeSessionMessages(messages);
+    return loadMessagesForLLM(this.params.sessionId);
   }
 
   getSessionMetadata(): { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null } {

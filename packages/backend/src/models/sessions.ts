@@ -50,12 +50,9 @@ interface TextBlock {
 }
 
 function isTextBlock(value: unknown): value is TextBlock {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as { type?: unknown }).type === "text" &&
-    typeof (value as { text?: unknown }).text === "string"
-  );
+  if (typeof value !== "object" || value === null) return false;
+  const obj: Record<string, unknown> = value;
+  return obj.type === "text" && typeof obj.text === "string";
 }
 
 /**
@@ -74,7 +71,8 @@ function stripUserSkillBlocks(msg: AgentRuntimeMessage): AgentRuntimeMessage {
   if (Array.isArray(content)) {
     const idx = content.findIndex(isTextBlock);
     if (idx < 0) return msg;
-    const block = content[idx] as TextBlock;
+    const block = content[idx];
+    if (!isTextBlock(block)) return msg;
     const stripped = stripLeadingSkillBlocks(block.text);
     if (stripped === block.text) return msg;
     const nextContent = content.slice();
@@ -115,7 +113,8 @@ export class Sessions {
   getMessages(sessionId: string): AgentRuntimeMessage[] | null {
     const row = getSession(sessionId);
     if (!row) return null;
-    return (loadMessages(sessionId) as AgentRuntimeMessage[]).map(stripUserSkillBlocks);
+    const messages: AgentRuntimeMessage[] = loadMessages(sessionId);
+    return messages.map(stripUserSkillBlocks);
   }
 
   listByProject(projectId: number): SessionListItem[] {

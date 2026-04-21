@@ -138,7 +138,8 @@ export class SkillSuggest extends LitElement {
   override updated(changed: PropertyValues) {
     if (!this.open) return;
     if (!changed.has("selectedIndex") && !changed.has("suggestions")) return;
-    const root = this.renderRoot as HTMLElement;
+    const root = this.renderRoot;
+    if (!(root instanceof HTMLElement)) return;
     const item = root.querySelector<HTMLElement>(
       `[data-index="${this.selectedIndex}"]`,
     );

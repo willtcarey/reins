@@ -109,8 +109,7 @@ What we _do_ need is `load()` — the ability to control what the model sees on 
 **Built:**
 - `toSessionStoreEntries()` translator: `AgentRuntimeMessage[] → SessionStoreEntry[]` with tool name/arg translation, tool result merging, consecutive assistant merging, compaction summary conversion, and UUID chain generation. Fully tested.
 - `createSessionStore()` factory: returns a `SessionStore` with `load()` reading from our SQLite via `loadMessagesForLLM()` → `toSessionStoreEntries()`, no-op `append()`, empty `listSubkeys()`. Tested with real DB.
-- Verification script (`packages/backend/scripts/session-store-load-test.ts`): end-to-end test that runs a session, persists to our format, and resumes via `load()`.
-- Metadata test script (`packages/backend/scripts/session-store-metadata-test.ts`): systematic test of which metadata fields are required for resume.
+- Unit tests: `packages/backend/src/__tests__/runtimes/claude_agent_sdk/session-store.test.ts` covers translator and store factory.
 
 **Wired up.** The translator and store are complete and connected. `createSessionStore()` is passed into the SDK's `query()` call in `ClaudeSdkAgentRuntime.buildQueryOptions()`. On resume, `load()` reads from our SQLite via `loadMessagesForLLM()` → `toSessionStoreEntries()`. On new sessions, `load()` returns `null` and the SDK starts fresh. `append()` is a no-op — the SDK's local JSONL files handle bookkeeping.
 
@@ -152,5 +151,6 @@ Register a `PostCompact` hook to capture `compact_summary` instead of showing a 
 
 ## Test Scripts
 
-- `packages/backend/scripts/session-store-explore.ts` — exploration script that exercises the SessionStore API.
-- `packages/backend/scripts/session-store-metadata-test.ts` — systematic test of minimum metadata fields required for resume (9 scenarios, simple + tool-call sessions).
+Unit tests: `packages/backend/src/__tests__/runtimes/claude_agent_sdk/session-store.test.ts`
+
+Ad-hoc exploration scripts (`session-store-explore.ts`, `session-store-load-test.ts`, `session-store-metadata-test.ts`, etc.) were used during development to reverse-engineer SDK behavior. Their findings are captured in the "Findings from Exploration" section above. The scripts were removed once implementation was complete.

@@ -1,28 +1,47 @@
 import { describe, expect, test, beforeEach } from "bun:test";
-import { toSessionStoreEntries, createSessionStore } from "../../../runtimes/claude_agent_sdk/session-store.js";
+import { toSessionStoreEntries, createSessionStore, type SessionEntryContext } from "../../../runtimes/claude_agent_sdk/session-store.js";
 import type { AgentRuntimeMessage } from "../../../runtimes/registry.js";
 import { useTestDb } from "../../helpers/test-db.js";
 import { createProject } from "../../../project-store.js";
-import { createSession, persistMessages } from "../../../session-store.js";
+import { createSession, persistMessages, loadMessages } from "../../../session-store.js";
 
-function msg(partial: Record<string, unknown>): AgentRuntimeMessage {
+function msg(partial: Partial<AgentRuntimeMessage>): AgentRuntimeMessage {
+  // eslint-disable-next-line typescript-eslint/consistent-type-assertions -- test helper intentionally casts partials
   return partial as AgentRuntimeMessage;
 }
+
+type StrippedEntry<T extends Record<string, unknown>> = Omit<T, "uuid" | "parentUuid" | "sessionId" | "cwd" | "timestamp">;
 
 /** Strip generated metadata fields from entries so existing assertions stay clean. */
 function stripMeta<T extends Record<string, unknown>>(
   entry: T,
-): Omit<T, "uuid" | "parentUuid" | "sessionId" | "cwd" | "timestamp"> {
+): StrippedEntry<T> {
   const { uuid: _uuid, parentUuid: _parentUuid, sessionId: _sessionId, cwd: _cwd, timestamp: _timestamp, ...rest } = entry;
-  // Also strip the generated message.id
-  if (rest.message && typeof rest.message === "object") {
-    const { id: _id, ...msgRest } = rest.message as Record<string, unknown>;
-    rest.message = msgRest;
+  if ("message" in rest && rest.message && typeof rest.message === "object") {
+    const msgObj = Object.entries(rest.message).reduce<Record<string, unknown>>((acc, [k, v]) => {
+      if (k !== "id") acc[k] = v;
+      return acc;
+    }, {});
+    // @ts-expect-error -- overwriting message field on rest for test assertion
+    rest.message = msgObj;
   }
-  return rest as Omit<T, "uuid" | "parentUuid" | "sessionId" | "cwd" | "timestamp">;
+  // eslint-disable-next-line typescript-eslint/consistent-type-assertions -- generic rest spread loses exact type
+  return rest as StrippedEntry<T>;
 }
 
-const testContext = { sessionId: "test-session", cwd: "/tmp/test" };
+/** Assert that entries form a valid uuid/parentUuid chain with unique IDs. */
+function expectUuidChain(entries: { uuid?: string; parentUuid?: string }[]) {
+  expect(entries[0].uuid).toEqual(expect.any(String));
+  expect(entries[0].parentUuid).toBeUndefined();
+  for (let i = 1; i < entries.length; i++) {
+    expect(entries[i].uuid).toEqual(expect.any(String));
+    expect(entries[i].parentUuid).toBe(entries[i - 1].uuid);
+  }
+  const uuids = entries.map((e) => e.uuid);
+  expect(new Set(uuids).size).toBe(uuids.length);
+}
+
+const testContext: SessionEntryContext = { sessionId: "test-session", cwd: "/tmp/test" };
 
 describe("toSessionStoreEntries", () => {
   test("simple user message", () => {
@@ -38,8 +57,7 @@ describe("toSessionStoreEntries", () => {
         content: [{ type: "text", text: "hello" }],
       },
     });
-    expect(result[0].uuid).toEqual(expect.any(String));
-    expect(result[0].parentUuid).toBeUndefined();
+    expectUuidChain(result);
   });
 
   test("entries include sessionId, cwd, and timestamp metadata", () => {
@@ -76,8 +94,7 @@ describe("toSessionStoreEntries", () => {
         stop_reason: "end_turn",
       },
     });
-    expect(result[0].uuid).toEqual(expect.any(String));
-    expect(result[0].parentUuid).toBeUndefined();
+    expectUuidChain(result);
   });
 
   test("assistant with builtin tool call — translates tool name and args", () => {
@@ -297,13 +314,11 @@ describe("toSessionStoreEntries", () => {
 
     expect(result).toHaveLength(4);
 
-    // User message
     expect(stripMeta(result[0])).toEqual({
       type: "user",
       message: { role: "user", content: [{ type: "text", text: "Read /foo" }] },
     });
 
-    // Assistant with tool call
     expect(stripMeta(result[1])).toEqual({
       type: "assistant",
       message: {
@@ -316,7 +331,6 @@ describe("toSessionStoreEntries", () => {
       },
     });
 
-    // Tool result
     expect(stripMeta(result[2])).toEqual({
       type: "user",
       message: {
@@ -327,7 +341,6 @@ describe("toSessionStoreEntries", () => {
       },
     });
 
-    // Final assistant
     expect(stripMeta(result[3])).toEqual({
       type: "assistant",
       message: {
@@ -498,7 +511,6 @@ describe("toSessionStoreEntries", () => {
       testContext,
     );
 
-    // 5 entries: user, assistant(thinking), assistant(tool_use), tool result, final assistant
     expect(result).toHaveLength(5);
     expect(result[0].type).toBe("user");
     expect(result[1].type).toBe("assistant");
@@ -506,7 +518,6 @@ describe("toSessionStoreEntries", () => {
     expect(result[3].type).toBe("user"); // tool result
     expect(result[4].type).toBe("assistant");
 
-    // Thinking and tool_use are separate entries (not merged)
     expect(stripMeta(result[1])).toEqual({
       type: "assistant",
       message: {
@@ -559,8 +570,6 @@ describe("toSessionStoreEntries", () => {
       testContext,
     );
 
-    // 4 entries: user, assistant(tool_use), tool result, final assistant
-    // The unsigned thinking assistant entry is dropped entirely
     expect(result).toHaveLength(4);
     expect(result[0].type).toBe("user");
     expect(result[1].type).toBe("assistant");
@@ -731,19 +740,7 @@ describe("toSessionStoreEntries", () => {
 
     expect(result).toHaveLength(4);
 
-    // First entry: uuid present, no parentUuid
-    expect(result[0].uuid).toEqual(expect.any(String));
-    expect(result[0].parentUuid).toBeUndefined();
-
-    // Each subsequent entry links back to the previous
-    for (let i = 1; i < result.length; i++) {
-      expect(result[i].uuid).toEqual(expect.any(String));
-      expect(result[i].parentUuid).toBe(result[i - 1].uuid);
-    }
-
-    // All UUIDs are unique
-    const uuids = result.map((e) => e.uuid);
-    expect(new Set(uuids).size).toBe(uuids.length);
+    expectUuidChain(result);
   });
 });
 
@@ -758,16 +755,16 @@ describe("createSessionStore", () => {
   });
 
   test("load() returns null when no messages exist", async () => {
-    const store = createSessionStore("/tmp/test-project");
     createSession("sess-empty", projectId, { agentRuntimeType: "claude_agent_sdk" });
+    const store = createSessionStore("sess-empty", "/tmp/test-project");
 
     const result = await store.load({ projectKey: "test", sessionId: "sess-empty" });
     expect(result).toBeNull();
   });
 
   test("load() returns translated entries when messages exist", async () => {
-    const store = createSessionStore("/tmp/test-project");
     createSession("sess-1", projectId, { agentRuntimeType: "claude_agent_sdk" });
+    const store = createSessionStore("sess-1", "/tmp/test-project");
     persistMessages("sess-1", [
       { role: "user", content: [{ type: "text", text: "hello" }] },
       { role: "assistant", content: [{ type: "text", text: "hi" }], stopReason: "endTurn" },
@@ -788,27 +785,93 @@ describe("createSessionStore", () => {
         stop_reason: "end_turn",
       },
     });
-    // Verify UUID chain
-    expect(result![0].uuid).toEqual(expect.any(String));
-    expect(result![0].parentUuid).toBeUndefined();
-    expect(result![1].uuid).toEqual(expect.any(String));
-    expect(result![1].parentUuid).toBe(result![0].uuid);
+    expectUuidChain(result!);
     // Verify metadata
     expect(result![0].sessionId).toBe("sess-1");
     expect(result![0].cwd).toBe("/tmp/test-project");
     expect(result![0].timestamp).toEqual(expect.any(String));
   });
 
-  test("append() is a no-op", async () => {
-    const store = createSessionStore("/tmp/test-project");
+  test("append() writes message entries to SQLite", async () => {
+    createSession("sess-append", projectId, { agentRuntimeType: "claude_agent_sdk" });
+    const store = createSessionStore("sess-append", "/tmp/test-project");
+
     await store.append(
-      { projectKey: "test", sessionId: "sess-1" },
-      [{ type: "user", message: { role: "user", content: "test" } }],
+      { projectKey: "test", sessionId: "sess-append" },
+      [
+        {
+          type: "user",
+          uuid: "u1",
+          timestamp: new Date().toISOString(),
+          message: { role: "user", content: [{ type: "text", text: "hello" }] },
+        },
+        {
+          type: "assistant",
+          uuid: "a1",
+          timestamp: new Date().toISOString(),
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "hi there" }],
+            stop_reason: "end_turn",
+          },
+        },
+      ],
     );
+
+    const messages = loadMessages("sess-append");
+    expect(messages).toHaveLength(2);
+    expect(messages[0].role).toBe("user");
+    expect(messages[0].content).toEqual([{ type: "text", text: "hello" }]);
+    expect(messages[1].role).toBe("assistant");
+    expect(messages[1].content).toEqual([{ type: "text", text: "hi there" }]);
+  });
+
+  test("append() ignores non-message entry types", async () => {
+    createSession("sess-filter", projectId, { agentRuntimeType: "claude_agent_sdk" });
+    const store = createSessionStore("sess-filter", "/tmp/test-project");
+
+    await store.append(
+      { projectKey: "test", sessionId: "sess-filter" },
+      [
+        { type: "ai-title", uuid: "t1", timestamp: new Date().toISOString(), title: "Hello" },
+        { type: "queue-operation", uuid: "q1", timestamp: new Date().toISOString() },
+        { type: "last-prompt", uuid: "lp1", timestamp: new Date().toISOString() },
+        {
+          type: "user",
+          uuid: "u1",
+          timestamp: new Date().toISOString(),
+          message: { role: "user", content: [{ type: "text", text: "hello" }] },
+        },
+      ],
+    );
+
+    const messages = loadMessages("sess-filter");
+    expect(messages).toHaveLength(1);
+    expect(messages[0].role).toBe("user");
+  });
+
+  test("append() ignores entries with subpath", async () => {
+    createSession("sess-sub", projectId, { agentRuntimeType: "claude_agent_sdk" });
+    const store = createSessionStore("sess-sub", "/tmp/test-project");
+
+    await store.append(
+      { projectKey: "test", sessionId: "sess-sub", subpath: "subagents/agent-123" },
+      [
+        {
+          type: "user",
+          uuid: "u1",
+          timestamp: new Date().toISOString(),
+          message: { role: "user", content: [{ type: "text", text: "subagent msg" }] },
+        },
+      ],
+    );
+
+    const messages = loadMessages("sess-sub");
+    expect(messages).toHaveLength(0);
   });
 
   test("listSubkeys() returns empty array", async () => {
-    const store = createSessionStore("/tmp/test-project");
+    const store = createSessionStore("sess-1", "/tmp/test-project");
     const result = await store.listSubkeys!({ projectKey: "test", sessionId: "sess-1" });
     expect(result).toEqual([]);
   });

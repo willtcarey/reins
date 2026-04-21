@@ -56,7 +56,7 @@ describe("GET /api/projects/:id/skills", () => {
     const found = body.skills.find((s: { name: string }) => s.name === uniqueName);
     expect(found).toBeDefined();
     expect(found.description).toBe("Test description");
-    expect(Object.keys(found).sort()).toEqual(["description", "name"]);
+    expect(Object.keys(found).toSorted()).toEqual(["description", "name"]);
   });
 
   test("returns 404 for a missing project", async () => {

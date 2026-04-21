@@ -197,10 +197,12 @@ describe("Sessions.setModel", () => {
     const messages = model.getMessages("sess-skills")!;
     expect(messages).toHaveLength(3);
 
-    expect((messages[0]!.content as Array<{ text: string }>)[0]!.text).toBe("/dip start");
+    const msg0Content: Array<{ text: string }> = messages[0]!.content;
+    expect(msg0Content[0]!.text).toBe("/dip start");
     expect(messages[1]!.content).toBe("just text");
     // Assistant messages are not stripped.
-    expect((messages[2]!.content as Array<{ text: string }>)[0]!.text).toBe(`${skillBlock}\n\nkeep me`);
+    const msg2Content: Array<{ text: string }> = messages[2]!.content;
+    expect(msg2Content[0]!.text).toBe(`${skillBlock}\n\nkeep me`);
   });
 
   test("rejects unknown providers", async () => {
