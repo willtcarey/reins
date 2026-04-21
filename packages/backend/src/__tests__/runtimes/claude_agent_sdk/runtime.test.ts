@@ -256,6 +256,26 @@ describe("ClaudeSdkAgentRuntime", () => {
     await runtime.close();
   });
 
+  test("query options include sessionStore backed by our database", () => {
+    const runtime = new ClaudeSdkAgentRuntime({
+      sessionId: "session-1",
+      projectDir: "/tmp/my-project",
+      systemPrompt: "You are helpful",
+      resumeOnFirstPrompt: false,
+      customTools: [],
+    });
+
+    const buildQueryOptions = Reflect.get(runtime, "buildQueryOptions");
+    if (typeof buildQueryOptions !== "function") throw new Error("buildQueryOptions is unavailable");
+    const options: Record<string, unknown> = Reflect.apply(buildQueryOptions, runtime, [null]);
+
+    expect(options.sessionStore).toBeDefined();
+    const store = options.sessionStore;
+    expect(store).toHaveProperty("load");
+    expect(store).toHaveProperty("append");
+    expect(store).toHaveProperty("listSubkeys");
+  });
+
   test("input stream errors do not trigger unhandled rejections", async () => {
     const runtime = new ClaudeSdkAgentRuntime({
       sessionId: "session-1",

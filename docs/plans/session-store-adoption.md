@@ -112,7 +112,7 @@ What we _do_ need is `load()` — the ability to control what the model sees on 
 - Verification script (`packages/backend/scripts/session-store-load-test.ts`): end-to-end test that runs a session, persists to our format, and resumes via `load()`.
 - Metadata test script (`packages/backend/scripts/session-store-metadata-test.ts`): systematic test of which metadata fields are required for resume.
 
-**Ready to wire up.** The translator and store are complete — `toSessionStoreEntries()` accepts a context with `sessionId` and `cwd`, and includes `sessionId`, `cwd`, and `timestamp` on each entry. Remaining step: pass `createSessionStore()` into the SDK's `query()` call in the runtime.
+**Wired up.** The translator and store are complete and connected. `createSessionStore()` is passed into the SDK's `query()` call in `ClaudeSdkAgentRuntime.buildQueryOptions()`. On resume, `load()` reads from our SQLite via `loadMessagesForLLM()` → `toSessionStoreEntries()`. On new sessions, `load()` returns `null` and the SDK starts fresh. `append()` is a no-op — the SDK's local JSONL files handle bookkeeping.
 
 ### What this enables
 
@@ -147,7 +147,7 @@ Register a `PostCompact` hook to capture `compact_summary` instead of showing a 
 
 1. ~~**Immediate (no SessionStore needed):** Register `PostCompact` hook to capture actual compaction summaries.~~ ✅ Done.
 2. ~~**Short term:** Add `sessionId`, `cwd`, and `timestamp` parameters to `toSessionStoreEntries()` and include them on each emitted entry.~~ ✅ Done.
-3. **Short term:** Wire `sessionStore` into the runtime via `createSessionStore()` — pass it into the SDK's `query()` call.
+3. ~~**Short term:** Wire `sessionStore` into the runtime via `createSessionStore()` — pass it into the SDK's `query()` call.~~ ✅ Done.
 4. **Medium term:** Implement context pruning in `load()` — prune `AgentRuntimeMessage[]` before translation, returning a trimmed transcript to the model.
 
 ## Test Scripts

@@ -15,6 +15,7 @@ import type {
 import { ClaudeStreamProcessor } from "./stream-processor.js";
 import { transformClaudeSessionMessages } from "./events.js";
 import { createClaudeCustomToolsServer } from "./tools.js";
+import { createSessionStore } from "./session-store.js";
 
 const BUILTIN_TOOLS = ["Read", "Write", "Edit", "Bash"] as const;
 const CLAUDE_SESSION_FLUSH_WAIT_MS = 300;
@@ -246,16 +247,10 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     this.inputStream.enqueue(buildUserMessage(text));
   }
 
-  private async ensureQueryStarted(): Promise<void> {
-    if (this.queryHandle) return;
-    if (this.closed) throw new Error("Runtime closed");
-
-    const mcpServer = createClaudeCustomToolsServer({
-      customTools: this.params.customTools,
-      getSignal: () => this.currentToolAbortController.signal,
-    });
-
-    const options: NonNullable<Parameters<typeof query>[0]["options"]> = {
+  private buildQueryOptions(
+    mcpServer: ReturnType<typeof createClaudeCustomToolsServer>,
+  ): NonNullable<Parameters<typeof query>[0]["options"]> {
+    return {
       cwd: this.params.projectDir,
       includePartialMessages: true,
       tools: [...BUILTIN_TOOLS],
@@ -266,6 +261,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
       settingSources: [],
       strictMcpConfig: true,
       systemPrompt: this.params.systemPrompt,
+      sessionStore: createSessionStore(this.params.projectDir),
       thinking: isThinkingDisabled(this.thinkingLevel) ? { type: "disabled" } : { type: "enabled" },
       ...(isThinkingDisabled(this.thinkingLevel) ? {} : { effort: mapThinkingEffort(this.thinkingLevel) }),
       env: {
@@ -286,7 +282,18 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
       ...(mcpServer ? { mcpServers: { "custom-tools": mcpServer } } : {}),
       ...this.resolveSessionOption(),
     };
+  }
 
+  private async ensureQueryStarted(): Promise<void> {
+    if (this.queryHandle) return;
+    if (this.closed) throw new Error("Runtime closed");
+
+    const mcpServer = createClaudeCustomToolsServer({
+      customTools: this.params.customTools,
+      getSignal: () => this.currentToolAbortController.signal,
+    });
+
+    const options = this.buildQueryOptions(mcpServer);
     const inputStream = new SdkInputStream();
 
     try {
