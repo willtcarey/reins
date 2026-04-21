@@ -8,11 +8,11 @@ import type {
 import type { AgentRuntimeEvent, AgentRuntimeMessage } from "../registry.js";
 import {
   normalizeClaudeToolName,
-  normalizeToolArgs,
   toTextContent,
   mapStopReason,
   nowTs,
 } from "./events.js";
+import { normalizeToolArgs } from "./mappings.js";
 import { isRecord } from "./type-guards.js";
 
 // ---------------------------------------------------------------------------

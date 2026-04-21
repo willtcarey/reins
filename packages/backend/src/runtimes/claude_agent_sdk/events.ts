@@ -1,19 +1,11 @@
 import type { SessionMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentRuntimeMessage, RuntimeContentBlock } from "../registry.js";
 import { isRecord, toRecord } from "./type-guards.js";
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const MCP_CUSTOM_TOOL_PREFIX = "mcp__custom-tools__";
-
-const BUILTIN_TOOL_NAME_MAP: Record<string, string> = {
-  Read: "read",
-  Write: "write",
-  Edit: "edit",
-  Bash: "bash",
-};
+import {
+  normalizeToolName,
+  normalizeToolArgs,
+  normalizeStopReason,
+} from "./mappings.js";
 
 // ---------------------------------------------------------------------------
 // Exported functions
@@ -21,10 +13,7 @@ const BUILTIN_TOOL_NAME_MAP: Record<string, string> = {
 
 export function normalizeClaudeToolName(name: string | undefined | null): string {
   if (!name) return "";
-  if (name.startsWith(MCP_CUSTOM_TOOL_PREFIX)) {
-    return name.slice(MCP_CUSTOM_TOOL_PREFIX.length);
-  }
-  return BUILTIN_TOOL_NAME_MAP[name] ?? name;
+  return normalizeToolName(name);
 }
 
 export function transformClaudeSessionMessages(messages: SessionMessage[]): AgentRuntimeMessage[] {
@@ -105,38 +94,7 @@ export function nowTs() {
 }
 
 export function mapStopReason(stopReason: string | null | undefined): string | undefined {
-  if (!stopReason) return undefined;
-  if (stopReason === "tool_use") return "toolUse";
-  return stopReason;
-}
-
-/**
- * Normalize SDK tool arg names to the frontend-expected names.
- *
- * The Claude SDK built-in tools use snake_case arg names (file_path,
- * old_string, new_string) while the Reins frontend expects shortened
- * or camelCase names (path, oldText, newText).
- */
-export function normalizeToolArgs(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
-  if (toolName === "read" || toolName === "write" || toolName === "edit") {
-    const out = { ...args };
-    if ("file_path" in out) {
-      out.path = out.file_path;
-      delete out.file_path;
-    }
-    if (toolName === "edit") {
-      if ("old_string" in out) {
-        out.oldText = out.old_string;
-        delete out.old_string;
-      }
-      if ("new_string" in out) {
-        out.newText = out.new_string;
-        delete out.new_string;
-      }
-    }
-    return out;
-  }
-  return args;
+  return normalizeStopReason(stopReason);
 }
 
 export function toTextContent(content: unknown): { type: "text"; text: string }[] {

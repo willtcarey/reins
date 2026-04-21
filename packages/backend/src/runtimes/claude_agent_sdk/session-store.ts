@@ -2,21 +2,7 @@ import type { SessionStore, SessionKey, SessionStoreEntry } from "@anthropic-ai/
 import type { AgentRuntimeMessage, RuntimeContentBlock } from "../registry.js";
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import { loadMessagesForLLM } from "../../session-store.js";
-
-// ---------------------------------------------------------------------------
-// Constants — reverse of the maps in events.ts
-// ---------------------------------------------------------------------------
-
-const MCP_CUSTOM_TOOL_PREFIX = "mcp__custom-tools__";
-
-const TOOL_NAME_MAP: Record<string, string> = {
-  read: "Read",
-  write: "Write",
-  edit: "Edit",
-  bash: "Bash",
-};
-
-const CUSTOM_TOOL_NAMES = new Set(["create_task", "delegate", "search", "execute"]);
+import { toSDKToolName, toSDKToolArgs, toSDKStopReason } from "./mappings.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -124,7 +110,7 @@ function buildAssistantEntry(msgs: AgentRuntimeMessage[]): SessionStoreEntry | n
   // If all content blocks were stripped (e.g. unsigned thinking), drop the entry
   if (content.length === 0) return null;
 
-  // Use the last message's stopReason (e.g. tool_use or end_turn)
+  // Use the last message's stopReason (e.g. toolUse or endTurn)
   const lastStop = msgs[msgs.length - 1].stopReason;
 
   return {
@@ -132,7 +118,7 @@ function buildAssistantEntry(msgs: AgentRuntimeMessage[]): SessionStoreEntry | n
     message: {
       role: "assistant",
       content,
-      stop_reason: translateStopReason(lastStop),
+      stop_reason: toSDKStopReason(lastStop),
     },
   };
 }
@@ -176,12 +162,12 @@ function buildCompactionEntry(msg: AgentRuntimeMessage): SessionStoreEntry {
 function translateContentBlockToSDKBlock(block: RuntimeContentBlock): ContentBlockParam | null {
   switch (block.type) {
     case "toolCall": {
-      const name = translateToolName(block.name);
+      const sdkName = toSDKToolName(block.name);
       return {
         type: "tool_use",
         id: block.id,
-        name,
-        input: translateToolArgs(name, block.arguments),
+        name: sdkName,
+        input: toSDKToolArgs(block.name, block.arguments),
       };
     }
     case "thinking": {
@@ -200,59 +186,6 @@ function translateContentBlockToSDKBlock(block: RuntimeContentBlock): ContentBlo
       // Structurally compatible with TextBlockParam
       return block;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Tool name / arg translation (reverse of events.ts)
-// ---------------------------------------------------------------------------
-
-function translateToolName(name: string): string {
-  if (TOOL_NAME_MAP[name]) return TOOL_NAME_MAP[name];
-  if (CUSTOM_TOOL_NAMES.has(name)) return MCP_CUSTOM_TOOL_PREFIX + name;
-  return name;
-}
-
-/**
- * Reverse of normalizeToolArgs in events.ts.
- * Converts our camelCase/short arg names back to the SDK's snake_case names.
- */
-function translateToolArgs(
-  sdkToolName: string,
-  args: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  if (!args) return {};
-
-  if (sdkToolName === "Read" || sdkToolName === "Write" || sdkToolName === "Edit") {
-    const out = { ...args };
-    if ("path" in out) {
-      out.file_path = out.path;
-      delete out.path;
-    }
-    if (sdkToolName === "Edit") {
-      if ("oldText" in out) {
-        out.old_string = out.oldText;
-        delete out.oldText;
-      }
-      if ("newText" in out) {
-        out.new_string = out.newText;
-        delete out.newText;
-      }
-    }
-    return out;
-  }
-
-  return args;
-}
-
-// ---------------------------------------------------------------------------
-// Stop reason translation
-// ---------------------------------------------------------------------------
-
-function translateStopReason(reason: string | undefined): string | undefined {
-  if (!reason) return undefined;
-  if (reason === "toolUse") return "tool_use";
-  if (reason === "endTurn") return "end_turn";
-  return reason;
 }
 
 // ---------------------------------------------------------------------------
