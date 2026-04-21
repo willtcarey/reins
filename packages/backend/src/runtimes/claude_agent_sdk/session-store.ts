@@ -9,7 +9,7 @@ import { loadMessagesForLLM } from "../../session-store.js";
 
 const MCP_CUSTOM_TOOL_PREFIX = "mcp__custom-tools__";
 
-const DENORM_TOOL_NAME_MAP: Record<string, string> = {
+const TOOL_NAME_MAP: Record<string, string> = {
   read: "Read",
   write: "Write",
   edit: "Edit",
@@ -132,7 +132,7 @@ function buildAssistantEntry(msgs: AgentRuntimeMessage[]): SessionStoreEntry | n
     message: {
       role: "assistant",
       content,
-      stop_reason: denormStopReason(lastStop),
+      stop_reason: translateStopReason(lastStop),
     },
   };
 }
@@ -176,12 +176,12 @@ function buildCompactionEntry(msg: AgentRuntimeMessage): SessionStoreEntry {
 function translateContentBlockToSDKBlock(block: RuntimeContentBlock): ContentBlockParam | null {
   switch (block.type) {
     case "toolCall": {
-      const name = denormToolName(block.name);
+      const name = translateToolName(block.name);
       return {
         type: "tool_use",
         id: block.id,
         name,
-        input: denormToolArgs(name, block.arguments),
+        input: translateToolArgs(name, block.arguments),
       };
     }
     case "thinking": {
@@ -203,11 +203,11 @@ function translateContentBlockToSDKBlock(block: RuntimeContentBlock): ContentBlo
 }
 
 // ---------------------------------------------------------------------------
-// Tool name / arg denormalization (reverse of events.ts)
+// Tool name / arg translation (reverse of events.ts)
 // ---------------------------------------------------------------------------
 
-function denormToolName(name: string): string {
-  if (DENORM_TOOL_NAME_MAP[name]) return DENORM_TOOL_NAME_MAP[name];
+function translateToolName(name: string): string {
+  if (TOOL_NAME_MAP[name]) return TOOL_NAME_MAP[name];
   if (CUSTOM_TOOL_NAMES.has(name)) return MCP_CUSTOM_TOOL_PREFIX + name;
   return name;
 }
@@ -216,7 +216,7 @@ function denormToolName(name: string): string {
  * Reverse of normalizeToolArgs in events.ts.
  * Converts our camelCase/short arg names back to the SDK's snake_case names.
  */
-function denormToolArgs(
+function translateToolArgs(
   sdkToolName: string,
   args: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
@@ -245,10 +245,10 @@ function denormToolArgs(
 }
 
 // ---------------------------------------------------------------------------
-// Stop reason denormalization
+// Stop reason translation
 // ---------------------------------------------------------------------------
 
-function denormStopReason(reason: string | undefined): string | undefined {
+function translateStopReason(reason: string | undefined): string | undefined {
   if (!reason) return undefined;
   if (reason === "toolUse") return "tool_use";
   if (reason === "endTurn") return "end_turn";

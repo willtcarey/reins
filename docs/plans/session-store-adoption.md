@@ -88,7 +88,7 @@ Store-based resume has identical cache behavior to file-based resume. No penalty
 
 Compaction fires during the agentic loop (between API calls within a turn), not between user turns. The flow: status `compacting` → `PreCompact` hook → summarize → `PostCompact` hook (carries `compact_summary`) → `SessionStart` with `source: 'compact'` → instructions reload → `compact_boundary` message.
 
-Reins currently doesn't capture the actual compaction summary — we emit a placeholder notice. The `PostCompact` hook provides `compact_summary` but we don't register it.
+Reins now captures the actual compaction summary via a `PostCompact` hook registered on the SDK query. The raw hook output includes an `<analysis>` section (Claude's reasoning) followed by `<summary>` (the actual summary); `extractSummaryContent()` strips the analysis before storing.
 
 ### 8. No direct way to disable auto-compaction via SDK
 
@@ -107,12 +107,12 @@ What we _do_ need is `load()` — the ability to control what the model sees on 
 ### Implementation status
 
 **Built:**
-- `toSessionStoreEntries()` translator: `AgentRuntimeMessage[] → SessionStoreEntry[]` with tool name/arg denormalization, tool result merging, consecutive assistant merging, compaction summary conversion, and UUID chain generation. Fully tested.
+- `toSessionStoreEntries()` translator: `AgentRuntimeMessage[] → SessionStoreEntry[]` with tool name/arg translation, tool result merging, consecutive assistant merging, compaction summary conversion, and UUID chain generation. Fully tested.
 - `createSessionStore()` factory: returns a `SessionStore` with `load()` reading from our SQLite via `loadMessagesForLLM()` → `toSessionStoreEntries()`, no-op `append()`, empty `listSubkeys()`. Tested with real DB.
 - Verification script (`packages/backend/scripts/session-store-load-test.ts`): end-to-end test that runs a session, persists to our format, and resumes via `load()`.
 - Metadata test script (`packages/backend/scripts/session-store-metadata-test.ts`): systematic test of which metadata fields are required for resume.
 
-**Ready to wire up.** The translator approach works — `toSessionStoreEntries()` just needs to accept `sessionId`, `cwd`, and `timestamp` and include them on each entry. No dual-write or raw entry storage needed.
+**Ready to wire up.** The translator and store are complete — `toSessionStoreEntries()` accepts a context with `sessionId` and `cwd`, and includes `sessionId`, `cwd`, and `timestamp` on each entry. Remaining step: pass `createSessionStore()` into the SDK's `query()` call in the runtime.
 
 ### What this enables
 
@@ -131,9 +131,9 @@ The canonical transcript stays in our database; `load()` returns the pruned vers
 
 Fabricate conversation history from other sources — e.g., inject relevant context from previous sessions, documentation, or external knowledge bases as if the model had already seen them.
 
-**C. Capture compaction summaries**
+**C. Capture compaction summaries** ✅
 
-Register a `PostCompact` hook to capture `compact_summary` instead of showing a placeholder. Independent of SessionStore adoption.
+Register a `PostCompact` hook to capture `compact_summary` instead of showing a placeholder. Independent of SessionStore adoption. **Done** — see commit `2fc23d8`.
 
 ## Open Questions
 
@@ -145,9 +145,10 @@ Register a `PostCompact` hook to capture `compact_summary` instead of showing a 
 
 ## Suggested Next Steps
 
-1. **Immediate (no SessionStore needed):** Register `PostCompact` hook to capture actual compaction summaries.
-2. **Short term:** Add `sessionId`, `cwd`, and `timestamp` parameters to `toSessionStoreEntries()` and include them on each emitted entry. Wire `sessionStore` into the runtime via `createSessionStore()`.
-3. **Medium term:** Implement context pruning in `load()` — prune `AgentRuntimeMessage[]` before translation, returning a trimmed transcript to the model.
+1. ~~**Immediate (no SessionStore needed):** Register `PostCompact` hook to capture actual compaction summaries.~~ ✅ Done.
+2. ~~**Short term:** Add `sessionId`, `cwd`, and `timestamp` parameters to `toSessionStoreEntries()` and include them on each emitted entry.~~ ✅ Done.
+3. **Short term:** Wire `sessionStore` into the runtime via `createSessionStore()` — pass it into the SDK's `query()` call.
+4. **Medium term:** Implement context pruning in `load()` — prune `AgentRuntimeMessage[]` before translation, returning a trimmed transcript to the model.
 
 ## Test Scripts
 

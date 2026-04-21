@@ -80,7 +80,7 @@ describe("toSessionStoreEntries", () => {
     expect(result[0].parentUuid).toBeUndefined();
   });
 
-  test("assistant with builtin tool call — denormalizes tool name and args", () => {
+  test("assistant with builtin tool call — translates tool name and args", () => {
     const result = toSessionStoreEntries(
       [
         msg({
@@ -595,7 +595,7 @@ describe("toSessionStoreEntries", () => {
     expect(result[1].type).toBe("assistant");
   });
 
-  test("read tool denormalizes path arg", () => {
+  test("read tool translates path arg", () => {
     const result = toSessionStoreEntries(
       [
         msg({
