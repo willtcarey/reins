@@ -7,13 +7,12 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentRuntimeEvent, AgentRuntimeMessage } from "../registry.js";
 import {
-  COMPACTION_NOTICE,
   normalizeClaudeToolName,
-  normalizeToolArgs,
   toTextContent,
   mapStopReason,
   nowTs,
 } from "./events.js";
+import { normalizeToolArgs } from "./mappings.js";
 import { isRecord } from "./type-guards.js";
 
 // ---------------------------------------------------------------------------
@@ -86,6 +85,9 @@ export class ClaudeStreamProcessor {
     completedTurnMessages: [],
   };
 
+  /** Summary text captured from the PostCompact hook callback. */
+  private pendingCompactSummary: string | null = null;
+
   /** Map a single SDK message into zero or more runtime events. */
   process(message: SDKMessage): AgentRuntimeEvent[] {
     return this.mapSdkMessage(message);
@@ -98,6 +100,19 @@ export class ClaudeStreamProcessor {
    */
   markStreamingStarted(): void {
     this.state.emittedTurnStart = true;
+  }
+
+  /**
+   * Store the compaction summary received from the PostCompact hook.
+   * Called by the runtime when the SDK fires the PostCompact hook callback,
+   * before the compact_boundary message arrives in the stream.
+   *
+   * The raw hook output may contain an `<analysis>...</analysis>` section
+   * (Claude's internal reasoning) followed by a `<summary>...</summary>`
+   * section. We strip the analysis and extract just the summary content.
+   */
+  setCompactSummary(raw: string): void {
+    this.pendingCompactSummary = extractSummaryContent(raw);
   }
 
   // ---------------------------------------------------------------------------
@@ -310,9 +325,11 @@ export class ClaudeStreamProcessor {
   // ---------------------------------------------------------------------------
 
   private handleCompactBoundary(): AgentRuntimeEvent[] {
+    const summary = this.pendingCompactSummary ?? "";
+    this.pendingCompactSummary = null;
     return [
       { type: "compaction_start", reason: "claude_sdk_compact_boundary" },
-      { type: "compaction_end", result: { summary: COMPACTION_NOTICE }, aborted: false },
+      { type: "compaction_end", result: { summary }, aborted: false },
     ];
   }
 
@@ -588,4 +605,27 @@ export class ClaudeStreamProcessor {
       return fallback;
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Module-level helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the useful summary from the raw PostCompact hook output.
+ *
+ * The hook output may contain `<analysis>...</analysis>` (Claude's internal
+ * reasoning about how to summarise) followed by `<summary>...</summary>`
+ * (the actual summary). We want only the summary content. If the tags are
+ * absent, return the raw string as-is.
+ */
+export function extractSummaryContent(raw: string): string {
+  const summaryMatch = raw.match(/<summary>([\s\S]*?)<\/summary>/);
+  if (summaryMatch) return summaryMatch[1].trim();
+
+  // No <summary> tag — strip <analysis> block if present and return the rest
+  const analysisEnd = raw.indexOf("</analysis>");
+  if (analysisEnd >= 0) return raw.slice(analysisEnd + "</analysis>".length).trim();
+
+  return raw;
 }

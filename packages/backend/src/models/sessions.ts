@@ -19,7 +19,7 @@ import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
 import { getRuntimeAdapter, type AgentRuntimeMessage } from "../runtimes/registry.js";
-import { stripLeadingSkillBlocks } from "../runtimes/prompt.js";
+import { stripLeadingSkillBlocks } from "./skill.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -50,12 +50,8 @@ interface TextBlock {
 }
 
 function isTextBlock(value: unknown): value is TextBlock {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as { type?: unknown }).type === "text" &&
-    typeof (value as { text?: unknown }).text === "string"
-  );
+  if (typeof value !== "object" || value === null) return false;
+  return "type" in value && value.type === "text" && "text" in value && typeof value.text === "string";
 }
 
 /**
@@ -74,7 +70,8 @@ function stripUserSkillBlocks(msg: AgentRuntimeMessage): AgentRuntimeMessage {
   if (Array.isArray(content)) {
     const idx = content.findIndex(isTextBlock);
     if (idx < 0) return msg;
-    const block = content[idx] as TextBlock;
+    const block = content[idx];
+    if (!isTextBlock(block)) return msg;
     const stripped = stripLeadingSkillBlocks(block.text);
     if (stripped === block.text) return msg;
     const nextContent = content.slice();
@@ -115,7 +112,8 @@ export class Sessions {
   getMessages(sessionId: string): AgentRuntimeMessage[] | null {
     const row = getSession(sessionId);
     if (!row) return null;
-    return (loadMessages(sessionId) as AgentRuntimeMessage[]).map(stripUserSkillBlocks);
+    const messages: AgentRuntimeMessage[] = loadMessages(sessionId);
+    return messages.map(stripUserSkillBlocks);
   }
 
   listByProject(projectId: number): SessionListItem[] {

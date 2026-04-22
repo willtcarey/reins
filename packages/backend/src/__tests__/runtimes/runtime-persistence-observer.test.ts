@@ -13,9 +13,9 @@ describe("runtime persistence observer", () => {
     createSession("sess-persist", project.id, { agentRuntimeType: "test_runtime" });
 
     const snapshot = [
-      { role: "user", content: [{ type: "text", text: "Summarize the latest changes" }] },
-      { role: "assistant", content: [{ type: "thinking", thinking: "Considering repository state" }] },
-      { role: "assistant", content: [{ type: "text", text: "No changes were made." }] },
+      { role: "user", content: [{ type: "text" as const, text: "Summarize the latest changes" }] },
+      { role: "assistant", content: [{ type: "thinking" as const, thinking: "Considering repository state" }] },
+      { role: "assistant", content: [{ type: "text" as const, text: "No changes were made." }] },
     ];
 
     const listeners = new Set<(event: AgentRuntimeEvent) => void>();

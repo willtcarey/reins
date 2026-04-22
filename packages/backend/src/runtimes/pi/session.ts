@@ -8,15 +8,30 @@ import { loadMessagesForLLM } from "../../session-store.js";
 import type { TaskRow } from "../../task-store.js";
 import { buildReinsSystemPrompt } from "../system-prompt.js";
 import { createPiContext } from "./factory.js";
+import type { ThinkingLevel as PiThinkingLevel } from "@mariozechner/pi-ai";
 import {
-  parseThinkingLevel,
   resolveModel,
   resolveModelSettingWithConfigInRegistry,
 } from "../../models/model-settings.js";
 
+const PI_THINKING_LEVELS: Record<string, PiThinkingLevel> = {
+  minimal: "minimal",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "xhigh",
+  max: "xhigh", // PI's highest level
+};
+
 /** Map a Reins thinking level to one PI supports (PI's max is "xhigh"). */
-export function toPiThinkingLevel(level: string): string {
-  return level === "max" ? "xhigh" : level;
+export function toPiThinkingLevel(level: string): PiThinkingLevel {
+  const mapped = PI_THINKING_LEVELS[level];
+  if (!mapped) {
+    throw new Error(
+      `Invalid thinking level '${level}'. Valid levels: ${Object.keys(PI_THINKING_LEVELS).join(", ")}`,
+    );
+  }
+  return mapped;
 }
 import {
   ModelNotFoundError,
@@ -98,7 +113,7 @@ async function buildSessionOpts(params: {
   }
 
   const configuredThinkingLevel = thinkingLevel
-    ? parseThinkingLevel(toPiThinkingLevel(thinkingLevel))
+    ? toPiThinkingLevel(thinkingLevel)
     : undefined;
 
   return {
@@ -247,7 +262,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
 
     try {
       if (thinkingLevel) {
-        session.setThinkingLevel(parseThinkingLevel(toPiThinkingLevel(thinkingLevel)));
+        session.setThinkingLevel(toPiThinkingLevel(thinkingLevel));
       }
 
       return ephemeralPrompt(session, { prompt, timeoutMs });

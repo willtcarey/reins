@@ -11,7 +11,7 @@ describe("PiAgentRuntime", () => {
     const abort = mock<() => Promise<void>>(async () => {});
     const subscribe = mock<(listener: (event: any) => void) => () => void>(() => unsubscribe);
     const dispose = mock<() => void>(() => {});
-    const messages = [{ role: "assistant", content: [{ type: "text", text: "hello" }] }];
+    const messages = [{ role: "assistant", content: [{ type: "text" as const, text: "hello" }] }];
 
     session.prompt = prompt;
     session.steer = steer;

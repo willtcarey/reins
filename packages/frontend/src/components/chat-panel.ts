@@ -559,10 +559,10 @@ function findSkillTokenAt(
   const prev = start === 0 ? "" : text[start - 1];
   if (prev !== "" && !/\s/.test(prev)) return null;
 
-  const query = text.slice(start + 1, caret);
-  if (!/^[a-z0-9-]*$/i.test(query)) return null;
+  const partial = text.slice(start + 1, caret);
+  if (!/^[a-z0-9-]*$/i.test(partial)) return null;
 
-  return { start, end: start + 1 + query.length, query };
+  return { start, end: start + 1 + partial.length, query: partial };
 }
 
 declare global {

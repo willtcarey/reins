@@ -27,14 +27,14 @@ afterEach(() => {
 function createSkill(
   name: string,
   body: string,
-  opts: { description?: string; withFrontmatter?: boolean } = {},
+  skillOpts: { description?: string; withFrontmatter?: boolean } = {},
 ): { name: string; description: string; filePath: string; baseDir: string } {
-  const description = opts.description ?? `${name} skill description`;
+  const description = skillOpts.description ?? `${name} skill description`;
   const skillDir = join(tempDir, ".agents", "skills", name);
   mkdirSync(skillDir, { recursive: true });
   const filePath = join(skillDir, "SKILL.md");
 
-  const content = opts.withFrontmatter === false
+  const content = skillOpts.withFrontmatter === false
     ? body
     : `---\nname: ${name}\ndescription: ${description}\n---\n\n${body}`;
   writeFileSync(filePath, content, "utf-8");

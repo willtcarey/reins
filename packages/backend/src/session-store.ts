@@ -9,7 +9,7 @@
  */
 
 import { getDb } from "./db.js";
-import { stripLeadingSkillBlocks } from "./runtimes/prompt.js";
+import { stripLeadingSkillBlocks } from "./models/skill.js";
 
 // ---- Types -----------------------------------------------------------------
 
@@ -251,26 +251,63 @@ export function updateSessionMeta(
   );
 }
 
+// ---- Helpers ----------------------------------------------------------------
+
+/**
+ * Prune tool result content from pre-compaction messages by replacing
+ * their content with `[pruned]`. Called after a compactionSummary is stored.
+ */
+function pruneToolResultsBeforeSeq(sessionId: string, compactionSeq: number): void {
+  const db = getDb();
+
+  const preCompactionResults = db
+    .query<{ id: number; message_json: string }, [string, number]>(
+      `SELECT id, message_json FROM session_messages
+       WHERE session_id = ? AND seq < ? AND role = 'toolResult'`,
+    )
+    .all(sessionId, compactionSeq);
+
+  const update = db.query(
+    `UPDATE session_messages SET message_json = ? WHERE id = ?`,
+  );
+  for (const row of preCompactionResults) {
+    const msg = JSON.parse(row.message_json);
+    msg.content = [{ type: "text", text: "[pruned]" }];
+    update.run(JSON.stringify(msg), row.id);
+  }
+}
+
 // ---- Message persistence ---------------------------------------------------
 
 /**
- * Persist messages to SQLite. Detects compactionSummary messages from pi's
- * in-memory array and handles compaction boundaries automatically.
+ * Persist messages to SQLite. Receives the full in-memory message array from
+ * the pi runtime, determines which messages are new, and delegates to
+ * `appendMessages` for the actual insert + pruning.
  *
  * Three cases:
- * 1. No compaction: standard append (skip already-stored messages)
- * 2. First compaction: keep old messages, insert compactionSummary + new, prune tool results
- * 3. Re-compaction: delete all messages, store only new post-compaction messages
+ * 1. No compaction: skip already-stored messages, append the rest.
+ * 2. New compaction (first or re-): delete superseded post-compaction rows,
+ *    then append compactionSummary + post-compaction messages.
+ * 3. Same compaction + growth: skip already-stored post-compaction messages,
+ *    append only the new tail.
  */
 export function persistMessages(sessionId: string, messages: any[]): void {
   const db = getDb();
 
   const maxRow = db
-    .query<{ max_seq: number }, [string]>("SELECT COALESCE(MAX(seq), -1) AS max_seq FROM session_messages WHERE session_id = ?")
+    .query<{ max_seq: number }, [string]>(
+      "SELECT COALESCE(MAX(seq), -1) AS max_seq FROM session_messages WHERE session_id = ?",
+    )
     .get(sessionId)!;
   const nextSeq = maxRow.max_seq + 1;
 
   const compactionIdx = messages.findIndex((m: any) => m.role === "compactionSummary");
+
+  if (compactionIdx < 0) {
+    // No compaction: append messages not yet stored
+    appendMessages(sessionId, messages.slice(nextSeq));
+    return;
+  }
 
   const lastSummaryRow = db
     .query<{ last_seq: number | null }, [string]>(
@@ -279,78 +316,27 @@ export function persistMessages(sessionId: string, messages: any[]): void {
     )
     .get(sessionId);
 
-  const insert = db.query(
-    `INSERT INTO session_messages (session_id, seq, role, message_json, created_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
-  );
+  const postCompactionMsgCount = messages.length - (compactionIdx + 1);
+  const dbPostCompactionCount = lastSummaryRow?.last_seq != null
+    ? nextSeq - (lastSummaryRow.last_seq + 1)
+    : 0;
 
-  const tx = db.transaction(() => {
-    if (compactionIdx >= 0) {
-      // Pi's array contains a compactionSummary. Either this is a new compaction
-      // or the same one we already stored (with possible new messages appended).
-
-      const postCompactionMsgCount = messages.length - (compactionIdx + 1);
-      const dbPostCompactionCount = lastSummaryRow?.last_seq != null
-        ? nextSeq - (lastSummaryRow.last_seq + 1)
-        : 0;
-
-      if (lastSummaryRow?.last_seq == null || postCompactionMsgCount < dbPostCompactionCount) {
-        // NEW COMPACTION (first or re-compaction): append compactionSummary + post-compaction messages
-
-        if (lastSummaryRow?.last_seq != null) {
-          // Re-compaction: delete old post-compaction messages that will be
-          // superseded by the new compaction summary + its post-compaction messages.
-          // Without this, the new post-compaction messages would duplicate rows
-          // that already exist between the old compactionSummary and nextSeq.
-          db.query(
-            `DELETE FROM session_messages
-             WHERE session_id = ? AND seq > ? AND seq < ?`,
-          ).run(sessionId, lastSummaryRow.last_seq, nextSeq);
-        }
-
-        for (let i = compactionIdx; i < messages.length; i++) {
-          const msg = messages[i];
-          insert.run(sessionId, nextSeq + (i - compactionIdx), msg.role, JSON.stringify(msg));
-        }
-
-        // Prune tool result content from pre-compaction messages
-        const compactionSeq = nextSeq;
-        const preCompactionResults = db
-          .query<{ id: number; message_json: string }, [string, number]>(
-            `SELECT id, message_json FROM session_messages
-             WHERE session_id = ? AND seq < ? AND role = 'toolResult'`,
-          )
-          .all(sessionId, compactionSeq);
-
-        const update = db.query(
-          `UPDATE session_messages SET message_json = ? WHERE id = ?`,
-        );
-        for (const row of preCompactionResults) {
-          const msg = JSON.parse(row.message_json);
-          msg.content = [{ type: "text", text: "[pruned]" }];
-          update.run(JSON.stringify(msg), row.id);
-        }
-      } else {
-        // SAME COMPACTION + new messages: skip already-stored messages
-        const startIdx = compactionIdx + 1 + dbPostCompactionCount;
-        if (startIdx >= messages.length) return;
-        for (let i = startIdx; i < messages.length; i++) {
-          const msg = messages[i];
-          insert.run(sessionId, nextSeq + (i - startIdx), msg.role, JSON.stringify(msg));
-        }
-      }
-    } else {
-      // NO COMPACTION: standard append
-      if (nextSeq >= messages.length) return;
-      for (let i = nextSeq; i < messages.length; i++) {
-        const msg = messages[i];
-        insert.run(sessionId, i, msg.role, JSON.stringify(msg));
-      }
+  if (lastSummaryRow?.last_seq == null || postCompactionMsgCount < dbPostCompactionCount) {
+    // New compaction (first or re-compaction)
+    if (lastSummaryRow?.last_seq != null) {
+      // Re-compaction: delete old post-compaction messages superseded by the
+      // new compaction summary.
+      db.query(
+        `DELETE FROM session_messages
+         WHERE session_id = ? AND seq > ? AND seq < ?`,
+      ).run(sessionId, lastSummaryRow.last_seq, nextSeq);
     }
-  });
-  tx();
-
-  // Touch updated_at
-  db.query("UPDATE sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(sessionId);
+    appendMessages(sessionId, messages.slice(compactionIdx));
+  } else {
+    // Same compaction + new messages: skip already-stored messages
+    const startIdx = compactionIdx + 1 + dbPostCompactionCount;
+    appendMessages(sessionId, messages.slice(startIdx));
+  }
 }
 
 /**
@@ -364,6 +350,45 @@ export function loadMessages(sessionId: string): any[] {
     .query<{ message_json: string }, [string]>("SELECT message_json FROM session_messages WHERE session_id = ? ORDER BY seq")
     .all(sessionId);
   return rows.map((r) => JSON.parse(r.message_json));
+}
+
+/**
+ * Append messages incrementally to a session. Unlike `persistMessages()` which
+ * expects the full ordered message array, this inserts new messages starting
+ * from the current max seq. Handles compaction boundaries the same way:
+ * prunes tool result content from pre-compaction messages.
+ */
+export function appendMessages(sessionId: string, messages: any[]): void {
+  if (messages.length === 0) return;
+
+  const db = getDb();
+
+  const maxRow = db
+    .query<{ max_seq: number }, [string]>(
+      "SELECT COALESCE(MAX(seq), -1) AS max_seq FROM session_messages WHERE session_id = ?",
+    )
+    .get(sessionId)!;
+  let nextSeq = maxRow.max_seq + 1;
+
+  const insert = db.query(
+    `INSERT INTO session_messages (session_id, seq, role, message_json, created_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+  );
+
+  const tx = db.transaction(() => {
+    for (const msg of messages) {
+      insert.run(sessionId, nextSeq, msg.role, JSON.stringify(msg));
+
+      if (msg.role === "compactionSummary") {
+        pruneToolResultsBeforeSeq(sessionId, nextSeq);
+      }
+
+      nextSeq++;
+    }
+  });
+  tx();
+
+  // Touch updated_at
+  db.query("UPDATE sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(sessionId);
 }
 
 /**

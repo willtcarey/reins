@@ -1,21 +1,11 @@
 import type { SessionMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentRuntimeMessage } from "../registry.js";
+import type { AgentRuntimeMessage, RuntimeContentBlock } from "../registry.js";
 import { isRecord, toRecord } from "./type-guards.js";
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const MCP_CUSTOM_TOOL_PREFIX = "mcp__custom-tools__";
-
-const BUILTIN_TOOL_NAME_MAP: Record<string, string> = {
-  Read: "read",
-  Write: "write",
-  Edit: "edit",
-  Bash: "bash",
-};
-
-export const COMPACTION_NOTICE = "*Claude Code compacted and we don't have visibility into the summary.*";
+import {
+  normalizeToolName,
+  normalizeToolArgs,
+  normalizeStopReason,
+} from "./mappings.js";
 
 // ---------------------------------------------------------------------------
 // Exported functions
@@ -23,10 +13,7 @@ export const COMPACTION_NOTICE = "*Claude Code compacted and we don't have visib
 
 export function normalizeClaudeToolName(name: string | undefined | null): string {
   if (!name) return "";
-  if (name.startsWith(MCP_CUSTOM_TOOL_PREFIX)) {
-    return name.slice(MCP_CUSTOM_TOOL_PREFIX.length);
-  }
-  return BUILTIN_TOOL_NAME_MAP[name] ?? name;
+  return normalizeToolName(name);
 }
 
 export function transformClaudeSessionMessages(messages: SessionMessage[]): AgentRuntimeMessage[] {
@@ -52,10 +39,11 @@ export function transformClaudeSessionMessages(messages: SessionMessage[]): Agen
       // via buildUserMessage(), so string content reliably indicates an
       // SDK-side compaction boundary.
       if (typeof message.content === "string") {
+        const summary = message.content;
         out.push({
           role: "compactionSummary",
-          summary: COMPACTION_NOTICE,
-          content: COMPACTION_NOTICE,
+          summary,
+          content: summary,
           timestamp: nowTs(),
         });
         continue;
@@ -76,14 +64,20 @@ export function transformClaudeSessionMessages(messages: SessionMessage[]): Agen
     if (entry.type === "system") {
       // SessionMessage doesn't expose `subtype` — detect compact_boundary
       // via the presence of `compact_metadata` on the raw entry.
+      // The compact_boundary is a structural marker — the actual summary
+      // lives in the preceding user message with string content. Only emit
+      // a compactionSummary here if we haven't already added one.
       const raw = toRecord(entry);
       if (raw.subtype === "compact_boundary" || raw.compact_metadata) {
-        out.push({
-          role: "compactionSummary",
-          summary: COMPACTION_NOTICE,
-          content: COMPACTION_NOTICE,
-          timestamp: nowTs(),
-        });
+        const lastOut = out[out.length - 1];
+        if (!lastOut || lastOut.role !== "compactionSummary") {
+          out.push({
+            role: "compactionSummary",
+            summary: "",
+            content: "",
+            timestamp: nowTs(),
+          });
+        }
       }
     }
   }
@@ -100,38 +94,7 @@ export function nowTs() {
 }
 
 export function mapStopReason(stopReason: string | null | undefined): string | undefined {
-  if (!stopReason) return undefined;
-  if (stopReason === "tool_use") return "toolUse";
-  return stopReason;
-}
-
-/**
- * Normalize SDK tool arg names to the frontend-expected names.
- *
- * The Claude SDK built-in tools use snake_case arg names (file_path,
- * old_string, new_string) while the Reins frontend expects shortened
- * or camelCase names (path, oldText, newText).
- */
-export function normalizeToolArgs(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
-  if (toolName === "read" || toolName === "write" || toolName === "edit") {
-    const out = { ...args };
-    if ("file_path" in out) {
-      out.path = out.file_path;
-      delete out.file_path;
-    }
-    if (toolName === "edit") {
-      if ("old_string" in out) {
-        out.oldText = out.old_string;
-        delete out.old_string;
-      }
-      if ("new_string" in out) {
-        out.newText = out.new_string;
-        delete out.new_string;
-      }
-    }
-    return out;
-  }
-  return args;
+  return normalizeStopReason(stopReason);
 }
 
 export function toTextContent(content: unknown): { type: "text"; text: string }[] {
@@ -159,10 +122,10 @@ export function toTextContent(content: unknown): { type: "text"; text: string }[
 // Internal helpers — session message transform
 // ---------------------------------------------------------------------------
 
-function mapAssistantContent(content: unknown): unknown[] {
+function mapAssistantContent(content: unknown): RuntimeContentBlock[] {
   if (!Array.isArray(content)) return [];
 
-  const out: unknown[] = [];
+  const out: RuntimeContentBlock[] = [];
   for (const block of content) {
     if (!isRecord(block)) continue;
 
@@ -172,7 +135,11 @@ function mapAssistantContent(content: unknown): unknown[] {
     }
 
     if (block.type === "thinking") {
-      out.push({ type: "thinking", thinking: typeof block.thinking === "string" ? block.thinking : "" });
+      out.push({
+        type: "thinking",
+        thinking: typeof block.thinking === "string" ? block.thinking : "",
+        ...(typeof block.signature === "string" ? { thinkingSignature: block.signature } : {}),
+      });
       continue;
     }
 
@@ -180,7 +147,7 @@ function mapAssistantContent(content: unknown): unknown[] {
       const toolName = normalizeClaudeToolName(typeof block.name === "string" ? block.name : "tool");
       out.push({
         type: "toolCall",
-        id: block.id,
+        id: typeof block.id === "string" ? block.id : String(block.id ?? ""),
         name: toolName,
         arguments: normalizeToolArgs(toolName, toRecord(block.input)),
       });
@@ -190,13 +157,13 @@ function mapAssistantContent(content: unknown): unknown[] {
   return out;
 }
 
-function mapUserContent(content: unknown): unknown[] {
-  if (typeof content === "string") return [{ type: "text", text: content }];
+function mapUserContent(content: unknown): RuntimeContentBlock[] {
+  if (typeof content === "string") return [{ type: "text" as const, text: content }];
   if (!Array.isArray(content)) return [];
 
   return content
     .filter((block): block is Record<string, unknown> => isRecord(block) && block.type === "text")
-    .map((block) => ({ type: "text", text: String(block.text ?? "") }));
+    .map((block) => ({ type: "text" as const, text: String(block.text ?? "") }));
 }
 
 function mapToolResultBlocks(content: unknown): AgentRuntimeMessage[] {
