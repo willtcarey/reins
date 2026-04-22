@@ -69,6 +69,32 @@ describe("buildReinsSystemPrompt", () => {
     expect(prompt).toContain("</available_skills>");
   });
 
+  test("includes task context when task is provided", () => {
+    const prompt = buildReinsSystemPrompt({
+      tools: [{ name: "read" }],
+      includePiDocs: false,
+      task: { title: "Fix login bug", description: "Users can't log in" },
+    });
+
+    expect(prompt).toContain("## Task");
+    expect(prompt).toContain("Fix login bug");
+    expect(prompt).toContain("Users can't log in");
+    expect(prompt).toContain("You are working on this task");
+    expect(prompt).not.toContain("project assistant session");
+  });
+
+  test("includes scratch session guidance when isScratchSession is true", () => {
+    const prompt = buildReinsSystemPrompt({
+      tools: [{ name: "read" }],
+      includePiDocs: false,
+      isScratchSession: true,
+    });
+
+    expect(prompt).toContain("project assistant session");
+    expect(prompt).toContain("create a task instead of implementing here");
+    expect(prompt).not.toContain("## Task");
+  });
+
   test("does not append skills or context files when not provided", () => {
     const prompt = buildReinsSystemPrompt({
       tools: [{ name: "read" }],

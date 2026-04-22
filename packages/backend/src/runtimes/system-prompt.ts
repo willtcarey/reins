@@ -89,7 +89,9 @@ REINS documentation (read only when the user asks about REINS itself):
     }
     prompt += "\n\nYou are working on this task.";
   } else if (options.isScratchSession) {
-    prompt += "\n\nWhen the user describes a problem or asks a question, focus on analysis and explanation first. Only make code changes when the user clearly indicates they want changes made. Implementation work should go in tasks.";
+    prompt += `
+
+This is a project assistant session — use it for discussion, analysis, planning, and small direct changes (doc updates, config tweaks, quick fixes). When the user asks you to implement a feature or make substantial code changes, create a task instead of implementing here. The task gets its own branch and session where the actual implementation happens. Do not check out task branches or write implementation code in this session.`;
   }
 
   if (options.contextFiles && options.contextFiles.length > 0) {
