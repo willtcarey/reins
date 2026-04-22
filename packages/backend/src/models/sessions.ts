@@ -51,8 +51,7 @@ interface TextBlock {
 
 function isTextBlock(value: unknown): value is TextBlock {
   if (typeof value !== "object" || value === null) return false;
-  const obj: Record<string, unknown> = value;
-  return obj.type === "text" && typeof obj.text === "string";
+  return "type" in value && value.type === "text" && "text" in value && typeof value.text === "string";
 }
 
 /**

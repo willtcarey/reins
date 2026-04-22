@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
@@ -197,12 +198,14 @@ describe("Sessions.setModel", () => {
     const messages = model.getMessages("sess-skills")!;
     expect(messages).toHaveLength(3);
 
-    const msg0Content: Array<{ text: string }> = messages[0]!.content;
-    expect(msg0Content[0]!.text).toBe("/dip start");
+    const msg0Blocks = messages[0]!.content;
+    assert(Array.isArray(msg0Blocks) && msg0Blocks[0]!.type === "text");
+    expect(msg0Blocks[0].text).toBe("/dip start");
     expect(messages[1]!.content).toBe("just text");
     // Assistant messages are not stripped.
-    const msg2Content: Array<{ text: string }> = messages[2]!.content;
-    expect(msg2Content[0]!.text).toBe(`${skillBlock}\n\nkeep me`);
+    const msg2Blocks = messages[2]!.content;
+    assert(Array.isArray(msg2Blocks) && msg2Blocks[0]!.type === "text");
+    expect(msg2Blocks[0].text).toBe(`${skillBlock}\n\nkeep me`);
   });
 
   test("rejects unknown providers", async () => {
