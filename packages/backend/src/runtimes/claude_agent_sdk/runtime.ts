@@ -15,6 +15,7 @@ import { ClaudeStreamProcessor } from "./stream-processor.js";
 import { createClaudeCustomToolsServer } from "./tools.js";
 import { createSessionStore } from "./session-store.js";
 import { loadMessagesForLLM } from "../../session-store.js";
+import { resolveClaudeBinary } from "./resolve-binary.js";
 
 const BUILTIN_TOOLS = ["Read", "Write", "Edit", "Bash"] as const;
 
@@ -243,6 +244,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     mcpServer: ReturnType<typeof createClaudeCustomToolsServer>,
   ): NonNullable<Parameters<typeof query>[0]["options"]> {
     return {
+      pathToClaudeCodeExecutable: resolveClaudeBinary(),
       cwd: this.params.projectDir,
       includePartialMessages: true,
       tools: [...BUILTIN_TOOLS],

@@ -11,9 +11,8 @@
  *   bun run packages/backend/scripts/capture-compact-trace.ts [sessionId]
  */
 
-import { existsSync } from "fs";
 import { mkdir } from "node:fs/promises";
-import { join, resolve } from "path";
+import { resolve } from "path";
 import {
   query,
   type HookInput,
@@ -23,30 +22,10 @@ import { getDb } from "../src/db.js";
 import { listProjects } from "../src/project-store.js";
 import { listSessions } from "../src/session-store.js";
 import { serializeForJson } from "./lib/claude-sdk-trace-capture.js";
+import { resolveClaudeBinary } from "../src/runtimes/claude_agent_sdk/resolve-binary.js";
 
 const CWD = process.cwd();
 const OUTPUT_PATH = resolve(CWD, "tmp/compact-trace.json");
-
-// ---------------------------------------------------------------------------
-// Claude binary resolution
-// ---------------------------------------------------------------------------
-
-function resolveClaudeBinary(): string {
-  const candidates = [
-    join(
-      CWD,
-      "node_modules/.bun/@anthropic-ai+claude-agent-sdk-linux-x64@0.2.114",
-      "node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude",
-    ),
-    join(process.env.HOME ?? "", ".local/bin/claude"),
-  ];
-  for (const p of candidates) {
-    if (existsSync(p)) return p;
-  }
-  throw new Error(
-    `Could not find Claude binary. Checked:\n${candidates.map((c) => `  - ${c}`).join("\n")}`,
-  );
-}
 
 // ---------------------------------------------------------------------------
 // SDK message type extraction (mirrors lib/claude-sdk-trace-capture.ts)
