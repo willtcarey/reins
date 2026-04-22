@@ -14,6 +14,14 @@ export type SessionEntryContext = {
   cwd: string;
 };
 
+type MessageType = "user" | "assistant" | "system";
+type UserMessageContent = AgentRuntimeMessage["content"] | Record<string, unknown>[] | string;
+
+/** Narrowed entry type so we can access message.id without `as` casts. */
+type TypedEntry = SessionStoreEntry & {
+  message: { id?: string; [k: string]: unknown };
+};
+
 /**
  * Convert persisted AgentRuntimeMessages into SessionStoreEntry[] for the
  * Claude Agent SDK's SessionStore.load() method.
@@ -22,7 +30,7 @@ export function toSessionStoreEntries(
   messages: AgentRuntimeMessage[],
   context: SessionEntryContext,
 ): SessionStoreEntry[] {
-  const out: SessionStoreEntry[] = [];
+  const out: TypedEntry[] = [];
   let i = 0;
 
   while (i < messages.length) {
@@ -80,9 +88,8 @@ export function toSessionStoreEntries(
     entry.cwd = context.cwd;
     entry.timestamp = new Date().toISOString();
     // SDK requires message.id on each entry
-    const msg: Record<string, unknown> | undefined = entry.message;
-    if (msg && !msg.id) {
-      msg.id = `msg_${crypto.randomUUID().replace(/-/g, "")}`;
+    if (!entry.message.id) {
+      entry.message.id = `msg_${crypto.randomUUID().replace(/-/g, "")}`;
     }
   }
 
@@ -93,17 +100,21 @@ export function toSessionStoreEntries(
 // Entry builders
 // ---------------------------------------------------------------------------
 
-function buildUserEntry(msg: AgentRuntimeMessage): SessionStoreEntry {
+function makeUserEntry(content: UserMessageContent): TypedEntry {
   return {
     type: "user",
     message: {
       role: "user",
-      content: msg.content,
+      content,
     },
   };
 }
 
-function buildAssistantEntry(msgs: AgentRuntimeMessage[]): SessionStoreEntry | null {
+function buildUserEntry(msg: AgentRuntimeMessage): TypedEntry {
+  return makeUserEntry(msg.content);
+}
+
+function buildAssistantEntry(msgs: AgentRuntimeMessage[]): TypedEntry | null {
   const content = msgs.flatMap((m) =>
     Array.isArray(m.content) ? m.content.map(translateContentBlockToSDKBlock).filter((b) => b !== null) : [],
   );
@@ -124,7 +135,7 @@ function buildAssistantEntry(msgs: AgentRuntimeMessage[]): SessionStoreEntry | n
   };
 }
 
-function buildToolResultEntry(results: AgentRuntimeMessage[]): SessionStoreEntry {
+function buildToolResultEntry(results: AgentRuntimeMessage[]): TypedEntry {
   const content = results.map((r) => ({
     type: "tool_result" as const,
     tool_use_id: String(r.toolCallId),
@@ -132,24 +143,12 @@ function buildToolResultEntry(results: AgentRuntimeMessage[]): SessionStoreEntry
     is_error: Boolean(r.isError),
   }));
 
-  return {
-    type: "user",
-    message: {
-      role: "user",
-      content,
-    },
-  };
+  return makeUserEntry(content);
 }
 
-function buildCompactionEntry(msg: AgentRuntimeMessage): SessionStoreEntry {
+function buildCompactionEntry(msg: AgentRuntimeMessage): TypedEntry {
   const text = msg.summary ?? (typeof msg.content === "string" ? msg.content : "");
-  return {
-    type: "user",
-    message: {
-      role: "user",
-      content: text,
-    },
-  };
+  return makeUserEntry(text);
 }
 
 // ---------------------------------------------------------------------------
@@ -197,16 +196,14 @@ function translateContentBlockToSDKBlock(block: RuntimeContentBlock): ContentBlo
  * If content is an array with a single text block, return just the string.
  * Otherwise pass through.
  */
-function extractToolResultContent(content: unknown): unknown {
+function extractToolResultContent(content: AgentRuntimeMessage["content"]): string | AgentRuntimeMessage["content"] {
   if (!Array.isArray(content)) return content;
-  if (content.length === 1) {
-    const block: unknown = content[0];
-    if (block && typeof block === "object") {
-      const obj: Record<string, unknown> = block;
-      if (obj.type === "text") return obj.text;
-    }
-  }
-  return content;
+  if (content.length !== 1) return content;
+
+  const block = content[0];
+  if (block.type !== "text") return content;
+
+  return block.text;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,7 +230,6 @@ export function createSessionStore(sessionId: string, cwd: string): SessionStore
       if (key.subpath) return;
 
       // Filter to message types that carry conversation content
-      type MessageType = "user" | "assistant" | "system";
       const messageTypes = new Set<string>(["user", "assistant", "system"]);
       const messageEntries = entries.filter(
         (e): e is SessionStoreEntry & { type: MessageType } => messageTypes.has(e.type),
