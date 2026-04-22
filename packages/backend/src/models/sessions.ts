@@ -19,7 +19,7 @@ import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
 import { getRuntimeAdapter, type AgentRuntimeMessage } from "../runtimes/registry.js";
-import { stripLeadingSkillBlocks } from "../runtimes/prompt.js";
+import { stripLeadingSkillBlocks } from "./skill.js";
 
 export interface SetSessionModelParams {
   sessionId: string;

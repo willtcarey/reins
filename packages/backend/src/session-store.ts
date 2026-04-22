@@ -9,7 +9,7 @@
  */
 
 import { getDb } from "./db.js";
-import { stripLeadingSkillBlocks } from "./runtimes/prompt.js";
+import { stripLeadingSkillBlocks } from "./models/skill.js";
 
 // ---- Types -----------------------------------------------------------------
 
