@@ -18,7 +18,7 @@ import { AppClient } from "../models/ws-client.js";
 import type { DiffPanel } from "./changes/diff-panel.js";
 import { FileTreeState } from "../models/changes/file-tree-state.js";
 import { AppStore } from "../models/stores/app-store.js";
-import { parseHash } from "../models/router.js";
+import { parseHash, getLastHash, saveHash } from "../models/router.js";
 import type { Route } from "../models/router.js";
 
 // Ensure sub-components are registered
@@ -78,9 +78,20 @@ export class AppShell extends LitElement {
       this.updateTitleAndFavicon();
     });
 
-    // Apply initial route
+    // Apply initial route — restore last-viewed hash on fresh page loads
     const route = parseHash();
-    this.applyRoute(route);
+    if (!route.sessionId) {
+      const lastHash = getLastHash();
+      if (lastHash) {
+        // Replace so we don't push an empty-hash entry into history
+        history.replaceState(null, "", lastHash);
+        this.applyRoute(parseHash());
+      } else {
+        this.applyRoute(route);
+      }
+    } else {
+      this.applyRoute(route);
+    }
 
     // Listen for hash changes
     window.addEventListener("hashchange", this.onHashChange);
@@ -116,6 +127,7 @@ export class AppShell extends LitElement {
   }
 
   private onHashChange = () => {
+    saveHash(location.hash);
     const previousProjectId = this.appStore.projectId;
     const route = parseHash();
     this.applyRoute(route, previousProjectId);
