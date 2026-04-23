@@ -21,6 +21,26 @@ export function parseHash(): Route {
   return { sessionId: null };
 }
 
+// ---- Last-viewed hash persistence -------------------------------------------
+
+const LAST_HASH_KEY = "reins:last-hash";
+
+/** Read the last-viewed hash from localStorage (null if absent). */
+export function getLastHash(): string | null {
+  try {
+    return localStorage.getItem(LAST_HASH_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Persist the current hash to localStorage. */
+export function saveHash(hash: string): void {
+  try {
+    localStorage.setItem(LAST_HASH_KEY, hash);
+  } catch { /* ignore */ }
+}
+
 /**
  * Navigate to a session URL.
  * Uses replaceState when `replace` is true (e.g. redirecting).
