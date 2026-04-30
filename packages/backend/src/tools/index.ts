@@ -5,9 +5,7 @@
  * Returns a ToolDefinition[] array for use in createAgentSession().
  */
 
-import type { TSchema } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import { defineTool, type ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { createTaskTool } from "./create-task.js";
@@ -30,29 +28,16 @@ export interface CustomToolsOpts {
   };
 }
 
-function widenTool<TParams extends TSchema, TDetails>(tool: ToolDefinition<TParams, TDetails>): ToolDefinition<TSchema, TDetails> {
-  return {
-    ...tool,
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const parsedParams = Value.Parse(tool.parameters, params);
-      return tool.execute(toolCallId, parsedParams, signal, onUpdate, ctx);
-    },
-    renderCall: tool.renderCall
-      ? (args, theme) => tool.renderCall!(Value.Parse(tool.parameters, args), theme)
-      : undefined,
-  };
-}
-
 export function createCustomTools(opts: CustomToolsOpts): ToolDefinition[] {
   const tools: ToolDefinition[] = [
-    widenTool(createTaskTool({
+    defineTool(createTaskTool({
       projectId: opts.projectId,
       broadcast: opts.broadcast,
       sessions: opts.sessions,
       createSession: opts.createSession,
     })),
-    widenTool(createSearchTool()),
-    widenTool(createExecuteTool({
+    defineTool(createSearchTool()),
+    defineTool(createExecuteTool({
       projectId: opts.projectId,
       sessionId: opts.sessionId,
       taskId: opts.taskId,
@@ -63,7 +48,7 @@ export function createCustomTools(opts: CustomToolsOpts): ToolDefinition[] {
 
   // Delegate tool is only available in task sessions
   if (opts.delegate) {
-    tools.push(widenTool(createDelegateTool(opts.delegate.sessionId, opts.createSession, opts.delegate.deleteSession)));
+    tools.push(defineTool(createDelegateTool(opts.delegate.sessionId, opts.createSession, opts.delegate.deleteSession)));
   }
 
   return tools;

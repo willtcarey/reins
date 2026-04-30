@@ -1,7 +1,6 @@
 import { createSdkMcpServer, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { z } from "zod/v4";
-import type { TSchema } from "@sinclair/typebox";
 import { isRecord, toRecord } from "./type-guards.js";
 
 /**
@@ -12,7 +11,7 @@ import { isRecord, toRecord } from "./type-guards.js";
  * JSON Schema properties to equivalent Zod types so the SDK's internal
  * validation (via `safeParseAsync`) works correctly.
  */
-export function typeboxToZodShape(schema: TSchema): z.core.$ZodShape {
+export function typeboxToZodShape(schema: ToolDefinition["parameters"]): z.core.$ZodShape {
   const schemaObj = toRecord(schema);
   const properties = toRecord(schemaObj.properties);
   const rawRequired = schemaObj.required;

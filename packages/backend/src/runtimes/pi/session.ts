@@ -1,6 +1,6 @@
 import {
   createAgentSession,
-  createCodingTools,
+  getAgentDir,
   SessionManager,
   type AgentSession,
 } from "@mariozechner/pi-coding-agent";
@@ -83,21 +83,19 @@ async function buildSessionOpts(params: {
   } = params;
 
   const sessionManager = SessionManager.inMemory();
-  const builtins = sessionTools?.builtins ?? ["read", "write", "edit", "bash"];
-
-  const builtInToolsByName = new Map(createCodingTools(projectDir).map((tool) => [tool.name, tool]));
-  const tools = builtins
-    .map((name) => builtInToolsByName.get(name))
-    .filter((tool): tool is NonNullable<typeof tool> => !!tool);
+  const builtinNames = sessionTools?.builtins ?? ["read", "write", "edit", "bash"];
 
   const customTools = sessionTools?.customTools ?? [];
-  const allTools = [...tools, ...customTools];
+  const allToolShapes = [
+    ...builtinNames.map((name) => ({ name })),
+    ...customTools,
+  ];
 
   const { authStorage, resourceLoader, modelRegistry } = await createPiContext({
     cwd: projectDir,
     resourceLoaderOptions: {
       systemPromptOverride: () => buildReinsSystemPrompt({
-        tools: allTools,
+        tools: allToolShapes,
         task: task ?? undefined,
         isScratchSession: !task,
       }),
@@ -118,7 +116,7 @@ async function buildSessionOpts(params: {
 
   return {
     cwd: projectDir,
-    tools,
+    tools: builtinNames,
     customTools,
     sessionManager,
     resourceLoader,
@@ -207,7 +205,7 @@ async function createPiSessionRuntime(params: CreateAgentRuntimeParams): Promise
   const messages = loadMessagesForLLM(sessionId);
   if (messages.length > 0) {
     hydrateSessionManager(agentSession.sessionManager, messages);
-    agentSession.agent.replaceMessages(messages);
+    agentSession.agent.state.messages = messages;
     console.log(`  Session hydrated: ${sessionId} (${messages.length} messages for LLM)`);
   }
 

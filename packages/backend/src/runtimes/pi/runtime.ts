@@ -1,4 +1,4 @@
-import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import { toPiThinkingLevel } from "./session.js";
 import type {
   AgentRuntime,
@@ -9,7 +9,7 @@ import type {
 
 /**
  * Assert that a value is an AgentRuntimeEvent.
- * PI AgentEvent and AgentRuntimeEvent share structure by design.
+ * PI AgentSessionEvent and AgentRuntimeEvent share structure by design.
  */
 function assertRuntimeEvent(_value: unknown): asserts _value is AgentRuntimeEvent {
   // PI session events are structurally compatible with AgentRuntimeEvent
@@ -21,27 +21,6 @@ function assertRuntimeEvent(_value: unknown): asserts _value is AgentRuntimeEven
  */
 function assertRuntimeMessages(_value: unknown): asserts _value is AgentRuntimeMessage[] {
   // PI session messages match AgentRuntimeMessage by design
-}
-
-function normalizePiSessionEvent(event: AgentSessionEvent): AgentRuntimeEvent {
-  if (event.type === "auto_compaction_start") {
-    return {
-      type: "compaction_start",
-      reason: event.reason ?? "auto",
-    };
-  }
-
-  if (event.type === "auto_compaction_end") {
-    return {
-      type: "compaction_end",
-      result: event.result,
-      aborted: event.aborted,
-      errorMessage: event.errorMessage,
-    };
-  }
-
-  assertRuntimeEvent(event);
-  return event;
 }
 
 export class PiAgentRuntime implements AgentRuntime {
@@ -88,7 +67,8 @@ export class PiAgentRuntime implements AgentRuntime {
 
   subscribe(listener: (event: AgentRuntimeEvent) => void): () => void {
     const unsubscribe = this.session.subscribe((event) => {
-      listener(normalizePiSessionEvent(event));
+      assertRuntimeEvent(event);
+      listener(event);
     });
     return typeof unsubscribe === "function" ? unsubscribe : () => {};
   }

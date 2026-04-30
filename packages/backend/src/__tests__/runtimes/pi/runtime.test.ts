@@ -44,7 +44,7 @@ describe("PiAgentRuntime", () => {
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
-  test("normalizes pi auto compaction events before notifying listeners", async () => {
+  test("forwards pi compaction events to listeners", async () => {
     const session = await createTestAgentSession();
     let capturedListener: ((event: any) => void) | undefined;
     const subscribe = mock<(listener: (event: any) => void) => () => void>((candidate) => {
@@ -60,9 +60,10 @@ describe("PiAgentRuntime", () => {
     expect(capturedListener).toBeDefined();
     const emit = capturedListener!;
 
-    emit({ type: "auto_compaction_start", reason: "threshold" });
+    emit({ type: "compaction_start", reason: "threshold" });
     emit({
-      type: "auto_compaction_end",
+      type: "compaction_end",
+      reason: "threshold",
       result: { summary: "done" },
       aborted: false,
       willRetry: false,
@@ -70,7 +71,7 @@ describe("PiAgentRuntime", () => {
 
     expect(listener.mock.calls).toEqual([
       [{ type: "compaction_start", reason: "threshold" }],
-      [{ type: "compaction_end", result: { summary: "done" }, aborted: false, errorMessage: undefined }],
+      [{ type: "compaction_end", reason: "threshold", result: { summary: "done" }, aborted: false, willRetry: false }],
     ]);
   });
 

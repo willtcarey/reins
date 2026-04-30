@@ -1,5 +1,6 @@
 import {
   DefaultResourceLoader,
+  getAgentDir,
   ModelRegistry,
   type AuthStorage,
 } from "@mariozechner/pi-coding-agent";
@@ -15,16 +16,17 @@ export interface PiContext {
 
 export async function createPiContext(params: {
   cwd: string;
-  resourceLoaderOptions?: Omit<DefaultResourceLoaderOptions, "cwd">;
+  resourceLoaderOptions?: Partial<Omit<DefaultResourceLoaderOptions, "cwd">>;
 }): Promise<PiContext> {
   const resourceLoader = new DefaultResourceLoader({
+    agentDir: getAgentDir(),
     ...params.resourceLoaderOptions,
     cwd: params.cwd,
   });
   await resourceLoader.reload();
 
   const authStorage = createDbBackedAuthStorage();
-  const modelRegistry = new ModelRegistry(authStorage);
+  const modelRegistry = ModelRegistry.create(authStorage);
 
   return {
     authStorage,
