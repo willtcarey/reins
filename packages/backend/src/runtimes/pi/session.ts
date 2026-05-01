@@ -1,6 +1,5 @@
 import {
   createAgentSession,
-  getAgentDir,
   SessionManager,
   type AgentSession,
 } from "@mariozechner/pi-coding-agent";
@@ -86,6 +85,14 @@ async function buildSessionOpts(params: {
   const builtinNames = sessionTools?.builtins ?? ["read", "write", "edit", "bash"];
 
   const customTools = sessionTools?.customTools ?? [];
+  // Pi's `tools` option is an allowlist across built-in, extension, and custom tools.
+  // Include custom tool names here or they are described in the prompt but filtered out at runtime.
+  const enabledToolNames = [
+    ...new Set([
+      ...builtinNames,
+      ...customTools.map((tool) => tool.name),
+    ]),
+  ];
   const allToolShapes = [
     ...builtinNames.map((name) => ({ name })),
     ...customTools,
@@ -116,7 +123,7 @@ async function buildSessionOpts(params: {
 
   return {
     cwd: projectDir,
-    tools: builtinNames,
+    tools: enabledToolNames,
     customTools,
     sessionManager,
     resourceLoader,
