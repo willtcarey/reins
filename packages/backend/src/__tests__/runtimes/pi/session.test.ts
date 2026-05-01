@@ -1,6 +1,51 @@
 import { describe, expect, mock, test } from "bun:test";
+import { Type } from "@sinclair/typebox";
+import { defineTool } from "@mariozechner/pi-coding-agent";
 import { createTestAgentSession } from "../../helpers/test-pi.js";
-import { ephemeralPrompt } from "../../../runtimes/pi/session.js";
+import { useTestDb } from "../../helpers/test-db.js";
+import { createServerState } from "../../helpers/server-state.js";
+import { getPiSession } from "../../../runtimes/pi/runtime.js";
+import { ephemeralPrompt, PiRuntimeAdapter } from "../../../runtimes/pi/session.js";
+
+describe("PiRuntimeAdapter", () => {
+  useTestDb();
+
+  test("enables custom tools in the pi SDK allowlist", async () => {
+    const customTool = defineTool({
+      name: "create_task",
+      label: "Create Task",
+      description: "Create a task",
+      parameters: Type.Object({}),
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "ok" }],
+        details: {},
+      }),
+    });
+
+    const adapter = new PiRuntimeAdapter();
+    const runtime = await adapter.createRuntime({
+      state: createServerState(),
+      projectId: 1,
+      projectDir: "/tmp",
+      sessionId: "sess-pi-custom-tools",
+      task: null,
+      sessionTools: {
+        builtins: ["read", "write", "edit", "bash"],
+        customTools: [customTool],
+      },
+    });
+
+    try {
+      const session = getPiSession(runtime);
+      const allToolNames = session.getAllTools().map((tool) => tool.name);
+
+      expect(allToolNames).toContain("create_task");
+      expect(session.getActiveToolNames()).toContain("create_task");
+    } finally {
+      await runtime.close();
+    }
+  });
+});
 
 describe("ephemeralPrompt", () => {
   test("aborts and returns empty string when prompt times out", async () => {
