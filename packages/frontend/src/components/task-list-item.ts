@@ -154,14 +154,13 @@ export class TaskListItemElement extends LitElement {
             </div>
           </button>
           <button
-            class="p-1.5 text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors shrink-0 md:opacity-0 md:group-hover/task:opacity-100"
+            class="px-1.5 py-2.5 text-zinc-500 hover:text-zinc-300 cursor-pointer transition-colors shrink-0"
             title="New session"
             @click=${(e: Event) => this.handleNewTaskSession(e)}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
           </button>
           <popover-menu
-            triggerClass="md:opacity-0 md:group-hover/task:opacity-100"
             .content=${() => html`
               <button
                 class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
