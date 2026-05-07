@@ -1,6 +1,11 @@
 import { describe, test, expect } from "bun:test";
 import { Type } from "@sinclair/typebox";
-import { formatSchema, formatFunctionSignature } from "../../scripting/api-schema-formatter.js";
+import {
+  formatSchema,
+  formatFunctionSignature,
+  formatApiInterfaces,
+  formatTypeDeclaration,
+} from "../../scripting/api-schema-formatter.js";
 
 describe("formatSchema", () => {
   test("formats a simple object", () => {
@@ -127,5 +132,87 @@ describe("formatFunctionSignature", () => {
       { async: true },
     );
     expect(result).toContain("Promise<");
+  });
+});
+
+describe("formatApiInterfaces", () => {
+  const TaskDocSchema = Type.Object({
+    id: Type.Number(),
+    title: Type.String(),
+  });
+  const names = new Map([[TaskDocSchema, "Task"]]);
+
+  test("renders a root Api interface and namespace interface", () => {
+    const result = formatApiInterfaces([
+      {
+        name: "tasks.list",
+        description: "List tasks.",
+        parameters: Type.Object({ status: Type.Optional(Type.Union([Type.Literal("open"), Type.Literal("closed")])) }),
+        returns: Type.Array(TaskDocSchema),
+        tags: ["tasks"],
+        execute: () => [],
+      },
+    ], { names });
+
+    expect(result).toContain("interface Api {");
+    expect(result).toContain("tasks: TasksApi;");
+    expect(result).toContain("interface TasksApi {");
+    expect(result).toContain("/** List tasks. */");
+    expect(result).toContain("list(status?: \"open\" | \"closed\"): Task[];");
+    expect(result).not.toContain("tasks.list(");
+  });
+
+  test("renders positional method params and async returns", () => {
+    const result = formatApiInterfaces([
+      {
+        name: "tasks.update",
+        description: "Update a task.",
+        parameters: Type.Object({
+          taskId: Type.Number(),
+          updates: Type.Object({ title: Type.Optional(Type.String()) }),
+        }),
+        returns: TaskDocSchema,
+        tags: ["tasks"],
+        execute: () => ({ id: 1, title: "Updated" }),
+      },
+      {
+        name: "tasks.reopen",
+        description: "Reopen a task.",
+        parameters: Type.Object({ taskId: Type.Number() }),
+        returns: TaskDocSchema,
+        async: true,
+        tags: ["tasks"],
+        execute: async () => ({ id: 1, title: "Updated" }),
+      },
+    ], { names });
+
+    expect(result).toContain("update(taskId: number, updates: { title?: string }): Task;");
+    expect(result).toContain("reopen(taskId: number): Promise<Task>;");
+  });
+});
+
+describe("formatTypeDeclaration", () => {
+  test("renders object schemas as TypeScript interfaces", () => {
+    const schema = Type.Object({
+      id: Type.Number(),
+      description: Type.Union([Type.String(), Type.Null()]),
+      status: Type.Union([Type.Literal("open"), Type.Literal("closed")]),
+      tags: Type.Array(Type.String()),
+      notes: Type.Optional(Type.String()),
+    });
+
+    const result = formatTypeDeclaration(schema, "Task");
+
+    expect(result).toContain("interface Task {");
+    expect(result).toContain("id: number;");
+    expect(result).toContain("description: string | null;");
+    expect(result).toContain("status: \"open\" | \"closed\";");
+    expect(result).toContain("tags: string[];");
+    expect(result).toContain("notes?: string;");
+  });
+
+  test("renders non-object schemas as type aliases", () => {
+    const result = formatTypeDeclaration(Type.Array(Type.String()), "Names");
+    expect(result).toBe("type Names = string[];");
   });
 });

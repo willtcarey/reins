@@ -4,19 +4,19 @@ Agents have two tools for scriptable access to Reins internals.
 
 ## `search` — Discover the API
 
-The `search` tool returns function signatures, descriptions, and return shapes. Query by category, function name, or description.
+The `search` tool discovers Reins internal API functions for `execute` scripts against Reins-managed data or UI state. It returns documentation-only TypeScript interfaces for the existing `api` object and referenced domain types, filtered by query.
 
 ```
-search({ query: "sessions" })       → session-related functions + types
-search({ query: "tasks.create" })   → create signature with param types
+search({ query: "sessions" })       → partial Api interface for session-related functions + types
+search({ query: "tasks.create" })   → Api interface containing the create method + referenced types
 search({ query: "" })               → full API surface
 ```
 
-Results include the related data shapes (Task, Session, Project, etc.) so the agent can understand what each function returns.
+Results include related data shapes (`Task`, `Session`, `Project`, etc.) as TypeScript interfaces. The returned interfaces are documentation only: `execute` scripts should call methods on the existing `api` object with positional arguments, e.g. `api.tasks.update(taskId, updates)`.
 
 ## `execute` — Run scripts against Reins
 
-The `execute` tool runs async JavaScript against a curated `api` object. The agent writes a function body; only the `api` object is in scope.
+The `execute` tool runs async JavaScript against a curated `api` object for Reins-managed data and UI state. The agent writes a function body; only the `api` object is in scope.
 
 ```javascript
 execute({
@@ -36,6 +36,7 @@ execute({
 | `api.sessions` | `list()`, `listForTask(taskId)`, `get(sessionId)`, `current()`, `messages(sessionId)` |
 | `api.projects` | `list()`, `get(projectId)`, `current()` |
 | `api.models` | `list()`, `listProviders()` |
+| `api.ui` | `openFile(path, startLine?, endLine?)` |
 
 ### Behavior
 
@@ -46,6 +47,6 @@ execute({
 
 ### Typical workflow
 
-1. Agent calls `search({ query: "messages" })` to find `sessions.messages()` and see the Message type.
+1. Agent calls `search({ query: "messages" })` to find `api.sessions.messages(sessionId)` and see the `Message` interface.
 2. Agent calls `execute({ code: ... })` with a script that reads messages from another session.
 3. Agent uses the returned data in its response.

@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import * as ts from "typescript";
 import { searchFunctions, API_FUNCTIONS, referencedTypes } from "../../scripting/api-registry.js";
 import { createSearchTool } from "../../tools/search.js";
 import { createStrictExtensionContext } from "../helpers/test-pi.js";
@@ -27,6 +28,12 @@ describe("searchFunctions", () => {
     expect(results[0].name).toBe("tasks.list");
   });
 
+  test("normalizes api-prefixed function queries", () => {
+    const results = searchFunctions("api.tasks");
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].name).toBe("tasks.list");
+  });
+
   test("matches description keywords", () => {
     const results = searchFunctions("messages");
     expect(results.some((e) => e.name === "sessions.messages")).toBe(true);
@@ -38,10 +45,17 @@ describe("searchFunctions", () => {
     expect(results.every((e) => e.tags.includes("write"))).toBe(true);
   });
 
-  test("multi-word query requires all terms to match", () => {
+  test("multi-word query requires all terms to match when strict matches exist", () => {
     const results = searchFunctions("create task");
     expect(results.length).toBeGreaterThanOrEqual(1);
     expect(results.some((e) => e.name === "tasks.create")).toBe(true);
+    expect(results.some((e) => e.name === "projects.list")).toBe(false);
+  });
+
+  test("falls back to merged per-term matches for long natural-language queries", () => {
+    const results = searchFunctions("sessions messages tasks list");
+    expect(results.some((e) => e.name === "sessions.messages")).toBe(true);
+    expect(results.some((e) => e.name === "tasks.list")).toBe(true);
     expect(results.some((e) => e.name === "projects.list")).toBe(false);
   });
 
@@ -105,7 +119,7 @@ describe("createSearchTool", () => {
     expect(tool.label).toBe("Search API");
   });
 
-  test("execute returns formatted signatures for a query", async () => {
+  test("execute returns TypeScript documentation interfaces for a query", async () => {
     const tool = createSearchTool();
     const result = await tool.execute("call-1", { query: "tasks.list" }, undefined, undefined, strictCtx);
 
@@ -114,20 +128,26 @@ describe("createSearchTool", () => {
     expect(result.content[0].type).toBe("text");
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
-    expect(text).toContain("tasks.list");
-    expect(text).toContain("Task");
+    expect(text).toContain("## API documentation");
+    expect(text).toContain("Documentation only");
+    expect(text).toContain("existing `api` object");
+    expect(text).toContain("positionally");
+    expect(text).toContain("interface Api {");
+    expect(text).toContain("tasks: TasksApi;");
+    expect(text).toContain("interface TasksApi {");
+    expect(text).toContain("list(status?: \"open\" | \"closed\"): Task[];");
+    expect(text).not.toContain("tasks.list(");
+    expectGeneratedTypeScriptToBeValid(text);
   });
 
-  test("execute includes type definitions for referenced types", async () => {
+  test("execute includes TypeScript interfaces for referenced types", async () => {
     const tool = createSearchTool();
     const result = await tool.execute("call-types", { query: "tasks.get" }, undefined, undefined, strictCtx);
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
-    // Should include the Task type definition
-    expect(text).toContain("## Types");
-    expect(text).toContain("Task {");
-    expect(text).toContain("id: number");
-    expect(text).toContain("title: string");
+    expect(text).toContain("interface Task {");
+    expect(text).toContain("id: number;");
+    expect(text).toContain("title: string;");
   });
 
   test("execute returns all entries for empty query", async () => {
@@ -135,9 +155,10 @@ describe("createSearchTool", () => {
     const result = await tool.execute("call-2", { query: "" }, undefined, undefined, strictCtx);
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
-    expect(text).toContain("tasks.");
-    expect(text).toContain("sessions.");
-    expect(text).toContain("projects.");
+    expect(text).toContain("tasks: TasksApi;");
+    expect(text).toContain("sessions: SessionsApi;");
+    expect(text).toContain("projects: ProjectsApi;");
+    expectGeneratedTypeScriptToBeValid(text);
   });
 
   test("execute returns no-results message for unmatched query", async () => {
@@ -148,3 +169,15 @@ describe("createSearchTool", () => {
     expect(text).toContain("No matching");
   });
 });
+
+function expectGeneratedTypeScriptToBeValid(text: string): void {
+  const match = text.match(/```typescript\n([\s\S]*?)\n```/);
+  expect(match).not.toBeNull();
+  const source = match?.[1] ?? "";
+  const result = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    reportDiagnostics: true,
+  });
+
+  expect(result.diagnostics ?? []).toEqual([]);
+}

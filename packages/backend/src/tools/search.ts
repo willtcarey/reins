@@ -3,7 +3,7 @@
  *
  * Discovers available functions and types for scripting Reins via the
  * `execute` tool. The agent describes what it wants to do, and the tool
- * returns matching function signatures, descriptions, and domain types.
+ * returns matching TypeScript documentation interfaces and domain types.
  *
  * This keeps context lean — the agent only loads what it needs rather
  * than paying token cost for the full API spec on every call.
@@ -12,14 +12,13 @@
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { searchFunctions, referencedTypes, DOMAIN_TYPES, type ApiFunctionDef } from "../scripting/api-registry.js";
-import { formatFunctionSignature, formatSchema, type SchemaNameMap } from "../scripting/api-schema-formatter.js";
+import { formatApiInterfaces, formatTypeDeclaration, type SchemaNameMap } from "../scripting/api-schema-formatter.js";
 
 const parameters = Type.Object({
   query: Type.String({
     description:
-      "What you're looking for — a category (e.g. \"tasks\"), a function name " +
-      "(e.g. \"sessions.messages\"), or a description (e.g. \"create task\"). " +
-      "Use an empty string to see the full API surface.",
+      "What you're looking for — a category, function name, or description. " +
+      "Use an empty string to inspect the full API surface.",
   }),
 });
 
@@ -43,20 +42,23 @@ function formatResults(fns: ApiFunctionDef[]): string {
 
   const names = buildNameMap();
 
-  // Render function signatures + descriptions
-  const fnBlocks = fns.map((fn) => {
-    const sig = formatFunctionSignature(fn.name, fn.parameters, fn.returns, { async: fn.async, names });
-    return `## ${fn.name}\n\n${fn.description}\n\n\`\`\`typescript\n${sig}\n\`\`\``;
-  });
+  const apiInterfaces = formatApiInterfaces(fns, { names });
+  const typeDeclarations = referencedTypes(fns)
+    .map((type) => formatTypeDeclaration(type.schema, type.name, names));
+  const code = [apiInterfaces, ...typeDeclarations].join("\n\n");
 
-  // Render referenced domain types
-  const types = referencedTypes(fns);
-  if (types.length > 0) {
-    const typeBlocks = types.map((t) => formatSchema(t.schema, t.name));
-    fnBlocks.push("## Types\n\n```typescript\n" + typeBlocks.join("\n\n") + "\n```");
-  }
-
-  return fnBlocks.join("\n\n---\n\n");
+  return [
+    "## API documentation",
+    "",
+    "Documentation only: these TypeScript interfaces describe the existing `api` object " +
+      "available inside `execute` scripts. They may be partial: only functions matched by " +
+      "this search are shown. Do not construct or import `Api`; call methods positionally " +
+      "on the provided `api`, e.g. `api.tasks.update(taskId, updates)`.",
+    "",
+    "```typescript",
+    code,
+    "```",
+  ].join("\n");
 }
 
 export function createSearchTool(): ToolDefinition<typeof parameters> {
@@ -64,9 +66,13 @@ export function createSearchTool(): ToolDefinition<typeof parameters> {
     name: "search",
     label: "Search API",
     description:
-      "Discover available API functions for the `execute` tool. " +
-      "Returns function signatures and documentation filtered by your query. " +
-      "Use this before writing execute scripts to find the right functions.",
+      "Discover Reins internal API functions available to the `execute` tool. " +
+      "Returns documentation-only TypeScript interfaces for the existing `api` object " +
+      "and referenced domain types, filtered by query. " +
+      "Use this before writing `execute` scripts for Reins-managed data or UI state. " +
+      "Use an empty query to inspect the full API surface. " +
+      "In `execute` scripts, call methods on the provided `api` object; " +
+      "these interfaces are documentation only.",
     parameters,
 
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {

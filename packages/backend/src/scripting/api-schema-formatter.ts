@@ -2,8 +2,8 @@
  * API Schema Formatter
  *
  * Renders TypeBox schemas as readable text for agents. Produces
- * OpenAPI-like type descriptions and function signatures from the
- * schema objects — no hand-maintained strings.
+ * valid TypeScript documentation interfaces and legacy function signatures
+ * from the schema objects — no hand-maintained strings.
  *
  * Works with the raw JSON Schema structure that TypeBox produces,
  * using schemaField() to access properties without type assertions.
@@ -13,6 +13,7 @@
  */
 
 import type { TSchema } from "@sinclair/typebox";
+import type { ApiFunctionDef } from "./define-function.js";
 import {
   schemaItems,
   schemaAnyOf,
@@ -68,9 +69,97 @@ export function formatFunctionSignature(
   return `${name}(${paramStr}): ${retType}`;
 }
 
+/**
+ * Render matched API functions as partial TypeScript documentation interfaces.
+ * Methods are grouped under namespace interfaces and use positional params,
+ * matching the runtime `api.namespace.method(...args)` calling convention.
+ */
+export function formatApiInterfaces(
+  fns: ApiFunctionDef[],
+  opts?: { names?: SchemaNameMap },
+): string {
+  const groups = new Map<string, ApiFunctionDef[]>();
+
+  for (const fn of fns) {
+    const { namespace } = splitApiName(fn.name);
+    const existing = groups.get(namespace);
+    if (existing) {
+      existing.push(fn);
+    } else {
+      groups.set(namespace, [fn]);
+    }
+  }
+
+  const namespaceLines = [...groups.keys()].map(
+    (namespace) => `  ${namespace}: ${namespaceInterfaceName(namespace)};`,
+  );
+
+  const rootInterface = [
+    "interface Api {",
+    ...namespaceLines,
+    "}",
+  ].join("\n");
+
+  const namespaceInterfaces = [...groups.entries()].map(([namespace, groupFns]) => {
+    const methodBlocks = groupFns.map((fn) => {
+      const { method } = splitApiName(fn.name);
+      const params = renderParams(fn.parameters, opts?.names);
+      const ret = renderType(fn.returns, opts?.names);
+      const retType = fn.async ? `Promise<${ret}>` : ret;
+      return [
+        renderJSDoc(fn.description, "  "),
+        `  ${method}(${params}): ${retType};`,
+      ].join("\n");
+    });
+
+    return [
+      `interface ${namespaceInterfaceName(namespace)} {`,
+      methodBlocks.join("\n\n"),
+      "}",
+    ].join("\n");
+  });
+
+  return [rootInterface, ...namespaceInterfaces].join("\n\n");
+}
+
+/** Render a named TypeBox schema as a valid TypeScript declaration. */
+export function formatTypeDeclaration(
+  schema: TSchema,
+  name: string,
+  names?: SchemaNameMap,
+): string {
+  if (schema.type === "object" && schemaProperties(schema)) {
+    const fields = renderInterfaceFields(schema, names);
+    return `interface ${name} {\n${fields}\n}`;
+  }
+
+  return `type ${name} = ${renderType(schema, names)};`;
+}
+
 // ---------------------------------------------------------------------------
 // Internal renderers
 // ---------------------------------------------------------------------------
+
+function splitApiName(name: string): { namespace: string; method: string } {
+  const [namespace, method] = name.split(".");
+  return { namespace, method };
+}
+
+function namespaceInterfaceName(namespace: string): string {
+  return `${namespace.charAt(0).toUpperCase()}${namespace.slice(1)}Api`;
+}
+
+function renderJSDoc(text: string, indent: string): string {
+  const escaped = text.replace(/\*\//g, "*\\/").trim();
+  if (!escaped.includes("\n")) return `${indent}/** ${escaped} */`;
+
+  const lines = escaped.split(/\r?\n/);
+  return [
+    `${indent}/**`,
+    ...lines.map((line) => `${indent} * ${line}`),
+    `${indent} */`,
+  ].join("\n");
+}
 
 function renderType(schema: TSchema, names?: SchemaNameMap): string {
   // Check for a named type first (by identity)
@@ -143,6 +232,19 @@ function renderObjectFields(schema: TSchema, names?: SchemaNameMap): string {
       const optional = !required.has(key);
       const type = renderType(propSchema, names);
       return `  ${key}${optional ? "?" : ""}: ${type}`;
+    })
+    .join("\n");
+}
+
+function renderInterfaceFields(schema: TSchema, names?: SchemaNameMap): string {
+  const props = getProps(schema);
+  const required = getRequiredSet(schema);
+
+  return props
+    .map(([key, propSchema]) => {
+      const optional = !required.has(key);
+      const type = renderType(propSchema, names);
+      return `  ${key}${optional ? "?" : ""}: ${type};`;
     })
     .join("\n");
 }

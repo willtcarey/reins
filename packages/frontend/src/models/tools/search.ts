@@ -27,6 +27,9 @@ export function getSearchResultText(block: ToolBlockData): string {
 
 /** Count the number of results (functions) found in the search output. */
 export function getSearchResultCount(block: ToolBlockData): number {
+  const matchCount = block.result?.details?.matchCount;
+  if (typeof matchCount === "number" && Number.isFinite(matchCount)) return matchCount;
+
   const text = getSearchResultText(block);
   if (!text) return 0;
   // Count function signatures — lines starting with "function " or containing common patterns

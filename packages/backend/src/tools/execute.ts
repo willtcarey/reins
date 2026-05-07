@@ -2,7 +2,7 @@
  * execute Tool
  *
  * Runs agent-written async JavaScript against a curated `api` object
- * that exposes Reins internals (tasks, sessions, projects).
+ * that exposes Reins-managed data and UI state.
  *
  * Code runs inside a Node.js `vm` context so it cannot access the host
  * process, filesystem, network, or native modules. Only the `api` object
@@ -44,8 +44,8 @@ const TIMEOUT_MS = 30_000;
 const parameters = Type.Object({
   code: Type.String({
     description:
-      "Async JavaScript function body. Has access to an `api` object with " +
-      "tasks, sessions, and projects namespaces. Use `return` to produce a result. " +
+      "Async JavaScript function body. Has access to the existing `api` object " +
+      "for Reins-managed data or UI state. Use `return` to produce a result. " +
       "Use the `search` tool first to discover available API functions.",
   }),
 });
@@ -67,8 +67,8 @@ export function createExecuteTool(opts: ExecuteToolOpts): ToolDefinition<typeof 
     label: "Execute",
     description:
       "Run async JavaScript against Reins internals. " +
-      "Write a function body using the `api` object (tasks, sessions, projects). " +
-      "Use the `search` tool first to discover available API functions and their signatures.",
+      "Write a function body using the existing `api` object. " +
+      "Use the `search` tool first to discover available API functions and documentation interfaces.",
     parameters,
 
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {

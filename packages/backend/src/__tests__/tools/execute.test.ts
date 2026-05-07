@@ -65,6 +65,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       expect(tool.label).toBe("Execute");
     });
+
   });
 
   describe("projects API", () => {

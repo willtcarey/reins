@@ -19,6 +19,7 @@
  */
 
 import type { TSchema } from "@sinclair/typebox";
+import type { ApiContext, ApiFunctionDef } from "./define-function.js";
 import {
   schemaItems,
   schemaAnyOf,
@@ -71,7 +72,7 @@ export const DOMAIN_TYPES: NamedType[] = [
 // Function registry (assembled from per-resource files)
 // ---------------------------------------------------------------------------
 
-export const API_FUNCTIONS: import("./define-function.js").ApiFunctionDef[] = [
+export const API_FUNCTIONS: ApiFunctionDef[] = [
   ...TASK_FUNCTIONS,
   ...SESSION_FUNCTIONS,
   ...PROJECT_FUNCTIONS,
@@ -85,27 +86,67 @@ export const API_FUNCTIONS: import("./define-function.js").ApiFunctionDef[] = [
 
 /**
  * Search the API registry by query string. Matches against name,
- * description, namespace, and tags. Each query term must match at
- * least one field.
+ * description, namespace, and tags. Prefer functions where every query
+ * term matches at least one field. If no strict match exists for a multi-word
+ * query, merge per-term matches so long natural-language queries still return
+ * a useful partial API surface.
  *
  * Returns matching function definitions sorted by relevance.
  */
-export function searchFunctions(query: string): import("./define-function.js").ApiFunctionDef[] {
+export function searchFunctions(query: string): ApiFunctionDef[] {
   const terms = query
     .toLowerCase()
     .split(/\s+/)
+    .map(normalizeSearchTerm)
     .filter((t) => t.length > 0);
 
   if (terms.length === 0) return [...API_FUNCTIONS];
 
-  const scored = API_FUNCTIONS.map((fn) => {
+  const strictResults = scoreFunctions(terms, { requireAllTerms: true });
+  if (strictResults.length > 0 || terms.length === 1) {
+    return strictResults.map((s) => s.fn);
+  }
+
+  // Long natural-language queries often mix terms that belong to different
+  // functions (e.g. "sessions messages tasks list"). If no single function
+  // matches every term, merge per-term matches so discovery still returns a
+  // useful partial API surface instead of an empty result. When richer matches
+  // exist, drop one-term matches to avoid broad terms like "list" pulling in
+  // unrelated namespaces.
+  const fallbackResults = scoreFunctions(terms, { requireAllTerms: false })
+    .filter((s) => s.matchedTerms > 0);
+  const maxMatchedTerms = Math.max(0, ...fallbackResults.map((s) => s.matchedTerms));
+  const minMatchedTerms = maxMatchedTerms > 1 ? 2 : 1;
+
+  return fallbackResults
+    .filter((s) => s.matchedTerms >= minMatchedTerms)
+    .map((s) => s.fn);
+}
+
+interface FunctionScore {
+  fn: ApiFunctionDef;
+  score: number;
+  matchedTerms: number;
+}
+
+function normalizeSearchTerm(term: string): string {
+  const withoutQuotes = term.replace(/^[`'"]+|[`'",;:]+$/g, "");
+  const withoutCall = withoutQuotes.replace(/\(.*$/, "");
+  return withoutCall.startsWith("api.") ? withoutCall.slice(4) : withoutCall;
+}
+
+function scoreFunctions(
+  terms: string[],
+  opts: { requireAllTerms: boolean },
+): FunctionScore[] {
+  return API_FUNCTIONS.map((fn) => {
     const nameLower = fn.name.toLowerCase();
     const nsLower = fnNamespace(fn).toLowerCase();
     const descLower = fn.description.toLowerCase();
-    const tagsJoined = fn.tags.join(" ");
+    const tagsJoined = fn.tags.join(" ").toLowerCase();
 
     let score = 0;
-    let allTermsMatch = true;
+    let matchedTerms = 0;
 
     for (const term of terms) {
       const nameMatch = nameLower.includes(term);
@@ -114,23 +155,21 @@ export function searchFunctions(query: string): import("./define-function.js").A
       const descMatch = descLower.includes(term);
 
       if (!nameMatch && !nsMatch && !tagMatch && !descMatch) {
-        allTermsMatch = false;
-        break;
+        if (opts.requireAllTerms) return { fn, score: 0, matchedTerms: 0 };
+        continue;
       }
 
+      matchedTerms += 1;
       if (nameMatch) score += 10;
       if (nsMatch) score += 5;
       if (tagMatch) score += 3;
       if (descMatch) score += 1;
     }
 
-    return { fn, score, match: allTermsMatch };
-  });
-
-  return scored
-    .filter((s) => s.match)
-    .toSorted((a, b) => b.score - a.score)
-    .map((s) => s.fn);
+    return { fn, score, matchedTerms };
+  })
+    .filter((s) => (opts.requireAllTerms ? s.matchedTerms === terms.length : s.matchedTerms > 0))
+    .toSorted((a, b) => b.matchedTerms - a.matchedTerms || b.score - a.score);
 }
 
 /**
@@ -138,7 +177,7 @@ export function searchFunctions(query: string): import("./define-function.js").A
  * A type is "referenced" if its schema appears in any function's
  * parameters or returns.
  */
-export function referencedTypes(fns: import("./define-function.js").ApiFunctionDef[]): NamedType[] {
+export function referencedTypes(fns: ApiFunctionDef[]): NamedType[] {
   const seen = new Set<string>();
   const result: NamedType[] = [];
 
@@ -201,7 +240,7 @@ function schemaReferences(schema: TSchema, target: TSchema): boolean {
  */
 type ApiMethod = (...args: unknown[]) => unknown;
 
-export function buildApiObject(ctx: import("./define-function.js").ApiContext): Record<string, Record<string, ApiMethod>> {
+export function buildApiObject(ctx: ApiContext): Record<string, Record<string, ApiMethod>> {
   const api: Record<string, Record<string, ApiMethod>> = {};
 
   for (const fn of API_FUNCTIONS) {
