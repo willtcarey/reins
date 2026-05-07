@@ -23,8 +23,10 @@ Fuzzy matching — characters must appear in order but not necessarily consecuti
 
 ## Activity Indicators
 
-- 🟢 **Green pulsing dot** — session is currently running
-- 🟠 **Amber dot** — session has finished with unread activity
+- 🟢 **Green pulsing dot** — session is currently running; it remains visible even after you open that session, until the agent loop ends or its task closes
+- 🟠 **Amber dot** — session has finished with unread activity; opening the session clears it
+
+Activity indicators are suppressed for sessions whose task has been closed.
 
 ## Mobile
 

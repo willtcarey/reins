@@ -17,9 +17,9 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { navigateToSession } from "../models/router.js";
 import type { AppStore } from "../models/stores/app-store.js";
-import type { ActivityState } from "../models/stores/app-store.js";
+import { TasksCollection, type ActivityState, type TaskListItem } from "../models/tasks.js";
 
-import type { ProjectInfo, TaskListItem } from "../models/ws-client.js";
+import type { ProjectInfo } from "../models/ws-client.js";
 import type { TaskForm } from "./task-form.js";
 import type { TaskDetail } from "./task-detail.js";
 import type { ProjectSidebar } from "./project-sidebar.js";
@@ -41,11 +41,6 @@ export class SessionSidebar extends LitElement {
 
   @property({ attribute: false })
   store: AppStore | null = null;
-
-  /** Activity states for all sessions — derived from store on each render. */
-  private get activityMap(): Map<string, ActivityState> {
-    return this.store?.activityMap ?? new Map();
-  }
 
   @state() private collapsed = window.matchMedia("(max-width: 768px)").matches;
   @state() private expandedProjects = new Set<number>();
@@ -272,12 +267,9 @@ export class SessionSidebar extends LitElement {
 
   /** Render a small badge dot on the collapsed rail if there's activity. */
   private renderRailBadge() {
-    let hasRunning = false;
-    let hasFinished = false;
-    for (const activity of this.activityMap.values()) {
-      if (activity === "running") hasRunning = true;
-      else if (activity === "finished") hasFinished = true;
-    }
+    const summary = this.store?.activitySummary;
+    const hasRunning = (summary?.running ?? 0) > 0;
+    const hasFinished = (summary?.finished ?? 0) > 0;
     if (!hasRunning && !hasFinished) return nothing;
     const colorClass = hasRunning
       ? "bg-green-500 animate-pulse"
@@ -286,7 +278,7 @@ export class SessionSidebar extends LitElement {
   }
 
   private renderProjectActivityDot(projectId: number) {
-    const activity = this.store?.activityByProject.get(projectId);
+    const activity = this.store?.projectCollectionStore.activityByProject.get(projectId);
     if (!activity) return nothing;
     const classes = activity === "running"
       ? "w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"
@@ -305,6 +297,7 @@ export class SessionSidebar extends LitElement {
     const isExpanded = this.expandedProjects.has(project.id);
     const isActive = project.id === store.projectId;
     const projectData = store.projectCollectionStore.peekStore(project.id);
+    const projectActivityMap = projectData?.activityMap ?? new Map<string, ActivityState>();
 
     return html`
       <div class="border-b border-zinc-700">
@@ -368,18 +361,17 @@ export class SessionSidebar extends LitElement {
                   .projectId=${project.id}
                   .sessions=${projectData?.sessions ?? []}
                   .activeSessionId=${store.sessionId ?? ""}
-                  .activityMap=${this.activityMap}
+                  .activityMap=${projectActivityMap}
                 ></assistant-session>
 
                 <task-list
                   @new-task=${() => { this.taskForm?.open(project.id); }}
                   .projectId=${project.id}
-                  .store=${store}
                   .projectStore=${projectData ?? null}
-                  .tasks=${projectData?.tasks ?? []}
+                  .tasksCollection=${projectData?.tasksWithActivity ?? TasksCollection.empty(project.id)}
                   .taskSessions=${projectData?.taskSessions ?? new Map()}
                   .activeSessionId=${store.sessionId ?? ""}
-                  .activityMap=${this.activityMap}
+                  .activityMap=${projectActivityMap}
                 ></task-list>
               `}
             </div>

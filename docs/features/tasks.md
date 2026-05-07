@@ -81,4 +81,4 @@ Reins automatically detects when a task's work is done and marks it as **closed*
 1. **Branch merged** — the task branch still exists but all its commits are reachable from the base branch. Reins closes the task and cleans up the local branch.
 2. **Branch gone** — the task branch no longer exists locally or on the remote. This covers the common case where a branch is merged and deleted (via PR, CLI, etc.) before Reins gets a chance to observe it.
 
-Once closed, a task stays closed permanently. Closed tasks no longer show diff stats (since their changes are now part of the base branch).
+Once closed, a task stays closed permanently. Closed tasks no longer show diff stats (since their changes are now part of the base branch). Activity notifications for the task's sessions are cleared when the task closes.

@@ -44,4 +44,4 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 
 ## Cross-cutting
 
-- Frontend duplicates backend types (`ProjectInfo`, `SessionListItem`, `TaskListItem`, `SessionData` in `ws-client.ts`) and API path strings (hardcoded in stores). These can drift. Use TypeScript `paths` mapping (`"@backend/*": ["../backend/src/*"]`) so the frontend can `import type` directly from backend source files — `tsc` resolves them for type checking, `bun build` erases them completely. Runtime values like `API` path constants would need a zero-dependency shared file or stay duplicated.
+- Frontend duplicates backend types (`ProjectInfo`, `SessionListItem`, `SessionData` in `ws-client.ts`; `TaskListItem` in `tasks.ts`) and API path strings (hardcoded in stores). These can drift. Use TypeScript `paths` mapping (`"@backend/*": ["../backend/src/*"]`) so the frontend can `import type` directly from backend source files — `tsc` resolves them for type checking, `bun build` erases them completely. Runtime values like `API` path constants would need a zero-dependency shared file or stay duplicated.

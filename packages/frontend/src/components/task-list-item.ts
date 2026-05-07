@@ -7,8 +7,8 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { SessionListItem, TaskListItem } from "../models/ws-client.js";
-import type { ActivityState } from "../models/stores/app-store.js";
+import type { SessionListItem } from "../models/ws-client.js";
+import type { ActivityState, TaskListItem } from "../models/tasks.js";
 import { formatRelativeDate } from "../models/format.js";
 import { buildChildMap } from "./delegate-popover.js";
 import "./activity-dot.js";
@@ -32,6 +32,9 @@ export class TaskListItemElement extends LitElement {
 
   @property({ type: String })
   activeSessionId = "";
+
+  @property({ attribute: false })
+  activityState: ActivityState | undefined = undefined;
 
   @property({ attribute: false })
   activityMap = new Map<string, ActivityState>();
@@ -84,21 +87,8 @@ export class TaskListItemElement extends LitElement {
     navigator.clipboard.writeText(this.task.branch_name).catch(() => {});
   }
 
-  private getTaskActivity(): ActivityState | undefined {
-    const ids = this.task.session_ids;
-    if (!ids.length) return undefined;
-    let hasFinished = false;
-    for (const id of ids) {
-      const state = this.activityMap.get(id);
-      if (state === "running") return "running";
-      if (state === "finished") hasFinished = true;
-    }
-    return hasFinished ? "finished" : undefined;
-  }
-
   private renderActivityDot() {
-    const state = this.getTaskActivity();
-    return html`<activity-dot .state=${state}></activity-dot>`;
+    return html`<activity-dot .state=${this.activityState}></activity-dot>`;
   }
 
   private renderBranchInfo() {

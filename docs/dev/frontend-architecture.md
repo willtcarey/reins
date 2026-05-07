@@ -30,6 +30,7 @@ models/
 ├── stores/              Shared state management (pubsub)
 │   ├── app-store.ts
 │   ├── active-session-store.ts
+│   ├── activity-store.ts
 │   ├── diff-store.ts
 │   ├── project-store.ts
 │   ├── project-collection-store.ts
@@ -45,6 +46,7 @@ models/
 │   ├── create-task.ts, delegate.ts, generic.ts
 │   ├── bash-command-parser.ts
 │   └── types.ts
+├── tasks.ts             Task list types and TasksCollection model
 ├── chat-state.ts        Chat event reducer
 ├── format.ts            Display formatting helpers
 ├── router.ts            Hash-based route parsing
@@ -136,14 +138,14 @@ All server communication — fetching, WebSocket event handling, polling, and in
                            │  - sessions            │
                            │  - sessionData         │
                            │  - sessionMessages     │
-                           │  - activity (per-      │
-                           │    session running/     │
-                           │    finished)            │
                            │  - connection status    │
                            │                        │
-                           │  Sub-store:            │
+                           │  Sub-stores:           │
                            │  - diffStore (diff,    │
                            │    spread, polling)     │
+                           │  - project stores       │
+                           │    (tasks/sessions +    │
+                           │    activity selectors)  │
                            └───────────┬────────────┘
                                        │ subscribe()
                     ┌──────────┬───────┴───────┬──────────┐
@@ -157,13 +159,13 @@ All server communication — fetching, WebSocket event handling, polling, and in
 The central store. Constructed with an `AppClient` (WebSocket client) and internally subscribes to connection and event callbacks. Responsibilities:
 
 - **Owns all HTTP fetches** — projects, tasks, sessions, session data, task generation, project CRUD. No component calls `fetch()` directly.
-- **Handles WS events internally** — `agent_start` / `agent_end` update activity state and trigger refetches. `task_updated` refreshes the task list. `session_updated` refreshes the active session and project lists. `tool_execution_end` for file-modifying tools refreshes the diff. Views don't participate in these decisions.
+- **Handles WS events internally** — `agent_start` / `agent_end` update activity state and trigger refetches. `task_updated` refreshes the task list and clears activity for sessions on closed tasks. `session_updated` refreshes the active session and project lists. `tool_execution_end` for file-modifying tools refreshes the diff. Views don't participate in these decisions.
 - **Manages reconnect** — On WebSocket reconnect, refetches the project list and active session metadata to catch up on missed events.
 - **Splits active session state** — Session metadata (`sessionData`) and persisted history (`sessionMessages`) are fetched separately so metadata refreshes can't clobber in-flight chat rendering.
 - **Uses blank session metadata while loading** — `ActiveSessionStore` keeps `sessionData` as a placeholder object for the active `sessionId` until the metadata request completes, so views don't need null checks for the selected session.
 - **Exposes the active session store directly to the chat view** — `chat-panel` receives `ActiveSessionStore`, reads `sessionData` / `sessionMessages` from it, and sends prompt/steer/abort/model-update intents back through the same store.
 - **Coordinates sub-stores** — When the session or project changes, AppStore updates DiffStore's branch and project. When an agent completes, AppStore tells DiffStore to refresh.
-- **Tracks activity** — Per-session running/finished state (absorbed from the former ActivityTracker). Used for title badge counts and sidebar indicators.
+- **Routes activity events** — WS events are dispatched by `projectId` to the matching `ProjectStore.activity`; AppStore does not own app-level notification state.
 
 Internally, AppStore delegates project/session state management to `ProjectCollectionStore` (a private implementation detail, not accessed by views).
 
@@ -180,11 +182,15 @@ Views access DiffStore through `store.diffStore` as a read-only surface.
 
 ### ProjectCollectionStore (`models/stores/project-collection-store.ts`)
 
-Internal to AppStore — not accessed by views directly. Manages the project list, project CRUD, and lazily-created `ProjectStore` instances that hold per-project task/session data.
+Internal to AppStore — not accessed by views directly. Manages the project list, project CRUD, and lazily-created `ProjectStore` instances that hold per-project task/session data. It exposes project-level activity helpers needed by sidebar UI: `activityByProject` for project header dots and `activityForSession(projectId, sessionId)` for quick-open indicators. Shell-level summary counts live on AppStore.
 
 ### ProjectStore (`models/stores/project-store.ts`)
 
-One instance per project, lazily created by `ProjectCollectionStore`. Holds task list, session list, task session sublists, and task mutations for a single project.
+One instance per project, lazily created by `ProjectCollectionStore`. Holds a data-only `TasksCollection`, session list, task session sublists, task mutations, and one project-scoped `ActivityStore`. It exposes `tasksWithActivity`, `activityMap`, and `activityState` so components render indicators from project-derived state instead of recalculating task activity themselves. Task/list fetches clear activity for sessions on closed tasks.
+
+### ActivityStore (`models/stores/activity-store.ts`)
+
+Owned by `ProjectStore`. Manages raw per-session notification state (`sessionId → running | finished`), delegate-session tracking, and viewed/cleared transitions for one project. It does not know about project ids, project collections, or task data; `ProjectStore` is responsible for combining raw activity with task/session state and for closed-task cleanup.
 
 ### QuickOpenStore (`models/stores/quick-open-store.ts`)
 
@@ -264,12 +270,25 @@ The client provides `onConnection(cb)` and `onEvent(cb)` hooks. AppStore is the 
 
 | WS Event | Store Reaction |
 |---|---|
-| `agent_start` | Mark session running in activity state |
-| `agent_end` | Mark session finished, refetch task list, refresh diff |
-| `task_updated` | Refetch task list |
+| `agent_start` | Route to the event project's activity store and mark the session running |
+| `agent_end` | Route to the event project's activity store; mark non-active open task sessions finished; clear active/delegate/closed-task sessions; refetch task list; refresh diff |
+| `task_updated` | Refetch that project store if it exists and clear activity for sessions on closed tasks |
 | `session_updated` | Refetch the active session (if selected) and refresh project lists |
 | `tool_execution_end` (file-modifying) | Refresh diff |
 | WS reconnect | Refetch project list, refetch active session data |
+
+### Activity indicator semantics
+
+Raw session activity is owned by each `ProjectStore`'s `ActivityStore` (`sessionId → running | finished`). Task list types and the project-scoped `TasksCollection` model live in `models/tasks.ts`. `ProjectStore` holds a data-only `TasksCollection`, combines it with raw activity via `tasksWithActivity`, and exposes project activity (`activityState`). `ProjectCollectionStore` aggregates only project-level state (`activityByProject`) and offers `activityForSession(projectId, sessionId)` for quick-open indicators instead of building a global session activity map. AppStore aggregates `activitySummary` for document title and collapsed sidebar rail state.
+
+Running indicators are green and remain visible while the agent loop is active, even if the user views that session. Finished indicators are amber, represent unread completed work, and are cleared when the session is viewed.
+
+Closed task sessions do not keep activity notifications. When task data is refreshed after `task_updated` or reconnect, `ProjectStore` removes both running and finished activity for sessions on closed tasks. Task selectors also suppress indicators for closed tasks.
+
+Known follow-up areas:
+
+- Activity state is in-memory only. A full page reload starts with no unread indicators; restoring running indicators from session metadata (`state.isStreaming`) across loaded session lists would require a separate reconciliation pass.
+- `task_updated` broadcasts do not identify which task changed, so closed-task cleanup has to refetch project task data before pruning finished activity. Including changed task/session identifiers in the broadcast would make this more targeted.
 
 ## Routing (`models/router.ts`)
 

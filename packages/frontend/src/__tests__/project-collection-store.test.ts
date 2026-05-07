@@ -4,6 +4,7 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { ProjectCollectionStore } from "../models/stores/project-collection-store.js";
 import { ProjectStore } from "../models/stores/project-store.js";
+import type { TaskListItem } from "../models/tasks.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 
 // Mock fetch globally
@@ -13,6 +14,23 @@ function jsonResponse(data: unknown, ok = true): Response {
     status: ok ? 200 : 500,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function task(overrides: Partial<TaskListItem>): TaskListItem {
+  return {
+    id: 1,
+    project_id: 42,
+    title: "Task",
+    description: null,
+    branch_name: "task/example",
+    status: "open",
+    created_at: "",
+    updated_at: "",
+    session_count: 1,
+    session_ids: ["s1"],
+    diffStats: null,
+    ...overrides,
+  };
 }
 
 describe("ProjectCollectionStore per-project data", () => {
@@ -259,5 +277,59 @@ describe("ProjectCollectionStore per-project data", () => {
     unsub();
     await child.fetchLists();
     expect(count).toBe(countBefore);
+  });
+
+  test("activityForSession reads activity from the target project store", () => {
+    store.getStore(1).setActivityRunning("s1");
+    store.getStore(2).setActivityRunning("s2");
+    store.getStore(2).setActivityFinished("s2", "other");
+
+    expect(store.activityForSession(1, "s1")).toBe("running");
+    expect(store.activityForSession(2, "s2")).toBe("finished");
+    expect(store.activityForSession(1, "s2")).toBeUndefined();
+    expect(store.activityForSession(99, "s1")).toBeUndefined();
+  });
+
+  test("activityByProject aggregates project store activity", () => {
+    store.getStore(1).setActivityRunning("s1");
+    store.getStore(1).setActivityRunning("s2");
+    store.getStore(1).setActivityFinished("s2", "other");
+    store.getStore(2).setActivityRunning("s3");
+
+    expect(store.activityByProject).toEqual(new Map([
+      [1, "running"],
+      [2, "running"],
+    ]));
+  });
+
+  test("refreshProjectForTaskUpdate refreshes existing event-created stores and clears closed activity", async () => {
+    store.getStore(42).setActivityRunning("s1");
+
+    mockFetch((url) => {
+      if (url === "/api/projects/42/tasks") {
+        return jsonResponse([task({ status: "closed", session_ids: ["s1"] })]);
+      }
+      if (url === "/api/projects/42/sessions") return jsonResponse([]);
+      if (url === "/api/projects/42/skills") return jsonResponse({ skills: [] });
+      return jsonResponse({}, false);
+    });
+
+    await store.refreshProjectForTaskUpdate(42);
+
+    expect(store.getStore(42).loaded).toBe(true);
+    expect(store.getStore(42).activity.getActivity("s1")).toBeUndefined();
+  });
+
+  test("refreshProjectForTaskUpdate is a no-op if the project store does not exist", async () => {
+    let fetchCount = 0;
+    mockFetch(() => {
+      fetchCount++;
+      return jsonResponse([]);
+    });
+
+    await store.refreshProjectForTaskUpdate(99);
+
+    expect(fetchCount).toBe(0);
+    expect(store.peekStore(99)).toBeUndefined();
   });
 });

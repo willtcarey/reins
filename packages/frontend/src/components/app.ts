@@ -146,9 +146,10 @@ export class AppShell extends LitElement {
       this.activeTab = "chat";
       store.diffStore.refresh();
     }
-    // Clear activity notification when viewing a session
+    // Clear unread completion when viewing a session, but keep the green
+    // running indicator visible until the agent loop actually ends.
     if (store.sessionId) {
-      store.clearActivity(store.sessionId);
+      store.activeProjectStore?.activity.markSessionViewed(store.sessionId);
     }
     // Track session visit for quick-open recency ordering
     if (store.sessionId) {
@@ -213,6 +214,10 @@ export class AppShell extends LitElement {
   private openSettings() {
     this._settingsPanel?.open();
   }
+
+  private activityForSession = (projectId: number, sessionId: string) => {
+    return this.appStore.projectCollectionStore.activityForSession(projectId, sessionId);
+  };
 
   private renderEmptyState() {
     return html`
@@ -372,7 +377,7 @@ export class AppShell extends LitElement {
 
         <!-- Quick-open overlay -->
         <quick-open
-          .activityMap=${store.activityMap}
+          .activityForSession=${this.activityForSession}
           .store=${this.quickOpenStore}
         ></quick-open>
 

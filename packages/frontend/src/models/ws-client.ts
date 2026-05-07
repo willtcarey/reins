@@ -35,20 +35,6 @@ export interface SessionListItem {
   parent_session_id: string | null;
 }
 
-export interface TaskListItem {
-  id: number;
-  project_id: number;
-  title: string;
-  description: string | null;
-  branch_name: string;
-  status: "open" | "closed";
-  created_at: string;
-  updated_at: string;
-  session_count: number;
-  session_ids: string[];
-  diffStats: { additions: number; removals: number } | null;
-}
-
 export interface ProjectInfo {
   id: number;
   name: string;

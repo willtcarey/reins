@@ -10,6 +10,7 @@
  */
 
 import type { ProjectInfo } from "../ws-client.js";
+import type { ActivityState } from "../tasks.js";
 import { ProjectStore } from "./project-store.js";
 
 export type ProjectCollectionStoreListener = () => void;
@@ -109,6 +110,45 @@ export class ProjectCollectionStore {
   }
 
   // ---- Per-project data stores ----------------------------------------------
+
+  /** Loaded/created per-project stores. */
+  get projectStores(): ProjectStore[] {
+    return [...this._stores.values()];
+  }
+
+  /** Activity state for a session in a known project store. */
+  activityForSession(projectId: number, sessionId: string): ActivityState | undefined {
+    return this.peekStore(projectId)?.activity.getActivity(sessionId);
+  }
+
+  /** Project header activity states. Running wins over finished within each project. */
+  get activityByProject(): Map<number, ActivityState> {
+    const result = new Map<number, ActivityState>();
+    for (const projectStore of this._stores.values()) {
+      const activity = projectStore.activityState;
+      if (activity) result.set(projectStore.projectId, activity);
+    }
+    return result;
+  }
+
+  clearActivityForClosedTasks(projectId?: number): void {
+    if (projectId != null) {
+      this.peekStore(projectId)?.clearActivityForClosedTasks();
+      return;
+    }
+
+    for (const projectStore of this._stores.values()) {
+      projectStore.clearActivityForClosedTasks();
+    }
+  }
+
+  async refreshProjectForTaskUpdate(projectId: number): Promise<void> {
+    const projectStore = this.peekStore(projectId);
+    if (!projectStore) return;
+
+    await projectStore.fetchLists();
+    projectStore.clearActivityForClosedTasks();
+  }
 
   /**
    * Get or create a ProjectStore for a project.

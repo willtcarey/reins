@@ -3,8 +3,9 @@
  *
  * Centralized reactive store that owns all server communication and
  * internal event handling. Wraps ActiveSessionStore for the viewed
- * session, ProjectCollectionStore for the project list and per-project data,
- * and DiffStore for diff/sync state. Handles WebSocket events
+ * session, ProjectCollectionStore for the project list, per-project data and
+ * project-scoped activity stores, and DiffStore for diff/sync state.
+ * Handles WebSocket events
  * internally — views never participate in fetch/event decisions.
  */
 
@@ -15,9 +16,6 @@ import type { ProjectStore } from "./project-store.js";
 import { DiffStore } from "./diff-store.js";
 import type { ProjectInfo } from "../ws-client.js";
 import { openInBrowserEvent } from "../../components/events.js";
-
-/** Activity state for a session: running, finished, or absent (no entry). */
-export type ActivityState = "running" | "finished";
 
 // Tools that modify files and should trigger a diff refresh
 const FILE_MODIFYING_TOOLS = new Set(["write", "edit", "bash"]);
@@ -37,14 +35,6 @@ export class AppStore {
 
   /** Diff/sync sub-store — owned and coordinated by AppStore. */
   readonly diffStore = new DiffStore();
-
-  // ---- Activity state (absorbed from ActivityTracker) -----------------------
-
-  private _activityStates = new Map<string, { state: ActivityState; projectId: number }>();
-  private _activityMapCache: Map<string, ActivityState> | null = null;
-
-  /** Sessions created via the delegate tool (have a parent session). */
-  private _delegateSessions = new Set<string>();
 
   // ---- Connection state -----------------------------------------------------
 
@@ -76,8 +66,10 @@ export class AppStore {
         // Always refresh the project list on (re)connect
         this.projectCollectionStore.fetchProjects();
         // Refresh all loaded project stores (any expanded in the sidebar)
-        // so session/task lists catch up on missed events
-        this.projectCollectionStore.refreshAll();
+        // so session/task lists catch up on missed events, then drop any
+        // stale activity for tasks that were closed while disconnected.
+        void this.projectCollectionStore.refreshAll()
+          .then(() => this.projectCollectionStore.clearActivityForClosedTasks());
         // Refresh active-session metadata and messages. refreshSession()
         // auto-triggers a message refresh when it detects streaming ended
         // (missed agent_end during disconnect). We also always refresh
@@ -92,7 +84,7 @@ export class AppStore {
     client.onEvent((sessionId, projectId, event) => {
       // Handle task_updated broadcast (not tagged with a sessionId)
       if (event.type === "task_updated") {
-        this.projectCollectionStore.refresh(event.projectId);
+        void this.projectCollectionStore.refreshProjectForTaskUpdate(event.projectId);
         return;
       }
 
@@ -109,12 +101,15 @@ export class AppStore {
 
       // Handle session_created broadcast (server-side session creation, e.g. delegate)
       if (event.type === "session_created") {
+        const projectStore = event.parentSessionId
+          ? this.projectCollectionStore.getStore(event.projectId)
+          : this.projectCollectionStore.peekStore(event.projectId);
         if (event.parentSessionId) {
-          this._delegateSessions.add(event.sessionId);
+          projectStore?.activity.trackDelegateSession(event.sessionId);
         }
         this.projectCollectionStore.refresh(event.projectId);
         if (event.taskId) {
-          this.projectCollectionStore.peekStore(event.projectId)?.fetchTaskSessions(event.taskId);
+          projectStore?.fetchTaskSessions(event.taskId);
         }
         return;
       }
@@ -129,10 +124,15 @@ export class AppStore {
 
       // Track activity for all sessions
       if (sessionId && event.type === "agent_start") {
-        this._setRunning(sessionId, projectId);
+        this.projectCollectionStore.getStore(projectId).setActivityRunning(sessionId);
       } else if (sessionId && event.type === "agent_end") {
-        this._setFinished(sessionId, projectId, this._activeSession.sessionId);
-        setTimeout(() => this.projectCollectionStore.refresh(projectId), 500);
+        this.projectCollectionStore
+          .getStore(projectId)
+          .setActivityFinished(sessionId, this._activeSession.sessionId);
+        setTimeout(() => {
+          void this.projectCollectionStore.refresh(projectId)
+            .then(() => this.projectCollectionStore.clearActivityForClosedTasks(projectId));
+        }, 500);
       }
 
       // Only refresh diff for the session we're viewing
@@ -158,6 +158,18 @@ export class AppStore {
   get projectId() { return this._activeSession.projectId; }
   get sessionId() { return this._activeSession.sessionId; }
 
+  /** Summary counts across all project activity, for shell-level title/badge state. */
+  get activitySummary(): { running: number; finished: number } {
+    let running = 0;
+    let finished = 0;
+    for (const projectStore of this.projectCollectionStore.projectStores) {
+      const summary = projectStore.activitySummary;
+      running += summary.running;
+      finished += summary.finished;
+    }
+    return { running, finished };
+  }
+
   /**
    * The per-project store for the session currently being viewed, or `null`
    * when no project is active or its store hasn't been loaded yet.
@@ -166,90 +178,6 @@ export class AppStore {
     const projectId = this._activeSession.projectId;
     if (projectId == null) return null;
     return this.projectCollectionStore.peekStore(projectId) ?? null;
-  }
-
-  // ---- Activity state accessors ---------------------------------------------
-
-  /** Get the activity state for a session (undefined = normal/no activity). */
-  getActivity(sessionId: string): ActivityState | undefined {
-    return this._activityStates.get(sessionId)?.state;
-  }
-
-  /** Get the projectId associated with a session's activity. */
-  getActivityProjectId(sessionId: string): number | undefined {
-    return this._activityStates.get(sessionId)?.projectId;
-  }
-
-  /** Get a snapshot of all activity states (for passing as a property). */
-  get activityMap(): Map<string, ActivityState> {
-    if (!this._activityMapCache) {
-      const map = new Map<string, ActivityState>();
-      for (const [id, entry] of this._activityStates) {
-        map.set(id, entry.state);
-      }
-      this._activityMapCache = map;
-    }
-    return this._activityMapCache;
-  }
-
-  /**
-   * Aggregate activity by projectId.
-   * If any session in a project is running, the project is "running".
-   * Otherwise if any session is finished, it's "finished".
-   */
-  get activityByProject(): Map<number, ActivityState> {
-    const result = new Map<number, ActivityState>();
-    for (const entry of this._activityStates.values()) {
-      const current = result.get(entry.projectId);
-      if (!current || (current === "finished" && entry.state === "running")) {
-        result.set(entry.projectId, entry.state);
-      }
-    }
-    return result;
-  }
-
-  /** Summary counts for favicon/title. */
-  get activitySummary(): { running: number; finished: number } {
-    let running = 0;
-    let finished = 0;
-    for (const entry of this._activityStates.values()) {
-      if (entry.state === "running") running++;
-      else if (entry.state === "finished") finished++;
-    }
-    return { running, finished };
-  }
-
-  /** Whether there's any activity at all. */
-  get hasActivity(): boolean {
-    return this._activityStates.size > 0;
-  }
-
-  // ---- Activity state mutations (private) -----------------------------------
-
-  private _setRunning(sessionId: string, projectId: number): void {
-    if (this._activityStates.get(sessionId)?.state === "running") return;
-    this._activityStates.set(sessionId, { state: "running", projectId });
-    this._activityMapCache = null;
-    this.notify();
-  }
-
-  private _setFinished(sessionId: string, projectId: number, activeSessionId: string): void {
-    if (sessionId === activeSessionId || this._delegateSessions.has(sessionId)) {
-      this.clearActivity(sessionId);
-      this._delegateSessions.delete(sessionId);
-      return;
-    }
-    this._activityStates.set(sessionId, { state: "finished", projectId });
-    this._activityMapCache = null;
-    this.notify();
-  }
-
-  /** Clear activity state for a session (e.g., user viewed it). */
-  clearActivity(sessionId: string): void {
-    if (!this._activityStates.has(sessionId)) return;
-    this._activityStates.delete(sessionId);
-    this._activityMapCache = null;
-    this.notify();
   }
 
   // ---- ActiveSessionStore delegate methods -----------------------------------
@@ -372,10 +300,9 @@ export class AppStore {
       return;
     }
     const projectId = this._activeSession.projectId;
-    const tasks = projectId != null
-      ? this.projectCollectionStore.peekStore(projectId)?.tasks ?? []
-      : [];
-    const task = tasks.find((t) => t.id === session.task_id);
+    const task = projectId != null
+      ? this.projectCollectionStore.peekStore(projectId)?.tasksWithActivity.find(session.task_id)
+      : undefined;
     this.diffStore.setBranch(task?.branch_name ?? null);
   }
 

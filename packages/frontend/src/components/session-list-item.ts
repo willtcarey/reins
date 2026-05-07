@@ -9,7 +9,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { SessionListItem as SessionListItemData } from "../models/ws-client.js";
-import type { ActivityState } from "../models/stores/app-store.js";
+import type { ActivityState } from "../models/tasks.js";
 import { formatRelativeDate } from "../models/format.js";
 import "./activity-dot.js";
 import "./delegate-popover.js";

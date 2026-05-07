@@ -1,13 +1,15 @@
 /**
  * Project Store
  *
- * Holds task/session list data for a single project. One instance per project,
+ * Holds the task collection and session list data for a single project. One instance per project,
  * lazily created by ProjectCollectionStore.
  *
  * Components subscribe via `subscribe()` and read public state directly.
  */
 
-import type { InjectedSkillInfo, SessionListItem, TaskListItem } from "../ws-client.js";
+import type { InjectedSkillInfo, SessionListItem } from "../ws-client.js";
+import { TasksCollection, type ActivityState, type TaskListItem } from "../tasks.js";
+import { ActivityStore } from "./activity-store.js";
 
 export type ProjectStoreListener = () => void;
 
@@ -16,7 +18,8 @@ export class ProjectStore {
 
   // ---- Public reactive state ------------------------------------------------
 
-  tasks: TaskListItem[] = [];
+  tasks: TasksCollection;
+  readonly activity = new ActivityStore();
   sessions: SessionListItem[] = [];
   taskSessions: Map<number, SessionListItem[]> = new Map();
   skills: InjectedSkillInfo[] = [];
@@ -29,6 +32,8 @@ export class ProjectStore {
 
   constructor(projectId: number) {
     this.projectId = projectId;
+    this.tasks = TasksCollection.empty(projectId);
+    this.activity.subscribe(() => this.notify());
   }
 
   // ---- Subscription ---------------------------------------------------------
@@ -40,6 +45,64 @@ export class ProjectStore {
 
   private notify() {
     for (const fn of this._listeners) fn();
+  }
+
+  // ---- Activity selectors/actions ------------------------------------------
+
+  get activityMap(): Map<string, ActivityState> {
+    return this.activity.activityMap;
+  }
+
+  get tasksWithActivity(): TasksCollection {
+    return this.tasks.withActivity(this.activityMap);
+  }
+
+  get activitySummary(): { running: number; finished: number } {
+    return this.activity.activitySummary;
+  }
+
+  get activityState(): ActivityState | undefined {
+    let hasFinished = false;
+    const merge = (state: ActivityState | undefined) => {
+      if (state === "running") return true;
+      if (state === "finished") hasFinished = true;
+      return false;
+    };
+
+    for (const state of this.tasksWithActivity.activityByTask.values()) {
+      if (merge(state)) return "running";
+    }
+
+    for (const session of this.sessions) {
+      if (merge(this.activityMap.get(session.id))) return "running";
+    }
+
+    for (const [sessionId, state] of this.activityMap) {
+      if (this.tasks.hasClosedTaskSession(sessionId)) continue;
+      if (merge(state)) return "running";
+    }
+
+    return hasFinished ? "finished" : undefined;
+  }
+
+  setActivityRunning(sessionId: string): void {
+    if (this.tasks.hasClosedTaskSession(sessionId)) {
+      this.activity.clearActivity(sessionId);
+      return;
+    }
+    this.activity.setRunning(sessionId);
+  }
+
+  setActivityFinished(sessionId: string, activeSessionId: string | null | undefined): void {
+    if (this.tasks.hasClosedTaskSession(sessionId)) {
+      this.activity.clearActivity(sessionId);
+      return;
+    }
+    this.activity.setFinished(sessionId, activeSessionId);
+  }
+
+  clearActivityForClosedTasks(): void {
+    this.activity.clearSessions(this.tasks.closedTaskSessionIds);
   }
 
   // ---- Actions --------------------------------------------------------------
@@ -58,7 +121,10 @@ export class ProjectStore {
         fetch(`/api/projects/${this.projectId}/skills`),
       ]);
 
-      if (tasksResp.ok) this.tasks = await tasksResp.json();
+      if (tasksResp.ok) {
+        const tasks: TaskListItem[] = await tasksResp.json();
+        this.tasks = new TasksCollection(this.projectId, tasks);
+      }
       if (sessionsResp.ok) this.sessions = await sessionsResp.json();
       if (skillsResp.ok) {
         const body = await skillsResp.json().catch(() => null);
@@ -69,6 +135,7 @@ export class ProjectStore {
           [...this.taskSessions.keys()].map((taskId) => this.fetchTaskSessions(taskId)),
         );
       }
+      this.clearActivityForClosedTasks();
       this.loaded = true;
     } catch {
       // silent — leave loaded as-is (false if first attempt)

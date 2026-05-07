@@ -3,6 +3,7 @@
  */
 import { describe, test, expect, beforeEach } from "bun:test";
 import { ProjectStore } from "../models/stores/project-store.js";
+import { TasksCollection, type TaskListItem } from "../models/tasks.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 
 // Mock fetch globally
@@ -12,6 +13,23 @@ function jsonResponse(data: unknown, ok = true): Response {
     status: ok ? 200 : 500,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function task(overrides: Partial<TaskListItem>): TaskListItem {
+  return {
+    id: 1,
+    project_id: 42,
+    title: "Task",
+    description: null,
+    branch_name: "task/example",
+    status: "open",
+    created_at: "",
+    updated_at: "",
+    session_count: 1,
+    session_ids: ["s1"],
+    diffStats: null,
+    ...overrides,
+  };
 }
 
 describe("ProjectStore", () => {
@@ -24,7 +42,9 @@ describe("ProjectStore", () => {
 
   test("constructor sets projectId and initial state", () => {
     expect(store.projectId).toBe(42);
-    expect(store.tasks).toEqual([]);
+    expect(store.tasks).toBeInstanceOf(TasksCollection);
+    expect(store.tasks.projectId).toBe(42);
+    expect(store.tasks.items).toEqual([]);
     expect(store.sessions).toEqual([]);
     expect(store.taskSessions).toEqual(new Map());
     expect(store.loading).toBe(false);
@@ -44,7 +64,8 @@ describe("ProjectStore", () => {
 
     await store.fetchLists();
 
-    expect(store.tasks).toEqual(tasks);
+    expect(store.tasks).toBeInstanceOf(TasksCollection);
+    expect(store.tasks.items).toEqual(tasks);
     expect(store.sessions).toEqual(sessions);
     expect(store.loading).toBe(false);
     expect(store.loaded).toBe(true);
@@ -77,7 +98,7 @@ describe("ProjectStore", () => {
     await store.fetchLists();
     expect(store.loading).toBe(false);
     expect(store.loaded).toBe(false);
-    expect(store.tasks).toEqual([]);
+    expect(store.tasks.items).toEqual([]);
     expect(store.sessions).toEqual([]);
   });
 
@@ -216,5 +237,55 @@ describe("ProjectStore", () => {
     expect(store.taskSessions.get(7)).toEqual([
       { id: "s-new", name: null, created_at: "", updated_at: "", message_count: 2, first_message: "Hello", parent_session_id: null },
     ]);
+  });
+
+  test("owns project-scoped activity and exposes tasksWithActivity", () => {
+    store.tasks = new TasksCollection(42, [task({ id: 1, session_ids: ["s1"] })]);
+
+    store.setActivityRunning("s1");
+
+    expect(store.activity.getActivity("s1")).toBe("running");
+    expect(store.tasksWithActivity.activityForId(1)).toBe("running");
+    expect(store.activityState).toBe("running");
+  });
+
+  test("setActivityFinished clears active and delegate sessions", () => {
+    store.setActivityRunning("active");
+    store.setActivityFinished("active", "active");
+
+    store.activity.trackDelegateSession("delegate");
+    store.setActivityRunning("delegate");
+    store.setActivityFinished("delegate", "parent");
+
+    expect(store.activity.getActivity("active")).toBeUndefined();
+    expect(store.activity.getActivity("delegate")).toBeUndefined();
+  });
+
+  test("closed task sessions suppress and clear activity", () => {
+    store.tasks = new TasksCollection(42, [task({ status: "closed", session_ids: ["s1"] })]);
+
+    store.setActivityRunning("s1");
+    expect(store.activity.getActivity("s1")).toBeUndefined();
+
+    store.activity.setRunning("s1");
+    store.clearActivityForClosedTasks();
+    expect(store.activity.getActivity("s1")).toBeUndefined();
+  });
+
+  test("fetchLists clears activity for sessions whose task is now closed", async () => {
+    store.setActivityRunning("s1");
+
+    mockFetch((url) => {
+      if (url === "/api/projects/42/tasks") {
+        return jsonResponse([task({ status: "closed", session_ids: ["s1"] })]);
+      }
+      if (url === "/api/projects/42/sessions") return jsonResponse([]);
+      if (url === "/api/projects/42/skills") return jsonResponse({ skills: [] });
+      return jsonResponse({}, false);
+    });
+
+    await store.fetchLists();
+
+    expect(store.activity.getActivity("s1")).toBeUndefined();
   });
 });

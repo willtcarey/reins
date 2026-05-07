@@ -8,9 +8,8 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { SessionListItem, TaskListItem } from "../models/ws-client.js";
-import type { AppStore } from "../models/stores/app-store.js";
-import type { ActivityState } from "../models/stores/app-store.js";
+import type { SessionListItem } from "../models/ws-client.js";
+import { TasksCollection, type ActivityState, type TaskListItem } from "../models/tasks.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import "./delete-task-dialog.js";
 import "./task-list-item.js";
@@ -25,13 +24,10 @@ export class TaskList extends LitElement {
   projectId: number | null = null;
 
   @property({ attribute: false })
-  store: AppStore | null = null;
-
-  @property({ attribute: false })
   projectStore: ProjectStore | null = null;
 
   @property({ attribute: false })
-  tasks: TaskListItem[] = [];
+  tasksCollection: TasksCollection = TasksCollection.empty();
 
   @property({ type: String })
   activeSessionId = "";
@@ -52,7 +48,7 @@ export class TaskList extends LitElement {
     if (changed.has("projectId")) {
       this.expandedTaskId = null;
     }
-    if (changed.has("activeSessionId") || changed.has("tasks")) {
+    if (changed.has("activeSessionId") || changed.has("tasksCollection")) {
       this.autoExpandForActiveSession();
     }
   }
@@ -62,7 +58,7 @@ export class TaskList extends LitElement {
    */
   private autoExpandForActiveSession() {
     if (!this.activeSessionId) return;
-    const task = this.tasks.find(t => t.session_ids.includes(this.activeSessionId));
+    const task = this.tasksCollection.findBySessionId(this.activeSessionId);
     if (task && task.id !== this.expandedTaskId) {
       this.expandedTaskId = task.id;
       this.projectStore?.fetchTaskSessions(task.id);
@@ -107,6 +103,7 @@ export class TaskList extends LitElement {
         .expanded=${this.expandedTaskId === task.id}
         .sessions=${this.taskSessions.get(task.id) ?? []}
         .activeSessionId=${this.activeSessionId}
+        .activityState=${this.tasksCollection.activityFor(task)}
         .activityMap=${this.activityMap}
         .projectId=${this.projectId}
         @toggle-expand=${this.handleToggleExpand}
@@ -116,8 +113,8 @@ export class TaskList extends LitElement {
   }
 
   override render() {
-    const openTasks = this.tasks.filter(t => t.status !== "closed");
-    const closedTasks = this.tasks.filter(t => t.status === "closed");
+    const openTasks = this.tasksCollection.open;
+    const closedTasks = this.tasksCollection.closed;
 
     return html`
       <div class="flex items-center px-3 pt-3 pb-1">

@@ -7,7 +7,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { TaskListItem } from "../models/ws-client.js";
+import type { TaskListItem } from "../models/tasks.js";
 
 @customElement("delete-task-dialog")
 export class DeleteTaskDialog extends LitElement {
