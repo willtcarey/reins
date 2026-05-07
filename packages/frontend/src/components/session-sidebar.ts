@@ -319,6 +319,7 @@ export class SessionSidebar extends LitElement {
           </button>
           <popover-menu
             triggerClass="md:opacity-0 md:group-hover/project:opacity-100"
+            close-on-panel-click
             .content=${() => html`
               <button
                 class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"

@@ -94,6 +94,7 @@ export class DelegatePopover extends LitElement {
         triggerClass="!p-0 !px-1 !py-1.5 !opacity-100"
         panelClass="w-64"
         anchor="right-start"
+        close-on-panel-click
         .content=${() => this.renderPopoverContent()}
         .triggerTemplate=${html`
           <span

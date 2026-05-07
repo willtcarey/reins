@@ -36,3 +36,7 @@ private renderMenuContent() {
 **Why it's safe in your own `render()`:** When a template is rendered by the component that created it, Lit's host binding works correctly. So `@click=${this.handleClick}` is fine in a component's own `render()` method.
 
 **When to watch out:** Any time a `TemplateResult` crosses a component boundary — callback props (`.content`, `.trigger`), helper methods whose output is rendered by a parent/child, etc.
+
+## Popover menu click behavior
+
+`<popover-menu>` keeps its panel open when users click inside it by default so form-like popovers can host controls such as `<select>` elements. For action menus where choosing an item should dismiss the panel, opt in explicitly with `close-on-panel-click`.

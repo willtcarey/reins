@@ -116,6 +116,7 @@ export class AssistantSession extends LitElement {
             <popover-menu
               triggerClass="md:opacity-0 md:group-hover/assistant:opacity-100"
               panelClass="w-60"
+              close-on-panel-click
               .content=${() => this.renderSessionMenuContent()}
             ></popover-menu>
           </div>

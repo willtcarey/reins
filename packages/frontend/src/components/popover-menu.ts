@@ -8,7 +8,8 @@
  * returning a Lit TemplateResult. This avoids light DOM / slot issues
  * since the component uses light DOM for Tailwind compatibility.
  *
- * The menu can optionally auto-close when a click lands inside the panel.
+ * Set `closeOnPanelClick` for action-menu usage where choosing an item should
+ * dismiss the panel. Form-like popovers should keep the default open behavior.
  */
 
 import { LitElement, html, nothing, type TemplateResult } from "lit";
@@ -36,6 +37,10 @@ export class PopoverMenu extends LitElement {
   /** Optional custom trigger template. When set, replaces the default three-dot icon. */
   @property({ attribute: false })
   triggerTemplate: TemplateResult | null = null;
+
+  /** Whether clicks inside the panel should close the popover. */
+  @property({ type: Boolean, attribute: "close-on-panel-click" })
+  closeOnPanelClick = false;
 
   /**
    * Controls where the panel appears relative to the trigger.
@@ -119,7 +124,9 @@ export class PopoverMenu extends LitElement {
   }
 
   private onPanelClick() {
-    this.open = false;
+    if (this.closeOnPanelClick) {
+      this.open = false;
+    }
   }
 
   override render() {
