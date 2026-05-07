@@ -2,14 +2,14 @@
  * Project Store
  *
  * Holds the task collection and session list data for a single project. One instance per project,
- * lazily created by ProjectCollectionStore.
+ * lazily created by ProjectsStore.
  *
  * Components subscribe via `subscribe()` and read public state directly.
  */
 
 import type { InjectedSkillInfo, SessionListItem } from "../ws-client.js";
-import { TasksCollection, type ActivityState, type TaskListItem } from "../tasks.js";
-import { ActivityStore } from "./activity-store.js";
+import { TasksCollection, type TaskListItem } from "../tasks.js";
+import { ActivityStore, type ActivityFinishOptions, type ActivityState } from "./activity-store.js";
 
 export type ProjectStoreListener = () => void;
 
@@ -19,7 +19,6 @@ export class ProjectStore {
   // ---- Public reactive state ------------------------------------------------
 
   tasks: TasksCollection;
-  readonly activity = new ActivityStore();
   sessions: SessionListItem[] = [];
   taskSessions: Map<number, SessionListItem[]> = new Map();
   skills: InjectedSkillInfo[] = [];
@@ -28,12 +27,13 @@ export class ProjectStore {
 
   // ---- Private state --------------------------------------------------------
 
+  private _activity = new ActivityStore();
   private _listeners = new Set<ProjectStoreListener>();
 
   constructor(projectId: number) {
     this.projectId = projectId;
     this.tasks = TasksCollection.empty(projectId);
-    this.activity.subscribe(() => this.notify());
+    this._activity.subscribe(() => this.notify());
   }
 
   // ---- Subscription ---------------------------------------------------------
@@ -50,7 +50,7 @@ export class ProjectStore {
   // ---- Activity selectors/actions ------------------------------------------
 
   get activityMap(): Map<string, ActivityState> {
-    return this.activity.activityMap;
+    return this._activity.activityMap;
   }
 
   get tasksWithActivity(): TasksCollection {
@@ -58,7 +58,19 @@ export class ProjectStore {
   }
 
   get activitySummary(): { running: number; finished: number } {
-    return this.activity.activitySummary;
+    return this._activity.activitySummary;
+  }
+
+  activityForSession(sessionId: string): ActivityState | undefined {
+    return this._activity.getActivity(sessionId);
+  }
+
+  trackDelegateSession(sessionId: string): void {
+    this._activity.trackDelegateSession(sessionId);
+  }
+
+  markSessionViewed(sessionId: string): void {
+    this._activity.markSessionViewed(sessionId);
   }
 
   get activityState(): ActivityState | undefined {
@@ -85,24 +97,24 @@ export class ProjectStore {
     return hasFinished ? "finished" : undefined;
   }
 
-  setActivityRunning(sessionId: string): void {
+  markSessionRunning(sessionId: string): void {
     if (this.tasks.hasClosedTaskSession(sessionId)) {
-      this.activity.clearActivity(sessionId);
+      this._activity.clearActivity(sessionId);
       return;
     }
-    this.activity.setRunning(sessionId);
+    this._activity.setRunning(sessionId);
   }
 
-  setActivityFinished(sessionId: string, activeSessionId: string | null | undefined): void {
+  markSessionFinished(sessionId: string, options: ActivityFinishOptions = {}): void {
     if (this.tasks.hasClosedTaskSession(sessionId)) {
-      this.activity.clearActivity(sessionId);
+      this._activity.clearActivity(sessionId);
       return;
     }
-    this.activity.setFinished(sessionId, activeSessionId);
+    this._activity.setFinished(sessionId, options);
   }
 
   clearActivityForClosedTasks(): void {
-    this.activity.clearSessions(this.tasks.closedTaskSessionIds);
+    this._activity.clearSessions(this.tasks.closedTaskSessionIds);
   }
 
   // ---- Actions --------------------------------------------------------------

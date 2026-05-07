@@ -1,8 +1,8 @@
 /**
- * Tests for ProjectCollectionStore — project list, CRUD, and per-project data stores.
+ * Tests for ProjectsStore — project list, CRUD, and per-project data stores.
  */
-import { describe, test, expect, beforeEach } from "bun:test";
-import { ProjectCollectionStore } from "../models/stores/project-collection-store.js";
+import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { ProjectsStore } from "../models/stores/projects-store.js";
 import { ProjectStore } from "../models/stores/project-store.js";
 import type { TaskListItem } from "../models/tasks.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
@@ -33,11 +33,11 @@ function task(overrides: Partial<TaskListItem>): TaskListItem {
   };
 }
 
-describe("ProjectCollectionStore per-project data", () => {
-  let store: ProjectCollectionStore;
+describe("ProjectsStore per-project data", () => {
+  let store: ProjectsStore;
 
   beforeEach(() => {
-    store = new ProjectCollectionStore();
+    store = new ProjectsStore();
     restoreFetch();
   });
 
@@ -235,7 +235,7 @@ describe("ProjectCollectionStore per-project data", () => {
 
   // ---- Notification bubbling ------------------------------------------------
 
-  test("child store notifications bubble to project collection store subscribers", async () => {
+  test("child store notifications bubble to projects store subscribers", async () => {
     mockFetch(() => jsonResponse([]));
 
     const child = store.getStore(1);
@@ -280,9 +280,9 @@ describe("ProjectCollectionStore per-project data", () => {
   });
 
   test("activityForSession reads activity from the target project store", () => {
-    store.getStore(1).setActivityRunning("s1");
-    store.getStore(2).setActivityRunning("s2");
-    store.getStore(2).setActivityFinished("s2", "other");
+    store.getStore(1).markSessionRunning("s1");
+    store.getStore(2).markSessionRunning("s2");
+    store.getStore(2).markSessionFinished("s2");
 
     expect(store.activityForSession(1, "s1")).toBe("running");
     expect(store.activityForSession(2, "s2")).toBe("finished");
@@ -290,20 +290,45 @@ describe("ProjectCollectionStore per-project data", () => {
     expect(store.activityForSession(99, "s1")).toBeUndefined();
   });
 
-  test("activityByProject aggregates project store activity", () => {
-    store.getStore(1).setActivityRunning("s1");
-    store.getStore(1).setActivityRunning("s2");
-    store.getStore(1).setActivityFinished("s2", "other");
-    store.getStore(2).setActivityRunning("s3");
+  test("activityForProject resolves project header activity", () => {
+    store.getStore(1).markSessionRunning("s1");
+    store.getStore(1).markSessionRunning("s2");
+    store.getStore(1).markSessionFinished("s2");
+    store.getStore(2).markSessionRunning("s3");
 
-    expect(store.activityByProject).toEqual(new Map([
-      [1, "running"],
-      [2, "running"],
-    ]));
+    expect(store.activityForProject(1)).toBe("running");
+    expect(store.activityForProject(2)).toBe("running");
+    expect(store.activityForProject(99)).toBeUndefined();
   });
 
-  test("refreshProjectForTaskUpdate refreshes existing event-created stores and clears closed activity", async () => {
-    store.getStore(42).setActivityRunning("s1");
+  test("activitySummary aggregates across project stores", () => {
+    store.getStore(1).markSessionRunning("s1");
+    store.getStore(1).markSessionRunning("s2");
+    store.getStore(1).markSessionFinished("s2");
+    store.getStore(2).markSessionRunning("s3");
+
+    expect(store.activitySummary).toEqual({ running: 2, finished: 1 });
+  });
+
+  test("handleAgentEnd marks activity and schedules project refresh reconciliation", async () => {
+    const refresh = mock(async () => {});
+    const clearActivityForClosedTasks = mock(() => {});
+    store.refresh = refresh;
+    store.clearActivityForClosedTasks = clearActivityForClosedTasks;
+
+    store.handleAgentStart(42, "s1");
+    store.handleAgentEnd(42, "s1", { suppressUnread: false });
+
+    expect(store.activityForSession(42, "s1")).toBe("finished");
+
+    await new Promise((resolve) => setTimeout(resolve, 510));
+
+    expect(refresh).toHaveBeenCalledWith(42);
+    expect(clearActivityForClosedTasks).toHaveBeenCalledWith(42);
+  });
+
+  test("handleTaskUpdated refreshes existing event-created stores and clears closed activity", async () => {
+    store.getStore(42).markSessionRunning("s1");
 
     mockFetch((url) => {
       if (url === "/api/projects/42/tasks") {
@@ -314,20 +339,20 @@ describe("ProjectCollectionStore per-project data", () => {
       return jsonResponse({}, false);
     });
 
-    await store.refreshProjectForTaskUpdate(42);
+    await store.handleTaskUpdated(42);
 
     expect(store.getStore(42).loaded).toBe(true);
-    expect(store.getStore(42).activity.getActivity("s1")).toBeUndefined();
+    expect(store.getStore(42).activityForSession("s1")).toBeUndefined();
   });
 
-  test("refreshProjectForTaskUpdate is a no-op if the project store does not exist", async () => {
+  test("handleTaskUpdated is a no-op if the project store does not exist", async () => {
     let fetchCount = 0;
     mockFetch(() => {
       fetchCount++;
       return jsonResponse([]);
     });
 
-    await store.refreshProjectForTaskUpdate(99);
+    await store.handleTaskUpdated(99);
 
     expect(fetchCount).toBe(0);
     expect(store.peekStore(99)).toBeUndefined();

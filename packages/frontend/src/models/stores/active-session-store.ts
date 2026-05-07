@@ -3,7 +3,7 @@
  *
  * Tracks which session is currently being viewed: the session ID, its full
  * data, and the derived project ID (for diff context). Does NOT hold task
- * or session lists — that data lives in ProjectStore via ProjectCollectionStore.
+ * or session lists — that data lives in ProjectStore via ProjectsStore.
  *
  * Components subscribe via `subscribe()` and read public state directly.
  * Mutations go through action methods which call the backend API.

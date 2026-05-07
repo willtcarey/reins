@@ -40,7 +40,7 @@ describe("AppShell chat panel rendering", () => {
       projectId: 42,
       sessionId: "sess-1",
       activeSessionStore,
-      projectCollectionStore: { activityForSession: () => undefined },
+      projectsStore: { activityForSession: () => undefined },
       diffStore: {
         branch: null,
         fileData: { branch: "main" },

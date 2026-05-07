@@ -18,17 +18,17 @@ describe("ActivityStore", () => {
     const first = store.activityMap;
     expect(store.activityMap).toBe(first);
 
-    store.setFinished("s1", "other");
+    store.setFinished("s1");
 
     expect(store.activityMap).not.toBe(first);
     expect(store.activityMap.get("s1")).toBe("finished");
   });
 
-  test("setFinished clears active sessions instead of marking unread", () => {
+  test("setFinished clears suppressUnread sessions instead of marking unread", () => {
     const store = new ActivityStore();
     store.setRunning("s1");
 
-    store.setFinished("s1", "s1");
+    store.setFinished("s1", { suppressUnread: true });
 
     expect(store.getActivity("s1")).toBeUndefined();
   });
@@ -38,7 +38,7 @@ describe("ActivityStore", () => {
     store.trackDelegateSession("delegate-1");
     store.setRunning("delegate-1");
 
-    store.setFinished("delegate-1", "parent");
+    store.setFinished("delegate-1");
 
     expect(store.getActivity("delegate-1")).toBeUndefined();
   });
@@ -47,7 +47,7 @@ describe("ActivityStore", () => {
     const store = new ActivityStore();
     store.setRunning("running");
     store.setRunning("finished");
-    store.setFinished("finished", "other");
+    store.setFinished("finished");
 
     store.markSessionViewed("running");
     store.markSessionViewed("finished");
@@ -74,7 +74,7 @@ describe("ActivityStore", () => {
 
     store.clearSessions(["delegate-1", "s2"]);
     store.setRunning("delegate-1");
-    store.setFinished("delegate-1", "other");
+    store.setFinished("delegate-1");
 
     expect(store.getActivity("delegate-1")).toBe("finished");
     expect(store.getActivity("s2")).toBeUndefined();
@@ -87,7 +87,7 @@ describe("ActivityStore", () => {
 
     store.setRunning("s1");
     store.setRunning("s2");
-    store.setFinished("s2", "other");
+    store.setFinished("s2");
 
     expect(store.hasActivity).toBe(true);
     expect(store.activitySummary).toEqual({ running: 1, finished: 1 });
@@ -101,7 +101,7 @@ describe("ActivityStore", () => {
     store.setRunning("s1");
     store.setRunning("s1");
     store.markSessionViewed("s1");
-    store.setFinished("s1", "other");
+    store.setFinished("s1");
     store.clearActivity("s1");
     unsubscribe();
     store.setRunning("s2");

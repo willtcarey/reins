@@ -19,10 +19,10 @@ describe("AppStore reconnect catch-up", () => {
     store = new AppStore(client);
   });
 
-  test("reconnect calls refreshAll on projectCollectionStore", () => {
+  test("reconnect calls refreshAll on projectsStore", () => {
     const calls: string[] = [];
-    store.projectCollectionStore.refreshAll = mock(async () => { calls.push("refreshAll"); });
-    store.projectCollectionStore.fetchProjects = mock(async () => { calls.push("fetchProjects"); });
+    store.projectsStore.refreshAll = mock(async () => { calls.push("refreshAll"); });
+    store.projectsStore.fetchProjects = mock(async () => { calls.push("fetchProjects"); });
 
     client.fireConnection(true);
 
@@ -31,8 +31,8 @@ describe("AppStore reconnect catch-up", () => {
   });
 
   test("reconnect refreshes active session messages", () => {
-    store.projectCollectionStore.fetchProjects = mock(async () => {});
-    store.projectCollectionStore.refreshAll = mock(async () => {});
+    store.projectsStore.fetchProjects = mock(async () => {});
+    store.projectsStore.refreshAll = mock(async () => {});
 
     // Set up an active session
     const activeStore = store.activeSessionStore;
@@ -58,7 +58,7 @@ describe("AppStore reconnect catch-up", () => {
 
   test("reconnect does not call refreshAll when disconnecting", () => {
     const refreshAllSpy = mock(async () => {});
-    store.projectCollectionStore.refreshAll = refreshAllSpy;
+    store.projectsStore.refreshAll = refreshAllSpy;
 
     client.fireConnection(false);
 

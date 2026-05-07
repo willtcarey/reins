@@ -1,21 +1,20 @@
 /**
- * Project Collection Store
+ * Projects Store
  *
- * Single entry point for all project-related data: the project list,
- * project CRUD mutations, and lazily-created ProjectStore instances
- * that hold per-project task/session lists and task mutations.
+ * Public project-domain store for the project list, project CRUD mutations,
+ * lazily-created ProjectStore instances, and cross-project activity selectors.
  *
- * Components subscribe via `subscribe()` to get notified when the
- * project list or any child store changes (notifications bubble up).
+ * Components subscribe via `subscribe()` to get notified when the project list
+ * or any child store changes (notifications bubble up).
  */
 
 import type { ProjectInfo } from "../ws-client.js";
-import type { ActivityState } from "../tasks.js";
+import type { ActivityFinishOptions, ActivityState } from "./activity-store.js";
 import { ProjectStore } from "./project-store.js";
 
-export type ProjectCollectionStoreListener = () => void;
+type ProjectsStoreListener = () => void;
 
-export class ProjectCollectionStore {
+export class ProjectsStore {
   // ---- Public reactive state ------------------------------------------------
 
   projects: ProjectInfo[] = [];
@@ -24,11 +23,11 @@ export class ProjectCollectionStore {
 
   private _stores = new Map<number, ProjectStore>();
   private _unsubscribes = new Map<number, () => void>();
-  private _listeners = new Set<ProjectCollectionStoreListener>();
+  private _listeners = new Set<ProjectsStoreListener>();
 
   // ---- Subscription ---------------------------------------------------------
 
-  subscribe(fn: ProjectCollectionStoreListener): () => void {
+  subscribe(fn: ProjectsStoreListener): () => void {
     this._listeners.add(fn);
     return () => this._listeners.delete(fn);
   }
@@ -111,24 +110,45 @@ export class ProjectCollectionStore {
 
   // ---- Per-project data stores ----------------------------------------------
 
-  /** Loaded/created per-project stores. */
-  get projectStores(): ProjectStore[] {
-    return [...this._stores.values()];
-  }
-
   /** Activity state for a session in a known project store. */
   activityForSession(projectId: number, sessionId: string): ActivityState | undefined {
-    return this.peekStore(projectId)?.activity.getActivity(sessionId);
+    return this.peekStore(projectId)?.activityForSession(sessionId);
   }
 
-  /** Project header activity states. Running wins over finished within each project. */
-  get activityByProject(): Map<number, ActivityState> {
-    const result = new Map<number, ActivityState>();
+  /** Activity state for a project header. Running wins over finished. */
+  activityForProject(projectId: number): ActivityState | undefined {
+    return this.peekStore(projectId)?.activityState;
+  }
+
+  /** Summary counts across all project activity, for shell-level title/badge state. */
+  get activitySummary(): { running: number; finished: number } {
+    let running = 0;
+    let finished = 0;
     for (const projectStore of this._stores.values()) {
-      const activity = projectStore.activityState;
-      if (activity) result.set(projectStore.projectId, activity);
+      const summary = projectStore.activitySummary;
+      running += summary.running;
+      finished += summary.finished;
     }
-    return result;
+    return { running, finished };
+  }
+
+  /** Route an agent_start event into the event project's activity model. */
+  handleAgentStart(projectId: number, sessionId: string): void {
+    this.getStore(projectId).markSessionRunning(sessionId);
+  }
+
+  /** Route an agent_end event into the event project's activity model and reconcile project lists. */
+  handleAgentEnd(projectId: number, sessionId: string, options: ActivityFinishOptions = {}): void {
+    this.getStore(projectId).markSessionFinished(sessionId, options);
+    setTimeout(() => {
+      void this.refresh(projectId)
+        .then(() => this.clearActivityForClosedTasks(projectId));
+    }, 500);
+  }
+
+  /** Mark a viewed session's finished/unread activity as read. */
+  markSessionViewed(projectId: number, sessionId: string): void {
+    this.peekStore(projectId)?.markSessionViewed(sessionId);
   }
 
   clearActivityForClosedTasks(projectId?: number): void {
@@ -142,12 +162,33 @@ export class ProjectCollectionStore {
     }
   }
 
-  async refreshProjectForTaskUpdate(projectId: number): Promise<void> {
+  async handleTaskUpdated(projectId: number): Promise<void> {
     const projectStore = this.peekStore(projectId);
     if (!projectStore) return;
 
     await projectStore.fetchLists();
     projectStore.clearActivityForClosedTasks();
+  }
+
+  async handleSessionCreated(event: {
+    projectId: number;
+    sessionId: string;
+    taskId: number | null;
+    parentSessionId: string | null;
+  }): Promise<void> {
+    const projectStore = event.parentSessionId
+      ? this.getStore(event.projectId)
+      : this.peekStore(event.projectId);
+
+    if (event.parentSessionId) {
+      projectStore?.trackDelegateSession(event.sessionId);
+    }
+
+    await this.refresh(event.projectId);
+
+    if (event.taskId) {
+      await projectStore?.fetchTaskSessions(event.taskId);
+    }
   }
 
   /**

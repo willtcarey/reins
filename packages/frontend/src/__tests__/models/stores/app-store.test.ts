@@ -18,13 +18,13 @@ describe("AppStore activity event routing", () => {
   test("routes agent activity events to the event project store", () => {
     client.fireEvent("s1", 42, { type: "agent_start" });
 
-    const projectStore = store.projectCollectionStore.peekStore(42)!;
-    expect(projectStore.activity.getActivity("s1")).toBe("running");
+    const projectStore = store.projectsStore.peekStore(42)!;
+    expect(projectStore.activityForSession("s1")).toBe("running");
 
     client.fireEvent("s1", 42, { type: "agent_end" });
 
-    expect(projectStore.activity.getActivity("s1")).toBe("finished");
-    expect(store.projectCollectionStore.peekStore(7)).toBeUndefined();
+    expect(projectStore.activityForSession("s1")).toBe("finished");
+    expect(store.projectsStore.peekStore(7)).toBeUndefined();
   });
 
   test("activitySummary aggregates project store activity for shell state", () => {
@@ -36,12 +36,24 @@ describe("AppStore activity event routing", () => {
   });
 
   test("routes task_updated to project activity reconciliation", () => {
-    const refreshProjectForTaskUpdate = mock(async () => {});
-    store.projectCollectionStore.refreshProjectForTaskUpdate = refreshProjectForTaskUpdate;
+    const handleTaskUpdated = mock(async () => {});
+    store.projectsStore.handleTaskUpdated = handleTaskUpdated;
 
     client.fireEvent("", 42, { type: "task_updated", projectId: 42 });
 
-    expect(refreshProjectForTaskUpdate).toHaveBeenCalledWith(42);
+    expect(handleTaskUpdated).toHaveBeenCalledWith(42);
+  });
+
+  test("routes active session agent_end with suppressUnread instead of leaking active session id", () => {
+    const handleAgentEnd = mock(() => {});
+    store.projectsStore.handleAgentEnd = handleAgentEnd;
+    store.activeSessionStore.sessionId = "active";
+
+    client.fireEvent("active", 42, { type: "agent_end" });
+    client.fireEvent("background", 42, { type: "agent_end" });
+
+    expect(handleAgentEnd).toHaveBeenNthCalledWith(1, 42, "active", { suppressUnread: true });
+    expect(handleAgentEnd).toHaveBeenNthCalledWith(2, 42, "background", { suppressUnread: false });
   });
 
   test("session_created marks delegate sessions on their project before agent_end", () => {
@@ -53,12 +65,12 @@ describe("AppStore activity event routing", () => {
       parentSessionId: "parent-1",
     });
 
-    const projectStore = store.projectCollectionStore.peekStore(42)!;
+    const projectStore = store.projectsStore.peekStore(42)!;
     client.fireEvent("delegate-1", 42, { type: "agent_start" });
-    expect(projectStore.activity.getActivity("delegate-1")).toBe("running");
+    expect(projectStore.activityForSession("delegate-1")).toBe("running");
 
     client.fireEvent("delegate-1", 42, { type: "agent_end" });
-    expect(projectStore.activity.getActivity("delegate-1")).toBeUndefined();
+    expect(projectStore.activityForSession("delegate-1")).toBeUndefined();
   });
 
   test("session_updated refreshes the active session data", () => {

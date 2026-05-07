@@ -5,6 +5,8 @@
  * derive task-level notification state from raw per-session activity.
  */
 
+import type { ActivityState } from "./stores/activity-store.js";
+
 export type TaskStatus = "open" | "closed";
 
 export interface TaskListItem {
@@ -20,9 +22,6 @@ export interface TaskListItem {
   session_ids: string[];
   diffStats: { additions: number; removals: number } | null;
 }
-
-/** Activity state for a session/task: running, finished, or absent (no entry). */
-export type ActivityState = "running" | "finished";
 
 /**
  * Project-specific task collection plus task notification selectors.

@@ -3,7 +3,7 @@
  *
  * Multi-project orchestrator. Renders ALL projects as collapsible sections,
  * each with its own sessions and tasks. Reads project list and per-project
- * data from ProjectCollectionStore (via ProjectStore instances).
+ * data from AppStore's public ProjectsStore sub-store.
  *
  * Child components:
  *  - project-sidebar  — "Add Project" button + project-form modal
@@ -17,7 +17,8 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { navigateToSession } from "../models/router.js";
 import type { AppStore } from "../models/stores/app-store.js";
-import { TasksCollection, type ActivityState, type TaskListItem } from "../models/tasks.js";
+import { TasksCollection, type TaskListItem } from "../models/tasks.js";
+import type { ActivityState } from "../models/stores/activity-store.js";
 
 import type { ProjectInfo } from "../models/ws-client.js";
 import type { TaskForm } from "./task-form.js";
@@ -90,7 +91,7 @@ export class SessionSidebar extends LitElement {
     // Auto-expand the project containing the visited session
     if (store.projectId != null && !this.expandedProjects.has(store.projectId)) {
       this.expandedProjects.add(store.projectId);
-      store.projectCollectionStore.ensureLoaded(store.projectId);
+      store.projectsStore.ensureLoaded(store.projectId);
       changed = true;
     }
 
@@ -107,7 +108,7 @@ export class SessionSidebar extends LitElement {
       next.delete(projectId);
     } else {
       next.add(projectId);
-      this.store?.projectCollectionStore.ensureLoaded(projectId);
+      this.store?.projectsStore.ensureLoaded(projectId);
     }
     this.expandedProjects = next;
   }
@@ -177,7 +178,7 @@ export class SessionSidebar extends LitElement {
 
     // Refresh the project data store
     if (projectId) {
-      store.projectCollectionStore.refresh(projectId);
+      store.projectsStore.refresh(projectId);
     }
 
     // If the store cleared the active session, navigate to empty state
@@ -224,7 +225,7 @@ export class SessionSidebar extends LitElement {
         this.uploadProgress = new Map(this.uploadProgress).set(project.id, pct);
       };
 
-      const result = await store.projectCollectionStore.uploadFiles(
+      const result = await store.projectsStore.uploadFiles(
         project.id,
         files,
         onProgress,
@@ -260,14 +261,14 @@ export class SessionSidebar extends LitElement {
       location.hash = "";
     }
     await this.store?.deleteProject(project.id);
-    this.store?.projectCollectionStore.remove(project.id);
+    this.store?.projectsStore.remove(project.id);
   }
 
   // ---- Render helpers -------------------------------------------------------
 
   /** Render a small badge dot on the collapsed rail if there's activity. */
   private renderRailBadge() {
-    const summary = this.store?.activitySummary;
+    const summary = this.store?.projectsStore.activitySummary;
     const hasRunning = (summary?.running ?? 0) > 0;
     const hasFinished = (summary?.finished ?? 0) > 0;
     if (!hasRunning && !hasFinished) return nothing;
@@ -278,7 +279,7 @@ export class SessionSidebar extends LitElement {
   }
 
   private renderProjectActivityDot(projectId: number) {
-    const activity = this.store?.projectCollectionStore.activityByProject.get(projectId);
+    const activity = this.store?.projectsStore.activityForProject(projectId);
     if (!activity) return nothing;
     const classes = activity === "running"
       ? "w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"
@@ -296,7 +297,7 @@ export class SessionSidebar extends LitElement {
     const store = this.store!;
     const isExpanded = this.expandedProjects.has(project.id);
     const isActive = project.id === store.projectId;
-    const projectData = store.projectCollectionStore.peekStore(project.id);
+    const projectData = store.projectsStore.peekStore(project.id);
     const projectActivityMap = projectData?.activityMap ?? new Map<string, ActivityState>();
 
     return html`

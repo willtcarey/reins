@@ -149,7 +149,7 @@ export class AppShell extends LitElement {
     // Clear unread completion when viewing a session, but keep the green
     // running indicator visible until the agent loop actually ends.
     if (store.sessionId) {
-      store.activeProjectStore?.activity.markSessionViewed(store.sessionId);
+      store.markActiveSessionViewed();
     }
     // Track session visit for quick-open recency ordering
     if (store.sessionId) {
@@ -216,7 +216,7 @@ export class AppShell extends LitElement {
   }
 
   private activityForSession = (projectId: number, sessionId: string) => {
-    return this.appStore.projectCollectionStore.activityForSession(projectId, sessionId);
+    return this.appStore.projectsStore.activityForSession(projectId, sessionId);
   };
 
   private renderEmptyState() {

@@ -12,14 +12,13 @@ afterEach(() => {
 });
 
 describe("AppShell activity routing", () => {
-  test("viewing a session marks it viewed without force-clearing activity", async () => {
+  test("viewing a session routes the viewed transition through AppStore", async () => {
     Reflect.set(globalThis, "location", { protocol: "http:", host: "localhost:3000" });
     Reflect.set(globalThis, "window", { matchMedia: () => ({ matches: false }) });
     Reflect.set(globalThis, "navigator", { standalone: false });
 
     const el = new AppShell();
-    const markSessionViewed = mock(() => {});
-    const clearActivity = mock(() => {});
+    const markActiveSessionViewed = mock(() => {});
     const refreshDiff = mock(() => {});
     const recordVisit = mock(() => {});
 
@@ -30,7 +29,7 @@ describe("AppShell activity routing", () => {
         appStore.sessionId = sessionId ?? "";
       }),
       diffStore: { refresh: refreshDiff },
-      activeProjectStore: { activity: { markSessionViewed, clearActivity } },
+      markActiveSessionViewed,
     };
 
     Reflect.set(el, "appStore", appStore);
@@ -38,7 +37,6 @@ describe("AppShell activity routing", () => {
 
     await Reflect.get(el, "applyRoute").call(el, { sessionId: "s1" });
 
-    expect(markSessionViewed).toHaveBeenCalledWith("s1");
-    expect(clearActivity).not.toHaveBeenCalled();
+    expect(markActiveSessionViewed).toHaveBeenCalledTimes(1);
   });
 });

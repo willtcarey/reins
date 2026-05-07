@@ -242,38 +242,42 @@ describe("ProjectStore", () => {
   test("owns project-scoped activity and exposes tasksWithActivity", () => {
     store.tasks = new TasksCollection(42, [task({ id: 1, session_ids: ["s1"] })]);
 
-    store.setActivityRunning("s1");
+    store.markSessionRunning("s1");
 
-    expect(store.activity.getActivity("s1")).toBe("running");
+    expect(store.activityForSession("s1")).toBe("running");
     expect(store.tasksWithActivity.activityForId(1)).toBe("running");
     expect(store.activityState).toBe("running");
   });
 
-  test("setActivityFinished clears active and delegate sessions", () => {
-    store.setActivityRunning("active");
-    store.setActivityFinished("active", "active");
+  test("markSessionFinished clears suppressUnread and delegate sessions", () => {
+    store.markSessionRunning("viewed");
+    store.markSessionFinished("viewed", { suppressUnread: true });
 
-    store.activity.trackDelegateSession("delegate");
-    store.setActivityRunning("delegate");
-    store.setActivityFinished("delegate", "parent");
+    store.trackDelegateSession("delegate");
+    store.markSessionRunning("delegate");
+    store.markSessionFinished("delegate");
 
-    expect(store.activity.getActivity("active")).toBeUndefined();
-    expect(store.activity.getActivity("delegate")).toBeUndefined();
+    expect(store.activityForSession("viewed")).toBeUndefined();
+    expect(store.activityForSession("delegate")).toBeUndefined();
   });
 
   test("closed task sessions suppress and clear activity", () => {
     store.tasks = new TasksCollection(42, [task({ status: "closed", session_ids: ["s1"] })]);
 
-    store.setActivityRunning("s1");
-    expect(store.activity.getActivity("s1")).toBeUndefined();
+    store.markSessionRunning("s1");
+    expect(store.activityForSession("s1")).toBeUndefined();
 
-    store.activity.setRunning("s1");
+    store.tasks = new TasksCollection(42, [task({ status: "open", session_ids: ["s1"] })]);
+    store.markSessionRunning("s1");
+    expect(store.activityForSession("s1")).toBe("running");
+
+    store.tasks = new TasksCollection(42, [task({ status: "closed", session_ids: ["s1"] })]);
     store.clearActivityForClosedTasks();
-    expect(store.activity.getActivity("s1")).toBeUndefined();
+    expect(store.activityForSession("s1")).toBeUndefined();
   });
 
   test("fetchLists clears activity for sessions whose task is now closed", async () => {
-    store.setActivityRunning("s1");
+    store.markSessionRunning("s1");
 
     mockFetch((url) => {
       if (url === "/api/projects/42/tasks") {
@@ -286,6 +290,6 @@ describe("ProjectStore", () => {
 
     await store.fetchLists();
 
-    expect(store.activity.getActivity("s1")).toBeUndefined();
+    expect(store.activityForSession("s1")).toBeUndefined();
   });
 });

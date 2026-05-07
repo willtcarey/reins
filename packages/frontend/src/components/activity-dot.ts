@@ -7,7 +7,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { ActivityState } from "../models/tasks.js";
+import type { ActivityState } from "../models/stores/activity-store.js";
 
 @customElement("activity-dot")
 export class ActivityDot extends LitElement {

@@ -6,7 +6,12 @@
  * UI-facing selectors and closed-task cleanup.
  */
 
-import type { ActivityState } from "../tasks.js";
+/** Activity state for a session/task: running, finished, or absent (no entry). */
+export type ActivityState = "running" | "finished";
+
+export interface ActivityFinishOptions {
+  suppressUnread?: boolean;
+}
 
 export type ActivityStoreListener = () => void;
 
@@ -65,8 +70,8 @@ export class ActivityStore {
     this.notify();
   }
 
-  setFinished(sessionId: string, activeSessionId: string | null | undefined): void {
-    if (sessionId === activeSessionId || this._delegateSessions.has(sessionId)) {
+  setFinished(sessionId: string, options: ActivityFinishOptions = {}): void {
+    if (options.suppressUnread || this._delegateSessions.has(sessionId)) {
       const changed = this._deleteActivityState(sessionId);
       this._delegateSessions.delete(sessionId);
       if (changed) this.notify();

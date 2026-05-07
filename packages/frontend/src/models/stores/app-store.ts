@@ -3,7 +3,7 @@
  *
  * Centralized reactive store that owns all server communication and
  * internal event handling. Wraps ActiveSessionStore for the viewed
- * session, ProjectCollectionStore for the project list, per-project data and
+ * session, ProjectsStore for the project list, per-project data and
  * project-scoped activity stores, and DiffStore for diff/sync state.
  * Handles WebSocket events
  * internally — views never participate in fetch/event decisions.
@@ -11,7 +11,7 @@
 
 import type { IAppClient } from "../ws-client.js";
 import { ActiveSessionStore } from "./active-session-store.js";
-import { ProjectCollectionStore } from "./project-collection-store.js";
+import { ProjectsStore } from "./projects-store.js";
 import type { ProjectStore } from "./project-store.js";
 import { DiffStore } from "./diff-store.js";
 import type { ProjectInfo } from "../ws-client.js";
@@ -31,7 +31,7 @@ export class AppStore {
   // ---- Sub-stores -----------------------------------------------------------
 
   /** Project list, per-project data, and project/task mutations. */
-  readonly projectCollectionStore = new ProjectCollectionStore();
+  readonly projectsStore = new ProjectsStore();
 
   /** Diff/sync sub-store — owned and coordinated by AppStore. */
   readonly diffStore = new DiffStore();
@@ -47,7 +47,7 @@ export class AppStore {
 
   /** Sub-stores whose notifications bubble up through AppStore. */
   private get _children(): { subscribe(fn: () => void): () => void }[] {
-    return [this._activeSession, this.projectCollectionStore, this.diffStore];
+    return [this._activeSession, this.projectsStore, this.diffStore];
   }
 
   constructor(client: IAppClient) {
@@ -64,12 +64,12 @@ export class AppStore {
       this.notify();
       if (connected) {
         // Always refresh the project list on (re)connect
-        this.projectCollectionStore.fetchProjects();
+        this.projectsStore.fetchProjects();
         // Refresh all loaded project stores (any expanded in the sidebar)
         // so session/task lists catch up on missed events, then drop any
         // stale activity for tasks that were closed while disconnected.
-        void this.projectCollectionStore.refreshAll()
-          .then(() => this.projectCollectionStore.clearActivityForClosedTasks());
+        void this.projectsStore.refreshAll()
+          .then(() => this.projectsStore.clearActivityForClosedTasks());
         // Refresh active-session metadata and messages. refreshSession()
         // auto-triggers a message refresh when it detects streaming ended
         // (missed agent_end during disconnect). We also always refresh
@@ -84,7 +84,7 @@ export class AppStore {
     client.onEvent((sessionId, projectId, event) => {
       // Handle task_updated broadcast (not tagged with a sessionId)
       if (event.type === "task_updated") {
-        void this.projectCollectionStore.refreshProjectForTaskUpdate(event.projectId);
+        void this.projectsStore.handleTaskUpdated(event.projectId);
         return;
       }
 
@@ -101,21 +101,12 @@ export class AppStore {
 
       // Handle session_created broadcast (server-side session creation, e.g. delegate)
       if (event.type === "session_created") {
-        const projectStore = event.parentSessionId
-          ? this.projectCollectionStore.getStore(event.projectId)
-          : this.projectCollectionStore.peekStore(event.projectId);
-        if (event.parentSessionId) {
-          projectStore?.activity.trackDelegateSession(event.sessionId);
-        }
-        this.projectCollectionStore.refresh(event.projectId);
-        if (event.taskId) {
-          projectStore?.fetchTaskSessions(event.taskId);
-        }
+        void this.projectsStore.handleSessionCreated(event);
         return;
       }
 
       if (event.type === "session_updated") {
-        this.projectCollectionStore.refresh(event.projectId);
+        this.projectsStore.refresh(event.projectId);
         if (sessionId === this._activeSession.sessionId) {
           void this._activeSession.refreshSession();
         }
@@ -124,15 +115,11 @@ export class AppStore {
 
       // Track activity for all sessions
       if (sessionId && event.type === "agent_start") {
-        this.projectCollectionStore.getStore(projectId).setActivityRunning(sessionId);
+        this.projectsStore.handleAgentStart(projectId, sessionId);
       } else if (sessionId && event.type === "agent_end") {
-        this.projectCollectionStore
-          .getStore(projectId)
-          .setActivityFinished(sessionId, this._activeSession.sessionId);
-        setTimeout(() => {
-          void this.projectCollectionStore.refresh(projectId)
-            .then(() => this.projectCollectionStore.clearActivityForClosedTasks(projectId));
-        }, 500);
+        this.projectsStore.handleAgentEnd(projectId, sessionId, {
+          suppressUnread: sessionId === this._activeSession.sessionId,
+        });
       }
 
       // Only refresh diff for the session we're viewing
@@ -150,7 +137,7 @@ export class AppStore {
 
   // ---- Project list accessors ------------------------------------------------
 
-  get projects(): ProjectInfo[] { return this.projectCollectionStore.projects; }
+  get projects(): ProjectInfo[] { return this.projectsStore.projects; }
 
   // ---- ActiveSessionStore delegate accessors ---------------------------------
 
@@ -160,14 +147,7 @@ export class AppStore {
 
   /** Summary counts across all project activity, for shell-level title/badge state. */
   get activitySummary(): { running: number; finished: number } {
-    let running = 0;
-    let finished = 0;
-    for (const projectStore of this.projectCollectionStore.projectStores) {
-      const summary = projectStore.activitySummary;
-      running += summary.running;
-      finished += summary.finished;
-    }
-    return { running, finished };
+    return this.projectsStore.activitySummary;
   }
 
   /**
@@ -177,10 +157,17 @@ export class AppStore {
   get activeProjectStore(): ProjectStore | null {
     const projectId = this._activeSession.projectId;
     if (projectId == null) return null;
-    return this.projectCollectionStore.peekStore(projectId) ?? null;
+    return this.projectsStore.peekStore(projectId) ?? null;
   }
 
   // ---- ActiveSessionStore delegate methods -----------------------------------
+
+  markActiveSessionViewed(): void {
+    const projectId = this._activeSession.projectId;
+    const sessionId = this._activeSession.sessionId;
+    if (projectId == null || !sessionId) return;
+    this.projectsStore.markSessionViewed(projectId, sessionId);
+  }
 
   async setRoute(sessionId: string | null): Promise<void> {
     const previousProjectId = this._activeSession.projectId;
@@ -202,7 +189,7 @@ export class AppStore {
   ): Promise<{ ok: true } | { error: string }> {
     const projectId = this._activeSession.projectId;
     if (projectId == null) return { error: "No project" };
-    const store = this.projectCollectionStore.peekStore(projectId);
+    const store = this.projectsStore.peekStore(projectId);
     if (!store) return { error: "No project data" };
     return store.updateTask(taskId, updates);
   }
@@ -210,7 +197,7 @@ export class AppStore {
   async deleteTask(taskId: number): Promise<{ ok: true } | { error: string }> {
     const projectId = this._activeSession.projectId;
     if (projectId == null) return { error: "No project" };
-    const store = this.projectCollectionStore.peekStore(projectId);
+    const store = this.projectsStore.peekStore(projectId);
     if (!store) return { error: "No project data" };
     const result = await store.deleteTask(taskId);
     if ("ok" in result && this._activeSession.sessionData?.task_id === taskId) {
@@ -220,9 +207,9 @@ export class AppStore {
     return result;
   }
 
-  /** Delete a project — delegates to ProjectCollectionStore and handles navigation. */
+  /** Delete a project — delegates to ProjectsStore and handles navigation. */
   async deleteProject(projectId: number): Promise<void> {
-    return this.projectCollectionStore.deleteProject(projectId);
+    return this.projectsStore.deleteProject(projectId);
   }
 
   /** Create a new project. Returns the created project on success. */
@@ -231,7 +218,7 @@ export class AppStore {
     path: string;
     base_branch: string;
   }): Promise<ProjectInfo | { error: string }> {
-    return this.projectCollectionStore.createProject(data);
+    return this.projectsStore.createProject(data);
   }
 
   /** Update a project's properties. */
@@ -239,7 +226,7 @@ export class AppStore {
     projectId: number,
     data: { name: string; path: string; base_branch: string },
   ): Promise<{ ok: true } | { error: string }> {
-    return this.projectCollectionStore.updateProject(projectId, data);
+    return this.projectsStore.updateProject(projectId, data);
   }
 
   // ---- Session creation ------------------------------------------------------
@@ -253,7 +240,7 @@ export class AppStore {
         return { error: body.error || "Failed to create session" };
       }
       const data = await resp.json();
-      this.projectCollectionStore.refresh(projectId);
+      this.projectsStore.refresh(projectId);
       return { sessionId: data.id };
     } catch {
       return { error: "Network error" };
@@ -269,7 +256,7 @@ export class AppStore {
         return { error: body.error || "Failed to create session" };
       }
       const data = await resp.json();
-      this.projectCollectionStore.refresh(projectId);
+      this.projectsStore.refresh(projectId);
       return { sessionId: data.id };
     } catch {
       return { error: "Network error" };
@@ -282,7 +269,7 @@ export class AppStore {
     projectId: number,
     prompt: string,
   ): Promise<{ ok: true } | { error: string }> {
-    const store = this.projectCollectionStore.peekStore(projectId);
+    const store = this.projectsStore.peekStore(projectId);
     if (!store) return { error: "No project data" };
     return store.generateTask(prompt);
   }
@@ -301,7 +288,7 @@ export class AppStore {
     }
     const projectId = this._activeSession.projectId;
     const task = projectId != null
-      ? this.projectCollectionStore.peekStore(projectId)?.tasksWithActivity.find(session.task_id)
+      ? this.projectsStore.peekStore(projectId)?.tasksWithActivity.find(session.task_id)
       : undefined;
     this.diffStore.setBranch(task?.branch_name ?? null);
   }

@@ -12,7 +12,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
-import type { ActivityState } from "../models/tasks.js";
+import type { ActivityState } from "../models/stores/activity-store.js";
 import type { QuickOpenStore, PaletteItem } from "../models/stores/quick-open-store.js";
 import { navigateToSession } from "../models/router.js";
 import { formatRelativeDate } from "../models/format.js";
