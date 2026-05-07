@@ -86,4 +86,5 @@ describe("AppStore activity event routing", () => {
 
     expect(activeSession.refreshSession).toHaveBeenCalledTimes(1);
   });
+
 });

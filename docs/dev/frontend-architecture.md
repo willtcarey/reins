@@ -160,7 +160,7 @@ The central store. Constructed with an `AppClient` (WebSocket client) and intern
 
 - **Owns server communication boundaries** — AppStore and its sub-stores perform REST/WS work; components do not call `fetch()` directly.
 - **Handles WS events internally** — `agent_start` / `agent_end` update activity state and trigger refetches. `task_updated` refreshes the task list and clears activity for sessions on closed tasks. `session_updated` refreshes the active session and project lists. `tool_execution_end` for file-modifying tools refreshes the diff. Views don't participate in these decisions.
-- **Manages reconnect** — On WebSocket reconnect, refetches the project list and active session metadata to catch up on missed events.
+- **Manages reconnect** — On WebSocket reconnect, refetches the project list, refreshes loaded project stores, refreshes active session metadata/messages, and reconciles locally-running activity against backend session streaming state to catch up on missed events.
 - **Splits active session state** — Session metadata (`sessionData`) and persisted history (`sessionMessages`) are fetched separately so metadata refreshes can't clobber in-flight chat rendering.
 - **Uses blank session metadata while loading** — `ActiveSessionStore` keeps `sessionData` as a placeholder object for the active `sessionId` until the metadata request completes, so views don't need null checks for the selected session.
 - **Exposes the active session store directly to the chat view** — `chat-panel` receives `ActiveSessionStore`, reads `sessionData` / `sessionMessages` from it, and sends prompt/steer/abort/model-update intents back through the same store.
@@ -182,15 +182,15 @@ Views access DiffStore through `store.diffStore` as a read-only surface.
 
 ### ProjectsStore (`models/stores/projects-store.ts`)
 
-Public AppStore sub-store for project-domain UI. Manages the project list, project CRUD, lazily-created `ProjectStore` instances, and cross-project activity selectors/event helpers. Sidebar and quick-open may read this store directly for project concerns: `activityForProject(projectId)` for project header dots, `activityForSession(projectId, sessionId)` for session indicators, and `activitySummary` for shell-level badge counts.
+Public AppStore sub-store for project-domain UI. Manages the project list, project CRUD, lazily-created `ProjectStore` instances, cross-project activity selectors/event helpers, and project-domain reconnect catch-up. Sidebar and quick-open may read this store directly for project concerns: `activityForProject(projectId)` for project header dots, `activityForSession(projectId, sessionId)` for session indicators, and `activitySummary` for shell-level badge counts.
 
 ### ProjectStore (`models/stores/project-store.ts`)
 
-One instance per project, lazily created by `ProjectsStore`. Holds a data-only `TasksCollection`, session list, task session sublists, task mutations, and one private project-scoped `ActivityStore`. It exposes semantic activity methods/selectors (`markSessionRunning`, `markSessionFinished`, `markSessionViewed`, `activityForSession`, `tasksWithActivity`, `activityMap`, and `activityState`) so callers do not reach into raw activity internals. Task/list fetches clear activity for sessions on closed tasks.
+One instance per project, lazily created by `ProjectsStore`. Holds a data-only `TasksCollection`, session list, task session sublists, task mutations, and one private project-scoped `ActivityStore`. It exposes semantic activity methods/selectors (`markSessionRunning`, `markSessionFinished`, `markSessionViewed`, `activityForSession`, `tasksWithActivity`, `activityMap`, and `activityState`) so callers do not reach into raw activity internals. Task/list fetches clear activity for sessions on closed tasks, and reconnect reconciliation fetches session detail for locally-running sessions in this project.
 
 ### ActivityStore (`models/stores/activity-store.ts`)
 
-Owned by `ProjectStore`. Manages raw per-session notification state (`sessionId → running | finished`), delegate-session tracking, and viewed/cleared transitions for one project. It does not know about project ids, project collections, or task data; `ProjectStore` is responsible for combining raw activity with task/session state and for closed-task cleanup.
+Owned by `ProjectStore`. Manages raw per-session notification state (`sessionId → running | finished`), delegate-session tracking, viewed/cleared transitions, and the set of locally-running session ids for one project. It does not know about project ids, project collections, or task data; `ProjectStore` is responsible for combining raw activity with task/session state and for closed-task/reconnect cleanup.
 
 ### QuickOpenStore (`models/stores/quick-open-store.ts`)
 
@@ -275,7 +275,7 @@ The client provides `onConnection(cb)` and `onEvent(cb)` hooks. AppStore is the 
 | `task_updated` | Refetch that project store if it exists and clear activity for sessions on closed tasks |
 | `session_updated` | Refetch the active session (if selected) and refresh project lists |
 | `tool_execution_end` (file-modifying) | Refresh diff |
-| WS reconnect | Refetch project list, refetch active session data |
+| WS reconnect | Refetch project list, refresh loaded project stores, refetch active session data/messages, reconcile locally-running activity against `/api/sessions/:id` streaming state |
 
 ### Activity indicator semantics
 
@@ -284,6 +284,8 @@ Raw session activity is owned by each `ProjectStore`'s private `ActivityStore` (
 Running indicators are green and remain visible while the agent loop is active, even if the user views that session. Finished indicators are amber, represent unread completed work, and are cleared when the session is viewed.
 
 Closed task sessions do not keep activity notifications. When task data is refreshed after `task_updated` or reconnect, `ProjectStore` removes both running and finished activity for sessions on closed tasks. Task selectors also suppress indicators for closed tasks.
+
+Reconnect reconciliation only touches sessions already marked locally `running`: still-streaming backend sessions stay green, deleted sessions clear, ended active sessions clear, and ended background sessions become `finished` unread activity.
 
 Known follow-up areas:
 

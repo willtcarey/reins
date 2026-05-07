@@ -327,6 +327,23 @@ describe("ProjectsStore per-project data", () => {
     expect(clearActivityForClosedTasks).toHaveBeenCalledWith(42);
   });
 
+  test("handleReconnect refreshes loaded data, clears closed activity, and reconciles running sessions", async () => {
+    const calls: string[] = [];
+    store.refreshAll = mock(async () => { calls.push("refreshAll"); });
+    store.clearActivityForClosedTasks = mock(() => { calls.push("clearActivityForClosedTasks"); });
+    store.reconcileRunningActivity = mock(async (activeSessionId) => {
+      calls.push(`reconcileRunningActivity:${activeSessionId}`);
+    });
+
+    await store.handleReconnect("active");
+
+    expect(calls).toEqual([
+      "refreshAll",
+      "clearActivityForClosedTasks",
+      "reconcileRunningActivity:active",
+    ]);
+  });
+
   test("handleTaskUpdated refreshes existing event-created stores and clears closed activity", async () => {
     store.getStore(42).markSessionRunning("s1");
 

@@ -3,7 +3,7 @@
  *
  * On WS reconnect (connection=true), the store should:
  *  - Re-fetch the project list
- *  - Refresh all loaded project stores (session/task lists)
+ *  - Delegate project-domain reconnect catch-up
  *  - Re-fetch the active session's messages if one is being viewed
  */
 import { describe, test, expect, beforeEach, mock } from "bun:test";
@@ -19,20 +19,19 @@ describe("AppStore reconnect catch-up", () => {
     store = new AppStore(client);
   });
 
-  test("reconnect calls refreshAll on projectsStore", () => {
-    const calls: string[] = [];
-    store.projectsStore.refreshAll = mock(async () => { calls.push("refreshAll"); });
-    store.projectsStore.fetchProjects = mock(async () => { calls.push("fetchProjects"); });
+  test("reconnect fetches projects and delegates project reconnect catch-up", () => {
+    store.projectsStore.fetchProjects = mock(async () => {});
+    store.projectsStore.handleReconnect = mock(async () => {});
 
     client.fireConnection(true);
 
-    expect(calls).toContain("fetchProjects");
-    expect(calls).toContain("refreshAll");
+    expect(store.projectsStore.fetchProjects).toHaveBeenCalled();
+    expect(store.projectsStore.handleReconnect).toHaveBeenCalledWith(null);
   });
 
   test("reconnect refreshes active session messages", () => {
     store.projectsStore.fetchProjects = mock(async () => {});
-    store.projectsStore.refreshAll = mock(async () => {});
+    store.projectsStore.handleReconnect = mock(async () => {});
 
     // Set up an active session
     const activeStore = store.activeSessionStore;
@@ -50,18 +49,20 @@ describe("AppStore reconnect catch-up", () => {
 
     const refreshMessagesSpy = mock(async () => {});
     activeStore.refreshMessages = refreshMessagesSpy;
+    activeStore.refreshSession = mock(async () => {});
 
     client.fireConnection(true);
 
+    expect(store.projectsStore.handleReconnect).toHaveBeenCalledWith("sess-1");
     expect(refreshMessagesSpy).toHaveBeenCalled();
   });
 
-  test("reconnect does not call refreshAll when disconnecting", () => {
-    const refreshAllSpy = mock(async () => {});
-    store.projectsStore.refreshAll = refreshAllSpy;
+  test("reconnect does not call handleReconnect when disconnecting", () => {
+    const handleReconnectSpy = mock(async () => {});
+    store.projectsStore.handleReconnect = handleReconnectSpy;
 
     client.fireConnection(false);
 
-    expect(refreshAllSpy).not.toHaveBeenCalled();
+    expect(handleReconnectSpy).not.toHaveBeenCalled();
   });
 });

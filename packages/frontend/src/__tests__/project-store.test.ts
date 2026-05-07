@@ -32,6 +32,24 @@ function task(overrides: Partial<TaskListItem>): TaskListItem {
   };
 }
 
+function sessionResponse(sessionId: string, isStreaming: boolean): Response {
+  return jsonResponse({
+    id: sessionId,
+    project_id: 42,
+    task_id: null,
+    state: {
+      model: null,
+      thinkingLevel: "high",
+      isStreaming,
+      messageCount: 1,
+    },
+  });
+}
+
+function notFoundResponse(): Response {
+  return new Response("Session not found", { status: 404 });
+}
+
 describe("ProjectStore", () => {
   let store: ProjectStore;
 
@@ -291,5 +309,47 @@ describe("ProjectStore", () => {
     await store.fetchLists();
 
     expect(store.activityForSession("s1")).toBeUndefined();
+  });
+
+  test("reconcileRunningActivity converts ended background sessions to finished", async () => {
+    store.markSessionRunning("background");
+    mockFetch((url) => url === "/api/sessions/background"
+      ? sessionResponse("background", false)
+      : notFoundResponse());
+
+    await store.reconcileRunningActivity(null);
+
+    expect(store.activityForSession("background")).toBe("finished");
+  });
+
+  test("reconcileRunningActivity clears ended active sessions", async () => {
+    store.markSessionRunning("active");
+    mockFetch((url) => url === "/api/sessions/active"
+      ? sessionResponse("active", false)
+      : notFoundResponse());
+
+    await store.reconcileRunningActivity("active");
+
+    expect(store.activityForSession("active")).toBeUndefined();
+  });
+
+  test("reconcileRunningActivity keeps sessions that are still streaming", async () => {
+    store.markSessionRunning("still-running");
+    mockFetch((url) => url === "/api/sessions/still-running"
+      ? sessionResponse("still-running", true)
+      : notFoundResponse());
+
+    await store.reconcileRunningActivity(null);
+
+    expect(store.activityForSession("still-running")).toBe("running");
+  });
+
+  test("reconcileRunningActivity clears deleted sessions", async () => {
+    store.markSessionRunning("deleted");
+    mockFetch(() => notFoundResponse());
+
+    await store.reconcileRunningActivity(null);
+
+    expect(store.activityForSession("deleted")).toBeUndefined();
   });
 });

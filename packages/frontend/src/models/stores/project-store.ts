@@ -7,7 +7,7 @@
  * Components subscribe via `subscribe()` and read public state directly.
  */
 
-import type { InjectedSkillInfo, SessionListItem } from "../ws-client.js";
+import type { InjectedSkillInfo, SessionData, SessionListItem } from "../ws-client.js";
 import { TasksCollection, type TaskListItem } from "../tasks.js";
 import { ActivityStore, type ActivityFinishOptions, type ActivityState } from "./activity-store.js";
 
@@ -115,6 +115,32 @@ export class ProjectStore {
 
   clearActivityForClosedTasks(): void {
     this._activity.clearSessions(this.tasks.closedTaskSessionIds);
+  }
+
+  /**
+   * Reconcile locally-running activity with backend session streaming state.
+   * Called after reconnect, when an agent_end event may have been missed.
+   */
+  async reconcileRunningActivity(activeSessionId: string | null = null): Promise<void> {
+    const runningSessionIds = this._activity.runningSessionIds;
+    await Promise.all(runningSessionIds.map(async (sessionId) => {
+      const session = await this.fetchSession(sessionId);
+      if (session?.state.isStreaming) return;
+
+      if (!session || sessionId === activeSessionId) {
+        this._activity.clearActivity(sessionId);
+        return;
+      }
+
+      this.markSessionFinished(sessionId);
+    }));
+  }
+
+  private async fetchSession(sessionId: string): Promise<SessionData | null> {
+    const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
+    if (resp.status === 404) return null;
+    if (!resp.ok) throw new Error(`Failed to fetch session ${sessionId}: HTTP ${resp.status}`);
+    return await resp.json();
   }
 
   // ---- Actions --------------------------------------------------------------

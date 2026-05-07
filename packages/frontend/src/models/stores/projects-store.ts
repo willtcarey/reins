@@ -162,6 +162,25 @@ export class ProjectsStore {
     }
   }
 
+  /**
+   * Reconcile project stores after reconnect, when an agent_end event may
+   * have been missed while the WebSocket was disconnected.
+   */
+  async reconcileRunningActivity(activeSessionId: string | null = null): Promise<void> {
+    await Promise.all(
+      [...this._stores.values()].map((projectStore) =>
+        projectStore.reconcileRunningActivity(activeSessionId)
+      ),
+    );
+  }
+
+  /** Refresh loaded project data and reconcile activity after a WebSocket reconnect. */
+  async handleReconnect(activeSessionId: string | null = null): Promise<void> {
+    await this.refreshAll();
+    this.clearActivityForClosedTasks();
+    await this.reconcileRunningActivity(activeSessionId);
+  }
+
   async handleTaskUpdated(projectId: number): Promise<void> {
     const projectStore = this.peekStore(projectId);
     if (!projectStore) return;

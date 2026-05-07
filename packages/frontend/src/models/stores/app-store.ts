@@ -65,11 +65,9 @@ export class AppStore {
       if (connected) {
         // Always refresh the project list on (re)connect
         this.projectsStore.fetchProjects();
-        // Refresh all loaded project stores (any expanded in the sidebar)
-        // so session/task lists catch up on missed events, then drop any
-        // stale activity for tasks that were closed while disconnected.
-        void this.projectsStore.refreshAll()
-          .then(() => this.projectsStore.clearActivityForClosedTasks());
+        // Refresh loaded project stores so sidebar data and activity catch up
+        // on events missed while disconnected.
+        void this.projectsStore.handleReconnect(this._activeSession.sessionId || null);
         // Refresh active-session metadata and messages. refreshSession()
         // auto-triggers a message refresh when it detects streaming ended
         // (missed agent_end during disconnect). We also always refresh

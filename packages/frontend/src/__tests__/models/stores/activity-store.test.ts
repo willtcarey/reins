@@ -81,7 +81,7 @@ describe("ActivityStore", () => {
     expect(store.getActivity("kept")).toBe("running");
   });
 
-  test("activitySummary and hasActivity reflect raw states", () => {
+  test("activitySummary, runningSessionIds, and hasActivity reflect raw states", () => {
     const store = new ActivityStore();
     expect(store.hasActivity).toBe(false);
 
@@ -90,6 +90,7 @@ describe("ActivityStore", () => {
     store.setFinished("s2");
 
     expect(store.hasActivity).toBe(true);
+    expect(store.runningSessionIds).toEqual(["s1"]);
     expect(store.activitySummary).toEqual({ running: 1, finished: 1 });
   });
 

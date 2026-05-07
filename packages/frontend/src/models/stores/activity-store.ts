@@ -43,6 +43,15 @@ export class ActivityStore {
     return this._activityMapCache;
   }
 
+  /** Session IDs currently marked as locally running. */
+  get runningSessionIds(): string[] {
+    const ids: string[] = [];
+    for (const [sessionId, state] of this._activityStates) {
+      if (state === "running") ids.push(sessionId);
+    }
+    return ids;
+  }
+
   /** Summary counts for favicon/title aggregation. */
   get activitySummary(): { running: number; finished: number } {
     let running = 0;
