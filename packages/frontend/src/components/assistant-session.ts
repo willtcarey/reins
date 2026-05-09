@@ -102,8 +102,8 @@ export class AssistantSession extends LitElement {
     if (assistant) {
       const isActive = assistant.id === this.activeSessionId;
       return html`
-        <div class="border-b border-zinc-700 group/assistant">
-          <div class="flex items-center transition-colors ${isActive ? "bg-blue-500/15" : "hover:bg-zinc-700/30"}">
+        <div class="p-1 group/assistant">
+          <div class="flex items-center rounded-md transition-colors ${isActive ? "bg-blue-500/15" : "hover:bg-zinc-800/70"}">
             <button
               data-session-id=${assistant.id}
               class="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 cursor-pointer text-left"
@@ -125,8 +125,8 @@ export class AssistantSession extends LitElement {
     }
 
     return html`
-      <div class="border-b border-zinc-700">
-        <div class="flex items-center">
+      <div class="p-1">
+        <div class="flex items-center rounded-md hover:bg-zinc-800/70 transition-colors">
           <button
             class="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 text-xs text-zinc-400 hover:text-zinc-300 cursor-pointer transition-colors text-left"
             @click=${this.handleNewSession}

@@ -301,9 +301,9 @@ export class SessionSidebar extends LitElement {
     const projectActivityMap = projectData?.activityMap ?? new Map<string, ActivityState>();
 
     return html`
-      <div class="border-b border-zinc-700">
+      <div class="px-1.5 py-0.5">
         <!-- Project header -->
-        <div class="flex items-center hover:bg-zinc-700/30 transition-colors group/project relative z-10 ${isActive ? "bg-zinc-800/60" : ""} ${isExpanded ? "shadow-[0_4px_6px_-2px_rgba(0,0,0,0.5)]" : ""}">
+        <div class="flex items-center rounded-md overflow-hidden transition-colors group/project relative z-10 ${isActive ? "bg-zinc-800/70" : "hover:bg-zinc-800/70"} ${isExpanded ? "shadow-[0_4px_6px_-2px_rgba(0,0,0,0.5)]" : ""}">
           <button
             class="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 cursor-pointer text-left"
             @click=${() => this.toggleProject(project.id)}
@@ -355,7 +355,7 @@ export class SessionSidebar extends LitElement {
         <!-- Expanded content (animated accordion) -->
         <div class="grid transition-[grid-template-rows] duration-200 ease-out ${isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}">
           <div class="overflow-hidden">
-            <div class="bg-black/30 border-l-2 border-zinc-700/50 ml-1 shadow-[inset_0_6px_8px_-4px_rgba(0,0,0,0.6),inset_0_-6px_8px_-4px_rgba(0,0,0,0.6)]">
+            <div class="mt-1 rounded-lg bg-black/25 border border-zinc-800/80 overflow-hidden shadow-[inset_0_6px_8px_-4px_rgba(0,0,0,0.6),inset_0_-6px_8px_-4px_rgba(0,0,0,0.6)]">
               ${projectData?.loading && !projectData?.loaded ? html`
                 <div class="px-3 py-2 text-[10px] text-zinc-500">Loading...</div>
               ` : html`

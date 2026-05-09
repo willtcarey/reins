@@ -130,9 +130,9 @@ export class TaskList extends LitElement {
       </div>
       ${openTasks.map(t => this.renderTask(t))}
       ${closedTasks.length > 0 ? html`
-        <div class="border-b border-zinc-700">
+        <div class="px-1 pb-1">
           <button
-            class="w-full px-3 py-1.5 flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-400 cursor-pointer transition-colors"
+            class="w-full px-3 py-1.5 rounded-md flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-400 hover:bg-zinc-800/70 cursor-pointer transition-colors"
             @click=${() => { this.closedExpanded = !this.closedExpanded; }}
           >
             <span class="font-mono">${this.closedExpanded ? "▼" : "▶"}</span>

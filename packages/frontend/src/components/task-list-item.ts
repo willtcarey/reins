@@ -126,8 +126,8 @@ export class TaskListItemElement extends LitElement {
     const isActive = this.isTaskActive();
 
     return html`
-      <div class="border-b border-zinc-700/50 group/task ${isClosed ? "opacity-50" : ""}">
-        <div class="flex items-start transition-colors ${isActive && !isExpanded ? "bg-blue-500/15" : "hover:bg-zinc-700/30"}">
+      <div class="px-1 pb-1 group/task ${isClosed ? "opacity-50" : ""}">
+        <div class="flex items-start rounded-md transition-colors ${isActive && !isExpanded ? "bg-blue-500/15" : "hover:bg-zinc-800/70"}">
           <button
             class="flex-1 text-left px-3 py-2.5 cursor-pointer flex items-start gap-2 min-w-0"
             @click=${() => this.handleExpand()}
@@ -173,7 +173,7 @@ export class TaskListItemElement extends LitElement {
         <div class="grid transition-[grid-template-rows] duration-200 ease-out ${isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}">
           <div class="overflow-hidden">
             ${sessions.length > 0 ? html`
-              <div class="border-l border-zinc-600/30 ml-3">
+              <div class="mx-2 mt-1 mb-1 rounded-md border border-zinc-800/80 bg-zinc-950/30 overflow-hidden">
                 ${(() => {
                   const childMap = buildChildMap(sessions);
                   const topLevel = sessions.filter(s => !s.parent_session_id);
@@ -191,7 +191,7 @@ export class TaskListItemElement extends LitElement {
                 })()}
               </div>
             ` : isExpanded && task.session_count > 0 ? html`
-              <div class="border-l border-zinc-600/30 ml-3">
+              <div class="mx-2 mt-1 mb-1 rounded-md border border-zinc-800/80 bg-zinc-950/30 overflow-hidden">
                 <div class="px-3 py-2 text-[10px] text-zinc-500">Loading…</div>
               </div>
             ` : nothing}
