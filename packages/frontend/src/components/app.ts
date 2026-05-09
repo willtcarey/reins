@@ -294,10 +294,10 @@ export class AppShell extends LitElement {
           ${hasProject ? html`
             <div class="flex-1 flex flex-col min-w-0">
               <!-- Tab bar -->
-              <div class="flex items-center border-b border-zinc-700 bg-zinc-800/50 overflow-x-auto">
+              <div class="flex items-center gap-2 border-b border-zinc-800/80 bg-zinc-900/80 px-2 py-1.5 overflow-x-auto">
                 <!-- Hamburger menu (mobile only) -->
                 <button
-                  class="p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer md:hidden shrink-0"
+                  class="p-2 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 cursor-pointer md:hidden shrink-0 transition-colors"
                   @click=${this.openSidebar}
                   title="Open sidebar"
                 >
@@ -309,23 +309,29 @@ export class AppShell extends LitElement {
                 <branch-indicator
                   .currentBranch=${store.diffStore.branch ?? store.diffStore.fileData.branch}
                 ></branch-indicator>
-                <button
-                  class="px-4 py-2 text-sm font-semibold transition-colors cursor-pointer shrink-0 ${this.activeTab === "chat" ? "text-zinc-100 border-b-2 border-blue-500" : "text-zinc-500 hover:text-zinc-300"}"
-                  @click=${() => this.activeTab = "chat"}
-                >
-                  Chat
-                </button>
-                <button
-                  class="px-4 py-2 text-sm font-semibold transition-colors cursor-pointer shrink-0 ${this.activeTab === "changes" ? "text-zinc-100 border-b-2 border-blue-500" : "text-zinc-500 hover:text-zinc-300"}"
-                  @click=${() => this.activeTab = "changes"}
-                >
-                  Changes
-                </button>
+                <div class="relative grid grid-cols-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-1 shrink-0 overflow-hidden">
+                  <span
+                    class="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-md bg-zinc-700/70 shadow-sm transition-transform duration-200 ease-out will-change-transform ${this.activeTab === "changes" ? "translate-x-full" : "translate-x-0"}"
+                    aria-hidden="true"
+                  ></span>
+                  <button
+                    class="relative z-10 px-3 py-1 rounded-md text-sm font-semibold transition-colors duration-200 cursor-pointer shrink-0 ${this.activeTab === "chat" ? "text-zinc-100" : "text-zinc-500 hover:text-zinc-300"}"
+                    @click=${() => this.activeTab = "chat"}
+                  >
+                    Chat
+                  </button>
+                  <button
+                    class="relative z-10 px-3 py-1 rounded-md text-sm font-semibold transition-colors duration-200 cursor-pointer shrink-0 ${this.activeTab === "changes" ? "text-zinc-100" : "text-zinc-500 hover:text-zinc-300"}"
+                    @click=${() => this.activeTab = "changes"}
+                  >
+                    Changes
+                  </button>
+                </div>
                 <div class="flex-1"></div>
-                <div class="flex items-center gap-2 px-4 shrink-0">
+                <div class="flex items-center gap-2 pr-2 shrink-0">
                   ${this.activeTab === "changes" ? html`
                     <button
-                      class="text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                      class="px-2.5 py-1 rounded-md text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 transition-colors cursor-pointer"
                       @click=${this.handleRefreshDiff}
                       title="Refresh diff"
                     >
@@ -334,7 +340,7 @@ export class AppShell extends LitElement {
                   ` : ""}
                   ${this.isStandalone ? html`
                     <button
-                      class="p-1 text-zinc-500 hover:text-zinc-200 transition-colors cursor-pointer"
+                      class="p-1.5 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/70 transition-colors cursor-pointer"
                       @click=${() => location.reload()}
                       title="Reload"
                     >

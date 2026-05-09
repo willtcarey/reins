@@ -76,8 +76,8 @@ export class NavIcon extends LitElement {
     if (!iconContent) return nothing;
 
     const buttonClass = this.compact
-      ? "p-1.5 text-zinc-500 hover:text-zinc-200 cursor-pointer transition-colors"
-      : "p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors shrink-0";
+      ? "p-1.5 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/70 cursor-pointer transition-colors"
+      : "p-2 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 cursor-pointer transition-colors shrink-0";
 
     return html`
       <button class=${buttonClass} aria-label=${this.label}
