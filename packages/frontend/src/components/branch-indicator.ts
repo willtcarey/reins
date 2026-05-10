@@ -23,16 +23,16 @@ export class BranchIndicator extends LitElement {
     if (!this.currentBranch) return nothing;
 
     return html`
-      <div class="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-800 bg-zinc-950/30 text-sm text-zinc-400 shrink-0">
+      <div class="flex items-center gap-1.5 px-1.5 text-sm text-zinc-500 shrink-0 min-w-0">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-             class="shrink-0">
+             class="shrink-0 text-zinc-500">
           <line x1="6" y1="3" x2="6" y2="15"></line>
           <circle cx="18" cy="6" r="3"></circle>
           <circle cx="6" cy="18" r="3"></circle>
           <path d="M18 9a9 9 0 0 1-9 9"></path>
         </svg>
-        <span class="truncate max-w-[200px]">${this.currentBranch}</span>
+        <span class="truncate max-w-[200px] font-mono text-zinc-400">${this.currentBranch}</span>
       </div>
     `;
   }

@@ -32,6 +32,7 @@ import "./assistant-session.js";
 import "./popover-menu.js";
 import { showToast } from "./toast.js";
 import { openQuickOpenEvent, openSettingsEvent } from "./events.js";
+import { ScrollToController } from "../controllers/scroll-to-controller.js";
 import "./nav-icon.js";
 
 @customElement("session-sidebar")
@@ -50,6 +51,12 @@ export class SessionSidebar extends LitElement {
   @state() private uploadProgress = new Map<number, number>();
 
   private _unsubscribe: (() => void) | null = null;
+  private _activeSessionScroll = new ScrollToController(this, {
+    getTargetId: () => this.store?.sessionId,
+    targetSelector: "[data-session-id]",
+    getItemId: (row) => row.getAttribute("data-session-id") ?? undefined,
+    scrollContainerSelector: "[data-sidebar-scroll-container]",
+  });
 
   @query("task-form") private taskForm!: TaskForm;
   @query("task-detail") private taskDetail!: TaskDetail;
@@ -450,7 +457,7 @@ export class SessionSidebar extends LitElement {
           <task-detail></task-detail>
 
           <!-- Scrollable content: project sections -->
-          <div class="flex-1 overflow-y-auto">
+          <div class="flex-1 overflow-y-auto" data-sidebar-scroll-container>
             ${this.sortedProjects.map(p => this.renderProjectSection(p))}
 
             <!-- Add Project at the bottom of the list -->

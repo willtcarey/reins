@@ -169,11 +169,6 @@ export class AppShell extends LitElement {
     }
   }
 
-  private handleRefreshDiff() {
-    this.appStore.diffStore.refresh();
-    this.appStore.diffStore.fetchFullDiff();
-  }
-
   private getDiffPanel(): DiffPanel | null {
     return this.querySelector("diff-panel");
   }
@@ -311,17 +306,17 @@ export class AppShell extends LitElement {
                 ></branch-indicator>
                 <div class="relative grid grid-cols-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-1 shrink-0 overflow-hidden">
                   <span
-                    class="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-md bg-zinc-700/70 shadow-sm transition-transform duration-200 ease-out will-change-transform ${this.activeTab === "changes" ? "translate-x-full" : "translate-x-0"}"
+                    class="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-md bg-blue-500/20 shadow-sm transition-transform duration-200 ease-out will-change-transform ${this.activeTab === "changes" ? "translate-x-full" : "translate-x-0"}"
                     aria-hidden="true"
                   ></span>
                   <button
-                    class="relative z-10 px-3 py-1 rounded-md text-sm font-semibold transition-colors duration-200 cursor-pointer shrink-0 ${this.activeTab === "chat" ? "text-zinc-100" : "text-zinc-500 hover:text-zinc-300"}"
+                    class="relative z-10 px-3 py-1 rounded-md text-sm font-semibold transition-colors duration-200 cursor-pointer shrink-0 ${this.activeTab === "chat" ? "text-blue-100" : "text-zinc-500 hover:text-zinc-300"}"
                     @click=${() => this.activeTab = "chat"}
                   >
                     Chat
                   </button>
                   <button
-                    class="relative z-10 px-3 py-1 rounded-md text-sm font-semibold transition-colors duration-200 cursor-pointer shrink-0 ${this.activeTab === "changes" ? "text-zinc-100" : "text-zinc-500 hover:text-zinc-300"}"
+                    class="relative z-10 px-3 py-1 rounded-md text-sm font-semibold transition-colors duration-200 cursor-pointer shrink-0 ${this.activeTab === "changes" ? "text-blue-100" : "text-zinc-500 hover:text-zinc-300"}"
                     @click=${() => this.activeTab = "changes"}
                   >
                     Changes
@@ -329,15 +324,6 @@ export class AppShell extends LitElement {
                 </div>
                 <div class="flex-1"></div>
                 <div class="flex items-center gap-2 pr-2 shrink-0">
-                  ${this.activeTab === "changes" ? html`
-                    <button
-                      class="px-2.5 py-1 rounded-md text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 transition-colors cursor-pointer"
-                      @click=${this.handleRefreshDiff}
-                      title="Refresh diff"
-                    >
-                      Refresh
-                    </button>
-                  ` : ""}
                   ${this.isStandalone ? html`
                     <button
                       class="p-1.5 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/70 transition-colors cursor-pointer"
