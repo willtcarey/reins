@@ -413,7 +413,7 @@ export class SessionSidebar extends LitElement {
         @toggle-collapse=${this.toggleCollapse}
       >
         <!-- Header: collapse toggle + quick-open -->
-        <div class="flex items-center border-b border-zinc-700 shrink-0 ${this.collapsed ? "justify-center" : "py-0.5"}">
+        <div class="flex items-center border-b border-zinc-800/80 shrink-0 ${this.collapsed ? "justify-center" : "h-[50px] px-2 gap-1"}">
           ${this.collapsed ? html`
             <!-- Collapsed: expand chevron + search icon -->
             <div class="flex flex-col items-center gap-1 py-1">
@@ -434,7 +434,7 @@ export class SessionSidebar extends LitElement {
             <nav-icon icon="settings" label="Settings" .size=${18} @click=${this._openSettings}></nav-icon>
             <div class="flex-1 min-w-0"></div>
             <button
-              class="p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors shrink-0"
+              class="p-2 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 cursor-pointer transition-colors shrink-0"
               @click=${this.toggleCollapse}
               title="Hide sidebar"
             >

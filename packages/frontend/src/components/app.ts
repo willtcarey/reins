@@ -294,7 +294,7 @@ export class AppShell extends LitElement {
           ${hasProject ? html`
             <div class="flex-1 flex flex-col min-w-0">
               <!-- Tab bar -->
-              <div class="flex items-center gap-2 border-b border-zinc-800/80 bg-zinc-900/80 px-2 py-1.5 overflow-x-auto">
+              <div class="h-[50px] flex items-center gap-2 border-b border-zinc-800/80 bg-zinc-900/80 px-2 py-1.5 overflow-x-auto shrink-0">
                 <!-- Hamburger menu (mobile only) -->
                 <button
                   class="p-2 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 cursor-pointer md:hidden shrink-0 transition-colors"

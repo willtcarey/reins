@@ -23,7 +23,7 @@ export class BranchIndicator extends LitElement {
     if (!this.currentBranch) return nothing;
 
     return html`
-      <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-zinc-800 bg-zinc-950/30 text-xs text-zinc-400 shrink-0">
+      <div class="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-800 bg-zinc-950/30 text-sm text-zinc-400 shrink-0">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
              class="shrink-0">
