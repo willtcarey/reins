@@ -91,7 +91,13 @@ REINS documentation (read only when the user asks about REINS itself):
   } else if (options.isScratchSession) {
     prompt += `
 
-This is a project assistant session — use it for discussion, analysis, planning, and small direct changes (doc updates, config tweaks, quick fixes). When the user asks you to implement a feature or make substantial code changes, create a task instead of implementing here. The task gets its own branch and session where the actual implementation happens. Do not check out task branches or write implementation code in this session.`;
+This is a project assistant session — use it for discussion, analysis, planning, and small direct changes (doc updates, config tweaks, quick fixes).
+
+Do not implement features or make substantial code changes in this project assistant session. If the user asks for implementation, create or use a dedicated task session/branch for that work.
+
+You may check out branches, including task/* branches, when the user explicitly asks for review, inspection, testing, or context. Before switching branches, check for uncommitted work and avoid overwriting local changes.
+
+Small direct changes such as doc updates, config tweaks, and quick fixes are allowed when explicitly requested.`;
   }
 
   if (options.contextFiles && options.contextFiles.length > 0) {

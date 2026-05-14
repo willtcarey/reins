@@ -91,7 +91,10 @@ describe("buildReinsSystemPrompt", () => {
     });
 
     expect(prompt).toContain("project assistant session");
-    expect(prompt).toContain("create a task instead of implementing here");
+    expect(prompt).toContain("Do not implement features or make substantial code changes");
+    expect(prompt).toContain("create or use a dedicated task session/branch");
+    expect(prompt).toContain("You may check out branches, including task/* branches");
+    expect(prompt).toContain("Small direct changes such as doc updates, config tweaks, and quick fixes are allowed");
     expect(prompt).not.toContain("## Task");
   });
 
