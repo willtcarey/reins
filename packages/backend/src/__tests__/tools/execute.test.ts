@@ -277,7 +277,7 @@ describe("createExecuteTool", () => {
       expect(parsed.id).toBe("sess-x");
     });
 
-    test("sessions.messages() returns persisted messages", async () => {
+    test("sessions.entries() returns persisted message entries", async () => {
       storeCreateSession("sess-m", project.id, { agentRuntimeType: "pi" });
       persistMessages("sess-m", [
         { role: "user", content: [{ type: "text", text: "Hello" }] },
@@ -286,13 +286,13 @@ describe("createExecuteTool", () => {
 
       const tool = makeTool();
       const result = await tool.execute("c12", {
-        code: `return api.sessions.messages("sess-m")`,
+        code: `return api.sessions.entries("sess-m")`,
       }, undefined, undefined, strictCtx);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed).toBeArray();
       expect(parsed.length).toBe(2);
-      expect(parsed[0].role).toBe("user");
+      expect(parsed[0]).toMatchObject({ role: "user", type: "user" });
     });
 
     test("session read methods can inspect sessions from another project", async () => {
@@ -317,8 +317,8 @@ describe("createExecuteTool", () => {
       const result = await tool.execute("c-cross-project-session-reads", {
         code: `return {
           session: api.sessions.get("other-read"),
-          messages: api.sessions.messages("other-read", { limit: 1 }),
-          trace: api.sessions.toolTrace("other-read"),
+          messages: api.sessions.entries("other-read", { types: ["user", "assistant", "toolResult"], limit: 1 }),
+          trace: api.sessions.entries("other-read", { types: ["toolCall", "toolResult"] }),
         }`,
       }, undefined, undefined, strictCtx);
 
@@ -425,7 +425,7 @@ describe("createExecuteTool", () => {
       expect(parsed.map((s: any) => s.id)).toEqual(["other-project"]);
     });
 
-    test("sessions.messages(sessionId, options) filters and pages messages with metadata", async () => {
+    test("sessions.entries(sessionId, options) filters and pages entries with metadata", async () => {
       storeCreateSession("sess-filter", project.id, { agentRuntimeType: "pi" });
       persistMessages("sess-filter", [
         { role: "user", content: [{ type: "text", text: "first prompt" }] },
@@ -436,17 +436,17 @@ describe("createExecuteTool", () => {
 
       const tool = makeTool();
       const result = await tool.execute("c-msg-filter", {
-        code: `return api.sessions.messages("sess-filter", { role: "user", search: "needle", limit: 1 })`,
+        code: `return api.sessions.entries("sess-filter", { types: ["user"], search: "needle", limit: 1 })`,
       }, undefined, undefined, strictCtx);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed).toHaveLength(1);
-      expect(parsed[0].role).toBe("user");
+      expect(parsed[0]).toMatchObject({ role: "user", type: "user" });
       expect(parsed[0].seq).toBe(2);
       expect(parsed[0].created_at).toBeString();
     });
 
-    test("sessions.messages(sessionId, { limit }) returns the latest messages in chronological order", async () => {
+    test("sessions.entries(sessionId, { limit }) returns the latest entries in chronological order", async () => {
       storeCreateSession("sess-latest", project.id, { agentRuntimeType: "pi" });
       persistMessages("sess-latest", [
         { role: "user", content: [{ type: "text", text: "one" }] },
@@ -456,16 +456,16 @@ describe("createExecuteTool", () => {
 
       const tool = makeTool();
       const result = await tool.execute("c-msg-limit", {
-        code: `return api.sessions.messages("sess-latest", { limit: 2 }).map((m) => ({ seq: m.seq, role: m.role }))`,
+        code: `return api.sessions.entries("sess-latest", { types: ["user", "assistant"], limit: 2 }).map((m) => ({ seq: m.seq, type: m.type }))`,
       }, undefined, undefined, strictCtx);
 
       expect(JSON.parse(textOf(result))).toEqual([
-        { seq: 1, role: "assistant" },
-        { seq: 2, role: "user" },
+        { seq: 1, type: "assistant" },
+        { seq: 2, type: "user" },
       ]);
     });
 
-    test("sessions.toolTrace() exposes compact tool traces", async () => {
+    test("sessions.entries() exposes compact tool entries", async () => {
       storeCreateSession("sess-tools", project.id, { agentRuntimeType: "pi" });
       persistMessages("sess-tools", [
         {
@@ -497,10 +497,10 @@ describe("createExecuteTool", () => {
 
       const tool = makeTool();
       const traceResult = await tool.execute("c-tool-trace", {
-        code: `return api.sessions.toolTrace("sess-tools", { toolName: "bash" })`,
+        code: `return api.sessions.entries("sess-tools", { types: ["toolCall", "toolResult"], toolName: "bash" })`,
       }, undefined, undefined, strictCtx);
       const errorResult = await tool.execute("c-tool-error-trace", {
-        code: `return api.sessions.toolTrace("sess-tools", { isError: true })`,
+        code: `return api.sessions.entries("sess-tools", { isError: true })`,
       }, undefined, undefined, strictCtx);
 
       const trace = JSON.parse(textOf(traceResult));

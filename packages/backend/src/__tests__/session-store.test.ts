@@ -24,8 +24,7 @@ import {
   updateSessionMeta,
   persistMessages,
   loadMessages,
-  querySessionMessages,
-  querySessionToolTrace,
+  listSessionEntries,
   loadMessagesForLLM,
 } from "../session-store.js";
 import { hydrateSessionManager } from "../runtimes/pi/session.js";
@@ -329,8 +328,8 @@ describe("session-store", () => {
     });
   });
 
-  describe("querySessionMessages", () => {
-    test("filters and returns latest limited messages chronologically", () => {
+  describe("listSessionEntries", () => {
+    test("filters persisted message entries and returns latest limited entries chronologically", () => {
       createSession("sess-query", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-query", [
         { role: "user", content: "first prompt" },
@@ -338,22 +337,20 @@ describe("session-store", () => {
         { role: "user", content: [{ type: "thinking", thinking: "third thought" }] },
       ]);
 
-      const latest = querySessionMessages("sess-query", { limit: 2 });
+      const latest = listSessionEntries("sess-query", { types: ["user", "assistant"], limit: 2 });
 
-      expect(latest.map((m) => ({ seq: m.seq, role: m.role }))).toEqual([
-        { seq: 1, role: "assistant" },
-        { seq: 2, role: "user" },
+      expect(latest.map((m) => ({ seq: m.seq, type: m.type }))).toEqual([
+        { seq: 1, type: "assistant" },
+        { seq: 2, type: "user" },
       ]);
-      expect(latest[0].content).toEqual([{ type: "text", text: "second response" }]);
-      expect(latest[1].content).toEqual([{ type: "thinking", thinking: "third thought" }]);
+      expect(latest[0]).toMatchObject({ content: [{ type: "text", text: "second response" }] });
+      expect(latest[1]).toMatchObject({ content: [{ type: "thinking", thinking: "third thought" }] });
 
-      const searched = querySessionMessages("sess-query", { role: "user", search: "third" });
+      const searched = listSessionEntries("sess-query", { types: ["user"], search: "third" });
       expect(searched.map((m) => m.seq)).toEqual([2]);
     });
-  });
 
-  describe("querySessionToolTrace", () => {
-    test("extracts compact tool trace events directly from persisted messages", () => {
+    test("extracts compact tool call and result entries directly from persisted messages", () => {
       createSession("sess-trace", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-trace", [
         {
@@ -369,8 +366,10 @@ describe("session-store", () => {
         },
         {
           role: "assistant",
-          content: "I'll run a command",
-          toolCalls: [{ id: "tc-bash", name: "bash", args: { command: "exit 1" } }],
+          content: [
+            { type: "text", text: "I'll run a command" },
+            { type: "toolCall", id: "tc-bash", name: "bash", arguments: { command: "exit 1" } },
+          ],
         },
         {
           role: "toolResult",
@@ -380,7 +379,7 @@ describe("session-store", () => {
         },
       ]);
 
-      expect(querySessionToolTrace("sess-trace", { toolName: "bash", includeContent: true })).toEqual([
+      expect(listSessionEntries("sess-trace", { types: ["toolCall", "toolResult"], toolName: "bash", includeContent: true })).toEqual([
         {
           sessionId: "sess-trace",
           seq: 2,
@@ -394,6 +393,7 @@ describe("session-store", () => {
           sessionId: "sess-trace",
           seq: 3,
           created_at: expect.any(String),
+          type: "toolResult",
           role: "toolResult",
           toolCallId: "tc-bash",
           toolName: "bash",
@@ -403,10 +403,33 @@ describe("session-store", () => {
         },
       ]);
 
-      expect(querySessionToolTrace("sess-trace", { isError: true }).map((item) => item.seq)).toEqual([3]);
+      expect(listSessionEntries("sess-trace", { isError: true }).map((item) => item.seq)).toEqual([3]);
     });
 
-    test("uses latest-window defaults but honors explicit ascending order for tool trace limits", () => {
+    test("can return a combined session timeline with derived tool calls", () => {
+      createSession("sess-entries", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-entries", [
+        { role: "user", content: "read the file" },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "I'll inspect it" },
+            { type: "toolCall", id: "tc-read", name: "read", arguments: { path: "README.md" } },
+          ],
+        },
+        { role: "toolResult", toolCallId: "tc-read", toolName: "read", isError: false, content: "contents" },
+      ]);
+
+      const entries = listSessionEntries("sess-entries", { types: ["user", "assistant", "toolCall"] });
+
+      expect(entries.map((entry) => ({ seq: entry.seq, type: entry.type }))).toEqual([
+        { seq: 0, type: "user" },
+        { seq: 1, type: "assistant" },
+        { seq: 1, type: "toolCall" },
+      ]);
+    });
+
+    test("uses latest-window defaults but honors explicit ascending order for entry limits", () => {
       createSession("sess-trace-order", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-trace-order", [
         { role: "assistant", content: [{ type: "toolCall", id: "tc-1", name: "read", arguments: { path: "one" } }] },
@@ -414,9 +437,9 @@ describe("session-store", () => {
         { role: "assistant", content: [{ type: "toolCall", id: "tc-3", name: "read", arguments: { path: "three" } }] },
       ]);
 
-      expect(querySessionToolTrace("sess-trace-order", { limit: 2 }).map((item) => item.seq)).toEqual([1, 2]);
-      expect(querySessionToolTrace("sess-trace-order", { order: "asc", limit: 2 }).map((item) => item.seq)).toEqual([0, 1]);
-      expect(querySessionToolTrace("sess-trace-order", { order: "desc", limit: 2 }).map((item) => item.seq)).toEqual([2, 1]);
+      expect(listSessionEntries("sess-trace-order", { types: ["toolCall"], limit: 2 }).map((item) => item.seq)).toEqual([1, 2]);
+      expect(listSessionEntries("sess-trace-order", { types: ["toolCall"], order: "asc", limit: 2 }).map((item) => item.seq)).toEqual([0, 1]);
+      expect(listSessionEntries("sess-trace-order", { types: ["toolCall"], order: "desc", limit: 2 }).map((item) => item.seq)).toEqual([2, 1]);
     });
   });
 
@@ -965,7 +988,13 @@ describe("session-store", () => {
       const sm = SessionManager.inMemory();
       const messages = [
         { role: "user", content: "list files" },
-        { role: "assistant", content: "I'll run ls", toolCalls: [{ id: "tc1", name: "bash", args: { command: "ls" } }] },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "I'll run ls" },
+            { type: "toolCall", id: "tc1", name: "bash", arguments: { command: "ls" } },
+          ],
+        },
         { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "file1.ts\nfile2.ts" }] },
         { role: "assistant", content: "Here are the files" },
       ];

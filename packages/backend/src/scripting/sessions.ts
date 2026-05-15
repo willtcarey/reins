@@ -5,10 +5,8 @@
 import { Type } from "@sinclair/typebox";
 import {
   getSession,
-  loadMessages,
-  querySessionRows,
-  querySessionMessages,
-  querySessionToolTrace,
+  listSessions,
+  listSessionEntries,
 } from "../session-store.js";
 import { Sessions } from "../models/sessions.js";
 import { ThinkingLevelSchema } from "../models/model-settings.js";
@@ -62,17 +60,16 @@ const SessionListOptionsSchema = Type.Object({
   minMessages: Type.Optional(Type.Number()),
 });
 
-const MessageOptionsSchema = Type.Object({
-  role: Type.Optional(Type.String()),
-  since: Type.Optional(Type.String()),
-  afterSeq: Type.Optional(Type.Number()),
-  beforeSeq: Type.Optional(Type.Number()),
-  limit: Type.Optional(Type.Number()),
-  search: Type.Optional(Type.String()),
-  order: Type.Optional(SortOrderSchema),
-});
+const EntryTypeSchema = Type.Union([
+  Type.Literal("user"),
+  Type.Literal("assistant"),
+  Type.Literal("toolResult"),
+  Type.Literal("compactionSummary"),
+  Type.Literal("toolCall"),
+]);
 
-const ToolTraceOptionsSchema = Type.Object({
+const EntryOptionsSchema = Type.Object({
+  types: Type.Optional(Type.Array(EntryTypeSchema)),
   toolName: Type.Optional(Type.String()),
   isError: Type.Optional(Type.Boolean()),
   since: Type.Optional(Type.String()),
@@ -84,17 +81,21 @@ const ToolTraceOptionsSchema = Type.Object({
   includeContent: Type.Optional(Type.Boolean()),
 });
 
-export const MessageSchema = Type.Object({
-  seq: Type.Optional(Type.Number()),
-  created_at: Type.Optional(Type.String()),
-  role: Type.String(),
-  content: Type.Optional(Type.Unknown()),
-});
-
-export const ToolResultSchema = Type.Object({
+export const MessageEntrySchema = Type.Object({
   sessionId: Type.String(),
   seq: Type.Number(),
   created_at: Type.String(),
+  type: Type.Union([Type.Literal("user"), Type.Literal("assistant"), Type.Literal("compactionSummary")]),
+  role: Type.String(),
+  content: Type.Optional(Type.Unknown()),
+  summary: Type.Optional(Type.String()),
+});
+
+export const ToolResultEntrySchema = Type.Object({
+  sessionId: Type.String(),
+  seq: Type.Number(),
+  created_at: Type.String(),
+  type: Type.Literal("toolResult"),
   role: Type.Literal("toolResult"),
   toolCallId: Type.String(),
   toolName: Type.String(),
@@ -103,7 +104,7 @@ export const ToolResultSchema = Type.Object({
   content: Type.Optional(Type.Unknown()),
 });
 
-export const ToolCallSchema = Type.Object({
+export const ToolCallEntrySchema = Type.Object({
   sessionId: Type.String(),
   seq: Type.Number(),
   created_at: Type.String(),
@@ -113,7 +114,7 @@ export const ToolCallSchema = Type.Object({
   arguments: Type.Unknown(),
 });
 
-const ToolTraceSchema = Type.Union([ToolCallSchema, ToolResultSchema]);
+export const SessionEntrySchema = Type.Union([MessageEntrySchema, ToolCallEntrySchema, ToolResultEntrySchema]);
 
 // ---------------------------------------------------------------------------
 // Function definitions
@@ -135,7 +136,7 @@ const sessionsListFunction = defineFunction({
       : options.projectId;
     const taskId = options?.taskId === "current" ? ctx.taskId : options?.taskId;
 
-    return querySessionRows({
+    return listSessions({
       projectId,
       taskId,
       includeTaskSessions: taskId === undefined,
@@ -153,7 +154,7 @@ const sessionsListForTaskFunction = defineFunction({
   parameters: Type.Object({ taskId: Type.Number() }),
   returns: Type.Array(SessionSchema),
   tags: ["sessions", "list", "query", "read", "task"],
-  execute: (params, _ctx) => querySessionRows({ taskId: params.taskId }),
+  execute: (params, _ctx) => listSessions({ taskId: params.taskId }),
 });
 
 const sessionsCurrentFunction = defineFunction({
@@ -178,40 +179,21 @@ const sessionsGetFunction = defineFunction({
   execute: (params, _ctx) => assertSessionExists(params.sessionId),
 });
 
-const sessionsMessagesFunction = defineFunction({
-  name: "sessions.messages",
+const sessionsEntriesFunction = defineFunction({
+  name: "sessions.entries",
   description:
-    "Load persisted messages for a session. Pass options to page, narrow, or request compact previews " +
-    "when inspecting long transcripts.",
+    "List session timeline entries. Entries can include persisted user/assistant/toolResult/compactionSummary " +
+    "messages and derived toolCall entries. Pass options.types to narrow returned entry types; tool results " +
+    "include contentPreview by default and raw content only when includeContent is true.",
   parameters: Type.Object({
     sessionId: Type.String(),
-    options: Type.Optional(MessageOptionsSchema),
+    options: Type.Optional(EntryOptionsSchema),
   }),
-  returns: Type.Array(MessageSchema),
-  tags: ["sessions", "messages", "read", "history", "conversation", "filter", "search", "prompts"],
+  returns: Type.Array(SessionEntrySchema),
+  tags: ["sessions", "entries", "messages", "read", "history", "conversation", "filter", "search", "prompts", "tools", "tool", "calls", "results", "trace", "errors"],
   execute: (params, _ctx) => {
     assertSessionExists(params.sessionId);
-
-    if (!params.options) return loadMessages(params.sessionId);
-
-    return querySessionMessages(params.sessionId, params.options);
-  },
-});
-
-const sessionsToolTraceFunction = defineFunction({
-  name: "sessions.toolTrace",
-  description:
-    "Return tool call and tool result events from a session as compact trace records. " +
-    "Tool results include contentPreview by default; pass includeContent when raw result content is needed.",
-  parameters: Type.Object({
-    sessionId: Type.String(),
-    options: Type.Optional(ToolTraceOptionsSchema),
-  }),
-  returns: Type.Array(ToolTraceSchema),
-  tags: ["sessions", "tools", "tool", "calls", "results", "toolTrace", "read", "trace", "errors", "filter"],
-  execute: (params, _ctx) => {
-    assertSessionExists(params.sessionId);
-    return querySessionToolTrace(params.sessionId, params.options);
+    return listSessionEntries(params.sessionId, params.options);
   },
 });
 
@@ -240,7 +222,6 @@ export const SESSION_FUNCTIONS: ApiFunctionDef[] = [
   sessionsListForTaskFunction,
   sessionsCurrentFunction,
   sessionsGetFunction,
-  sessionsMessagesFunction,
-  sessionsToolTraceFunction,
+  sessionsEntriesFunction,
   sessionsSetModelFunction,
 ];

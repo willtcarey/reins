@@ -30,9 +30,10 @@ import { TASK_FUNCTIONS, TaskSchema } from "./tasks.js";
 import {
   SESSION_FUNCTIONS,
   SessionSchema,
-  MessageSchema,
-  ToolCallSchema,
-  ToolResultSchema,
+  SessionEntrySchema,
+  MessageEntrySchema,
+  ToolCallEntrySchema,
+  ToolResultEntrySchema,
 } from "./sessions.js";
 import { PROJECT_FUNCTIONS, ProjectSchema } from "./projects.js";
 import { UI_FUNCTIONS } from "./ui.js";
@@ -68,9 +69,10 @@ export interface NamedType {
 export const DOMAIN_TYPES: NamedType[] = [
   { name: "Task", schema: TaskSchema },
   { name: "Session", schema: SessionSchema },
-  { name: "Message", schema: MessageSchema },
-  { name: "ToolCall", schema: ToolCallSchema },
-  { name: "ToolResult", schema: ToolResultSchema },
+  { name: "SessionEntry", schema: SessionEntrySchema },
+  { name: "MessageEntry", schema: MessageEntrySchema },
+  { name: "ToolCallEntry", schema: ToolCallEntrySchema },
+  { name: "ToolResultEntry", schema: ToolResultEntrySchema },
   { name: "Project", schema: ProjectSchema },
   { name: "ProviderInfo", schema: ProviderInfoSchema },
   { name: "ModelInfo", schema: ModelInfoSchema },

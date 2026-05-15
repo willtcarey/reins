@@ -31,8 +31,8 @@ export interface SessionRow {
   first_message?: string | null;
 }
 
-export interface SessionQueryOptions {
-  /** Required unless querying a specific numeric taskId. */
+export interface SessionListOptions {
+  /** Required unless listing sessions for a specific numeric taskId. */
   projectId?: number;
   /**
    * `undefined` means use `includeTaskSessions` to decide scope.
@@ -48,13 +48,6 @@ export interface SessionQueryOptions {
   minMessages?: number;
 }
 
-export interface SessionMessageWithMetadata {
-  seq: number;
-  created_at: string;
-  role: string;
-  [key: string]: unknown;
-}
-
 export interface SessionWindowOptions {
   since?: string;
   afterSeq?: number;
@@ -64,20 +57,30 @@ export interface SessionWindowOptions {
   order?: "asc" | "desc";
 }
 
-export interface SessionMessageQueryOptions extends SessionWindowOptions {
-  role?: string;
-}
+export type SessionEntryType = "user" | "assistant" | "toolResult" | "compactionSummary" | "toolCall";
 
-export interface SessionToolTraceOptions extends SessionWindowOptions {
+export interface SessionEntryOptions extends SessionWindowOptions {
+  types?: SessionEntryType[];
   toolName?: string;
   isError?: boolean;
   includeContent?: boolean;
 }
 
-export interface SessionToolResultTrace {
+export interface SessionMessageEntry {
   sessionId: string;
   seq: number;
   created_at: string;
+  type: Exclude<SessionEntryType, "toolCall" | "toolResult">;
+  role: string;
+  content?: unknown;
+  [key: string]: unknown;
+}
+
+export interface SessionToolResultEntry {
+  sessionId: string;
+  seq: number;
+  created_at: string;
+  type: "toolResult";
   role: "toolResult";
   toolCallId: string;
   toolName: string;
@@ -93,7 +96,28 @@ interface ToolCallBlock {
   arguments: unknown;
 }
 
-export interface SessionToolCallTrace {
+type PersistedContentBlock =
+  | { type: "text"; text: string }
+  | { type: "thinking"; thinking: string }
+  | ToolCallBlock;
+
+type PersistedMessageBase = {
+  summary?: string;
+  [key: string]: unknown;
+};
+
+type PersistedAssistantMessage = PersistedMessageBase & {
+  role: "assistant";
+  content: PersistedContentBlock[];
+};
+
+type PersistedMessage =
+  | (PersistedMessageBase & { role: "user"; content: string | PersistedContentBlock[] })
+  | PersistedAssistantMessage
+  | (PersistedMessageBase & { role: "toolResult"; content: string | PersistedContentBlock[]; toolCallId: string; toolName?: string; isError: boolean })
+  | (PersistedMessageBase & { role: "compactionSummary"; content?: string | PersistedContentBlock[] });
+
+export interface SessionToolCallEntry {
   sessionId: string;
   seq: number;
   created_at: string;
@@ -103,7 +127,7 @@ export interface SessionToolCallTrace {
   arguments: unknown;
 }
 
-export type SessionToolTrace = SessionToolCallTrace | SessionToolResultTrace;
+export type SessionEntry = SessionMessageEntry | SessionToolCallEntry | SessionToolResultEntry;
 
 export interface PaletteItem {
   sessionId: string;
@@ -134,6 +158,7 @@ WHERE role = 'user'
   AND seq = (SELECT MIN(seq) FROM session_messages sm2 WHERE sm2.session_id = session_messages.session_id AND sm2.role = 'user')`;
 
 const TOOL_RESULT_PREVIEW_CHARS = 500;
+const ALL_SESSION_ENTRY_TYPES: SessionEntryType[] = ["user", "assistant", "toolResult", "compactionSummary", "toolCall"];
 
 // ---- Session CRUD ----------------------------------------------------------
 
@@ -178,15 +203,11 @@ export function deleteSession(id: string): void {
   db.query("DELETE FROM sessions WHERE id = ?").run(id);
 }
 
-export function listSessions(options: SessionQueryOptions): SessionRow[] {
-  return querySessionRows(options);
-}
-
 /**
- * Query sessions for scripting/analysis. Supports message-count metadata and
- * filters without loading full transcripts into the agent context.
+ * List sessions for UI and scripting/analysis. Supports message-count metadata
+ * and filters without loading full transcripts into the agent context.
  */
-export function querySessionRows(options: SessionQueryOptions): SessionRow[] {
+export function listSessions(options: SessionListOptions): SessionRow[] {
   if (options.projectId === undefined && (options.taskId === undefined || options.taskId === null)) {
     throw new Error("projectId or numeric taskId must be provided");
   }
@@ -323,83 +344,28 @@ function usesLatestWindow(options: SessionWindowOptions): boolean {
   return options.limit !== undefined && options.order === undefined && options.afterSeq === undefined && !options.since;
 }
 
-function sqlSortOrder(order: SessionWindowOptions["order"]): "ASC" | "DESC" {
-  return order === "desc" ? "DESC" : "ASC";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function contentToText(content: unknown): string {
-  if (content === undefined || content === null) return "";
+function contentToText(content: string | PersistedContentBlock[]): string {
   if (typeof content === "string") return content;
-  if (typeof content === "number" || typeof content === "boolean") return String(content);
 
-  if (Array.isArray(content)) {
-    return content.map((item) => {
-      if (typeof item === "string") return item;
-      if (!isRecord(item)) return JSON.stringify(item) ?? "";
-      if (typeof item.text === "string") return item.text;
-      if (typeof item.thinking === "string") return item.thinking;
-      return JSON.stringify(item) ?? "";
-    }).join("\n");
-  }
-
-  return JSON.stringify(content) ?? "";
+  return content.map((block) => {
+    if (block.type === "text") return block.text;
+    if (block.type === "thinking") return block.thinking;
+    return JSON.stringify(block) ?? "";
+  }).join("\n");
 }
 
-function contentPreview(content: unknown): string {
+function contentPreview(content: string | PersistedContentBlock[]): string {
   const text = contentToText(content);
   if (text.length <= TOOL_RESULT_PREVIEW_CHARS) return text;
   return `${text.slice(0, TOOL_RESULT_PREVIEW_CHARS)}…`;
 }
 
-function extractToolCallBlocks(message: Record<string, unknown>): ToolCallBlock[] {
-  const blocks: ToolCallBlock[] = [];
-
-  if (Array.isArray(message.content)) {
-    for (const block of message.content) {
-      if (!isRecord(block) || block.type !== "toolCall") continue;
-      blocks.push({
-        type: "toolCall",
-        id: typeof block.id === "string" ? block.id : "",
-        name: typeof block.name === "string" ? block.name : "",
-        arguments: block.arguments ?? {},
-      });
-    }
-  }
-
-  if (Array.isArray(message.toolCalls)) {
-    for (const call of message.toolCalls) {
-      if (!isRecord(call)) continue;
-      blocks.push({
-        type: "toolCall",
-        id: typeof call.id === "string" ? call.id : "",
-        name: typeof call.name === "string" ? call.name : "",
-        arguments: call.arguments ?? call.args ?? {},
-      });
-    }
-  }
-
-  return blocks.filter((block) => block.id && block.name);
+function extractToolCallBlocks(message: PersistedAssistantMessage): ToolCallBlock[] {
+  return message.content.filter((block): block is ToolCallBlock => block.type === "toolCall");
 }
 
-function toolCallIdFromMessage(message: SessionMessageWithMetadata): string {
-  return typeof message.toolCallId === "string" ? message.toolCallId : "";
-}
-
-function isToolCallTrace(item: SessionToolTrace): item is SessionToolCallTrace {
-  return "type" in item;
-}
-
-function matchesSearch(search: string | undefined, ...values: unknown[]): boolean {
-  const needle = search?.trim().toLowerCase();
-  if (!needle) return true;
-  return values.some((value) => {
-    const text = typeof value === "string" ? value : JSON.stringify(value) ?? "";
-    return text.toLowerCase().includes(needle);
-  });
+function searchLikePattern(search: string): string {
+  return `%${search.replace(/([\\%_])/g, "\\$1")}%`;
 }
 
 function orderAndLimit<T extends { seq: number }>(items: T[], options: SessionWindowOptions): T[] {
@@ -409,6 +375,21 @@ function orderAndLimit<T extends { seq: number }>(items: T[], options: SessionWi
 
   if (descending) return ordered.slice(0, options.limit);
   return usesLatestWindow(options) ? ordered.slice(-options.limit) : ordered.slice(0, options.limit);
+}
+
+function entryMatchesToolFilters(entry: SessionEntry, options: SessionEntryOptions): boolean {
+  if (options.toolName) {
+    if (entry.type === "toolCall") {
+      if (entry.name !== options.toolName) return false;
+    } else if (entry.type === "toolResult") {
+      if (entry.toolName !== options.toolName) return false;
+    } else {
+      return false;
+    }
+  }
+
+  if (options.isError !== undefined && (entry.type !== "toolResult" || entry.isError !== options.isError)) return false;
+  return true;
 }
 
 /**
@@ -511,21 +492,20 @@ export function loadMessages(sessionId: string): any[] {
 }
 
 /**
- * Query persisted messages with cursor/search filters and return Reins-normalized
- * message objects augmented with SQLite seq/created_at metadata.
+ * List persisted session timeline entries with cursor/search filters. The result
+ * can mix stored message rows (user/assistant/toolResult/compactionSummary) and
+ * derived toolCall entries extracted from assistant messages.
  */
-export function querySessionMessages(
+export function listSessionEntries(
   sessionId: string,
-  options: SessionMessageQueryOptions = {},
-): SessionMessageWithMetadata[] {
+  options: SessionEntryOptions = {},
+): SessionEntry[] {
   const db = getDb();
   const where: string[] = ["session_id = ?"];
   const binds: (string | number)[] = [sessionId];
+  const requestedTypes = new Set<SessionEntryType>(options.types ?? ALL_SESSION_ENTRY_TYPES);
 
-  if (options.role) {
-    where.push("role = ?");
-    binds.push(options.role);
-  }
+  if (requestedTypes.size === 0) return [];
 
   if (options.since) {
     where.push("created_at >= ?");
@@ -542,92 +522,71 @@ export function querySessionMessages(
     binds.push(options.beforeSeq);
   }
 
-  if (options.search?.trim()) {
-    where.push("message_json LIKE ?");
-    binds.push(`%${options.search.trim()}%`);
-  }
-
-  const shouldReadLatestFirst = usesLatestWindow(options);
-  const queryOrder = shouldReadLatestFirst ? "DESC" : sqlSortOrder(options.order);
-
-  let sql = `SELECT seq, role, message_json, created_at
-     FROM session_messages
-     WHERE ${where.join(" AND ")}
-     ORDER BY seq ${queryOrder}`;
-
-  if (options.limit !== undefined) {
-    sql += " LIMIT ?";
-    binds.push(options.limit);
+  const search = options.search?.trim();
+  if (search) {
+    where.push("message_json LIKE ? ESCAPE '\\'");
+    binds.push(searchLikePattern(search));
   }
 
   const rows = db
-    .query<{ seq: number; role: string; message_json: string; created_at: string }, (string | number)[]>(sql)
+    .query<{ seq: number; message_json: string; created_at: string }, (string | number)[]>(
+      `SELECT seq, message_json, created_at
+       FROM session_messages
+       WHERE ${where.join(" AND ")}
+       ORDER BY seq ASC`,
+    )
     .all(...binds);
-  const orderedRows = shouldReadLatestFirst ? rows.toReversed() : rows;
-
-  return orderedRows.map((row) => {
-    const parsed = JSON.parse(row.message_json);
-    return { role: row.role, ...parsed, seq: row.seq, created_at: row.created_at };
-  });
-}
-
-/**
- * Extract tool call and tool result events from persisted messages.
- */
-export function querySessionToolTrace(
-  sessionId: string,
-  options: SessionToolTraceOptions = {},
-): SessionToolTrace[] {
-  const messages = querySessionMessages(sessionId, {
-    since: options.since,
-    afterSeq: options.afterSeq,
-    beforeSeq: options.beforeSeq,
-    order: "asc",
-  });
 
   const toolNamesById = new Map<string, string>();
-  const trace: SessionToolTrace[] = [];
+  const entries: SessionEntry[] = [];
 
-  for (const message of messages) {
-    if (message.role === "assistant") {
-      for (const block of extractToolCallBlocks(message)) {
-        toolNamesById.set(block.id, block.name);
-        trace.push({
+  for (const row of rows) {
+    const parsed: PersistedMessage = JSON.parse(row.message_json);
+    const entryType = parsed.role;
+
+    if (requestedTypes.has(entryType)) {
+      if (entryType === "toolResult") {
+        const result: SessionToolResultEntry = {
           sessionId,
-          seq: message.seq,
-          created_at: message.created_at,
+          seq: row.seq,
+          created_at: row.created_at,
+          type: "toolResult",
+          role: "toolResult",
+          toolCallId: parsed.toolCallId,
+          toolName: parsed.toolName ?? toolNamesById.get(parsed.toolCallId) ?? "",
+          isError: parsed.isError,
+          contentPreview: contentPreview(parsed.content),
+        };
+        if (options.includeContent) result.content = parsed.content;
+        entries.push(result);
+      } else {
+        entries.push({
+          ...parsed,
+          sessionId,
+          seq: row.seq,
+          created_at: row.created_at,
+          type: entryType,
+          role: entryType,
+        });
+      }
+    }
+
+    if (parsed.role !== "assistant") continue;
+
+    for (const block of extractToolCallBlocks(parsed)) {
+      toolNamesById.set(block.id, block.name);
+      if (requestedTypes.has("toolCall")) {
+        entries.push({
+          sessionId,
+          seq: row.seq,
+          created_at: row.created_at,
           ...block,
         });
       }
-      continue;
-    }
-
-    if (message.role === "toolResult") {
-      const toolCallId = toolCallIdFromMessage(message);
-      const result: SessionToolResultTrace = {
-        sessionId,
-        seq: message.seq,
-        created_at: message.created_at,
-        role: "toolResult",
-        toolCallId,
-        toolName: typeof message.toolName === "string" ? message.toolName : toolNamesById.get(toolCallId) ?? "",
-        isError: message.isError === true,
-        contentPreview: contentPreview(message.content),
-      };
-      if (options.includeContent) result.content = message.content;
-      trace.push(result);
     }
   }
 
-  const filtered = trace
-    .filter((item) => {
-      const toolName = isToolCallTrace(item) ? item.name : item.toolName;
-      return !options.toolName || toolName === options.toolName;
-    })
-    .filter((item) => options.isError === undefined || (!isToolCallTrace(item) && item.isError === options.isError))
-    .filter((item) => isToolCallTrace(item)
-      ? matchesSearch(options.search, item.id, item.name, item.arguments)
-      : matchesSearch(options.search, item.toolCallId, item.toolName, item.contentPreview));
+  const filtered = entries.filter((entry) => entryMatchesToolFilters(entry, options));
 
   return orderAndLimit(filtered, options);
 }
