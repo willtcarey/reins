@@ -161,6 +161,21 @@ describe("createSearchTool", () => {
     expectGeneratedTypeScriptToBeValid(text);
   });
 
+  test("execute documents session filtering and tool trace APIs", async () => {
+    const tool = createSearchTool();
+    const result = await tool.execute("call-session-traces", { query: "sessions" }, undefined, undefined, strictCtx);
+
+    const text = result.content[0].type === "text" ? result.content[0].text : "";
+    expect(text).toContain("list(options?:");
+    expect(text).toContain("messages(sessionId: string, options?:");
+    expect(text).toContain("toolTrace(sessionId: string, options?:");
+    expect(text).toContain("interface ToolCall {");
+    expect(text).toContain('type: "toolCall";');
+    expect(text).toContain("interface ToolResult {");
+    expect(text).toContain('role: "toolResult";');
+    expectGeneratedTypeScriptToBeValid(text);
+  });
+
   test("execute returns no-results message for unmatched query", async () => {
     const tool = createSearchTool();
     const result = await tool.execute("call-3", { query: "xyznonexistent" }, undefined, undefined, strictCtx);

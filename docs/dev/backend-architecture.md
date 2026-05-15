@@ -26,6 +26,8 @@ Tool factories receive stable references (server state, session ID) at factory t
 
 - **`create_task`** — creates a task with a git branch. Available in all sessions. Optional `prompt` parameter kicks off a fire-and-forget session on the new task.
 - **`delegate`** — spawns a sub-session on the same task with a fresh context window, awaits completion, returns a summary. Only available in task sessions. Depth-limited (max 3), serialized per project via an in-memory mutex. See [ADR-005](../adr/005-orchestrator-loop-not-relay-chain.md) for the orchestrator-loop design choice.
+- **`search`** — discovers the curated `execute` API surface by returning documentation-only TypeScript interfaces from `src/scripting/api-registry.ts`.
+- **`execute`** — runs an async JavaScript function body in a VM with only the curated `api` object in scope. Scripting functions live under `src/scripting/`; session-analysis helpers should extend `api.sessions` rather than introducing a separate analytics namespace. Keep `src/scripting/*` as execute/search glue: TypeBox schemas, descriptions/tags, project/task access checks, and delegation to stores/models. DB-backed filtering/extraction logic (for example message queries and tool traces) belongs in `src/*-store.ts` so scripting is not the source of truth.
 
 ### WebSocket handlers (`src/ws.ts`)
 
@@ -39,7 +41,7 @@ WS broadcasts for state changes live here so every caller gets them automaticall
 
 ### Stores (`src/*-store.ts`)
 
-Thin SQLite access. CRUD operations and queries. No git, no broadcasts, no business logic beyond what the DB enforces.
+Thin SQLite access. CRUD operations and queries, including DB-backed read projections used by scripting APIs. No git, no broadcasts, no business logic beyond what the DB enforces.
 
 ### Utilities
 

@@ -20,11 +20,12 @@ import {
   createSession,
   getSession,
   listSessions,
-  listTaskSessions,
   listPaletteItems,
   updateSessionMeta,
   persistMessages,
   loadMessages,
+  querySessionMessages,
+  querySessionToolTrace,
   loadMessagesForLLM,
 } from "../session-store.js";
 import { hydrateSessionManager } from "../runtimes/pi/session.js";
@@ -99,7 +100,7 @@ describe("session-store", () => {
       const task = createTask(projectId, "T", null, "task/t");
       createSession("task-1", projectId, {  agentRuntimeType: "pi",taskId: task.id });
 
-      const list = listSessions(projectId);
+      const list = listSessions({ projectId, taskId: null });
       expect(list).toHaveLength(1);
       expect(list[0].id).toBe("free-1");
     });
@@ -111,10 +112,39 @@ describe("session-store", () => {
         { role: "assistant", content: [{ type: "text", text: "Hi" }] },
       ]);
 
-      const list = listSessions(projectId);
+      const list = listSessions({ projectId, taskId: null });
       expect(list).toHaveLength(1);
       expect(list[0].message_count).toBe(2);
       expect(list[0].first_message).toBe("Hello world");
+    });
+
+    test("returns full session rows so list and query callers share one shape", () => {
+      createSession("sess-full", projectId, {
+        agentRuntimeType: "pi",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4",
+        thinkingLevel: "medium",
+      });
+      persistMessages("sess-full", [
+        { role: "user", content: [{ type: "text", text: "Full row prompt" }] },
+      ]);
+
+      const list = listSessions({ projectId, taskId: null });
+
+      expect(list).toHaveLength(1);
+      expect(list[0]).toMatchObject({
+        id: "sess-full",
+        project_id: projectId,
+        name: null,
+        model_provider: "anthropic",
+        model_id: "claude-sonnet-4",
+        thinking_level: "medium",
+        agent_runtime_type: "pi",
+        task_id: null,
+        parent_session_id: null,
+        message_count: 1,
+        first_message: "Full row prompt",
+      });
     });
 
     test("ordered by updated_at DESC", () => {
@@ -126,12 +156,12 @@ describe("session-store", () => {
         { role: "user", content: [{ type: "text", text: "bump" }] },
       ]);
 
-      const list = listSessions(projectId);
+      const list = listSessions({ projectId, taskId: null });
       expect(list[0].id).toBe("older");
     });
 
     test("returns empty array when no sessions exist", () => {
-      expect(listSessions(projectId)).toEqual([]);
+      expect(listSessions({ projectId, taskId: null })).toEqual([]);
     });
 
     test("strips leading <skill> blocks from first_message preview", () => {
@@ -144,27 +174,27 @@ describe("session-store", () => {
         { role: "user", content: [{ type: "text", text: expanded }] },
       ]);
 
-      const list = listSessions(projectId);
+      const list = listSessions({ projectId, taskId: null });
       expect(list).toHaveLength(1);
       expect(list[0].first_message).toBe("/dip start the server");
     });
 
     test("leaves first_message null when absent", () => {
       createSession("sess-empty", projectId, { agentRuntimeType: "pi" });
-      const list = listSessions(projectId);
+      const list = listSessions({ projectId, taskId: null });
       expect(list).toHaveLength(1);
       expect(list[0].first_message).toBeNull();
     });
   });
 
-  describe("listTaskSessions", () => {
+  describe("listSessions task scope", () => {
     test("returns sessions scoped to a task", () => {
       const task = createTask(projectId, "T", null, "task/t");
       createSession("task-sess-1", projectId, {  agentRuntimeType: "pi",taskId: task.id });
       createSession("task-sess-2", projectId, {  agentRuntimeType: "pi",taskId: task.id });
       createSession("free-sess", projectId, { agentRuntimeType: "pi" });
 
-      const list = listTaskSessions(task.id);
+      const list = listSessions({ taskId: task.id });
       expect(list).toHaveLength(2);
       const ids = list.map((s) => s.id);
       expect(ids).toContain("task-sess-1");
@@ -180,7 +210,7 @@ describe("session-store", () => {
         { role: "user", content: [{ type: "text", text: expanded }] },
       ]);
 
-      const list = listTaskSessions(task.id);
+      const list = listSessions({ taskId: task.id });
       expect(list).toHaveLength(1);
       expect(list[0].first_message).toBe("/dip run it");
     });
@@ -296,6 +326,97 @@ describe("session-store", () => {
       const msgs = loadMessages("sess-1");
       const roles = msgs.map((m: any) => m.role);
       expect(roles).toContain("compactionSummary");
+    });
+  });
+
+  describe("querySessionMessages", () => {
+    test("filters and returns latest limited messages chronologically", () => {
+      createSession("sess-query", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-query", [
+        { role: "user", content: "first prompt" },
+        { role: "assistant", content: [{ type: "text", text: "second response" }] },
+        { role: "user", content: [{ type: "thinking", thinking: "third thought" }] },
+      ]);
+
+      const latest = querySessionMessages("sess-query", { limit: 2 });
+
+      expect(latest.map((m) => ({ seq: m.seq, role: m.role }))).toEqual([
+        { seq: 1, role: "assistant" },
+        { seq: 2, role: "user" },
+      ]);
+      expect(latest[0].content).toEqual([{ type: "text", text: "second response" }]);
+      expect(latest[1].content).toEqual([{ type: "thinking", thinking: "third thought" }]);
+
+      const searched = querySessionMessages("sess-query", { role: "user", search: "third" });
+      expect(searched.map((m) => m.seq)).toEqual([2]);
+    });
+  });
+
+  describe("querySessionToolTrace", () => {
+    test("extracts compact tool trace events directly from persisted messages", () => {
+      createSession("sess-trace", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-trace", [
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "tc-read", name: "read", arguments: { path: "src/a.ts" } }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tc-read",
+          toolName: "read",
+          isError: false,
+          content: "file contents",
+        },
+        {
+          role: "assistant",
+          content: "I'll run a command",
+          toolCalls: [{ id: "tc-bash", name: "bash", args: { command: "exit 1" } }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tc-bash",
+          isError: true,
+          content: [{ type: "text", text: "long failure output" }],
+        },
+      ]);
+
+      expect(querySessionToolTrace("sess-trace", { toolName: "bash", includeContent: true })).toEqual([
+        {
+          sessionId: "sess-trace",
+          seq: 2,
+          created_at: expect.any(String),
+          type: "toolCall",
+          id: "tc-bash",
+          name: "bash",
+          arguments: { command: "exit 1" },
+        },
+        {
+          sessionId: "sess-trace",
+          seq: 3,
+          created_at: expect.any(String),
+          role: "toolResult",
+          toolCallId: "tc-bash",
+          toolName: "bash",
+          isError: true,
+          contentPreview: "long failure output",
+          content: [{ type: "text", text: "long failure output" }],
+        },
+      ]);
+
+      expect(querySessionToolTrace("sess-trace", { isError: true }).map((item) => item.seq)).toEqual([3]);
+    });
+
+    test("uses latest-window defaults but honors explicit ascending order for tool trace limits", () => {
+      createSession("sess-trace-order", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-trace-order", [
+        { role: "assistant", content: [{ type: "toolCall", id: "tc-1", name: "read", arguments: { path: "one" } }] },
+        { role: "assistant", content: [{ type: "toolCall", id: "tc-2", name: "read", arguments: { path: "two" } }] },
+        { role: "assistant", content: [{ type: "toolCall", id: "tc-3", name: "read", arguments: { path: "three" } }] },
+      ]);
+
+      expect(querySessionToolTrace("sess-trace-order", { limit: 2 }).map((item) => item.seq)).toEqual([1, 2]);
+      expect(querySessionToolTrace("sess-trace-order", { order: "asc", limit: 2 }).map((item) => item.seq)).toEqual([0, 1]);
+      expect(querySessionToolTrace("sess-trace-order", { order: "desc", limit: 2 }).map((item) => item.seq)).toEqual([2, 1]);
     });
   });
 

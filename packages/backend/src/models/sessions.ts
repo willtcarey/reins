@@ -9,10 +9,8 @@
 import {
   getSession,
   listSessions,
-  listTaskSessions,
   loadMessages,
   updateSessionMeta,
-  type SessionListItem,
   type SessionRow,
 } from "../session-store.js";
 import type { Broadcast } from "./broadcast.js";
@@ -116,12 +114,12 @@ export class Sessions {
     return messages.map(stripUserSkillBlocks);
   }
 
-  listByProject(projectId: number): SessionListItem[] {
-    return listSessions(projectId);
+  listByProject(projectId: number): SessionRow[] {
+    return listSessions({ projectId, taskId: null });
   }
 
-  listByTask(taskId: number): SessionListItem[] {
-    return listTaskSessions(taskId);
+  listByTask(taskId: number): SessionRow[] {
+    return listSessions({ taskId });
   }
 
   /**

@@ -25,17 +25,85 @@ export interface SessionRow {
   agent_runtime_type: string;
   task_id: number | null;
   parent_session_id: string | null;
+  /** Present on list/query rows that join session message metadata. */
+  message_count?: number;
+  /** Present on list/query rows that join the first user-message preview. */
+  first_message?: string | null;
 }
 
-export interface SessionListItem {
-  id: string;
-  name: string | null;
-  created_at: string;
-  updated_at: string;
-  message_count: number;
-  first_message: string | null;
-  parent_session_id: string | null;
+export interface SessionQueryOptions {
+  /** Required unless querying a specific numeric taskId. */
+  projectId?: number;
+  /**
+   * `undefined` means use `includeTaskSessions` to decide scope.
+   * `null` means scratch sessions only.
+   * A number means sessions for that task only.
+   */
+  taskId?: number | null;
+  /** When taskId is undefined, include task sessions as well as scratch sessions. */
+  includeTaskSessions?: boolean;
+  since?: string;
+  limit?: number;
+  search?: string;
+  minMessages?: number;
 }
+
+export interface SessionMessageWithMetadata {
+  seq: number;
+  created_at: string;
+  role: string;
+  [key: string]: unknown;
+}
+
+export interface SessionWindowOptions {
+  since?: string;
+  afterSeq?: number;
+  beforeSeq?: number;
+  limit?: number;
+  search?: string;
+  order?: "asc" | "desc";
+}
+
+export interface SessionMessageQueryOptions extends SessionWindowOptions {
+  role?: string;
+}
+
+export interface SessionToolTraceOptions extends SessionWindowOptions {
+  toolName?: string;
+  isError?: boolean;
+  includeContent?: boolean;
+}
+
+export interface SessionToolResultTrace {
+  sessionId: string;
+  seq: number;
+  created_at: string;
+  role: "toolResult";
+  toolCallId: string;
+  toolName: string;
+  isError: boolean;
+  contentPreview: string;
+  content?: unknown;
+}
+
+interface ToolCallBlock {
+  type: "toolCall";
+  id: string;
+  name: string;
+  arguments: unknown;
+}
+
+export interface SessionToolCallTrace {
+  sessionId: string;
+  seq: number;
+  created_at: string;
+  type: "toolCall";
+  id: string;
+  name: string;
+  arguments: unknown;
+}
+
+export type SessionToolTrace = SessionToolCallTrace | SessionToolResultTrace;
 
 export interface PaletteItem {
   sessionId: string;
@@ -55,6 +123,17 @@ export interface SessionMessageRow {
   message_json: string;
   created_at: string;
 }
+
+const MESSAGE_COUNT_BY_SESSION_SQL =
+  "SELECT session_id, COUNT(*) AS cnt FROM session_messages GROUP BY session_id";
+
+const FIRST_USER_MESSAGE_BY_SESSION_SQL = `SELECT session_id,
+  json_extract(message_json, '$.content[0].text') AS first_message
+FROM session_messages
+WHERE role = 'user'
+  AND seq = (SELECT MIN(seq) FROM session_messages sm2 WHERE sm2.session_id = session_messages.session_id AND sm2.role = 'user')`;
+
+const TOOL_RESULT_PREVIEW_CHARS = 500;
 
 // ---- Session CRUD ----------------------------------------------------------
 
@@ -99,82 +178,77 @@ export function deleteSession(id: string): void {
   db.query("DELETE FROM sessions WHERE id = ?").run(id);
 }
 
-export function listSessions(projectId: number): SessionListItem[] {
-  const db = getDb();
-  return db
-    .query<SessionListItem, [number]>(
-      `SELECT
-         s.id,
-         s.name,
-         s.created_at,
-         s.updated_at,
-         COALESCE(mc.cnt, 0) AS message_count,
-         fm.first_message,
-         s.parent_session_id
-       FROM sessions s
-       LEFT JOIN (
-         SELECT session_id, COUNT(*) AS cnt FROM session_messages GROUP BY session_id
-       ) mc ON mc.session_id = s.id
-       LEFT JOIN (
-         SELECT session_id,
-           json_extract(message_json, '$.content[0].text') AS first_message
-         FROM session_messages
-         WHERE role = 'user'
-           AND seq = (SELECT MIN(seq) FROM session_messages sm2 WHERE sm2.session_id = session_messages.session_id AND sm2.role = 'user')
-       ) fm ON fm.session_id = s.id
-       WHERE s.project_id = ? AND s.task_id IS NULL
-       ORDER BY s.updated_at DESC`,
-    )
-    .all(projectId)
-    .map((r) => ({ ...r, first_message: stripLeadingSkillBlocks(r.first_message) }));
+export function listSessions(options: SessionQueryOptions): SessionRow[] {
+  return querySessionRows(options);
 }
 
-export function listTaskSessions(taskId: number): SessionListItem[] {
-  const db = getDb();
-  return db
-    .query<SessionListItem, [number]>(
-      `SELECT
-         s.id,
-         s.name,
-         s.created_at,
-         s.updated_at,
-         COALESCE(mc.cnt, 0) AS message_count,
-         fm.first_message,
-         s.parent_session_id
-       FROM sessions s
-       LEFT JOIN (
-         SELECT session_id, COUNT(*) AS cnt FROM session_messages GROUP BY session_id
-       ) mc ON mc.session_id = s.id
-       LEFT JOIN (
-         SELECT session_id,
-           json_extract(message_json, '$.content[0].text') AS first_message
-         FROM session_messages
-         WHERE role = 'user'
-           AND seq = (SELECT MIN(seq) FROM session_messages sm2 WHERE sm2.session_id = session_messages.session_id AND sm2.role = 'user')
-       ) fm ON fm.session_id = s.id
-       WHERE s.task_id = ?
-       ORDER BY s.updated_at DESC`,
-    )
-    .all(taskId)
-    .map((r) => ({ ...r, first_message: stripLeadingSkillBlocks(r.first_message) }));
-}
+/**
+ * Query sessions for scripting/analysis. Supports message-count metadata and
+ * filters without loading full transcripts into the agent context.
+ */
+export function querySessionRows(options: SessionQueryOptions): SessionRow[] {
+  if (options.projectId === undefined && (options.taskId === undefined || options.taskId === null)) {
+    throw new Error("projectId or numeric taskId must be provided");
+  }
 
-export function listSessionRows(projectId: number): SessionRow[] {
   const db = getDb();
-  return db
-    .query<SessionRow, [number]>(
-      `SELECT * FROM sessions WHERE project_id = ? AND task_id IS NULL ORDER BY updated_at DESC`,
-    )
-    .all(projectId);
-}
+  const where: string[] = [];
+  const binds: (string | number)[] = [];
 
-export function listTaskSessionRows(taskId: number): SessionRow[] {
-  const db = getDb();
+  if (options.projectId !== undefined) {
+    where.push("s.project_id = ?");
+    binds.push(options.projectId);
+  }
+
+  if (options.taskId === null) {
+    where.push("s.task_id IS NULL");
+  } else if (options.taskId !== undefined) {
+    where.push("s.task_id = ?");
+    binds.push(options.taskId);
+  } else if (!options.includeTaskSessions) {
+    where.push("s.task_id IS NULL");
+  }
+
+  if (options.since) {
+    where.push("s.updated_at >= ?");
+    binds.push(options.since);
+  }
+
+  if (options.search?.trim()) {
+    const pattern = `%${options.search.trim()}%`;
+    where.push(
+      `(s.id LIKE ? OR s.name LIKE ? OR EXISTS (
+         SELECT 1 FROM session_messages sm
+         WHERE sm.session_id = s.id AND sm.message_json LIKE ?
+       ))`,
+    );
+    binds.push(pattern, pattern, pattern);
+  }
+
+  if (options.minMessages !== undefined) {
+    where.push("COALESCE(mc.cnt, 0) >= ?");
+    binds.push(options.minMessages);
+  }
+
+  let sql = `SELECT
+       s.*,
+       COALESCE(mc.cnt, 0) AS message_count,
+       fm.first_message
+     FROM sessions s
+     LEFT JOIN (${MESSAGE_COUNT_BY_SESSION_SQL}) mc ON mc.session_id = s.id
+     LEFT JOIN (${FIRST_USER_MESSAGE_BY_SESSION_SQL}) fm ON fm.session_id = s.id
+     WHERE ${where.join(" AND ")}
+     ORDER BY s.updated_at DESC`;
+
+  if (options.limit !== undefined) {
+    sql += " LIMIT ?";
+    binds.push(options.limit);
+  }
+
   return db
-    .query<SessionRow, [number]>(
-      `SELECT * FROM sessions WHERE task_id = ? ORDER BY updated_at DESC`,
-    )
-    .all(taskId);
+    .query<SessionRow, (string | number)[]>(sql)
+    .all(...binds)
+    .map((r) => ({ ...r, first_message: stripLeadingSkillBlocks(r.first_message ?? null) }));
 }
 
 export function listPaletteItems(): PaletteItem[] {
@@ -192,16 +266,8 @@ export function listPaletteItems(): PaletteItem[] {
        FROM sessions s
        JOIN projects p ON p.id = s.project_id
        LEFT JOIN tasks t ON t.id = s.task_id
-       JOIN (
-         SELECT session_id, COUNT(*) AS cnt FROM session_messages GROUP BY session_id
-       ) mc ON mc.session_id = s.id
-       LEFT JOIN (
-         SELECT session_id,
-           json_extract(message_json, '$.content[0].text') AS first_message
-         FROM session_messages
-         WHERE role = 'user'
-           AND seq = (SELECT MIN(seq) FROM session_messages sm2 WHERE sm2.session_id = session_messages.session_id AND sm2.role = 'user')
-       ) fm ON fm.session_id = s.id
+       JOIN (${MESSAGE_COUNT_BY_SESSION_SQL}) mc ON mc.session_id = s.id
+       LEFT JOIN (${FIRST_USER_MESSAGE_BY_SESSION_SQL}) fm ON fm.session_id = s.id
        WHERE s.parent_session_id IS NULL
          AND mc.cnt > 0
          AND (
@@ -252,6 +318,98 @@ export function updateSessionMeta(
 }
 
 // ---- Helpers ----------------------------------------------------------------
+
+function usesLatestWindow(options: SessionWindowOptions): boolean {
+  return options.limit !== undefined && options.order === undefined && options.afterSeq === undefined && !options.since;
+}
+
+function sqlSortOrder(order: SessionWindowOptions["order"]): "ASC" | "DESC" {
+  return order === "desc" ? "DESC" : "ASC";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function contentToText(content: unknown): string {
+  if (content === undefined || content === null) return "";
+  if (typeof content === "string") return content;
+  if (typeof content === "number" || typeof content === "boolean") return String(content);
+
+  if (Array.isArray(content)) {
+    return content.map((item) => {
+      if (typeof item === "string") return item;
+      if (!isRecord(item)) return JSON.stringify(item) ?? "";
+      if (typeof item.text === "string") return item.text;
+      if (typeof item.thinking === "string") return item.thinking;
+      return JSON.stringify(item) ?? "";
+    }).join("\n");
+  }
+
+  return JSON.stringify(content) ?? "";
+}
+
+function contentPreview(content: unknown): string {
+  const text = contentToText(content);
+  if (text.length <= TOOL_RESULT_PREVIEW_CHARS) return text;
+  return `${text.slice(0, TOOL_RESULT_PREVIEW_CHARS)}…`;
+}
+
+function extractToolCallBlocks(message: Record<string, unknown>): ToolCallBlock[] {
+  const blocks: ToolCallBlock[] = [];
+
+  if (Array.isArray(message.content)) {
+    for (const block of message.content) {
+      if (!isRecord(block) || block.type !== "toolCall") continue;
+      blocks.push({
+        type: "toolCall",
+        id: typeof block.id === "string" ? block.id : "",
+        name: typeof block.name === "string" ? block.name : "",
+        arguments: block.arguments ?? {},
+      });
+    }
+  }
+
+  if (Array.isArray(message.toolCalls)) {
+    for (const call of message.toolCalls) {
+      if (!isRecord(call)) continue;
+      blocks.push({
+        type: "toolCall",
+        id: typeof call.id === "string" ? call.id : "",
+        name: typeof call.name === "string" ? call.name : "",
+        arguments: call.arguments ?? call.args ?? {},
+      });
+    }
+  }
+
+  return blocks.filter((block) => block.id && block.name);
+}
+
+function toolCallIdFromMessage(message: SessionMessageWithMetadata): string {
+  return typeof message.toolCallId === "string" ? message.toolCallId : "";
+}
+
+function isToolCallTrace(item: SessionToolTrace): item is SessionToolCallTrace {
+  return "type" in item;
+}
+
+function matchesSearch(search: string | undefined, ...values: unknown[]): boolean {
+  const needle = search?.trim().toLowerCase();
+  if (!needle) return true;
+  return values.some((value) => {
+    const text = typeof value === "string" ? value : JSON.stringify(value) ?? "";
+    return text.toLowerCase().includes(needle);
+  });
+}
+
+function orderAndLimit<T extends { seq: number }>(items: T[], options: SessionWindowOptions): T[] {
+  const descending = options.order === "desc";
+  const ordered = descending ? items.toReversed() : [...items];
+  if (options.limit === undefined) return ordered;
+
+  if (descending) return ordered.slice(0, options.limit);
+  return usesLatestWindow(options) ? ordered.slice(-options.limit) : ordered.slice(0, options.limit);
+}
 
 /**
  * Prune tool result content from pre-compaction messages by replacing
@@ -350,6 +508,128 @@ export function loadMessages(sessionId: string): any[] {
     .query<{ message_json: string }, [string]>("SELECT message_json FROM session_messages WHERE session_id = ? ORDER BY seq")
     .all(sessionId);
   return rows.map((r) => JSON.parse(r.message_json));
+}
+
+/**
+ * Query persisted messages with cursor/search filters and return Reins-normalized
+ * message objects augmented with SQLite seq/created_at metadata.
+ */
+export function querySessionMessages(
+  sessionId: string,
+  options: SessionMessageQueryOptions = {},
+): SessionMessageWithMetadata[] {
+  const db = getDb();
+  const where: string[] = ["session_id = ?"];
+  const binds: (string | number)[] = [sessionId];
+
+  if (options.role) {
+    where.push("role = ?");
+    binds.push(options.role);
+  }
+
+  if (options.since) {
+    where.push("created_at >= ?");
+    binds.push(options.since);
+  }
+
+  if (options.afterSeq !== undefined) {
+    where.push("seq > ?");
+    binds.push(options.afterSeq);
+  }
+
+  if (options.beforeSeq !== undefined) {
+    where.push("seq < ?");
+    binds.push(options.beforeSeq);
+  }
+
+  if (options.search?.trim()) {
+    where.push("message_json LIKE ?");
+    binds.push(`%${options.search.trim()}%`);
+  }
+
+  const shouldReadLatestFirst = usesLatestWindow(options);
+  const queryOrder = shouldReadLatestFirst ? "DESC" : sqlSortOrder(options.order);
+
+  let sql = `SELECT seq, role, message_json, created_at
+     FROM session_messages
+     WHERE ${where.join(" AND ")}
+     ORDER BY seq ${queryOrder}`;
+
+  if (options.limit !== undefined) {
+    sql += " LIMIT ?";
+    binds.push(options.limit);
+  }
+
+  const rows = db
+    .query<{ seq: number; role: string; message_json: string; created_at: string }, (string | number)[]>(sql)
+    .all(...binds);
+  const orderedRows = shouldReadLatestFirst ? rows.toReversed() : rows;
+
+  return orderedRows.map((row) => {
+    const parsed = JSON.parse(row.message_json);
+    return { role: row.role, ...parsed, seq: row.seq, created_at: row.created_at };
+  });
+}
+
+/**
+ * Extract tool call and tool result events from persisted messages.
+ */
+export function querySessionToolTrace(
+  sessionId: string,
+  options: SessionToolTraceOptions = {},
+): SessionToolTrace[] {
+  const messages = querySessionMessages(sessionId, {
+    since: options.since,
+    afterSeq: options.afterSeq,
+    beforeSeq: options.beforeSeq,
+    order: "asc",
+  });
+
+  const toolNamesById = new Map<string, string>();
+  const trace: SessionToolTrace[] = [];
+
+  for (const message of messages) {
+    if (message.role === "assistant") {
+      for (const block of extractToolCallBlocks(message)) {
+        toolNamesById.set(block.id, block.name);
+        trace.push({
+          sessionId,
+          seq: message.seq,
+          created_at: message.created_at,
+          ...block,
+        });
+      }
+      continue;
+    }
+
+    if (message.role === "toolResult") {
+      const toolCallId = toolCallIdFromMessage(message);
+      const result: SessionToolResultTrace = {
+        sessionId,
+        seq: message.seq,
+        created_at: message.created_at,
+        role: "toolResult",
+        toolCallId,
+        toolName: typeof message.toolName === "string" ? message.toolName : toolNamesById.get(toolCallId) ?? "",
+        isError: message.isError === true,
+        contentPreview: contentPreview(message.content),
+      };
+      if (options.includeContent) result.content = message.content;
+      trace.push(result);
+    }
+  }
+
+  const filtered = trace
+    .filter((item) => {
+      const toolName = isToolCallTrace(item) ? item.name : item.toolName;
+      return !options.toolName || toolName === options.toolName;
+    })
+    .filter((item) => options.isError === undefined || (!isToolCallTrace(item) && item.isError === options.isError))
+    .filter((item) => isToolCallTrace(item)
+      ? matchesSearch(options.search, item.id, item.name, item.arguments)
+      : matchesSearch(options.search, item.toolCallId, item.toolName, item.contentPreview));
+
+  return orderAndLimit(filtered, options);
 }
 
 /**

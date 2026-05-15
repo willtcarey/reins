@@ -27,7 +27,13 @@ import {
   schemaPropertyKeys,
 } from "./schema-utils.js";
 import { TASK_FUNCTIONS, TaskSchema } from "./tasks.js";
-import { SESSION_FUNCTIONS, SessionSchema, MessageSchema } from "./sessions.js";
+import {
+  SESSION_FUNCTIONS,
+  SessionSchema,
+  MessageSchema,
+  ToolCallSchema,
+  ToolResultSchema,
+} from "./sessions.js";
 import { PROJECT_FUNCTIONS, ProjectSchema } from "./projects.js";
 import { UI_FUNCTIONS } from "./ui.js";
 import { MODEL_FUNCTIONS, ProviderInfoSchema, ModelInfoSchema } from "./models.js";
@@ -63,6 +69,8 @@ export const DOMAIN_TYPES: NamedType[] = [
   { name: "Task", schema: TaskSchema },
   { name: "Session", schema: SessionSchema },
   { name: "Message", schema: MessageSchema },
+  { name: "ToolCall", schema: ToolCallSchema },
+  { name: "ToolResult", schema: ToolResultSchema },
   { name: "Project", schema: ProjectSchema },
   { name: "ProviderInfo", schema: ProviderInfoSchema },
   { name: "ModelInfo", schema: ModelInfoSchema },

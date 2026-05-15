@@ -7,6 +7,7 @@ import {
   createSession as storeCreateSession,
   persistMessages,
 } from "../../session-store.js";
+import { getDb } from "../../db.js";
 import { createExecuteTool } from "../../tools/execute.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
@@ -221,9 +222,11 @@ describe("createExecuteTool", () => {
   });
 
   describe("sessions API", () => {
-    test("sessions.list() returns scratch sessions", async () => {
+    test("sessions.list() returns all sessions for the current project", async () => {
+      const task = createTask(project.id, "List Task", "desc", "task/list", null);
       storeCreateSession("sess-1", project.id, { agentRuntimeType: "pi" });
       storeCreateSession("sess-2", project.id, { agentRuntimeType: "pi" });
+      storeCreateSession("task-sess", project.id, { agentRuntimeType: "pi", taskId: task.id });
 
       const tool = makeTool();
       const result = await tool.execute("c9", {
@@ -232,7 +235,7 @@ describe("createExecuteTool", () => {
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed).toBeArray();
-      expect(parsed.length).toBe(2);
+      expect(parsed.map((s: any) => s.id).toSorted()).toEqual(["sess-1", "sess-2", "task-sess"]);
     });
 
     test("sessions.listForTask() returns task sessions", async () => {
@@ -290,6 +293,236 @@ describe("createExecuteTool", () => {
       expect(parsed).toBeArray();
       expect(parsed.length).toBe(2);
       expect(parsed[0].role).toBe("user");
+    });
+
+    test("session read methods can inspect sessions from another project", async () => {
+      const otherProject = createProject("Other Project", `${repo.dir}-other-read`, "main");
+      storeCreateSession("other-read", otherProject.id, { agentRuntimeType: "pi" });
+      persistMessages("other-read", [
+        { role: "user", content: [{ type: "text", text: "Hello from another project" }] },
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "tc-other", name: "read", arguments: { path: "README.md" } }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tc-other",
+          toolName: "read",
+          isError: false,
+          content: [{ type: "text", text: "other project file" }],
+        },
+      ]);
+
+      const tool = makeTool();
+      const result = await tool.execute("c-cross-project-session-reads", {
+        code: `return {
+          session: api.sessions.get("other-read"),
+          messages: api.sessions.messages("other-read", { limit: 1 }),
+          trace: api.sessions.toolTrace("other-read"),
+        }`,
+      }, undefined, undefined, strictCtx);
+
+      const parsed = JSON.parse(textOf(result));
+      expect(parsed.session.project_id).toBe(otherProject.id);
+      expect(parsed.messages[0].role).toBe("toolResult");
+      expect(parsed.trace[0]).toMatchObject({ type: "toolCall", id: "tc-other", name: "read" });
+      expect(parsed.trace[1]).toMatchObject({ role: "toolResult", toolCallId: "tc-other", toolName: "read" });
+    });
+
+    test("sessions.list(options) filters by search, minMessages, since, and limit", async () => {
+      storeCreateSession("old-match", project.id, { agentRuntimeType: "pi" });
+      persistMessages("old-match", [
+        { role: "user", content: [{ type: "text", text: "needle old prompt" }] },
+        { role: "assistant", content: [{ type: "text", text: "old answer" }] },
+      ]);
+
+      storeCreateSession("new-low-count", project.id, { agentRuntimeType: "pi" });
+      persistMessages("new-low-count", [
+        { role: "user", content: [{ type: "text", text: "needle but only one message" }] },
+      ]);
+
+      storeCreateSession("new-match", project.id, { agentRuntimeType: "pi" });
+      persistMessages("new-match", [
+        { role: "user", content: [{ type: "text", text: "needle new prompt" }] },
+        { role: "assistant", content: [{ type: "text", text: "new answer" }] },
+      ]);
+
+      getDb().query("UPDATE sessions SET updated_at = ? WHERE id = ?").run("2024-01-01T00:00:00.000Z", "old-match");
+      getDb().query("UPDATE sessions SET updated_at = ? WHERE id = ?").run("2024-03-01T00:00:00.000Z", "new-low-count");
+      getDb().query("UPDATE sessions SET updated_at = ? WHERE id = ?").run("2024-03-02T00:00:00.000Z", "new-match");
+
+      const tool = makeTool();
+      const result = await tool.execute("c-list-filter", {
+        code: `return api.sessions.list({ search: "needle", minMessages: 2, since: "2024-02-01T00:00:00.000Z", limit: 1 })`,
+      }, undefined, undefined, strictCtx);
+
+      const parsed = JSON.parse(textOf(result));
+      expect(parsed.map((s: any) => s.id)).toEqual(["new-match"]);
+      expect(parsed[0].message_count).toBe(2);
+      expect(parsed[0].first_message).toBe("needle new prompt");
+    });
+
+    test("sessions.list(options) can list task sessions through taskId", async () => {
+      const task = createTask(project.id, "Task Sessions", "desc", "task/sessions", null);
+      storeCreateSession("scratch-only", project.id, { agentRuntimeType: "pi" });
+      storeCreateSession("task-only", project.id, { agentRuntimeType: "pi", taskId: task.id });
+
+      const tool = makeTool();
+      const result = await tool.execute("c-list-task", {
+        code: `return api.sessions.list({ taskId: ${task.id} })`,
+      }, undefined, undefined, strictCtx);
+
+      const parsed = JSON.parse(textOf(result));
+      expect(parsed.map((s: any) => s.id)).toEqual(["task-only"]);
+    });
+
+    test("sessions.list(options) can list scratch sessions through taskId null", async () => {
+      const task = createTask(project.id, "Task Sessions", "desc", "task/sessions-null", null);
+      storeCreateSession("scratch-only", project.id, { agentRuntimeType: "pi" });
+      storeCreateSession("task-only", project.id, { agentRuntimeType: "pi", taskId: task.id });
+
+      const tool = makeTool();
+      const result = await tool.execute("c-list-scratch", {
+        code: "return api.sessions.list({ taskId: null })",
+      }, undefined, undefined, strictCtx);
+
+      const parsed = JSON.parse(textOf(result));
+      expect(parsed.map((s: any) => s.id)).toEqual(["scratch-only"]);
+    });
+
+    test("sessions.list(options) accepts current project and task identifiers", async () => {
+      const task = createTask(project.id, "Current Task Sessions", "desc", "task/current-sessions", null);
+      storeCreateSession("scratch-only", project.id, { agentRuntimeType: "pi" });
+      storeCreateSession("task-current", project.id, { agentRuntimeType: "pi", taskId: task.id });
+      storeCreateSession("task-context", project.id, { agentRuntimeType: "pi", taskId: task.id });
+
+      const tool = makeTool("task-context", task.id);
+      const result = await tool.execute("c-list-current-identifiers", {
+        code: `return api.sessions.list({ projectId: "current", taskId: "current" })`,
+      }, undefined, undefined, strictCtx);
+
+      const parsed = JSON.parse(textOf(result));
+      expect(parsed.map((s: any) => s.id).toSorted()).toEqual(["task-context", "task-current"]);
+    });
+
+    test("sessions.list(options) can target another project", async () => {
+      const otherProject = createProject("Other Project", `${repo.dir}-other`, "main");
+      storeCreateSession("current-project", project.id, { agentRuntimeType: "pi" });
+      persistMessages("current-project", [
+        { role: "user", content: [{ type: "text", text: "scope needle current" }] },
+      ]);
+      storeCreateSession("other-project", otherProject.id, { agentRuntimeType: "pi" });
+      persistMessages("other-project", [
+        { role: "user", content: [{ type: "text", text: "scope needle other" }] },
+      ]);
+
+      const tool = makeTool();
+      const result = await tool.execute("c-list-other-project", {
+        code: `return api.sessions.list({ projectId: ${otherProject.id}, search: "scope needle" })`,
+      }, undefined, undefined, strictCtx);
+
+      const parsed = JSON.parse(textOf(result));
+      expect(parsed.map((s: any) => s.id)).toEqual(["other-project"]);
+    });
+
+    test("sessions.messages(sessionId, options) filters and pages messages with metadata", async () => {
+      storeCreateSession("sess-filter", project.id, { agentRuntimeType: "pi" });
+      persistMessages("sess-filter", [
+        { role: "user", content: [{ type: "text", text: "first prompt" }] },
+        { role: "assistant", content: [{ type: "text", text: "first answer" }] },
+        { role: "user", content: [{ type: "text", text: "second prompt needle" }] },
+        { role: "assistant", content: [{ type: "text", text: "second answer" }] },
+      ]);
+
+      const tool = makeTool();
+      const result = await tool.execute("c-msg-filter", {
+        code: `return api.sessions.messages("sess-filter", { role: "user", search: "needle", limit: 1 })`,
+      }, undefined, undefined, strictCtx);
+
+      const parsed = JSON.parse(textOf(result));
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0].role).toBe("user");
+      expect(parsed[0].seq).toBe(2);
+      expect(parsed[0].created_at).toBeString();
+    });
+
+    test("sessions.messages(sessionId, { limit }) returns the latest messages in chronological order", async () => {
+      storeCreateSession("sess-latest", project.id, { agentRuntimeType: "pi" });
+      persistMessages("sess-latest", [
+        { role: "user", content: [{ type: "text", text: "one" }] },
+        { role: "assistant", content: [{ type: "text", text: "two" }] },
+        { role: "user", content: [{ type: "text", text: "three" }] },
+      ]);
+
+      const tool = makeTool();
+      const result = await tool.execute("c-msg-limit", {
+        code: `return api.sessions.messages("sess-latest", { limit: 2 }).map((m) => ({ seq: m.seq, role: m.role }))`,
+      }, undefined, undefined, strictCtx);
+
+      expect(JSON.parse(textOf(result))).toEqual([
+        { seq: 1, role: "assistant" },
+        { seq: 2, role: "user" },
+      ]);
+    });
+
+    test("sessions.toolTrace() exposes compact tool traces", async () => {
+      storeCreateSession("sess-tools", project.id, { agentRuntimeType: "pi" });
+      persistMessages("sess-tools", [
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "I'll inspect a file" },
+            { type: "toolCall", id: "tc-read", name: "read", arguments: { path: "src/a.ts" } },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tc-read",
+          toolName: "read",
+          isError: false,
+          content: [{ type: "text", text: "file contents" }],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "tc-bash", name: "bash", arguments: { command: "exit 1" } }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tc-bash",
+          toolName: "bash",
+          isError: true,
+          content: [{ type: "text", text: "a very long failure output" }],
+        },
+      ]);
+
+      const tool = makeTool();
+      const traceResult = await tool.execute("c-tool-trace", {
+        code: `return api.sessions.toolTrace("sess-tools", { toolName: "bash" })`,
+      }, undefined, undefined, strictCtx);
+      const errorResult = await tool.execute("c-tool-error-trace", {
+        code: `return api.sessions.toolTrace("sess-tools", { isError: true })`,
+      }, undefined, undefined, strictCtx);
+
+      const trace = JSON.parse(textOf(traceResult));
+      expect(trace).toHaveLength(2);
+      expect(trace[0]).toMatchObject({
+        type: "toolCall",
+        id: "tc-bash",
+        name: "bash",
+        arguments: { command: "exit 1" },
+      });
+      expect(trace[1]).toMatchObject({
+        role: "toolResult",
+        toolCallId: "tc-bash",
+        toolName: "bash",
+        isError: true,
+        contentPreview: "a very long failure output",
+      });
+      expect(trace[1].content).toBeUndefined();
+
+      const errors = JSON.parse(textOf(errorResult));
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({ role: "toolResult", toolCallId: "tc-bash", toolName: "bash", isError: true });
     });
   });
 
