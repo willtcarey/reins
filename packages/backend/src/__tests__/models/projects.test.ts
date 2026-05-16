@@ -150,7 +150,7 @@ describe("ProjectModel.serveFile", () => {
       expect(new TextDecoder().decode(result.content)).toBe("on feature branch");
     });
 
-    test("downloads binary file from a different branch via showFileBinary", async () => {
+    test("returns binary bytes from a different branch", async () => {
       const bytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
       const proc = Bun.spawn(["git", "checkout", "-b", "feature/bin"], {
         cwd: repo.dir, stdout: "pipe", stderr: "pipe",

@@ -201,7 +201,7 @@ describe("file routes", () => {
       expect(content).toBe("nested content");
     });
 
-    test("serves working-tree image previews as uncorrupted binary bytes without download=1", async () => {
+    test("serves working-tree image previews inline with uncorrupted bytes", async () => {
       const bytes = onePixelPng();
       mkdirSync(join(repo.dir, "assets"), { recursive: true });
       writeFileSync(join(repo.dir, "assets", "pixel.png"), bytes);
@@ -218,7 +218,7 @@ describe("file routes", () => {
       expect([...body]).toEqual([...bytes]);
     });
 
-    test("serves git-ref image previews as uncorrupted binary bytes without download=1", async () => {
+    test("serves git-ref image previews inline with uncorrupted bytes", async () => {
       const bytes = onePixelPng();
       await git(repo.dir, ["checkout", "-b", "feature/image-preview"]);
       mkdirSync(join(repo.dir, "assets"), { recursive: true });
