@@ -10,7 +10,7 @@
  */
 
 import { resolve, normalize, basename, join } from "path";
-import { detectMimeType } from "../mime.js";
+import { detectMimeTypeFromBytes } from "../mime.js";
 import { mkdirSync, readdirSync } from "fs";
 import {
   createProject as storeCreateProject,
@@ -68,8 +68,8 @@ export class InvalidFilenameError extends Error {
 // ---------------------------------------------------------------------------
 
 export interface ServeFileResult {
-  /** File content — string for text mode, Uint8Array for binary/download */
-  content: string | Uint8Array;
+  /** Raw file bytes. Callers decide whether to decode as text. */
+  content: Uint8Array;
   /** Detected MIME type (e.g. "text/plain; charset=utf-8") */
   mimeType: string;
   /** Bare filename extracted from the path (e.g. "report.xlsx") */
@@ -268,8 +268,9 @@ export class ProjectModel {
   /**
    * Serve a file with MIME type detection and filename extraction.
    *
-   * When `download` is true the content is returned as binary bytes;
-   * otherwise it's returned as a UTF-8 string (suitable for rendering).
+   * Always returns raw bytes. HTTP responses are bytes on the wire; text
+   * callers can decode with `Response.text()`, while image/PDF previews receive
+   * the exact original bytes without relying on `download=1`.
    *
    * The caller (route handler) uses the returned metadata to build
    * Content-Type and Content-Disposition headers.
@@ -277,17 +278,13 @@ export class ProjectModel {
   async serveFile(
     filePath: string,
     ref?: string | null,
-    download?: boolean,
   ): Promise<ServeFileResult> {
     const resolved = resolve(this.projectDir, filePath);
     this.assertInsideProject(resolved);
 
-    const mimeType = await detectMimeType(resolved);
+    const content = await this.readFile(filePath, ref, true);
+    const mimeType = await detectMimeTypeFromBytes(content);
     const filename = basename(filePath) || filePath;
-
-    const content = download
-      ? await this.readFile(filePath, ref, true)
-      : await this.readFile(filePath, ref);
 
     return { content, mimeType, filename };
   }

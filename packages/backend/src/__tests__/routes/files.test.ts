@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { writeFileSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
@@ -7,6 +7,25 @@ import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo, commitFile } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
+
+async function git(cwd: string, args: string[]): Promise<void> {
+  const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  const [, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    throw new Error(`git ${args.join(" ")} failed (exit ${exitCode}): ${stderr.trim()}`);
+  }
+}
+
+function onePixelPng(): Uint8Array {
+  const fileBytes = readFileSync(join(import.meta.dir, "..", "fixtures", "one-pixel.png"));
+  const bytes = new Uint8Array(new ArrayBuffer(fileBytes.byteLength));
+  bytes.set(fileBytes);
+  return bytes;
+}
 
 describe("file routes", () => {
   let state: ReturnType<typeof createServerState>;
@@ -182,6 +201,44 @@ describe("file routes", () => {
       expect(content).toBe("nested content");
     });
 
+    test("serves working-tree image previews as uncorrupted binary bytes without download=1", async () => {
+      const bytes = onePixelPng();
+      mkdirSync(join(repo.dir, "assets"), { recursive: true });
+      writeFileSync(join(repo.dir, "assets", "pixel.png"), bytes);
+
+      const res = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/files/content?path=assets%2Fpixel.png`),
+        state,
+      );
+
+      expect(res!.status).toBe(200);
+      expect(res!.headers.get("Content-Type")).toBe("image/png");
+      expect(res!.headers.get("Content-Disposition")).toBeNull();
+      const body = new Uint8Array(await res!.arrayBuffer());
+      expect([...body]).toEqual([...bytes]);
+    });
+
+    test("serves git-ref image previews as uncorrupted binary bytes without download=1", async () => {
+      const bytes = onePixelPng();
+      await git(repo.dir, ["checkout", "-b", "feature/image-preview"]);
+      mkdirSync(join(repo.dir, "assets"), { recursive: true });
+      writeFileSync(join(repo.dir, "assets", "pixel.png"), bytes);
+      await git(repo.dir, ["add", "assets/pixel.png"]);
+      await git(repo.dir, ["commit", "-m", "Add preview image"]);
+      await git(repo.dir, ["checkout", "main"]);
+
+      const res = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/files/content?path=assets%2Fpixel.png&ref=feature%2Fimage-preview`),
+        state,
+      );
+
+      expect(res!.status).toBe(200);
+      expect(res!.headers.get("Content-Type")).toBe("image/png");
+      expect(res!.headers.get("Content-Disposition")).toBeNull();
+      const body = new Uint8Array(await res!.arrayBuffer());
+      expect([...body]).toEqual([...bytes]);
+    });
+
     // ---- Download mode tests -----------------------------------------------
 
     test("download=1 sets Content-Disposition attachment header", async () => {
@@ -210,7 +267,7 @@ describe("file routes", () => {
       expect(buf).toEqual(bytes);
     });
 
-    test("download=1 sets correct Content-Type for known extensions", async () => {
+    test("download=1 sets content-based Content-Type", async () => {
       writeFileSync(join(repo.dir, "style.json"), "{}");
 
       const res = await router.handle(

@@ -10,7 +10,6 @@ import {
   FileNotFoundError,
 } from "../../models/projects.js";
 import { Sessions } from "../../models/sessions.js";
-import { detectMimeType } from "../../mime.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 
@@ -104,38 +103,32 @@ describe("ProjectModel.serveFile", () => {
     });
   });
 
-  // ---- Content: text (non-download) --------------------------------------
+  // ---- Content bytes ------------------------------------------------------
 
-  describe("text content (non-download)", () => {
-    test("returns string content for text file", async () => {
+  describe("content bytes", () => {
+    test("returns bytes for text files", async () => {
       writeFileSync(join(repo.dir, "greet.txt"), "hello world");
       const result = await model.serveFile("greet.txt");
-      expect(typeof result.content).toBe("string");
-      expect(result.content).toBe("hello world");
+      expect(result.content).toBeInstanceOf(Uint8Array);
+      expect(new TextDecoder().decode(result.content)).toBe("hello world");
     });
-  });
 
-  // ---- Content: binary (download) ----------------------------------------
-
-  describe("binary content (download)", () => {
-    test("returns Uint8Array when download is true", async () => {
+    test("returns Uint8Array for binary files", async () => {
       const bytes = new Uint8Array([0x00, 0x01, 0x02, 0xff]);
       writeFileSync(join(repo.dir, "bin.dat"), bytes);
-      const result = await model.serveFile("bin.dat", null, true);
+      const result = await model.serveFile("bin.dat");
       expect(result.content).toBeInstanceOf(Uint8Array);
-      if (!(result.content instanceof Uint8Array)) throw new Error("expected Uint8Array");
-      expect(result.content).toEqual(bytes);
+      expect([...result.content]).toEqual([...bytes]);
     });
 
-    test("preserves binary bytes for a PNG file download", async () => {
+    test("preserves binary bytes for a PNG file", async () => {
       const pngHeader = new Uint8Array([
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
         0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
       ]);
       writeFileSync(join(repo.dir, "image.png"), pngHeader);
-      const result = await model.serveFile("image.png", null, true);
-      if (!(result.content instanceof Uint8Array)) throw new Error("expected Uint8Array");
-      expect(result.content).toEqual(pngHeader);
+      const result = await model.serveFile("image.png");
+      expect([...result.content]).toEqual([...pngHeader]);
     });
   });
 
@@ -154,8 +147,7 @@ describe("ProjectModel.serveFile", () => {
       await proc2.exited;
 
       const result = await model.serveFile("branch-only.txt", "feature/serve");
-      expect(typeof result.content).toBe("string");
-      expect(result.content).toBe("on feature branch");
+      expect(new TextDecoder().decode(result.content)).toBe("on feature branch");
     });
 
     test("downloads binary file from a different branch via showFileBinary", async () => {
@@ -176,10 +168,9 @@ describe("ProjectModel.serveFile", () => {
       });
       await proc4.exited;
 
-      const result = await model.serveFile("data.bin", "feature/bin", true);
+      const result = await model.serveFile("data.bin", "feature/bin");
       expect(result.content).toBeInstanceOf(Uint8Array);
-      if (!(result.content instanceof Uint8Array)) throw new Error("expected Uint8Array");
-      expect(result.content).toEqual(bytes);
+      expect([...result.content]).toEqual([...bytes]);
       expect(result.filename).toBe("data.bin");
     });
   });
@@ -242,82 +233,5 @@ describe("ProjectModel.listFiles", () => {
     const files = await model.listFiles();
     const sorted = [...files].toSorted();
     expect(files).toEqual(sorted);
-  });
-});
-
-describe("detectMimeType", () => {
-  // These tests use real files on disk since `file` examines content.
-  // We use the test repo directory for temp files.
-
-  const repo = useTestRepo();
-
-  test("returns text/* for source code files", async () => {
-    const files: [string, string][] = [
-      ["user.rb", "class User < ApplicationRecord; end"],
-      ["app.py", "def hello(): print('hi')"],
-      ["main.go", "package main\nfunc main() {}"],
-      ["main.rs", 'fn main() { println!("hi"); }'],
-      ["app.ex", "defmodule App do; end"],
-      ["app.swift", "let x: Int = 5"],
-      ["app.kt", 'fun main() { println("hi") }'],
-    ];
-    for (const [name, content] of files) {
-      writeFileSync(join(repo.dir, name), content);
-      const mime = await detectMimeType(join(repo.dir, name));
-      expect(mime).toStartWith("text/");
-    }
-  });
-
-  test("returns text/* for config and data files", async () => {
-    const files: [string, string][] = [
-      ["config.toml", '[database]\nhost = "localhost"'],
-      [".env", "DB_HOST=localhost"],
-      ["config.ini", "[section]\nkey=value"],
-    ];
-    for (const [name, content] of files) {
-      writeFileSync(join(repo.dir, name), content);
-      const mime = await detectMimeType(join(repo.dir, name));
-      expect(mime).toStartWith("text/");
-    }
-  });
-
-  test("returns text/* for well-known filenames", async () => {
-    writeFileSync(join(repo.dir, "Makefile"), "all: build");
-    writeFileSync(join(repo.dir, "Dockerfile"), "FROM node:18");
-    expect(await detectMimeType(join(repo.dir, "Makefile"))).toStartWith("text/");
-    expect(await detectMimeType(join(repo.dir, "Dockerfile"))).toStartWith("text/");
-  });
-
-  test("returns text/* for shell scripts", async () => {
-    writeFileSync(join(repo.dir, "script.sh"), "#!/bin/bash\necho hi");
-    expect(await detectMimeType(join(repo.dir, "script.sh"))).toStartWith("text/");
-  });
-
-  test("returns image/* for image files", async () => {
-    // Minimal PNG
-    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-      0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-      0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53]);
-    writeFileSync(join(repo.dir, "icon.png"), png);
-    expect(await detectMimeType(join(repo.dir, "icon.png"))).toBe("image/png");
-  });
-
-  test("returns application/pdf for PDFs", async () => {
-    writeFileSync(join(repo.dir, "doc.pdf"), "%PDF-1.4 fake content");
-    expect(await detectMimeType(join(repo.dir, "doc.pdf"))).toBe("application/pdf");
-  });
-
-  test("returns application/octet-stream for truly binary files", async () => {
-    writeFileSync(join(repo.dir, "data.bin"), new Uint8Array([0x00, 0x01, 0x02, 0xff, 0xfe, 0xfd]));
-    expect(await detectMimeType(join(repo.dir, "data.bin"))).toBe("application/octet-stream");
-  });
-
-  test("returns application/* for executables", async () => {
-    // ELF header
-    const elf = new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00]);
-    writeFileSync(join(repo.dir, "binary"), elf);
-    const mime = await detectMimeType(join(repo.dir, "binary"));
-    expect(mime).toStartWith("application/");
   });
 });

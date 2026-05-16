@@ -40,7 +40,7 @@ export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
     const download = ctx.url.searchParams.get("download") === "1";
 
     try {
-      const { content, mimeType, filename } = await ctx.project.serveFile(filePath!, ref, download);
+      const { content, mimeType, filename } = await ctx.project.serveFile(filePath!, ref);
 
       const headers: Record<string, string> = {
         "Content-Type": mimeType,
@@ -50,14 +50,11 @@ export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
         headers["Content-Disposition"] = `attachment; filename="${filename}"`;
       }
 
-      if (content instanceof Uint8Array) {
-        // Copy to a fresh ArrayBuffer to satisfy TS 5.7's stricter
-        // ArrayBufferView<ArrayBuffer> constraint in BodyInit/BlobPart.
-        const buf = new ArrayBuffer(content.byteLength);
-        new Uint8Array(buf).set(content);
-        return new Response(buf, { headers });
-      }
-      return new Response(content, { headers });
+      // Copy to a fresh ArrayBuffer to satisfy TS 5.7's stricter
+      // ArrayBufferView<ArrayBuffer> constraint in BodyInit/BlobPart.
+      const buf = new ArrayBuffer(content.byteLength);
+      new Uint8Array(buf).set(content);
+      return new Response(buf, { headers });
     } catch (err: any) {
       if (err instanceof PathTraversalError) badRequest(err.message);
       if (err instanceof FileNotFoundError) notFound(err.message);
