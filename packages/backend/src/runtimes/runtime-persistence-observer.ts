@@ -1,5 +1,6 @@
-import { persistMessages, updateSessionMeta } from "../session-store.js";
 import { logger } from "../logger.js";
+import { persistMessages } from "../messages-store.js";
+import { updateSessionMeta } from "../session-store.js";
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeMessage } from "./registry.js";
 
 function shouldPersistForRuntimeEvent(event: AgentRuntimeEvent): boolean {

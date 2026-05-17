@@ -3,7 +3,8 @@ import { toSessionStoreEntries, createSessionStore, type SessionEntryContext } f
 import type { AgentRuntimeMessage } from "../../../runtimes/registry.js";
 import { useTestDb } from "../../helpers/test-db.js";
 import { createProject } from "../../../project-store.js";
-import { createSession, persistMessages, loadMessages } from "../../../session-store.js";
+import { createSession } from "../../../session-store.js";
+import { loadMessages, persistMessages } from "../../../messages-store.js";
 
 function msg(partial: Partial<AgentRuntimeMessage>): AgentRuntimeMessage {
   // eslint-disable-next-line typescript-eslint/consistent-type-assertions -- test helper intentionally casts partials

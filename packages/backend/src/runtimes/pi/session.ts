@@ -3,7 +3,7 @@ import {
   SessionManager,
   type AgentSession,
 } from "@mariozechner/pi-coding-agent";
-import { loadMessagesForLLM } from "../../session-store.js";
+import { loadMessagesForLLM } from "../../messages-store.js";
 import type { TaskRow } from "../../task-store.js";
 import { buildReinsSystemPrompt } from "../system-prompt.js";
 import { createPiContext } from "./factory.js";

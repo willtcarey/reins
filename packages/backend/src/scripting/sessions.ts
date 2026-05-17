@@ -6,8 +6,8 @@ import { Type } from "@sinclair/typebox";
 import {
   getSession,
   listSessions,
-  listSessionEntries,
 } from "../session-store.js";
+import { listSessionEntries } from "../messages-store.js";
 import { Sessions } from "../models/sessions.js";
 import { ThinkingLevelSchema } from "../models/model-settings.js";
 import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";

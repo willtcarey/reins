@@ -9,10 +9,10 @@
 import {
   getSession,
   listSessions,
-  loadMessages,
   updateSessionMeta,
   type SessionRow,
 } from "../session-store.js";
+import { loadMessages } from "../messages-store.js";
 import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";

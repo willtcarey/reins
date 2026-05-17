@@ -7,11 +7,8 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "../project-store.js";
-import {
-  createSession,
-  persistMessages,
-  loadMessages,
-} from "../session-store.js";
+import { createSession } from "../session-store.js";
+import { loadMessages, persistMessages } from "../messages-store.js";
 import { filterErrorMessages } from "../runtimes/pi/session.js";
 
 let projectId: number;

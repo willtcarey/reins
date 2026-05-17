@@ -5,7 +5,8 @@ import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
-import { createSession, persistMessages } from "../../session-store.js";
+import { createSession } from "../../session-store.js";
+import { persistMessages } from "../../messages-store.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 
 describe("session routes (top-level)", () => {

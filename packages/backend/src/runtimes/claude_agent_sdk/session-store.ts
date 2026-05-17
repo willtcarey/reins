@@ -1,7 +1,7 @@
 import type { SessionStore, SessionKey, SessionStoreEntry } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentRuntimeMessage, RuntimeContentBlock } from "../registry.js";
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
-import { loadMessagesForLLM, appendMessages } from "../../session-store.js";
+import { loadMessagesForLLM, appendMessages } from "../../messages-store.js";
 import { toSDKToolName, toSDKToolArgs, toSDKStopReason } from "./mappings.js";
 import { transformClaudeSessionMessages } from "./events.js";
 

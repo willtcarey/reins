@@ -12,7 +12,8 @@ import {
   touchTask,
   getTaskSessionIds,
 } from "../task-store.js";
-import { createSession, persistMessages } from "../session-store.js";
+import { createSession, getSession } from "../session-store.js";
+import { loadMessages, persistMessages } from "../messages-store.js";
 
 let projectId: number;
 
@@ -138,7 +139,6 @@ describe("task-store", () => {
       deleteTask(t.id);
 
       // Session and messages should be gone
-      const { getSession, loadMessages } = require("../session-store.js");
       expect(getSession("sess-1")).toBeNull();
       expect(loadMessages("sess-1")).toEqual([]);
     });

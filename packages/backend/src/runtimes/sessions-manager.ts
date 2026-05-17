@@ -3,8 +3,8 @@ import {
   createSession as dbCreateSession,
   deleteSession as dbDeleteSession,
   getSession as dbGetSession,
-  loadMessages as dbLoadMessages,
 } from "../session-store.js";
+import { loadMessages as dbLoadMessages } from "../messages-store.js";
 import { getProject } from "../project-store.js";
 import { touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";

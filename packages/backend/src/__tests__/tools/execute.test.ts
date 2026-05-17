@@ -3,10 +3,8 @@ import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo, createTestRepo } from "../helpers/test-repo.js";
 import { createProject, type Project } from "../../project-store.js";
 import { createTask, getTask } from "../../task-store.js";
-import {
-  createSession as storeCreateSession,
-  persistMessages,
-} from "../../session-store.js";
+import { createSession as storeCreateSession } from "../../session-store.js";
+import { persistMessages } from "../../messages-store.js";
 import { getDb } from "../../db.js";
 import { createExecuteTool } from "../../tools/execute.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";

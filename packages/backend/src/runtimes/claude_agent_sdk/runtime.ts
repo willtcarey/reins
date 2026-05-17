@@ -14,7 +14,7 @@ import type {
 import { ClaudeStreamProcessor } from "./stream-processor.js";
 import { createClaudeCustomToolsServer } from "./tools.js";
 import { createSessionStore } from "./session-store.js";
-import { loadMessagesForLLM } from "../../session-store.js";
+import { loadMessagesForLLM } from "../../messages-store.js";
 import { resolveClaudeBinary } from "./resolve-binary.js";
 
 const BUILTIN_TOOLS = ["Read", "Write", "Edit", "Bash"] as const;

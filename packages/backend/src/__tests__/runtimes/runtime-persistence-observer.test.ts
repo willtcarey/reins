@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createProject } from "../../project-store.js";
-import { createSession, loadMessages } from "../../session-store.js";
+import { createSession } from "../../session-store.js";
+import { loadMessages } from "../../messages-store.js";
 import { attachRuntimePersistenceObserver } from "../../runtimes/runtime-persistence-observer.js";
 import type { AgentRuntime, AgentRuntimeEvent } from "../../runtimes/registry.js";
 import { useTestDb } from "../helpers/test-db.js";

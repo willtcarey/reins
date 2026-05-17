@@ -1,6 +1,7 @@
 import { describe, test, expect, mock } from "bun:test";
 import { createProject } from "../../project-store.js";
-import { createSession, getSession, loadMessages, persistMessages } from "../../session-store.js";
+import { createSession, getSession } from "../../session-store.js";
+import { loadMessages, persistMessages } from "../../messages-store.js";
 import { createTask } from "../../task-store.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";

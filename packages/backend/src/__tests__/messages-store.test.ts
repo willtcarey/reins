@@ -1,0 +1,500 @@
+import { describe, test, expect, beforeEach } from "bun:test";
+import { useTestDb } from "./helpers/test-db.js";
+import { createProject } from "../project-store.js";
+import { createSession } from "../session-store.js";
+import {
+  loadMessages,
+  loadMessagesForLLM,
+  listSessionEntries,
+  persistMessages,
+} from "../messages-store.js";
+
+let projectId: number;
+
+describe("messages-store", () => {
+  useTestDb();
+
+  beforeEach(() => {
+    const project = createProject("Test Project", "/tmp/test-project");
+    projectId = project.id;
+  });
+
+  describe("persistMessages", () => {
+    test("inserts messages with correct seq ordering", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+      const msgs = [
+        { role: "user", content: [{ type: "text", text: "Hello" }] },
+        { role: "assistant", content: [{ type: "text", text: "Hi" }] },
+      ];
+      persistMessages("sess-1", msgs);
+
+      const loaded = loadMessages("sess-1");
+      expect(loaded).toHaveLength(2);
+      expect(loaded[0].role).toBe("user");
+      expect(loaded[1].role).toBe("assistant");
+    });
+
+    test("is idempotent — re-calling with same messages inserts nothing new", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+      const msgs = [
+        { role: "user", content: [{ type: "text", text: "Hello" }] },
+      ];
+      persistMessages("sess-1", msgs);
+      persistMessages("sess-1", msgs);
+
+      const loaded = loadMessages("sess-1");
+      expect(loaded).toHaveLength(1);
+    });
+
+    test("appends only new messages on subsequent calls", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+      const batch1 = [
+        { role: "user", content: [{ type: "text", text: "Hello" }] },
+      ];
+      persistMessages("sess-1", batch1);
+
+      const batch2 = [
+        ...batch1,
+        { role: "assistant", content: [{ type: "text", text: "Hi" }] },
+      ];
+      persistMessages("sess-1", batch2);
+
+      const loaded = loadMessages("sess-1");
+      expect(loaded).toHaveLength(2);
+    });
+  });
+
+  describe("loadMessages", () => {
+    test("returns empty array for session with no messages", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+      expect(loadMessages("sess-1")).toEqual([]);
+    });
+
+    test("returns messages ordered by seq", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-1", [
+        { role: "user", content: "first" },
+        { role: "assistant", content: "second" },
+        { role: "user", content: "third" },
+      ]);
+
+      const msgs = loadMessages("sess-1");
+      expect(msgs).toHaveLength(3);
+      expect(msgs[0].content).toBe("first");
+      expect(msgs[1].content).toBe("second");
+      expect(msgs[2].content).toBe("third");
+    });
+
+    test("includes compaction markers", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-1", [
+        { role: "user", content: "before compaction" },
+        { role: "assistant", content: "reply" },
+      ]);
+
+      // Pi compacts and replaces in-memory array
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "discussed things" },
+        { role: "user", content: "after compaction" },
+      ]);
+
+      const msgs = loadMessages("sess-1");
+      const roles = msgs.map((m: any) => m.role);
+      expect(roles).toContain("compactionSummary");
+    });
+  });
+
+  describe("listSessionEntries", () => {
+    test("filters persisted message entries and returns latest limited entries chronologically", () => {
+      createSession("sess-query", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-query", [
+        { role: "user", content: "first prompt" },
+        { role: "assistant", content: [{ type: "text", text: "second response" }] },
+        { role: "user", content: [{ type: "thinking", thinking: "third thought" }] },
+      ]);
+
+      const latest = listSessionEntries("sess-query", { types: ["user", "assistant"], limit: 2 });
+
+      expect(latest.map((m) => ({ seq: m.seq, type: m.type }))).toEqual([
+        { seq: 1, type: "assistant" },
+        { seq: 2, type: "user" },
+      ]);
+      expect(latest[0]).toMatchObject({ content: [{ type: "text", text: "second response" }] });
+      expect(latest[1]).toMatchObject({ content: [{ type: "thinking", thinking: "third thought" }] });
+
+      const searched = listSessionEntries("sess-query", { types: ["user"], search: "third" });
+      expect(searched.map((m) => m.seq)).toEqual([2]);
+    });
+
+    test("extracts compact tool call and result entries directly from persisted messages", () => {
+      createSession("sess-trace", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-trace", [
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "tc-read", name: "read", arguments: { path: "src/a.ts" } }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tc-read",
+          toolName: "read",
+          isError: false,
+          content: "file contents",
+        },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "I'll run a command" },
+            { type: "toolCall", id: "tc-bash", name: "bash", arguments: { command: "exit 1" } },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tc-bash",
+          isError: true,
+          content: [{ type: "text", text: "long failure output" }],
+        },
+      ]);
+
+      expect(listSessionEntries("sess-trace", { types: ["toolCall", "toolResult"], toolName: "bash", includeContent: true })).toEqual([
+        {
+          sessionId: "sess-trace",
+          seq: 2,
+          created_at: expect.any(String),
+          type: "toolCall",
+          id: "tc-bash",
+          name: "bash",
+          arguments: { command: "exit 1" },
+        },
+        {
+          sessionId: "sess-trace",
+          seq: 3,
+          created_at: expect.any(String),
+          type: "toolResult",
+          role: "toolResult",
+          toolCallId: "tc-bash",
+          toolName: "bash",
+          isError: true,
+          contentPreview: "long failure output",
+          content: [{ type: "text", text: "long failure output" }],
+        },
+      ]);
+
+      expect(listSessionEntries("sess-trace", { isError: true }).map((item) => item.seq)).toEqual([3]);
+    });
+
+    test("can return a combined session timeline with derived tool calls", () => {
+      createSession("sess-entries", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-entries", [
+        { role: "user", content: "read the file" },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "I'll inspect it" },
+            { type: "toolCall", id: "tc-read", name: "read", arguments: { path: "README.md" } },
+          ],
+        },
+        { role: "toolResult", toolCallId: "tc-read", toolName: "read", isError: false, content: "contents" },
+      ]);
+
+      const entries = listSessionEntries("sess-entries", { types: ["user", "assistant", "toolCall"] });
+
+      expect(entries.map((entry) => ({ seq: entry.seq, type: entry.type }))).toEqual([
+        { seq: 0, type: "user" },
+        { seq: 1, type: "assistant" },
+        { seq: 1, type: "toolCall" },
+      ]);
+    });
+
+    test("uses latest-window defaults but honors explicit ascending order for entry limits", () => {
+      createSession("sess-trace-order", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-trace-order", [
+        { role: "assistant", content: [{ type: "toolCall", id: "tc-1", name: "read", arguments: { path: "one" } }] },
+        { role: "assistant", content: [{ type: "toolCall", id: "tc-2", name: "read", arguments: { path: "two" } }] },
+        { role: "assistant", content: [{ type: "toolCall", id: "tc-3", name: "read", arguments: { path: "three" } }] },
+      ]);
+
+      expect(listSessionEntries("sess-trace-order", { types: ["toolCall"], limit: 2 }).map((item) => item.seq)).toEqual([1, 2]);
+      expect(listSessionEntries("sess-trace-order", { types: ["toolCall"], order: "asc", limit: 2 }).map((item) => item.seq)).toEqual([0, 1]);
+      expect(listSessionEntries("sess-trace-order", { types: ["toolCall"], order: "desc", limit: 2 }).map((item) => item.seq)).toEqual([2, 1]);
+    });
+  });
+
+  describe("loadMessagesForLLM", () => {
+    test("returns all messages when no compaction has occurred", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-1", [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "hi" },
+      ]);
+
+      const msgs = loadMessagesForLLM("sess-1");
+      expect(msgs).toHaveLength(2);
+    });
+
+    test("returns compactionSummary and post-compaction messages", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-1", [
+        { role: "user", content: "old message" },
+        { role: "assistant", content: "old reply" },
+      ]);
+
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "summary of old" },
+        { role: "user", content: "new message" },
+        { role: "assistant", content: "new reply" },
+      ]);
+
+      const msgs = loadMessagesForLLM("sess-1");
+      expect(msgs).toHaveLength(3);
+      expect(msgs[0].role).toBe("compactionSummary");
+      expect(msgs[0].summary).toBe("summary of old");
+      expect(msgs[1].content).toBe("new message");
+      expect(msgs[2].content).toBe("new reply");
+    });
+
+    test("excludes pre-compaction messages from LLM context", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-1", [
+        { role: "user", content: "old" },
+        { role: "assistant", content: "old reply" },
+      ]);
+
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "summary" },
+        { role: "user", content: "new" },
+      ]);
+
+      const msgs = loadMessagesForLLM("sess-1");
+      const contents = msgs.map((m: any) => m.content || m.summary);
+      expect(contents).not.toContain("old");
+      expect(contents).not.toContain("old reply");
+    });
+  });
+
+  describe("compaction", () => {
+    test("persistMessages detects compactionSummary and creates boundary", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-1", [
+        { role: "user", content: "old" },
+        { role: "assistant", content: "old reply" },
+      ]);
+
+      // Pi compacts — in-memory array now starts with compactionSummary
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "discussed old topics" },
+        { role: "user", content: "new question" },
+      ]);
+
+      const all = loadMessages("sess-1");
+      // old(2) + compactionSummary(1) + new(1) = 4
+      expect(all).toHaveLength(4);
+      expect(all[2].role).toBe("compactionSummary");
+      expect(all[3].content).toBe("new question");
+    });
+
+    test("preserves summary text from compactionSummary message", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-1", [
+        { role: "user", content: "old" },
+        { role: "assistant", content: "old reply" },
+      ]);
+
+      const summary = "## Goal\nBuild a widget\n\n## Progress\n- [x] Created skeleton";
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary },
+        { role: "user", content: "new" },
+      ]);
+
+      const all = loadMessages("sess-1");
+      const marker = all.find((m: any) => m.role === "compactionSummary");
+      expect(marker).toBeDefined();
+      expect(marker.summary).toBe(summary);
+    });
+
+    test("prunes tool result content from pre-compaction messages", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-1", [
+        { role: "user", content: "question" },
+        { role: "toolResult", content: [{ type: "text", text: "big result data" }] },
+        { role: "assistant", content: "answer" },
+      ]);
+
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "summary" },
+        { role: "user", content: "post-compact msg" },
+      ]);
+
+      const all = loadMessages("sess-1");
+      const toolResult = all.find((m: any) => m.role === "toolResult");
+      expect(toolResult).toBeDefined();
+      expect(toolResult.content).toEqual([{ type: "text", text: "[pruned]" }]);
+    });
+
+    test("new messages persist correctly after compaction", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-1", [
+        { role: "user", content: "msg 1" },
+        { role: "assistant", content: "reply 1" },
+        { role: "user", content: "msg 2" },
+        { role: "assistant", content: "reply 2" },
+      ]);
+
+      // Compaction replaces pi's in-memory array
+      const postCompaction = [
+        { role: "compactionSummary", summary: "compacted context" },
+        { role: "user", content: "kept question" },
+        { role: "assistant", content: "kept reply" },
+      ];
+      persistMessages("sess-1", postCompaction);
+
+      // User continues — pi's array grows
+      persistMessages("sess-1", [
+        ...postCompaction,
+        { role: "user", content: "new question" },
+        { role: "assistant", content: "new answer" },
+      ]);
+
+      const llmMsgs = loadMessagesForLLM("sess-1");
+      expect(llmMsgs.map((m: any) => m.content)).toContain("new question");
+      expect(llmMsgs.map((m: any) => m.content)).toContain("new answer");
+
+      const allMsgs = loadMessages("sess-1");
+      const allContents = allMsgs.map((m: any) => m.content || m.summary);
+      expect(allContents).toContain("new question");
+      expect(allContents).toContain("new answer");
+    });
+
+    test("handles multiple compactions", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-1", [
+        { role: "user", content: "batch 1" },
+        { role: "assistant", content: "reply 1" },
+      ]);
+
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "summary of batch 1" },
+        { role: "user", content: "batch 2" },
+        { role: "assistant", content: "reply 2" },
+      ]);
+
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "summary of batches 1-2" },
+        { role: "user", content: "batch 3" },
+      ]);
+
+      // loadMessagesForLLM returns last compactionSummary + post-compaction messages
+      const llmMsgs = loadMessagesForLLM("sess-1");
+      expect(llmMsgs).toHaveLength(2);
+      expect(llmMsgs[0].role).toBe("compactionSummary");
+      expect(llmMsgs[0].summary).toBe("summary of batches 1-2");
+      expect(llmMsgs[1].content).toBe("batch 3");
+
+      // Full history: pre-compaction + first CS + second CS + new post-compaction
+      // Old post-compaction messages (batch 2, reply 2) are deleted during re-compaction
+      // since they're now subsumed by the new compaction summary.
+      const allMsgs = loadMessages("sess-1");
+      const allRoles = allMsgs.map((m: any) => m.role);
+      expect(allRoles.filter((r: string) => r === "compactionSummary")).toHaveLength(2);
+      const allContents = allMsgs.map((m: any) => m.content || m.summary);
+      expect(allContents).toContain("batch 1");
+      expect(allContents).toContain("summary of batch 1");
+      expect(allContents).toContain("summary of batches 1-2");
+      expect(allContents).toContain("batch 3");
+      // Old post-compaction messages are removed — they're subsumed by the new CS
+      expect(allContents).not.toContain("batch 2");
+      expect(allContents).not.toContain("reply 2");
+    });
+
+    test("re-compaction does not duplicate messages", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+
+      // Initial messages
+      persistMessages("sess-1", [
+        { role: "user", content: "msg 1" },
+        { role: "assistant", content: "reply 1" },
+        { role: "user", content: "msg 2" },
+        { role: "assistant", content: "reply 2" },
+      ]);
+
+      // First compaction — pi's array is now [CS1, msg 2, reply 2]
+      const postCompact1 = [
+        { role: "compactionSummary", summary: "summary v1" },
+        { role: "user", content: "msg 2" },
+        { role: "assistant", content: "reply 2" },
+      ];
+      persistMessages("sess-1", postCompact1);
+
+      // User continues — pi's array grows
+      const continued = [
+        ...postCompact1,
+        { role: "user", content: "msg 3" },
+        { role: "assistant", content: "reply 3" },
+        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "tool output" }] },
+        { role: "assistant", content: "reply 4" },
+      ];
+      persistMessages("sess-1", continued);
+
+      // Re-compaction — pi compacts again, new summary subsumes everything
+      const postCompact2 = [
+        { role: "compactionSummary", summary: "summary v2" },
+        { role: "assistant", content: "reply 4" },
+      ];
+      persistMessages("sess-1", postCompact2);
+
+      // Verify no duplicates: each content value appears at most once
+      const allMsgs = loadMessages("sess-1");
+      const allContents = allMsgs.map((m: any) => m.content || m.summary);
+      const duplicates = allContents.filter((c: string, i: number) => allContents.indexOf(c) !== i);
+      expect(duplicates).toEqual([]);
+
+      // LLM context uses only the latest compaction
+      const llmMsgs = loadMessagesForLLM("sess-1");
+      expect(llmMsgs).toHaveLength(2);
+      expect(llmMsgs[0].role).toBe("compactionSummary");
+      expect(llmMsgs[0].summary).toBe("summary v2");
+      expect(llmMsgs[1].content).toBe("reply 4");
+
+      // Old post-compaction messages were deleted, not duplicated
+      const msgContents = allMsgs.map((m: any) => m.content);
+      expect(msgContents.filter((c: string) => c === "reply 4")).toHaveLength(1);
+    });
+
+    test("re-compaction prunes tool results from all pre-compaction messages", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+
+      // Messages with tool results
+      persistMessages("sess-1", [
+        { role: "user", content: "question" },
+        { role: "toolResult", toolCallId: "tc0", content: [{ type: "text", text: "early tool output" }] },
+        { role: "assistant", content: "answer" },
+      ]);
+
+      // First compaction
+      const postCompact1 = [
+        { role: "compactionSummary", summary: "summary v1" },
+        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "kept tool output" }] },
+        { role: "assistant", content: "reply" },
+      ];
+      persistMessages("sess-1", postCompact1);
+
+      // Re-compaction
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "summary v2" },
+        { role: "assistant", content: "final" },
+      ]);
+
+      const allMsgs = loadMessages("sess-1");
+
+      // All toolResult messages before the latest compaction should be pruned
+      const toolResults = allMsgs.filter((m: any) => m.role === "toolResult");
+      for (const tr of toolResults) {
+        expect(tr.content).toEqual([{ type: "text", text: "[pruned]" }]);
+      }
+
+      // No orphaned tool results in LLM context
+      const llmMsgs = loadMessagesForLLM("sess-1");
+      const llmToolResults = llmMsgs.filter((m: any) => m.role === "toolResult");
+      expect(llmToolResults).toHaveLength(0);
+    });
+  });
+});
