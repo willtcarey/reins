@@ -13,6 +13,7 @@ import type { ManagedSession } from "../state.js";
 import { getSession } from "../session-store.js";
 import { getProject } from "../project-store.js";
 import { ThinkingLevelSchema } from "../models/model-settings.js";
+import { logger } from "../logger.js";
 
 // ---------------------------------------------------------------------------
 // Per-project mutex for delegation
@@ -236,7 +237,7 @@ export function createDelegateTool(
 
             const messageCount = messages.length;
 
-            console.log(`  Delegate sub-session ${subSessionId} completed (${messageCount} messages)`);
+            logger.info(`  Delegate sub-session ${subSessionId} completed (${messageCount} messages)`);
             return {
               content: [{ type: "text" as const, text: summary }],
               details: {

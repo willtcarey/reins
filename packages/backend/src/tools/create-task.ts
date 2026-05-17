@@ -18,6 +18,7 @@ import type { Broadcast } from "../models/broadcast.js";
 import type { CreateSessionFn } from "./delegate.js";
 import { ProjectModel } from "../models/projects.js";
 import type { ManagedSession } from "../state.js";
+import { logger } from "../logger.js";
 
 const parameters = Type.Object({
   title: Type.String({ description: "Concise task title (imperative mood, e.g. \"Add dark mode support\")" }),
@@ -74,11 +75,11 @@ export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition<typeof 
           createSession(projectId, projectModel.projectDir, { taskId: task.id })
             .then((managed) => {
               managed.runtime.prompt(params.prompt!).catch((err: any) => {
-                console.error(`  Failed to prompt task session ${managed.id}:`, err);
+                logger.error(`  Failed to prompt task session ${managed.id}:`, err);
               });
             })
             .catch((err: any) => {
-              console.error(`  Failed to create session for task ${task.id}:`, err);
+              logger.error(`  Failed to create session for task ${task.id}:`, err);
             });
         }
 

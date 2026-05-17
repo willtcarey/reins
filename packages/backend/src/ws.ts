@@ -14,6 +14,7 @@ import { ensureSessionOpen } from "./runtimes/sessions-manager.js";
 import { getSession } from "./session-store.js";
 import { createBroadcastExcluding } from "./models/broadcast.js";
 import { expandPrompt } from "./runtimes/prompt.js";
+import { logger } from "./logger.js";
 
 /** Maps raw WebSocket objects to their WsClient wrappers. */
 const wsClientMap = new WeakMap<WebSocketLike, WsClient>();
@@ -128,7 +129,7 @@ export function handleWsOpen(state: ServerState, ws: WebSocketLike): void {
   const client: WsClient = { ws };
   state.clients.add(client);
   wsClientMap.set(ws, client);
-  console.log(`WebSocket client connected (total: ${state.clients.size})`);
+  logger.info(`WebSocket client connected (total: ${state.clients.size})`);
 }
 
 export function handleWsMessage(state: ServerState, ws: WebSocketLike, message: string | Buffer): void {
@@ -136,7 +137,7 @@ export function handleWsMessage(state: ServerState, ws: WebSocketLike, message: 
   if (!client) return;
   const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
   handleWsCommand(state, client, raw).catch((err) => {
-    console.error("WebSocket command error:", err);
+    logger.error("WebSocket command error:", err);
     sendToWs(ws, { type: "error", error: "Internal server error" });
   });
 }
@@ -146,5 +147,5 @@ export function handleWsClose(state: ServerState, ws: WebSocketLike): void {
   if (client) {
     state.clients.delete(client);
   }
-  console.log(`WebSocket client disconnected (total: ${state.clients.size})`);
+  logger.info(`WebSocket client disconnected (total: ${state.clients.size})`);
 }

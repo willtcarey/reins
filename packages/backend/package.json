@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/index.ts",
-    "test": "bun test",
-    "test:watch": "bun test --watch",
+    "test": "bun test --only-failures",
+    "test:watch": "bun test --only-failures --watch",
     "typecheck": "tsc --noEmit",
     "repro:claude-missing-final-text": "bun scripts/claude-sdk-missing-final-text-smoke.ts",
     "capture:claude-sdk-trace": "bun scripts/capture-claude-sdk-trace.ts"

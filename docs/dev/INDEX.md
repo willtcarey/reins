@@ -5,6 +5,7 @@
 | [hot-reload.md](hot-reload.md) | backend | How backend hot-reload works in dev mode |
 | [backend-architecture.md](backend-architecture.md) | backend | Backend layering: routes, tools, models, stores, utilities |
 | [router.md](router.md) | backend | Router API, adding routes, error handling |
+| [logging.md](logging.md) | backend | Logger levels, test behavior, and runtime verbosity configuration |
 | [frontend-architecture.md](frontend-architecture.md) | frontend | Store layer, WS event flow, component structure, how views consume state |
 | [ui-design.md](ui-design.md) | frontend | CSS architecture, z-index layers, color palette, syntax highlighting, responsive patterns |
 | [macos.md](macos.md) | macos | Native Mac app shell: setup, dev workflow, building |

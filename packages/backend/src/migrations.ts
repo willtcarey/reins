@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { logger } from "./logger.js";
 
 const MIGRATIONS: [name: string, sql: string][] = [
   [
@@ -155,6 +156,6 @@ export function runMigrations(db: Database): void {
     if (applied.has(name)) continue;
     db.exec(sql);
     db.query("INSERT INTO migrations (name) VALUES (?)").run(name);
-    console.log(`  Migration applied: ${name}`);
+    logger.info(`  Migration applied: ${name}`);
   }
 }

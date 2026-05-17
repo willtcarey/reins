@@ -41,6 +41,7 @@ import {
 } from "../registry.js";
 import { PiAgentRuntime } from "./runtime.js";
 import { buildProviderList } from "./models-registry.js";
+import { logger } from "../../logger.js";
 
 export function filterErrorMessages(messages: any[]): any[] {
   return messages.filter((m) => {
@@ -191,18 +192,18 @@ async function createPiSessionRuntime(params: CreateAgentRuntimeParams): Promise
   const agentSession = runtime.session;
 
   if (result.extensionsResult.errors.length > 0) {
-    console.warn("  Pi extension load errors:", result.extensionsResult.errors);
+    logger.warn("  Pi extension load errors:", result.extensionsResult.errors);
   }
 
   if (result.modelFallbackMessage) {
-    console.warn(`  Model fallback: ${result.modelFallbackMessage}`);
+    logger.warn(`  Model fallback: ${result.modelFallbackMessage}`);
   }
 
   if (sessionOpts.configuredThinkingLevel) {
     try {
       agentSession.setThinkingLevel(sessionOpts.configuredThinkingLevel);
     } catch (err) {
-      console.warn(
+      logger.warn(
         `  Failed to apply configured thinking level '${sessionOpts.configuredThinkingLevel}' for session ${sessionId}:`,
         err,
       );
@@ -213,7 +214,7 @@ async function createPiSessionRuntime(params: CreateAgentRuntimeParams): Promise
   if (messages.length > 0) {
     hydrateSessionManager(agentSession.sessionManager, messages);
     agentSession.agent.state.messages = messages;
-    console.log(`  Session hydrated: ${sessionId} (${messages.length} messages for LLM)`);
+    logger.info(`  Session hydrated: ${sessionId} (${messages.length} messages for LLM)`);
   }
 
   return runtime;

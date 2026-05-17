@@ -14,6 +14,7 @@
  */
 
 import type { ServerState } from "./state.js";
+import { logger } from "./logger.js";
 import { HttpError } from "./errors.js";
 
 // ---- Types -----------------------------------------------------------------
@@ -112,7 +113,7 @@ export function createRouter(): RouterGroup & { handle: (req: Request, state: Se
         if (err instanceof HttpError) {
           return Response.json({ error: err.message }, { status: err.status });
         }
-        console.error(`Error in ${req.method} ${url.pathname}:`, err);
+        logger.error(`Error in ${req.method} ${url.pathname}:`, err);
         return Response.json({ error: err.message ?? "Internal server error" }, { status: 500 });
       }
     }

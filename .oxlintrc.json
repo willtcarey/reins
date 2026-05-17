@@ -9,5 +9,22 @@
     "unicorn/prefer-add-event-listener": "off",
     "unicorn/require-post-message-target-origin": "off",
     "typescript/consistent-type-assertions": ["error", { "assertionStyle": "never" }]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["packages/backend/src/**/*.ts"],
+      "rules": {
+        "no-console": "error"
+      }
+    },
+    {
+      "files": [
+        "packages/backend/src/logger.ts",
+        "packages/backend/src/__tests__/**/*.ts"
+      ],
+      "rules": {
+        "no-console": "off"
+      }
+    }
+  ]
 }

@@ -1,4 +1,5 @@
 import { persistMessages, updateSessionMeta } from "../session-store.js";
+import { logger } from "../logger.js";
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeMessage } from "./registry.js";
 
 function shouldPersistForRuntimeEvent(event: AgentRuntimeEvent): boolean {
@@ -95,7 +96,7 @@ export function attachRuntimePersistenceObserver(params: {
 
   return runtime.subscribe((event) => {
     void persistRuntimeStateFromRuntime({ sessionId, runtime, event }).catch((err) => {
-      console.error(`  Failed to persist runtime state for ${sessionId}:`, err);
+      logger.error(`  Failed to persist runtime state for ${sessionId}:`, err);
     });
   });
 }

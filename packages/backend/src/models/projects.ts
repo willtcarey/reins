@@ -36,6 +36,7 @@ import {
 } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
+import { logger } from "../logger.js";
 import { Sessions } from "./sessions.js";
 import { ProjectTasks } from "./tasks.js";
 
@@ -401,7 +402,7 @@ export class ProjectModel {
         }
         await deleteBranch(this.projectDir, task.branch_name);
       } catch (err: any) {
-        console.warn(`  Could not delete branch ${task.branch_name}: ${err.message}`);
+        logger.warn(`  Could not delete branch ${task.branch_name}: ${err.message}`);
       }
     }
   }

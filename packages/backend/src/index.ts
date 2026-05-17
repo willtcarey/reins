@@ -17,15 +17,16 @@ import type { ServerState, ManagedSession, WsClient } from "./state.js";
 // We import the handler types but load via dynamic import so we can reload
 import type * as RoutesModule from "./handler.js";
 import type * as WsModule from "./ws.js";
+import { logger } from "./logger.js";
 
 const PORT = parseInt(process.env.REINS_PORT || "3100", 10);
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const EVICTION_CHECK_INTERVAL_MS = 60 * 1000;
 const IS_DEV = process.env.REINS_DEV === "1";
 
-console.log(`REINS backend starting...`);
-console.log(`  Port: ${PORT}`);
-if (IS_DEV) console.log(`  Hot reload: enabled`);
+logger.info(`REINS backend starting...`);
+logger.info(`  Port: ${PORT}`);
+if (IS_DEV) logger.info(`  Hot reload: enabled`);
 
 // ---------------------------------------------------------------------------
 // 1. Long-lived state (survives hot reloads)
@@ -45,10 +46,10 @@ setInterval(() => {
     if (managed.runtime.isStreaming()) continue;
     if (now - managed.lastActivity > IDLE_TIMEOUT_MS) {
       managed.runtime.close().catch((err) => {
-        console.warn(`  Failed to close runtime for ${id}:`, err);
+        logger.warn(`  Failed to close runtime for ${id}:`, err);
       });
       state.sessions.delete(id);
-      console.log(`  Session evicted (idle): ${id} (remaining: ${state.sessions.size})`);
+      logger.info(`  Session evicted (idle): ${id} (remaining: ${state.sessions.size})`);
     }
   }
 }, EVICTION_CHECK_INTERVAL_MS);
@@ -128,9 +129,9 @@ if (IS_DEV) {
       try {
         await loadHandlers();
         installRoutes();
-        console.log(`\x1b[36m[hot reload]\x1b[0m ${filename} reloaded`);
+        logger.info(`\x1b[36m[hot reload]\x1b[0m ${filename} reloaded`);
       } catch (err) {
-        console.error(`\x1b[31m[hot reload]\x1b[0m Failed to reload:`, err);
+        logger.error(`\x1b[31m[hot reload]\x1b[0m Failed to reload:`, err);
       }
     }, 100);
   });
@@ -169,10 +170,10 @@ async function startServer(): Promise<void> {
     },
   });
 
-  console.log(`REINS backend listening on http://localhost:${PORT}`);
+  logger.info(`REINS backend listening on http://localhost:${PORT}`);
 }
 
 startServer().catch((err) => {
-  console.error("Fatal: failed to start REINS backend:", err);
+  logger.error("Fatal: failed to start REINS backend:", err);
   process.exit(1);
 });

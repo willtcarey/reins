@@ -1,0 +1,3 @@
+[test]
+# Keep routine test runs focused on failures and the final summary.
+onlyFailures = true

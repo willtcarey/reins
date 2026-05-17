@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { getProject } from "../project-store.js";
 import { getSession } from "../session-store.js";
+import { logger } from "../logger.js";
 import { ReinsResourceLoader, type Skill } from "./resource-loader.js";
 
 export interface InjectedSkill {
@@ -93,7 +94,7 @@ export function expandPromptWithSkills(
       body = readSkillBody(skill);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      console.warn(`[prompt] Failed to read skill "${skill.name}" at ${skill.filePath}: ${detail}`);
+      logger.warn(`[prompt] Failed to read skill "${skill.name}" at ${skill.filePath}: ${detail}`);
       continue;
     }
 

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { setupTestDb, teardownTestDb } from "./test-db.js";
 
-function captureMigrationLogs(fn: () => void): string[] {
+function captureConsoleLogs(fn: () => void): string[] {
   const originalLog = console.log;
   const logs: string[] = [];
 
@@ -15,7 +15,7 @@ function captureMigrationLogs(fn: () => void): string[] {
     console.log = originalLog;
   }
 
-  return logs.filter((line) => line.includes("Migration applied:"));
+  return logs;
 }
 
 function setupAndTeardownTestDb(): void {
@@ -23,10 +23,8 @@ function setupAndTeardownTestDb(): void {
   teardownTestDb();
 }
 
-test("setupTestDb reuses the migrated template after first setup", () => {
-  captureMigrationLogs(setupAndTeardownTestDb);
+test("setupTestDb does not print migration logs during routine test setup", () => {
+  const logs = captureConsoleLogs(setupAndTeardownTestDb);
 
-  const secondSetupMigrationLogs = captureMigrationLogs(setupAndTeardownTestDb);
-
-  expect(secondSetupMigrationLogs).toEqual([]);
+  expect(logs).toEqual([]);
 });
