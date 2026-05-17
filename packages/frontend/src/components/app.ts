@@ -289,7 +289,7 @@ export class AppShell extends LitElement {
           ${hasProject ? html`
             <div class="flex-1 flex flex-col min-w-0">
               <!-- Tab bar -->
-              <div class="h-[50px] flex items-center gap-2 border-b border-zinc-800/80 bg-zinc-900/80 px-2 py-1.5 overflow-x-auto shrink-0">
+              <div class="h-[50px] flex items-center gap-1.5 border-b border-zinc-800/80 bg-zinc-900/80 px-2 py-1.5 overflow-hidden shrink-0">
                 <!-- Hamburger menu (mobile only) -->
                 <button
                   class="p-2 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 cursor-pointer md:hidden shrink-0 transition-colors"
@@ -301,9 +301,6 @@ export class AppShell extends LitElement {
                 <!-- File browser button -->
                 <nav-icon icon="folder" label="Browse files" .size=${18}
                   @click=${() => this._fileBrowser?.open()}></nav-icon>
-                <branch-indicator
-                  .currentBranch=${store.diffStore.branch ?? store.diffStore.fileData.branch}
-                ></branch-indicator>
                 <div class="relative grid grid-cols-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-1 shrink-0 overflow-hidden">
                   <span
                     class="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-md bg-blue-500/20 shadow-sm transition-transform duration-200 ease-out will-change-transform ${this.activeTab === "changes" ? "translate-x-full" : "translate-x-0"}"
@@ -311,19 +308,26 @@ export class AppShell extends LitElement {
                   ></span>
                   <button
                     class="relative z-10 px-3 py-1 rounded-md text-sm font-semibold transition-colors duration-200 cursor-pointer shrink-0 ${this.activeTab === "chat" ? "text-blue-100" : "text-zinc-500 hover:text-zinc-300"}"
+                    aria-pressed=${this.activeTab === "chat"}
                     @click=${() => this.activeTab = "chat"}
                   >
                     Chat
                   </button>
                   <button
                     class="relative z-10 px-3 py-1 rounded-md text-sm font-semibold transition-colors duration-200 cursor-pointer shrink-0 ${this.activeTab === "changes" ? "text-blue-100" : "text-zinc-500 hover:text-zinc-300"}"
+                    aria-pressed=${this.activeTab === "changes"}
                     @click=${() => this.activeTab = "changes"}
                   >
                     Changes
                   </button>
                 </div>
-                <div class="flex-1"></div>
-                <div class="flex items-center gap-2 pr-2 shrink-0">
+                <div class="min-w-0 flex-1 overflow-hidden flex justify-end">
+                  <branch-indicator
+                    class="block min-w-0 max-w-full"
+                    .currentBranch=${store.diffStore.branch ?? store.diffStore.fileData.branch}
+                  ></branch-indicator>
+                </div>
+                <div class="flex items-center gap-1 pr-1 shrink-0">
                   ${this.isStandalone ? html`
                     <button
                       class="p-1.5 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/70 transition-colors cursor-pointer"
