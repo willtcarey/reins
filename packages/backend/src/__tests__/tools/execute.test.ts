@@ -236,21 +236,6 @@ describe("createExecuteTool", () => {
       expect(parsed.map((s: any) => s.id).toSorted()).toEqual(["sess-1", "sess-2", "task-sess"]);
     });
 
-    test("sessions.listForTask() returns task sessions", async () => {
-      const task = createTask(project.id, "T", "d", "task/t", null);
-      storeCreateSession("tsess-1", project.id, { agentRuntimeType: "pi", taskId: task.id });
-      storeCreateSession("tsess-2", project.id, { agentRuntimeType: "pi", taskId: task.id });
-
-      const tool = makeTool();
-      const result = await tool.execute("c10", {
-        code: `return api.sessions.listForTask(${task.id})`,
-      }, undefined, undefined, strictCtx);
-
-      const parsed = JSON.parse(textOf(result));
-      expect(parsed).toBeArray();
-      expect(parsed.length).toBe(2);
-    });
-
     test("sessions.current() returns the current session", async () => {
       storeCreateSession("current-sess", project.id, { agentRuntimeType: "pi" });
       const tool = makeTool("current-sess");
@@ -315,16 +300,21 @@ describe("createExecuteTool", () => {
       const result = await tool.execute("c-cross-project-session-reads", {
         code: `return {
           session: api.sessions.get("other-read"),
-          messages: api.sessions.entries("other-read", { types: ["user", "assistant", "toolResult"], limit: 1 }),
-          trace: api.sessions.entries("other-read", { types: ["toolCall", "toolResult"] }),
+          messages: api.sessions.entries("other-read", { types: ["user", "assistant"], limit: 1 }),
+          trace: api.sessions.entries("other-read", { types: ["toolCall"] }),
         }`,
       }, undefined, undefined, strictCtx);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.session.project_id).toBe(otherProject.id);
-      expect(parsed.messages[0].role).toBe("toolResult");
-      expect(parsed.trace[0]).toMatchObject({ type: "toolCall", id: "tc-other", name: "read" });
-      expect(parsed.trace[1]).toMatchObject({ role: "toolResult", toolCallId: "tc-other", toolName: "read" });
+      expect(parsed.messages[0].role).toBe("assistant");
+      expect(parsed.trace).toHaveLength(1);
+      expect(parsed.trace[0]).toMatchObject({
+        type: "toolCall",
+        id: "tc-other",
+        name: "read",
+        result: { isError: false, contentPreview: "other project file" },
+      });
     });
 
     test("sessions.list(options) filters by search, minMessages, since, and limit", async () => {
@@ -495,32 +485,29 @@ describe("createExecuteTool", () => {
 
       const tool = makeTool();
       const traceResult = await tool.execute("c-tool-trace", {
-        code: `return api.sessions.entries("sess-tools", { types: ["toolCall", "toolResult"], toolName: "bash" })`,
+        code: `return api.sessions.entries("sess-tools", { types: ["toolCall"], toolName: "bash" })`,
       }, undefined, undefined, strictCtx);
       const errorResult = await tool.execute("c-tool-error-trace", {
         code: `return api.sessions.entries("sess-tools", { isError: true })`,
       }, undefined, undefined, strictCtx);
 
       const trace = JSON.parse(textOf(traceResult));
-      expect(trace).toHaveLength(2);
+      expect(trace).toHaveLength(1);
       expect(trace[0]).toMatchObject({
         type: "toolCall",
         id: "tc-bash",
         name: "bash",
         arguments: { command: "exit 1" },
+        result: {
+          isError: true,
+          contentPreview: "a very long failure output",
+        },
       });
-      expect(trace[1]).toMatchObject({
-        role: "toolResult",
-        toolCallId: "tc-bash",
-        toolName: "bash",
-        isError: true,
-        contentPreview: "a very long failure output",
-      });
-      expect(trace[1].content).toBeUndefined();
+      expect(trace[0].result.content).toBeUndefined();
 
       const errors = JSON.parse(textOf(errorResult));
       expect(errors).toHaveLength(1);
-      expect(errors[0]).toMatchObject({ role: "toolResult", toolCallId: "tc-bash", toolName: "bash", isError: true });
+      expect(errors[0]).toMatchObject({ type: "toolCall", id: "tc-bash", name: "bash", result: { isError: true } });
     });
   });
 

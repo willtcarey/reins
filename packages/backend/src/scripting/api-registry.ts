@@ -33,7 +33,7 @@ import {
   SessionEntrySchema,
   MessageEntrySchema,
   ToolCallEntrySchema,
-  ToolResultEntrySchema,
+  ToolCallResultSchema,
 } from "./sessions.js";
 import { PROJECT_FUNCTIONS, ProjectSchema } from "./projects.js";
 import { UI_FUNCTIONS } from "./ui.js";
@@ -72,7 +72,7 @@ export const DOMAIN_TYPES: NamedType[] = [
   { name: "SessionEntry", schema: SessionEntrySchema },
   { name: "MessageEntry", schema: MessageEntrySchema },
   { name: "ToolCallEntry", schema: ToolCallEntrySchema },
-  { name: "ToolResultEntry", schema: ToolResultEntrySchema },
+  { name: "ToolCallResult", schema: ToolCallResultSchema },
   { name: "Project", schema: ProjectSchema },
   { name: "ProviderInfo", schema: ProviderInfoSchema },
   { name: "ModelInfo", schema: ModelInfoSchema },

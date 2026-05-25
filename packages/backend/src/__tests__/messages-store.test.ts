@@ -126,7 +126,7 @@ describe("messages-store", () => {
       expect(searched.map((m) => m.seq)).toEqual([2]);
     });
 
-    test("extracts compact tool call and result entries directly from persisted messages", () => {
+    test("extracts compact tool call entries with joined results", () => {
       createSession("sess-trace", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-trace", [
         {
@@ -155,31 +155,26 @@ describe("messages-store", () => {
         },
       ]);
 
-      expect(listSessionEntries("sess-trace", { types: ["toolCall", "toolResult"], toolName: "bash", includeContent: true })).toEqual([
-        {
-          sessionId: "sess-trace",
-          seq: 2,
-          created_at: expect.any(String),
-          type: "toolCall",
-          id: "tc-bash",
-          name: "bash",
-          arguments: { command: "exit 1" },
-        },
-        {
-          sessionId: "sess-trace",
+      const bashCall = {
+        sessionId: "sess-trace",
+        seq: 2,
+        created_at: expect.any(String),
+        type: "toolCall" as const,
+        id: "tc-bash",
+        name: "bash",
+        arguments: { command: "exit 1" },
+        result: {
           seq: 3,
           created_at: expect.any(String),
-          type: "toolResult",
-          role: "toolResult",
-          toolCallId: "tc-bash",
-          toolName: "bash",
           isError: true,
           contentPreview: "long failure output",
           content: [{ type: "text", text: "long failure output" }],
         },
-      ]);
+      };
 
-      expect(listSessionEntries("sess-trace", { isError: true }).map((item) => item.seq)).toEqual([3]);
+      expect(listSessionEntries("sess-trace", { types: ["toolCall"], toolName: "bash", includeContent: true })).toEqual([bashCall]);
+      expect(listSessionEntries("sess-trace", { types: ["toolCall"], search: "long failure", includeContent: true })).toEqual([bashCall]);
+      expect(listSessionEntries("sess-trace", { isError: true }).map((item) => item.seq)).toEqual([2]);
     });
 
     test("can return a combined session timeline with derived tool calls", () => {
@@ -196,7 +191,7 @@ describe("messages-store", () => {
         { role: "toolResult", toolCallId: "tc-read", toolName: "read", isError: false, content: "contents" },
       ]);
 
-      const entries = listSessionEntries("sess-entries", { types: ["user", "assistant", "toolCall"] });
+      const entries = listSessionEntries("sess-entries");
 
       expect(entries.map((entry) => ({ seq: entry.seq, type: entry.type }))).toEqual([
         { seq: 0, type: "user" },

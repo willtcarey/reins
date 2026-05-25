@@ -5,6 +5,7 @@ import {
   formatFunctionSignature,
   formatApiInterfaces,
   formatTypeDeclaration,
+  type SchemaNameMap,
 } from "../../scripting/api-schema-formatter.js";
 
 describe("formatSchema", () => {
@@ -214,5 +215,19 @@ describe("formatTypeDeclaration", () => {
   test("renders non-object schemas as type aliases", () => {
     const result = formatTypeDeclaration(Type.Array(Type.String()), "Names");
     expect(result).toBe("type Names = string[];");
+  });
+
+  test("does not render named union declarations as self aliases", () => {
+    const CatSchema = Type.Object({ meows: Type.Boolean() });
+    const DogSchema = Type.Object({ barks: Type.Boolean() });
+    const PetSchema = Type.Union([CatSchema, DogSchema]);
+    const names: SchemaNameMap = new Map();
+    names.set(CatSchema, "Cat");
+    names.set(DogSchema, "Dog");
+    names.set(PetSchema, "Pet");
+
+    const result = formatTypeDeclaration(PetSchema, "Pet", names);
+
+    expect(result).toBe("type Pet = Cat | Dog;");
   });
 });

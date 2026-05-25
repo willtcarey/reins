@@ -172,8 +172,12 @@ describe("createSearchTool", () => {
     expect(text).toContain('type: "user" | "assistant" | "compactionSummary";');
     expect(text).toContain("interface ToolCallEntry {");
     expect(text).toContain('type: "toolCall";');
-    expect(text).toContain("interface ToolResultEntry {");
-    expect(text).toContain('role: "toolResult";');
+    expect(text).toContain("result: ToolCallResult | null;");
+    expect(text).toContain("interface ToolCallResult {");
+    expect(text).toContain("contentPreview: string;");
+    expect(text).not.toContain("interface ToolResultEntry {");
+    expect(text).toContain("type SessionEntry = MessageEntry | ToolCallEntry;");
+    expect(text).not.toContain("type SessionEntry = SessionEntry;");
     expectGeneratedTypeScriptToBeValid(text);
   });
 

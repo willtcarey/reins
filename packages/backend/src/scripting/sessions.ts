@@ -63,7 +63,6 @@ const SessionListOptionsSchema = Type.Object({
 const EntryTypeSchema = Type.Union([
   Type.Literal("user"),
   Type.Literal("assistant"),
-  Type.Literal("toolResult"),
   Type.Literal("compactionSummary"),
   Type.Literal("toolCall"),
 ]);
@@ -91,14 +90,9 @@ export const MessageEntrySchema = Type.Object({
   summary: Type.Optional(Type.String()),
 });
 
-export const ToolResultEntrySchema = Type.Object({
-  sessionId: Type.String(),
+export const ToolCallResultSchema = Type.Object({
   seq: Type.Number(),
   created_at: Type.String(),
-  type: Type.Literal("toolResult"),
-  role: Type.Literal("toolResult"),
-  toolCallId: Type.String(),
-  toolName: Type.String(),
   isError: Type.Boolean(),
   contentPreview: Type.String(),
   content: Type.Optional(Type.Unknown()),
@@ -112,9 +106,10 @@ export const ToolCallEntrySchema = Type.Object({
   id: Type.String(),
   name: Type.String(),
   arguments: Type.Unknown(),
+  result: Type.Union([ToolCallResultSchema, Type.Null()]),
 });
 
-export const SessionEntrySchema = Type.Union([MessageEntrySchema, ToolCallEntrySchema, ToolResultEntrySchema]);
+export const SessionEntrySchema = Type.Union([MessageEntrySchema, ToolCallEntrySchema]);
 
 // ---------------------------------------------------------------------------
 // Function definitions
@@ -148,15 +143,6 @@ const sessionsListFunction = defineFunction({
   },
 });
 
-const sessionsListForTaskFunction = defineFunction({
-  name: "sessions.listForTask",
-  description: "List sessions belonging to a specific task.",
-  parameters: Type.Object({ taskId: Type.Number() }),
-  returns: Type.Array(SessionSchema),
-  tags: ["sessions", "list", "query", "read", "task"],
-  execute: (params, _ctx) => listSessions({ taskId: params.taskId }),
-});
-
 const sessionsCurrentFunction = defineFunction({
   name: "sessions.current",
   description: "Get the current session (the one running this script). No ID needed.",
@@ -182,9 +168,9 @@ const sessionsGetFunction = defineFunction({
 const sessionsEntriesFunction = defineFunction({
   name: "sessions.entries",
   description:
-    "List session timeline entries. Entries can include persisted user/assistant/toolResult/compactionSummary " +
-    "messages and derived toolCall entries. Pass options.types to narrow returned entry types; tool results " +
-    "include contentPreview by default and raw content only when includeContent is true.",
+    "List session timeline entries. Entries can include persisted user/assistant/compactionSummary " +
+    "messages and derived toolCall entries. Pass options.types to narrow returned entry types; tool calls " +
+    "include joined result previews when available, and raw result content only when includeContent is true.",
   parameters: Type.Object({
     sessionId: Type.String(),
     options: Type.Optional(EntryOptionsSchema),
@@ -219,7 +205,6 @@ export const sessionsSetModelFunction = defineFunction({
 
 export const SESSION_FUNCTIONS: ApiFunctionDef[] = [
   sessionsListFunction,
-  sessionsListForTaskFunction,
   sessionsCurrentFunction,
   sessionsGetFunction,
   sessionsEntriesFunction,

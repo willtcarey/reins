@@ -19,7 +19,7 @@ export interface SessionWindowOptions {
   order?: "asc" | "desc";
 }
 
-export type SessionEntryType = "user" | "assistant" | "toolResult" | "compactionSummary" | "toolCall";
+export type SessionEntryType = "user" | "assistant" | "compactionSummary" | "toolCall";
 
 export interface SessionEntryOptions extends SessionWindowOptions {
   types?: SessionEntryType[];
@@ -32,20 +32,15 @@ export interface SessionMessageEntry {
   sessionId: string;
   seq: number;
   created_at: string;
-  type: Exclude<SessionEntryType, "toolCall" | "toolResult">;
+  type: Exclude<SessionEntryType, "toolCall">;
   role: string;
   content?: unknown;
   [key: string]: unknown;
 }
 
-export interface SessionToolResultEntry {
-  sessionId: string;
+export interface SessionToolCallResult {
   seq: number;
   created_at: string;
-  type: "toolResult";
-  role: "toolResult";
-  toolCallId: string;
-  toolName: string;
   isError: boolean;
   contentPreview: string;
   content?: unknown;
@@ -87,9 +82,10 @@ export interface SessionToolCallEntry {
   id: string;
   name: string;
   arguments: unknown;
+  result: SessionToolCallResult | null;
 }
 
-export type SessionEntry = SessionMessageEntry | SessionToolCallEntry | SessionToolResultEntry;
+export type SessionEntry = SessionMessageEntry | SessionToolCallEntry;
 
 export interface SessionMessageRow {
   id: number;
@@ -101,7 +97,7 @@ export interface SessionMessageRow {
 }
 
 const TOOL_RESULT_PREVIEW_CHARS = 500;
-const ALL_SESSION_ENTRY_TYPES: SessionEntryType[] = ["user", "assistant", "toolResult", "compactionSummary", "toolCall"];
+const ALL_SESSION_ENTRY_TYPES: SessionEntryType[] = ["user", "assistant", "compactionSummary", "toolCall"];
 
 // ---- Helpers ----------------------------------------------------------------
 
@@ -129,10 +125,6 @@ function extractToolCallBlocks(message: PersistedAssistantMessage): ToolCallBloc
   return message.content.filter((block): block is ToolCallBlock => block.type === "toolCall");
 }
 
-function searchLikePattern(search: string): string {
-  return `%${search.replace(/([\\%_])/g, "\\$1")}%`;
-}
-
 function orderAndLimit<T extends { seq: number }>(items: T[], options: SessionWindowOptions): T[] {
   const descending = options.order === "desc";
   const ordered = descending ? items.toReversed() : [...items];
@@ -144,17 +136,21 @@ function orderAndLimit<T extends { seq: number }>(items: T[], options: SessionWi
 
 function entryMatchesToolFilters(entry: SessionEntry, options: SessionEntryOptions): boolean {
   if (options.toolName) {
-    if (entry.type === "toolCall") {
-      if (entry.name !== options.toolName) return false;
-    } else if (entry.type === "toolResult") {
-      if (entry.toolName !== options.toolName) return false;
-    } else {
-      return false;
-    }
+    if (entry.type !== "toolCall" || entry.name !== options.toolName) return false;
   }
 
-  if (options.isError !== undefined && (entry.type !== "toolResult" || entry.isError !== options.isError)) return false;
+  if (options.isError !== undefined && (entry.type !== "toolCall" || entry.result?.isError !== options.isError)) return false;
   return true;
+}
+
+function rawMessageMatchesSearch(rawMessage: string, search: string | undefined): boolean {
+  if (!search) return true;
+  return rawMessage.toLowerCase().includes(search.toLowerCase());
+}
+
+function parsePersistedMessage(messageJson: string): PersistedMessage {
+  const parsed: PersistedMessage = JSON.parse(messageJson);
+  return parsed;
 }
 
 /**
@@ -258,8 +254,9 @@ export function loadMessages(sessionId: string): any[] {
 
 /**
  * List persisted session timeline entries with cursor/search filters. The result
- * can mix stored message rows (user/assistant/toolResult/compactionSummary) and
- * derived toolCall entries extracted from assistant messages.
+ * can mix stored message rows (user/assistant/compactionSummary) and derived
+ * toolCall entries extracted from assistant messages. Tool results are joined
+ * onto their corresponding toolCall entry instead of returned separately.
  */
 export function listSessionEntries(
   sessionId: string,
@@ -288,11 +285,6 @@ export function listSessionEntries(
   }
 
   const search = options.search?.trim();
-  if (search) {
-    where.push("message_json LIKE ? ESCAPE '\\'");
-    binds.push(searchLikePattern(search));
-  }
-
   const rows = db
     .query<{ seq: number; message_json: string; created_at: string }, (string | number)[]>(
       `SELECT seq, message_json, created_at
@@ -300,52 +292,56 @@ export function listSessionEntries(
        WHERE ${where.join(" AND ")}
        ORDER BY seq ASC`,
     )
-    .all(...binds);
+    .all(...binds)
+    .map((row) => ({
+      ...row,
+      parsed: parsePersistedMessage(row.message_json),
+      matchesSearch: rawMessageMatchesSearch(row.message_json, search),
+    }));
 
-  const toolNamesById = new Map<string, string>();
+  const toolResultsById = new Map<string, { result: SessionToolCallResult; matchesSearch: boolean }>();
+  for (const row of rows) {
+    if (row.parsed.role !== "toolResult") continue;
+
+    const result: SessionToolCallResult = {
+      seq: row.seq,
+      created_at: row.created_at,
+      isError: row.parsed.isError,
+      contentPreview: contentPreview(row.parsed.content),
+    };
+    if (options.includeContent) result.content = row.parsed.content;
+
+    toolResultsById.set(row.parsed.toolCallId, { result, matchesSearch: row.matchesSearch });
+  }
+
   const entries: SessionEntry[] = [];
 
   for (const row of rows) {
-    const parsed: PersistedMessage = JSON.parse(row.message_json);
+    const parsed = row.parsed;
     const entryType = parsed.role;
 
-    if (requestedTypes.has(entryType)) {
-      if (entryType === "toolResult") {
-        const result: SessionToolResultEntry = {
-          sessionId,
-          seq: row.seq,
-          created_at: row.created_at,
-          type: "toolResult",
-          role: "toolResult",
-          toolCallId: parsed.toolCallId,
-          toolName: parsed.toolName ?? toolNamesById.get(parsed.toolCallId) ?? "",
-          isError: parsed.isError,
-          contentPreview: contentPreview(parsed.content),
-        };
-        if (options.includeContent) result.content = parsed.content;
-        entries.push(result);
-      } else {
-        entries.push({
-          ...parsed,
-          sessionId,
-          seq: row.seq,
-          created_at: row.created_at,
-          type: entryType,
-          role: entryType,
-        });
-      }
+    if (entryType !== "toolResult" && requestedTypes.has(entryType) && row.matchesSearch) {
+      entries.push({
+        ...parsed,
+        sessionId,
+        seq: row.seq,
+        created_at: row.created_at,
+        type: entryType,
+        role: entryType,
+      });
     }
 
     if (parsed.role !== "assistant") continue;
 
     for (const block of extractToolCallBlocks(parsed)) {
-      toolNamesById.set(block.id, block.name);
-      if (requestedTypes.has("toolCall")) {
+      const result = toolResultsById.get(block.id);
+      if (requestedTypes.has("toolCall") && (row.matchesSearch || result?.matchesSearch)) {
         entries.push({
           sessionId,
           seq: row.seq,
           created_at: row.created_at,
           ...block,
+          result: result?.result ?? null,
         });
       }
     }

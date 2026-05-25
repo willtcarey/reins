@@ -68,8 +68,7 @@ const api = {
     update(taskId: number, updates: { title?, description?, status? }): void
   },
   sessions: {
-    list(projectId: number): SessionListItem[]
-    listForTask(taskId: number): SessionListItem[]
+    list(projectId: number, opts?: { taskId?: number | null }): SessionListItem[]
     get(sessionId: string): SessionRow | null
     messages(sessionId: string): Message[]
     create(projectId: number, opts?: { taskId?, prompt? }): { sessionId: string }

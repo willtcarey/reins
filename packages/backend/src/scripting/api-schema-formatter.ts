@@ -42,16 +42,17 @@ export type SchemaNameMap = Map<TSchema, string>;
  * Otherwise renders inline: `{ id: number, name: string }` or `string`.
  */
 export function formatSchema(schema: TSchema, name?: string, names?: SchemaNameMap): string {
-  const inline = renderType(schema, names);
-  if (!name) return inline;
+  if (!name) return renderType(schema, names);
+
+  const declarationNames = namesWithoutSelfAlias(names, schema, name);
 
   // For object schemas, render as named block
   if (schema.type === "object" && schemaProperties(schema)) {
-    const fields = renderObjectFields(schema, names);
+    const fields = renderObjectFields(schema, declarationNames);
     return `${name} {\n${fields}\n}`;
   }
 
-  return `${name} = ${inline}`;
+  return `${name} = ${renderType(schema, declarationNames)}`;
 }
 
 /**
@@ -128,17 +129,31 @@ export function formatTypeDeclaration(
   name: string,
   names?: SchemaNameMap,
 ): string {
+  const declarationNames = namesWithoutSelfAlias(names, schema, name);
+
   if (schema.type === "object" && schemaProperties(schema)) {
-    const fields = renderInterfaceFields(schema, names);
+    const fields = renderInterfaceFields(schema, declarationNames);
     return `interface ${name} {\n${fields}\n}`;
   }
 
-  return `type ${name} = ${renderType(schema, names)};`;
+  return `type ${name} = ${renderType(schema, declarationNames)};`;
 }
 
 // ---------------------------------------------------------------------------
 // Internal renderers
 // ---------------------------------------------------------------------------
+
+function namesWithoutSelfAlias(
+  names: SchemaNameMap | undefined,
+  schema: TSchema,
+  name: string,
+): SchemaNameMap | undefined {
+  if (!names || names.get(schema) !== name) return names;
+
+  const next = new Map(names);
+  next.delete(schema);
+  return next;
+}
 
 function splitApiName(name: string): { namespace: string; method: string } {
   const [namespace, method] = name.split(".");
