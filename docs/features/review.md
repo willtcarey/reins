@@ -22,9 +22,9 @@ Each diff shows a few lines of context around changes by default. You can expand
 
 - **Above a hunk** — a button appears if there are hidden lines above the first visible line. Click to reveal more context upward.
 - **Below a hunk** — a button at the bottom of the last hunk reveals more lines below.
-- **Between hunks** — when two hunks are separated by hidden lines, a button shows how many lines are hidden. If the gap is small (≤ 15 lines), one click reveals them all. For larger gaps, it reveals 15 lines at a time.
+- **Between hunks** — when two hunks are separated by hidden lines, controls show how many lines are hidden. If the gap is small (≤ 15 lines), one **Expand** control reveals them all upward from the following hunk. For larger gaps, separate controls reveal context downward from the preceding hunk or upward from the following hunk.
 
-When expanding closes the gap between two adjacent hunks, they automatically merge into a single hunk. Expanded lines are fetched from the full file on demand (not included in the initial diff payload) and syntax-highlighted in the background.
+When expanding closes the gap between two adjacent hunks, they automatically merge into a single hunk. Expanded lines are fetched from the full file on demand (not included in the initial diff payload), syntax-highlighted in the background, and upward expansion keeps your scroll position anchored on the original hunk content.
 
 ## Markdown files
 

@@ -15,10 +15,17 @@ import type { DiffFile } from "../../models/changes/types.js";
 import type { DiffStore } from "../../models/stores/diff-store.js";
 import type { FileTreeState } from "../../models/changes/file-tree-state.js";
 import type { ExpandDetail } from "./diff-hunk.js";
-import { fileCardId } from "../../models/changes/diff-utils.js";
+import {
+  fileCardId,
+  scrollTopAfterExpansion,
+  type ExpansionScrollSnapshot,
+} from "../../models/changes/diff-utils.js";
 import { ScrollSpy } from "../../models/changes/scroll-spy.js";
 import "./diff-file-tree.js";
 import "./diff-file-card.js";
+
+type ExpansionViewportSnapshot = ExpansionScrollSnapshot;
+type ExpandEvent = CustomEvent<ExpandDetail> & { target: HTMLElement };
 
 // ---- Component --------------------------------------------------------------
 
@@ -139,18 +146,12 @@ export class DiffPanel extends LitElement {
 
   // ---- Child event handlers -------------------------------------------------
 
-  private async _onExpandUp(e: Event) {
-    if (!(e instanceof CustomEvent)) return;
-    const { filePath, hunkIndex }: ExpandDetail = e.detail;
+  private async _onExpandUp(e: ExpandEvent) {
+    const { filePath, hunkIndex } = e.detail;
     const key = `${filePath}:${hunkIndex}:up`;
     if (this.expandingHunks.has(key)) return;
 
-    const container = this._scrollContainer;
-    const scrollBefore = container?.scrollTop ?? 0;
-
-    const hunkEl = this._findHunkElement(filePath, hunkIndex);
-    const rectBefore = hunkEl?.getBoundingClientRect();
-    const containerRect = container?.getBoundingClientRect();
+    const snapshot = this._captureExpansionViewportSnapshot(e.target);
 
     this.expandingHunks = new Set(this.expandingHunks).add(key);
     const linesInserted = await this.store?.expandHunk(filePath, hunkIndex, "up") ?? 0;
@@ -158,20 +159,13 @@ export class DiffPanel extends LitElement {
     next.delete(key);
     this.expandingHunks = next;
 
-    if (linesInserted > 0 && container && rectBefore && containerRect) {
-      await this.updateComplete;
-      const hunkElAfter = this._findHunkElement(filePath, hunkIndex);
-      const rectAfter = hunkElAfter?.getBoundingClientRect();
-      if (rectAfter) {
-        const shift = rectAfter.top - rectBefore.top;
-        container.scrollTop = scrollBefore + shift;
-      }
+    if (linesInserted > 0) {
+      await this._restoreExpansionViewportSnapshot(snapshot);
     }
   }
 
-  private async _onExpandDown(e: Event) {
-    if (!(e instanceof CustomEvent)) return;
-    const { filePath, hunkIndex }: ExpandDetail = e.detail;
+  private async _onExpandDown(e: ExpandEvent) {
+    const { filePath, hunkIndex } = e.detail;
     const key = `${filePath}:${hunkIndex}:down`;
     if (this.expandingHunks.has(key)) return;
     this.expandingHunks = new Set(this.expandingHunks).add(key);
@@ -187,18 +181,32 @@ export class DiffPanel extends LitElement {
     return this.querySelector("[data-diff-scroll]");
   }
 
-  private _findHunkElement(filePath: string, hunkIndex: number): HTMLElement | null {
-    const fileCard = this.querySelector(`#${CSS.escape(fileCardId(filePath))}`);
-    if (!fileCard) return null;
-    const hunkEls = fileCard.querySelectorAll("[data-hunk-index]");
-    for (const el of hunkEls) {
-      if (el instanceof HTMLElement && el.dataset.hunkIndex === String(hunkIndex)) {
-        return el;
-      }
-    }
-    return null;
+  private _captureExpansionViewportSnapshot(hunkElement: HTMLElement): ExpansionViewportSnapshot | null {
+    const container = this._scrollContainer;
+    if (!container) return null;
+
+    const containerRect = container.getBoundingClientRect();
+    const hunkRect = hunkElement.getBoundingClientRect();
+    return {
+      scrollTop: container.scrollTop,
+      scrollHeight: container.scrollHeight,
+      changeTop: container.scrollTop + hunkRect.top - containerRect.top,
+      clientHeight: container.clientHeight,
+    };
   }
 
+
+  private async _restoreExpansionViewportSnapshot(snapshot: ExpansionViewportSnapshot | null) {
+    if (!snapshot) return;
+
+    await this.updateComplete;
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+
+    const container = this._scrollContainer;
+    if (!container) return;
+
+    container.scrollTop = scrollTopAfterExpansion(snapshot, container.scrollHeight);
+  }
 
 
   // ---- Render helpers -------------------------------------------------------

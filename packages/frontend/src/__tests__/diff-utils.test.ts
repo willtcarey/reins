@@ -10,6 +10,7 @@ import {
   escapeHtml,
   gutterWidth,
   getHunkEndLine,
+  scrollTopAfterExpansion,
   EXPAND_STEP,
 } from "../models/changes/diff-utils.js";
 import type { DiffFile, DiffHunk } from "../models/changes/types.js";
@@ -235,6 +236,45 @@ describe("gutterWidth", () => {
       makeHunk([makeLine("context", "x")]),
     ]);
     expect(gutterWidth(file)).toBe(3);
+  });
+});
+
+// ---- scrollTopAfterExpansion ----------------------------------------------
+
+describe("scrollTopAfterExpansion", () => {
+  test("adds the height delta when expansion starts above the viewport", () => {
+    expect(scrollTopAfterExpansion(
+      { scrollTop: 100, scrollHeight: 1000, changeTop: 80, clientHeight: 500 },
+      1040,
+    )).toBe(140);
+  });
+
+  test("adds the height delta when expansion starts at the viewport top", () => {
+    expect(scrollTopAfterExpansion(
+      { scrollTop: 100, scrollHeight: 1000, changeTop: 100, clientHeight: 500 },
+      1040,
+    )).toBe(140);
+  });
+
+  test("adds the height delta when expansion starts inside the viewport", () => {
+    expect(scrollTopAfterExpansion(
+      { scrollTop: 100, scrollHeight: 1000, changeTop: 300, clientHeight: 500 },
+      1040,
+    )).toBe(140);
+  });
+
+  test("leaves scrollTop unchanged when expansion starts below the viewport", () => {
+    expect(scrollTopAfterExpansion(
+      { scrollTop: 100, scrollHeight: 1000, changeTop: 601, clientHeight: 500 },
+      1040,
+    )).toBe(100);
+  });
+
+  test("ignores non-positive height deltas", () => {
+    expect(scrollTopAfterExpansion(
+      { scrollTop: 100, scrollHeight: 1000, changeTop: 80, clientHeight: 500 },
+      990,
+    )).toBe(100);
   });
 });
 

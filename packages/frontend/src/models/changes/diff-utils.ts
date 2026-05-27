@@ -84,3 +84,32 @@ export function getHunkEndLine(hunk: DiffHunk): number {
   }
   return 0;
 }
+
+
+export interface ExpansionScrollSnapshot {
+  /** Scroll container top before expansion. */
+  scrollTop: number;
+  /** Scroll container height before expansion. */
+  scrollHeight: number;
+  /** Expansion point, measured in the scroll container's coordinate space. */
+  changeTop: number;
+  /** Scroll container viewport height before expansion. */
+  clientHeight: number;
+}
+
+/**
+ * Preserve visible content after an upward expansion by applying the net height
+ * delta when the expansion point was above or inside the viewport.
+ */
+export function scrollTopAfterExpansion(
+  before: ExpansionScrollSnapshot,
+  scrollHeightAfter: number,
+): number {
+  const heightDelta = scrollHeightAfter - before.scrollHeight;
+  if (heightDelta <= 0) return before.scrollTop;
+
+  const viewportBottom = before.scrollTop + before.clientHeight;
+  return before.changeTop <= viewportBottom
+    ? before.scrollTop + heightDelta
+    : before.scrollTop;
+}
