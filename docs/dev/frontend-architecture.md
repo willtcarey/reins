@@ -384,7 +384,7 @@ The diff/changes feature spans both `models/changes/` (pure logic) and `componen
 
 **Pure logic (`models/changes/`):**
 - `diff-sort.ts` — Sorting utilities for diff files
-- `diff-utils.ts` — Pure helpers (isMarkdown, fileCardId, escapeHtml, gutterWidth, getHunkEndLine)
+- `diff-utils.ts` — Pure helpers (isMarkdown, fileCardId, escapeHtml, gutterWidth, getHunkEndLine, diffLineKey)
 - `file-tree-state.ts` — UI-local state for tree expansion (not in store — ephemeral)
 - `scroll-spy.ts` — Tracks which diff card is visible for tree highlighting
 - `highlighter.ts` — Pure-function interface to the Shiki Web Worker: text lines in, HTML lines out via callback. Exports `IHighlighter` for test fakes.

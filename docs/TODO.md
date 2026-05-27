@@ -2,6 +2,7 @@
 
 Roadmap and open items. Remove items when they're done — don't check them off.
 
+- *(2026-05-26)* Make `bun run dev` supervise the frontend watcher — ensure the frontend `bun build --watch` and Tailwind watcher stay running alongside the backend dev server, and surface/restart them if they exit so served assets don't go stale.
 - *(2026-05-21)* Revisit `@pierre/diffs` using the DiffsHub architecture — prototype a streaming, file-by-file patch pipeline with virtualized diff rendering, measured/estimated height caches, and incremental append/render behavior. The goal is to evaluate the performant architecture DiffsHub demonstrates, not the earlier direct `FileDiff` drop-in approach.
 - *(2026-04-11)* Diff panel commit selector — replace the current uncommitted/changes-vs-base toggle with a full commit selector so users can diff against any commit, not just the base branch or working tree.
 - *(2026-02-12)* Better conversation design — [inspiration](https://x.com/benjitaylor/status/2027902450049708385)
