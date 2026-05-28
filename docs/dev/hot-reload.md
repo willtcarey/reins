@@ -75,7 +75,10 @@ state.ts (types only)
 ## Usage
 
 ```sh
-# Dev mode (hot reload enabled)
+# Full dev stack (backend hot reload + supervised frontend JS/CSS watchers)
+bun run dev
+
+# Backend-only dev mode (hot reload enabled)
 bun packages/backend/dev.ts
 
 # Production (no watcher, single static import)

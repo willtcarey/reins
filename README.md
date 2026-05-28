@@ -71,5 +71,5 @@ The default model is configured in the app's settings UI and stored in the datab
 ## Development
 
 ```sh
-bun run dev          # starts backend + frontend build watcher
+bun run dev          # starts backend + supervised frontend JS/CSS watchers
 ```
