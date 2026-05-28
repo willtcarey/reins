@@ -80,26 +80,49 @@ function escapeHtml(text: string): string {
 // ---- Worker state ----------------------------------------------------------
 
 let highlighter: Highlighter | null = null;
+let highlighterPromise: Promise<Highlighter> | null = null;
 const loadedLangs = new Set<string>();
+const loadingLangs = new Map<string, Promise<void>>();
 
 async function getHighlighter(): Promise<Highlighter> {
-  if (!highlighter) {
-    highlighter = await createHighlighter({
+  if (highlighter) return highlighter;
+
+  if (!highlighterPromise) {
+    highlighterPromise = createHighlighter({
       themes: ["github-dark"],
       langs: [], // load languages on demand
+    }).then((hl) => {
+      highlighter = hl;
+      return hl;
+    }).catch((error) => {
+      highlighterPromise = null;
+      throw error;
     });
   }
-  return highlighter;
+
+  return highlighterPromise;
 }
 
 async function ensureLang(hl: Highlighter, lang: BundledLanguage): Promise<void> {
   if (loadedLangs.has(lang)) return;
-  try {
-    await hl.loadLanguage(lang);
-    loadedLangs.add(lang);
-  } catch {
-    // Language not available in Shiki — fall back to plain text
-  }
+
+  const pending = loadingLangs.get(lang);
+  if (pending) return pending;
+
+  const loading = Promise.resolve()
+    .then(() => hl.loadLanguage(lang))
+    .then(() => {
+      loadedLangs.add(lang);
+    })
+    .catch(() => {
+      // Language not available in Shiki — fall back to plain text
+    })
+    .finally(() => {
+      loadingLangs.delete(lang);
+    });
+
+  loadingLangs.set(lang, loading);
+  return loading;
 }
 
 /**
