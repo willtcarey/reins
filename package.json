@@ -5,7 +5,7 @@
   "scripts": {
     "start": "bun run build && bun packages/backend/src/index.ts",
     "build": "bun run --filter '@reins/frontend' build",
-    "dev": "bun run --filter '@reins/frontend' dev & bun packages/backend/dev.ts",
+    "dev": "bun packages/backend/src/dev-supervisor.ts",
     "test": "bun run --filter '@reins/backend' test",
     "typecheck": "bun run --filter '@reins/*' typecheck",
     "lint": "oxlint -c .oxlintrc.json packages/backend/src packages/frontend/src"
