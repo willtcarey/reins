@@ -9,6 +9,7 @@
 | [frontend-architecture.md](frontend-architecture.md) | frontend | Store layer, WS event flow, component structure, how views consume state |
 | [ui-design.md](ui-design.md) | frontend | CSS architecture, z-index layers, color palette, syntax highlighting, responsive patterns |
 | [macos.md](macos.md) | macos | Native Mac app shell: setup, dev workflow, building |
+| [tauri.md](tauri.md) | tauri | Tauri desktop wrapper: setup, backend URL behavior, packaging |
 | [docker.md](docker.md) | all | Building and running REINS in a Docker container |
 | [workflow.md](workflow.md) | all | Development workflow: RGR, testing reference, pre/post-implementation checklist |
 | [testing-structure.md](testing-structure.md) | all | Test organization convention: mirror source/app folder structure |
