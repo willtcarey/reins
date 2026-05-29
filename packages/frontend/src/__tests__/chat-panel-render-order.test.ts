@@ -51,5 +51,33 @@ describe("ChatPanel assistant render order", () => {
     expect(firstTextIdx).toBeLessThan(toolIdx);
     expect(toolIdx).toBeLessThan(secondTextIdx);
   });
+});
 
+describe("ChatPanel compaction rendering", () => {
+  test("shows summarizing status even when the session is not streaming", () => {
+    const el = new ChatPanel();
+
+    Reflect.set(el, "isCompacting", true);
+    Reflect.set(el, "isStreaming", false);
+
+    const output = templateToString(el.render());
+
+    expect(output).toContain("Summarizing conversation…");
+    expect(output).toContain("text-sm text-amber-500/80");
+    expect(output).not.toContain("Thinking...");
+    expect(output).not.toContain("Send a message to start a conversation");
+  });
+
+  test("shows the same summarizing status instead of thinking while streaming", () => {
+    const el = new ChatPanel();
+
+    Reflect.set(el, "isCompacting", true);
+    Reflect.set(el, "isStreaming", true);
+
+    const output = templateToString(el.render());
+
+    expect(output).toContain("Summarizing conversation…");
+    expect(output).toContain("text-sm text-amber-500/80");
+    expect(output).not.toContain("Thinking...");
+  });
 });

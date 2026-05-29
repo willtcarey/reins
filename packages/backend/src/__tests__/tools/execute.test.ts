@@ -511,6 +511,26 @@ describe("createExecuteTool", () => {
     });
   });
 
+  describe("ui API", () => {
+    test("ui.broadcast() sends an arbitrary frontend message", async () => {
+      const tool = makeTool("test-session");
+      const message: ServerMessage = {
+        type: "event",
+        sessionId: "test-session",
+        projectId: project.id,
+        event: { type: "compaction_start", reason: "debug" },
+      };
+
+      const result = await tool.execute("c-ui-broadcast", {
+        code: `return api.ui.broadcast(${JSON.stringify(message)})`,
+      }, undefined, undefined, strictCtx);
+
+      expect(textOf(result)).toBe("Broadcast sent");
+      expect(broadcastSpy).toHaveBeenCalledTimes(1);
+      expect(broadcastSpy.mock.calls[0][0]).toEqual(message);
+    });
+  });
+
   describe("error handling", () => {
     test("returns error for syntax errors", async () => {
       const tool = makeTool();

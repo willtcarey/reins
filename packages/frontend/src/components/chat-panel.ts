@@ -424,22 +424,31 @@ export class ChatPanel extends LitElement {
     }
   }
 
-  private renderStreamingContent() {
-    if (!this.isStreaming) return nothing;
+  private renderCompactingIndicator() {
+    return html`
+      <div class="flex items-center gap-2 text-sm text-amber-500/80">
+        <span class="inline-block w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>
+        Summarizing conversation…
+      </div>
+    `;
+  }
 
-    if (this.streamingBlocks.length === 0) {
-      return html`
-        <div class="mb-3">
-          <div class="flex items-center gap-2 text-sm text-zinc-500">
-            <span class="inline-block w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin"></span>
-            Thinking...
-          </div>
-        </div>
-      `;
-    }
+  private renderThinkingIndicator() {
+    return html`
+      <div class="flex items-center gap-2 text-sm text-zinc-500">
+        <span class="inline-block w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin"></span>
+        Thinking...
+      </div>
+    `;
+  }
+
+  private renderStreamingContent() {
+    const hasStreamingBlocks = this.streamingBlocks.length > 0;
+    const showThinking = this.isStreaming && !this.isCompacting && !hasStreamingBlocks;
+    if (!showThinking && !hasStreamingBlocks && !this.isCompacting) return nothing;
 
     return html`
-      <div class="mb-3">
+      <div class="mb-3 space-y-2">
         ${this.streamingBlocks.map((block) => {
           if (block.type === "text") {
             return html`
@@ -450,12 +459,8 @@ export class ChatPanel extends LitElement {
           }
           return this.renderToolBlock(block);
         })}
-        ${this.isCompacting ? html`
-          <div class="flex items-center gap-2 text-xs text-amber-500/70 mt-2 ml-2">
-            <span class="inline-block w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>
-            Summarizing conversation…
-          </div>
-        ` : nothing}
+        ${showThinking ? this.renderThinkingIndicator() : nothing}
+        ${this.isCompacting ? this.renderCompactingIndicator() : nothing}
       </div>
     `;
   }
@@ -472,7 +477,7 @@ export class ChatPanel extends LitElement {
           class="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-1"
           @scroll=${this.handleScroll}
         >
-          ${this.messages.length === 0 && !this.isStreaming ? html`
+          ${this.messages.length === 0 && !this.isStreaming && !this.isCompacting ? html`
             <div class="flex items-center justify-center h-full text-zinc-500 text-sm">
               Send a message to start a conversation
             </div>

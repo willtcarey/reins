@@ -15,6 +15,22 @@ import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 export const UI_FUNCTIONS: ApiFunctionDef[] = [
   defineFunction({
+    name: "ui.broadcast",
+    description:
+      "Broadcast an arbitrary frontend WebSocket message to connected clients. " +
+      "Intended for debugging and manually exercising UI event paths.",
+    parameters: Type.Object({
+      message: Type.Any({ description: "ServerMessage-shaped payload to broadcast." }),
+    }),
+    returns: Type.String({ description: "Confirmation message." }),
+    tags: ["ui", "broadcast", "websocket", "event", "debug"],
+    execute: (params, ctx) => {
+      ctx.broadcast(params.message);
+      return "Broadcast sent";
+    },
+  }),
+
+  defineFunction({
     name: "ui.openFile",
     description:
       "Open the file browser overlay to a specific file. " +

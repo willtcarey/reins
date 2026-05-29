@@ -181,6 +181,16 @@ describe("createSearchTool", () => {
     expectGeneratedTypeScriptToBeValid(text);
   });
 
+  test("execute documents the UI broadcast helper", async () => {
+    const tool = createSearchTool();
+    const result = await tool.execute("call-ui-broadcast", { query: "ui broadcast" }, undefined, undefined, strictCtx);
+
+    const text = result.content[0].type === "text" ? result.content[0].text : "";
+    expect(text).toContain("ui: UiApi;");
+    expect(text).toContain("broadcast(message: unknown): string;");
+    expectGeneratedTypeScriptToBeValid(text);
+  });
+
   test("execute returns no-results message for unmatched query", async () => {
     const tool = createSearchTool();
     const result = await tool.execute("call-3", { query: "xyznonexistent" }, undefined, undefined, strictCtx);
