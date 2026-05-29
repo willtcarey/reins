@@ -26,7 +26,7 @@ bun run tauri
 REINS_BACKEND_URL=http://localhost:3100 bun run --filter '@reins/tauri' dev
 ```
 
-Cmd+R on macOS and Ctrl+R on Windows/Linux reload the webview.
+The native View menu exposes Reload (Cmd+R on macOS, Ctrl+R on Windows/Linux) and Toggle Developer Tools (Cmd+Option+I on macOS, Ctrl+Alt+I elsewhere). Standard app, edit, and window menu items are also provided.
 
 ## Build
 
@@ -42,5 +42,5 @@ REINS_BACKEND_URL=http://myhost:3100 bun run tauri:build
 
 ## Platform setup
 
-- macOS: install Xcode Command Line Tools, Rust, Bun, and the Tauri CLI dependency with `bun install`. The bundle currently allows arbitrary HTTP loads so runtime-configured localhost/LAN/Tailscale backend URLs work.
+- macOS: install Xcode Command Line Tools, Rust, Bun, and the Tauri CLI dependency with `bun install`. The bundle currently allows arbitrary HTTP loads so runtime-configured localhost/LAN/Tailscale backend URLs work. Release builds currently include Tauri's devtools support for the View menu's Web Inspector item.
 - Windows (future): use the Rust MSVC toolchain, Visual Studio Build Tools, and WebView2 Runtime. Set a runtime URL in PowerShell with `$env:REINS_BACKEND_URL = 'http://host:3100'` before launching.

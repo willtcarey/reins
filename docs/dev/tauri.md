@@ -40,7 +40,7 @@ REINS_BACKEND_URL=http://dev-node:3100 bun run tauri
 
 `bun run start` still builds frontend assets and starts the backend; the desktop app remains a separate optional wrapper.
 
-Cmd+R on macOS and Ctrl+R on Windows/Linux reload the webview.
+The native menu bar includes standard app/edit/window menus plus a View menu. View → Reload reloads the webview with Cmd+R on macOS and Ctrl+R on Windows/Linux. View → Toggle Developer Tools opens/closes the web inspector with Cmd+Option+I on macOS and Ctrl+Alt+I elsewhere.
 
 ## Packaging
 
@@ -64,7 +64,7 @@ The Tauri config intentionally omits `beforeDevCommand`, `beforeBuildCommand`, a
 - Rust toolchain
 - Bun dependencies installed with `bun install`
 
-The macOS bundle currently allows arbitrary HTTP loads because the backend URL is runtime-configurable and often points at localhost, LAN, or Tailscale hosts. Revisit ATS policy before broad distribution.
+The macOS bundle currently allows arbitrary HTTP loads because the backend URL is runtime-configurable and often points at localhost, LAN, or Tailscale hosts. Release builds also enable Tauri's `devtools` feature so the View menu can expose Web Inspector; revisit both ATS policy and release devtools before broad distribution.
 
 ### Windows (future)
 
