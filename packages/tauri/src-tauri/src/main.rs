@@ -3,6 +3,7 @@
 
 use tauri::{
     menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
+    webview::DownloadEvent,
     AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, Wry,
 };
 
@@ -133,6 +134,28 @@ fn main() {
                 .title("REINS")
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(800.0, 600.0)
+                .on_download(|_, event| match event {
+                    DownloadEvent::Requested { destination, .. } => {
+                        let mut dialog = rfd::FileDialog::new();
+
+                        if let Some(directory) = destination.parent() {
+                            dialog = dialog.set_directory(directory);
+                        }
+
+                        if let Some(file_name) = destination.file_name() {
+                            dialog = dialog.set_file_name(file_name.to_string_lossy());
+                        }
+
+                        if let Some(path) = dialog.save_file() {
+                            *destination = path;
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    DownloadEvent::Finished { .. } => true,
+                    _ => true,
+                })
                 .initialization_script(
                     r#"document.addEventListener('keydown', (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'r') {

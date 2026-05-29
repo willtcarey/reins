@@ -42,6 +42,8 @@ REINS_BACKEND_URL=http://dev-node:3100 bun run tauri
 
 The native menu bar includes standard app/edit/window menus plus a View menu. View → Reload reloads the webview with Cmd+R on macOS and Ctrl+R on Windows/Linux. View → Toggle Developer Tools opens/closes the web inspector with Cmd+Option+I on macOS and Ctrl+Alt+I elsewhere.
 
+Downloads open a native save dialog instead of silently saving to the default downloads folder. Canceling the dialog cancels the download.
+
 ## Packaging
 
 ```sh

@@ -28,6 +28,8 @@ REINS_BACKEND_URL=http://localhost:3100 bun run --filter '@reins/tauri' dev
 
 The native View menu exposes Reload (Cmd+R on macOS, Ctrl+R on Windows/Linux) and Toggle Developer Tools (Cmd+Option+I on macOS, Ctrl+Alt+I elsewhere). Standard app, edit, and window menu items are also provided.
 
+Downloads open a native save dialog. Canceling the dialog cancels the download.
+
 ## Build
 
 ```sh
