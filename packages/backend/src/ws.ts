@@ -15,6 +15,12 @@ import { getSession } from "./session-store.js";
 import { createBroadcastExcluding } from "./models/broadcast.js";
 import { expandPrompt } from "./runtimes/prompt.js";
 import { logger } from "./logger.js";
+import {
+  isClientPromptContent,
+  type ClientPromptContent,
+  type RuntimePromptContent,
+} from "./content-blocks.js";
+import { hydrateAttachmentRefs } from "./session-attachments-store.js";
 
 /** Maps raw WebSocket objects to their WsClient wrappers. */
 const wsClientMap = new WeakMap<WebSocketLike, WsClient>();
@@ -32,7 +38,7 @@ async function handleWsCommand(
   client: WsClient,
   raw: string,
 ): Promise<void> {
-  let cmd: { type: string; sessionId?: string; message?: string };
+  let cmd: { type: string; sessionId?: string; message?: unknown };
   try {
     cmd = JSON.parse(raw);
   } catch {
@@ -53,15 +59,17 @@ async function handleWsCommand(
 
   switch (cmd.type) {
     case "prompt": {
-      if (!cmd.message) { sendToWs(client.ws, { type: "error", error: "Missing message field" }); return; }
+      if (cmd.message === undefined) { sendToWs(client.ws, { type: "error", error: "Missing message field" }); return; }
+      if (!isClientPromptContent(cmd.message)) { sendToWs(client.ws, { type: "error", error: "Invalid message field" }); return; }
       const sessionId = cmd.sessionId;
-      const message = cmd.message;
+      const message: ClientPromptContent = cmd.message;
       try {
         const row = getSession(sessionId);
         if (!row) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
         const managed = await ensureSessionOpen(state, sessionId);
 
         const { expanded } = expandPrompt(message, sessionId);
+        const runtimeContent: RuntimePromptContent = hydrateAttachmentRefs(sessionId, expanded);
 
         sendToWs(client.ws, { type: "ack", command: "prompt" });
 
@@ -72,10 +80,10 @@ async function handleWsCommand(
           type: "user_message",
           sessionId,
           projectId: row.project_id,
-          message: cmd.message,
+          message,
         });
 
-        void managed.runtime.prompt(expanded).catch((err: unknown) => {
+        void managed.runtime.prompt(runtimeContent).catch((err: unknown) => {
           const errorMessage = err instanceof Error ? err.message : String(err);
           sendToWs(client.ws, { type: "error", error: `prompt failed: ${errorMessage}` });
         });
@@ -87,17 +95,19 @@ async function handleWsCommand(
     }
 
     case "steer": {
-      if (!cmd.message) { sendToWs(client.ws, { type: "error", error: "Missing message field" }); return; }
+      if (cmd.message === undefined) { sendToWs(client.ws, { type: "error", error: "Missing message field" }); return; }
+      if (!isClientPromptContent(cmd.message)) { sendToWs(client.ws, { type: "error", error: "Invalid message field" }); return; }
       const sessionId = cmd.sessionId;
-      const message = cmd.message;
+      const message: ClientPromptContent = cmd.message;
       try {
         if (!getSession(sessionId)) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
         const managed = await ensureSessionOpen(state, sessionId);
 
         const { expanded } = expandPrompt(message, sessionId);
+        const runtimeContent: RuntimePromptContent = hydrateAttachmentRefs(sessionId, expanded);
 
         sendToWs(client.ws, { type: "ack", command: "steer" });
-        await managed.runtime.steer(expanded);
+        await managed.runtime.steer(runtimeContent);
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         sendToWs(client.ws, { type: "error", error: `steer failed: ${errorMessage}` });

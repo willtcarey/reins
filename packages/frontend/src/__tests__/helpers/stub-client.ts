@@ -4,6 +4,7 @@
  * Implements the full public API so it's structurally compatible
  * with AppClient and can be passed anywhere one is expected.
  */
+import type { ClientPromptContent } from "../../models/chat-content.js";
 import type { IAppClient, EventListener, ConnectionListener } from "../../models/ws-client.js";
 
 export class StubClient implements IAppClient {
@@ -35,7 +36,7 @@ export class StubClient implements IAppClient {
   connect() {}
   disconnect() {}
   get isConnected() { return false; }
-  prompt(_sessionId: string, _message: string) {}
-  steer(_sessionId: string, _message: string) {}
+  prompt(_sessionId: string, _message: ClientPromptContent) {}
+  steer(_sessionId: string, _message: ClientPromptContent) {}
   abort(_sessionId: string) {}
 }

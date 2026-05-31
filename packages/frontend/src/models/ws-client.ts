@@ -45,6 +45,7 @@ export interface ProjectInfo {
 }
 
 import type { ChatEvent } from "./chat-state.js";
+import type { ClientPromptContent } from "./chat-content.js";
 
 export interface InjectedSkillInfo {
   name: string;
@@ -57,7 +58,7 @@ export type ServerMessage =
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number }
-  | { type: "user_message"; sessionId: string; projectId: number; message: string }
+  | { type: "user_message"; sessionId: string; projectId: number; message: ClientPromptContent }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
   | { type: "ack"; command: string }
   | { type: "error"; error: string };
@@ -85,8 +86,8 @@ export interface IAppClient {
   connect(): void;
   disconnect(): void;
   readonly isConnected: boolean;
-  prompt(sessionId: string, message: string): void;
-  steer(sessionId: string, message: string): void;
+  prompt(sessionId: string, message: ClientPromptContent): void;
+  steer(sessionId: string, message: ClientPromptContent): void;
   abort(sessionId: string): void;
   onEvent(listener: EventListener): () => void;
   onConnection(listener: ConnectionListener): () => void;
@@ -324,11 +325,11 @@ export class AppClient implements IAppClient {
 
   // ---- Commands ------------------------------------------------------------
 
-  prompt(sessionId: string, message: string): void {
+  prompt(sessionId: string, message: ClientPromptContent): void {
     this.send({ type: "prompt", sessionId, message });
   }
 
-  steer(sessionId: string, message: string): void {
+  steer(sessionId: string, message: ClientPromptContent): void {
     this.send({ type: "steer", sessionId, message });
   }
 

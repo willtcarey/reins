@@ -11,6 +11,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ToolResultImage } from "./types.js";
+import { imageBlockSrc, isImageAttachmentBlock, isInlineImageBlock } from "../../models/chat-content.js";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { getToolSummary } from "../../models/tools/generic.js";
@@ -44,6 +45,9 @@ export class GenericToolBlock extends LitElement {
   /** Image attachments from the tool result. */
   @property({ attribute: false })
   images: ToolResultImage[] = [];
+
+  @property({ attribute: false })
+  sessionId = "";
 
   /** Whether a result exists (even if empty). */
   @property({ type: Boolean })
@@ -91,7 +95,7 @@ export class GenericToolBlock extends LitElement {
         ${!this.expanded && this.images.length > 0 ? html`
           <div class="mt-1">
             ${this.images.map(
-              (img) => html`<img src="data:${img.mimeType};base64,${img.data}" class="max-w-full max-h-96 rounded mt-1" alt="Tool result image" />`,
+              (img) => html`<img src=${imageBlockSrc(this.sessionId, img)} class="max-w-full max-h-96 rounded mt-1" alt="Tool result image" />`,
             )}
           </div>
         ` : nothing}
@@ -102,7 +106,7 @@ export class GenericToolBlock extends LitElement {
             ${this.hasResult ? html`
               <div class="text-zinc-500 mt-2 mb-1">Result${this.isError ? " (error)" : ""}:</div>
               ${this.images.map(
-                (img) => html`<img src="data:${img.mimeType};base64,${img.data}" class="max-w-full max-h-96 rounded mt-1 mb-1" alt="Tool result image" />`,
+                (img) => html`<img src=${imageBlockSrc(this.sessionId, img)} class="max-w-full max-h-96 rounded mt-1 mb-1" alt="Tool result image" />`,
               )}
               ${this.resultText ? html`
                 <pre class="bg-zinc-900 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto ${this.isError ? "text-red-400" : "text-zinc-300"}">${this.resultText}</pre>
@@ -126,11 +130,9 @@ declare global {
 // ---------------------------------------------------------------------------
 
 function extractImages(block: ToolBlockData): ToolResultImage[] {
-  return (
-    block.result?.content?.filter(
-      (c): c is { type: "image"; data: string; mimeType: string } => c.type === "image",
-    ) ?? []
-  );
+  return block.result?.content?.filter(
+    (c): c is ToolResultImage => isInlineImageBlock(c) || isImageAttachmentBlock(c),
+  ) ?? [];
 }
 
 function extractResultText(block: ToolBlockData): string {
@@ -160,6 +162,7 @@ export const genericRenderer: ToolRenderer = {
       .argsJson=${isRunning ? "" : JSON.stringify(block.args, null, 2)}
       .resultText=${resultText}
       .images=${images}
+      .sessionId=${block.sessionId ?? ""}
       .hasResult=${!isRunning && !!block.result}
       .showSpinner=${isRunning}
     ></generic-tool-block>`;

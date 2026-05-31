@@ -6,6 +6,7 @@ import type {
   AgentRuntimeMessage,
   SetRuntimeModelParams,
 } from "../registry.js";
+import { runtimePromptToTextAndImages, type RuntimePromptContent } from "../../content-blocks.js";
 
 /**
  * Assert that a value is an AgentRuntimeEvent.
@@ -30,12 +31,22 @@ export class PiAgentRuntime implements AgentRuntime {
     public readonly session: AgentSession,
   ) {}
 
-  async prompt(text: string): Promise<void> {
-    await this.session.prompt(text);
+  async prompt(content: RuntimePromptContent): Promise<void> {
+    const { text, images } = runtimePromptToTextAndImages(content);
+    if (images.length > 0) {
+      await this.session.prompt(text, { images });
+    } else {
+      await this.session.prompt(text);
+    }
   }
 
-  async steer(text: string): Promise<void> {
-    await this.session.steer(text);
+  async steer(content: RuntimePromptContent): Promise<void> {
+    const { text, images } = runtimePromptToTextAndImages(content);
+    if (images.length > 0) {
+      await this.session.steer(text, images);
+    } else {
+      await this.session.steer(text);
+    }
   }
 
   async abort(): Promise<void> {

@@ -5,6 +5,8 @@
  * so it can be tested without Lit/DOM dependencies.
  */
 
+import type { ChatImageBlock, ClientPromptContent } from "./chat-content.js";
+
 // ---- Types (matching pi-ai / pi-agent-core shapes) -------------------------
 
 export interface TextContent {
@@ -36,7 +38,7 @@ export interface AssistantMessage {
 
 export interface UserMessage {
   role: "user";
-  content: string | (TextContent | { type: "image"; data: string; mimeType: string })[];
+  content: ClientPromptContent | (TextContent | ChatImageBlock)[];
   timestamp: number;
 }
 
@@ -44,7 +46,7 @@ export interface ToolResultMessage {
   role: "toolResult";
   toolCallId: string;
   toolName: string;
-  content: (TextContent | { type: "image"; data: string; mimeType: string })[];
+  content: (TextContent | ChatImageBlock)[];
   details?: Record<string, any>;
   isError: boolean;
   timestamp: number;
@@ -70,8 +72,9 @@ export interface StreamingToolBlock {
   name: string;
   args: Record<string, any>;
   status: "running" | "done";
-  result?: { content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[]; details?: Record<string, any> };
+  result?: { content: ({ type: "text"; text: string } | ChatImageBlock)[]; details?: Record<string, any> };
   isError?: boolean;
+  sessionId?: string;
 }
 
 export type StreamingBlock = StreamingTextBlock | StreamingToolBlock;
@@ -98,7 +101,7 @@ export type ChatEvent =
   | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean }
   | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
   | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
-  | { type: "user_message"; message: string };
+  | { type: "user_message"; message: ClientPromptContent };
 
 // ---- State ------------------------------------------------------------------
 

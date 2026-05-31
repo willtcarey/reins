@@ -6,6 +6,7 @@ import { useTestDb } from "../helpers/test-db.js";
 import { createProject } from "../../project-store.js";
 import { createSession } from "../../session-store.js";
 import { expandPrompt, expandPromptWithSkills, stripLeadingSkillBlocks } from "../../runtimes/prompt.js";
+import type { ClientPromptContent } from "../../content-blocks.js";
 
 let tempDir: string;
 
@@ -46,6 +47,13 @@ function opts() {
   return { cwd: tempDir, agentDir: NONEXISTENT_AGENT_DIR };
 }
 
+function expandedText(result: { expanded: ClientPromptContent }): string {
+  if (typeof result.expanded !== "string") {
+    throw new Error("Expected expanded prompt to be a string");
+  }
+  return result.expanded;
+}
+
 describe("expandPromptWithSkills", () => {
   test("passes through when there are no slash tokens", () => {
     createSkill("dip", "dip body");
@@ -63,25 +71,48 @@ describe("expandPromptWithSkills", () => {
   test("injects a skill when the token is at the start of the message", () => {
     createSkill("dip", "dip body content");
     const result = expandPromptWithSkills("/dip start the server", opts());
-    expect(result.expanded.startsWith('<skill name="dip"')).toBe(true);
+    expect(expandedText(result).startsWith('<skill name="dip"')).toBe(true);
     expect(result.expanded).toContain("dip body content");
-    expect(result.expanded.endsWith("/dip start the server")).toBe(true);
+    expect(expandedText(result).endsWith("/dip start the server")).toBe(true);
     expect(result.injected).toHaveLength(1);
     expect(result.injected[0]).toMatchObject({ name: "dip", description: "dip skill description" });
+  });
+
+  test("injects skills into the first text block without disturbing image refs", () => {
+    createSkill("dip", "dip body content");
+    const imageBlock = { type: "image" as const, attachmentId: "att_1", mimeType: "image/png", byteSize: 123 };
+    const message: ClientPromptContent = [
+      { type: "text", text: "/dip what is in this screenshot?" },
+      imageBlock,
+    ];
+
+    const result = expandPromptWithSkills(message, opts());
+
+    if (!Array.isArray(result.expanded)) {
+      throw new Error("Expected expanded prompt to be content blocks");
+    }
+    const expanded = result.expanded;
+    expect(expanded[0]).toMatchObject({ type: "text" });
+    if (expanded[0]?.type === "text") {
+      expect(expanded[0].text).toContain("dip body content");
+      expect(expanded[0].text.endsWith("/dip what is in this screenshot?")).toBe(true);
+    }
+    expect(expanded[1]).toEqual(imageBlock);
+    expect(result.injected.map((skill) => skill.name)).toEqual(["dip"]);
   });
 
   test("injects a skill when the token is in the middle", () => {
     createSkill("dip", "dip body");
     const result = expandPromptWithSkills("please run /dip now", opts());
     expect(result.injected.map((i) => i.name)).toEqual(["dip"]);
-    expect(result.expanded.endsWith("please run /dip now")).toBe(true);
+    expect(expandedText(result).endsWith("please run /dip now")).toBe(true);
   });
 
   test("injects a skill when the token is at the end", () => {
     createSkill("tmux", "tmux body");
     const result = expandPromptWithSkills("check session via /tmux", opts());
     expect(result.injected.map((i) => i.name)).toEqual(["tmux"]);
-    expect(result.expanded.endsWith("check session via /tmux")).toBe(true);
+    expect(expandedText(result).endsWith("check session via /tmux")).toBe(true);
   });
 
   test("injects multiple distinct skills in order of first appearance", () => {
@@ -90,8 +121,8 @@ describe("expandPromptWithSkills", () => {
     const result = expandPromptWithSkills("/tmux then /dip please", opts());
     expect(result.injected.map((i) => i.name)).toEqual(["tmux", "dip"]);
 
-    const tmuxIdx = result.expanded.indexOf('<skill name="tmux"');
-    const dipIdx = result.expanded.indexOf('<skill name="dip"');
+    const tmuxIdx = expandedText(result).indexOf('<skill name="tmux"');
+    const dipIdx = expandedText(result).indexOf('<skill name="dip"');
     expect(tmuxIdx).toBeGreaterThanOrEqual(0);
     expect(dipIdx).toBeGreaterThan(tmuxIdx);
   });
@@ -100,10 +131,10 @@ describe("expandPromptWithSkills", () => {
     createSkill("dip", "dip body");
     const result = expandPromptWithSkills("/dip /dip foo", opts());
     expect(result.injected.map((i) => i.name)).toEqual(["dip", "dip"]);
-    const matches = result.expanded.match(/<skill name="dip"/g) ?? [];
+    const matches = expandedText(result).match(/<skill name="dip"/g) ?? [];
     expect(matches).toHaveLength(2);
     // User message text is unchanged
-    expect(result.expanded.endsWith("/dip /dip foo")).toBe(true);
+    expect(expandedText(result).endsWith("/dip /dip foo")).toBe(true);
   });
 
   test("does not match path-like tokens", () => {
@@ -190,7 +221,7 @@ describe("expandPrompt (session-based wrapper)", () => {
     const result = expandPrompt(message, sessionId);
     expect(result.injected.map((i) => i.name)).toEqual([skillName]);
     expect(result.expanded).toContain("fixture body content");
-    expect(result.expanded.endsWith(message)).toBe(true);
+    expect(expandedText(result).endsWith(message)).toBe(true);
   });
 
   test("returns message unchanged when the token does not match any known skill", () => {

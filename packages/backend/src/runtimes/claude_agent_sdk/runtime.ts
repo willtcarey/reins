@@ -11,6 +11,7 @@ import type {
   AgentRuntimeMessage,
   SetRuntimeModelParams,
 } from "../registry.js";
+import type { RuntimePromptContent } from "../../content-blocks.js";
 import { ClaudeStreamProcessor } from "./stream-processor.js";
 import { createClaudeCustomToolsServer } from "./tools.js";
 import { createSessionStore } from "./session-store.js";
@@ -34,12 +35,39 @@ export function mapThinkingEffort(level: string | null | undefined): "low" | "me
   return "high";
 }
 
-function buildUserMessage(text: string): SDKUserMessage {
+type SDKUserContentBlocks = Exclude<SDKUserMessage["message"]["content"], string>;
+
+type SDKImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+
+function toSDKImageMediaType(mimeType: string): SDKImageMediaType | null {
+  if (mimeType === "image/jpeg" || mimeType === "image/png" || mimeType === "image/gif" || mimeType === "image/webp") {
+    return mimeType;
+  }
+  return null;
+}
+
+function buildUserMessage(content: RuntimePromptContent): SDKUserMessage {
+  const blocks: SDKUserContentBlocks = typeof content === "string"
+    ? [{ type: "text", text: content }]
+    : content.map((block) => {
+      if (block.type === "text") return { type: "text", text: block.text };
+      const mediaType = toSDKImageMediaType(block.mimeType);
+      if (!mediaType) return { type: "text", text: `[Unsupported image type: ${block.mimeType}]` };
+      return {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: mediaType,
+          data: block.data,
+        },
+      };
+    });
+
   return {
     type: "user",
     message: {
       role: "user",
-      content: [{ type: "text", text }],
+      content: blocks,
     },
     parent_tool_use_id: null,
   };
@@ -232,12 +260,12 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     this.currentToolAbortController.abort();
   }
 
-  private enqueuePrompt(text: string): void {
+  private enqueuePrompt(content: RuntimePromptContent): void {
     if (!this.inputStream) {
       throw new Error("Claude input stream is unavailable");
     }
 
-    this.inputStream.enqueue(buildUserMessage(text));
+    this.inputStream.enqueue(buildUserMessage(content));
   }
 
   private buildQueryOptions(
@@ -328,7 +356,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     }
   }
 
-  async prompt(text: string): Promise<void> {
+  async prompt(content: RuntimePromptContent): Promise<void> {
     if (this.closed) throw new Error("Runtime closed");
 
     const promptId = this.nextPromptId++;
@@ -339,7 +367,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
       this.startToolAbortScope();
       try {
         await this.ensureQueryStarted();
-        this.enqueuePrompt(text);
+        this.enqueuePrompt(content);
         this.signalStreamingStart();
       } catch (error) {
         this.activePromptId = null;
@@ -357,7 +385,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     this.activePromptId = promptId;
     this.startToolAbortScope();
     try {
-      this.enqueuePrompt(text);
+      this.enqueuePrompt(content);
       this.signalStreamingStart();
     } catch (error) {
       this.activePromptId = null;
@@ -368,7 +396,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     return completion;
   }
 
-  async steer(_text: string): Promise<void> {
+  async steer(_content: RuntimePromptContent): Promise<void> {
     if (this.closed) throw new Error("Runtime closed");
     throw new Error("Steering is not supported on Claude runtime yet. Wait for completion or abort and send a new prompt.");
   }

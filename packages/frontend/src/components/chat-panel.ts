@@ -13,7 +13,7 @@ import type { ActiveSessionStore } from "../models/stores/active-session-store.j
 import type { ProjectStore } from "../models/stores/project-store.js";
 import "./markdown-content.js";
 import "./session-model-picker.js";
-import "./skill-suggest.js";
+import "./chat-composer.js";
 import { getToolRenderer } from "./tools/index.js";
 import {
   applyChatEvent,
@@ -22,12 +22,16 @@ import {
   type CompactionSummaryMessage,
   type UserMessage,
   type ToolResultMessage,
-  type TextContent,
   type ToolCall,
   type ToolBlockData,
   type StreamingBlock,
 } from "../models/chat-state.js";
-import type { SkillSuggest, SkillInsertDetail } from "./skill-suggest.js";
+import {
+  imageBlockSrc,
+  imagesFromContent,
+  textFromClientContent,
+} from "../models/chat-content.js";
+import type { ChatComposer, ChatComposerSubmitDetail } from "./chat-composer.js";
 
 // ---- Component --------------------------------------------------------------
 
@@ -53,15 +57,13 @@ export class ChatPanel extends LitElement {
   @state() private messages: AgentMessage[] = [];
   @state() private isStreaming = false;
   @state() private streamingBlocks: StreamingBlock[] = [];
-  @state() private inputText = "";
   @state() private expandedSections = new Set<string>();
   @state() private isCompacting = false;
   @state() private errorMessage = "";
 
   private errorTimeout?: ReturnType<typeof setTimeout>;
 
-  @query("textarea") private textarea!: HTMLTextAreaElement;
-  @query("skill-suggest") private skillSuggest?: SkillSuggest;
+  @query("chat-composer") private composer?: ChatComposer;
 
   private unsubscribeEvent?: () => void;
   private unsubscribeStore?: () => void;
@@ -91,7 +93,7 @@ export class ChatPanel extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>) {
-    // Autofocus the textarea when returning to chat tab (desktop only).
+    // Autofocus the composer when returning to chat tab (desktop only).
     // Session switches remount the component via keyed(sessionId).
     if (changed.has("visible") && this.visible) {
       this.focusInput();
@@ -101,10 +103,10 @@ export class ChatPanel extends LitElement {
     this.autoScroll();
   }
 
-  /** Focus the chat textarea, skipping on touch devices to avoid keyboard popup. */
+  /** Focus the chat composer, skipping on touch devices to avoid keyboard popup. */
   private focusInput() {
     if ("ontouchstart" in window || navigator.maxTouchPoints > 0) return;
-    requestAnimationFrame(() => this.textarea?.focus());
+    requestAnimationFrame(() => this.composer?.focusInput());
   }
 
   private subscribeToStore() {
@@ -200,80 +202,31 @@ export class ChatPanel extends LitElement {
     if (next.errorMessage !== prev.errorMessage) this.errorMessage = next.errorMessage;
   }
 
-  private handleSend() {
-    const text = this.inputText.trim();
+  private handleSend(e: CustomEvent<ChatComposerSubmitDetail>) {
+    const content = e.detail.content;
     const sessionId = this.store?.sessionId ?? "";
-    if (!text || !sessionId || !this.store) return;
+    if (!sessionId || !this.store) return;
 
     const sent = this.isStreaming
-      ? this.store.steer(text)
-      : this.store.prompt(text);
+      ? this.store.steer(content)
+      : this.store.prompt(content);
     if (!sent) return;
 
     this.messages = [
       ...this.messages,
       {
         role: "user",
-        content: text,
+        content,
         timestamp: Date.now(),
       },
     ];
 
-    this.inputText = "";
     this.shouldAutoScroll = true;
-    this.skillSuggest?.close();
+    this.composer?.closeSuggestions();
   }
 
   private handleStop() {
     this.store?.abort();
-  }
-
-  private handleKeyDown(e: KeyboardEvent) {
-    if (this.skillSuggest?.handleKey(e)) return;
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      this.handleSend();
-    }
-  }
-
-  /**
-   * Range of the `/name` token the caret is currently inside, tracked so we
-   * can replace it when `skill-suggest` emits an insertion. `null` when the
-   * caret is not in a completable token.
-   */
-  private skillTokenRange: { start: number; end: number } | null = null;
-
-  private handleInput(e: Event) {
-    if (!(e.target instanceof HTMLTextAreaElement)) return;
-    this.inputText = e.target.value;
-    const caret = e.target.selectionStart ?? this.inputText.length;
-
-    const token = findSkillTokenAt(this.inputText, caret);
-    if (token === null) {
-      this.skillTokenRange = null;
-      this.skillSuggest?.search(null);
-      return;
-    }
-    this.skillTokenRange = { start: token.start, end: token.end };
-    this.skillSuggest?.search(token.query);
-  }
-
-  private handleSkillInsert(e: CustomEvent<SkillInsertDetail>) {
-    const range = this.skillTokenRange;
-    if (!range) return;
-    const insertion = `/${e.detail.name} `;
-    const before = this.inputText.slice(0, range.start);
-    const after = this.inputText.slice(range.end);
-    this.inputText = before + insertion + after;
-    const caret = range.start + insertion.length;
-    this.skillTokenRange = null;
-
-    // Restore caret after the DOM reflects the new value.
-    queueMicrotask(() => {
-      if (!this.textarea) return;
-      this.textarea.focus();
-      this.textarea.setSelectionRange(caret, caret);
-    });
   }
 
   private handleScroll(e: Event) {
@@ -306,14 +259,26 @@ export class ChatPanel extends LitElement {
   private renderUserMessage(msg: UserMessage) {
     const text = typeof msg.content === "string"
       ? msg.content
-      : msg.content
-          .filter((c): c is TextContent => c.type === "text")
-          .map((c) => c.text)
-          .join("\n");
+      : textFromClientContent(msg.content);
+    const images = imagesFromContent(msg.content);
+    const sessionId = this.store?.sessionId ?? "";
 
     return html`
       <div class="flex justify-end mb-3">
-        <div class="bg-blue-600 text-white rounded-2xl rounded-br-md px-3 py-1.5 max-w-[80%] text-sm whitespace-pre-wrap">${text}</div>
+        <div class="bg-blue-600 text-white rounded-2xl rounded-br-md px-3 py-1.5 max-w-[80%] text-sm">
+          ${text ? html`<div class="whitespace-pre-wrap">${text}</div>` : nothing}
+          ${images.length > 0 ? html`
+            <div class="mt-2 grid grid-cols-1 gap-2">
+              ${images.map((image) => html`
+                <img
+                  src=${imageBlockSrc(sessionId, image)}
+                  alt=${"filename" in image && image.filename ? image.filename : "Attached image"}
+                  class="max-h-64 max-w-full rounded-lg border border-white/20 object-contain bg-black/20"
+                />
+              `)}
+            </div>
+          ` : nothing}
+        </div>
       </div>
     `;
   }
@@ -371,7 +336,7 @@ export class ChatPanel extends LitElement {
 
   private renderToolBlock(block: ToolBlockData) {
     const renderer = getToolRenderer(block.name);
-    return html`<div class="max-w-[90%]">${renderer.render(block)}</div>`;
+    return html`<div class="max-w-[90%]">${renderer.render({ ...block, sessionId: this.store?.sessionId ?? "" })}</div>`;
   }
 
   private renderToolResultMessage(_msg: ToolResultMessage) {
@@ -503,71 +468,17 @@ export class ChatPanel extends LitElement {
               ></session-model-picker>
             </div>
           ` : nothing}
-          <div class="relative">
-            <skill-suggest
-              .store=${this.projectStore}
-              @skill-insert=${this.handleSkillInsert}
-            ></skill-suggest>
-            <div class="flex gap-2 items-end">
-              <textarea
-              class="flex-1 bg-zinc-800 text-zinc-100 rounded-lg px-3 py-2 text-base resize-none outline-none focus:ring-1 focus:ring-blue-500 placeholder-zinc-500"
-              rows="1"
-              placeholder="${this.isStreaming ? "Send a steering message..." : "Type a message..."}"
-              .value=${this.inputText}
-              @input=${this.handleInput}
-              @keydown=${this.handleKeyDown}
-              @blur=${() => setTimeout(() => this.skillSuggest?.close(), 100)}
-            ></textarea>
-            ${this.isStreaming ? html`
-              <button
-                class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
-                @click=${this.handleStop}
-              >
-                Stop
-              </button>
-            ` : nothing}
-            <button
-              class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              ?disabled=${!this.inputText.trim()}
-              @click=${this.handleSend}
-            >
-              Send
-            </button>
-            </div>
-          </div>
+          <chat-composer
+            .projectStore=${this.projectStore}
+            .sessionId=${sessionId}
+            .streaming=${this.isStreaming}
+            @composer-submit=${this.handleSend}
+            @composer-stop=${this.handleStop}
+          ></chat-composer>
         </div>
       </div>
     `;
   }
-}
-
-/**
- * If the caret sits inside a `/name` skill token (at the start of the input
- * or immediately after whitespace), return the token's range in `text` and
- * the partial name typed so far. Returns `null` if no completable token is
- * under the caret.
- */
-function findSkillTokenAt(
-  text: string,
-  caret: number,
-): { start: number; end: number; query: string } | null {
-  // Walk left from the caret to find the `/` that opened the token.
-  let start = -1;
-  for (let i = caret - 1; i >= 0; i--) {
-    const ch = text[i];
-    if (ch === "/") { start = i; break; }
-    if (!/[a-z0-9-]/i.test(ch)) return null;
-  }
-  if (start === -1) return null;
-
-  // The `/` must be at the start of input or directly follow whitespace.
-  const prev = start === 0 ? "" : text[start - 1];
-  if (prev !== "" && !/\s/.test(prev)) return null;
-
-  const partial = text.slice(start + 1, caret);
-  if (!/^[a-z0-9-]*$/i.test(partial)) return null;
-
-  return { start, end: start + 1 + partial.length, query: partial };
 }
 
 declare global {

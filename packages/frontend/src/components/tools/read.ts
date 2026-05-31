@@ -16,6 +16,7 @@ import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
 import { escapeHtml, shouldWrapLines } from "../../models/changes/diff-utils.js";
 import type { ToolResultImage } from "./types.js";
+import { imageBlockSrc } from "../../models/chat-content.js";
 import { openInBrowserEvent } from "../events.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
@@ -73,6 +74,9 @@ export class ReadToolBlock extends LitElement {
 
   @property({ attribute: false })
   images: ToolResultImage[] = [];
+
+  @property({ attribute: false })
+  sessionId = "";
 
   @property({ type: Boolean })
   showSpinner = false;
@@ -234,7 +238,7 @@ export class ReadToolBlock extends LitElement {
                 ${images.map(
                   (img) =>
                     html`<img
-                      src="data:${img.mimeType};base64,${img.data}"
+                      src=${imageBlockSrc(this.sessionId, img)}
                       class="max-w-full max-h-96 rounded mt-1"
                       alt="Tool result image"
                     />`,
@@ -280,6 +284,7 @@ export const readRenderer: ToolRenderer = {
       .startLine=${startLine}
       .isError=${isError}
       .images=${images}
+      .sessionId=${block.sessionId ?? ""}
       .showSpinner=${isRunning}
     ></read-tool-block>`;
   },

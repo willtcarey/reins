@@ -96,4 +96,4 @@ Custom WebKit scrollbar styles: 8px wide, transparent track, `zinc-700` thumb wi
 - **Mobile sidebar**: hidden by default, slides in as a fixed overlay at `--layer-sidebar` / `--layer-overlay` z-indices. Backdrop at `--layer-sidebar`.
 - **File viewer**: full-screen (`100vw × 100dvh`, no rounded corners) on mobile, centered `90vw × 90vh` with rounded corners on desktop (`sm:` breakpoint).
 - **Diff file tree**: sidebar only visible on wide screens, hidden on narrow viewports.
-- **Textarea**: uses `field-sizing: content` for auto-resize, capped at `max-height: 200px`.
+- **Chat composer**: uses JavaScript textarea autosizing capped at 200px so prompt controls stay stable across browsers.

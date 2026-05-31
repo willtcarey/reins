@@ -16,6 +16,14 @@ export type SessionEntryContext = {
 
 type MessageType = "user" | "assistant" | "system";
 type UserMessageContent = AgentRuntimeMessage["content"] | Record<string, unknown>[] | string;
+type SDKImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+
+function toSDKImageMediaType(mimeType: string): SDKImageMediaType | null {
+  if (mimeType === "image/jpeg" || mimeType === "image/png" || mimeType === "image/gif" || mimeType === "image/webp") {
+    return mimeType;
+  }
+  return null;
+}
 
 /** Narrowed entry type so we can access message.id without `as` casts. */
 type TypedEntry = SessionStoreEntry & {
@@ -185,6 +193,20 @@ function translateContentBlockToSDKBlock(block: RuntimeContentBlock): ContentBlo
     case "text":
       // Structurally compatible with TextBlockParam
       return block;
+    case "image": {
+      if (!("data" in block)) return null;
+      const mediaType = toSDKImageMediaType(block.mimeType);
+      if (!mediaType) return null;
+      const imageBlock: ContentBlockParam = {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: mediaType,
+          data: block.data,
+        },
+      };
+      return imageBlock;
+    }
   }
 }
 

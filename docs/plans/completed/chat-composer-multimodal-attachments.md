@@ -1,6 +1,6 @@
 # Chat Composer Multimodal Attachments
 
-Status: **planning** — API shapes and application call flow.
+Status: **completed** — implemented composer, attachment storage/API, multimodal prompt path, externalization, hydration, and attachment pruning.
 
 Replace the chat textarea with a dedicated composer that supports image attachments while keeping normal chat/session payloads lightweight. The key design is content-addressed attachment storage: binary image bytes live in SQLite BLOB rows, while chat messages, WebSocket events, and REST history responses carry small attachment references.
 

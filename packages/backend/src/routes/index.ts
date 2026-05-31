@@ -23,6 +23,7 @@ import { registerSettingsRoutes } from "./settings.js";
 import { registerModelsRoutes } from "./models.js";
 import { registerOAuthRoutes } from "./oauth.js";
 import { registerAuthRoutes } from "./auth.js";
+import { registerAttachmentRoutes } from "./attachments.js";
 
 export type ProjectRouteContext = RouteContext & { project: ProjectModel };
 
@@ -56,6 +57,7 @@ export function buildRouter() {
   });
   router.group(API.sessions, (r) => {
     registerSessionRoutes(r);
+    registerAttachmentRoutes(r);
   });
 
   router.group(API.tasks, (r) => {

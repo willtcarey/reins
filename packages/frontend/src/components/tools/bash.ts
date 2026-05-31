@@ -11,6 +11,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ToolResultImage } from "./types.js";
+import { imageBlockSrc } from "../../models/chat-content.js";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { parseCommandSegments } from "../../models/tools/bash-command-parser.js";
@@ -48,6 +49,9 @@ export class BashToolBlock extends LitElement {
   @property({ attribute: false })
   images: ToolResultImage[] = [];
 
+  @property({ attribute: false })
+  sessionId = "";
+
   @property({ type: Boolean })
   showSpinner = false;
 
@@ -59,7 +63,7 @@ export class BashToolBlock extends LitElement {
   };
 
   override render() {
-    const { command, isError, output, images, showSpinner } = this;
+    const { command, isError, output, images, showSpinner, sessionId } = this;
 
     const borderColor = isError
       ? "border-red-500/60"
@@ -97,7 +101,7 @@ export class BashToolBlock extends LitElement {
         ${images.length > 0 && (this.expanded || !hasOutput) ? html`
           <div class="border-t border-zinc-800 p-2">
             ${images.map(
-              (img) => html`<img src="data:${img.mimeType};base64,${img.data}" class="max-w-full max-h-96 rounded mt-1" alt="Tool result image" />`,
+              (img) => html`<img src=${imageBlockSrc(sessionId, img)} class="max-w-full max-h-96 rounded mt-1" alt="Tool result image" />`,
             )}
           </div>
         ` : nothing}
@@ -128,6 +132,7 @@ export const bashRenderer: ToolRenderer = {
       .isError=${isError}
       .output=${output}
       .images=${images}
+      .sessionId=${block.sessionId ?? ""}
       .showSpinner=${isRunning}
     ></bash-tool-block>`;
   },

@@ -10,6 +10,7 @@
  */
 
 import type { AgentMessage } from "../chat-state.js";
+import type { ClientPromptContent } from "../chat-content.js";
 import type { EventListener, IAppClient, SessionData } from "../ws-client.js";
 
 export interface SessionModelUpdate {
@@ -96,13 +97,13 @@ export class ActiveSessionStore {
 
   // ---- Actions --------------------------------------------------------------
 
-  prompt(message: string): boolean {
+  prompt(message: ClientPromptContent): boolean {
     if (!this._client || !this.sessionId) return false;
     this._client.prompt(this.sessionId, message);
     return true;
   }
 
-  steer(message: string): boolean {
+  steer(message: ClientPromptContent): boolean {
     if (!this._client || !this.sessionId) return false;
     this._client.steer(this.sessionId, message);
     return true;

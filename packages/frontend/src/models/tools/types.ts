@@ -1,6 +1,4 @@
-/** Inline image data from a tool result. */
-export interface ToolResultImage {
-  type: "image";
-  data: string;
-  mimeType: string;
-}
+import type { ChatImageBlock } from "../chat-content.js";
+
+/** Image data/ref from a tool result. */
+export type ToolResultImage = ChatImageBlock;

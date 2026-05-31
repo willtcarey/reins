@@ -1,6 +1,7 @@
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { getTask as storeGetTask, type TaskRow } from "../task-store.js";
 import type { ServerState } from "../state.js";
+import type { RuntimePromptContent, InlineImageBlock, ImageAttachmentBlock } from "../content-blocks.js";
 import { checkoutBranch } from "../git.js";
 import { TaskNotFoundError } from "../models/tasks.js";
 
@@ -100,7 +101,9 @@ export interface RuntimeToolCallBlock {
   arguments: Record<string, unknown>;
 }
 
-export type RuntimeContentBlock = RuntimeTextBlock | RuntimeThinkingBlock | RuntimeToolCallBlock;
+export type RuntimeImageBlock = InlineImageBlock | ImageAttachmentBlock;
+
+export type RuntimeContentBlock = RuntimeTextBlock | RuntimeThinkingBlock | RuntimeToolCallBlock | RuntimeImageBlock;
 
 /**
  * Runtime-agnostic persisted message shape.
@@ -151,8 +154,8 @@ export interface SetRuntimeModelParams {
 }
 
 export interface AgentRuntime {
-  prompt(text: string): Promise<void>;
-  steer(text: string): Promise<void>;
+  prompt(content: RuntimePromptContent): Promise<void>;
+  steer(content: RuntimePromptContent): Promise<void>;
   abort(): Promise<void>;
   setModel(params: SetRuntimeModelParams): Promise<void>;
   subscribe(listener: (event: AgentRuntimeEvent) => void): () => void;

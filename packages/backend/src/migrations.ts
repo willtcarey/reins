@@ -137,6 +137,24 @@ const MIGRATIONS: [name: string, sql: string][] = [
        AND message_json LIKE '%"signature":%'
        AND message_json NOT LIKE '%"thinkingSignature":%'`,
   ],
+  [
+    "018_create_session_attachments",
+    `CREATE TABLE session_attachments (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      filename TEXT,
+      byte_size INTEGER NOT NULL,
+      sha256 TEXT NOT NULL,
+      data BLOB,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      pruned_at TEXT,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+      UNIQUE (session_id, sha256, mime_type)
+    );
+    CREATE INDEX idx_session_attachments_session ON session_attachments(session_id, created_at DESC)`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

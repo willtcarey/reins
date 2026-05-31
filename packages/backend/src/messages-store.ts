@@ -7,6 +7,12 @@
  */
 
 import { getDb } from "./db.js";
+import {
+  collectAttachmentIds,
+  externalizeImages,
+  hydrateAttachmentRefs,
+  pruneUnreferencedAttachmentData,
+} from "./session-attachments-store.js";
 
 // ---- Types -----------------------------------------------------------------
 
@@ -56,6 +62,8 @@ interface ToolCallBlock {
 type PersistedContentBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string }
+  | { type: "image"; attachmentId: string; mimeType: string; filename?: string; byteSize: number; sha256?: string }
+  | { type: "image"; data: string; mimeType: string; filename?: string }
   | ToolCallBlock;
 
 type PersistedMessageBase = {
@@ -111,6 +119,7 @@ function contentToText(content: string | PersistedContentBlock[]): string {
   return content.map((block) => {
     if (block.type === "text") return block.text;
     if (block.type === "thinking") return block.thinking;
+    if (block.type === "image") return "[image]";
     return JSON.stringify(block) ?? "";
   }).join("\n");
 }
@@ -167,14 +176,18 @@ function pruneToolResultsBeforeSeq(sessionId: string, compactionSeq: number): vo
     )
     .all(sessionId, compactionSeq);
 
+  const prunedAttachmentIds: string[] = [];
   const update = db.query(
     `UPDATE session_messages SET message_json = ? WHERE id = ?`,
   );
   for (const row of preCompactionResults) {
     const msg = JSON.parse(row.message_json);
+    prunedAttachmentIds.push(...collectAttachmentIds(msg));
     msg.content = [{ type: "text", text: "[pruned]" }];
     update.run(JSON.stringify(msg), row.id);
   }
+
+  pruneUnreferencedAttachmentData(sessionId, prunedAttachmentIds);
 }
 
 // ---- Message persistence ---------------------------------------------------
@@ -225,11 +238,27 @@ export function persistMessages(sessionId: string, messages: any[]): void {
     // New compaction (first or re-compaction)
     if (lastSummaryRow?.last_seq != null) {
       // Re-compaction: delete old post-compaction messages superseded by the
-      // new compaction summary.
+      // new compaction summary. Collect attachment refs first so orphaned BLOBs
+      // can be pruned after the rows disappear.
+      const deletedRows = db
+        .query<{ message_json: string }, [string, number, number]>(
+          `SELECT message_json FROM session_messages
+           WHERE session_id = ? AND seq > ? AND seq < ?`,
+        )
+        .all(sessionId, lastSummaryRow.last_seq, nextSeq);
+      const deletedAttachmentIds = deletedRows.flatMap((row) => {
+        try {
+          return collectAttachmentIds(JSON.parse(row.message_json));
+        } catch {
+          return [];
+        }
+      });
+
       db.query(
         `DELETE FROM session_messages
          WHERE session_id = ? AND seq > ? AND seq < ?`,
       ).run(sessionId, lastSummaryRow.last_seq, nextSeq);
+      pruneUnreferencedAttachmentData(sessionId, deletedAttachmentIds);
     }
     appendMessages(sessionId, messages.slice(compactionIdx));
   } else {
@@ -247,9 +276,17 @@ export function persistMessages(sessionId: string, messages: any[]): void {
 export function loadMessages(sessionId: string): any[] {
   const db = getDb();
   const rows = db
-    .query<{ message_json: string }, [string]>("SELECT message_json FROM session_messages WHERE session_id = ? ORDER BY seq")
+    .query<{ id: number; message_json: string }, [string]>("SELECT id, message_json FROM session_messages WHERE session_id = ? ORDER BY seq")
     .all(sessionId);
-  return rows.map((r) => JSON.parse(r.message_json));
+  const update = db.query("UPDATE session_messages SET message_json = ? WHERE id = ?");
+
+  return rows.map((row) => {
+    const parsed = JSON.parse(row.message_json);
+    const externalized = externalizeImages(sessionId, parsed);
+    const nextJson = JSON.stringify(externalized);
+    if (nextJson !== row.message_json) update.run(nextJson, row.id);
+    return externalized;
+  });
 }
 
 /**
@@ -376,9 +413,10 @@ export function appendMessages(sessionId: string, messages: any[]): void {
 
   const tx = db.transaction(() => {
     for (const msg of messages) {
-      insert.run(sessionId, nextSeq, msg.role, JSON.stringify(msg));
+      const persisted = externalizeImages(sessionId, msg);
+      insert.run(sessionId, nextSeq, persisted.role, JSON.stringify(persisted));
 
-      if (msg.role === "compactionSummary") {
+      if (persisted.role === "compactionSummary") {
         pruneToolResultsBeforeSeq(sessionId, nextSeq);
       }
 
@@ -417,5 +455,5 @@ export function loadMessagesForLLM(sessionId: string): any[] {
     )
     .all(sessionId, minSeq);
 
-  return rows.map((r) => JSON.parse(r.message_json));
+  return rows.map((r) => hydrateAttachmentRefs(sessionId, JSON.parse(r.message_json)));
 }

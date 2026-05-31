@@ -55,12 +55,12 @@ A runtime should build the Reins system prompt with project/task context and ava
 
 A runtime returned from `createRuntime()` must implement:
 
-- `prompt(text): Promise<void>`
-  - Starts a user turn and resolves only when the run is complete or failed.
+- `prompt(content): Promise<void>`
+  - Starts a user turn from text or hydrated multimodal content and resolves only when the run is complete or failed.
   - Must reject on fatal prompt failures so the initiating WS client sees an error.
   - Must update `isStreaming()` while running.
-- `steer(text): Promise<void>`
-  - Called when the user submits text while streaming.
+- `steer(content): Promise<void>`
+  - Called when the user submits text or hydrated multimodal content while streaming.
   - If unsupported, reject with a clear error. Claude SDK currently does this.
 - `abort(): Promise<void>`
   - Cancels the active prompt and aborts active tool execution where possible.
@@ -129,7 +129,7 @@ Tool names should be normalized to Reins names where possible (`read`, `write`, 
 
 - User message:
   - `role: "user"`
-  - `content`: string or content blocks, usually `[{ type: "text", text }]`
+  - `content`: string or content blocks, usually `[{ type: "text", text }]`; prompt images use attachment refs in persisted/client form and inline base64 only after runtime hydration.
   - `timestamp` recommended for frontend dedupe.
 - Assistant message:
   - `role: "assistant"`

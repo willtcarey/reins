@@ -67,7 +67,8 @@ components/
 │   ├── create-task.ts, delegate.ts, generic.ts
 │   ├── index.ts (registry), types.ts
 ├── app.ts               Root shell
-├── chat-panel.ts        Message display + input
+├── chat-panel.ts        Message display + composer orchestration
+├── chat-composer.ts     Prompt input, autosize, skill suggestions, image attachments
 ├── session-sidebar.ts   Sidebar layout
 ├── session-list.ts, project-sidebar.ts, project-form.ts
 ├── task-list.ts, task-detail.ts, task-form.ts
@@ -315,7 +316,8 @@ app-shell                    — root shell, creates store, applies routes
 │   ├── task-form            — task creation (generate from prompt)
 │   ├── task-detail          — task edit/delete
 │   └── session-list         — scratch sessions
-├── chat-panel               — message display + input
+├── chat-panel               — message display + composer orchestration
+│   ├── chat-composer        — prompt input, autosize, skill suggestions, image attachments
 │   └── diff-file-tree       — file tree sidebar (wide screens)
 ├── diff-panel               — full diff view with file cards
 │   └── diff-file-tree       — file tree with scroll spy

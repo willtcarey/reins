@@ -14,6 +14,7 @@ import { getProject } from "../project-store.js";
 import { getSession } from "../session-store.js";
 import { logger } from "../logger.js";
 import { ReinsResourceLoader, type Skill } from "./resource-loader.js";
+import { isTextContentBlock, type ClientPromptContent, type TextContentBlock } from "../content-blocks.js";
 
 export interface InjectedSkill {
   name: string;
@@ -22,7 +23,7 @@ export interface InjectedSkill {
 }
 
 export interface ExpandPromptResult {
-  expanded: string;
+  expanded: ClientPromptContent;
   injected: InjectedSkill[];
 }
 
@@ -40,13 +41,30 @@ function extractSlashTokens(message: string): string[] {
   return names;
 }
 
+function textBlocksForPrompt(message: ClientPromptContent): TextContentBlock[] {
+  if (typeof message === "string") return [{ type: "text", text: message }];
+  return message.filter(isTextContentBlock);
+}
+
+function prependSkillBlocks(message: ClientPromptContent, skillBlocks: string): ClientPromptContent {
+  if (typeof message === "string") return `${skillBlocks}\n\n${message}`;
+
+  const firstTextIndex = message.findIndex(isTextContentBlock);
+  if (firstTextIndex < 0) return message;
+
+  return message.map((block, index) => {
+    if (index !== firstTextIndex || !isTextContentBlock(block)) return block;
+    return { ...block, text: `${skillBlocks}\n\n${block.text}` };
+  });
+}
+
 /**
  * Expand any standalone `/name` slash commands in `message` that match a
  * skill available to the given session's project. Thin wrapper that only
  * resolves the session's projectDir and delegates — all skill-detection and
  * loader work happens in `expandPromptWithSkills`.
  */
-export function expandPrompt(message: string, sessionId: string): ExpandPromptResult {
+export function expandPrompt(message: ClientPromptContent, sessionId: string): ExpandPromptResult {
   const row = getSession(sessionId);
   if (!row) return { expanded: message, injected: [] };
 
@@ -65,10 +83,11 @@ export function expandPrompt(message: string, sessionId: string): ExpandPromptRe
  * `~/.agents/skills`).
  */
 export function expandPromptWithSkills(
-  message: string,
+  message: ClientPromptContent,
   loaderOptions: { cwd: string; agentDir?: string },
 ): ExpandPromptResult {
-  const candidates = extractSlashTokens(message);
+  const textBlocks = textBlocksForPrompt(message);
+  const candidates = textBlocks.flatMap((block) => extractSlashTokens(block.text));
   if (candidates.length === 0) return { expanded: message, injected: [] };
 
   const loader = new ReinsResourceLoader(loaderOptions);
@@ -104,7 +123,7 @@ export function expandPromptWithSkills(
 
   if (blocks.length === 0) return { expanded: message, injected: [] };
 
-  return { expanded: blocks.join("\n\n") + "\n\n" + message, injected };
+  return { expanded: prependSkillBlocks(message, blocks.join("\n\n")), injected };
 }
 
 // Re-export for backward compatibility — canonical home is models/skill.ts

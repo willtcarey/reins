@@ -86,8 +86,7 @@ describe("ChatPanel refresh contract", () => {
     store.sessionMessages = [{ role: "user", content: "earlier prompt", timestamp: 100 }];
     notify(store);
 
-    Reflect.set(el, "inputText", "new prompt");
-    callPrivate(el, "handleSend");
+    callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: "new prompt" } }));
     startStreamingWithTool(el);
 
     store.sessionData = makeSessionData({ isStreaming: true, messageCount: 1 });
