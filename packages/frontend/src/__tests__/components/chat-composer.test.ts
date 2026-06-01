@@ -4,6 +4,8 @@ import {
   buildClientPromptContent,
   findSkillTokenAt,
   imageMimeTypeForFile,
+  focusTextareaWithoutScroll,
+  blurTextarea,
   isAllowedImageFile,
 } from "../../components/chat-composer.js";
 import { templateToString } from "../helpers/lit-template.js";
@@ -80,6 +82,40 @@ describe("chat-composer helpers", () => {
     expect(output).toContain('aria-label="Send message"');
     expect(output).toContain('data-role="send-icon"');
     expect(output).not.toContain(">Send</button>");
+  });
+
+  test("focuses the textarea with preventScroll when preserving keyboard focus", () => {
+    const calls: unknown[] = [];
+    const textarea = {
+      focus: (options?: FocusOptions) => calls.push(options),
+    };
+
+    expect(focusTextareaWithoutScroll(textarea)).toBe(true);
+    expect(calls).toEqual([{ preventScroll: true }]);
+  });
+
+  test("blurs the textarea to collapse the mobile keyboard", () => {
+    let blurCalls = 0;
+    const textarea = {
+      blur: () => { blurCalls += 1; },
+    };
+
+    expect(blurTextarea(textarea)).toBe(true);
+    expect(blurCalls).toBe(1);
+    expect(blurTextarea(null)).toBe(false);
+  });
+
+  test("send control preserves keyboard focus during pointer and mouse activation", () => {
+    const el = new ChatComposer();
+
+    const output = templateToString(el.render());
+    const sendStart = output.indexOf('data-role="send-control"');
+    const sendEnd = output.indexOf(">", sendStart);
+    const sendTag = output.slice(sendStart, sendEnd);
+
+    expect(sendTag).toContain("@pointerdown=");
+    expect(sendTag).toContain("@pointerup=");
+    expect(sendTag).toContain("@mousedown=");
   });
 
   test("uses compact vertical spacing in the prompt input box", () => {

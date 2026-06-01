@@ -28,6 +28,43 @@ export interface ChatComposerSubmitDetail {
   content: ClientPromptContent;
 }
 
+export interface SendAnimationRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export interface SendAnimationOrigin {
+  rect: SendAnimationRect;
+  backgroundColor: string;
+  borderRadius: string;
+}
+
+export interface FocusableTextInput {
+  focus(options?: FocusOptions): void;
+}
+
+export interface BlurableTextInput {
+  blur(): void;
+}
+
+export function focusTextareaWithoutScroll(textarea: FocusableTextInput | null | undefined): boolean {
+  if (!textarea) return false;
+  try {
+    textarea.focus({ preventScroll: true });
+  } catch {
+    textarea.focus();
+  }
+  return true;
+}
+
+export function blurTextarea(textarea: BlurableTextInput | null | undefined): boolean {
+  if (!textarea) return false;
+  textarea.blur();
+  return true;
+}
+
 export function imageMimeTypeForFile(file: File): string | null {
   const browserType = file.type.toLowerCase();
   if (ALLOWED_IMAGE_TYPES.has(browserType)) return browserType;
@@ -107,8 +144,12 @@ export class ChatComposer extends LitElement {
   @query("textarea") private textarea?: HTMLTextAreaElement;
   @query("input[type=file]") private fileInput?: HTMLInputElement;
   @query("skill-suggest") private skillSuggest?: SkillSuggest;
+  @query('[data-role="prompt-box"]') private promptBox?: HTMLElement;
 
   private skillTokenRange: { start: number; end: number } | null = null;
+  private sendPointerPreservedFocus = false;
+  private skipNextSendClick = false;
+  private focusPreservationVersion = 0;
 
   override disconnectedCallback() {
     super.disconnectedCallback();
@@ -124,11 +165,47 @@ export class ChatComposer extends LitElement {
   }
 
   focusInput() {
-    requestAnimationFrame(() => this.textarea?.focus());
+    requestAnimationFrame(() => focusTextareaWithoutScroll(this.textarea));
+  }
+
+  blurInput() {
+    const blurred = blurTextarea(this.textarea);
+    if (blurred) {
+      this.focusPreservationVersion += 1;
+      this.skillSuggest?.close();
+    }
+    return blurred;
   }
 
   closeSuggestions() {
     this.skillSuggest?.close();
+  }
+
+  getSendAnimationOrigin(): SendAnimationOrigin | null {
+    const source = this.promptBox;
+    if (!source) return null;
+
+    const rect = source.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+
+    let backgroundColor = "rgb(39, 39, 42)";
+    let borderRadius = "12px";
+    if (typeof globalThis.getComputedStyle === "function") {
+      const style = globalThis.getComputedStyle(source);
+      backgroundColor = style.backgroundColor || backgroundColor;
+      borderRadius = style.borderRadius || borderRadius;
+    }
+
+    return {
+      rect: {
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+      },
+      backgroundColor,
+      borderRadius,
+    };
   }
 
   private get canSubmit(): boolean {
@@ -233,8 +310,11 @@ export class ChatComposer extends LitElement {
     return body.attachments ?? [];
   }
 
-  private async handleSend() {
+  private async handleSend(opts: { preserveFocus?: boolean } = {}) {
     if (!this.canSubmit) return;
+
+    const focusPreservationVersion = this.focusPreservationVersion;
+    if (opts.preserveFocus) focusTextareaWithoutScroll(this.textarea);
 
     this.isUploading = true;
     this.errorMessage = "";
@@ -247,11 +327,58 @@ export class ChatComposer extends LitElement {
         detail: { content },
       }));
       this.clearDraft();
+      if (opts.preserveFocus && focusPreservationVersion === this.focusPreservationVersion) {
+        queueMicrotask(() => focusTextareaWithoutScroll(this.textarea));
+      }
     } catch (err) {
       this.errorMessage = err instanceof Error ? err.message : "Failed to send message";
     } finally {
       this.isUploading = false;
     }
+  }
+
+  private textareaHasFocus(): boolean {
+    return typeof document !== "undefined" && document.activeElement === this.textarea;
+  }
+
+  private preserveTextareaFocus(e: Event) {
+    if (!this.textareaHasFocus()) return;
+    e.preventDefault();
+    focusTextareaWithoutScroll(this.textarea);
+  }
+
+  private handleSendPointerDown(e: PointerEvent) {
+    this.sendPointerPreservedFocus = false;
+    if (!this.textareaHasFocus()) return;
+    e.preventDefault();
+    this.sendPointerPreservedFocus = true;
+    focusTextareaWithoutScroll(this.textarea);
+  }
+
+  private pointerEndedInsideControl(e: PointerEvent): boolean {
+    if (!(e.currentTarget instanceof HTMLElement)) return false;
+    if (typeof document === "undefined" || typeof document.elementFromPoint !== "function") return true;
+    const hit = document.elementFromPoint(e.clientX, e.clientY);
+    return hit === e.currentTarget || (hit !== null && e.currentTarget.contains(hit));
+  }
+
+  private handleSendPointerUp(e: PointerEvent) {
+    if (!this.sendPointerPreservedFocus) return;
+    this.sendPointerPreservedFocus = false;
+    if (!this.pointerEndedInsideControl(e)) return;
+
+    this.skipNextSendClick = true;
+    focusTextareaWithoutScroll(this.textarea);
+    void this.handleSend({ preserveFocus: true });
+  }
+
+  private handleSendClick() {
+    if (this.skipNextSendClick) {
+      this.skipNextSendClick = false;
+      return;
+    }
+    focusTextareaWithoutScroll(this.textarea);
+    void this.handleSend({ preserveFocus: true });
   }
 
   private handleStop() {
@@ -445,7 +572,10 @@ export class ChatComposer extends LitElement {
               title="Send message"
               aria-label="Send message"
               ?disabled=${!this.canSubmit}
-              @click=${() => void this.handleSend()}
+              @pointerdown=${this.handleSendPointerDown}
+              @pointerup=${this.handleSendPointerUp}
+              @mousedown=${this.preserveTextareaFocus}
+              @click=${this.handleSendClick}
             >${this.isUploading ? html`
               <span
                 data-role="send-icon"

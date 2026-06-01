@@ -31,7 +31,75 @@ import {
   imagesFromContent,
   textFromClientContent,
 } from "../models/chat-content.js";
-import type { ChatComposer, ChatComposerSubmitDetail } from "./chat-composer.js";
+import type { ChatComposer, ChatComposerSubmitDetail, SendAnimationOrigin, SendAnimationRect } from "./chat-composer.js";
+
+export interface SendAnimationGeometry {
+  startLeft: number;
+  startTop: number;
+  startWidth: number;
+  startHeight: number;
+  targetLeft: number;
+  targetTop: number;
+  dx: number;
+  dy: number;
+}
+
+export interface SendAnimationStages {
+  detachDx: number;
+  detachDy: number;
+  finalDx: number;
+  finalDy: number;
+  detachScale: number;
+  travelScale: number;
+  settleScale: number;
+  detachMs: number;
+  travelMs: number;
+  settleMs: number;
+}
+
+function directionalDrift(delta: number, fraction: number, maxDistance: number): number {
+  if (delta === 0) return 0;
+  return Math.sign(delta) * Math.min(Math.abs(delta) * fraction, maxDistance);
+}
+
+export function computeSendAnimationStages(delta: { dx: number; dy: number }): SendAnimationStages {
+  return {
+    detachDx: Math.round(directionalDrift(delta.dx, 0.08, 18)),
+    detachDy: Math.round(directionalDrift(delta.dy, 0.07, 14)),
+    finalDx: delta.dx,
+    finalDy: delta.dy,
+    detachScale: 1.012,
+    travelScale: 1.018,
+    settleScale: 1,
+    detachMs: 60,
+    travelMs: 135,
+    settleMs: 75,
+  };
+}
+
+export function computeSendAnimationGeometry(
+  originRect: SendAnimationRect,
+  targetRect: SendAnimationRect,
+  layerRect: SendAnimationRect,
+): SendAnimationGeometry {
+  const startWidth = Math.min(originRect.width, targetRect.width);
+  const startHeight = Math.min(originRect.height, targetRect.height);
+  const startLeft = originRect.left - layerRect.left;
+  const startTop = originRect.top + ((originRect.height - startHeight) / 2) - layerRect.top;
+  const targetLeft = targetRect.left - layerRect.left;
+  const targetTop = targetRect.top - layerRect.top;
+
+  return {
+    startLeft,
+    startTop,
+    startWidth,
+    startHeight,
+    targetLeft,
+    targetTop,
+    dx: targetLeft - startLeft,
+    dy: targetTop - startTop,
+  };
+}
 
 // ---- Component --------------------------------------------------------------
 
@@ -60,6 +128,7 @@ export class ChatPanel extends LitElement {
   @state() private expandedSections = new Set<string>();
   @state() private isCompacting = false;
   @state() private errorMessage = "";
+  @state() private animatingUserMessageKeys = new Set<string>();
 
   private errorTimeout?: ReturnType<typeof setTimeout>;
 
@@ -207,22 +276,42 @@ export class ChatPanel extends LitElement {
     const sessionId = this.store?.sessionId ?? "";
     if (!sessionId || !this.store) return;
 
-    const sent = this.isStreaming
+    const animationOrigin = this.composer?.getSendAnimationOrigin() ?? null;
+    const shouldAnimate = animationOrigin !== null && this.canAnimateOutgoingMessage();
+    const timestamp = Date.now();
+    const messageKey = this.userMessageKey(timestamp);
+
+    const wasStreaming = this.isStreaming;
+    const sent = wasStreaming
       ? this.store.steer(content)
       : this.store.prompt(content);
     if (!sent) return;
+
+    if (!wasStreaming) {
+      // Mirror the imminent agent_start locally so the outgoing bubble's
+      // measured target already includes the Thinking row. Otherwise the
+      // row can appear mid-flight and push the hidden real bubble upward,
+      // producing a jump when the animation reveals it.
+      this.isStreaming = true;
+      this.streamingBlocks = [];
+    }
+
+    if (shouldAnimate) {
+      this.animatingUserMessageKeys = new Set([...this.animatingUserMessageKeys, messageKey]);
+    }
 
     this.messages = [
       ...this.messages,
       {
         role: "user",
         content,
-        timestamp: Date.now(),
+        timestamp,
       },
     ];
 
     this.shouldAutoScroll = true;
     this.composer?.closeSuggestions();
+    if (shouldAnimate) void this.runOutgoingMessageAnimation(messageKey, animationOrigin);
   }
 
   private handleStop() {
@@ -235,6 +324,10 @@ export class ChatPanel extends LitElement {
     this.shouldAutoScroll = atBottom;
   }
 
+  private handleMessageTouchMove() {
+    this.composer?.blurInput();
+  }
+
   private autoScroll() {
     if (!this.shouldAutoScroll) return;
     requestAnimationFrame(() => {
@@ -243,6 +336,167 @@ export class ChatPanel extends LitElement {
         container.scrollTop = container.scrollHeight;
       }
     });
+  }
+
+  private userMessageKey(timestamp: number): string {
+    return `user-${timestamp}`;
+  }
+
+  private cssEscape(value: string): string {
+    if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(value);
+    return value.replace(/["\\]/g, "\\$&");
+  }
+
+  private canAnimateOutgoingMessage(): boolean {
+    if (typeof document === "undefined" || !document.body) return false;
+    if (
+      typeof window !== "undefined"
+      && typeof window.matchMedia === "function"
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  private waitForAnimationFrame(): Promise<void> {
+    return new Promise((resolve) => {
+      if (typeof globalThis.requestAnimationFrame === "function") {
+        globalThis.requestAnimationFrame(() => resolve());
+        return;
+      }
+      setTimeout(resolve, 0);
+    });
+  }
+
+  private revealOutgoingMessage(messageKey: string) {
+    if (!this.animatingUserMessageKeys.has(messageKey)) return;
+    const next = new Set(this.animatingUserMessageKeys);
+    next.delete(messageKey);
+    this.animatingUserMessageKeys = next;
+  }
+
+  private waitForTransition(element: HTMLElement, durationMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeout);
+        element.removeEventListener("transitionend", onTransitionEnd);
+        resolve();
+      };
+      const onTransitionEnd = (event: TransitionEvent) => {
+        if (event.target === element && event.propertyName === "transform") finish();
+      };
+      const timeout = setTimeout(finish, durationMs + 120);
+      element.addEventListener("transitionend", onTransitionEnd);
+    });
+  }
+
+  private async runOutgoingMessageAnimation(
+    messageKey: string,
+    origin: SendAnimationOrigin,
+  ): Promise<void> {
+    let ghost: HTMLElement | null = null;
+
+    try {
+      await this.updateComplete;
+      await this.waitForAnimationFrame();
+
+      if (!this.canAnimateOutgoingMessage()) return;
+
+      const target = this.querySelector<HTMLElement>(
+        `[data-message-key="${this.cssEscape(messageKey)}"] [data-role="user-message-bubble"]`,
+      );
+      if (!target) return;
+
+      const targetRect = target.getBoundingClientRect();
+      if (targetRect.width <= 0 || targetRect.height <= 0) return;
+
+      const layer = this.querySelector<HTMLElement>('[data-role="send-animation-layer"]');
+      if (!layer) return;
+      const layerRect = layer.getBoundingClientRect();
+      const geometry = computeSendAnimationGeometry(origin.rect, targetRect, layerRect);
+
+      const targetStyle = typeof globalThis.getComputedStyle === "function"
+        ? globalThis.getComputedStyle(target)
+        : null;
+      const targetBackground = targetStyle?.backgroundColor || "rgb(37, 99, 235)";
+      const targetBorderRadius = targetStyle?.borderRadius || "16px";
+
+      const clonedTarget = target.cloneNode(true);
+      if (!(clonedTarget instanceof HTMLElement)) return;
+      ghost = clonedTarget;
+      ghost.classList.add("sent-message-ghost");
+      ghost.style.position = "absolute";
+      ghost.style.left = `${geometry.startLeft}px`;
+      ghost.style.top = `${geometry.startTop}px`;
+      ghost.style.width = `${geometry.startWidth}px`;
+      ghost.style.height = `${geometry.startHeight}px`;
+      ghost.style.maxWidth = "none";
+      ghost.style.overflow = "hidden";
+      ghost.style.boxSizing = "border-box";
+      ghost.style.margin = "0";
+      ghost.style.pointerEvents = "none";
+      ghost.style.zIndex = "var(--layer-overlay)";
+      ghost.style.transformOrigin = "top left";
+      ghost.style.transform = "translate3d(0, 0, 0) scale(0.995)";
+      ghost.style.backgroundColor = origin.backgroundColor;
+      ghost.style.borderRadius = origin.borderRadius;
+      ghost.style.opacity = "0.96";
+      ghost.style.boxShadow = "0 0 0 rgba(0, 0, 0, 0)";
+      ghost.style.willChange = "transform, width, height, opacity";
+      ghost.style.contain = "layout paint";
+      layer.appendChild(ghost);
+
+      await this.waitForAnimationFrame();
+      ghost.getBoundingClientRect();
+
+      const stages = computeSendAnimationStages(geometry);
+      const detachEasing = "cubic-bezier(0.4, 0, 0.2, 1)";
+      const travelEasing = "cubic-bezier(0.2, 0.8, 0.2, 1)";
+      const settleEasing = "cubic-bezier(0.16, 1, 0.3, 1)";
+
+      ghost.style.transition = [
+        `transform ${stages.detachMs}ms ${detachEasing}`,
+        `background-color ${stages.detachMs}ms ease-out`,
+        `border-radius ${stages.detachMs}ms ${detachEasing}`,
+        `opacity ${stages.detachMs}ms ease-out`,
+      ].join(", ");
+      ghost.style.transform = `translate3d(${stages.detachDx}px, ${stages.detachDy}px, 0) scale(${stages.detachScale})`;
+      ghost.style.backgroundColor = targetBackground;
+      ghost.style.borderRadius = targetBorderRadius;
+      ghost.style.opacity = "1";
+
+      await this.waitForTransition(ghost, stages.detachMs);
+
+      ghost.style.transition = [
+        `transform ${stages.travelMs}ms ${travelEasing}`,
+        `width ${stages.travelMs}ms ${travelEasing}`,
+        `height ${stages.travelMs}ms ${travelEasing}`,
+        `box-shadow ${stages.travelMs}ms ${travelEasing}`,
+      ].join(", ");
+      ghost.style.transform = `translate3d(${stages.finalDx}px, ${stages.finalDy}px, 0) scale(${stages.travelScale})`;
+      ghost.style.width = `${targetRect.width}px`;
+      ghost.style.height = `${targetRect.height}px`;
+      ghost.style.boxShadow = "0 12px 28px rgba(0, 0, 0, 0.25)";
+
+      await this.waitForTransition(ghost, stages.travelMs);
+
+      ghost.style.transition = [
+        `transform ${stages.settleMs}ms ${settleEasing}`,
+        `box-shadow ${stages.settleMs}ms ${settleEasing}`,
+      ].join(", ");
+      ghost.style.transform = `translate3d(${stages.finalDx}px, ${stages.finalDy}px, 0) scale(${stages.settleScale})`;
+      ghost.style.boxShadow = "0 0 0 rgba(0, 0, 0, 0)";
+
+      await this.waitForTransition(ghost, stages.settleMs);
+    } finally {
+      this.revealOutgoingMessage(messageKey);
+      await this.updateComplete.catch(() => undefined);
+      ghost?.remove();
+    }
   }
 
   private toggleSection(id: string) {
@@ -262,10 +516,16 @@ export class ChatPanel extends LitElement {
       : textFromClientContent(msg.content);
     const images = imagesFromContent(msg.content);
     const sessionId = this.store?.sessionId ?? "";
+    const messageKey = this.userMessageKey(msg.timestamp);
+    const isAnimating = this.animatingUserMessageKeys.has(messageKey);
 
     return html`
-      <div class="flex justify-end mb-3">
-        <div class="bg-blue-600 text-white rounded-2xl rounded-br-md px-3 py-1.5 max-w-[80%] text-sm">
+      <div
+        data-role="user-message-row"
+        data-message-key=${messageKey}
+        class="flex justify-end mb-3 ${isAnimating ? 'sent-message-target-hidden' : ''}"
+      >
+        <div data-role="user-message-bubble" class="bg-blue-600 text-white rounded-2xl rounded-br-md px-3 py-1.5 max-w-[80%] text-sm">
           ${text ? html`<div class="whitespace-pre-wrap">${text}</div>` : nothing}
           ${images.length > 0 ? html`
             <div class="mt-2 grid grid-cols-1 gap-2">
@@ -435,12 +695,13 @@ export class ChatPanel extends LitElement {
     const sessionData = this.store?.sessionData;
 
     return html`
-      <div class="flex flex-col h-full">
+      <div class="relative flex flex-col h-full">
         <!-- Messages area -->
         <div
           id="chat-scroll"
           class="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-1"
           @scroll=${this.handleScroll}
+          @touchmove=${this.handleMessageTouchMove}
         >
           ${this.messages.length === 0 && !this.isStreaming && !this.isCompacting ? html`
             <div class="flex items-center justify-center h-full text-zinc-500 text-sm">
@@ -476,6 +737,12 @@ export class ChatPanel extends LitElement {
             @composer-stop=${this.handleStop}
           ></chat-composer>
         </div>
+
+        <div
+          data-role="send-animation-layer"
+          class="absolute inset-0 pointer-events-none overflow-visible z-[var(--layer-overlay)]"
+          aria-hidden="true"
+        ></div>
       </div>
     `;
   }
