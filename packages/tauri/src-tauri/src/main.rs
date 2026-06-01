@@ -1,6 +1,8 @@
 // Prevents an additional console window on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::process::Command;
+
 use tauri::{
     menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
     webview::DownloadEvent,
@@ -27,6 +29,21 @@ fn backend_url() -> String {
     env_backend_url()
         .or_else(build_time_backend_url)
         .unwrap_or_else(|| DEFAULT_BACKEND_URL.to_string())
+}
+
+fn open_external_url(url: &str) {
+    #[cfg(target_os = "macos")]
+    let result = Command::new("open").arg(url).spawn();
+
+    #[cfg(target_os = "windows")]
+    let result = Command::new("cmd").args(["/C", "start", "", url]).spawn();
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = Command::new("xdg-open").arg(url).spawn();
+
+    if let Err(error) = result {
+        eprintln!("failed to open external URL `{url}`: {error}");
+    }
 }
 
 fn app_menu(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
@@ -125,15 +142,28 @@ fn main() {
         .setup(move |app| {
             app.set_menu(app_menu(app.handle())?)?;
 
-            let url = backend_url.parse().unwrap_or_else(|error| {
+            let backend_url = backend_url.parse().unwrap_or_else(|error| {
                 panic!("invalid REINS_BACKEND_URL `{backend_url}`: {error}")
             });
-            let url = WebviewUrl::External(url);
+            let backend_origin = backend_url.origin().ascii_serialization();
+            let url = WebviewUrl::External(backend_url);
 
             WebviewWindowBuilder::new(app, "main", url)
                 .title("REINS")
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(800.0, 600.0)
+                .on_navigation(move |url| {
+                    if url.origin().ascii_serialization() == backend_origin {
+                        return true;
+                    }
+
+                    if matches!(url.scheme(), "http" | "https") {
+                        open_external_url(url.as_str());
+                        return false;
+                    }
+
+                    true
+                })
                 .on_download(|_, event| match event {
                     DownloadEvent::Requested { destination, .. } => {
                         let mut dialog = rfd::FileDialog::new();
