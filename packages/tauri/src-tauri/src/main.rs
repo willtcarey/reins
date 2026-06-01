@@ -6,7 +6,7 @@ use std::process::Command;
 use tauri::{
     menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
     webview::DownloadEvent,
-    AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, Wry,
+    AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder, Wry,
 };
 
 const DEFAULT_BACKEND_URL: &str = "http://localhost:3100";
@@ -142,7 +142,7 @@ fn main() {
         .setup(move |app| {
             app.set_menu(app_menu(app.handle())?)?;
 
-            let backend_url = backend_url.parse().unwrap_or_else(|error| {
+            let backend_url: Url = backend_url.parse().unwrap_or_else(|error| {
                 panic!("invalid REINS_BACKEND_URL `{backend_url}`: {error}")
             });
             let backend_origin = backend_url.origin().ascii_serialization();
