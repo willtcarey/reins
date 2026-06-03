@@ -16,11 +16,13 @@ import { customElement, property, query, state } from "lit/decorators.js";
 import type { TemplateResult } from "lit";
 import type { FileBrowserStore } from "../../models/stores/file-browser-store.js";
 import { StoreController } from "../../controllers/store-controller.js";
-import { isMarkdown, isImage, isPdf } from "../../models/changes/diff-utils.js";
+import { isMarkdown, isImage, isPdf, isHtml } from "../../models/changes/diff-utils.js";
+import type { FileViewMode } from "../events.js";
 import "./file-viewer-image.js";
 import "./file-viewer-pdf.js";
 import "./file-viewer-binary.js";
 import "./file-viewer-markdown.js";
+import "./file-viewer-html.js";
 import "./file-viewer-code.js";
 import "../view-mode-tabs.js";
 import type { TabDef } from "../view-mode-tabs.js";
@@ -52,6 +54,9 @@ export class FileViewer extends LitElement {
 
   @property({ attribute: false }) store!: FileBrowserStore;
 
+  /** Initial tab to show when opening/selecting a file. */
+  @property() initialView: FileViewMode = "code";
+
   @state() private _activeTab = 0;
 
   /** Track the file the active tab applies to so we reset on file change. */
@@ -66,12 +71,18 @@ export class FileViewer extends LitElement {
       this._storeCtrl.store = this.store;
     }
 
-    // Reset to first tab when the selected file changes.
+    // Reset to the requested initial tab when the selected file changes.
     const path = this.store?.selectedFile ?? null;
     if (path !== this._activeTabFile) {
       this._activeTabFile = path;
-      this._activeTab = 0;
+      this._activeTab = this._initialTabIndex();
+    } else if (path && changed.has("initialView")) {
+      this._activeTab = this._initialTabIndex();
     }
+  }
+
+  private _initialTabIndex(): number {
+    return this.initialView === "preview" ? 1 : 0;
   }
 
   /** Set a line range to highlight and scroll to in the code viewer. */
@@ -110,7 +121,7 @@ export class FileViewer extends LitElement {
       });
     }
 
-    // Preview renderers (image, PDF, markdown).
+    // Preview renderers (image, PDF, markdown, HTML).
     if (isImage(path) && store.contentUrl) {
       const filename = path.split("/").pop() ?? path;
       renderers.push({
@@ -136,6 +147,14 @@ export class FileViewer extends LitElement {
           class="flex-1 min-h-0 flex flex-col"
           .content=${store.fileContent}
         ></file-viewer-markdown>`,
+      });
+    } else if (isHtml(path) && store.fileContent != null) {
+      renderers.push({
+        tab: PREVIEW_TAB,
+        render: () => html`<file-viewer-html
+          class="flex-1 min-h-0 flex flex-col"
+          .content=${store.fileContent}
+        ></file-viewer-html>`,
       });
     }
 

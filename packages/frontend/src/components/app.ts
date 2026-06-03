@@ -187,11 +187,15 @@ export class AppShell extends LitElement {
 
   /** Handle `open-in-browser` events — from child components (bubbling) and agent-triggered (document dispatch). */
   private handleOpenInBrowser = (e: CustomEvent<OpenInBrowserDetail>) => {
-    const { startLine, endLine } = e.detail;
+    const { startLine, endLine, viewMode } = e.detail;
     // Normalise absolute project paths to relative before opening
     const path = toRelativePath(e.detail.path);
     if (!path) return;
-    this._fileBrowser?.openFile(path, startLine != null && endLine != null ? { startLine, endLine } : undefined);
+    this._fileBrowser?.openFile(
+      path,
+      startLine != null && endLine != null ? { startLine, endLine } : undefined,
+      viewMode,
+    );
   }
 
   private openSidebar() {

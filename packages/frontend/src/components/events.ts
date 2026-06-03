@@ -23,6 +23,8 @@ declare global {
   }
 }
 
+export type FileViewMode = "code" | "preview";
+
 /** Detail payload for the open-in-browser event. */
 export interface OpenInBrowserDetail {
   path: string;
@@ -30,12 +32,14 @@ export interface OpenInBrowserDetail {
   startLine?: number;
   /** Optional 1-based end line (inclusive) of the highlight range. */
   endLine?: number;
+  /** Optional file browser tab to show after opening. */
+  viewMode?: FileViewMode;
 }
 
 /** Request to open a file in the file browser overlay. */
-export function openInBrowserEvent(path: string, lineRange?: { startLine: number; endLine: number }) {
+export function openInBrowserEvent(path: string, options?: Omit<OpenInBrowserDetail, "path">) {
   return new CustomEvent<OpenInBrowserDetail>("open-in-browser", {
-    detail: { path, ...lineRange },
+    detail: { path, ...options },
     bubbles: true,
     composed: true,
   });

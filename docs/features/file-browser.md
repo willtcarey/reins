@@ -51,6 +51,16 @@ Selecting a file opens a syntax-highlighted, read-only viewer with:
 - **Image preview** — `.png`, `.jpg`, `.gif`, `.svg`, `.webp` files render inline
 - **PDF preview** — `.pdf` files render in an embedded viewer
 - **Markdown preview** — markdown files have a code/preview toggle
+- **HTML preview** — `.html`, `.htm`, and `.xhtml` files have a Code/Preview toggle. Code remains the default tab. Preview renders in a sandboxed iframe; inline scripts can run, while forms and navigation are blocked.
+
+### HTML Preview Limitations
+
+HTML preview is intended for static inspection, not full site browsing:
+
+- Inline scripts can run, but the preview does not get same-origin access to Reins.
+- Relative assets (CSS, images, scripts, links) are not resolved against the project directory, so they may not load.
+- External navigation is blocked by the iframe sandbox; use the Code tab to inspect links.
+- External absolute assets may still load according to normal browser rules, with no referrer sent; external script files are blocked.
 
 ## Line Highlighting
 

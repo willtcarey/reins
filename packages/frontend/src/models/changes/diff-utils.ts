@@ -30,6 +30,11 @@ export function isPdf(path: string): boolean {
   return /\.pdf$/i.test(path);
 }
 
+/** Check whether a file path has an HTML extension (.html, .htm, .xhtml). */
+export function isHtml(path: string): boolean {
+  return /\.(html?|xhtml)$/i.test(path);
+}
+
 /**
  * Whether lines for this file should word-wrap instead of horizontal-scroll.
  * Currently wraps markdown files; extend this to add more prose-oriented

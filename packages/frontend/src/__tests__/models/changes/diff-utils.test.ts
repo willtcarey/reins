@@ -6,14 +6,15 @@ import {
   isMarkdown,
   isImage,
   isPdf,
+  isHtml,
   fileCardId,
   escapeHtml,
   gutterWidth,
   getHunkEndLine,
   scrollTopAfterExpansion,
   EXPAND_STEP,
-} from "../models/changes/diff-utils.js";
-import type { DiffFile, DiffHunk } from "../models/changes/types.js";
+} from "../../../models/changes/diff-utils.js";
+import type { DiffFile, DiffHunk } from "../../../models/changes/types.js";
 
 // ---- Helpers to build test data --------------------------------------------
 
@@ -115,6 +116,27 @@ describe("isPdf", () => {
   test("rejects non-PDF files", () => {
     expect(isPdf("file.txt")).toBe(false);
     expect(isPdf("file.pdf.bak")).toBe(false);
+  });
+});
+
+// ---- isHtml ----------------------------------------------------------------
+
+describe("isHtml", () => {
+  test("recognizes HTML files", () => {
+    expect(isHtml("index.html")).toBe(true);
+    expect(isHtml("docs/page.htm")).toBe(true);
+    expect(isHtml("public/feed.xhtml")).toBe(true);
+  });
+
+  test("is case-insensitive", () => {
+    expect(isHtml("INDEX.HTML")).toBe(true);
+    expect(isHtml("page.HtM")).toBe(true);
+  });
+
+  test("rejects non-HTML files", () => {
+    expect(isHtml("template.html.erb")).toBe(false);
+    expect(isHtml("file.txt")).toBe(false);
+    expect(isHtml("index.html.bak")).toBe(false);
   });
 });
 

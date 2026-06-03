@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { openInBrowserEvent } from "../components/events.js";
+import { openInBrowserEvent } from "../../components/events.js";
 
 describe("openInBrowserEvent", () => {
   test("creates event with path only", () => {
@@ -20,5 +20,10 @@ describe("openInBrowserEvent", () => {
     const event = openInBrowserEvent("a.ts", { startLine: 1, endLine: 1 });
     expect(event.detail.startLine).toBe(1);
     expect(event.detail.endLine).toBe(1);
+  });
+
+  test("can request the preview tab", () => {
+    const event = openInBrowserEvent("index.html", { viewMode: "preview" });
+    expect(event.detail).toEqual({ path: "index.html", viewMode: "preview" });
   });
 });

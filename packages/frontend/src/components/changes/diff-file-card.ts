@@ -18,7 +18,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { DiffFile } from "../../models/changes/types.js";
 import { openInBrowserEvent } from "../events.js";
-import { isMarkdown, isImage, isPdf, shouldWrapLines, fileCardId, gutterWidth } from "../../models/changes/diff-utils.js";
+import { isMarkdown, isImage, isPdf, isHtml, shouldWrapLines, fileCardId, gutterWidth } from "../../models/changes/diff-utils.js";
 import "./diff-hunk.js";
 import "./diff-markdown-preview.js";
 import "../file-viewer/file-viewer-image.js";
@@ -167,7 +167,10 @@ export class DiffFileCard extends LitElement {
   /** Open this file in the file browser overlay. */
   private _openInBrowser(e: Event) {
     e.stopPropagation();
-    this.dispatchEvent(openInBrowserEvent(this.file.path));
+    this.dispatchEvent(openInBrowserEvent(
+      this.file.path,
+      isHtml(this.file.path) ? { viewMode: "preview" } : undefined,
+    ));
   }
 
   private async _toggleRendered() {

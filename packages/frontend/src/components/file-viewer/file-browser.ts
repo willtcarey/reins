@@ -17,6 +17,7 @@ import "./file-viewer.js";
 import "./file-tree.js";
 import type { FileViewer } from "./file-viewer.js";
 import { openFileSearchEvent } from "../events.js";
+import type { FileViewMode } from "../events.js";
 
 @customElement("file-browser")
 export class FileBrowser extends LitElement {
@@ -29,6 +30,8 @@ export class FileBrowser extends LitElement {
   @state() private _open = false;
   /** Whether the mobile tree slide-out panel is visible. */
   @state() private _mobileTreeOpen = false;
+  /** Initial tab to show for the current file open request. */
+  @state() private _initialView: FileViewMode = "code";
 
   /** Line range to apply once the viewer finishes loading content. */
   private _pendingHighlight: { startLine: number; endLine: number } | null = null;
@@ -64,8 +67,13 @@ export class FileBrowser extends LitElement {
   }
 
   /** Open the overlay to a specific file, or switch files if already open. */
-  openFile(path: string, lineRange?: { startLine: number; endLine: number }) {
+  openFile(
+    path: string,
+    lineRange?: { startLine: number; endLine: number },
+    initialView: FileViewMode = "code",
+  ) {
     this.open();
+    this._initialView = initialView;
     this._viewer?.resetHighlight();
     this._pendingHighlight = lineRange ?? null;
     this.store?.selectFile(path);
@@ -94,6 +102,12 @@ export class FileBrowser extends LitElement {
   private _onGlobalKeydown = (e: KeyboardEvent) => {
     if (e.key === "Escape" && this._open) {
       e.preventDefault();
+      this.close();
+    }
+  };
+
+  private _onHtmlPreviewEscape = () => {
+    if (this._open) {
       this.close();
     }
   };
@@ -182,6 +196,8 @@ export class FileBrowser extends LitElement {
             <file-viewer
               class="flex-1 min-w-0 flex flex-col"
               .store=${this.store}
+              .initialView=${this._initialView}
+              @html-preview-escape=${this._onHtmlPreviewEscape}
             ></file-viewer>
           </div>
         </div>
