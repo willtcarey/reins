@@ -3,8 +3,7 @@
  *
  * Extracted from api-registry.ts to break circular imports. Per-resource
  * files (tasks.ts, sessions.ts, models.ts, etc.) import defineFunction
- * from here instead of api-registry.ts. api-registry.ts re-exports it
- * for backward compatibility.
+ * from here instead of api-registry.ts.
  */
 
 import type { TSchema, TObject, TProperties, Static } from "@sinclair/typebox";

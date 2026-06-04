@@ -15,8 +15,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
 import { escapeHtml, shouldWrapLines } from "../../models/changes/diff-utils.js";
-import type { ToolResultImage } from "./types.js";
-import { imageBlockSrc } from "../../models/chat-content.js";
+import { imageBlockSrc, type ChatImageBlock } from "../../models/chat-content.js";
 import { openImageViewerEvent, openInBrowserEvent } from "../events.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
@@ -73,7 +72,7 @@ export class ReadToolBlock extends LitElement {
   isError = false;
 
   @property({ attribute: false })
-  images: ToolResultImage[] = [];
+  images: ChatImageBlock[] = [];
 
   @property({ attribute: false })
   sessionId = "";
@@ -116,7 +115,7 @@ export class ReadToolBlock extends LitElement {
     this.dispatchEvent(openInBrowserEvent(this.path, lineRange));
   };
 
-  private _openImage(event: Event, image: ToolResultImage) {
+  private _openImage(event: Event, image: ChatImageBlock) {
     event.stopPropagation();
     const src = imageBlockSrc(this.sessionId, image);
     const alt = "filename" in image && image.filename ? image.filename : "Tool result image";

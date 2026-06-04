@@ -10,8 +10,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { ToolResultImage } from "./types.js";
-import { imageBlockSrc } from "../../models/chat-content.js";
+import { imageBlockSrc, type ChatImageBlock } from "../../models/chat-content.js";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { parseCommandSegments } from "../../models/tools/bash-command-parser.js";
@@ -47,7 +46,7 @@ export class BashToolBlock extends LitElement {
   output = "";
 
   @property({ attribute: false })
-  images: ToolResultImage[] = [];
+  images: ChatImageBlock[] = [];
 
   @property({ attribute: false })
   sessionId = "";

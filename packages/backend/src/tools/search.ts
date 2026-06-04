@@ -11,7 +11,8 @@
 
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { searchFunctions, referencedTypes, DOMAIN_TYPES, type ApiFunctionDef } from "../scripting/api-registry.js";
+import { searchFunctions, referencedTypes, DOMAIN_TYPES } from "../scripting/api-registry.js";
+import type { ApiFunctionDef } from "../scripting/define-function.js";
 import { formatApiInterfaces, formatTypeDeclaration, type SchemaNameMap } from "../scripting/api-schema-formatter.js";
 
 const parameters = Type.Object({

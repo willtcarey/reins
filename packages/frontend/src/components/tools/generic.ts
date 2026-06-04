@@ -10,8 +10,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { ToolResultImage } from "./types.js";
-import { imageBlockSrc, isImageAttachmentBlock, isInlineImageBlock } from "../../models/chat-content.js";
+import { imageBlockSrc, isImageAttachmentBlock, isInlineImageBlock, type ChatImageBlock } from "../../models/chat-content.js";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { getToolSummary } from "../../models/tools/generic.js";
@@ -44,7 +43,7 @@ export class GenericToolBlock extends LitElement {
 
   /** Image attachments from the tool result. */
   @property({ attribute: false })
-  images: ToolResultImage[] = [];
+  images: ChatImageBlock[] = [];
 
   @property({ attribute: false })
   sessionId = "";
@@ -129,9 +128,9 @@ declare global {
 // Extraction helpers
 // ---------------------------------------------------------------------------
 
-function extractImages(block: ToolBlockData): ToolResultImage[] {
+function extractImages(block: ToolBlockData): ChatImageBlock[] {
   return block.result?.content?.filter(
-    (c): c is ToolResultImage => isInlineImageBlock(c) || isImageAttachmentBlock(c),
+    (c): c is ChatImageBlock => isInlineImageBlock(c) || isImageAttachmentBlock(c),
   ) ?? [];
 }
 

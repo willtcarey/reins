@@ -13,6 +13,3 @@ import type { ToolBlockData } from "../../models/chat-state.js";
 export interface ToolRenderer {
   render(block: ToolBlockData): TemplateResult;
 }
-
-// Re-export ToolResultImage from models so component-side imports still work.
-export type { ToolResultImage } from "../../models/tools/types.js";

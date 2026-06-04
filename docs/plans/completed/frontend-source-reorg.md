@@ -72,10 +72,10 @@ src/
 │   ├── edit.ts                         # Mixed: pure helpers + renderer
 │   ├── generic-tool-block.ts           # Lit component
 │   ├── generic.ts                      # Mixed: pure getToolSummary + genericRenderer
-│   ├── index.ts                        # Registry barrel (getToolRenderer + re-exports)
+│   ├── index.ts                        # Registry (getToolRenderer)
 │   ├── read-tool-block.ts              # Lit component
 │   ├── read.ts                         # Mixed: pure helpers + renderer
-│   ├── types.ts                        # ToolRenderer interface + ToolResultImage type
+│   ├── types.ts                        # ToolRenderer interface
 │   ├── write-tool-block.ts             # Lit component
 │   └── write.ts                        # Mixed: pure helpers + renderer
 ├── app.css                             # App shell styles
@@ -146,9 +146,9 @@ src/
 │   │   ├── delegate.ts                  # DelegateToolBlock + delegateRenderer
 │   │   ├── edit.ts                      # EditToolBlock + editRenderer
 │   │   ├── generic.ts                   # GenericToolBlock + genericRenderer
-│   │   ├── index.ts                     # Registry barrel (getToolRenderer + re-exports)
+│   │   ├── index.ts                     # Registry (getToolRenderer)
 │   │   ├── read.ts                      # ReadToolBlock + readRenderer
-│   │   ├── types.ts                     # ToolRenderer interface + ToolResultImage
+│   │   ├── types.ts                     # ToolRenderer interface
 │   │   └── write.ts                     # WriteToolBlock + writeRenderer
 │   ├── app.css
 │   ├── app.ts
@@ -182,8 +182,8 @@ src/
 - **`changes/` splits** — pure half to `models/changes/`, Lit components to `components/changes/`.
 - **`tool-renderers/` splits into `models/tools/` + `components/tools/`** — each mixed file (e.g. `read.ts`) gets split: pure data-extraction helpers move to `models/tools/read.ts`, the renderer object (which uses `html``) gets merged into the corresponding `-tool-block.ts` component file (e.g. `readRenderer` merges into `read-tool-block.ts`). No need for separate renderer glue files — they're only ~15 lines each.
 - **`bash-command-parser.ts`** moves to `models/tools/` as-is (already pure).
-- **`index.ts` (registry barrel)** moves to `components/tools/index.ts` — it re-exports renderers and maps tool names, all Lit-dependent.
-- **`types.ts`** (ToolRenderer + ToolResultImage) moves to `components/tools/types.ts` — `ToolRenderer` depends on Lit's `TemplateResult`. If `ToolResultImage` is needed by pure code, it can be re-exported from a models type file later.
+- **`index.ts` (registry)** moves to `components/tools/index.ts` — it maps tool names to renderers without re-exporting renderers.
+- **`types.ts`** (ToolRenderer) moves to `components/tools/types.ts` — `ToolRenderer` depends on Lit's `TemplateResult`; tool result images use the canonical `ChatImageBlock` type.
 - **`app.css`** moves with `app.ts` to `components/`.
 - **`__tests__/` stays flat** — test files don't move, only their import paths update.
 
@@ -224,7 +224,7 @@ Each mixed renderer file (read.ts, bash.ts, edit.ts, write.ts, create-task.ts, d
 **Moved as-is:**
 - `bash-command-parser.ts` → `models/tools/bash-command-parser.ts` (already pure)
 - `*-tool-block.ts` → `components/tools/<name>.ts` (renamed, with renderer merged in)
-- `index.ts` → `components/tools/index.ts` (registry barrel, updated imports)
+- `index.ts` → `components/tools/index.ts` (registry, updated imports)
 - `types.ts` → `components/tools/types.ts`
 
 **Deleted after merge:**

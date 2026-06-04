@@ -6,12 +6,6 @@ import { Type } from "@sinclair/typebox";
 import { listAllRuntimeProviders } from "../runtimes/registry.js";
 import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 
-export type {
-  AvailabilitySourceType,
-  RuntimeProviderInfo as ProviderInfo,
-  ModelInfo,
-} from "../runtimes/registry.js";
-
 // ---------------------------------------------------------------------------
 // Function definitions
 // ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { clearRuntimeAdapters } from "../../runtimes/registry.js";
 import { registerBuiltinRuntimeAdapters } from "../../runtimes/register-builtins.js";
 import { modelsListFunction, modelsListProvidersFunction } from "../../scripting/models.js";
-import type { ApiContext } from "../../scripting/api-registry.js";
+import type { ApiContext } from "../../scripting/define-function.js";
 import type { ManagedSession } from "../../state.js";
 
 function noop() {}

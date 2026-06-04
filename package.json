@@ -10,7 +10,7 @@
     "tauri:build": "bun run --filter '@reins/tauri' build",
     "test": "bun run --filter '@reins/backend' test",
     "typecheck": "bun run --filter '@reins/*' typecheck",
-    "lint": "oxlint -c .oxlintrc.json packages/backend/src packages/frontend/src"
+    "lint": "oxlint -c .oxlintrc.json packages/backend/src packages/frontend/src scripts"
   },
   "devDependencies": {
     "oxlint": "^1.56.0"

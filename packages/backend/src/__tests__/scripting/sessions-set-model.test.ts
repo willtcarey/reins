@@ -9,7 +9,7 @@ import { createTestManagedSession } from "../helpers/test-pi.js";
 import { createProject, type Project } from "../../project-store.js";
 import { createSession, getSession } from "../../session-store.js";
 import { SESSION_FUNCTIONS, sessionsSetModelFunction } from "../../scripting/sessions.js";
-import type { ApiContext } from "../../scripting/api-registry.js";
+import type { ApiContext } from "../../scripting/define-function.js";
 import type { ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 import { getPiSession } from "../../runtimes/pi/runtime.js";

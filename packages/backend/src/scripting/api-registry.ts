@@ -14,8 +14,7 @@
  * projects.ts) and are assembled here into a single registry.
  *
  * Core types (ApiContext, ApiFunctionDef, defineFunction) live in
- * define-function.ts to avoid circular imports — per-resource files
- * import from there, and this file re-exports for external consumers.
+ * define-function.ts to avoid circular imports — import them from there.
  */
 
 import type { TSchema } from "@sinclair/typebox";
@@ -38,10 +37,6 @@ import {
 import { PROJECT_FUNCTIONS, ProjectSchema } from "./projects.js";
 import { UI_FUNCTIONS } from "./ui.js";
 import { MODEL_FUNCTIONS, ProviderInfoSchema, ModelInfoSchema } from "./models.js";
-
-// Re-export core types from define-function.ts for backward compatibility
-export type { ApiContext, ApiFunctionDef, TypedApiFunctionDef } from "./define-function.js";
-export { defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

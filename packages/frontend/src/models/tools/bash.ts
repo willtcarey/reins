@@ -4,11 +4,7 @@
 
 import type { ToolBlockData } from "../chat-state.js";
 import { isImageAttachmentBlock, isInlineImageBlock } from "../chat-content.js";
-import type { ToolResultImage } from "./types.js";
-
-// Re-export from bash-command-parser for convenience
-export type { CommandSegment } from "./bash-command-parser.js";
-export { parseCommandSegments } from "./bash-command-parser.js";
+import type { ChatImageBlock } from "../chat-content.js";
 
 /** Extract the full command string from a Bash tool block. */
 export function getBashCommand(block: ToolBlockData): string {
@@ -51,8 +47,8 @@ export function getBashExitInfo(block: ToolBlockData): { isError: boolean; label
 }
 
 /** Extract image content items from a Bash tool block result. */
-export function getBashImages(block: ToolBlockData): ToolResultImage[] {
+export function getBashImages(block: ToolBlockData): ChatImageBlock[] {
   return block.result?.content?.filter(
-    (c): c is ToolResultImage => isInlineImageBlock(c) || isImageAttachmentBlock(c),
+    (c): c is ChatImageBlock => isInlineImageBlock(c) || isImageAttachmentBlock(c),
   ) ?? [];
 }

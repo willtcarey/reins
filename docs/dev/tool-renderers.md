@@ -22,8 +22,8 @@ models/tools/                      components/tools/
 ├── create-task.ts                 │               writeRenderer)
 ├── delegate.ts                    ├── create-task.ts
 ├── generic.ts (getToolSummary)    ├── delegate.ts
-├── bash-command-parser.ts         ├── generic.ts
-└── types.ts   (ToolResultImage)   ├── index.ts   (registry)
+└── bash-command-parser.ts         ├── generic.ts
+                                   ├── index.ts   (registry)
                                    └── types.ts   (ToolRenderer)
 ```
 
@@ -142,7 +142,7 @@ models/tools/delegate.ts   → getDelegateSummary(), getDelegateDetail()
 models/tools/generic.ts    → getToolSummary()
 ```
 
-`ToolResultImage` (`{ data: string; mimeType: string }`) lives in `models/tools/types.ts` as a pure data type. The `ToolRenderer` interface (which depends on Lit's `TemplateResult`) lives in `components/tools/types.ts`.
+Tool result image helpers use the canonical `ChatImageBlock` type from `models/chat-content.ts`. The `ToolRenderer` interface (which depends on Lit's `TemplateResult`) lives in `components/tools/types.ts`.
 
 ## Interaction Patterns
 

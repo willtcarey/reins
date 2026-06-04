@@ -16,13 +16,9 @@ import {
   type PiContext,
 } from "./factory.js";
 
-export type { AvailabilitySourceType, ProviderInfo, ModelInfo } from "../registry.js";
-
-export type PiModelRegistryResult = PiContext;
-
 export async function createPiModelRegistry(params: {
   cwd: string;
-}): Promise<PiModelRegistryResult> {
+}): Promise<PiContext> {
   return createPiContext(params);
 }
 

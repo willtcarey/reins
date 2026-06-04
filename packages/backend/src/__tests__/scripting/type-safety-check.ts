@@ -9,7 +9,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { defineFunction } from "../../scripting/api-registry.js";
+import { defineFunction } from "../../scripting/define-function.js";
 
 // GOOD: execute return matches schema
 defineFunction({

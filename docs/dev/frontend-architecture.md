@@ -44,8 +44,7 @@ models/
 ├── tools/               Tool data extraction helpers
 │   ├── read.ts, edit.ts, write.ts, bash.ts
 │   ├── create-task.ts, delegate.ts, generic.ts
-│   ├── bash-command-parser.ts
-│   └── types.ts
+│   └── bash-command-parser.ts
 ├── tasks.ts             Task list types and TasksCollection model
 ├── chat-state.ts        Chat event reducer
 ├── format.ts            Display formatting helpers
