@@ -5,7 +5,8 @@ import type {
   SDKResultMessage,
   SDKPartialAssistantMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentRuntimeEvent, RuntimeMessage } from "../registry.js";
+import type { RuntimeMessage } from "../../messages-store.js";
+import type { AgentRuntimeEvent } from "../registry.js";
 import {
   normalizeClaudeToolName,
   toTextContent,

@@ -5,7 +5,8 @@ import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "../project-store.js";
 import { createSession } from "../session-store.js";
 import { storeSessionAttachment } from "../session-attachments-store.js";
-import type { AgentRuntime, RuntimePromptContent } from "../runtimes/registry.js";
+import type { ClientPromptContent } from "../messages-store.js";
+import type { AgentRuntime } from "../runtimes/registry.js";
 import type { ServerState } from "../state.js";
 
 /**
@@ -35,8 +36,8 @@ function createMockWs() {
 
 function createRuntimeStub(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
   return {
-    prompt: bunMock(async (_content: RuntimePromptContent) => {}),
-    steer: bunMock(async (_content: RuntimePromptContent) => {}),
+    prompt: bunMock(async (_content: ClientPromptContent) => {}),
+    steer: bunMock(async (_content: ClientPromptContent) => {}),
     abort: bunMock(async () => {}),
     setModel: bunMock(async () => {}),
     subscribe: bunMock(() => () => {}),
@@ -301,7 +302,7 @@ describe("WebSocket handlers", () => {
           height: attachment.height,
         },
       ];
-      const prompt = bunMock(async (_content: RuntimePromptContent) => {});
+      const prompt = bunMock(async (_content: ClientPromptContent) => {});
       const runtime = createRuntimeStub({ prompt });
       state.sessions.set("sess-ws", { id: "sess-ws", runtime, lastActivity: 0 });
 

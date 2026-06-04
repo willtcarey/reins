@@ -8,16 +8,13 @@ import {
 import type {
   AgentRuntime,
   AgentRuntimeEvent,
-  RuntimeMessage,
-  RuntimeHydratedPromptContent,
-  RuntimePromptContent,
   SetRuntimeModelParams,
 } from "../registry.js";
 import { ClaudeStreamProcessor } from "./stream-processor.js";
 import { toClaudeSdkUserContent } from "./sdk-content-blocks.js";
 import { createClaudeCustomToolsServer } from "./tools.js";
 import { createSessionStore } from "./session-store.js";
-import { loadMessagesForLLM } from "../../messages-store.js";
+import { loadMessagesForLLM, type ClientPromptContent, type HydratedPromptContent, type RuntimeMessage } from "../../messages-store.js";
 import { hydratePromptContent } from "../../session-attachments-store.js";
 import { resolveClaudeBinary } from "./resolve-binary.js";
 
@@ -40,7 +37,7 @@ export function mapThinkingEffort(level: string | null | undefined): "low" | "me
 
 type SDKUserContentBlocks = Exclude<SDKUserMessage["message"]["content"], string>;
 
-function buildUserMessage(content: RuntimeHydratedPromptContent): SDKUserMessage {
+function buildUserMessage(content: HydratedPromptContent): SDKUserMessage {
   const blocks: SDKUserContentBlocks = toClaudeSdkUserContent(content);
 
   return {
@@ -240,7 +237,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     this.currentToolAbortController.abort();
   }
 
-  private enqueuePrompt(content: RuntimeHydratedPromptContent): void {
+  private enqueuePrompt(content: HydratedPromptContent): void {
     if (!this.inputStream) {
       throw new Error("Claude input stream is unavailable");
     }
@@ -336,7 +333,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     }
   }
 
-  async prompt(content: RuntimePromptContent): Promise<void> {
+  async prompt(content: ClientPromptContent): Promise<void> {
     if (this.closed) throw new Error("Runtime closed");
 
     const promptId = this.nextPromptId++;
@@ -376,7 +373,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     return completion;
   }
 
-  async steer(_content: RuntimePromptContent): Promise<void> {
+  async steer(_content: ClientPromptContent): Promise<void> {
     if (this.closed) throw new Error("Runtime closed");
     throw new Error("Steering is not supported on Claude runtime yet. Wait for completion or abort and send a new prompt.");
   }

@@ -1,17 +1,15 @@
-import type { PersistedContentBlock } from "../messages-store.js";
+import type { PersistedContentBlock, RuntimeContentBlock, RuntimeMessage } from "../messages-store.js";
 import { externalizeInlineImageBlock } from "../session-attachments-store.js";
 import type {
   AgentRuntimeEvent,
-  RuntimeMessage,
-  RuntimeContentBlock,
   RuntimeToolResultPayload,
 } from "./registry.js";
 
-export type ExternalizedRuntimeMessage = Omit<RuntimeMessage, "content"> & {
+type ExternalizedRuntimeMessage = Omit<RuntimeMessage, "content"> & {
   content?: PersistedContentBlock[];
 };
 
-export type ExternalizedRuntimeToolResultPayload = Omit<RuntimeToolResultPayload, "content"> & {
+type ExternalizedRuntimeToolResultPayload = Omit<RuntimeToolResultPayload, "content"> & {
   content: PersistedContentBlock[];
 };
 
@@ -39,7 +37,7 @@ function externalizeContentImages(sessionId: string, content: RuntimeContentBloc
   return content.map((block) => externalizeContentBlockImages(sessionId, block));
 }
 
-export function externalizeRuntimeMessageImages(
+function externalizeRuntimeMessageImages(
   sessionId: string,
   message: RuntimeMessage,
 ): ExternalizedRuntimeMessage {

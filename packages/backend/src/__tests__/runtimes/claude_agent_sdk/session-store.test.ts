@@ -1,6 +1,6 @@
 import { describe, expect, test, beforeEach } from "bun:test";
 import { toSessionStoreEntries, createSessionStore, type SessionEntryContext } from "../../../runtimes/claude_agent_sdk/session-store.js";
-import type { RuntimeMessage } from "../../../runtimes/registry.js";
+import type { RuntimeMessage } from "../../../messages-store.js";
 import { useTestDb } from "../../helpers/test-db.js";
 import { createProject } from "../../../project-store.js";
 import { createSession } from "../../../session-store.js";

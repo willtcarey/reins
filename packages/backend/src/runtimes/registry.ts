@@ -2,17 +2,9 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { getTask as storeGetTask, type TaskRow } from "../task-store.js";
 import type { ServerState } from "../state.js";
 import type {
-  ClientPromptBlock,
   ClientPromptContent,
-  HydratedPromptBlock,
-  HydratedPromptContent,
-  ImageAttachmentBlock,
-  InlineImageBlock,
-  RuntimeContentBlock as MessageRuntimeContentBlock,
+  RuntimeContentBlock,
   RuntimeMessage,
-  TextContentBlock,
-  ThinkingContentBlock,
-  ToolCallContentBlock,
 } from "../messages-store.js";
 import { checkoutBranch } from "../git.js";
 import { TaskNotFoundError } from "../models/tasks.js";
@@ -51,16 +43,14 @@ export interface RuntimeProviderInfo extends ProviderInfo {
   runtimeType: AgentRuntimeType;
 }
 
-export type RuntimeBuiltinToolName = "read" | "write" | "edit" | "bash";
-
-export type RuntimeCustomToolName = "create_task" | "delegate" | "search" | "execute";
+type RuntimeBuiltinToolName = "read" | "write" | "edit" | "bash";
 
 export interface RuntimeSessionTools {
   builtins: RuntimeBuiltinToolName[];
   customTools: ToolDefinition[];
 }
 
-export type RuntimeCompactionEvent =
+type RuntimeCompactionEvent =
   | { type: "compaction_start"; reason: string }
   | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean; errorMessage?: string };
 
@@ -69,7 +59,7 @@ export type RuntimeCompactionEvent =
  * pi (rich AssistantMessageEvent) and Claude SDK (minimal text_delta) can
  * satisfy the type without casting. Consumers only read `type` + `delta`.
  */
-export type RuntimeAssistantDelta = {
+type RuntimeAssistantDelta = {
   type: string;
   delta?: string;
   [key: string]: unknown;
@@ -95,25 +85,11 @@ export type AgentRuntimeEvent =
   | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
   | RuntimeCompactionEvent;
 
-export type RuntimeTextBlock = TextContentBlock;
-export type RuntimeThinkingBlock = ThinkingContentBlock;
-export type RuntimeToolCallBlock = ToolCallContentBlock;
-export type RuntimeInlineImageBlock = InlineImageBlock;
-export type RuntimeAttachmentImageBlock = ImageAttachmentBlock;
-export type RuntimeImageBlock = InlineImageBlock;
-export type RuntimePromptBlock = ClientPromptBlock;
-export type RuntimePromptContent = ClientPromptContent;
-export type RuntimeHydratedPromptBlock = HydratedPromptBlock;
-export type RuntimeHydratedPromptContent = HydratedPromptContent;
-export type RuntimeContentBlock = MessageRuntimeContentBlock;
-
 export interface RuntimeToolResultPayload {
   content: RuntimeContentBlock[];
   details?: Record<string, unknown>;
   [key: string]: unknown;
 }
-
-export type { RuntimeMessage } from "../messages-store.js";
 
 export interface CreateAgentRuntimeParams {
   state: ServerState;
@@ -136,7 +112,7 @@ export interface RuntimeAskParams {
   timeoutMs?: number;
 }
 
-export type AgentRuntimeType = string;
+type AgentRuntimeType = string;
 
 export interface SetRuntimeModelParams {
   provider: string;
@@ -145,8 +121,8 @@ export interface SetRuntimeModelParams {
 }
 
 export interface AgentRuntime {
-  prompt(content: RuntimePromptContent): Promise<void>;
-  steer(content: RuntimePromptContent): Promise<void>;
+  prompt(content: ClientPromptContent): Promise<void>;
+  steer(content: ClientPromptContent): Promise<void>;
   abort(): Promise<void>;
   setModel(params: SetRuntimeModelParams): Promise<void>;
   subscribe(listener: (event: AgentRuntimeEvent) => void): () => void;

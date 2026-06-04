@@ -21,13 +21,13 @@ export interface TextContentBlock {
   text: string;
 }
 
-export interface ThinkingContentBlock {
+interface ThinkingContentBlock {
   type: "thinking";
   thinking: string;
   thinkingSignature?: string;
 }
 
-export interface ToolCallContentBlock {
+interface ToolCallContentBlock {
   type: "toolCall";
   id: string;
   name: string;
@@ -54,7 +54,7 @@ export interface InlineImageBlock {
   height?: number;
 }
 
-export type ClientPromptBlock = TextContentBlock | ImageAttachmentBlock;
+type ClientPromptBlock = TextContentBlock | ImageAttachmentBlock;
 export type ClientPromptContent = ClientPromptBlock[];
 
 export type HydratedPromptBlock = TextContentBlock | InlineImageBlock;
@@ -110,17 +110,17 @@ type PersistedMessageBase = {
   [key: string]: unknown;
 };
 
-export type PersistedUserMessage = PersistedMessageBase & {
+type PersistedUserMessage = PersistedMessageBase & {
   role: "user";
   content: PersistedContentBlock[];
 };
 
-export type PersistedAssistantMessage = PersistedMessageBase & {
+type PersistedAssistantMessage = PersistedMessageBase & {
   role: "assistant";
   content: PersistedContentBlock[];
 };
 
-export type PersistedToolResultMessage = PersistedMessageBase & {
+type PersistedToolResultMessage = PersistedMessageBase & {
   role: "toolResult";
   content: PersistedContentBlock[];
   toolCallId: string;
@@ -128,12 +128,12 @@ export type PersistedToolResultMessage = PersistedMessageBase & {
   isError: boolean;
 };
 
-export type PersistedCompactionSummaryMessage = PersistedMessageBase & {
+type PersistedCompactionSummaryMessage = PersistedMessageBase & {
   role: "compactionSummary";
   content?: never;
 };
 
-export type PersistedMessage =
+type PersistedMessage =
   | PersistedUserMessage
   | PersistedAssistantMessage
   | PersistedToolResultMessage

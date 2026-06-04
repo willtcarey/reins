@@ -2,13 +2,15 @@ import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import { hydratePromptContent } from "../../session-attachments-store.js";
 import { toPiThinkingLevel } from "./session.js";
 import type {
+  ClientPromptContent,
+  HydratedPromptContent,
+  InlineImageBlock,
+  RuntimeContentBlock,
+  RuntimeMessage,
+} from "../../messages-store.js";
+import type {
   AgentRuntime,
   AgentRuntimeEvent,
-  RuntimeMessage,
-  RuntimeContentBlock,
-  RuntimeHydratedPromptContent,
-  RuntimeInlineImageBlock,
-  RuntimePromptContent,
   SetRuntimeModelParams,
 } from "../registry.js";
 
@@ -66,12 +68,12 @@ function normalizePiRuntimeMessage(message: PiRuntimeMessage): RuntimeMessage {
   return { ...rest, content };
 }
 
-function runtimePromptToTextAndImages(content: RuntimeHydratedPromptContent): {
+function runtimePromptToTextAndImages(content: HydratedPromptContent): {
   text: string;
-  images: RuntimeInlineImageBlock[];
+  images: InlineImageBlock[];
 } {
   const textParts: string[] = [];
-  const images: RuntimeInlineImageBlock[] = [];
+  const images: InlineImageBlock[] = [];
   for (const block of content) {
     if (block.type === "text") {
       textParts.push(block.text);
@@ -107,7 +109,7 @@ export class PiAgentRuntime implements AgentRuntime {
     private readonly sessionId: string,
   ) {}
 
-  async prompt(content: RuntimePromptContent): Promise<void> {
+  async prompt(content: ClientPromptContent): Promise<void> {
     const hydrated = hydratePromptContent(this.sessionId, content);
     const { text, images } = runtimePromptToTextAndImages(hydrated);
     if (images.length > 0) {
@@ -117,7 +119,7 @@ export class PiAgentRuntime implements AgentRuntime {
     }
   }
 
-  async steer(content: RuntimePromptContent): Promise<void> {
+  async steer(content: ClientPromptContent): Promise<void> {
     const hydrated = hydratePromptContent(this.sessionId, content);
     const { text, images } = runtimePromptToTextAndImages(hydrated);
     if (images.length > 0) {

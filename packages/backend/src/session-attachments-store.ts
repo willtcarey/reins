@@ -119,7 +119,7 @@ function toInfo(row: SessionAttachmentRow): SessionAttachmentInfo {
   };
 }
 
-export function attachmentUrl(sessionId: string, attachmentId: string): string {
+function attachmentUrl(sessionId: string, attachmentId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(attachmentId)}`;
 }
 
@@ -157,7 +157,7 @@ export function parseClientPromptContent(value: unknown): ClientPromptContent {
   });
 }
 
-export function validateImageAttachmentInput(input: StoreSessionAttachmentInput): Buffer {
+function validateImageAttachmentInput(input: StoreSessionAttachmentInput): Buffer {
   if (!ALLOWED_IMAGE_MIME_TYPES.has(input.mimeType)) {
     throw new Error(`Unsupported image type: ${input.mimeType || "unknown"}`);
   }

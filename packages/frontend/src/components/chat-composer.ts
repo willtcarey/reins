@@ -46,15 +46,15 @@ export interface SendAnimationOrigin {
   borderRadius: string;
 }
 
-export interface FocusableTextInput {
+interface FocusableTextInput {
   focus(options?: FocusOptions): void;
 }
 
-export interface BlurableTextInput {
+interface BlurableTextInput {
   blur(): void;
 }
 
-export function focusTextareaWithoutScroll(textarea: FocusableTextInput | null | undefined): boolean {
+function focusTextareaWithoutScroll(textarea: FocusableTextInput | null | undefined): boolean {
   if (!textarea) return false;
   try {
     textarea.focus({ preventScroll: true });
@@ -64,7 +64,7 @@ export function focusTextareaWithoutScroll(textarea: FocusableTextInput | null |
   return true;
 }
 
-export function blurTextarea(textarea: BlurableTextInput | null | undefined): boolean {
+function blurTextarea(textarea: BlurableTextInput | null | undefined): boolean {
   if (!textarea) return false;
   textarea.blur();
   return true;

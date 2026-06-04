@@ -1,7 +1,7 @@
 import { logger } from "../logger.js";
-import { persistMessages } from "../messages-store.js";
+import { persistMessages, type RuntimeMessage } from "../messages-store.js";
 import { updateSessionMeta } from "../session-store.js";
-import type { AgentRuntime, AgentRuntimeEvent, RuntimeMessage } from "./registry.js";
+import type { AgentRuntime, AgentRuntimeEvent } from "./registry.js";
 
 function shouldPersistForRuntimeEvent(event: AgentRuntimeEvent): boolean {
   if (!event || typeof event !== "object") return false;

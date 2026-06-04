@@ -12,7 +12,7 @@ import {
   updateSessionMeta,
   type SessionRow,
 } from "../session-store.js";
-import { loadMessages } from "../messages-store.js";
+import { loadMessages, type RuntimeMessage } from "../messages-store.js";
 import {
   MAX_PROMPT_ATTACHMENT_BYTES,
   getSessionAttachment,
@@ -23,7 +23,7 @@ import type { Broadcast } from "./broadcast.js";
 import { UploadedFile } from "./uploaded-file.js";
 import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
-import { getRuntimeAdapter, type RuntimeMessage } from "../runtimes/registry.js";
+import { getRuntimeAdapter } from "../runtimes/registry.js";
 import { stripLeadingSkillBlocks } from "./skill.js";
 
 export interface SetSessionModelParams {

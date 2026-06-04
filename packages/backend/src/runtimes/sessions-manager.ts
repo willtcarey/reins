@@ -4,7 +4,7 @@ import {
   deleteSession as dbDeleteSession,
   getSession as dbGetSession,
 } from "../session-store.js";
-import { loadMessages as dbLoadMessages } from "../messages-store.js";
+import { loadMessages as dbLoadMessages, type ClientPromptContent } from "../messages-store.js";
 import { getProject } from "../project-store.js";
 import { touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
@@ -21,7 +21,7 @@ import { parseThinkingLevel } from "../models/model-settings.js";
 import { attachRuntimeBroadcastObserver } from "./runtime-broadcast-observer.js";
 import { attachRuntimePersistenceObserver } from "./runtime-persistence-observer.js";
 import { expandPrompt } from "./prompt.js";
-import type { AgentRuntime, RuntimePromptContent } from "./registry.js";
+import type { AgentRuntime } from "./registry.js";
 
 function createSessionFactory(state: ServerState) {
   return (projectId: number, projectDir: string, opts?: CreateSessionOpts) =>
@@ -36,7 +36,7 @@ function attachPromptExpansion(params: {
   const originalPrompt = runtime.prompt.bind(runtime);
   const originalSteer = runtime.steer.bind(runtime);
 
-  const expand = (content: RuntimePromptContent): RuntimePromptContent => {
+  const expand = (content: ClientPromptContent): ClientPromptContent => {
     const { expanded } = expandPrompt(content, sessionId);
     return expanded;
   };

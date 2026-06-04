@@ -9,7 +9,7 @@ import type { ChatImageBlock, ClientPromptContent } from "./chat-content.js";
 
 // ---- Types (matching pi-ai / pi-agent-core shapes) -------------------------
 
-export interface TextContent {
+interface TextContent {
   type: "text";
   text: string;
 }
@@ -36,7 +36,7 @@ export interface AssistantMessage {
   errorMessage?: string;
 }
 
-export type UserMessageContent = string | (TextContent | ChatImageBlock)[];
+type UserMessageContent = string | (TextContent | ChatImageBlock)[];
 
 export interface UserMessage {
   role: "user";

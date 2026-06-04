@@ -1,5 +1,5 @@
 import type { SessionMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { RuntimeMessage, RuntimeContentBlock } from "../registry.js";
+import type { RuntimeContentBlock, RuntimeMessage } from "../../messages-store.js";
 import { isRecord, toRecord } from "./type-guards.js";
 import {
   normalizeToolName,

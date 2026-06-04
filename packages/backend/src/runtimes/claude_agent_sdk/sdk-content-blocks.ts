@@ -1,5 +1,5 @@
 import type { ContentBlockParam, ImageBlockParam } from "@anthropic-ai/sdk/resources";
-import type { RuntimeHydratedPromptBlock, RuntimeHydratedPromptContent, RuntimeInlineImageBlock } from "../registry.js";
+import type { HydratedPromptBlock, HydratedPromptContent, InlineImageBlock } from "../../messages-store.js";
 
 type SDKImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 
@@ -19,7 +19,7 @@ export function toClaudeSdkImageMediaType(mimeType: string): SDKImageMediaType |
   }
 }
 
-export function toClaudeSdkImageBlock(block: Pick<RuntimeInlineImageBlock, "data" | "mimeType">): ImageBlockParam | null {
+export function toClaudeSdkImageBlock(block: Pick<InlineImageBlock, "data" | "mimeType">): ImageBlockParam | null {
   const mediaType = toClaudeSdkImageMediaType(block.mimeType);
   if (!mediaType) return null;
 
@@ -33,7 +33,7 @@ export function toClaudeSdkImageBlock(block: Pick<RuntimeInlineImageBlock, "data
   };
 }
 
-export function toClaudeSdkUserContentBlock(block: RuntimeHydratedPromptBlock): ContentBlockParam {
+export function toClaudeSdkUserContentBlock(block: HydratedPromptBlock): ContentBlockParam {
   switch (block.type) {
     case "text":
       return { type: "text", text: block.text };
@@ -44,6 +44,6 @@ export function toClaudeSdkUserContentBlock(block: RuntimeHydratedPromptBlock): 
   }
 }
 
-export function toClaudeSdkUserContent(content: RuntimeHydratedPromptContent): ContentBlockParam[] {
+export function toClaudeSdkUserContent(content: HydratedPromptContent): ContentBlockParam[] {
   return content.map(toClaudeSdkUserContentBlock);
 }

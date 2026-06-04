@@ -28,7 +28,7 @@ export interface InlineImageBlock {
   height?: number;
 }
 
-export type ClientPromptBlock = TextContentBlock | ImageAttachmentBlock;
+type ClientPromptBlock = TextContentBlock | ImageAttachmentBlock;
 export type ClientPromptContent = ClientPromptBlock[];
 export type ChatImageBlock = InlineImageBlock | ImageAttachmentBlock;
 
@@ -44,7 +44,7 @@ export interface AttachmentInfo {
   height?: number;
 }
 
-export function isTextContentBlock(value: unknown): value is TextContentBlock {
+function isTextContentBlock(value: unknown): value is TextContentBlock {
   return typeof value === "object" && value !== null
     && "type" in value && value.type === "text"
     && "text" in value && typeof value.text === "string";
