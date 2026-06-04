@@ -5,7 +5,7 @@ import type {
   SDKResultMessage,
   SDKPartialAssistantMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentRuntimeEvent, AgentRuntimeMessage } from "../registry.js";
+import type { AgentRuntimeEvent, RuntimeMessage } from "../registry.js";
 import {
   normalizeClaudeToolName,
   toTextContent,
@@ -49,15 +49,15 @@ interface CurrentStreamBlock {
 }
 
 interface StreamProcessorState {
-  activeAssistant: AgentRuntimeMessage | null;
+  activeAssistant: RuntimeMessage | null;
   currentToolCalls: Map<string, TrackedToolCall>;
-  turnToolResults: AgentRuntimeMessage[];
+  turnToolResults: RuntimeMessage[];
   emittedToolExecutionEnd: Set<string>;
   emittedMessageStart: boolean;
   emittedTurnStart: boolean;
   currentStreamBlocks?: Map<number, CurrentStreamBlock>;
   /** Messages accumulated from completed intermediate turns within one agent loop. */
-  completedTurnMessages: AgentRuntimeMessage[];
+  completedTurnMessages: RuntimeMessage[];
 }
 
 interface UserToolResult {
@@ -429,9 +429,9 @@ export class ClaudeStreamProcessor {
   // Private — state management
   // ---------------------------------------------------------------------------
 
-  private ensureAssistant(): AgentRuntimeMessage {
+  private ensureAssistant(): RuntimeMessage {
     if (this.state.activeAssistant) return this.state.activeAssistant;
-    const assistant: AgentRuntimeMessage = {
+    const assistant: RuntimeMessage = {
       role: "assistant",
       content: [],
       timestamp: nowTs(),
@@ -440,7 +440,7 @@ export class ClaudeStreamProcessor {
     return assistant;
   }
 
-  private contentOf(msg: AgentRuntimeMessage): unknown[] {
+  private contentOf(msg: RuntimeMessage): unknown[] {
     if (!Array.isArray(msg.content)) msg.content = [];
     return msg.content;
   }

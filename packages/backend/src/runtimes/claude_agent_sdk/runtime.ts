@@ -8,14 +8,17 @@ import {
 import type {
   AgentRuntime,
   AgentRuntimeEvent,
-  AgentRuntimeMessage,
+  RuntimeMessage,
+  RuntimeHydratedPromptContent,
+  RuntimePromptContent,
   SetRuntimeModelParams,
 } from "../registry.js";
-import type { RuntimePromptContent } from "../../content-blocks.js";
 import { ClaudeStreamProcessor } from "./stream-processor.js";
+import { toClaudeSdkUserContent } from "./sdk-content-blocks.js";
 import { createClaudeCustomToolsServer } from "./tools.js";
 import { createSessionStore } from "./session-store.js";
 import { loadMessagesForLLM } from "../../messages-store.js";
+import { hydratePromptContent } from "../../session-attachments-store.js";
 import { resolveClaudeBinary } from "./resolve-binary.js";
 
 const BUILTIN_TOOLS = ["Read", "Write", "Edit", "Bash"] as const;
@@ -37,31 +40,8 @@ export function mapThinkingEffort(level: string | null | undefined): "low" | "me
 
 type SDKUserContentBlocks = Exclude<SDKUserMessage["message"]["content"], string>;
 
-type SDKImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-
-function toSDKImageMediaType(mimeType: string): SDKImageMediaType | null {
-  if (mimeType === "image/jpeg" || mimeType === "image/png" || mimeType === "image/gif" || mimeType === "image/webp") {
-    return mimeType;
-  }
-  return null;
-}
-
-function buildUserMessage(content: RuntimePromptContent): SDKUserMessage {
-  const blocks: SDKUserContentBlocks = typeof content === "string"
-    ? [{ type: "text", text: content }]
-    : content.map((block) => {
-      if (block.type === "text") return { type: "text", text: block.text };
-      const mediaType = toSDKImageMediaType(block.mimeType);
-      if (!mediaType) return { type: "text", text: `[Unsupported image type: ${block.mimeType}]` };
-      return {
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: mediaType,
-          data: block.data,
-        },
-      };
-    });
+function buildUserMessage(content: RuntimeHydratedPromptContent): SDKUserMessage {
+  const blocks: SDKUserContentBlocks = toClaudeSdkUserContent(content);
 
   return {
     type: "user",
@@ -260,7 +240,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     this.currentToolAbortController.abort();
   }
 
-  private enqueuePrompt(content: RuntimePromptContent): void {
+  private enqueuePrompt(content: RuntimeHydratedPromptContent): void {
     if (!this.inputStream) {
       throw new Error("Claude input stream is unavailable");
     }
@@ -367,7 +347,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
       this.startToolAbortScope();
       try {
         await this.ensureQueryStarted();
-        this.enqueuePrompt(content);
+        this.enqueuePrompt(hydratePromptContent(this.params.sessionId, content));
         this.signalStreamingStart();
       } catch (error) {
         this.activePromptId = null;
@@ -385,7 +365,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     this.activePromptId = promptId;
     this.startToolAbortScope();
     try {
-      this.enqueuePrompt(content);
+      this.enqueuePrompt(hydratePromptContent(this.params.sessionId, content));
       this.signalStreamingStart();
     } catch (error) {
       this.activePromptId = null;
@@ -423,7 +403,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     };
   }
 
-  async getMessages(): Promise<AgentRuntimeMessage[]> {
+  async getMessages(): Promise<RuntimeMessage[]> {
     return loadMessagesForLLM(this.params.sessionId);
   }
 

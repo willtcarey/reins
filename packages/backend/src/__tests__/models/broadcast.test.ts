@@ -39,7 +39,7 @@ describe("createBroadcastExcluding", () => {
     const clients = new Set([sender.client, other.client]);
 
     const broadcast = createBroadcastExcluding(clients, sender.client);
-    broadcast({ type: "user_message", sessionId: "s1", projectId: 1, message: "hello" });
+    broadcast({ type: "user_message", sessionId: "s1", projectId: 1, message: [{ type: "text", text: "hello" }] });
 
     expect(sender.sent).toHaveLength(0);
     expect(other.sent).toHaveLength(1);
@@ -47,7 +47,7 @@ describe("createBroadcastExcluding", () => {
       type: "user_message",
       sessionId: "s1",
       projectId: 1,
-      message: "hello",
+      message: [{ type: "text", text: "hello" }],
     });
   });
 

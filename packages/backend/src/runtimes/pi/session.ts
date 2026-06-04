@@ -188,7 +188,7 @@ async function createPiSessionRuntime(params: CreateAgentRuntimeParams): Promise
   });
 
   const result = await createAgentSession(sessionOpts);
-  const runtime = new PiAgentRuntime(result.session);
+  const runtime = new PiAgentRuntime(result.session, sessionId);
   const agentSession = runtime.session;
 
   if (result.extensionsResult.errors.length > 0) {

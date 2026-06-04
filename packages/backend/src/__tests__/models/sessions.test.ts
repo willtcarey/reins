@@ -5,6 +5,7 @@ import { createTestManagedSession } from "../helpers/test-pi.js";
 import { createProject, type Project } from "../../project-store.js";
 import { createSession, getSession } from "../../session-store.js";
 import { persistMessages } from "../../messages-store.js";
+import { getSessionAttachment } from "../../session-attachments-store.js";
 import { Sessions } from "../../models/sessions.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
@@ -18,6 +19,31 @@ async function createMockManagedSession(sessionId: string): Promise<ManagedSessi
   session.setModel = mock<typeof session.setModel>(async () => {});
   session.setThinkingLevel = mock<typeof session.setThinkingLevel>(() => {});
   return managed;
+}
+
+function writeUInt32BE(bytes: Uint8Array, offset: number, value: number): void {
+  bytes[offset] = (value >>> 24) & 0xff;
+  bytes[offset + 1] = (value >>> 16) & 0xff;
+  bytes[offset + 2] = (value >>> 8) & 0xff;
+  bytes[offset + 3] = value & 0xff;
+}
+
+function pngBytes(width = 640, height = 480): Buffer {
+  const bytes = new Uint8Array(24);
+  bytes.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
+  writeUInt32BE(bytes, 16, width);
+  writeUInt32BE(bytes, 20, height);
+  return Buffer.from(bytes);
+}
+
+function imageFile(bytes: Buffer, name = "screen.png", type = "image/png"): File {
+  const body = new Uint8Array(bytes.length);
+  body.set(bytes);
+  return new File([body], name, { type });
+}
+
+function textContent(text: string) {
+  return [{ type: "text" as const, text }];
 }
 
 describe("Sessions.setModel", () => {
@@ -188,7 +214,7 @@ describe("Sessions.setModel", () => {
       },
       {
         role: "user",
-        content: "just text",
+        content: textContent("just text"),
       },
       {
         role: "assistant",
@@ -202,7 +228,9 @@ describe("Sessions.setModel", () => {
     const msg0Blocks = messages[0]!.content;
     assert(Array.isArray(msg0Blocks) && msg0Blocks[0]!.type === "text");
     expect(msg0Blocks[0].text).toBe("/dip start");
-    expect(messages[1]!.content).toBe("just text");
+    const msg1Blocks = messages[1]!.content;
+    assert(Array.isArray(msg1Blocks) && msg1Blocks[0]!.type === "text");
+    expect(msg1Blocks[0].text).toBe("just text");
     // Assistant messages are not stripped.
     const msg2Blocks = messages[2]!.content;
     assert(Array.isArray(msg2Blocks) && msg2Blocks[0]!.type === "text");
@@ -219,5 +247,49 @@ describe("Sessions.setModel", () => {
         modelId: "claude-opus-4-5",
       }),
     ).rejects.toThrow(/Unknown provider/);
+  });
+});
+
+describe("Sessions.uploadAttachments", () => {
+  useTestDb();
+
+  let project: Project;
+  let model: Sessions;
+
+  beforeEach(() => {
+    project = createProject("Attachment Model Project", "/tmp/attachment-model-project", "main");
+    model = new Sessions(new Map());
+  });
+
+  test("reads file bytes after validating the session and stores measured dimensions", async () => {
+    createSession("sess-upload", project.id, { agentRuntimeType: "pi" });
+    const bytes = pngBytes(321, 123);
+    const file = imageFile(bytes);
+    const readBytes = mock(file.arrayBuffer.bind(file));
+    Object.defineProperty(file, "arrayBuffer", { value: readBytes });
+
+    const attachments = await model.uploadAttachments("sess-upload", [file]);
+
+    expect(readBytes).toHaveBeenCalledTimes(1);
+    expect(attachments[0]).toMatchObject({
+      filename: "screen.png",
+      byteSize: bytes.length,
+      width: 321,
+      height: 123,
+    });
+
+    const stored = getSessionAttachment("sess-upload", attachments[0]!.id);
+    expect(stored?.data?.toString("hex")).toBe(bytes.toString("hex"));
+  });
+
+  test("does not read file bytes when the session is missing", async () => {
+    const readBytes = mock(async () => {
+      throw new Error("Upload bytes should not be read");
+    });
+    const file = imageFile(pngBytes());
+    Object.defineProperty(file, "arrayBuffer", { value: readBytes });
+
+    await expect(model.uploadAttachments("missing-session", [file])).rejects.toThrow("Session not found");
+    expect(readBytes).not.toHaveBeenCalled();
   });
 });

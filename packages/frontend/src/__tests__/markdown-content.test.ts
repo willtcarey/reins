@@ -6,7 +6,7 @@
  * <div class="mermaid"> instead of <pre><code>.
  */
 import { describe, test, expect } from "bun:test";
-import { parseMarkdown } from "../components/markdown-content.js";
+import { imageViewerDetailFromMarkdownTarget, parseMarkdown } from "../components/markdown-content.js";
 
 // ---------------------------------------------------------------------------
 // Basic markdown
@@ -107,5 +107,28 @@ describe("parseMarkdown", () => {
     const result = parseMarkdown(md);
     const matches = result.match(/<div class="mermaid">/g);
     expect(matches).toHaveLength(2);
+  });
+});
+
+describe("imageViewerDetailFromMarkdownTarget", () => {
+  test("creates image viewer details from markdown image targets", () => {
+    expect(imageViewerDetailFromMarkdownTarget({
+      tagName: "IMG",
+      currentSrc: "/assets/screen.png",
+      src: "/fallback.png",
+      alt: "Screenshot",
+      title: "screen.png",
+    })).toEqual({ src: "/assets/screen.png", alt: "Screenshot", title: "screen.png" });
+  });
+
+  test("falls back to src and default labels", () => {
+    expect(imageViewerDetailFromMarkdownTarget({
+      nodeName: "IMG",
+      src: "/assets/diagram.png",
+    })).toEqual({ src: "/assets/diagram.png", alt: "Image preview", title: "Image preview" });
+  });
+
+  test("ignores non-image targets", () => {
+    expect(imageViewerDetailFromMarkdownTarget({ tagName: "A", src: "/assets/screen.png" })).toBeNull();
   });
 });

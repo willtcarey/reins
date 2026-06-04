@@ -13,8 +13,14 @@ import { readFileSync } from "node:fs";
 import { getProject } from "../project-store.js";
 import { getSession } from "../session-store.js";
 import { logger } from "../logger.js";
+import type { ClientPromptContent, TextContentBlock } from "../messages-store.js";
 import { ReinsResourceLoader, type Skill } from "./resource-loader.js";
-import { isTextContentBlock, type ClientPromptContent, type TextContentBlock } from "../content-blocks.js";
+
+function isTextPromptBlock(value: unknown): value is TextContentBlock {
+  return typeof value === "object" && value !== null
+    && "type" in value && value.type === "text"
+    && "text" in value && typeof value.text === "string";
+}
 
 export interface InjectedSkill {
   name: string;
@@ -42,18 +48,15 @@ function extractSlashTokens(message: string): string[] {
 }
 
 function textBlocksForPrompt(message: ClientPromptContent): TextContentBlock[] {
-  if (typeof message === "string") return [{ type: "text", text: message }];
-  return message.filter(isTextContentBlock);
+  return message.filter(isTextPromptBlock);
 }
 
 function prependSkillBlocks(message: ClientPromptContent, skillBlocks: string): ClientPromptContent {
-  if (typeof message === "string") return `${skillBlocks}\n\n${message}`;
-
-  const firstTextIndex = message.findIndex(isTextContentBlock);
+  const firstTextIndex = message.findIndex(isTextPromptBlock);
   if (firstTextIndex < 0) return message;
 
   return message.map((block, index) => {
-    if (index !== firstTextIndex || !isTextContentBlock(block)) return block;
+    if (index !== firstTextIndex || !isTextPromptBlock(block)) return block;
     return { ...block, text: `${skillBlocks}\n\n${block.text}` };
   });
 }
@@ -125,9 +128,6 @@ export function expandPromptWithSkills(
 
   return { expanded: prependSkillBlocks(message, blocks.join("\n\n")), injected };
 }
-
-// Re-export for backward compatibility — canonical home is models/skill.ts
-export { stripLeadingSkillBlocks } from "../models/skill.js";
 
 /**
  * Read a skill's SKILL.md body with YAML frontmatter stripped.

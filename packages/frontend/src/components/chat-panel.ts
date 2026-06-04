@@ -27,11 +27,27 @@ import {
   type StreamingBlock,
 } from "../models/chat-state.js";
 import {
+  imageAspectRatioStyle,
   imageBlockSrc,
   imagesFromContent,
+  imageSizeHint,
   textFromClientContent,
+  type ChatImageBlock,
 } from "../models/chat-content.js";
 import type { ChatComposer, ChatComposerSubmitDetail, SendAnimationOrigin, SendAnimationRect } from "./chat-composer.js";
+import { openImageViewerEvent } from "./events.js";
+
+export interface ConversationShiftSnapshotItem {
+  key: string;
+  left: number;
+  top: number;
+}
+
+export interface ConversationShiftDelta {
+  key: string;
+  dx: number;
+  dy: number;
+}
 
 export interface SendAnimationGeometry {
   startLeft: number;
@@ -45,35 +61,39 @@ export interface SendAnimationGeometry {
 }
 
 export interface SendAnimationStages {
-  detachDx: number;
-  detachDy: number;
   finalDx: number;
   finalDy: number;
-  detachScale: number;
-  travelScale: number;
-  settleScale: number;
-  detachMs: number;
-  travelMs: number;
-  settleMs: number;
+  scale: number;
+  durationMs: number;
 }
 
-function directionalDrift(delta: number, fraction: number, maxDistance: number): number {
-  if (delta === 0) return 0;
-  return Math.sign(delta) * Math.min(Math.abs(delta) * fraction, maxDistance);
+export function computeConversationShiftDeltas(
+  before: ConversationShiftSnapshotItem[],
+  after: ConversationShiftSnapshotItem[],
+): ConversationShiftDelta[] {
+  const afterByKey = new Map(after.map((item) => [item.key, item]));
+  const deltas: ConversationShiftDelta[] = [];
+
+  for (const item of before) {
+    const next = afterByKey.get(item.key);
+    if (!next) continue;
+
+    const dx = item.left - next.left;
+    const dy = item.top - next.top;
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+
+    deltas.push({ key: item.key, dx, dy });
+  }
+
+  return deltas;
 }
 
 export function computeSendAnimationStages(delta: { dx: number; dy: number }): SendAnimationStages {
   return {
-    detachDx: Math.round(directionalDrift(delta.dx, 0.08, 18)),
-    detachDy: Math.round(directionalDrift(delta.dy, 0.07, 14)),
     finalDx: delta.dx,
     finalDy: delta.dy,
-    detachScale: 1.012,
-    travelScale: 1.018,
-    settleScale: 1,
-    detachMs: 60,
-    travelMs: 135,
-    settleMs: 75,
+    scale: 1,
+    durationMs: 220,
   };
 }
 
@@ -287,6 +307,10 @@ export class ChatPanel extends LitElement {
       : this.store.prompt(content);
     if (!sent) return;
 
+    const conversationShiftSnapshot = shouldAnimate
+      ? this.captureConversationShiftSnapshot()
+      : [];
+
     if (!wasStreaming) {
       // Mirror the imminent agent_start locally so the outgoing bubble's
       // measured target already includes the Thinking row. Otherwise the
@@ -311,7 +335,10 @@ export class ChatPanel extends LitElement {
 
     this.shouldAutoScroll = true;
     this.composer?.closeSuggestions();
-    if (shouldAnimate) void this.runOutgoingMessageAnimation(messageKey, animationOrigin);
+    if (shouldAnimate) {
+      void this.runConversationShiftAnimation(conversationShiftSnapshot);
+      void this.runOutgoingMessageAnimation(messageKey, animationOrigin);
+    }
   }
 
   private handleStop() {
@@ -340,6 +367,19 @@ export class ChatPanel extends LitElement {
 
   private userMessageKey(timestamp: number): string {
     return `user-${timestamp}`;
+  }
+
+  private conversationMessageKey(msg: AgentMessage): string {
+    switch (msg.role) {
+      case "user":
+        return this.userMessageKey(msg.timestamp);
+      case "assistant":
+        return `assistant-${msg.timestamp}`;
+      case "compactionSummary":
+        return `compaction-${msg.timestamp || 0}`;
+      case "toolResult":
+        return `tool-result-${msg.toolCallId}-${msg.timestamp}`;
+    }
   }
 
   private cssEscape(value: string): string {
@@ -392,6 +432,99 @@ export class ChatPanel extends LitElement {
       const timeout = setTimeout(finish, durationMs + 120);
       element.addEventListener("transitionend", onTransitionEnd);
     });
+  }
+
+  private captureConversationShiftSnapshot(onlyVisible = true): ConversationShiftSnapshotItem[] {
+    if (typeof this.querySelector !== "function" || typeof this.querySelectorAll !== "function") return [];
+
+    const container = this.querySelector<HTMLElement>("#chat-scroll");
+    if (!container) return [];
+
+    const containerRect = container.getBoundingClientRect();
+    const items: ConversationShiftSnapshotItem[] = [];
+    const elements = this.querySelectorAll<HTMLElement>("[data-conversation-key]");
+
+    for (const element of elements) {
+      const key = element.dataset.conversationKey;
+      if (!key) continue;
+
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      if (onlyVisible && (rect.bottom < containerRect.top || rect.top > containerRect.bottom)) continue;
+
+      items.push({ key, left: rect.left, top: rect.top });
+    }
+
+    return items;
+  }
+
+  private async runConversationShiftAnimation(before: ConversationShiftSnapshotItem[]): Promise<void> {
+    if (before.length === 0) return;
+
+    const animated: Array<{
+      element: HTMLElement;
+      transition: string;
+      transform: string;
+      willChange: string;
+    }> = [];
+
+    try {
+      await this.updateComplete;
+      await this.waitForAnimationFrame();
+
+      if (!this.canAnimateOutgoingMessage()) return;
+
+      const after = this.captureConversationShiftSnapshot(false);
+      const deltas = computeConversationShiftDeltas(before, after);
+      if (deltas.length === 0) return;
+
+      if (typeof this.querySelectorAll !== "function") return;
+
+      const elementsByKey = new Map<string, HTMLElement>();
+      for (const element of this.querySelectorAll<HTMLElement>("[data-conversation-key]")) {
+        const key = element.dataset.conversationKey;
+        if (key) elementsByKey.set(key, element);
+      }
+
+      for (const delta of deltas) {
+        const element = elementsByKey.get(delta.key);
+        if (!element) continue;
+
+        const transform = element.style.transform;
+        const baseTransform = transform && transform !== "none" ? transform : "";
+        animated.push({
+          element,
+          transition: element.style.transition,
+          transform,
+          willChange: element.style.willChange,
+        });
+
+        element.classList.add("conversation-shift-animating");
+        element.style.transition = "none";
+        element.style.transform = `translate3d(${delta.dx}px, ${delta.dy}px, 0)${baseTransform ? ` ${baseTransform}` : ""}`;
+        element.style.willChange = "transform";
+      }
+
+      if (animated.length === 0) return;
+
+      await this.waitForAnimationFrame();
+
+      const durationMs = 220;
+      const easing = "cubic-bezier(0.16, 1, 0.3, 1)";
+      for (const item of animated) {
+        item.element.style.transition = `transform ${durationMs}ms ${easing}`;
+        item.element.style.transform = item.transform;
+      }
+
+      await Promise.all(animated.map((item) => this.waitForTransition(item.element, durationMs)));
+    } finally {
+      for (const item of animated) {
+        item.element.classList.remove("conversation-shift-animating");
+        item.element.style.transition = item.transition;
+        item.element.style.transform = item.transform;
+        item.element.style.willChange = item.willChange;
+      }
+    }
   }
 
   private async runOutgoingMessageAnimation(
@@ -454,44 +587,24 @@ export class ChatPanel extends LitElement {
       ghost.getBoundingClientRect();
 
       const stages = computeSendAnimationStages(geometry);
-      const detachEasing = "cubic-bezier(0.4, 0, 0.2, 1)";
-      const travelEasing = "cubic-bezier(0.2, 0.8, 0.2, 1)";
-      const settleEasing = "cubic-bezier(0.16, 1, 0.3, 1)";
+      const travelEasing = "cubic-bezier(0.16, 1, 0.3, 1)";
 
       ghost.style.transition = [
-        `transform ${stages.detachMs}ms ${detachEasing}`,
-        `background-color ${stages.detachMs}ms ease-out`,
-        `border-radius ${stages.detachMs}ms ${detachEasing}`,
-        `opacity ${stages.detachMs}ms ease-out`,
+        `transform ${stages.durationMs}ms ${travelEasing}`,
+        `width ${stages.durationMs}ms ${travelEasing}`,
+        `height ${stages.durationMs}ms ${travelEasing}`,
+        `background-color ${stages.durationMs}ms ease-out`,
+        `border-radius ${stages.durationMs}ms ${travelEasing}`,
+        `opacity ${stages.durationMs}ms ease-out`,
       ].join(", ");
-      ghost.style.transform = `translate3d(${stages.detachDx}px, ${stages.detachDy}px, 0) scale(${stages.detachScale})`;
+      ghost.style.transform = `translate3d(${stages.finalDx}px, ${stages.finalDy}px, 0) scale(${stages.scale})`;
+      ghost.style.width = `${targetRect.width}px`;
+      ghost.style.height = `${targetRect.height}px`;
       ghost.style.backgroundColor = targetBackground;
       ghost.style.borderRadius = targetBorderRadius;
       ghost.style.opacity = "1";
 
-      await this.waitForTransition(ghost, stages.detachMs);
-
-      ghost.style.transition = [
-        `transform ${stages.travelMs}ms ${travelEasing}`,
-        `width ${stages.travelMs}ms ${travelEasing}`,
-        `height ${stages.travelMs}ms ${travelEasing}`,
-        `box-shadow ${stages.travelMs}ms ${travelEasing}`,
-      ].join(", ");
-      ghost.style.transform = `translate3d(${stages.finalDx}px, ${stages.finalDy}px, 0) scale(${stages.travelScale})`;
-      ghost.style.width = `${targetRect.width}px`;
-      ghost.style.height = `${targetRect.height}px`;
-      ghost.style.boxShadow = "0 12px 28px rgba(0, 0, 0, 0.25)";
-
-      await this.waitForTransition(ghost, stages.travelMs);
-
-      ghost.style.transition = [
-        `transform ${stages.settleMs}ms ${settleEasing}`,
-        `box-shadow ${stages.settleMs}ms ${settleEasing}`,
-      ].join(", ");
-      ghost.style.transform = `translate3d(${stages.finalDx}px, ${stages.finalDy}px, 0) scale(${stages.settleScale})`;
-      ghost.style.boxShadow = "0 0 0 rgba(0, 0, 0, 0)";
-
-      await this.waitForTransition(ghost, stages.settleMs);
+      await this.waitForTransition(ghost, stages.durationMs);
     } finally {
       this.revealOutgoingMessage(messageKey);
       await this.updateComplete.catch(() => undefined);
@@ -510,6 +623,49 @@ export class ChatPanel extends LitElement {
   }
 
 
+  private renderChatImage(image: ChatImageBlock, sessionId: string) {
+    const hint = imageSizeHint(image);
+    const src = imageBlockSrc(sessionId, image);
+    const alt = "filename" in image && image.filename ? image.filename : "Attached image";
+    const className = "max-h-64 max-w-full rounded-lg border border-zinc-700 object-contain bg-zinc-900 transition-opacity group-hover:opacity-90";
+    const openImage = (event: Event) => {
+      event.stopPropagation();
+      this.dispatchEvent(openImageViewerEvent({ src, alt, title: alt }));
+    };
+    const imageTemplate = !hint
+      ? html`
+        <img
+          src=${src}
+          alt=${alt}
+          class=${className}
+          loading="lazy"
+        />
+      `
+      : html`
+        <img
+          src=${src}
+          alt=${alt}
+          width=${hint.width}
+          height=${hint.height}
+          style=${imageAspectRatioStyle(image)}
+          class=${className}
+          loading="lazy"
+        />
+      `;
+
+    return html`
+      <button
+        type="button"
+        class="group block max-w-full cursor-zoom-in rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-zinc-900"
+        aria-label=${`Open image full screen: ${alt}`}
+        title="Open image full screen"
+        @click=${openImage}
+      >
+        ${imageTemplate}
+      </button>
+    `;
+  }
+
   private renderUserMessage(msg: UserMessage) {
     const text = typeof msg.content === "string"
       ? msg.content
@@ -523,19 +679,18 @@ export class ChatPanel extends LitElement {
       <div
         data-role="user-message-row"
         data-message-key=${messageKey}
+        data-conversation-key=${messageKey}
         class="flex justify-end mb-3 ${isAnimating ? 'sent-message-target-hidden' : ''}"
       >
-        <div data-role="user-message-bubble" class="bg-blue-600 text-white rounded-2xl rounded-br-md px-3 py-1.5 max-w-[80%] text-sm">
-          ${text ? html`<div class="whitespace-pre-wrap">${text}</div>` : nothing}
+        <div class="flex max-w-[80%] flex-col items-end gap-2">
           ${images.length > 0 ? html`
-            <div class="mt-2 grid grid-cols-1 gap-2">
-              ${images.map((image) => html`
-                <img
-                  src=${imageBlockSrc(sessionId, image)}
-                  alt=${"filename" in image && image.filename ? image.filename : "Attached image"}
-                  class="max-h-64 max-w-full rounded-lg border border-white/20 object-contain bg-black/20"
-                />
-              `)}
+            <div data-role="user-message-attachments" class="grid grid-cols-1 gap-2 justify-items-end max-w-full">
+              ${images.map((image) => this.renderChatImage(image, sessionId))}
+            </div>
+          ` : nothing}
+          ${text ? html`
+            <div data-role="user-message-bubble" class="bg-blue-600 text-white rounded-2xl rounded-br-md px-3 py-1.5 max-w-full text-sm">
+              <div class="whitespace-pre-wrap">${text}</div>
             </div>
           ` : nothing}
         </div>
@@ -574,7 +729,7 @@ export class ChatPanel extends LitElement {
     flushText();
 
     return html`
-      <div class="mb-3">
+      <div data-conversation-key=${this.conversationMessageKey(msg)} class="mb-3">
         ${parts}
       </div>
     `;
@@ -612,7 +767,7 @@ export class ChatPanel extends LitElement {
     const expanded = this.expandedSections.has(id);
 
     return html`
-      <div class="my-4">
+      <div data-conversation-key=${this.conversationMessageKey(msg)} class="my-4">
         <div class="flex items-center gap-3">
           <div class="flex-1 border-t border-zinc-600"></div>
           <button
@@ -673,7 +828,7 @@ export class ChatPanel extends LitElement {
     if (!showThinking && !hasStreamingBlocks && !this.isCompacting) return nothing;
 
     return html`
-      <div class="mb-3 space-y-2">
+      <div data-conversation-key="streaming-content" class="mb-3 space-y-2">
         ${this.streamingBlocks.map((block) => {
           if (block.type === "text") {
             return html`

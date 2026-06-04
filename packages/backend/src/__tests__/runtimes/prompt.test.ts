@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { useTestDb } from "../helpers/test-db.js";
 import { createProject } from "../../project-store.js";
 import { createSession } from "../../session-store.js";
-import { expandPrompt, expandPromptWithSkills, stripLeadingSkillBlocks } from "../../runtimes/prompt.js";
-import type { ClientPromptContent } from "../../content-blocks.js";
+import type { ClientPromptContent } from "../../messages-store.js";
+import { stripLeadingSkillBlocks } from "../../models/skill.js";
+import { expandPrompt, expandPromptWithSkills } from "../../runtimes/prompt.js";
 
 let tempDir: string;
 
@@ -47,32 +48,37 @@ function opts() {
   return { cwd: tempDir, agentDir: NONEXISTENT_AGENT_DIR };
 }
 
+function textPrompt(text: string): ClientPromptContent {
+  return [{ type: "text", text }];
+}
+
 function expandedText(result: { expanded: ClientPromptContent }): string {
-  if (typeof result.expanded !== "string") {
-    throw new Error("Expected expanded prompt to be a string");
+  const block = result.expanded.find((entry) => entry.type === "text");
+  if (!block) {
+    throw new Error("Expected expanded prompt to contain a text block");
   }
-  return result.expanded;
+  return block.text;
 }
 
 describe("expandPromptWithSkills", () => {
   test("passes through when there are no slash tokens", () => {
     createSkill("dip", "dip body");
-    const result = expandPromptWithSkills("just a plain message", opts());
-    expect(result.expanded).toBe("just a plain message");
+    const result = expandPromptWithSkills(textPrompt("just a plain message"), opts());
+    expect(result.expanded).toEqual(textPrompt("just a plain message"));
     expect(result.injected).toEqual([]);
   });
 
   test("passes through when no skills are known", () => {
-    const result = expandPromptWithSkills("/dip hello", opts());
-    expect(result.expanded).toBe("/dip hello");
+    const result = expandPromptWithSkills(textPrompt("/dip hello"), opts());
+    expect(result.expanded).toEqual(textPrompt("/dip hello"));
     expect(result.injected).toEqual([]);
   });
 
   test("injects a skill when the token is at the start of the message", () => {
     createSkill("dip", "dip body content");
-    const result = expandPromptWithSkills("/dip start the server", opts());
+    const result = expandPromptWithSkills(textPrompt("/dip start the server"), opts());
     expect(expandedText(result).startsWith('<skill name="dip"')).toBe(true);
-    expect(result.expanded).toContain("dip body content");
+    expect(expandedText(result)).toContain("dip body content");
     expect(expandedText(result).endsWith("/dip start the server")).toBe(true);
     expect(result.injected).toHaveLength(1);
     expect(result.injected[0]).toMatchObject({ name: "dip", description: "dip skill description" });
@@ -103,14 +109,14 @@ describe("expandPromptWithSkills", () => {
 
   test("injects a skill when the token is in the middle", () => {
     createSkill("dip", "dip body");
-    const result = expandPromptWithSkills("please run /dip now", opts());
+    const result = expandPromptWithSkills(textPrompt("please run /dip now"), opts());
     expect(result.injected.map((i) => i.name)).toEqual(["dip"]);
     expect(expandedText(result).endsWith("please run /dip now")).toBe(true);
   });
 
   test("injects a skill when the token is at the end", () => {
     createSkill("tmux", "tmux body");
-    const result = expandPromptWithSkills("check session via /tmux", opts());
+    const result = expandPromptWithSkills(textPrompt("check session via /tmux"), opts());
     expect(result.injected.map((i) => i.name)).toEqual(["tmux"]);
     expect(expandedText(result).endsWith("check session via /tmux")).toBe(true);
   });
@@ -118,7 +124,7 @@ describe("expandPromptWithSkills", () => {
   test("injects multiple distinct skills in order of first appearance", () => {
     createSkill("dip", "dip body");
     createSkill("tmux", "tmux body");
-    const result = expandPromptWithSkills("/tmux then /dip please", opts());
+    const result = expandPromptWithSkills(textPrompt("/tmux then /dip please"), opts());
     expect(result.injected.map((i) => i.name)).toEqual(["tmux", "dip"]);
 
     const tmuxIdx = expandedText(result).indexOf('<skill name="tmux"');
@@ -129,7 +135,7 @@ describe("expandPromptWithSkills", () => {
 
   test("re-injects on duplicate invocations within a turn", () => {
     createSkill("dip", "dip body");
-    const result = expandPromptWithSkills("/dip /dip foo", opts());
+    const result = expandPromptWithSkills(textPrompt("/dip /dip foo"), opts());
     expect(result.injected.map((i) => i.name)).toEqual(["dip", "dip"]);
     const matches = expandedText(result).match(/<skill name="dip"/g) ?? [];
     expect(matches).toHaveLength(2);
@@ -139,31 +145,31 @@ describe("expandPromptWithSkills", () => {
 
   test("does not match path-like tokens", () => {
     createSkill("dip", "dip body");
-    const result = expandPromptWithSkills("see docker/dip for details", opts());
+    const result = expandPromptWithSkills(textPrompt("see docker/dip for details"), opts());
     expect(result.injected).toEqual([]);
-    expect(result.expanded).toBe("see docker/dip for details");
+    expect(result.expanded).toEqual(textPrompt("see docker/dip for details"));
   });
 
   test("does not match glued tokens (e.g. /dipfoo)", () => {
     createSkill("dip", "dip body");
-    const result = expandPromptWithSkills("/dipfoo is not a skill", opts());
+    const result = expandPromptWithSkills(textPrompt("/dipfoo is not a skill"), opts());
     expect(result.injected).toEqual([]);
-    expect(result.expanded).toBe("/dipfoo is not a skill");
+    expect(result.expanded).toEqual(textPrompt("/dipfoo is not a skill"));
   });
 
   test("does nothing for unknown skill names", () => {
     createSkill("dip", "dip body");
-    const result = expandPromptWithSkills("/doesnotexist and /alsonope", opts());
+    const result = expandPromptWithSkills(textPrompt("/doesnotexist and /alsonope"), opts());
     expect(result.injected).toEqual([]);
-    expect(result.expanded).toBe("/doesnotexist and /alsonope");
+    expect(result.expanded).toEqual(textPrompt("/doesnotexist and /alsonope"));
   });
 
   test("strips YAML frontmatter from skill body", () => {
     createSkill("dip", "actual body text");
-    const result = expandPromptWithSkills("/dip hello", opts());
-    expect(result.expanded).toContain("actual body text");
-    expect(result.expanded).not.toContain("name: dip");
-    expect(result.expanded).not.toContain("description: dip skill description");
+    const result = expandPromptWithSkills(textPrompt("/dip hello"), opts());
+    expect(expandedText(result)).toContain("actual body text");
+    expect(expandedText(result)).not.toContain("name: dip");
+    expect(expandedText(result)).not.toContain("description: dip skill description");
   });
 
   test("handles a file with no frontmatter", () => {
@@ -176,16 +182,16 @@ describe("expandPromptWithSkills", () => {
       "plain docs with no frontmatter",
       "utf-8",
     );
-    const result = expandPromptWithSkills("/dip go", opts());
-    expect(result.expanded).toContain("frontmatter body");
+    const result = expandPromptWithSkills(textPrompt("/dip go"), opts());
+    expect(expandedText(result)).toContain("frontmatter body");
   });
 
   test("wraps blocks with location and baseDir references", () => {
     const skill = createSkill("dip", "body");
-    const result = expandPromptWithSkills("/dip", opts());
-    expect(result.expanded).toContain(`<skill name="dip" location="${skill.filePath}">`);
-    expect(result.expanded).toContain(`References are relative to ${skill.baseDir}.`);
-    expect(result.expanded).toContain("</skill>");
+    const result = expandPromptWithSkills(textPrompt("/dip"), opts());
+    expect(expandedText(result)).toContain(`<skill name="dip" location="${skill.filePath}">`);
+    expect(expandedText(result)).toContain(`References are relative to ${skill.baseDir}.`);
+    expect(expandedText(result)).toContain("</skill>");
   });
 });
 
@@ -200,8 +206,8 @@ describe("expandPrompt (session-based wrapper)", () => {
   }
 
   test("returns message unchanged when the session cannot be resolved", () => {
-    const result = expandPrompt("/unknown please", "no-such-session");
-    expect(result.expanded).toBe("/unknown please");
+    const result = expandPrompt(textPrompt("/unknown please"), "no-such-session");
+    expect(result.expanded).toEqual(textPrompt("/unknown please"));
     expect(result.injected).toEqual([]);
   });
 
@@ -218,16 +224,16 @@ describe("expandPrompt (session-based wrapper)", () => {
 
     const sessionId = createSessionForProject(tempDir);
     const message = `/${skillName} start the server`;
-    const result = expandPrompt(message, sessionId);
+    const result = expandPrompt(textPrompt(message), sessionId);
     expect(result.injected.map((i) => i.name)).toEqual([skillName]);
-    expect(result.expanded).toContain("fixture body content");
+    expect(expandedText(result)).toContain("fixture body content");
     expect(expandedText(result).endsWith(message)).toBe(true);
   });
 
   test("returns message unchanged when the token does not match any known skill", () => {
     const sessionId = createSessionForProject(tempDir);
-    const result = expandPrompt("/doesnotexist please", sessionId);
-    expect(result.expanded).toBe("/doesnotexist please");
+    const result = expandPrompt(textPrompt("/doesnotexist please"), sessionId);
+    expect(result.expanded).toEqual(textPrompt("/doesnotexist please"));
     expect(result.injected).toEqual([]);
   });
 });

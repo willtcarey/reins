@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, test, expect, mock } from "bun:test";
 import { createProject } from "../../project-store.js";
 import { createSession, getSession } from "../../session-store.js";
@@ -85,6 +87,50 @@ describe("runtime sessions manager", () => {
     expect(row?.agent_runtime_type).toBe("pi");
 
     clearRuntimeAdapters();
+  });
+
+  test("managed runtime expands slash-skill prompts before provider runtime", async () => {
+    clearRuntimeAdapters();
+
+    const skillDir = join(repo.dir, ".agents", "skills", "fixture-skill");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: fixture-skill\ndescription: fixture skill\n---\n\nFixture skill body.",
+      "utf-8",
+    );
+
+    let capturedPrompt: unknown;
+    registerRuntimeAdapter({
+      runtimeType: "test_runtime",
+      listModels: async () => [],
+      ask: async () => "",
+      createRuntime: async () => ({
+        prompt: async (content) => {
+          capturedPrompt = content;
+        },
+        steer: async () => {},
+        abort: async () => {},
+        setModel: async () => {},
+        subscribe: () => () => {},
+        getMessages: async () => [],
+        isStreaming: () => false,
+        close: async () => {},
+      }),
+    });
+
+    const state = createServerState();
+    const project = createProject("Reins", repo.dir);
+    createSession("sess-expand-runtime", project.id, { agentRuntimeType: "test_runtime" });
+
+    const managed = await ensureSessionOpen(state, "sess-expand-runtime");
+    await managed.runtime.prompt([{ type: "text", text: "/fixture-skill please" }]);
+
+    if (!Array.isArray(capturedPrompt) || capturedPrompt[0]?.type !== "text" || typeof capturedPrompt[0].text !== "string") {
+      throw new Error("Expected expanded text prompt");
+    }
+    expect(capturedPrompt[0].text).toContain("Fixture skill body.");
+    expect(capturedPrompt[0].text.endsWith("/fixture-skill please")).toBe(true);
   });
 
   test("createNewSession selects claude_agent_sdk runtime when selected model provider is claude_agent_sdk", async () => {
@@ -323,7 +369,7 @@ describe("runtime sessions manager", () => {
       { role: "assistant", stopReason: "error", content: [] },
       { role: "assistant", content: [{ type: "text", text: "turn output" }] },
     ];
-    emit({ type: "turn_end" });
+    emit({ type: "turn_end", message: { role: "assistant", content: [{ type: "text", text: "turn output" }] }, toolResults: [] });
     await Bun.sleep(0);
 
     messages = [
@@ -339,7 +385,7 @@ describe("runtime sessions manager", () => {
       { role: "assistant", content: [{ type: "text", text: "post compaction" }] },
       { role: "assistant", content: [{ type: "text", text: "done" }] },
     ];
-    emit({ type: "agent_end" });
+    emit({ type: "agent_end", messages: [] });
     await Bun.sleep(0);
 
     const persisted = loadMessages("sess-checkpoints");
@@ -438,7 +484,7 @@ describe("runtime sessions manager", () => {
       }
     };
 
-    emit({ type: "turn_end", output: "ok" });
+    emit({ type: "turn_end", message: { role: "assistant", content: [{ type: "text", text: "ok" }] }, toolResults: [] });
     emit({ type: "compaction_start", reason: "auto" });
     emit({ type: "compaction_end", result: { summary: "done" }, aborted: true, errorMessage: "oops" });
 
@@ -447,7 +493,7 @@ describe("runtime sessions manager", () => {
         type: "event",
         sessionId: "sess-broadcast-observer",
         projectId: project.id,
-        event: { type: "turn_end", output: "ok" },
+        event: { type: "turn_end", message: { role: "assistant", content: [{ type: "text", text: "ok" }] }, toolResults: [] },
       },
       {
         type: "event",

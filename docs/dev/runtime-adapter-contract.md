@@ -56,11 +56,12 @@ A runtime should build the Reins system prompt with project/task context and ava
 A runtime returned from `createRuntime()` must implement:
 
 - `prompt(content): Promise<void>`
-  - Starts a user turn from text or hydrated multimodal content and resolves only when the run is complete or failed.
+  - Starts a user turn from `RuntimePromptContent` (`runtimes/registry.ts`) and resolves only when the run is complete or failed.
+  - Text-only prompts are represented as `[{ type: "text", text }]`; prompt images are attachment refs that the runtime hydrates at the provider boundary.
   - Must reject on fatal prompt failures so the initiating WS client sees an error.
   - Must update `isStreaming()` while running.
 - `steer(content): Promise<void>`
-  - Called when the user submits text or hydrated multimodal content while streaming.
+  - Called when the user submits validated `RuntimePromptContent` while streaming.
   - If unsupported, reject with a clear error. Claude SDK currently does this.
 - `abort(): Promise<void>`
   - Cancels the active prompt and aborts active tool execution where possible.
@@ -110,7 +111,7 @@ For useful tool rendering, emit:
 
 - `tool_execution_start` with stable `toolCallId`, canonical `toolName`, and `args`.
 - `tool_execution_update` for progress, when available.
-- `tool_execution_end` with the same `toolCallId`, `toolName`, optional `result`, and `isError`.
+- `tool_execution_end` with the same `toolCallId`, `toolName`, optional `result`, and `isError`. When present, `result` should use `{ content: RuntimeContentBlock[], details?: Record<string, unknown> }` so Reins can externalize inline image blocks before broadcasting.
 
 Tool names should be normalized to Reins names where possible (`read`, `write`, `edit`, `bash`, `create_task`, `delegate`, `search`, `execute`) so existing frontend renderers work.
 
@@ -129,7 +130,7 @@ Tool names should be normalized to Reins names where possible (`read`, `write`, 
 
 - User message:
   - `role: "user"`
-  - `content`: string or content blocks, usually `[{ type: "text", text }]`; prompt images use attachment refs in persisted/client form and inline base64 only after runtime hydration.
+  - `content`: block-only content, usually `[{ type: "text", text }]`; prompt images use attachment refs in persisted/client form and inline base64 only at provider boundaries.
   - `timestamp` recommended for frontend dedupe.
 - Assistant message:
   - `role: "assistant"`
@@ -144,7 +145,7 @@ Tool names should be normalized to Reins names where possible (`read`, `write`, 
   - `toolCallId`, `toolName`, `content`, `isError`, `timestamp`.
 - Compaction summary:
   - `role: "compactionSummary"`
-  - `summary` and/or string `content`.
+  - `summary` contains the compacted context; do not also set `content`.
 
 Persistence filters empty assistant error messages (`role="assistant"`, `stopReason="error"`, empty `content`) so runtimes may emit those only as transient UI error carriers.
 

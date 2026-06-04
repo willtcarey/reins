@@ -36,8 +36,10 @@ import type { FileSearch } from "./file-search.js";
 import "./file-viewer/file-browser.js";
 import type { FileBrowser } from "./file-viewer/file-browser.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
-import type { OpenInBrowserDetail } from "./events.js";
+import type { OpenImageViewerDetail, OpenInBrowserDetail } from "./events.js";
 import { setProjectDir, toRelativePath } from "../models/path-utils.js";
+import "./image-lightbox.js";
+import type { ImageLightbox } from "./image-lightbox.js";
 import "./settings/panel.js";
 import type { SettingsPanel } from "./settings/panel.js";
 
@@ -61,6 +63,7 @@ export class AppShell extends LitElement {
   private fileBrowserStore = new FileBrowserStore();
   @query("file-search") private _fileSearch!: FileSearch;
   @query("file-browser") private _fileBrowser!: FileBrowser;
+  @query("image-lightbox") private _imageLightbox!: ImageLightbox;
   @query("settings-panel") private _settingsPanel!: SettingsPanel;
 
   override connectedCallback() {
@@ -198,6 +201,10 @@ export class AppShell extends LitElement {
     );
   }
 
+  private handleOpenImageViewer = (e: CustomEvent<OpenImageViewerDetail>) => {
+    this._imageLightbox?.show(e.detail);
+  };
+
   private openSidebar() {
     this.querySelector("session-sidebar")?.open();
   }
@@ -275,6 +282,7 @@ export class AppShell extends LitElement {
       <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"
         @open-quick-open=${() => this.openQuickOpen()}
         @open-file-search=${() => this.openFileSearch()}
+        @open-image-viewer=${this.handleOpenImageViewer}
         @open-settings=${() => this.openSettings()}>
         <!-- Connection status bar -->
         ${!store.connected ? html`
@@ -390,6 +398,9 @@ export class AppShell extends LitElement {
         <file-browser
           .store=${this.fileBrowserStore}
         ></file-browser>
+
+        <!-- Image preview overlay -->
+        <image-lightbox></image-lightbox>
 
         <!-- Settings panel overlay -->
         <settings-panel></settings-panel>

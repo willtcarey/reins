@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { ClaudeSdkAgentRuntime } from "../../../runtimes/claude_agent_sdk/runtime.js";
+import { createProject } from "../../../project-store.js";
+import { createSession } from "../../../session-store.js";
+import { storeSessionAttachment } from "../../../session-attachments-store.js";
+import { useTestDb } from "../../helpers/test-db.js";
 
 describe("ClaudeSdkAgentRuntime", () => {
+  useTestDb();
+
   test("rejects steer with a clear unsupported message", async () => {
     const runtime = new ClaudeSdkAgentRuntime({
       sessionId: "session-1",
@@ -11,7 +17,7 @@ describe("ClaudeSdkAgentRuntime", () => {
       customTools: [],
     });
 
-    await expect(runtime.steer("course-correct")).rejects.toThrow(
+    await expect(runtime.steer([{ type: "text", text: "course-correct" }])).rejects.toThrow(
       "Steering is not supported on Claude runtime yet. Wait for completion or abort and send a new prompt.",
     );
   });
@@ -28,7 +34,7 @@ describe("ClaudeSdkAgentRuntime", () => {
     Reflect.set(runtime, "queryHandle", {});
     Reflect.set(runtime, "activePromptId", 42);
 
-    await expect(runtime.prompt("new prompt")).rejects.toThrow(
+    await expect(runtime.prompt([{ type: "text", text: "new prompt" }])).rejects.toThrow(
       "Prompt already running. Wait for completion or abort and send a new prompt.",
     );
   });
@@ -52,7 +58,7 @@ describe("ClaudeSdkAgentRuntime", () => {
       close: () => {},
     });
 
-    const promptPromise = runtime.prompt("follow-up");
+    const promptPromise = runtime.prompt([{ type: "text", text: "follow-up" }]);
 
     const resolvePrompt = Reflect.get(runtime, "resolvePrompt");
     if (typeof resolvePrompt !== "function") throw new Error("resolvePrompt is unavailable");
@@ -65,6 +71,73 @@ describe("ClaudeSdkAgentRuntime", () => {
         message: {
           role: "user",
           content: [{ type: "text", text: "follow-up" }],
+        },
+        parent_tool_use_id: null,
+      },
+    ]);
+
+    await runtime.close();
+  });
+
+  test("prompt hydrates attachment refs before enqueueing SDK user content", async () => {
+    const project = createProject("Claude Runtime Images", "/tmp/claude-runtime-images");
+    createSession("session-with-image", project.id, { agentRuntimeType: "claude_agent_sdk" });
+    const imageData = Buffer.from("claude prompt image");
+    const attachment = storeSessionAttachment("session-with-image", {
+      data: imageData,
+      mimeType: "image/png",
+      filename: "prompt.png",
+    });
+    const runtime = new ClaudeSdkAgentRuntime({
+      sessionId: "session-with-image",
+      projectDir: "/tmp",
+      systemPrompt: "You are helpful",
+      resumeOnFirstPrompt: false,
+      customTools: [],
+    });
+
+    const enqueued: unknown[] = [];
+    Reflect.set(runtime, "queryHandle", {});
+    Reflect.set(runtime, "inputStream", {
+      enqueue: (message: unknown) => {
+        enqueued.push(message);
+      },
+      close: () => {},
+    });
+
+    const promptPromise = runtime.prompt([
+      { type: "text", text: "describe" },
+      {
+        type: "image",
+        attachmentId: attachment.id,
+        mimeType: attachment.mimeType,
+        filename: attachment.filename,
+        byteSize: attachment.byteSize,
+        sha256: attachment.sha256,
+      },
+    ]);
+
+    const resolvePrompt = Reflect.get(runtime, "resolvePrompt");
+    if (typeof resolvePrompt !== "function") throw new Error("resolvePrompt is unavailable");
+    Reflect.apply(resolvePrompt, runtime, [1]);
+
+    await expect(promptPromise).resolves.toBeUndefined();
+    expect(enqueued).toEqual([
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            { type: "text", text: "describe" },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: imageData.toString("base64"),
+              },
+            },
+          ],
         },
         parent_tool_use_id: null,
       },
@@ -90,7 +163,7 @@ describe("ClaudeSdkAgentRuntime", () => {
 
     expect(runtime.isStreaming()).toBe(false);
 
-    const promptPromise = runtime.prompt("hello");
+    const promptPromise = runtime.prompt([{ type: "text", text: "hello" }]);
 
     // isStreaming should be true immediately, before SDK events arrive
     expect(runtime.isStreaming()).toBe(true);
@@ -121,7 +194,7 @@ describe("ClaudeSdkAgentRuntime", () => {
     const events: { type: string }[] = [];
     runtime.subscribe((event) => events.push({ type: event.type }));
 
-    const promptPromise = runtime.prompt("hello");
+    const promptPromise = runtime.prompt([{ type: "text", text: "hello" }]);
 
     expect(events).toEqual([{ type: "agent_start" }]);
 
@@ -158,7 +231,7 @@ describe("ClaudeSdkAgentRuntime", () => {
     });
 
     // Simulate a prompt that signals streaming start
-    const promptPromise = runtime.prompt("hello");
+    const promptPromise = runtime.prompt([{ type: "text", text: "hello" }]);
     expect(runtime.isStreaming()).toBe(true);
     expect(events).toEqual([{ type: "agent_start" }]);
 
@@ -229,7 +302,7 @@ describe("ClaudeSdkAgentRuntime", () => {
       close: () => {},
     });
 
-    const firstPrompt = runtime.prompt("first");
+    const firstPrompt = runtime.prompt([{ type: "text", text: "first" }]);
     const firstController = Reflect.get(runtime, "currentToolAbortController");
     expect(firstController).toBeInstanceOf(AbortController);
     expect(firstController.signal.aborted).toBe(false);
@@ -245,7 +318,7 @@ describe("ClaudeSdkAgentRuntime", () => {
     await firstPrompt;
     Reflect.set(runtime, "activePromptId", null);
 
-    const secondPrompt = runtime.prompt("second");
+    const secondPrompt = runtime.prompt([{ type: "text", text: "second" }]);
     const secondController = Reflect.get(runtime, "currentToolAbortController");
     expect(secondController).toBeInstanceOf(AbortController);
     expect(secondController).not.toBe(firstController);
@@ -301,7 +374,7 @@ describe("ClaudeSdkAgentRuntime", () => {
     process.on("unhandledRejection", onUnhandled);
 
     try {
-      await expect(runtime.prompt("follow-up")).rejects.toThrow("ProcessTransport is not ready for writing");
+      await expect(runtime.prompt([{ type: "text", text: "follow-up" }])).rejects.toThrow("ProcessTransport is not ready for writing");
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(unhandled).toHaveLength(0);
     } finally {

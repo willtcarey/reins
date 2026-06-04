@@ -1,7 +1,12 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
-import type { AttachmentInfo, ClientPromptContent, ImageAttachmentBlock } from "../models/chat-content.js";
+import {
+  normalizeImageSizeHint,
+  type AttachmentInfo,
+  type ClientPromptContent,
+  type ImageAttachmentBlock,
+} from "../models/chat-content.js";
 import "./skill-suggest.js";
 import type { SkillInsertDetail, SkillSuggest } from "./skill-suggest.js";
 
@@ -82,20 +87,22 @@ export function buildClientPromptContent(
   attachments: AttachmentInfo[],
 ): ClientPromptContent {
   const trimmed = text.trim();
-  if (attachments.length === 0) return trimmed;
+  const blocks: ClientPromptContent = trimmed ? [{ type: "text", text: trimmed }] : [];
 
-  const blocks: ImageAttachmentBlock[] = attachments.map((attachment) => ({
-    type: "image",
-    attachmentId: attachment.id,
-    mimeType: attachment.mimeType,
-    filename: attachment.filename,
-    byteSize: attachment.byteSize,
-    sha256: attachment.sha256,
+  blocks.push(...attachments.map((attachment): ImageAttachmentBlock => {
+    const hint = normalizeImageSizeHint(attachment.width, attachment.height);
+    return {
+      type: "image",
+      attachmentId: attachment.id,
+      mimeType: attachment.mimeType,
+      filename: attachment.filename,
+      byteSize: attachment.byteSize,
+      sha256: attachment.sha256,
+      ...(hint ? { width: hint.width, height: hint.height } : {}),
+    };
   }));
 
-  return trimmed
-    ? [{ type: "text", text: trimmed }, ...blocks]
-    : blocks;
+  return blocks;
 }
 
 /**
@@ -286,10 +293,10 @@ export class ChatComposer extends LitElement {
     this.errorMessage = "";
   }
 
-  private async uploadAttachments(): Promise<AttachmentInfo[]> {
-    if (this.draftAttachments.length === 0) return [];
+  private async uploadAttachments(attachments: DraftAttachment[]): Promise<AttachmentInfo[]> {
+    if (attachments.length === 0) return [];
     const form = new FormData();
-    for (const attachment of this.draftAttachments) {
+    for (const attachment of attachments) {
       const uploadFile = attachment.file.type === attachment.mimeType
         ? attachment.file
         : new Blob([attachment.file], { type: attachment.mimeType });
@@ -319,7 +326,7 @@ export class ChatComposer extends LitElement {
     this.isUploading = true;
     this.errorMessage = "";
     try {
-      const uploaded = await this.uploadAttachments();
+      const uploaded = await this.uploadAttachments(this.draftAttachments);
       const content = buildClientPromptContent(this.inputText, uploaded);
       this.dispatchEvent(new CustomEvent<ChatComposerSubmitDetail>("composer-submit", {
         bubbles: true,
@@ -549,7 +556,7 @@ export class ChatComposer extends LitElement {
             class="flex flex-1 min-w-0 gap-1 items-end rounded-xl bg-zinc-800 border border-zinc-700 px-1 py-1 focus-within:border-blue-500/80 focus-within:ring-1 focus-within:ring-blue-500/60"
           >
             <textarea
-              class="min-h-8 max-h-[200px] flex-1 min-w-0 bg-transparent text-zinc-100 px-1 py-1 text-base resize-none outline-none placeholder-zinc-500 leading-5"
+              class="min-h-8 max-h-[200px] flex-1 min-w-0 bg-transparent text-zinc-100 px-1 py-1 text-base resize-none outline-none placeholder-zinc-500 leading-6"
               rows="1"
               placeholder=${this.streaming ? "Send a steering message..." : "Type a message..."}
               .value=${this.inputText}

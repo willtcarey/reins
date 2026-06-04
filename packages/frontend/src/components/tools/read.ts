@@ -17,7 +17,7 @@ import { LazyHighlightController } from "../../controllers/lazy-highlight-contro
 import { escapeHtml, shouldWrapLines } from "../../models/changes/diff-utils.js";
 import type { ToolResultImage } from "./types.js";
 import { imageBlockSrc } from "../../models/chat-content.js";
-import { openInBrowserEvent } from "../events.js";
+import { openImageViewerEvent, openInBrowserEvent } from "../events.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
@@ -115,6 +115,13 @@ export class ReadToolBlock extends LitElement {
       : undefined;
     this.dispatchEvent(openInBrowserEvent(this.path, lineRange));
   };
+
+  private _openImage(event: Event, image: ToolResultImage) {
+    event.stopPropagation();
+    const src = imageBlockSrc(this.sessionId, image);
+    const alt = "filename" in image && image.filename ? image.filename : "Tool result image";
+    this.dispatchEvent(openImageViewerEvent({ src, alt, title: alt }));
+  }
 
   private _renderHighlightedLine(index: number, text: string) {
     const highlighted = this._hl.getLineHtml(index);
@@ -235,14 +242,26 @@ export class ReadToolBlock extends LitElement {
         ${images.length > 0 && (this.expanded || !hasContent)
           ? html`
               <div class="border-t border-zinc-800 p-2">
-                ${images.map(
-                  (img) =>
-                    html`<img
-                      src=${imageBlockSrc(this.sessionId, img)}
-                      class="max-w-full max-h-96 rounded mt-1"
-                      alt="Tool result image"
-                    />`,
-                )}
+                ${images.map((img) => {
+                  const src = imageBlockSrc(this.sessionId, img);
+                  const alt = "filename" in img && img.filename ? img.filename : "Tool result image";
+                  return html`
+                    <button
+                      type="button"
+                      class="group mt-1 block max-w-full cursor-zoom-in rounded focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-zinc-950"
+                      aria-label=${`Open image full screen: ${alt}`}
+                      title="Open image full screen"
+                      @click=${(event: Event) => this._openImage(event, img)}
+                    >
+                      <img
+                        src=${src}
+                        class="max-w-full max-h-96 rounded transition-opacity group-hover:opacity-90"
+                        alt=${alt}
+                        loading="lazy"
+                      />
+                    </button>
+                  `;
+                })}
               </div>
             `
           : nothing}

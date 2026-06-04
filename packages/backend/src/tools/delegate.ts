@@ -213,7 +213,7 @@ export function createDelegateTool(
           signal?.addEventListener("abort", onAbort, { once: true });
 
           try {
-            await subRuntime.prompt(fullPrompt);
+            await subRuntime.prompt([{ type: "text", text: fullPrompt }]);
 
             // Extract the final assistant message
             const messages = await subRuntime.getMessages();

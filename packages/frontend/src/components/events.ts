@@ -10,6 +10,7 @@
 declare global {
   interface DocumentEventMap {
     "open-in-browser": CustomEvent<OpenInBrowserDetail>;
+    "open-image-viewer": CustomEvent<OpenImageViewerDetail>;
     "open-quick-open": CustomEvent<void>;
     "open-file-search": CustomEvent<void>;
     "open-settings": CustomEvent<void>;
@@ -17,6 +18,7 @@ declare global {
 
   interface HTMLElementEventMap {
     "open-in-browser": CustomEvent<OpenInBrowserDetail>;
+    "open-image-viewer": CustomEvent<OpenImageViewerDetail>;
     "open-quick-open": CustomEvent<void>;
     "open-file-search": CustomEvent<void>;
     "open-settings": CustomEvent<void>;
@@ -24,6 +26,13 @@ declare global {
 }
 
 export type FileViewMode = "code" | "preview";
+
+/** Detail payload for the open-image-viewer event. */
+export interface OpenImageViewerDetail {
+  src: string;
+  alt?: string;
+  title?: string;
+}
 
 /** Detail payload for the open-in-browser event. */
 export interface OpenInBrowserDetail {
@@ -40,6 +49,15 @@ export interface OpenInBrowserDetail {
 export function openInBrowserEvent(path: string, options?: Omit<OpenInBrowserDetail, "path">) {
   return new CustomEvent<OpenInBrowserDetail>("open-in-browser", {
     detail: { path, ...options },
+    bubbles: true,
+    composed: true,
+  });
+}
+
+/** Request to open an image preview in the zoomable image viewer. */
+export function openImageViewerEvent(detail: OpenImageViewerDetail) {
+  return new CustomEvent<OpenImageViewerDetail>("open-image-viewer", {
+    detail,
     bubbles: true,
     composed: true,
   });

@@ -287,7 +287,7 @@ describe("applyChatEvent — other event types", () => {
   test("user_message appends and sets shouldAutoScroll", () => {
     const state = applyChatEvent(initialChatState(), {
       type: "user_message",
-      message: "hello from another client",
+      message: [{ type: "text", text: "hello from another client" }],
     });
 
     expect(state.messages).toHaveLength(1);

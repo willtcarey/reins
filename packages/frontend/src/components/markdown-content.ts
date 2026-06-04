@@ -17,6 +17,7 @@ import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { marked, type MarkedExtension } from "marked";
 import { getSharedHighlighter } from "../models/changes/shared-highlighter.js";
+import { openImageViewerEvent, type OpenImageViewerDetail } from "./events.js";
 
 // ---------------------------------------------------------------------------
 // Marked configuration — runs once at module load
@@ -62,6 +63,36 @@ export function parseMarkdown(text: string): string {
   return result;
 }
 
+/** Build an image-viewer event payload from a clicked markdown image target. */
+export function imageViewerDetailFromMarkdownTarget(target: unknown): OpenImageViewerDetail | null {
+  if (typeof target !== "object" || target === null) return null;
+  const candidate: {
+    tagName?: unknown;
+    nodeName?: unknown;
+    currentSrc?: unknown;
+    src?: unknown;
+    alt?: unknown;
+    title?: unknown;
+  } = target;
+  const tagName = typeof candidate.tagName === "string"
+    ? candidate.tagName
+    : typeof candidate.nodeName === "string"
+      ? candidate.nodeName
+      : "";
+  const isImage = tagName.toUpperCase() === "IMG"
+    || (typeof HTMLImageElement !== "undefined" && target instanceof HTMLImageElement);
+  if (!isImage) return null;
+
+  const currentSrc = typeof candidate.currentSrc === "string" ? candidate.currentSrc : "";
+  const fallbackSrc = typeof candidate.src === "string" ? candidate.src : "";
+  const src = currentSrc || fallbackSrc;
+  if (!src) return null;
+
+  const alt = typeof candidate.alt === "string" && candidate.alt ? candidate.alt : "Image preview";
+  const title = typeof candidate.title === "string" && candidate.title ? candidate.title : alt;
+  return { src, alt, title };
+}
+
 // ---------------------------------------------------------------------------
 // Mermaid lazy-loader
 // ---------------------------------------------------------------------------
@@ -99,11 +130,20 @@ export class MarkdownContent extends LitElement {
   override render() {
     try {
       const rendered = parseMarkdown(this.text);
-      return html`<div class="prose prose-invert prose-sm max-w-none break-words leading-relaxed">${unsafeHTML(rendered)}</div>`;
+      return html`<div class="prose prose-invert prose-sm max-w-none break-words leading-relaxed" @click=${this._handleImageClick}>${unsafeHTML(rendered)}</div>`;
     } catch {
       return html`<pre class="whitespace-pre-wrap text-sm">${this.text}</pre>`;
     }
   }
+
+  private _handleImageClick = (event: MouseEvent) => {
+    const detail = imageViewerDetailFromMarkdownTarget(event.target);
+    if (!detail) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    this.dispatchEvent(openImageViewerEvent(detail));
+  };
 
   override async updated() {
     if (this.streaming) return;

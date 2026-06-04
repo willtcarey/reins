@@ -11,6 +11,20 @@ import {
 
 let projectId: number;
 
+function textContent(text: string) {
+  return [{ type: "text" as const, text }];
+}
+
+function messageText(message: any): string | undefined {
+  if (Array.isArray(message.content)) {
+    return message.content
+      .filter((block: any) => block?.type === "text" && typeof block.text === "string")
+      .map((block: any) => block.text)
+      .join("\n");
+  }
+  return message.summary;
+}
+
 describe("messages-store", () => {
   useTestDb();
 
@@ -70,32 +84,32 @@ describe("messages-store", () => {
       expect(loadMessages("sess-1")).toEqual([]);
     });
 
-    test("returns messages ordered by seq", () => {
+    test("returns messages ordered by seq with block-only content", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
-        { role: "user", content: "first" },
-        { role: "assistant", content: "second" },
-        { role: "user", content: "third" },
+        { role: "user", content: textContent("first") },
+        { role: "assistant", content: textContent("second") },
+        { role: "user", content: textContent("third") },
       ]);
 
       const msgs = loadMessages("sess-1");
       expect(msgs).toHaveLength(3);
-      expect(msgs[0].content).toBe("first");
-      expect(msgs[1].content).toBe("second");
-      expect(msgs[2].content).toBe("third");
+      expect(msgs[0].content).toEqual(textContent("first"));
+      expect(msgs[1].content).toEqual(textContent("second"));
+      expect(msgs[2].content).toEqual(textContent("third"));
     });
 
     test("includes compaction markers", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
-        { role: "user", content: "before compaction" },
-        { role: "assistant", content: "reply" },
+        { role: "user", content: textContent("before compaction") },
+        { role: "assistant", content: textContent("reply") },
       ]);
 
       // Pi compacts and replaces in-memory array
       persistMessages("sess-1", [
         { role: "compactionSummary", summary: "discussed things" },
-        { role: "user", content: "after compaction" },
+        { role: "user", content: textContent("after compaction") },
       ]);
 
       const msgs = loadMessages("sess-1");
@@ -108,7 +122,7 @@ describe("messages-store", () => {
     test("filters persisted message entries and returns latest limited entries chronologically", () => {
       createSession("sess-query", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-query", [
-        { role: "user", content: "first prompt" },
+        { role: "user", content: textContent("first prompt") },
         { role: "assistant", content: [{ type: "text", text: "second response" }] },
         { role: "user", content: [{ type: "thinking", thinking: "third thought" }] },
       ]);
@@ -138,7 +152,7 @@ describe("messages-store", () => {
           toolCallId: "tc-read",
           toolName: "read",
           isError: false,
-          content: "file contents",
+          content: textContent("file contents"),
         },
         {
           role: "assistant",
@@ -151,7 +165,7 @@ describe("messages-store", () => {
           role: "toolResult",
           toolCallId: "tc-bash",
           isError: true,
-          content: [{ type: "text", text: "long failure output" }],
+          content: textContent("long failure output"),
         },
       ]);
 
@@ -168,7 +182,7 @@ describe("messages-store", () => {
           created_at: expect.any(String),
           isError: true,
           contentPreview: "long failure output",
-          content: [{ type: "text", text: "long failure output" }],
+          content: textContent("long failure output"),
         },
       };
 
@@ -180,7 +194,7 @@ describe("messages-store", () => {
     test("can return a combined session timeline with derived tool calls", () => {
       createSession("sess-entries", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-entries", [
-        { role: "user", content: "read the file" },
+        { role: "user", content: textContent("read the file") },
         {
           role: "assistant",
           content: [
@@ -188,7 +202,7 @@ describe("messages-store", () => {
             { type: "toolCall", id: "tc-read", name: "read", arguments: { path: "README.md" } },
           ],
         },
-        { role: "toolResult", toolCallId: "tc-read", toolName: "read", isError: false, content: "contents" },
+        { role: "toolResult", toolCallId: "tc-read", toolName: "read", isError: false, content: textContent("contents") },
       ]);
 
       const entries = listSessionEntries("sess-entries");
@@ -218,8 +232,8 @@ describe("messages-store", () => {
     test("returns all messages when no compaction has occurred", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
-        { role: "user", content: "hello" },
-        { role: "assistant", content: "hi" },
+        { role: "user", content: textContent("hello") },
+        { role: "assistant", content: textContent("hi") },
       ]);
 
       const msgs = loadMessagesForLLM("sess-1");
@@ -229,38 +243,38 @@ describe("messages-store", () => {
     test("returns compactionSummary and post-compaction messages", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
-        { role: "user", content: "old message" },
-        { role: "assistant", content: "old reply" },
+        { role: "user", content: textContent("old message") },
+        { role: "assistant", content: textContent("old reply") },
       ]);
 
       persistMessages("sess-1", [
         { role: "compactionSummary", summary: "summary of old" },
-        { role: "user", content: "new message" },
-        { role: "assistant", content: "new reply" },
+        { role: "user", content: textContent("new message") },
+        { role: "assistant", content: textContent("new reply") },
       ]);
 
       const msgs = loadMessagesForLLM("sess-1");
       expect(msgs).toHaveLength(3);
       expect(msgs[0].role).toBe("compactionSummary");
       expect(msgs[0].summary).toBe("summary of old");
-      expect(msgs[1].content).toBe("new message");
-      expect(msgs[2].content).toBe("new reply");
+      expect(msgs[1].content).toEqual(textContent("new message"));
+      expect(msgs[2].content).toEqual(textContent("new reply"));
     });
 
     test("excludes pre-compaction messages from LLM context", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
-        { role: "user", content: "old" },
-        { role: "assistant", content: "old reply" },
+        { role: "user", content: textContent("old") },
+        { role: "assistant", content: textContent("old reply") },
       ]);
 
       persistMessages("sess-1", [
         { role: "compactionSummary", summary: "summary" },
-        { role: "user", content: "new" },
+        { role: "user", content: textContent("new") },
       ]);
 
       const msgs = loadMessagesForLLM("sess-1");
-      const contents = msgs.map((m: any) => m.content || m.summary);
+      const contents = msgs.map(messageText);
       expect(contents).not.toContain("old");
       expect(contents).not.toContain("old reply");
     });
@@ -270,34 +284,34 @@ describe("messages-store", () => {
     test("persistMessages detects compactionSummary and creates boundary", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
-        { role: "user", content: "old" },
-        { role: "assistant", content: "old reply" },
+        { role: "user", content: textContent("old") },
+        { role: "assistant", content: textContent("old reply") },
       ]);
 
       // Pi compacts — in-memory array now starts with compactionSummary
       persistMessages("sess-1", [
         { role: "compactionSummary", summary: "discussed old topics" },
-        { role: "user", content: "new question" },
+        { role: "user", content: textContent("new question") },
       ]);
 
       const all = loadMessages("sess-1");
       // old(2) + compactionSummary(1) + new(1) = 4
       expect(all).toHaveLength(4);
       expect(all[2].role).toBe("compactionSummary");
-      expect(all[3].content).toBe("new question");
+      expect(all[3].content).toEqual(textContent("new question"));
     });
 
     test("preserves summary text from compactionSummary message", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
-        { role: "user", content: "old" },
-        { role: "assistant", content: "old reply" },
+        { role: "user", content: textContent("old") },
+        { role: "assistant", content: textContent("old reply") },
       ]);
 
       const summary = "## Goal\nBuild a widget\n\n## Progress\n- [x] Created skeleton";
       persistMessages("sess-1", [
         { role: "compactionSummary", summary },
-        { role: "user", content: "new" },
+        { role: "user", content: textContent("new") },
       ]);
 
       const all = loadMessages("sess-1");
@@ -309,14 +323,14 @@ describe("messages-store", () => {
     test("prunes tool result content from pre-compaction messages", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
-        { role: "user", content: "question" },
+        { role: "user", content: textContent("question") },
         { role: "toolResult", content: [{ type: "text", text: "big result data" }] },
-        { role: "assistant", content: "answer" },
+        { role: "assistant", content: textContent("answer") },
       ]);
 
       persistMessages("sess-1", [
         { role: "compactionSummary", summary: "summary" },
-        { role: "user", content: "post-compact msg" },
+        { role: "user", content: textContent("post-compact msg") },
       ]);
 
       const all = loadMessages("sess-1");
@@ -328,33 +342,33 @@ describe("messages-store", () => {
     test("new messages persist correctly after compaction", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
-        { role: "user", content: "msg 1" },
-        { role: "assistant", content: "reply 1" },
-        { role: "user", content: "msg 2" },
-        { role: "assistant", content: "reply 2" },
+        { role: "user", content: textContent("msg 1") },
+        { role: "assistant", content: textContent("reply 1") },
+        { role: "user", content: textContent("msg 2") },
+        { role: "assistant", content: textContent("reply 2") },
       ]);
 
       // Compaction replaces pi's in-memory array
       const postCompaction = [
         { role: "compactionSummary", summary: "compacted context" },
-        { role: "user", content: "kept question" },
-        { role: "assistant", content: "kept reply" },
+        { role: "user", content: textContent("kept question") },
+        { role: "assistant", content: textContent("kept reply") },
       ];
       persistMessages("sess-1", postCompaction);
 
       // User continues — pi's array grows
       persistMessages("sess-1", [
         ...postCompaction,
-        { role: "user", content: "new question" },
-        { role: "assistant", content: "new answer" },
+        { role: "user", content: textContent("new question") },
+        { role: "assistant", content: textContent("new answer") },
       ]);
 
       const llmMsgs = loadMessagesForLLM("sess-1");
-      expect(llmMsgs.map((m: any) => m.content)).toContain("new question");
-      expect(llmMsgs.map((m: any) => m.content)).toContain("new answer");
+      expect(llmMsgs.map(messageText)).toContain("new question");
+      expect(llmMsgs.map(messageText)).toContain("new answer");
 
       const allMsgs = loadMessages("sess-1");
-      const allContents = allMsgs.map((m: any) => m.content || m.summary);
+      const allContents = allMsgs.map(messageText);
       expect(allContents).toContain("new question");
       expect(allContents).toContain("new answer");
     });
@@ -362,19 +376,19 @@ describe("messages-store", () => {
     test("handles multiple compactions", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
       persistMessages("sess-1", [
-        { role: "user", content: "batch 1" },
-        { role: "assistant", content: "reply 1" },
+        { role: "user", content: textContent("batch 1") },
+        { role: "assistant", content: textContent("reply 1") },
       ]);
 
       persistMessages("sess-1", [
         { role: "compactionSummary", summary: "summary of batch 1" },
-        { role: "user", content: "batch 2" },
-        { role: "assistant", content: "reply 2" },
+        { role: "user", content: textContent("batch 2") },
+        { role: "assistant", content: textContent("reply 2") },
       ]);
 
       persistMessages("sess-1", [
         { role: "compactionSummary", summary: "summary of batches 1-2" },
-        { role: "user", content: "batch 3" },
+        { role: "user", content: textContent("batch 3") },
       ]);
 
       // loadMessagesForLLM returns last compactionSummary + post-compaction messages
@@ -382,7 +396,7 @@ describe("messages-store", () => {
       expect(llmMsgs).toHaveLength(2);
       expect(llmMsgs[0].role).toBe("compactionSummary");
       expect(llmMsgs[0].summary).toBe("summary of batches 1-2");
-      expect(llmMsgs[1].content).toBe("batch 3");
+      expect(llmMsgs[1].content).toEqual(textContent("batch 3"));
 
       // Full history: pre-compaction + first CS + second CS + new post-compaction
       // Old post-compaction messages (batch 2, reply 2) are deleted during re-compaction
@@ -390,7 +404,7 @@ describe("messages-store", () => {
       const allMsgs = loadMessages("sess-1");
       const allRoles = allMsgs.map((m: any) => m.role);
       expect(allRoles.filter((r: string) => r === "compactionSummary")).toHaveLength(2);
-      const allContents = allMsgs.map((m: any) => m.content || m.summary);
+      const allContents = allMsgs.map(messageText);
       expect(allContents).toContain("batch 1");
       expect(allContents).toContain("summary of batch 1");
       expect(allContents).toContain("summary of batches 1-2");
@@ -405,41 +419,41 @@ describe("messages-store", () => {
 
       // Initial messages
       persistMessages("sess-1", [
-        { role: "user", content: "msg 1" },
-        { role: "assistant", content: "reply 1" },
-        { role: "user", content: "msg 2" },
-        { role: "assistant", content: "reply 2" },
+        { role: "user", content: textContent("msg 1") },
+        { role: "assistant", content: textContent("reply 1") },
+        { role: "user", content: textContent("msg 2") },
+        { role: "assistant", content: textContent("reply 2") },
       ]);
 
       // First compaction — pi's array is now [CS1, msg 2, reply 2]
       const postCompact1 = [
         { role: "compactionSummary", summary: "summary v1" },
-        { role: "user", content: "msg 2" },
-        { role: "assistant", content: "reply 2" },
+        { role: "user", content: textContent("msg 2") },
+        { role: "assistant", content: textContent("reply 2") },
       ];
       persistMessages("sess-1", postCompact1);
 
       // User continues — pi's array grows
       const continued = [
         ...postCompact1,
-        { role: "user", content: "msg 3" },
-        { role: "assistant", content: "reply 3" },
+        { role: "user", content: textContent("msg 3") },
+        { role: "assistant", content: textContent("reply 3") },
         { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "tool output" }] },
-        { role: "assistant", content: "reply 4" },
+        { role: "assistant", content: textContent("reply 4") },
       ];
       persistMessages("sess-1", continued);
 
       // Re-compaction — pi compacts again, new summary subsumes everything
       const postCompact2 = [
         { role: "compactionSummary", summary: "summary v2" },
-        { role: "assistant", content: "reply 4" },
+        { role: "assistant", content: textContent("reply 4") },
       ];
       persistMessages("sess-1", postCompact2);
 
       // Verify no duplicates: each content value appears at most once
       const allMsgs = loadMessages("sess-1");
-      const allContents = allMsgs.map((m: any) => m.content || m.summary);
-      const duplicates = allContents.filter((c: string, i: number) => allContents.indexOf(c) !== i);
+      const allContents = allMsgs.map(messageText);
+      const duplicates = allContents.filter((c, i) => allContents.indexOf(c) !== i);
       expect(duplicates).toEqual([]);
 
       // LLM context uses only the latest compaction
@@ -447,11 +461,11 @@ describe("messages-store", () => {
       expect(llmMsgs).toHaveLength(2);
       expect(llmMsgs[0].role).toBe("compactionSummary");
       expect(llmMsgs[0].summary).toBe("summary v2");
-      expect(llmMsgs[1].content).toBe("reply 4");
+      expect(llmMsgs[1].content).toEqual(textContent("reply 4"));
 
       // Old post-compaction messages were deleted, not duplicated
-      const msgContents = allMsgs.map((m: any) => m.content);
-      expect(msgContents.filter((c: string) => c === "reply 4")).toHaveLength(1);
+      const msgContents = allMsgs.map(messageText);
+      expect(msgContents.filter((c) => c === "reply 4")).toHaveLength(1);
     });
 
     test("re-compaction prunes tool results from all pre-compaction messages", () => {
@@ -459,23 +473,23 @@ describe("messages-store", () => {
 
       // Messages with tool results
       persistMessages("sess-1", [
-        { role: "user", content: "question" },
+        { role: "user", content: textContent("question") },
         { role: "toolResult", toolCallId: "tc0", content: [{ type: "text", text: "early tool output" }] },
-        { role: "assistant", content: "answer" },
+        { role: "assistant", content: textContent("answer") },
       ]);
 
       // First compaction
       const postCompact1 = [
         { role: "compactionSummary", summary: "summary v1" },
         { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "kept tool output" }] },
-        { role: "assistant", content: "reply" },
+        { role: "assistant", content: textContent("reply") },
       ];
       persistMessages("sess-1", postCompact1);
 
       // Re-compaction
       persistMessages("sess-1", [
         { role: "compactionSummary", summary: "summary v2" },
-        { role: "assistant", content: "final" },
+        { role: "assistant", content: textContent("final") },
       ]);
 
       const allMsgs = loadMessages("sess-1");

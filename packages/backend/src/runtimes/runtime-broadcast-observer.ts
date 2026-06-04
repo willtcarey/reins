@@ -1,6 +1,6 @@
 import { createBroadcast } from "../models/broadcast.js";
-import { externalizeImages } from "../session-attachments-store.js";
 import type { AgentRuntime } from "./registry.js";
+import { externalizeRuntimeEventImages } from "./runtime-image-externalization.js";
 
 export function attachRuntimeBroadcastObserver(params: {
   sessionId: string;
@@ -16,7 +16,7 @@ export function attachRuntimeBroadcastObserver(params: {
       type: "event",
       sessionId,
       projectId,
-      event: externalizeImages(sessionId, event),
+      event: externalizeRuntimeEventImages(sessionId, event),
     });
   });
 }

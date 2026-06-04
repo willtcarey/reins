@@ -9,12 +9,67 @@
 import { getDb } from "./db.js";
 import {
   collectAttachmentIds,
-  externalizeImages,
-  hydrateAttachmentRefs,
+  externalizeInlineImageBlock,
+  hydrateImageAttachmentBlock,
   pruneUnreferencedAttachmentData,
 } from "./session-attachments-store.js";
 
 // ---- Types -----------------------------------------------------------------
+
+export interface TextContentBlock {
+  type: "text";
+  text: string;
+}
+
+export interface ThinkingContentBlock {
+  type: "thinking";
+  thinking: string;
+  thinkingSignature?: string;
+}
+
+export interface ToolCallContentBlock {
+  type: "toolCall";
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface ImageAttachmentBlock {
+  type: "image";
+  attachmentId: string;
+  mimeType: string;
+  filename?: string;
+  byteSize: number;
+  sha256?: string;
+  width?: number;
+  height?: number;
+}
+
+export interface InlineImageBlock {
+  type: "image";
+  data: string;
+  mimeType: string;
+  filename?: string;
+  width?: number;
+  height?: number;
+}
+
+export type ClientPromptBlock = TextContentBlock | ImageAttachmentBlock;
+export type ClientPromptContent = ClientPromptBlock[];
+
+export type HydratedPromptBlock = TextContentBlock | InlineImageBlock;
+export type HydratedPromptContent = HydratedPromptBlock[];
+
+export type PersistedContentBlock = TextContentBlock | ThinkingContentBlock | ToolCallContentBlock | ImageAttachmentBlock;
+export type RuntimeContentBlock = TextContentBlock | ThinkingContentBlock | ToolCallContentBlock | InlineImageBlock;
+
+export interface RuntimeMessage {
+  role: string;
+  content?: RuntimeContentBlock[];
+  stopReason?: string;
+  summary?: string;
+  [key: string]: unknown;
+}
 
 export interface SessionWindowOptions {
   since?: string;
@@ -34,53 +89,60 @@ export interface SessionEntryOptions extends SessionWindowOptions {
   includeContent?: boolean;
 }
 
-export interface SessionMessageEntry {
-  sessionId: string;
-  seq: number;
-  created_at: string;
-  type: Exclude<SessionEntryType, "toolCall">;
-  role: string;
-  content?: unknown;
-  [key: string]: unknown;
-}
-
 export interface SessionToolCallResult {
   seq: number;
   created_at: string;
   isError: boolean;
   contentPreview: string;
-  content?: unknown;
+  content?: PersistedContentBlock[];
 }
 
-interface ToolCallBlock {
-  type: "toolCall";
-  id: string;
-  name: string;
-  arguments: unknown;
-}
-
-type PersistedContentBlock =
-  | { type: "text"; text: string }
-  | { type: "thinking"; thinking: string }
-  | { type: "image"; attachmentId: string; mimeType: string; filename?: string; byteSize: number; sha256?: string }
-  | { type: "image"; data: string; mimeType: string; filename?: string }
-  | ToolCallBlock;
+type SessionMessageEntryMetadata<Role extends Exclude<SessionEntryType, "toolCall">> = {
+  sessionId: string;
+  seq: number;
+  created_at: string;
+  type: Role;
+  role: Role;
+};
 
 type PersistedMessageBase = {
   summary?: string;
   [key: string]: unknown;
 };
 
-type PersistedAssistantMessage = PersistedMessageBase & {
+export type PersistedUserMessage = PersistedMessageBase & {
+  role: "user";
+  content: PersistedContentBlock[];
+};
+
+export type PersistedAssistantMessage = PersistedMessageBase & {
   role: "assistant";
   content: PersistedContentBlock[];
 };
 
-type PersistedMessage =
-  | (PersistedMessageBase & { role: "user"; content: string | PersistedContentBlock[] })
+export type PersistedToolResultMessage = PersistedMessageBase & {
+  role: "toolResult";
+  content: PersistedContentBlock[];
+  toolCallId: string;
+  toolName?: string;
+  isError: boolean;
+};
+
+export type PersistedCompactionSummaryMessage = PersistedMessageBase & {
+  role: "compactionSummary";
+  content?: never;
+};
+
+export type PersistedMessage =
+  | PersistedUserMessage
   | PersistedAssistantMessage
-  | (PersistedMessageBase & { role: "toolResult"; content: string | PersistedContentBlock[]; toolCallId: string; toolName?: string; isError: boolean })
-  | (PersistedMessageBase & { role: "compactionSummary"; content?: string | PersistedContentBlock[] });
+  | PersistedToolResultMessage
+  | PersistedCompactionSummaryMessage;
+
+export type SessionMessageEntry =
+  | (PersistedUserMessage & SessionMessageEntryMetadata<"user">)
+  | (PersistedAssistantMessage & SessionMessageEntryMetadata<"assistant">)
+  | (PersistedCompactionSummaryMessage & SessionMessageEntryMetadata<"compactionSummary">);
 
 export interface SessionToolCallEntry {
   sessionId: string;
@@ -89,7 +151,7 @@ export interface SessionToolCallEntry {
   type: "toolCall";
   id: string;
   name: string;
-  arguments: unknown;
+  arguments: Record<string, unknown>;
   result: SessionToolCallResult | null;
 }
 
@@ -113,9 +175,7 @@ function usesLatestWindow(options: SessionWindowOptions): boolean {
   return options.limit !== undefined && options.order === undefined && options.afterSeq === undefined && !options.since;
 }
 
-function contentToText(content: string | PersistedContentBlock[]): string {
-  if (typeof content === "string") return content;
-
+function contentToText(content: PersistedContentBlock[]): string {
   return content.map((block) => {
     if (block.type === "text") return block.text;
     if (block.type === "thinking") return block.thinking;
@@ -124,14 +184,46 @@ function contentToText(content: string | PersistedContentBlock[]): string {
   }).join("\n");
 }
 
-function contentPreview(content: string | PersistedContentBlock[]): string {
+function contentPreview(content: PersistedContentBlock[]): string {
   const text = contentToText(content);
   if (text.length <= TOOL_RESULT_PREVIEW_CHARS) return text;
   return `${text.slice(0, TOOL_RESULT_PREVIEW_CHARS)}…`;
 }
 
-function extractToolCallBlocks(message: PersistedAssistantMessage): ToolCallBlock[] {
-  return message.content.filter((block): block is ToolCallBlock => block.type === "toolCall");
+function externalizeMessageImages(
+  sessionId: string,
+  message: RuntimeMessage,
+): Omit<RuntimeMessage, "content" | "role"> & { role: string; content?: PersistedContentBlock[] } {
+  const { content, ...rest } = message;
+  if (!content) return rest;
+  return {
+    ...rest,
+    content: content.map((block) => (
+      block.type === "image"
+        ? externalizeInlineImageBlock(sessionId, block)
+        : block
+    )),
+  };
+}
+
+type HydratedPersistedMessage = Omit<PersistedMessage, "content"> & {
+  content?: RuntimeContentBlock[];
+};
+
+function hydratePersistedMessageImages(sessionId: string, message: PersistedMessage): HydratedPersistedMessage {
+  if (message.role === "compactionSummary") return message;
+  return {
+    ...message,
+    content: message.content.map((block) => (
+      block.type === "image"
+        ? hydrateImageAttachmentBlock(sessionId, block)
+        : block
+    )),
+  };
+}
+
+function extractToolCallBlocks(message: PersistedAssistantMessage): ToolCallContentBlock[] {
+  return message.content.filter((block): block is ToolCallContentBlock => block.type === "toolCall");
 }
 
 function orderAndLimit<T extends { seq: number }>(items: T[], options: SessionWindowOptions): T[] {
@@ -214,7 +306,7 @@ export function persistMessages(sessionId: string, messages: any[]): void {
     .get(sessionId)!;
   const nextSeq = maxRow.max_seq + 1;
 
-  const compactionIdx = messages.findIndex((m: any) => m.role === "compactionSummary");
+  const compactionIdx = messages.findIndex((m) => m.role === "compactionSummary");
 
   if (compactionIdx < 0) {
     // No compaction: append messages not yet stored
@@ -246,13 +338,7 @@ export function persistMessages(sessionId: string, messages: any[]): void {
            WHERE session_id = ? AND seq > ? AND seq < ?`,
         )
         .all(sessionId, lastSummaryRow.last_seq, nextSeq);
-      const deletedAttachmentIds = deletedRows.flatMap((row) => {
-        try {
-          return collectAttachmentIds(JSON.parse(row.message_json));
-        } catch {
-          return [];
-        }
-      });
+      const deletedAttachmentIds = deletedRows.flatMap((row) => collectAttachmentIds(JSON.parse(row.message_json)));
 
       db.query(
         `DELETE FROM session_messages
@@ -276,17 +362,10 @@ export function persistMessages(sessionId: string, messages: any[]): void {
 export function loadMessages(sessionId: string): any[] {
   const db = getDb();
   const rows = db
-    .query<{ id: number; message_json: string }, [string]>("SELECT id, message_json FROM session_messages WHERE session_id = ? ORDER BY seq")
+    .query<{ message_json: string }, [string]>("SELECT message_json FROM session_messages WHERE session_id = ? ORDER BY seq")
     .all(sessionId);
-  const update = db.query("UPDATE session_messages SET message_json = ? WHERE id = ?");
 
-  return rows.map((row) => {
-    const parsed = JSON.parse(row.message_json);
-    const externalized = externalizeImages(sessionId, parsed);
-    const nextJson = JSON.stringify(externalized);
-    if (nextJson !== row.message_json) update.run(nextJson, row.id);
-    return externalized;
-  });
+  return rows.map((row) => JSON.parse(row.message_json));
 }
 
 /**
@@ -355,17 +434,27 @@ export function listSessionEntries(
 
   for (const row of rows) {
     const parsed = row.parsed;
-    const entryType = parsed.role;
 
-    if (entryType !== "toolResult" && requestedTypes.has(entryType) && row.matchesSearch) {
-      entries.push({
-        ...parsed,
-        sessionId,
-        seq: row.seq,
-        created_at: row.created_at,
-        type: entryType,
-        role: entryType,
-      });
+    if (row.matchesSearch) {
+      switch (parsed.role) {
+        case "user":
+          if (requestedTypes.has("user")) {
+            entries.push({ ...parsed, sessionId, seq: row.seq, created_at: row.created_at, type: "user", role: "user" });
+          }
+          break;
+        case "assistant":
+          if (requestedTypes.has("assistant")) {
+            entries.push({ ...parsed, sessionId, seq: row.seq, created_at: row.created_at, type: "assistant", role: "assistant" });
+          }
+          break;
+        case "compactionSummary":
+          if (requestedTypes.has("compactionSummary")) {
+            entries.push({ ...parsed, sessionId, seq: row.seq, created_at: row.created_at, type: "compactionSummary", role: "compactionSummary" });
+          }
+          break;
+        case "toolResult":
+          break;
+      }
     }
 
     if (parsed.role !== "assistant") continue;
@@ -395,7 +484,7 @@ export function listSessionEntries(
  * from the current max seq. Handles compaction boundaries the same way:
  * prunes tool result content from pre-compaction messages.
  */
-export function appendMessages(sessionId: string, messages: any[]): void {
+export function appendMessages(sessionId: string, messages: RuntimeMessage[]): void {
   if (messages.length === 0) return;
 
   const db = getDb();
@@ -413,7 +502,7 @@ export function appendMessages(sessionId: string, messages: any[]): void {
 
   const tx = db.transaction(() => {
     for (const msg of messages) {
-      const persisted = externalizeImages(sessionId, msg);
+      const persisted = externalizeMessageImages(sessionId, msg);
       insert.run(sessionId, nextSeq, persisted.role, JSON.stringify(persisted));
 
       if (persisted.role === "compactionSummary") {
@@ -455,5 +544,5 @@ export function loadMessagesForLLM(sessionId: string): any[] {
     )
     .all(sessionId, minSeq);
 
-  return rows.map((r) => hydrateAttachmentRefs(sessionId, JSON.parse(r.message_json)));
+  return rows.map((r) => hydratePersistedMessageImages(sessionId, parsePersistedMessage(r.message_json)));
 }

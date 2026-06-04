@@ -108,6 +108,12 @@ throw new HttpError(403, "Forbidden");
 
 Unexpected errors are caught automatically and returned as 500 with the error message.
 
+## Request Validation
+
+Use `src/routes/validate.ts` helpers for request parsing and shape validation instead of hand-rolled defensive checks in handlers. Routes should translate HTTP-specific shapes (`Request`, JSON bodies, `FormData`, uploaded `File`s) into plain model DTOs, then delegate to models.
+
+Available helpers include JSON body validation (`parseBody`), multipart parsing (`parseFormData`), required file extraction (`parseFormFiles`), and URL integer params (`parseIntParam`).
+
 ## Router API
 
 ```ts

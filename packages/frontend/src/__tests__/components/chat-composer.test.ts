@@ -1,14 +1,21 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import {
   ChatComposer,
   buildClientPromptContent,
   findSkillTokenAt,
   imageMimeTypeForFile,
-  focusTextareaWithoutScroll,
-  blurTextarea,
   isAllowedImageFile,
+  type ChatComposerSubmitDetail,
+  type DraftAttachment,
 } from "../../components/chat-composer.js";
-import { templateToString } from "../helpers/lit-template.js";
+import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
+
+function callPrivate<T = unknown>(obj: object, key: string, ...args: unknown[]): T {
+  const fn = Reflect.get(obj, key);
+  if (typeof fn !== "function") throw new Error(`${key} is not callable`);
+  const result: T = Reflect.apply(fn, obj, args);
+  return result;
+}
 
 describe("chat-composer helpers", () => {
   test("detects slash skill tokens at the caret", () => {
@@ -17,8 +24,8 @@ describe("chat-composer helpers", () => {
     expect(findSkillTokenAt("docker/dip", 10)).toBeNull();
   });
 
-  test("keeps text-only submits as plain strings", () => {
-    expect(buildClientPromptContent(" hello ", [])).toBe("hello");
+  test("keeps text-only submits as content blocks", () => {
+    expect(buildClientPromptContent(" hello ", [])).toEqual([{ type: "text", text: "hello" }]);
   });
 
   test("builds multimodal content from text plus attachment refs", () => {
@@ -31,6 +38,8 @@ describe("chat-composer helpers", () => {
         byteSize: 123,
         sha256: "abc",
         url: "/api/sessions/s1/attachments/att_1",
+        width: 640,
+        height: 480,
       },
     ]);
 
@@ -43,6 +52,8 @@ describe("chat-composer helpers", () => {
         filename: "screen.png",
         byteSize: 123,
         sha256: "abc",
+        width: 640,
+        height: 480,
       },
     ]);
   });
@@ -58,79 +69,131 @@ describe("chat-composer helpers", () => {
     expect(isAllowedImageFile(screenshot)).toBe(true);
     expect(imageMimeTypeForFile(screenshot)).toBe("image/png");
   });
+});
 
-  test("renders the attach control outside the prompt input box", () => {
+describe("ChatComposer behavior", () => {
+  test("autosizes the textarea using scroll height and caps tall drafts", () => {
     const el = new ChatComposer();
-
-    const output = templateToString(el.render());
-    const attachIndex = output.indexOf('data-role="attach-control"');
-    const promptIndex = output.indexOf('data-role="prompt-box"');
-    const promptBox = output.slice(promptIndex);
-
-    expect(attachIndex).toBeGreaterThan(-1);
-    expect(promptIndex).toBeGreaterThan(-1);
-    expect(attachIndex).toBeLessThan(promptIndex);
-    expect(promptBox).not.toContain('title="Attach image"');
-  });
-
-  test("renders the send control as an accessible icon button", () => {
-    const el = new ChatComposer();
-
-    const output = templateToString(el.render());
-
-    expect(output).toContain('data-role="send-control"');
-    expect(output).toContain('aria-label="Send message"');
-    expect(output).toContain('data-role="send-icon"');
-    expect(output).not.toContain(">Send</button>");
-  });
-
-  test("focuses the textarea with preventScroll when preserving keyboard focus", () => {
-    const calls: unknown[] = [];
+    const style: Record<string, string> = {};
     const textarea = {
-      focus: (options?: FocusOptions) => calls.push(options),
+      scrollHeight: 84,
+      style,
     };
+    Object.defineProperty(el, "textarea", { configurable: true, value: textarea });
 
-    expect(focusTextareaWithoutScroll(textarea)).toBe(true);
-    expect(calls).toEqual([{ preventScroll: true }]);
+    callPrivate(el, "syncTextareaHeight");
+    expect(textarea.style.height).toBe("84px");
+    expect(textarea.style.overflowY).toBe("hidden");
+
+    textarea.scrollHeight = 240;
+    callPrivate(el, "syncTextareaHeight");
+    expect(textarea.style.height).toBe("200px");
+    expect(textarea.style.overflowY).toBe("auto");
   });
 
-  test("blurs the textarea to collapse the mobile keyboard", () => {
-    let blurCalls = 0;
-    const textarea = {
-      blur: () => { blurCalls += 1; },
-    };
-
-    expect(blurTextarea(textarea)).toBe(true);
-    expect(blurCalls).toBe(1);
-    expect(blurTextarea(null)).toBe(false);
-  });
-
-  test("send control preserves keyboard focus during pointer and mouse activation", () => {
+  test("adds pasted image files as draft attachments", () => {
     const el = new ChatComposer();
+    Object.defineProperty(el, "createObjectUrl", { configurable: true, value: () => "" });
+    const preventDefault = mock(() => undefined);
 
-    const output = templateToString(el.render());
-    const sendStart = output.indexOf('data-role="send-control"');
-    const sendEnd = output.indexOf(">", sendStart);
-    const sendTag = output.slice(sendStart, sendEnd);
+    callPrivate(el, "handlePaste", {
+      clipboardData: {
+        files: [
+          new File(["png bytes"], "screen.png", { type: "image/png" }),
+          new File(["not an image"], "note.txt", { type: "text/plain" }),
+        ],
+      },
+      preventDefault,
+    });
 
-    expect(sendTag).toContain("@pointerdown=");
-    expect(sendTag).toContain("@pointerup=");
-    expect(sendTag).toContain("@mousedown=");
+    const attachments: DraftAttachment[] = Reflect.get(el, "draftAttachments");
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0]).toMatchObject({
+      filename: "screen.png",
+      mimeType: "image/png",
+      byteSize: "png bytes".length,
+    });
   });
 
-  test("uses compact vertical spacing in the prompt input box", () => {
+  test("uploads draft attachments and dispatches a multimodal submit", async () => {
     const el = new ChatComposer();
+    el.sessionId = "sess-1";
+    Reflect.set(el, "inputText", " look ");
+    Reflect.set(el, "draftAttachments", [
+      {
+        id: "draft-1",
+        file: new File(["png bytes"], "screen.png", { type: "image/png" }),
+        objectUrl: "",
+        byteSize: "png bytes".length,
+        mimeType: "image/png",
+        filename: "screen.png",
+      } satisfies DraftAttachment,
+    ]);
 
-    const output = templateToString(el.render());
-    const promptStart = output.indexOf('data-role="prompt-box"');
-    const textareaStart = output.indexOf("<textarea", promptStart);
-    const textareaEnd = output.indexOf("</textarea>", textareaStart);
-    const promptBoxOpenTag = output.slice(promptStart, textareaStart);
-    const textareaTag = output.slice(textareaStart, textareaEnd);
+    const dispatched: CustomEvent<ChatComposerSubmitDetail>[] = [];
+    Object.defineProperty(el, "dispatchEvent", {
+      configurable: true,
+      value: (event: Event) => {
+        if (!(event instanceof CustomEvent)) throw new Error("Expected CustomEvent");
+        const submitted: CustomEvent<ChatComposerSubmitDetail> = event;
+        dispatched.push(submitted);
+        return true;
+      },
+    });
 
-    expect(promptBoxOpenTag).toContain("px-1 py-1 ");
-    expect(promptBoxOpenTag).not.toContain("py-1.5");
-    expect(textareaTag).toContain("px-1 py-1 ");
-    expect(textareaTag).not.toContain("py-1.5");
+    let fetchCount = 0;
+    const uploadState: { form: FormData | null } = { form: null };
+    mockFetch((url, init) => {
+      fetchCount += 1;
+      expect(url).toBe("/api/sessions/sess-1/attachments");
+      expect(init?.method).toBe("POST");
+      if (!(init?.body instanceof FormData)) throw new Error("Expected FormData upload body");
+      uploadState.form = init.body;
+      return new Response(JSON.stringify({
+        attachments: [{
+          id: "att_1",
+          kind: "image",
+          mimeType: "image/png",
+          filename: "screen.png",
+          byteSize: 9,
+          sha256: "abc",
+          url: "/api/sessions/sess-1/attachments/att_1",
+          width: 640,
+          height: 480,
+        }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    try {
+      await callPrivate<Promise<void>>(el, "handleSend");
+    } finally {
+      restoreFetch();
+    }
+
+    expect(fetchCount).toBe(1);
+    if (!uploadState.form) throw new Error("Expected upload form");
+    const form: FormData = uploadState.form;
+    expect(form.getAll("files")).toHaveLength(1);
+    expect(form.get("metadata")).toBeNull();
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0].type).toBe("composer-submit");
+    expect(dispatched[0].bubbles).toBe(true);
+    expect(dispatched[0].composed).toBe(true);
+    expect(dispatched[0].detail.content).toEqual([
+      { type: "text", text: "look" },
+      {
+        type: "image",
+        attachmentId: "att_1",
+        mimeType: "image/png",
+        filename: "screen.png",
+        byteSize: 9,
+        sha256: "abc",
+        width: 640,
+        height: 480,
+      },
+    ]);
+    expect(Reflect.get(el, "inputText")).toBe("");
+    expect(Reflect.get(el, "draftAttachments")).toEqual([]);
   });
 });

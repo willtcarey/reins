@@ -36,9 +36,11 @@ export interface AssistantMessage {
   errorMessage?: string;
 }
 
+export type UserMessageContent = string | (TextContent | ChatImageBlock)[];
+
 export interface UserMessage {
   role: "user";
-  content: ClientPromptContent | (TextContent | ChatImageBlock)[];
+  content: UserMessageContent;
   timestamp: number;
 }
 
@@ -54,7 +56,7 @@ export interface ToolResultMessage {
 
 export interface CompactionSummaryMessage {
   role: "compactionSummary";
-  content: string;
+  content?: string;
   summary?: string;
   timestamp: number;
 }

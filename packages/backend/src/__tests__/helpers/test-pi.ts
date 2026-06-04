@@ -65,7 +65,7 @@ export async function createTestManagedSession(
   }
 
   return {
-    runtime: new PiAgentRuntime(session),
+    runtime: new PiAgentRuntime(session, id),
     id,
     lastActivity: Date.now(),
   };

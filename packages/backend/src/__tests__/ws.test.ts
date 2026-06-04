@@ -1,6 +1,11 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach, mock as bunMock } from "bun:test";
 import { handleWsOpen, handleWsMessage, handleWsClose } from "../ws.js";
 import { createServerState } from "./helpers/server-state.js";
+import { useTestDb } from "./helpers/test-db.js";
+import { createProject } from "../project-store.js";
+import { createSession } from "../session-store.js";
+import { storeSessionAttachment } from "../session-attachments-store.js";
+import type { AgentRuntime, RuntimePromptContent } from "../runtimes/registry.js";
 import type { ServerState } from "../state.js";
 
 /**
@@ -25,6 +30,20 @@ function createMockWs() {
     allMessages(): any[] {
       return sent.map((s) => JSON.parse(s));
     },
+  };
+}
+
+function createRuntimeStub(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
+  return {
+    prompt: bunMock(async (_content: RuntimePromptContent) => {}),
+    steer: bunMock(async (_content: RuntimePromptContent) => {}),
+    abort: bunMock(async () => {}),
+    setModel: bunMock(async () => {}),
+    subscribe: bunMock(() => () => {}),
+    getMessages: bunMock(async () => []),
+    isStreaming: () => false,
+    close: bunMock(async () => {}),
+    ...overrides,
   };
 }
 
@@ -233,6 +252,82 @@ describe("WebSocket handlers", () => {
         type: "error",
         error: "Missing message field",
       });
+    });
+
+    test("prompt with non-block message sends validation error before session lookup", async () => {
+      const mock = createMockWs();
+      handleWsOpen(state, mock.ws);
+
+      handleWsMessage(
+        state,
+        mock.ws,
+        JSON.stringify({ type: "prompt", sessionId: "missing-session", message: "hello" }),
+      );
+
+      await Bun.sleep(10);
+
+      expect(mock.lastMessage()).toEqual({
+        type: "error",
+        error: "Invalid message field: expected content blocks array",
+      });
+    });
+
+  });
+
+  describe("handleWsMessage — multimodal prompt path", () => {
+    useTestDb();
+
+    test("validates and forwards attachment refs to the runtime while broadcasting refs to other clients", async () => {
+      const project = createProject("WS Multimodal", "/tmp/ws-multimodal");
+      createSession("sess-ws", project.id, { agentRuntimeType: "pi" });
+      const imageData = Buffer.from("runtime image bytes");
+      const attachment = storeSessionAttachment("sess-ws", {
+        data: imageData,
+        mimeType: "image/png",
+        filename: "screen.png",
+        width: 320,
+        height: 200,
+      });
+      const message = [
+        { type: "text" as const, text: "look at this" },
+        {
+          type: "image" as const,
+          attachmentId: attachment.id,
+          mimeType: attachment.mimeType,
+          filename: attachment.filename,
+          byteSize: attachment.byteSize,
+          sha256: attachment.sha256,
+          width: attachment.width,
+          height: attachment.height,
+        },
+      ];
+      const prompt = bunMock(async (_content: RuntimePromptContent) => {});
+      const runtime = createRuntimeStub({ prompt });
+      state.sessions.set("sess-ws", { id: "sess-ws", runtime, lastActivity: 0 });
+
+      const sender = createMockWs();
+      const observer = createMockWs();
+      handleWsOpen(state, sender.ws);
+      handleWsOpen(state, observer.ws);
+
+      handleWsMessage(state, sender.ws, JSON.stringify({
+        type: "prompt",
+        sessionId: "sess-ws",
+        message,
+      }));
+
+      await Bun.sleep(10);
+
+      expect(sender.lastMessage()).toEqual({ type: "ack", command: "prompt" });
+      expect(prompt).toHaveBeenCalledTimes(1);
+      expect(prompt.mock.calls[0][0]).toEqual(message);
+      expect(observer.lastMessage()).toEqual({
+        type: "user_message",
+        sessionId: "sess-ws",
+        projectId: project.id,
+        message,
+      });
+      expect(JSON.stringify(observer.lastMessage())).not.toContain(imageData.toString("base64"));
     });
   });
 });

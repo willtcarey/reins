@@ -20,6 +20,10 @@ function asCompaction(entry: SessionEntry): CompactionEntry {
   return entry;
 }
 
+function textContent(text: string) {
+  return [{ type: "text" as const, text }];
+}
+
 describe("PiRuntimeAdapter", () => {
   useTestDb();
 
@@ -105,10 +109,10 @@ describe("hydrateSessionManager", () => {
   test("populates entries from regular messages", () => {
     const sm = SessionManager.inMemory();
     const messages = [
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "hi there" },
-      { role: "user", content: "what is 2+2?" },
-      { role: "assistant", content: "4" },
+      { role: "user", content: textContent("hello") },
+      { role: "assistant", content: textContent("hi there") },
+      { role: "user", content: textContent("what is 2+2?") },
+      { role: "assistant", content: textContent("4") },
     ];
 
     hydrateSessionManager(sm, messages);
@@ -118,20 +122,20 @@ describe("hydrateSessionManager", () => {
     expect(entries.every((e) => e.type === "message")).toBe(true);
     const msg0 = asMessage(entries[0]).message;
     expect(msg0.role).toBe("user");
-    if ("content" in msg0) expect(msg0.content).toBe("hello");
+    if ("content" in msg0) expect(msg0.content).toEqual(textContent("hello"));
     else throw new Error("expected content on user message");
     const msg3 = asMessage(entries[3]).message;
     expect(msg3.role).toBe("assistant");
-    if ("content" in msg3) expect(msg3.content).toBe("4");
+    if ("content" in msg3) expect(msg3.content).toEqual(textContent("4"));
     else throw new Error("expected content on assistant message");
   });
 
   test("entries form a linear chain via parentId", () => {
     const sm = SessionManager.inMemory();
     const messages = [
-      { role: "user", content: "a" },
-      { role: "assistant", content: "b" },
-      { role: "user", content: "c" },
+      { role: "user", content: textContent("a") },
+      { role: "assistant", content: textContent("b") },
+      { role: "user", content: textContent("c") },
     ];
 
     hydrateSessionManager(sm, messages);
@@ -145,9 +149,9 @@ describe("hydrateSessionManager", () => {
   test("getBranch returns all entries after hydration", () => {
     const sm = SessionManager.inMemory();
     const messages = [
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "hi" },
-      { role: "user", content: "bye" },
+      { role: "user", content: textContent("hello") },
+      { role: "assistant", content: textContent("hi") },
+      { role: "user", content: textContent("bye") },
     ];
 
     hydrateSessionManager(sm, messages);
@@ -160,8 +164,8 @@ describe("hydrateSessionManager", () => {
     const sm = SessionManager.inMemory();
     const messages = [
       { role: "compactionSummary", summary: "discussed project setup" },
-      { role: "user", content: "what next?" },
-      { role: "assistant", content: "let's continue" },
+      { role: "user", content: textContent("what next?") },
+      { role: "assistant", content: textContent("let's continue") },
     ];
 
     hydrateSessionManager(sm, messages);
@@ -178,7 +182,7 @@ describe("hydrateSessionManager", () => {
     const sm = SessionManager.inMemory();
     const messages = [
       { role: "compactionSummary", summary: "old context" },
-      { role: "user", content: "new question" },
+      { role: "user", content: textContent("new question") },
     ];
 
     hydrateSessionManager(sm, messages);
@@ -202,7 +206,7 @@ describe("hydrateSessionManager", () => {
     const sm = SessionManager.inMemory();
     const messages = [
       { role: "compactionSummary" },
-      { role: "user", content: "hello" },
+      { role: "user", content: textContent("hello") },
     ];
 
     hydrateSessionManager(sm, messages);
@@ -216,7 +220,7 @@ describe("hydrateSessionManager", () => {
   test("handles toolResult messages", () => {
     const sm = SessionManager.inMemory();
     const messages = [
-      { role: "user", content: "list files" },
+      { role: "user", content: textContent("list files") },
       {
         role: "assistant",
         content: [
@@ -225,7 +229,7 @@ describe("hydrateSessionManager", () => {
         ],
       },
       { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "file1.ts\nfile2.ts" }] },
-      { role: "assistant", content: "Here are the files" },
+      { role: "assistant", content: textContent("Here are the files") },
     ];
 
     hydrateSessionManager(sm, messages);

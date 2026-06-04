@@ -1,7 +1,7 @@
 import { logger } from "../logger.js";
 import { persistMessages } from "../messages-store.js";
 import { updateSessionMeta } from "../session-store.js";
-import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeMessage } from "./registry.js";
+import type { AgentRuntime, AgentRuntimeEvent, RuntimeMessage } from "./registry.js";
 
 function shouldPersistForRuntimeEvent(event: AgentRuntimeEvent): boolean {
   if (!event || typeof event !== "object") return false;
@@ -17,7 +17,7 @@ function shouldPersistForRuntimeEvent(event: AgentRuntimeEvent): boolean {
   return false;
 }
 
-function normalizeRuntimeMessagesForPersistence(messages: AgentRuntimeMessage[]): AgentRuntimeMessage[] {
+function normalizeRuntimeMessagesForPersistence(messages: RuntimeMessage[]): RuntimeMessage[] {
   return messages.filter((message) => {
     if (
       message.role === "assistant"

@@ -1,12 +1,86 @@
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import { hydratePromptContent } from "../../session-attachments-store.js";
 import { toPiThinkingLevel } from "./session.js";
 import type {
   AgentRuntime,
   AgentRuntimeEvent,
-  AgentRuntimeMessage,
+  RuntimeMessage,
+  RuntimeContentBlock,
+  RuntimeHydratedPromptContent,
+  RuntimeInlineImageBlock,
+  RuntimePromptContent,
   SetRuntimeModelParams,
 } from "../registry.js";
-import { runtimePromptToTextAndImages, type RuntimePromptContent } from "../../content-blocks.js";
+
+type PiRuntimeMessageBase = {
+  summary?: string;
+  stopReason?: string;
+  [key: string]: unknown;
+};
+
+type PiMessageContent = RuntimeContentBlock[] | string;
+
+type PiUserMessage = PiRuntimeMessageBase & {
+  role: "user";
+  content: PiMessageContent;
+};
+
+type PiAssistantMessage = PiRuntimeMessageBase & {
+  role: "assistant";
+  content: PiMessageContent;
+};
+
+type PiToolResultMessage = PiRuntimeMessageBase & {
+  role: "toolResult";
+  toolCallId?: string;
+  toolName?: string;
+  isError?: boolean;
+  content: PiMessageContent;
+};
+
+type PiCompactionSummaryMessage = PiRuntimeMessageBase & {
+  role: "compactionSummary";
+  content?: string;
+};
+
+type PiRuntimeMessage = PiUserMessage | PiAssistantMessage | PiToolResultMessage | PiCompactionSummaryMessage;
+
+function textBlock(text: string): RuntimeContentBlock {
+  return { type: "text", text };
+}
+
+function normalizePiRuntimeMessage(message: PiRuntimeMessage): RuntimeMessage {
+  if (message.role === "compactionSummary") {
+    const { content, ...rest } = message;
+    return {
+      ...rest,
+      summary: message.summary ?? (typeof content === "string" ? content : ""),
+    };
+  }
+
+  const { content, ...rest } = message;
+  if (typeof content === "string") {
+    return { ...rest, content: [textBlock(content)] };
+  }
+
+  return { ...rest, content };
+}
+
+function runtimePromptToTextAndImages(content: RuntimeHydratedPromptContent): {
+  text: string;
+  images: RuntimeInlineImageBlock[];
+} {
+  const textParts: string[] = [];
+  const images: RuntimeInlineImageBlock[] = [];
+  for (const block of content) {
+    if (block.type === "text") {
+      textParts.push(block.text);
+    } else {
+      images.push(block);
+    }
+  }
+  return { text: textParts.join("\n"), images };
+}
 
 /**
  * Assert that a value is an AgentRuntimeEvent.
@@ -17,11 +91,12 @@ function assertRuntimeEvent(_value: unknown): asserts _value is AgentRuntimeEven
 }
 
 /**
- * Assert that a value is an AgentRuntimeMessage[].
- * PI AgentMessage[] is structurally compatible with AgentRuntimeMessage[].
+ * Assert that a value is a PI runtime message array.
+ * PI may use string text content; normalize it at this adapter boundary before
+ * handing messages to Reins persistence.
  */
-function assertRuntimeMessages(_value: unknown): asserts _value is AgentRuntimeMessage[] {
-  // PI session messages match AgentRuntimeMessage by design
+function assertPiRuntimeMessages(_value: unknown): asserts _value is PiRuntimeMessage[] {
+  // PI session messages match PiRuntimeMessage by design
 }
 
 export class PiAgentRuntime implements AgentRuntime {
@@ -29,10 +104,12 @@ export class PiAgentRuntime implements AgentRuntime {
 
   constructor(
     public readonly session: AgentSession,
+    private readonly sessionId: string,
   ) {}
 
   async prompt(content: RuntimePromptContent): Promise<void> {
-    const { text, images } = runtimePromptToTextAndImages(content);
+    const hydrated = hydratePromptContent(this.sessionId, content);
+    const { text, images } = runtimePromptToTextAndImages(hydrated);
     if (images.length > 0) {
       await this.session.prompt(text, { images });
     } else {
@@ -41,7 +118,8 @@ export class PiAgentRuntime implements AgentRuntime {
   }
 
   async steer(content: RuntimePromptContent): Promise<void> {
-    const { text, images } = runtimePromptToTextAndImages(content);
+    const hydrated = hydratePromptContent(this.sessionId, content);
+    const { text, images } = runtimePromptToTextAndImages(hydrated);
     if (images.length > 0) {
       await this.session.steer(text, images);
     } else {
@@ -84,10 +162,10 @@ export class PiAgentRuntime implements AgentRuntime {
     return typeof unsubscribe === "function" ? unsubscribe : () => {};
   }
 
-  async getMessages(): Promise<AgentRuntimeMessage[]> {
+  async getMessages(): Promise<RuntimeMessage[]> {
     const messages = this.session.messages;
-    assertRuntimeMessages(messages);
-    return messages;
+    assertPiRuntimeMessages(messages);
+    return messages.map(normalizePiRuntimeMessage);
   }
 
   getSessionMetadata(): { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null } {

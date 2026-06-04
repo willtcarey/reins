@@ -1,11 +1,12 @@
 import type { SessionMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentRuntimeMessage, RuntimeContentBlock } from "../registry.js";
+import type { RuntimeMessage, RuntimeContentBlock } from "../registry.js";
 import { isRecord, toRecord } from "./type-guards.js";
 import {
   normalizeToolName,
   normalizeToolArgs,
   normalizeStopReason,
 } from "./mappings.js";
+import { toClaudeSdkImageMediaType } from "./sdk-content-blocks.js";
 
 // ---------------------------------------------------------------------------
 // Exported functions
@@ -16,8 +17,8 @@ export function normalizeClaudeToolName(name: string | undefined | null): string
   return normalizeToolName(name);
 }
 
-export function transformClaudeSessionMessages(messages: SessionMessage[]): AgentRuntimeMessage[] {
-  const out: AgentRuntimeMessage[] = [];
+export function transformClaudeSessionMessages(messages: SessionMessage[]): RuntimeMessage[] {
+  const out: RuntimeMessage[] = [];
 
   for (const entry of messages) {
     if (entry.type === "assistant") {
@@ -43,7 +44,6 @@ export function transformClaudeSessionMessages(messages: SessionMessage[]): Agen
         out.push({
           role: "compactionSummary",
           summary,
-          content: summary,
           timestamp: nowTs(),
         });
         continue;
@@ -74,7 +74,6 @@ export function transformClaudeSessionMessages(messages: SessionMessage[]): Agen
           out.push({
             role: "compactionSummary",
             summary: "",
-            content: "",
             timestamp: nowTs(),
           });
         }
@@ -161,12 +160,28 @@ function mapUserContent(content: unknown): RuntimeContentBlock[] {
   if (typeof content === "string") return [{ type: "text" as const, text: content }];
   if (!Array.isArray(content)) return [];
 
-  return content
-    .filter((block): block is Record<string, unknown> => isRecord(block) && block.type === "text")
-    .map((block) => ({ type: "text" as const, text: String(block.text ?? "") }));
+  const out: RuntimeContentBlock[] = [];
+  for (const block of content) {
+    if (!isRecord(block)) continue;
+
+    switch (block.type) {
+      case "text":
+        out.push({ type: "text" as const, text: String(block.text ?? "") });
+        break;
+      case "image": {
+        const source = toRecord(block.source);
+        const mediaType = typeof source.media_type === "string" ? toClaudeSdkImageMediaType(source.media_type) : null;
+        if (source.type !== "base64" || typeof source.data !== "string" || !mediaType) break;
+        out.push({ type: "image" as const, data: source.data, mimeType: mediaType });
+        break;
+      }
+    }
+  }
+
+  return out;
 }
 
-function mapToolResultBlocks(content: unknown): AgentRuntimeMessage[] {
+function mapToolResultBlocks(content: unknown): RuntimeMessage[] {
   if (!Array.isArray(content)) return [];
 
   return content
@@ -178,5 +193,5 @@ function mapToolResultBlocks(content: unknown): AgentRuntimeMessage[] {
       content: toTextContent(block.content),
       isError: Boolean(block.is_error),
       timestamp: nowTs(),
-    } satisfies AgentRuntimeMessage));
+    } satisfies RuntimeMessage));
 }

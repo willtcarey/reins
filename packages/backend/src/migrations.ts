@@ -1,7 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { logger } from "./logger.js";
+import { canonicalizeMessageContentMigration } from "./migrations/canonicalize-message-content.js";
 
-const MIGRATIONS: [name: string, sql: string][] = [
+type Migration = [name: string, migration: string | ((db: Database) => void)];
+
+const MIGRATIONS: Migration[] = [
   [
     "001_create_projects",
     `CREATE TABLE IF NOT EXISTS projects (
@@ -155,6 +158,15 @@ const MIGRATIONS: [name: string, sql: string][] = [
     );
     CREATE INDEX idx_session_attachments_session ON session_attachments(session_id, created_at DESC)`,
   ],
+  [
+    "019_add_session_attachment_dimensions",
+    `ALTER TABLE session_attachments ADD COLUMN width INTEGER;
+     ALTER TABLE session_attachments ADD COLUMN height INTEGER`,
+  ],
+  [
+    "020_canonicalize_message_content",
+    canonicalizeMessageContentMigration,
+  ],
 ];
 
 export function runMigrations(db: Database): void {
@@ -170,9 +182,13 @@ export function runMigrations(db: Database): void {
       .map((row) => row.name),
   );
 
-  for (const [name, sql] of MIGRATIONS) {
+  for (const [name, migration] of MIGRATIONS) {
     if (applied.has(name)) continue;
-    db.exec(sql);
+    if (typeof migration === "string") {
+      db.exec(migration);
+    } else {
+      migration(db);
+    }
     db.query("INSERT INTO migrations (name) VALUES (?)").run(name);
     logger.info(`  Migration applied: ${name}`);
   }

@@ -46,6 +46,37 @@ describe("claude sdk event helpers", () => {
     expect(content[0]).not.toHaveProperty("arguments.file_path");
   });
 
+  test("session message transform preserves user image blocks", () => {
+    const transformed = transformClaudeSessionMessages([
+      sessionMsg({
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            { type: "text", text: "What is in this image?" },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: "base64-image",
+              },
+            },
+          ],
+        },
+      }),
+    ]);
+
+    expect(transformed).toHaveLength(1);
+    expect(transformed[0]).toEqual(expect.objectContaining({
+      role: "user",
+      content: [
+        { type: "text", text: "What is in this image?" },
+        { type: "image", data: "base64-image", mimeType: "image/png" },
+      ],
+    }));
+  });
+
   test("session message transform skips blank user wrappers for tool_result-only messages", () => {
     const transformed = transformClaudeSessionMessages([
       sessionMsg({
@@ -119,9 +150,8 @@ describe("claude sdk event helpers", () => {
     expect(transformed[0]).toEqual(expect.objectContaining({
       role: "compactionSummary",
       summary: summaryText,
-      content: summaryText,
     }));
-    expect(typeof transformed[0]?.content).toBe("string");
+    expect(transformed[0]?.content).toBeUndefined();
     expect(transformed.map((message) => message.role)).toEqual([
       "compactionSummary",
       "assistant",
@@ -147,7 +177,6 @@ describe("claude sdk event helpers", () => {
     expect(transformed[0]).toEqual(expect.objectContaining({
       role: "compactionSummary",
       summary: summaryText,
-      content: summaryText,
     }));
   });
 
@@ -163,9 +192,8 @@ describe("claude sdk event helpers", () => {
       expect.objectContaining({
         role: "compactionSummary",
         summary: "",
-        content: "",
       }),
     ]);
-    expect(typeof transformed[0]?.content).toBe("string");
+    expect(transformed[0]?.content).toBeUndefined();
   });
 });

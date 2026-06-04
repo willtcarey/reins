@@ -86,7 +86,7 @@ describe("ChatPanel refresh contract", () => {
     store.sessionMessages = [{ role: "user", content: "earlier prompt", timestamp: 100 }];
     notify(store);
 
-    callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: "new prompt" } }));
+    callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: [{ type: "text", text: "new prompt" }] } }));
     startStreamingWithTool(el);
 
     store.sessionData = makeSessionData({ isStreaming: true, messageCount: 1 });
@@ -94,7 +94,7 @@ describe("ChatPanel refresh contract", () => {
 
     expect(get(el, "messages")).toEqual([
       { role: "user", content: "earlier prompt", timestamp: 100 },
-      { role: "user", content: "new prompt", timestamp: expect.any(Number) },
+      { role: "user", content: [{ type: "text", text: "new prompt" }], timestamp: expect.any(Number) },
     ]);
     expect(get(el, "isStreaming")).toBe(true);
     expect(get(el, "streamingBlocks")).toHaveLength(1);

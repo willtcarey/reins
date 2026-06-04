@@ -4,9 +4,9 @@ import { createProject } from "../project-store.js";
 import { createSession } from "../session-store.js";
 import {
   collectAttachmentIds,
-  externalizeImages,
+  externalizeInlineImageBlock,
   getSessionAttachment,
-  hydrateAttachmentRefs,
+  hydrateImageAttachmentBlock,
   storeSessionAttachment,
 } from "../session-attachments-store.js";
 import { appendMessages, loadMessages, loadMessagesForLLM, persistMessages } from "../messages-store.js";
@@ -44,29 +44,25 @@ describe("session attachments", () => {
   });
 
   test("externalizes inline image blocks and hydrates refs back to runtime blocks", () => {
-    const inline = {
-      role: "user",
-      content: [
-        { type: "text", text: "look" },
-        { type: "image", data: Buffer.from("hello").toString("base64"), mimeType: "image/png", filename: "shot.png" },
-      ],
-    };
+    const inline = { type: "image" as const, data: Buffer.from("hello").toString("base64"), mimeType: "image/png", filename: "shot.png", width: 320, height: 200 };
 
-    const externalized = externalizeImages("sess-attachments", inline);
-    const externalizedImage = externalized.content[1];
+    const externalizedImage = externalizeInlineImageBlock("sess-attachments", inline);
     if (!("attachmentId" in externalizedImage) || typeof externalizedImage.attachmentId !== "string") {
       throw new Error("Expected externalized image attachment ref");
     }
     expect(externalizedImage.attachmentId).toStartWith("att_");
-    expect(externalizedImage.data).toBeUndefined();
-    expect(collectAttachmentIds(externalized)).toEqual([externalizedImage.attachmentId]);
+    expect("data" in externalizedImage).toBe(false);
+    expect(externalizedImage).toMatchObject({ width: 320, height: 200 });
+    expect(collectAttachmentIds({ content: [{ type: "text", text: "look" }, externalizedImage] })).toEqual([externalizedImage.attachmentId]);
 
-    const hydrated = hydrateAttachmentRefs("sess-attachments", externalized);
-    expect(hydrated.content[1]).toMatchObject({
+    const hydrated = hydrateImageAttachmentBlock("sess-attachments", externalizedImage);
+    expect(hydrated).toMatchObject({
       type: "image",
       data: Buffer.from("hello").toString("base64"),
       mimeType: "image/png",
       filename: "shot.png",
+      width: 320,
+      height: 200,
     });
   });
 

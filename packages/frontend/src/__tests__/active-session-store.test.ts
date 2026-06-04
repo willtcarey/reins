@@ -73,12 +73,12 @@ describe("ActiveSessionStore command helpers", () => {
     const store = new ActiveSessionStore(client);
     store.sessionId = "sess-1";
 
-    expect(store.prompt("hello")).toBe(true);
-    expect(store.steer("keep going")).toBe(true);
+    expect(store.prompt([{ type: "text", text: "hello" }])).toBe(true);
+    expect(store.steer([{ type: "text", text: "keep going" }])).toBe(true);
     expect(store.abort()).toBe(true);
 
-    expect(client.prompt).toHaveBeenCalledWith("sess-1", "hello");
-    expect(client.steer).toHaveBeenCalledWith("sess-1", "keep going");
+    expect(client.prompt).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "hello" }]);
+    expect(client.steer).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "keep going" }]);
     expect(client.abort).toHaveBeenCalledWith("sess-1");
   });
 
@@ -90,8 +90,8 @@ describe("ActiveSessionStore command helpers", () => {
 
     const store = new ActiveSessionStore(client);
 
-    expect(store.prompt("hello")).toBe(false);
-    expect(store.steer("keep going")).toBe(false);
+    expect(store.prompt([{ type: "text", text: "hello" }])).toBe(false);
+    expect(store.steer([{ type: "text", text: "keep going" }])).toBe(false);
     expect(store.abort()).toBe(false);
 
     expect(client.prompt).not.toHaveBeenCalled();

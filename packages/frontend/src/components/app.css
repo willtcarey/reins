@@ -203,6 +203,10 @@ html, body {
   @apply border border-zinc-700 px-3 py-1.5 text-sm;
 }
 
+.prose img {
+  @apply cursor-zoom-in rounded-lg;
+}
+
 /* Left-truncate file paths: RTL direction makes ellipsis appear on the left */
 .direction-rtl {
   direction: rtl;
@@ -240,6 +244,10 @@ html, body {
   transform-origin: top left;
   will-change: transform, width, height, opacity;
   contain: layout paint;
+}
+
+.conversation-shift-animating {
+  will-change: transform;
 }
 
 @media (prefers-reduced-motion: reduce) {

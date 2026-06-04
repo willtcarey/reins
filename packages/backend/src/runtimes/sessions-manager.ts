@@ -20,10 +20,29 @@ import { getSetting } from "../settings-store.js";
 import { parseThinkingLevel } from "../models/model-settings.js";
 import { attachRuntimeBroadcastObserver } from "./runtime-broadcast-observer.js";
 import { attachRuntimePersistenceObserver } from "./runtime-persistence-observer.js";
+import { expandPrompt } from "./prompt.js";
+import type { AgentRuntime, RuntimePromptContent } from "./registry.js";
 
 function createSessionFactory(state: ServerState) {
   return (projectId: number, projectDir: string, opts?: CreateSessionOpts) =>
     createNewSession(state, projectId, projectDir, opts);
+}
+
+function attachPromptExpansion(params: {
+  runtime: AgentRuntime;
+  sessionId: string;
+}): void {
+  const { runtime, sessionId } = params;
+  const originalPrompt = runtime.prompt.bind(runtime);
+  const originalSteer = runtime.steer.bind(runtime);
+
+  const expand = (content: RuntimePromptContent): RuntimePromptContent => {
+    const { expanded } = expandPrompt(content, sessionId);
+    return expanded;
+  };
+
+  runtime.prompt = (content) => originalPrompt(expand(content));
+  runtime.steer = (content) => originalSteer(expand(content));
 }
 
 function resolveSessionTools(params: {
@@ -124,6 +143,8 @@ async function createManagedSessionRuntime(params: {
 
     throw err;
   }
+
+  attachPromptExpansion({ runtime, sessionId });
 
   const detachRuntimeBroadcastObserver = attachRuntimeBroadcastObserver({
     sessionId,

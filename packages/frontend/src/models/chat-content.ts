@@ -3,6 +3,11 @@ export interface TextContentBlock {
   text: string;
 }
 
+export interface ImageSizeHint {
+  width: number;
+  height: number;
+}
+
 export interface ImageAttachmentBlock {
   type: "image";
   attachmentId: string;
@@ -10,6 +15,8 @@ export interface ImageAttachmentBlock {
   filename?: string;
   byteSize: number;
   sha256?: string;
+  width?: number;
+  height?: number;
 }
 
 export interface InlineImageBlock {
@@ -17,10 +24,12 @@ export interface InlineImageBlock {
   data: string;
   mimeType: string;
   filename?: string;
+  width?: number;
+  height?: number;
 }
 
 export type ClientPromptBlock = TextContentBlock | ImageAttachmentBlock;
-export type ClientPromptContent = string | ClientPromptBlock[];
+export type ClientPromptContent = ClientPromptBlock[];
 export type ChatImageBlock = InlineImageBlock | ImageAttachmentBlock;
 
 export interface AttachmentInfo {
@@ -31,6 +40,8 @@ export interface AttachmentInfo {
   byteSize: number;
   sha256: string;
   url: string;
+  width?: number;
+  height?: number;
 }
 
 export function isTextContentBlock(value: unknown): value is TextContentBlock {
@@ -51,8 +62,7 @@ export function isInlineImageBlock(value: unknown): value is InlineImageBlock {
     && "data" in value && typeof value.data === "string";
 }
 
-export function textFromClientContent(content: string | (TextContentBlock | ChatImageBlock)[]): string {
-  if (typeof content === "string") return content;
+export function textFromClientContent(content: (TextContentBlock | ChatImageBlock)[]): string {
   return content
     .filter(isTextContentBlock)
     .map((block) => block.text)
@@ -69,4 +79,20 @@ export function imageBlockSrc(sessionId: string, block: ChatImageBlock): string 
     return `/api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(block.attachmentId)}`;
   }
   return `data:${block.mimeType};base64,${block.data}`;
+}
+
+export function normalizeImageSizeHint(width: unknown, height: unknown): ImageSizeHint | null {
+  if (typeof width !== "number" || typeof height !== "number") return null;
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
+  if (width <= 0 || height <= 0) return null;
+  return { width: Math.round(width), height: Math.round(height) };
+}
+
+export function imageSizeHint(block: ChatImageBlock): ImageSizeHint | null {
+  return normalizeImageSizeHint(block.width, block.height);
+}
+
+export function imageAspectRatioStyle(block: ChatImageBlock): string {
+  const hint = imageSizeHint(block);
+  return hint ? `aspect-ratio: ${hint.width} / ${hint.height};` : "";
 }

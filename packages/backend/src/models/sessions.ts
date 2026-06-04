@@ -13,10 +13,17 @@ import {
   type SessionRow,
 } from "../session-store.js";
 import { loadMessages } from "../messages-store.js";
+import {
+  MAX_PROMPT_ATTACHMENT_BYTES,
+  getSessionAttachment,
+  storeSessionAttachment,
+  type SessionAttachmentInfo,
+} from "../session-attachments-store.js";
 import type { Broadcast } from "./broadcast.js";
+import { UploadedFile } from "./uploaded-file.js";
 import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
-import { getRuntimeAdapter, type AgentRuntimeMessage } from "../runtimes/registry.js";
+import { getRuntimeAdapter, type RuntimeMessage } from "../runtimes/registry.js";
 import { stripLeadingSkillBlocks } from "./skill.js";
 
 export interface SetSessionModelParams {
@@ -26,6 +33,34 @@ export interface SetSessionModelParams {
   modelId: string;
   thinkingLevel?: string;
   projectId?: number;
+}
+
+export class SessionNotFoundError extends Error {
+  constructor(message = "Session not found") {
+    super(message);
+    this.name = "SessionNotFoundError";
+  }
+}
+
+export class SessionAttachmentNotFoundError extends Error {
+  constructor() {
+    super("Attachment not found");
+    this.name = "SessionAttachmentNotFoundError";
+  }
+}
+
+export class SessionAttachmentPrunedError extends Error {
+  constructor() {
+    super("Attachment data has been pruned");
+    this.name = "SessionAttachmentPrunedError";
+  }
+}
+
+export class SessionAttachmentUploadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SessionAttachmentUploadError";
+  }
 }
 
 export interface SessionView {
@@ -39,6 +74,11 @@ export interface SessionView {
     isStreaming: boolean;
     messageCount: number;
   };
+}
+
+export interface SessionAttachmentBytes {
+  data: Buffer;
+  mimeType: string;
 }
 
 interface TextBlock {
@@ -57,14 +97,9 @@ function isTextBlock(value: unknown): value is TextBlock {
  * historical messages don't render walls of hoisted skill content. The
  * expanded form stays in the DB for runtime replay / compaction.
  */
-function stripUserSkillBlocks(msg: AgentRuntimeMessage): AgentRuntimeMessage {
+function stripUserSkillBlocks(msg: RuntimeMessage): RuntimeMessage {
   if (msg.role !== "user") return msg;
   const { content } = msg;
-  if (typeof content === "string") {
-    const stripped = stripLeadingSkillBlocks(content);
-    if (stripped === content) return msg;
-    return { ...msg, content: stripped ?? content };
-  }
   if (Array.isArray(content)) {
     const idx = content.findIndex(isTextBlock);
     if (idx < 0) return msg;
@@ -107,11 +142,64 @@ export class Sessions {
     };
   }
 
-  getMessages(sessionId: string): AgentRuntimeMessage[] | null {
+  getMessages(sessionId: string): RuntimeMessage[] | null {
     const row = getSession(sessionId);
     if (!row) return null;
-    const messages: AgentRuntimeMessage[] = loadMessages(sessionId);
+    const messages: RuntimeMessage[] = loadMessages(sessionId);
     return messages.map(stripUserSkillBlocks);
+  }
+
+  async uploadAttachments(sessionId: string, files: File[]): Promise<SessionAttachmentInfo[]> {
+    const row = getSession(sessionId);
+    if (!row) throw new SessionNotFoundError();
+    if (files.length === 0) throw new SessionAttachmentUploadError("No files uploaded");
+
+    const uploadedFiles = files.map((file) => new UploadedFile(file));
+
+    let declaredTotalBytes = 0;
+    for (const upload of uploadedFiles) {
+      try {
+        upload.assertSupportedImageAttachment();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Invalid attachment";
+        throw new SessionAttachmentUploadError(message);
+      }
+      declaredTotalBytes += upload.declaredByteSize;
+      if (declaredTotalBytes > MAX_PROMPT_ATTACHMENT_BYTES) {
+        throw new SessionAttachmentUploadError(`Attachments exceed ${MAX_PROMPT_ATTACHMENT_BYTES} byte prompt limit`);
+      }
+    }
+
+    let actualTotalBytes = 0;
+    const attachments: SessionAttachmentInfo[] = [];
+
+    for (const upload of uploadedFiles) {
+      try {
+        const input = await upload.toImageAttachmentInput();
+        actualTotalBytes += input.data.length;
+        if (actualTotalBytes > MAX_PROMPT_ATTACHMENT_BYTES) {
+          throw new Error(`Attachments exceed ${MAX_PROMPT_ATTACHMENT_BYTES} byte prompt limit`);
+        }
+
+        attachments.push(storeSessionAttachment(sessionId, input));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Invalid attachment";
+        throw new SessionAttachmentUploadError(message);
+      }
+    }
+
+    return attachments;
+  }
+
+  getAttachmentBytes(sessionId: string, attachmentId: string): SessionAttachmentBytes {
+    const row = getSession(sessionId);
+    if (!row) throw new SessionNotFoundError();
+
+    const attachment = getSessionAttachment(sessionId, attachmentId);
+    if (!attachment) throw new SessionAttachmentNotFoundError();
+    if (!attachment.data) throw new SessionAttachmentPrunedError();
+
+    return { data: attachment.data, mimeType: attachment.mime_type };
   }
 
   listByProject(projectId: number): SessionRow[] {

@@ -1,14 +1,14 @@
 import { describe, expect, test, beforeEach } from "bun:test";
 import { toSessionStoreEntries, createSessionStore, type SessionEntryContext } from "../../../runtimes/claude_agent_sdk/session-store.js";
-import type { AgentRuntimeMessage } from "../../../runtimes/registry.js";
+import type { RuntimeMessage } from "../../../runtimes/registry.js";
 import { useTestDb } from "../../helpers/test-db.js";
 import { createProject } from "../../../project-store.js";
 import { createSession } from "../../../session-store.js";
 import { loadMessages, persistMessages } from "../../../messages-store.js";
 
-function msg(partial: Partial<AgentRuntimeMessage>): AgentRuntimeMessage {
+function msg(partial: Partial<RuntimeMessage>): RuntimeMessage {
   // eslint-disable-next-line typescript-eslint/consistent-type-assertions -- test helper intentionally casts partials
-  return partial as AgentRuntimeMessage;
+  return partial as RuntimeMessage;
 }
 
 type StrippedEntry<T extends Record<string, unknown>> = Omit<T, "uuid" | "parentUuid" | "sessionId" | "cwd" | "timestamp">;
@@ -56,6 +56,40 @@ describe("toSessionStoreEntries", () => {
       message: {
         role: "user",
         content: [{ type: "text", text: "hello" }],
+      },
+    });
+    expectUuidChain(result);
+  });
+
+  test("user image blocks are translated to SDK image content", () => {
+    const result = toSessionStoreEntries(
+      [
+        msg({
+          role: "user",
+          content: [
+            { type: "text", text: "What is in this image?" },
+            { type: "image", data: "base64-image", mimeType: "image/png", filename: "image.png" },
+          ],
+        }),
+      ],
+      testContext,
+    );
+
+    expect(stripMeta(result[0])).toEqual({
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: "What is in this image?" },
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/png",
+              data: "base64-image",
+            },
+          },
+        ],
       },
     });
     expectUuidChain(result);
@@ -246,7 +280,6 @@ describe("toSessionStoreEntries", () => {
         msg({
           role: "compactionSummary",
           summary: "This is the summary.",
-          content: "This is the content.",
         }),
       ],
       testContext,
@@ -257,26 +290,6 @@ describe("toSessionStoreEntries", () => {
       message: {
         role: "user",
         content: "This is the summary.",
-      },
-    });
-  });
-
-  test("compaction summary falls back to content string", () => {
-    const result = toSessionStoreEntries(
-      [
-        msg({
-          role: "compactionSummary",
-          content: "Fallback content.",
-        }),
-      ],
-      testContext,
-    );
-
-    expect(stripMeta(result[0])).toEqual({
-      type: "user",
-      message: {
-        role: "user",
-        content: "Fallback content.",
       },
     });
   });
@@ -593,7 +606,7 @@ describe("toSessionStoreEntries", () => {
     const result = toSessionStoreEntries(
       [
         msg({ role: "user", content: [{ type: "text", text: "hi" }] }),
-        msg({ role: "system", content: "something" }),
+        msg({ role: "system", content: [{ type: "text", text: "something" }] }),
         msg({ role: "unknown_role", content: [] }),
         msg({ role: "assistant", content: [{ type: "text", text: "bye" }], stopReason: "endTurn" }),
       ],

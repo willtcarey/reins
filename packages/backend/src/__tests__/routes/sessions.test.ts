@@ -9,6 +9,10 @@ import { createSession } from "../../session-store.js";
 import { persistMessages } from "../../messages-store.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 
+function textContent(text: string) {
+  return [{ type: "text" as const, text }];
+}
+
 describe("session routes (top-level)", () => {
   let state: ReturnType<typeof createServerState>;
   let router: ReturnType<typeof buildRouter>;
@@ -68,7 +72,7 @@ describe("session routes (top-level)", () => {
       const sessionId = "lookup-db";
       createSession(sessionId, projectId, { agentRuntimeType: "pi",});
       persistMessages(sessionId, [
-        { role: "user", content: "test" },
+        { role: "user", content: textContent("test") },
       ]);
 
       const res = await router.handle(
@@ -98,7 +102,7 @@ describe("session routes (top-level)", () => {
       const sessionId = "messages-existing";
       createSession(sessionId, projectId, { agentRuntimeType: "pi",});
       persistMessages(sessionId, [
-        { role: "user", content: "hello", timestamp: 1000 },
+        { role: "user", content: textContent("hello"), timestamp: 1000 },
         {
           role: "assistant",
           content: [{ type: "text", text: "hi" }],
@@ -113,7 +117,7 @@ describe("session routes (top-level)", () => {
 
       expect(res!.status).toBe(200);
       expect(await res!.json()).toEqual([
-        { role: "user", content: "hello", timestamp: 1000 },
+        { role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1000 },
         {
           role: "assistant",
           content: [{ type: "text", text: "hi" }],

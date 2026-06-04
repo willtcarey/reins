@@ -31,7 +31,7 @@ Tool factories receive stable references (server state, session ID) at factory t
 
 ### WebSocket handlers (`src/ws.ts`)
 
-Command dispatch for `prompt`, `steer`, `abort`. Resolves project context from the session's DB row.
+Command dispatch for `prompt`, `steer`, `abort`. Prompt and steer messages are validated at the WS boundary and use block-only content (`[{ type: "text", text }]` plus optional image refs). WS does not expand skills or hydrate attachments; runtime orchestration expands slash-skill prompts, and runtime adapters hydrate attachment refs at the provider boundary. Resolves project context from the session's DB row.
 
 ### Models (`src/models/`)
 
@@ -42,6 +42,10 @@ WS broadcasts for state changes live here so every caller gets them automaticall
 ### Stores (`src/*-store.ts`)
 
 Thin SQLite access. CRUD operations and queries, including DB-backed read projections used by scripting APIs. No git, no broadcasts, no business logic beyond what the DB enforces.
+
+### Migrations (`src/migrations.ts`)
+
+Schema-only migrations can be SQL strings. Data migrations that need application logic (for example JSON tree rewrites, hashing, or BLOB creation) should live under `src/migrations/` and be imported into the same ordered migration list.
 
 ### Utilities
 
@@ -85,7 +89,8 @@ The models layer covers all route handlers and some backend domain helpers:
 
 - `models/tasks.ts` — task create/update/delete with branch orchestration, list with diff stats
 - `models/projects.ts` — project creation, remote sync + task reconciliation, file content reads
-- `models/sessions.ts` — session model mutations and related broadcast behavior
+- `models/sessions.ts` — session model mutations, message reads, attachment upload/fetch, and related broadcast behavior
+- `models/uploaded-file.ts` — wraps browser `File` uploads at the HTTP/model boundary and extracts validated attachment bytes/metadata
 - `models/auth-credentials.ts` — auth credential mutations plus live session auth reload orchestration
 - `models/model-settings.ts` — thinking-level schema/parsing plus resolution of stored model settings into concrete pi model objects
 - `models/broadcast.ts` — typed broadcast abstraction over WS clients

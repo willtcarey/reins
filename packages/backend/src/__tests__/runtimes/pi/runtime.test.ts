@@ -1,8 +1,14 @@
 import { describe, test, expect, mock } from "bun:test";
 import { PiAgentRuntime, getPiSession } from "../../../runtimes/pi/runtime.js";
+import { createProject } from "../../../project-store.js";
+import { createSession } from "../../../session-store.js";
+import { storeSessionAttachment } from "../../../session-attachments-store.js";
 import { createTestAgentSession } from "../../helpers/test-pi.js";
+import { useTestDb } from "../../helpers/test-db.js";
 
 describe("PiAgentRuntime", () => {
+  useTestDb();
+
   test("delegates prompt, steer, abort, subscribe, getMessages, and close", async () => {
     const session = await createTestAgentSession();
     const unsubscribe = mock<() => void>(() => {});
@@ -23,10 +29,10 @@ describe("PiAgentRuntime", () => {
       configurable: true,
     });
 
-    const runtime = new PiAgentRuntime(session);
+    const runtime = new PiAgentRuntime(session, "sess-pi-runtime");
 
-    await runtime.prompt("hi");
-    await runtime.steer("course-correct");
+    await runtime.prompt([{ type: "text", text: "hi" }]);
+    await runtime.steer([{ type: "text", text: "course-correct" }]);
     await runtime.abort();
 
     const listener = mock<(event: any) => void>(() => {});
@@ -44,6 +50,71 @@ describe("PiAgentRuntime", () => {
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
+  test("normalizes pi string messages to Reins block-only messages", async () => {
+    const session = await createTestAgentSession();
+    const messages = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi" },
+      { role: "compactionSummary", content: "summarized context" },
+    ];
+    Object.defineProperty(session, "messages", {
+      value: messages,
+      configurable: true,
+    });
+
+    const runtime = new PiAgentRuntime(session, "sess-pi-runtime");
+
+    await expect(runtime.getMessages()).resolves.toEqual([
+      { role: "user", content: [{ type: "text", text: "hello" }] },
+      { role: "assistant", content: [{ type: "text", text: "hi" }] },
+      { role: "compactionSummary", summary: "summarized context" },
+    ]);
+  });
+
+  test("hydrates attachment refs before calling pi", async () => {
+    const project = createProject("Pi Runtime Images", "/tmp/pi-runtime-images");
+    createSession("sess-pi-images", project.id, { agentRuntimeType: "pi" });
+    const imageData = Buffer.from("pi prompt image");
+    const attachment = storeSessionAttachment("sess-pi-images", {
+      data: imageData,
+      mimeType: "image/png",
+      filename: "prompt.png",
+      width: 320,
+      height: 200,
+    });
+
+    const session = await createTestAgentSession();
+    const prompt = mock(async (_text: string, _options?: { images?: unknown[] }) => {});
+    session.prompt = prompt;
+
+    const runtime = new PiAgentRuntime(session, "sess-pi-images");
+
+    await runtime.prompt([
+      { type: "text", text: "describe" },
+      {
+        type: "image",
+        attachmentId: attachment.id,
+        mimeType: attachment.mimeType,
+        filename: attachment.filename,
+        byteSize: attachment.byteSize,
+        sha256: attachment.sha256,
+        width: attachment.width,
+        height: attachment.height,
+      },
+    ]);
+
+    expect(prompt).toHaveBeenCalledWith("describe", {
+      images: [{
+        type: "image",
+        data: imageData.toString("base64"),
+        mimeType: "image/png",
+        filename: "prompt.png",
+        width: 320,
+        height: 200,
+      }],
+    });
+  });
+
   test("forwards pi compaction events to listeners", async () => {
     const session = await createTestAgentSession();
     let capturedListener: ((event: any) => void) | undefined;
@@ -53,7 +124,7 @@ describe("PiAgentRuntime", () => {
     });
     session.subscribe = subscribe;
 
-    const runtime = new PiAgentRuntime(session);
+    const runtime = new PiAgentRuntime(session, "sess-pi-runtime");
     const listener = mock<(event: any) => void>(() => {});
     runtime.subscribe(listener);
 
@@ -77,7 +148,7 @@ describe("PiAgentRuntime", () => {
 
   test("exposes the wrapped pi session", async () => {
     const session = await createTestAgentSession();
-    const runtime = new PiAgentRuntime(session);
+    const runtime = new PiAgentRuntime(session, "sess-pi-runtime");
 
     expect(getPiSession(runtime)).toBe(session);
   });

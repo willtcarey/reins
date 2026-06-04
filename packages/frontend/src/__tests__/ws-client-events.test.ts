@@ -74,14 +74,14 @@ describe("WS client EventListener contract", () => {
       type: "user_message",
       sessionId: "sess-1",
       projectId: 42,
-      message: "hello world",
+      message: [{ type: "text", text: "hello world" }],
     });
 
     expect(received).toHaveLength(1);
     expect(received[0].sessionId).toBe("sess-1");
     expect(received[0].projectId).toBe(42);
     expect(received[0].event.type).toBe("user_message");
-    expect(received[0].event.message).toBe("hello world");
+    expect(received[0].event.message).toEqual([{ type: "text", text: "hello world" }]);
   });
 
   it("passes session update broadcasts through to listeners", () => {

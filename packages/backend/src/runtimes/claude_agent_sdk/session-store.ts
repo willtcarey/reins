@@ -1,9 +1,10 @@
 import type { SessionStore, SessionKey, SessionStoreEntry } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentRuntimeMessage, RuntimeContentBlock } from "../registry.js";
+import type { RuntimeMessage, RuntimeContentBlock } from "../registry.js";
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import { loadMessagesForLLM, appendMessages } from "../../messages-store.js";
 import { toSDKToolName, toSDKToolArgs, toSDKStopReason } from "./mappings.js";
 import { transformClaudeSessionMessages } from "./events.js";
+import { toClaudeSdkImageBlock, toClaudeSdkUserContentBlock } from "./sdk-content-blocks.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -15,15 +16,7 @@ export type SessionEntryContext = {
 };
 
 type MessageType = "user" | "assistant" | "system";
-type UserMessageContent = AgentRuntimeMessage["content"] | Record<string, unknown>[] | string;
-type SDKImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-
-function toSDKImageMediaType(mimeType: string): SDKImageMediaType | null {
-  if (mimeType === "image/jpeg" || mimeType === "image/png" || mimeType === "image/gif" || mimeType === "image/webp") {
-    return mimeType;
-  }
-  return null;
-}
+type UserMessageContent = string | Array<ContentBlockParam | RuntimeContentBlock | Record<string, unknown>> | undefined;
 
 /** Narrowed entry type so we can access message.id without `as` casts. */
 type TypedEntry = SessionStoreEntry & {
@@ -31,11 +24,11 @@ type TypedEntry = SessionStoreEntry & {
 };
 
 /**
- * Convert persisted AgentRuntimeMessages into SessionStoreEntry[] for the
+ * Convert persisted RuntimeMessages into SessionStoreEntry[] for the
  * Claude Agent SDK's SessionStore.load() method.
  */
 export function toSessionStoreEntries(
-  messages: AgentRuntimeMessage[],
+  messages: RuntimeMessage[],
   context: SessionEntryContext,
 ): SessionStoreEntry[] {
   const out: TypedEntry[] = [];
@@ -62,7 +55,7 @@ export function toSessionStoreEntries(
 
     if (msg.role === "toolResult") {
       // Accumulate consecutive toolResult messages into one user entry
-      const toolResults: AgentRuntimeMessage[] = [];
+      const toolResults: RuntimeMessage[] = [];
       while (i < messages.length && messages[i].role === "toolResult") {
         toolResults.push(messages[i]);
         i++;
@@ -118,11 +111,11 @@ function makeUserEntry(content: UserMessageContent): TypedEntry {
   };
 }
 
-function buildUserEntry(msg: AgentRuntimeMessage): TypedEntry {
-  return makeUserEntry(msg.content);
+function buildUserEntry(msg: RuntimeMessage): TypedEntry {
+  return makeUserEntry(translateUserContentToSDKContent(msg.content));
 }
 
-function buildAssistantEntry(msgs: AgentRuntimeMessage[]): TypedEntry | null {
+function buildAssistantEntry(msgs: RuntimeMessage[]): TypedEntry | null {
   const content = msgs.flatMap((m) =>
     Array.isArray(m.content) ? m.content.map(translateContentBlockToSDKBlock).filter((b) => b !== null) : [],
   );
@@ -143,7 +136,7 @@ function buildAssistantEntry(msgs: AgentRuntimeMessage[]): TypedEntry | null {
   };
 }
 
-function buildToolResultEntry(results: AgentRuntimeMessage[]): TypedEntry {
+function buildToolResultEntry(results: RuntimeMessage[]): TypedEntry {
   const content = results.map((r) => ({
     type: "tool_result" as const,
     tool_use_id: String(r.toolCallId),
@@ -154,14 +147,30 @@ function buildToolResultEntry(results: AgentRuntimeMessage[]): TypedEntry {
   return makeUserEntry(content);
 }
 
-function buildCompactionEntry(msg: AgentRuntimeMessage): TypedEntry {
-  const text = msg.summary ?? (typeof msg.content === "string" ? msg.content : "");
-  return makeUserEntry(text);
+function buildCompactionEntry(msg: RuntimeMessage): TypedEntry {
+  return makeUserEntry(msg.summary ?? "");
 }
 
 // ---------------------------------------------------------------------------
 // Content block transforms
 // ---------------------------------------------------------------------------
+
+function translateUserContentToSDKContent(content: RuntimeMessage["content"]): UserMessageContent {
+  if (!content) return undefined;
+
+  return content.map((block) => {
+    switch (block.type) {
+      case "text":
+        return toClaudeSdkUserContentBlock(block);
+      case "image":
+        if ("data" in block) return toClaudeSdkUserContentBlock(block);
+        return { type: "text", text: "[Image attachment missing]" };
+      case "thinking":
+      case "toolCall":
+        return block;
+    }
+  });
+}
 
 /**
  * Translate a normalized content block back to SDK format.
@@ -195,17 +204,7 @@ function translateContentBlockToSDKBlock(block: RuntimeContentBlock): ContentBlo
       return block;
     case "image": {
       if (!("data" in block)) return null;
-      const mediaType = toSDKImageMediaType(block.mimeType);
-      if (!mediaType) return null;
-      const imageBlock: ContentBlockParam = {
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: mediaType,
-          data: block.data,
-        },
-      };
-      return imageBlock;
+      return toClaudeSdkImageBlock(block);
     }
   }
 }
@@ -218,7 +217,7 @@ function translateContentBlockToSDKBlock(block: RuntimeContentBlock): ContentBlo
  * If content is an array with a single text block, return just the string.
  * Otherwise pass through.
  */
-function extractToolResultContent(content: AgentRuntimeMessage["content"]): string | AgentRuntimeMessage["content"] {
+function extractToolResultContent(content: RuntimeMessage["content"]): string | RuntimeMessage["content"] {
   if (!Array.isArray(content)) return content;
   if (content.length !== 1) return content;
 
@@ -258,7 +257,7 @@ export function createSessionStore(sessionId: string, cwd: string): SessionStore
       );
       if (messageEntries.length === 0) return;
 
-      // Transform SDK entries to AgentRuntimeMessages via the same path
+      // Transform SDK entries to RuntimeMessages via the same path
       // used when reading session history from JSONL
       const runtimeMessages = transformClaudeSessionMessages(
         messageEntries.map((e) => ({

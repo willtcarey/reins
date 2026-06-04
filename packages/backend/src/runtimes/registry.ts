@@ -1,7 +1,19 @@
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { getTask as storeGetTask, type TaskRow } from "../task-store.js";
 import type { ServerState } from "../state.js";
-import type { RuntimePromptContent, InlineImageBlock, ImageAttachmentBlock } from "../content-blocks.js";
+import type {
+  ClientPromptBlock,
+  ClientPromptContent,
+  HydratedPromptBlock,
+  HydratedPromptContent,
+  ImageAttachmentBlock,
+  InlineImageBlock,
+  RuntimeContentBlock as MessageRuntimeContentBlock,
+  RuntimeMessage,
+  TextContentBlock,
+  ThinkingContentBlock,
+  ToolCallContentBlock,
+} from "../messages-store.js";
 import { checkoutBranch } from "../git.js";
 import { TaskNotFoundError } from "../models/tasks.js";
 
@@ -70,59 +82,38 @@ export type RuntimeAssistantDelta = {
  */
 export type AgentRuntimeEvent =
   | { type: "agent_start" }
-  | { type: "agent_end"; messages: AgentRuntimeMessage[] }
+  | { type: "agent_end"; messages: RuntimeMessage[] }
   | { type: "turn_start" }
-  | { type: "turn_end"; message: AgentRuntimeMessage; toolResults: AgentRuntimeMessage[] }
-  | { type: "message_start"; message: AgentRuntimeMessage }
-  | { type: "message_update"; message: AgentRuntimeMessage; assistantMessageEvent: RuntimeAssistantDelta }
-  | { type: "message_end"; message: AgentRuntimeMessage }
+  | { type: "turn_end"; message: RuntimeMessage; toolResults: RuntimeMessage[] }
+  | { type: "message_start"; message: RuntimeMessage }
+  | { type: "message_update"; message: RuntimeMessage; assistantMessageEvent: RuntimeAssistantDelta }
+  | { type: "message_end"; message: RuntimeMessage }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
   | { type: "tool_execution_update"; toolCallId: string; toolName: string; args: Record<string, unknown>; partialResult: unknown }
-  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: unknown; isError: boolean }
+  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: RuntimeToolResultPayload; isError: boolean }
   | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
   | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
   | RuntimeCompactionEvent;
 
-export interface RuntimeTextBlock {
-  type: "text";
-  text: string;
-}
+export type RuntimeTextBlock = TextContentBlock;
+export type RuntimeThinkingBlock = ThinkingContentBlock;
+export type RuntimeToolCallBlock = ToolCallContentBlock;
+export type RuntimeInlineImageBlock = InlineImageBlock;
+export type RuntimeAttachmentImageBlock = ImageAttachmentBlock;
+export type RuntimeImageBlock = InlineImageBlock;
+export type RuntimePromptBlock = ClientPromptBlock;
+export type RuntimePromptContent = ClientPromptContent;
+export type RuntimeHydratedPromptBlock = HydratedPromptBlock;
+export type RuntimeHydratedPromptContent = HydratedPromptContent;
+export type RuntimeContentBlock = MessageRuntimeContentBlock;
 
-export interface RuntimeThinkingBlock {
-  type: "thinking";
-  thinking: string;
-  thinkingSignature?: string;
-}
-
-export interface RuntimeToolCallBlock {
-  type: "toolCall";
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-}
-
-export type RuntimeImageBlock = InlineImageBlock | ImageAttachmentBlock;
-
-export type RuntimeContentBlock = RuntimeTextBlock | RuntimeThinkingBlock | RuntimeToolCallBlock | RuntimeImageBlock;
-
-/**
- * Runtime-agnostic persisted message shape.
- *
- * This intentionally reflects the current pi-backed persistence contract:
- * - all persisted items have a `role`
- * - messages may contain block `content`
- * - assistant errors may include `stopReason`
- * - compaction markers use role `compactionSummary` + optional `summary`
- * - additional role-specific fields are preserved as opaque properties
- */
-export interface AgentRuntimeMessage {
-  role: string;
-  /** Array for assistant/user/toolResult messages, string for compactionSummary. */
-  content?: RuntimeContentBlock[] | string;
-  stopReason?: string;
-  summary?: string;
+export interface RuntimeToolResultPayload {
+  content: RuntimeContentBlock[];
+  details?: Record<string, unknown>;
   [key: string]: unknown;
 }
+
+export type { RuntimeMessage } from "../messages-store.js";
 
 export interface CreateAgentRuntimeParams {
   state: ServerState;
@@ -159,7 +150,7 @@ export interface AgentRuntime {
   abort(): Promise<void>;
   setModel(params: SetRuntimeModelParams): Promise<void>;
   subscribe(listener: (event: AgentRuntimeEvent) => void): () => void;
-  getMessages(): Promise<AgentRuntimeMessage[]>;
+  getMessages(): Promise<RuntimeMessage[]>;
   getSessionMetadata?(): {
     model?: { provider: string; modelId: string } | null;
     thinkingLevel?: string | null;
