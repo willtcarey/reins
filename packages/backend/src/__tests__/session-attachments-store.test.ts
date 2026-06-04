@@ -117,7 +117,7 @@ describe("session attachments", () => {
     expect(pruned?.pruned_at).toEqual(expect.any(String));
   });
 
-  test("re-compaction pruning clears attachment bytes from deleted rows", () => {
+  test("re-compaction prunes tool-result attachment bytes from historical rows", () => {
     const imageData = Buffer.from("delete me").toString("base64");
     persistMessages("sess-attachments", [
       { role: "compactionSummary", summary: "summary 1" },
@@ -144,5 +144,30 @@ describe("session attachments", () => {
     const pruned = getSessionAttachment("sess-attachments", image.attachmentId);
     expect(pruned?.data).toBeNull();
     expect(pruned?.pruned_at).toEqual(expect.any(String));
+  });
+
+  test("re-compaction preserves attachment bytes from retained non-tool messages", () => {
+    const imageData = Buffer.from("keep me").toString("base64");
+    persistMessages("sess-attachments", [
+      { role: "compactionSummary", summary: "summary 1" },
+      {
+        role: "user",
+        content: [{ type: "image", data: imageData, mimeType: "image/png" }],
+      },
+    ]);
+
+    const visible = loadMessages("sess-attachments");
+    const image = visible[1].content[0];
+    if (!("attachmentId" in image) || typeof image.attachmentId !== "string") {
+      throw new Error("Expected post-compaction attachment ref before re-compaction");
+    }
+
+    persistMessages("sess-attachments", [
+      { role: "compactionSummary", summary: "summary 2" },
+    ]);
+
+    const retained = getSessionAttachment("sess-attachments", image.attachmentId);
+    expect(retained?.data?.toString("base64")).toBe(imageData);
+    expect(retained?.pruned_at).toBeNull();
   });
 });

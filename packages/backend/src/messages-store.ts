@@ -254,6 +254,13 @@ function parsePersistedMessage(messageJson: string): PersistedMessage {
   return parsed;
 }
 
+function compactionSummaryMatches(summaryJson: string, incoming: RuntimeMessage): boolean {
+  const parsed = parsePersistedMessage(summaryJson);
+  return parsed.role === "compactionSummary"
+    && incoming.role === "compactionSummary"
+    && parsed.summary === incoming.summary;
+}
+
 /**
  * Prune tool result content from pre-compaction messages by replacing
  * their content with `[pruned]`. Called after a compactionSummary is stored.
@@ -291,8 +298,8 @@ function pruneToolResultsBeforeSeq(sessionId: string, compactionSeq: number): vo
  *
  * Three cases:
  * 1. No compaction: skip already-stored messages, append the rest.
- * 2. New compaction (first or re-): delete superseded post-compaction rows,
- *    then append compactionSummary + post-compaction messages.
+ * 2. New compaction (first or re-): append compactionSummary + post-compaction
+ *    messages while preserving the existing stored transcript.
  * 3. Same compaction + growth: skip already-stored post-compaction messages,
  *    append only the new tail.
  */
@@ -315,43 +322,31 @@ export function persistMessages(sessionId: string, messages: any[]): void {
   }
 
   const lastSummaryRow = db
-    .query<{ last_seq: number | null }, [string]>(
-      `SELECT MAX(seq) AS last_seq FROM session_messages
-       WHERE session_id = ? AND role = 'compactionSummary'`,
+    .query<{ last_seq: number; message_json: string }, [string]>(
+      `SELECT seq AS last_seq, message_json FROM session_messages
+       WHERE session_id = ? AND role = 'compactionSummary'
+       ORDER BY seq DESC
+       LIMIT 1`,
     )
     .get(sessionId);
 
-  const postCompactionMsgCount = messages.length - (compactionIdx + 1);
-  const dbPostCompactionCount = lastSummaryRow?.last_seq != null
-    ? nextSeq - (lastSummaryRow.last_seq + 1)
-    : 0;
+  let appendStartIdx = compactionIdx;
+  if (lastSummaryRow) {
+    const persistedTailCount = nextSeq - (lastSummaryRow.last_seq + 1);
+    const incomingTailCount = messages.length - (compactionIdx + 1);
+    const latestBoundaryAlreadyPersisted = compactionSummaryMatches(lastSummaryRow.message_json, messages[compactionIdx]);
 
-  if (lastSummaryRow?.last_seq == null || postCompactionMsgCount < dbPostCompactionCount) {
-    // New compaction (first or re-compaction)
-    if (lastSummaryRow?.last_seq != null) {
-      // Re-compaction: delete old post-compaction messages superseded by the
-      // new compaction summary. Collect attachment refs first so orphaned BLOBs
-      // can be pruned after the rows disappear.
-      const deletedRows = db
-        .query<{ message_json: string }, [string, number, number]>(
-          `SELECT message_json FROM session_messages
-           WHERE session_id = ? AND seq > ? AND seq < ?`,
-        )
-        .all(sessionId, lastSummaryRow.last_seq, nextSeq);
-      const deletedAttachmentIds = deletedRows.flatMap((row) => collectAttachmentIds(JSON.parse(row.message_json)));
-
-      db.query(
-        `DELETE FROM session_messages
-         WHERE session_id = ? AND seq > ? AND seq < ?`,
-      ).run(sessionId, lastSummaryRow.last_seq, nextSeq);
-      pruneUnreferencedAttachmentData(sessionId, deletedAttachmentIds);
+    // Stored history is append-only across compactions, so DB seq is not a
+    // prefix length for the runtime's current compacted snapshot. If the latest
+    // summary boundary is already stored and the incoming tail still covers the
+    // persisted tail, skip that prefix and append only new growth. Otherwise,
+    // append the whole compacted snapshot: summary + retained tail.
+    if (latestBoundaryAlreadyPersisted && incomingTailCount >= persistedTailCount) {
+      appendStartIdx = compactionIdx + 1 + persistedTailCount;
     }
-    appendMessages(sessionId, messages.slice(compactionIdx));
-  } else {
-    // Same compaction + new messages: skip already-stored messages
-    const startIdx = compactionIdx + 1 + dbPostCompactionCount;
-    appendMessages(sessionId, messages.slice(startIdx));
   }
+
+  appendMessages(sessionId, messages.slice(appendStartIdx));
 }
 
 /**

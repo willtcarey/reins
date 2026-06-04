@@ -398,23 +398,53 @@ describe("messages-store", () => {
       expect(llmMsgs[0].summary).toBe("summary of batches 1-2");
       expect(llmMsgs[1].content).toEqual(textContent("batch 3"));
 
-      // Full history: pre-compaction + first CS + second CS + new post-compaction
-      // Old post-compaction messages (batch 2, reply 2) are deleted during re-compaction
-      // since they're now subsumed by the new compaction summary.
+      // Full history keeps every persisted message and appends compaction summaries
+      // as additional timeline entries. Re-compaction must not delete the messages
+      // that were between the previous summary and the new one.
       const allMsgs = loadMessages("sess-1");
       const allRoles = allMsgs.map((m: any) => m.role);
       expect(allRoles.filter((r: string) => r === "compactionSummary")).toHaveLength(2);
       const allContents = allMsgs.map(messageText);
       expect(allContents).toContain("batch 1");
       expect(allContents).toContain("summary of batch 1");
+      expect(allContents).toContain("batch 2");
+      expect(allContents).toContain("reply 2");
       expect(allContents).toContain("summary of batches 1-2");
       expect(allContents).toContain("batch 3");
-      // Old post-compaction messages are removed — they're subsumed by the new CS
-      expect(allContents).not.toContain("batch 2");
-      expect(allContents).not.toContain("reply 2");
     });
 
-    test("re-compaction does not duplicate messages", () => {
+    test("re-compaction appends new summary when retained tail length matches previous tail", () => {
+      createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+
+      persistMessages("sess-1", [
+        { role: "user", content: textContent("before compaction") },
+      ]);
+
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "summary v1" },
+        { role: "assistant", content: textContent("retained tail v1") },
+      ]);
+
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "summary v2" },
+        { role: "assistant", content: textContent("retained tail v2") },
+      ]);
+
+      const allMsgs = loadMessages("sess-1");
+      const allContents = allMsgs.map(messageText);
+      expect(allContents).toContain("summary v1");
+      expect(allContents).toContain("retained tail v1");
+      expect(allContents).toContain("summary v2");
+      expect(allContents).toContain("retained tail v2");
+
+      const llmMsgs = loadMessagesForLLM("sess-1");
+      expect(llmMsgs).toHaveLength(2);
+      expect(llmMsgs[0].role).toBe("compactionSummary");
+      expect(llmMsgs[0].summary).toBe("summary v2");
+      expect(llmMsgs[1].content).toEqual(textContent("retained tail v2"));
+    });
+
+    test("re-compaction appends a new summary without deleting historical tail messages", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
 
       // Initial messages
@@ -443,29 +473,24 @@ describe("messages-store", () => {
       ];
       persistMessages("sess-1", continued);
 
-      // Re-compaction — pi compacts again, new summary subsumes everything
+      // Re-compaction — pi compacts again and produces a fresh summary.
       const postCompact2 = [
         { role: "compactionSummary", summary: "summary v2" },
-        { role: "assistant", content: textContent("reply 4") },
       ];
       persistMessages("sess-1", postCompact2);
 
-      // Verify no duplicates: each content value appears at most once
       const allMsgs = loadMessages("sess-1");
       const allContents = allMsgs.map(messageText);
-      const duplicates = allContents.filter((c, i) => allContents.indexOf(c) !== i);
-      expect(duplicates).toEqual([]);
+      expect(allContents).toContain("msg 3");
+      expect(allContents).toContain("reply 3");
+      expect(allContents).toContain("reply 4");
+      expect(allContents).toContain("summary v2");
 
-      // LLM context uses only the latest compaction
+      // LLM context uses only the latest compaction.
       const llmMsgs = loadMessagesForLLM("sess-1");
-      expect(llmMsgs).toHaveLength(2);
+      expect(llmMsgs).toHaveLength(1);
       expect(llmMsgs[0].role).toBe("compactionSummary");
       expect(llmMsgs[0].summary).toBe("summary v2");
-      expect(llmMsgs[1].content).toEqual(textContent("reply 4"));
-
-      // Old post-compaction messages were deleted, not duplicated
-      const msgContents = allMsgs.map(messageText);
-      expect(msgContents.filter((c) => c === "reply 4")).toHaveLength(1);
     });
 
     test("re-compaction prunes tool results from all pre-compaction messages", () => {
