@@ -9,7 +9,7 @@
 import { getDb } from "./db.js";
 import {
   collectAttachmentIds,
-  externalizeInlineImageBlock,
+  externalizeRuntimeContentBlock,
   hydrateImageAttachmentBlock,
   pruneUnreferencedAttachmentData,
 } from "./session-attachments-store.js";
@@ -188,22 +188,6 @@ function contentPreview(content: PersistedContentBlock[]): string {
   const text = contentToText(content);
   if (text.length <= TOOL_RESULT_PREVIEW_CHARS) return text;
   return `${text.slice(0, TOOL_RESULT_PREVIEW_CHARS)}…`;
-}
-
-function externalizeMessageImages(
-  sessionId: string,
-  message: RuntimeMessage,
-): Omit<RuntimeMessage, "content" | "role"> & { role: string; content?: PersistedContentBlock[] } {
-  const { content, ...rest } = message;
-  if (!content) return rest;
-  return {
-    ...rest,
-    content: content.map((block) => (
-      block.type === "image"
-        ? externalizeInlineImageBlock(sessionId, block)
-        : block
-    )),
-  };
 }
 
 type HydratedPersistedMessage = Omit<PersistedMessage, "content"> & {
@@ -497,7 +481,9 @@ export function appendMessages(sessionId: string, messages: RuntimeMessage[]): v
 
   const tx = db.transaction(() => {
     for (const msg of messages) {
-      const persisted = externalizeMessageImages(sessionId, msg);
+      const persisted = msg.content
+        ? { ...msg, content: msg.content.map((block) => externalizeRuntimeContentBlock(sessionId, block)) }
+        : msg;
       insert.run(sessionId, nextSeq, persisted.role, JSON.stringify(persisted));
 
       if (persisted.role === "compactionSummary") {

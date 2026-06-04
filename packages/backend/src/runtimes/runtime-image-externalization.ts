@@ -1,5 +1,5 @@
 import type { PersistedContentBlock, RuntimeContentBlock, RuntimeMessage } from "../messages-store.js";
-import { externalizeInlineImageBlock } from "../session-attachments-store.js";
+import { externalizeRuntimeContentBlock } from "../session-attachments-store.js";
 import type {
   AgentRuntimeEvent,
   RuntimeToolResultPayload,
@@ -26,15 +26,8 @@ export type ExternalizedAgentRuntimeEvent =
   | (Omit<MessageEvent, "message"> & { message: ExternalizedRuntimeMessage })
   | (Omit<ToolExecutionEndEvent, "result"> & { result?: ExternalizedRuntimeToolResultPayload });
 
-function externalizeContentBlockImages(sessionId: string, block: RuntimeContentBlock): PersistedContentBlock {
-  if (block.type === "image") {
-    return externalizeInlineImageBlock(sessionId, block);
-  }
-  return block;
-}
-
-function externalizeContentImages(sessionId: string, content: RuntimeContentBlock[]): PersistedContentBlock[] {
-  return content.map((block) => externalizeContentBlockImages(sessionId, block));
+function externalizeRuntimeContent(sessionId: string, content: RuntimeContentBlock[]): PersistedContentBlock[] {
+  return content.map((block) => externalizeRuntimeContentBlock(sessionId, block));
 }
 
 function externalizeRuntimeMessageImages(
@@ -43,15 +36,7 @@ function externalizeRuntimeMessageImages(
 ): ExternalizedRuntimeMessage {
   const { content, ...rest } = message;
   if (!content) return rest;
-  return { ...rest, content: externalizeContentImages(sessionId, content) };
-}
-
-function externalizeToolResultImages(
-  sessionId: string,
-  result: RuntimeToolResultPayload | undefined,
-): ExternalizedRuntimeToolResultPayload | undefined {
-  if (!result) return result;
-  return { ...result, content: externalizeContentImages(sessionId, result.content) };
+  return { ...rest, content: externalizeRuntimeContent(sessionId, content) };
 }
 
 export function externalizeRuntimeEventImages(
@@ -83,7 +68,9 @@ export function externalizeRuntimeEventImages(
     case "tool_execution_end":
       return {
         ...event,
-        result: externalizeToolResultImages(sessionId, event.result),
+        result: event.result
+          ? { ...event.result, content: externalizeRuntimeContent(sessionId, event.result.content) }
+          : undefined,
       };
 
     case "agent_start":

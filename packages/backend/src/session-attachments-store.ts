@@ -6,6 +6,7 @@ import type {
   ImageAttachmentBlock,
   InlineImageBlock,
   PersistedContentBlock,
+  RuntimeContentBlock,
   TextContentBlock,
 } from "./messages-store.js";
 
@@ -267,7 +268,13 @@ function inlineBlockFromRow(
   };
 }
 
-export function externalizeInlineImageBlock(sessionId: string, block: InlineImageBlock): ImageAttachmentBlock {
+/**
+ * Store inline runtime image blocks as attachment refs.
+ * Non-image runtime blocks are already persistable and pass through unchanged.
+ */
+export function externalizeRuntimeContentBlock(sessionId: string, block: RuntimeContentBlock): PersistedContentBlock {
+  if (block.type !== "image") return block;
+
   const data = Buffer.from(block.data, "base64");
   const info = storeSessionAttachment(sessionId, {
     data,

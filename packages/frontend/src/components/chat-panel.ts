@@ -627,7 +627,7 @@ export class ChatPanel extends LitElement {
     const hint = imageSizeHint(image);
     const src = imageBlockSrc(sessionId, image);
     const alt = "filename" in image && image.filename ? image.filename : "Attached image";
-    const className = "max-h-64 max-w-full rounded-lg border border-zinc-700 object-contain bg-zinc-900 transition-opacity group-hover:opacity-90";
+    const className = "block h-auto w-auto max-h-64 max-w-full rounded-lg border border-zinc-700 bg-zinc-900 transition-opacity group-hover:opacity-90";
     const openImage = (event: Event) => {
       event.stopPropagation();
       this.dispatchEvent(openImageViewerEvent({ src, alt, title: alt }));
@@ -656,7 +656,7 @@ export class ChatPanel extends LitElement {
     return html`
       <button
         type="button"
-        class="group block max-w-full cursor-zoom-in rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-zinc-900"
+        class="group ml-auto inline-flex max-w-full cursor-zoom-in justify-end rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-zinc-900"
         aria-label=${`Open image full screen: ${alt}`}
         title="Open image full screen"
         @click=${openImage}

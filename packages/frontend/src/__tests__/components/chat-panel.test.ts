@@ -43,4 +43,33 @@ describe("chat-panel attachment rendering", () => {
     expect(output).toContain("height=480");
     expect(output).toContain("aspect-ratio: 640 / 480");
   });
+
+  test("right-aligns attached image previews without centering them in a stretched object box", () => {
+    const el = new ChatPanel();
+    Reflect.set(el, "store", { sessionId: "sess-attachments" });
+    Reflect.set(el, "messages", [
+      {
+        role: "user",
+        timestamp: 1,
+        content: [
+          {
+            type: "image",
+            attachmentId: "att_wide",
+            mimeType: "image/png",
+            filename: "wide-screen.png",
+            byteSize: 123,
+            width: 1600,
+            height: 500,
+          },
+        ],
+      },
+    ]);
+
+    const output = templateToString(el.render());
+
+    expect(output).toContain("justify-items-end");
+    expect(output).toContain("group ml-auto inline-flex max-w-full cursor-zoom-in justify-end");
+    expect(output).toContain("block h-auto w-auto max-h-64 max-w-full");
+    expect(output).not.toContain("object-contain");
+  });
 });
