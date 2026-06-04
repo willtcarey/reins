@@ -22,13 +22,13 @@ function isTextPromptBlock(value: unknown): value is TextContentBlock {
     && "text" in value && typeof value.text === "string";
 }
 
-export interface InjectedSkill {
+interface InjectedSkill {
   name: string;
   description: string;
   filePath: string;
 }
 
-export interface ExpandPromptResult {
+interface ExpandPromptResult {
   expanded: ClientPromptContent;
   injected: InjectedSkill[];
 }
@@ -63,9 +63,7 @@ function prependSkillBlocks(message: ClientPromptContent, skillBlocks: string): 
 
 /**
  * Expand any standalone `/name` slash commands in `message` that match a
- * skill available to the given session's project. Thin wrapper that only
- * resolves the session's projectDir and delegates — all skill-detection and
- * loader work happens in `expandPromptWithSkills`.
+ * skill available to the given session's project.
  */
 export function expandPrompt(message: ClientPromptContent, sessionId: string): ExpandPromptResult {
   const row = getSession(sessionId);
@@ -74,26 +72,11 @@ export function expandPrompt(message: ClientPromptContent, sessionId: string): E
   const project = getProject(row.project_id);
   if (!project) return { expanded: message, injected: [] };
 
-  return expandPromptWithSkills(message, { cwd: project.path });
-}
-
-/**
- * Decide whether the message contains any `/name` tokens, and only then
- * instantiate a resource loader to resolve them against available skills.
- *
- * Accepts `ReinsResourceLoader` constructor options directly so tests can
- * pin `agentDir` to a known location (isolating from the user's real
- * `~/.agents/skills`).
- */
-export function expandPromptWithSkills(
-  message: ClientPromptContent,
-  loaderOptions: { cwd: string; agentDir?: string },
-): ExpandPromptResult {
   const textBlocks = textBlocksForPrompt(message);
   const candidates = textBlocks.flatMap((block) => extractSlashTokens(block.text));
   if (candidates.length === 0) return { expanded: message, injected: [] };
 
-  const loader = new ReinsResourceLoader(loaderOptions);
+  const loader = new ReinsResourceLoader({ cwd: project.path });
   loader.load();
 
   const byName = new Map<string, Skill>();
@@ -132,7 +115,7 @@ export function expandPromptWithSkills(
 /**
  * Read a skill's SKILL.md body with YAML frontmatter stripped.
  */
-export function readSkillBody(skill: Skill): string {
+function readSkillBody(skill: Skill): string {
   const raw = readFileSync(skill.filePath, "utf-8");
   return stripFrontmatter(raw);
 }
