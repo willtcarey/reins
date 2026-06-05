@@ -11,6 +11,8 @@ import "./skill-suggest.js";
 import type { SkillInsertDetail, SkillSuggest } from "./skill-suggest.js";
 
 const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+const IMAGE_ATTACHMENT_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
+const IMAGE_ATTACHMENT_ERROR = "Only PNG, JPEG, WebP, and GIF images can be attached.";
 const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
   png: "image/png",
   jpg: "image/jpeg",
@@ -27,6 +29,11 @@ export interface DraftAttachment {
   byteSize: number;
   mimeType: string;
   filename: string;
+}
+
+interface SkillTokenRange {
+  start: number;
+  end: number;
 }
 
 export interface ChatComposerSubmitDetail {
@@ -46,30 +53,6 @@ export interface SendAnimationOrigin {
   borderRadius: string;
 }
 
-interface FocusableTextInput {
-  focus(options?: FocusOptions): void;
-}
-
-interface BlurableTextInput {
-  blur(): void;
-}
-
-function focusTextareaWithoutScroll(textarea: FocusableTextInput | null | undefined): boolean {
-  if (!textarea) return false;
-  try {
-    textarea.focus({ preventScroll: true });
-  } catch {
-    textarea.focus();
-  }
-  return true;
-}
-
-function blurTextarea(textarea: BlurableTextInput | null | undefined): boolean {
-  if (!textarea) return false;
-  textarea.blur();
-  return true;
-}
-
 export function imageMimeTypeForFile(file: File): string | null {
   const browserType = file.type.toLowerCase();
   if (ALLOWED_IMAGE_TYPES.has(browserType)) return browserType;
@@ -80,29 +63,6 @@ export function imageMimeTypeForFile(file: File): string | null {
 
 export function isAllowedImageFile(file: File): boolean {
   return imageMimeTypeForFile(file) !== null;
-}
-
-export function buildClientPromptContent(
-  text: string,
-  attachments: AttachmentInfo[],
-): ClientPromptContent {
-  const trimmed = text.trim();
-  const blocks: ClientPromptContent = trimmed ? [{ type: "text", text: trimmed }] : [];
-
-  blocks.push(...attachments.map((attachment): ImageAttachmentBlock => {
-    const hint = normalizeImageSizeHint(attachment.width, attachment.height);
-    return {
-      type: "image",
-      attachmentId: attachment.id,
-      mimeType: attachment.mimeType,
-      filename: attachment.filename,
-      byteSize: attachment.byteSize,
-      sha256: attachment.sha256,
-      ...(hint ? { width: hint.width, height: hint.height } : {}),
-    };
-  }));
-
-  return blocks;
 }
 
 /**
@@ -132,6 +92,29 @@ export function findSkillTokenAt(
   return { start, end: start + 1 + partial.length, query: partial };
 }
 
+export function buildClientPromptContent(
+  text: string,
+  attachments: AttachmentInfo[],
+): ClientPromptContent {
+  const trimmed = text.trim();
+  const blocks: ClientPromptContent = trimmed ? [{ type: "text", text: trimmed }] : [];
+
+  blocks.push(...attachments.map((attachment): ImageAttachmentBlock => {
+    const hint = normalizeImageSizeHint(attachment.width, attachment.height);
+    return {
+      type: "image",
+      attachmentId: attachment.id,
+      mimeType: attachment.mimeType,
+      filename: attachment.filename,
+      byteSize: attachment.byteSize,
+      sha256: attachment.sha256,
+      ...(hint ? { width: hint.width, height: hint.height } : {}),
+    };
+  }));
+
+  return blocks;
+}
+
 @customElement("chat-composer")
 export class ChatComposer extends LitElement {
   override createRenderRoot() {
@@ -153,14 +136,14 @@ export class ChatComposer extends LitElement {
   @query("skill-suggest") private skillSuggest?: SkillSuggest;
   @query('[data-role="prompt-box"]') private promptBox?: HTMLElement;
 
-  private skillTokenRange: { start: number; end: number } | null = null;
+  private skillTokenRange: SkillTokenRange | null = null;
   private sendPointerPreservedFocus = false;
   private skipNextSendClick = false;
   private focusPreservationVersion = 0;
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    for (const attachment of this.draftAttachments) this.revokeObjectUrl(attachment.objectUrl);
+    for (const attachment of this.draftAttachments) URL.revokeObjectURL(attachment.objectUrl);
   }
 
   override firstUpdated() {
@@ -172,16 +155,15 @@ export class ChatComposer extends LitElement {
   }
 
   focusInput() {
-    requestAnimationFrame(() => focusTextareaWithoutScroll(this.textarea));
+    requestAnimationFrame(() => this.textarea?.focus({ preventScroll: true }));
   }
 
   blurInput() {
-    const blurred = blurTextarea(this.textarea);
-    if (blurred) {
-      this.focusPreservationVersion += 1;
-      this.skillSuggest?.close();
-    }
-    return blurred;
+    if (!this.textarea) return false;
+    this.textarea.blur();
+    this.focusPreservationVersion += 1;
+    this.skillSuggest?.close();
+    return true;
   }
 
   closeSuggestions() {
@@ -221,57 +203,27 @@ export class ChatComposer extends LitElement {
       && (this.inputText.trim().length > 0 || this.draftAttachments.length > 0);
   }
 
-  private createDraftId(): string {
-    const randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto);
-    if (randomUUID) return randomUUID();
-
-    const getRandomValues = globalThis.crypto?.getRandomValues?.bind(globalThis.crypto);
-    if (getRandomValues) {
-      const bytes = new Uint32Array(2);
-      getRandomValues(bytes);
-      return `draft_${bytes[0].toString(36)}${bytes[1].toString(36)}`;
-    }
-
-    return `draft_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-  }
-
-  private createObjectUrl(file: File): string {
-    try {
-      if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
-        return URL.createObjectURL(file);
-      }
-    } catch {
-      // Some browser contexts disallow object URLs. The preview renderer will
-      // fall back to a non-thumbnail placeholder but still show the selected file.
-    }
-    return "";
-  }
-
-  private revokeObjectUrl(url: string) {
-    if (!url) return;
-    if (typeof URL !== "undefined" && "revokeObjectURL" in URL) URL.revokeObjectURL(url);
-  }
-
   private addFiles(files: Iterable<File>) {
     const next: DraftAttachment[] = [];
     let rejected = 0;
 
     for (const file of files) {
       const mimeType = imageMimeTypeForFile(file);
-      if (!mimeType) { rejected += 1; continue; }
+      if (!mimeType) {
+        rejected += 1;
+        continue;
+      }
       next.push({
-        id: this.createDraftId(),
+        id: globalThis.crypto.randomUUID(),
         file,
-        objectUrl: this.createObjectUrl(file),
+        objectUrl: URL.createObjectURL(file),
         byteSize: file.size,
         mimeType,
         filename: file.name || "image",
       });
     }
 
-    if (rejected > 0) {
-      this.errorMessage = "Only PNG, JPEG, WebP, and GIF images can be attached.";
-    }
+    if (rejected > 0) this.errorMessage = IMAGE_ATTACHMENT_ERROR;
     if (next.length > 0) {
       this.errorMessage = "";
       this.draftAttachments = [...this.draftAttachments, ...next];
@@ -280,12 +232,12 @@ export class ChatComposer extends LitElement {
 
   private removeAttachment(id: string) {
     const attachment = this.draftAttachments.find((item) => item.id === id);
-    if (attachment) this.revokeObjectUrl(attachment.objectUrl);
+    if (attachment) URL.revokeObjectURL(attachment.objectUrl);
     this.draftAttachments = this.draftAttachments.filter((item) => item.id !== id);
   }
 
   private clearDraft() {
-    for (const attachment of this.draftAttachments) this.revokeObjectUrl(attachment.objectUrl);
+    for (const attachment of this.draftAttachments) URL.revokeObjectURL(attachment.objectUrl);
     this.draftAttachments = [];
     this.inputText = "";
     this.skillTokenRange = null;
@@ -321,12 +273,19 @@ export class ChatComposer extends LitElement {
     if (!this.canSubmit) return;
 
     const focusPreservationVersion = this.focusPreservationVersion;
-    if (opts.preserveFocus) focusTextareaWithoutScroll(this.textarea);
+    if (opts.preserveFocus) this.textarea?.focus({ preventScroll: true });
 
     this.isUploading = true;
     this.errorMessage = "";
     try {
-      const uploaded = await this.uploadAttachments(this.draftAttachments);
+      let uploaded: AttachmentInfo[];
+      try {
+        uploaded = await this.uploadAttachments(this.draftAttachments);
+      } catch (err) {
+        this.errorMessage = err instanceof Error ? err.message : "Failed to send message";
+        return;
+      }
+
       const content = buildClientPromptContent(this.inputText, uploaded);
       this.dispatchEvent(new CustomEvent<ChatComposerSubmitDetail>("composer-submit", {
         bubbles: true,
@@ -335,10 +294,8 @@ export class ChatComposer extends LitElement {
       }));
       this.clearDraft();
       if (opts.preserveFocus && focusPreservationVersion === this.focusPreservationVersion) {
-        queueMicrotask(() => focusTextareaWithoutScroll(this.textarea));
+        queueMicrotask(() => this.textarea?.focus({ preventScroll: true }));
       }
-    } catch (err) {
-      this.errorMessage = err instanceof Error ? err.message : "Failed to send message";
     } finally {
       this.isUploading = false;
     }
@@ -351,7 +308,7 @@ export class ChatComposer extends LitElement {
   private preserveTextareaFocus(e: Event) {
     if (!this.textareaHasFocus()) return;
     e.preventDefault();
-    focusTextareaWithoutScroll(this.textarea);
+    this.textarea?.focus({ preventScroll: true });
   }
 
   private handleSendPointerDown(e: PointerEvent) {
@@ -359,7 +316,7 @@ export class ChatComposer extends LitElement {
     if (!this.textareaHasFocus()) return;
     e.preventDefault();
     this.sendPointerPreservedFocus = true;
-    focusTextareaWithoutScroll(this.textarea);
+    this.textarea?.focus({ preventScroll: true });
   }
 
   private pointerEndedInsideControl(e: PointerEvent): boolean {
@@ -375,7 +332,7 @@ export class ChatComposer extends LitElement {
     if (!this.pointerEndedInsideControl(e)) return;
 
     this.skipNextSendClick = true;
-    focusTextareaWithoutScroll(this.textarea);
+    this.textarea?.focus({ preventScroll: true });
     void this.handleSend({ preserveFocus: true });
   }
 
@@ -384,7 +341,7 @@ export class ChatComposer extends LitElement {
       this.skipNextSendClick = false;
       return;
     }
-    focusTextareaWithoutScroll(this.textarea);
+    this.textarea?.focus({ preventScroll: true });
     void this.handleSend({ preserveFocus: true });
   }
 
@@ -537,7 +494,7 @@ export class ChatComposer extends LitElement {
         <div class="flex items-end gap-2">
           <input
             type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif"
+            accept=${IMAGE_ATTACHMENT_ACCEPT}
             multiple
             class="hidden"
             @change=${this.handleFileChange}

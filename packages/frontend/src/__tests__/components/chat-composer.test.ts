@@ -93,27 +93,50 @@ describe("ChatComposer behavior", () => {
 
   test("adds pasted image files as draft attachments", () => {
     const el = new ChatComposer();
-    Object.defineProperty(el, "createObjectUrl", { configurable: true, value: () => "" });
     const preventDefault = mock(() => undefined);
 
-    callPrivate(el, "handlePaste", {
-      clipboardData: {
-        files: [
-          new File(["png bytes"], "screen.png", { type: "image/png" }),
-          new File(["not an image"], "note.txt", { type: "text/plain" }),
-        ],
-      },
-      preventDefault,
-    });
+    try {
+      callPrivate(el, "handlePaste", {
+        clipboardData: {
+          files: [
+            new File(["png bytes"], "screen.png", { type: "image/png" }),
+            new File(["not an image"], "note.txt", { type: "text/plain" }),
+          ],
+        },
+        preventDefault,
+      });
 
-    const attachments: DraftAttachment[] = Reflect.get(el, "draftAttachments");
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(attachments).toHaveLength(1);
-    expect(attachments[0]).toMatchObject({
-      filename: "screen.png",
-      mimeType: "image/png",
-      byteSize: "png bytes".length,
+      const attachments: DraftAttachment[] = Reflect.get(el, "draftAttachments");
+      expect(preventDefault).toHaveBeenCalledTimes(1);
+      expect(attachments).toHaveLength(1);
+      expect(attachments[0]).toMatchObject({
+        filename: "screen.png",
+        mimeType: "image/png",
+        byteSize: "png bytes".length,
+      });
+      expect(attachments[0]?.objectUrl.startsWith("blob:")).toBe(true);
+    } finally {
+      callPrivate(el, "clearDraft");
+    }
+  });
+
+  test("lets object URL creation failures propagate", () => {
+    const originalCreate = URL.createObjectURL;
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: mock(() => { throw new Error("object url failed"); }),
     });
+    try {
+      const el = new ChatComposer();
+
+      expect(() => callPrivate(el, "handlePaste", {
+        clipboardData: { files: [new File(["x"], "screen.png", { type: "image/png" })] },
+        preventDefault: mock(() => undefined),
+      })).toThrow("object url failed");
+      expect(Reflect.get(el, "draftAttachments")).toEqual([]);
+    } finally {
+      Object.defineProperty(URL, "createObjectURL", { configurable: true, value: originalCreate });
+    }
   });
 
   test("uploads draft attachments and dispatches a multimodal submit", async () => {
@@ -195,5 +218,27 @@ describe("ChatComposer behavior", () => {
     ]);
     expect(Reflect.get(el, "inputText")).toBe("");
     expect(Reflect.get(el, "draftAttachments")).toEqual([]);
+  });
+
+  test("lets unexpected submit failures bubble instead of becoming composer errors", async () => {
+    const el = new ChatComposer();
+    el.sessionId = "sess-1";
+    Reflect.set(el, "inputText", "hello");
+    Object.defineProperty(el, "dispatchEvent", {
+      configurable: true,
+      value: () => { throw new Error("submit listener failed"); },
+    });
+
+    let thrown: unknown;
+    try {
+      await callPrivate<Promise<void>>(el, "handleSend");
+    } catch (err) {
+      thrown = err;
+    }
+
+    if (!(thrown instanceof Error)) throw new Error("Expected submit failure to throw");
+    expect(thrown.message).toBe("submit listener failed");
+    expect(Reflect.get(el, "errorMessage")).toBe("");
+    expect(Reflect.get(el, "isUploading")).toBe(false);
   });
 });
