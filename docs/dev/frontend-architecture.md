@@ -115,6 +115,10 @@ The overall data flow is one-directional:
 
 Views never call `fetch()` directly or listen to WebSocket events. All server communication and event→refetch logic is internal to the stores.
 
+## Error handling
+
+Follow the repo-wide [error handling guide](error-handling.md). For frontend code, unexpected render/runtime failures should bubble to browser/global error handling. Use local error UI only for expected, recoverable outcomes that are part of a feature contract, such as validation failures, failed REST mutations, or WS command errors.
+
 ## Store layer
 
 All server communication — fetching, WebSocket event handling, polling, and invalidation — lives in a centralized store layer. Views read state and render; they never fetch data or decide when to refetch.
