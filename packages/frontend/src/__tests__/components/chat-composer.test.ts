@@ -8,7 +8,6 @@ import {
   type ChatComposerSubmitDetail,
   type DraftAttachment,
 } from "../../components/chat-composer.js";
-import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
 
 function callPrivate<T = unknown>(obj: object, key: string, ...args: unknown[]): T {
   const fn = Reflect.get(obj, key);
@@ -165,40 +164,30 @@ describe("ChatComposer behavior", () => {
       },
     });
 
-    let fetchCount = 0;
-    const uploadState: { form: FormData | null } = { form: null };
-    mockFetch((url, init) => {
-      fetchCount += 1;
-      expect(url).toBe("/api/sessions/sess-1/attachments");
-      expect(init?.method).toBe("POST");
-      if (!(init?.body instanceof FormData)) throw new Error("Expected FormData upload body");
-      uploadState.form = init.body;
-      return new Response(JSON.stringify({
-        attachments: [{
-          id: "att_1",
-          kind: "image",
-          mimeType: "image/png",
-          filename: "screen.png",
-          byteSize: 9,
-          sha256: "abc",
-          url: "/api/sessions/sess-1/attachments/att_1",
-          width: 640,
-          height: 480,
-        }],
-      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    const uploadAttachments = mock(async (attachments: readonly DraftAttachment[]) => {
+      expect(attachments).toHaveLength(1);
+      expect(attachments[0]).toMatchObject({
+        filename: "screen.png",
+        mimeType: "image/png",
+        byteSize: 9,
+      });
+      return [{
+        id: "att_1",
+        kind: "image" as const,
+        mimeType: "image/png",
+        filename: "screen.png",
+        byteSize: 9,
+        sha256: "abc",
+        url: "/api/sessions/sess-1/attachments/att_1",
+        width: 640,
+        height: 480,
+      }];
     });
+    el.uploadAttachments = uploadAttachments;
 
-    try {
-      await callPrivate<Promise<void>>(el, "handleSend");
-    } finally {
-      restoreFetch();
-    }
+    await callPrivate<Promise<void>>(el, "handleSend");
 
-    expect(fetchCount).toBe(1);
-    if (!uploadState.form) throw new Error("Expected upload form");
-    const form: FormData = uploadState.form;
-    expect(form.getAll("files")).toHaveLength(1);
-    expect(form.get("metadata")).toBeNull();
+    expect(uploadAttachments).toHaveBeenCalledTimes(1);
     expect(dispatched).toHaveLength(1);
     expect(dispatched[0].type).toBe("composer-submit");
     expect(dispatched[0].bubbles).toBe(true);

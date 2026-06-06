@@ -10,7 +10,7 @@
  */
 
 import type { AgentMessage } from "../chat-state.js";
-import type { ClientPromptContent } from "../chat-content.js";
+import type { AttachmentInfo, ClientPromptContent } from "../chat-content.js";
 import type { EventListener, IAppClient, SessionData } from "../ws-client.js";
 
 export interface SessionModelUpdate {
@@ -18,6 +18,12 @@ export interface SessionModelUpdate {
   provider: string;
   modelId: string;
   thinkingLevel: string;
+}
+
+export interface SessionAttachmentUpload {
+  file: File;
+  mimeType: string;
+  filename: string;
 }
 
 export type ActiveSessionStoreListener = () => void;
@@ -113,6 +119,32 @@ export class ActiveSessionStore {
     if (!this._client || !this.sessionId) return false;
     this._client.abort(this.sessionId);
     return true;
+  }
+
+  async uploadAttachments(attachments: readonly SessionAttachmentUpload[]): Promise<AttachmentInfo[]> {
+    if (attachments.length === 0) return [];
+    if (!this.sessionId) throw new Error("No active session");
+
+    const form = new FormData();
+    for (const attachment of attachments) {
+      const uploadFile = attachment.file.type === attachment.mimeType
+        ? attachment.file
+        : new Blob([attachment.file], { type: attachment.mimeType });
+      form.append("files", uploadFile, attachment.filename);
+    }
+
+    const response = await fetch(`/api/sessions/${encodeURIComponent(this.sessionId)}/attachments`, {
+      method: "POST",
+      body: form,
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || "Failed to upload attachments");
+    }
+
+    const body: { attachments?: AttachmentInfo[] } = await response.json();
+    return body.attachments ?? [];
   }
 
   /**

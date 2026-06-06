@@ -63,6 +63,56 @@ describe("ActiveSessionStore.updateSessionModel", () => {
   });
 });
 
+describe("ActiveSessionStore.uploadAttachments", () => {
+  afterEach(() => { restoreFetch(); });
+
+  test("posts files through the active session store boundary", async () => {
+    const store = new ActiveSessionStore();
+    store.sessionId = "sess-1";
+    const uploadState: { form?: FormData } = {};
+
+    mockFetch((url, init) => {
+      expect(url).toBe("/api/sessions/sess-1/attachments");
+      expect(init?.method).toBe("POST");
+      if (!(init?.body instanceof FormData)) throw new Error("Expected FormData upload body");
+      uploadState.form = init.body;
+      return jsonResponse({
+        attachments: [{
+          id: "att_1",
+          kind: "image",
+          mimeType: "image/png",
+          filename: "screen.png",
+          byteSize: 9,
+          sha256: "abc",
+          url: "/api/sessions/sess-1/attachments/att_1",
+          width: 640,
+          height: 480,
+        }],
+      });
+    });
+
+    const result = await store.uploadAttachments([
+      { file: new File(["png bytes"], "screen.png", { type: "image/png" }), mimeType: "image/png", filename: "screen.png" },
+    ]);
+
+    const form = uploadState.form;
+    if (!form) throw new Error("Expected upload form");
+    expect(form.getAll("files")).toHaveLength(1);
+    expect(form.get("metadata")).toBeNull();
+    expect(result).toEqual([{
+      id: "att_1",
+      kind: "image",
+      mimeType: "image/png",
+      filename: "screen.png",
+      byteSize: 9,
+      sha256: "abc",
+      url: "/api/sessions/sess-1/attachments/att_1",
+      width: 640,
+      height: 480,
+    }]);
+  });
+});
+
 describe("ActiveSessionStore command helpers", () => {
   test("prompt, steer, and abort target the active session", () => {
     const client = new StubClient();

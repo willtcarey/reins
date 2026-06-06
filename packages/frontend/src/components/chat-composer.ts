@@ -8,6 +8,7 @@ import {
   type ImageAttachmentBlock,
 } from "../models/chat-content.js";
 import "./skill-suggest.js";
+import type { SendAnimationOrigin } from "../helpers/chat-send-animation.js";
 import type { SkillInsertDetail, SkillSuggest } from "./skill-suggest.js";
 
 const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
@@ -31,6 +32,8 @@ export interface DraftAttachment {
   filename: string;
 }
 
+export type ChatAttachmentUploader = (attachments: readonly DraftAttachment[]) => Promise<AttachmentInfo[]>;
+
 interface SkillTokenRange {
   start: number;
   end: number;
@@ -38,19 +41,6 @@ interface SkillTokenRange {
 
 export interface ChatComposerSubmitDetail {
   content: ClientPromptContent;
-}
-
-export interface SendAnimationRect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
-
-export interface SendAnimationOrigin {
-  rect: SendAnimationRect;
-  backgroundColor: string;
-  borderRadius: string;
 }
 
 export function imageMimeTypeForFile(file: File): string | null {
@@ -122,6 +112,7 @@ export class ChatComposer extends LitElement {
   }
 
   @property({ attribute: false }) projectStore: ProjectStore | null = null;
+  @property({ attribute: false }) uploadAttachments: ChatAttachmentUploader | null = null;
   @property({ type: String }) sessionId = "";
   @property({ type: Boolean }) streaming = false;
 
@@ -245,28 +236,10 @@ export class ChatComposer extends LitElement {
     this.errorMessage = "";
   }
 
-  private async uploadAttachments(attachments: DraftAttachment[]): Promise<AttachmentInfo[]> {
+  private async uploadDraftAttachments(attachments: readonly DraftAttachment[]): Promise<AttachmentInfo[]> {
     if (attachments.length === 0) return [];
-    const form = new FormData();
-    for (const attachment of attachments) {
-      const uploadFile = attachment.file.type === attachment.mimeType
-        ? attachment.file
-        : new Blob([attachment.file], { type: attachment.mimeType });
-      form.append("files", uploadFile, attachment.filename);
-    }
-
-    const response = await fetch(`/api/sessions/${encodeURIComponent(this.sessionId)}/attachments`, {
-      method: "POST",
-      body: form,
-    });
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(body.error || "Failed to upload attachments");
-    }
-
-    const body: { attachments?: AttachmentInfo[] } = await response.json();
-    return body.attachments ?? [];
+    if (!this.uploadAttachments) throw new Error("Attachment uploads are unavailable");
+    return this.uploadAttachments(attachments);
   }
 
   private async handleSend(opts: { preserveFocus?: boolean } = {}) {
@@ -280,7 +253,7 @@ export class ChatComposer extends LitElement {
     try {
       let uploaded: AttachmentInfo[];
       try {
-        uploaded = await this.uploadAttachments(this.draftAttachments);
+        uploaded = await this.uploadDraftAttachments(this.draftAttachments);
       } catch (err) {
         this.errorMessage = err instanceof Error ? err.message : "Failed to send message";
         return;
