@@ -23,6 +23,13 @@ const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
 };
 const MAX_TEXTAREA_HEIGHT = 200;
 
+let nextDraftAttachmentId = 0;
+
+function createDraftAttachmentId(): string {
+  nextDraftAttachmentId += 1;
+  return `draft-att-${nextDraftAttachmentId}`;
+}
+
 export interface DraftAttachment {
   id: string;
   file: File;
@@ -41,6 +48,43 @@ interface SkillTokenRange {
 
 export interface ChatComposerSubmitDetail {
   content: ClientPromptContent;
+}
+
+type TransferList<T> = Iterable<T> | ArrayLike<T>;
+
+interface DragDataTransferItem {
+  kind: string;
+  getAsFile(): File | null;
+}
+
+interface DragDataTransferLike {
+  files?: TransferList<File> | null;
+  items?: TransferList<DragDataTransferItem> | null;
+  types?: TransferList<string> | { contains(value: string): boolean } | null;
+}
+
+export function filesFromDataTransfer(dataTransfer: DragDataTransferLike | null | undefined): File[] {
+  const files = dataTransfer?.files ? Array.from(dataTransfer.files) : [];
+  if (files.length > 0) return files;
+
+  const items = dataTransfer?.items ? Array.from(dataTransfer.items) : [];
+  return items.flatMap((item) => {
+    if (item.kind !== "file") return [];
+    const file = item.getAsFile();
+    return file ? [file] : [];
+  });
+}
+
+export function dataTransferHasFiles(dataTransfer: DragDataTransferLike | null | undefined): boolean {
+  if (filesFromDataTransfer(dataTransfer).length > 0) return true;
+
+  const items = dataTransfer?.items ? Array.from(dataTransfer.items) : [];
+  if (items.some((item) => item.kind === "file")) return true;
+
+  const types = dataTransfer?.types;
+  if (!types) return false;
+  if ("contains" in types) return types.contains("Files");
+  return Array.from(types).includes("Files");
 }
 
 export function imageMimeTypeForFile(file: File): string | null {
@@ -194,7 +238,7 @@ export class ChatComposer extends LitElement {
       && (this.inputText.trim().length > 0 || this.draftAttachments.length > 0);
   }
 
-  private addFiles(files: Iterable<File>) {
+  addAttachmentFiles(files: Iterable<File>) {
     const next: DraftAttachment[] = [];
     let rejected = 0;
 
@@ -205,7 +249,7 @@ export class ChatComposer extends LitElement {
         continue;
       }
       next.push({
-        id: globalThis.crypto.randomUUID(),
+        id: createDraftAttachmentId(),
         file,
         objectUrl: URL.createObjectURL(file),
         byteSize: file.size,
@@ -363,17 +407,18 @@ export class ChatComposer extends LitElement {
   }
 
   private handlePaste(e: ClipboardEvent) {
-    const files = e.clipboardData?.files;
-    if (!files || files.length === 0) return;
-    const images = Array.from(files).filter(isAllowedImageFile);
+    const files = filesFromDataTransfer(e.clipboardData);
+    if (files.length === 0) return;
+    const images = files.filter(isAllowedImageFile);
     if (images.length === 0) return;
     e.preventDefault();
-    this.addFiles(images);
+    this.addAttachmentFiles(images);
   }
 
   private handleDragOver(e: DragEvent) {
-    if (!e.dataTransfer?.types.includes("Files")) return;
+    if (!dataTransferHasFiles(e.dataTransfer)) return;
     e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
     this.dragActive = true;
   }
 
@@ -383,15 +428,16 @@ export class ChatComposer extends LitElement {
   }
 
   private handleDrop(e: DragEvent) {
-    if (!e.dataTransfer?.files || e.dataTransfer.files.length === 0) return;
+    const files = filesFromDataTransfer(e.dataTransfer);
+    if (files.length === 0) return;
     e.preventDefault();
     this.dragActive = false;
-    this.addFiles(Array.from(e.dataTransfer.files));
+    this.addAttachmentFiles(files);
   }
 
   private handleFileChange(e: Event) {
     if (!(e.target instanceof HTMLInputElement) || !e.target.files) return;
-    this.addFiles(Array.from(e.target.files));
+    this.addAttachmentFiles(Array.from(e.target.files));
     e.target.value = "";
   }
 

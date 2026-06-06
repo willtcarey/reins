@@ -2,13 +2,14 @@ import { describe, expect, mock, test } from "bun:test";
 import {
   ChatComposer,
   buildClientPromptContent,
+  dataTransferHasFiles,
+  filesFromDataTransfer,
   findSkillTokenAt,
   imageMimeTypeForFile,
   isAllowedImageFile,
   type ChatComposerSubmitDetail,
   type DraftAttachment,
 } from "../../components/chat-composer.js";
-
 function callPrivate<T = unknown>(obj: object, key: string, ...args: unknown[]): T {
   const fn = Reflect.get(obj, key);
   if (typeof fn !== "function") throw new Error(`${key} is not callable`);
@@ -68,6 +69,25 @@ describe("chat-composer helpers", () => {
     expect(isAllowedImageFile(screenshot)).toBe(true);
     expect(imageMimeTypeForFile(screenshot)).toBe("image/png");
   });
+
+  test("extracts dropped files when browsers expose them through DataTransfer items", () => {
+    const image = new File(["png bytes"], "screen.png", { type: "image/png" });
+
+    expect(filesFromDataTransfer({
+      files: [],
+      items: [
+        { kind: "string", getAsFile: () => null },
+        { kind: "file", getAsFile: () => image },
+      ],
+    })).toEqual([image]);
+  });
+
+  test("recognizes file drags from DataTransfer types before file contents are readable", () => {
+    expect(dataTransferHasFiles({
+      files: [],
+      types: { contains: (value: string) => value === "Files" },
+    })).toBe(true);
+  });
 });
 
 describe("ChatComposer behavior", () => {
@@ -114,6 +134,60 @@ describe("ChatComposer behavior", () => {
         byteSize: "png bytes".length,
       });
       expect(attachments[0]?.objectUrl.startsWith("blob:")).toBe(true);
+    } finally {
+      callPrivate(el, "clearDraft");
+    }
+  });
+
+  test("adds draft attachments without requiring crypto.randomUUID", () => {
+    const randomUUIDDescriptor = Object.getOwnPropertyDescriptor(globalThis.crypto, "randomUUID");
+    Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: undefined });
+    const el = new ChatComposer();
+
+    try {
+      el.addAttachmentFiles([new File(["png bytes"], "screen.png", { type: "image/png" })]);
+
+      const attachments: DraftAttachment[] = Reflect.get(el, "draftAttachments");
+      expect(attachments).toHaveLength(1);
+      expect(attachments[0]).toMatchObject({
+        filename: "screen.png",
+        mimeType: "image/png",
+      });
+      expect(attachments[0]?.id).toStartWith("draft-att-");
+    } finally {
+      callPrivate(el, "clearDraft");
+      if (randomUUIDDescriptor) {
+        Object.defineProperty(globalThis.crypto, "randomUUID", randomUUIDDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis.crypto, "randomUUID");
+      }
+    }
+  });
+
+  test("adds pasted image files from clipboard items when the files list is empty", () => {
+    const el = new ChatComposer();
+    const preventDefault = mock(() => undefined);
+    const image = new File(["png bytes"], "pasted.png", { type: "image/png" });
+
+    try {
+      callPrivate(el, "handlePaste", {
+        clipboardData: {
+          files: [],
+          items: [
+            { kind: "string", getAsFile: () => null },
+            { kind: "file", getAsFile: () => image },
+          ],
+        },
+        preventDefault,
+      });
+
+      const attachments: DraftAttachment[] = Reflect.get(el, "draftAttachments");
+      expect(preventDefault).toHaveBeenCalledTimes(1);
+      expect(attachments).toHaveLength(1);
+      expect(attachments[0]).toMatchObject({
+        filename: "pasted.png",
+        mimeType: "image/png",
+      });
     } finally {
       callPrivate(el, "clearDraft");
     }

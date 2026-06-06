@@ -152,6 +152,9 @@ fn main() {
                 .title("REINS")
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(800.0, 600.0)
+                // Let the web app receive standard DataTransfer.files drops so
+                // chat attachments work the same in Tauri as they do in a browser.
+                .disable_drag_drop_handler()
                 .on_navigation(move |url| {
                     if url.origin().ascii_serialization() == backend_origin {
                         return true;

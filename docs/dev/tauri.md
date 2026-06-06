@@ -46,6 +46,8 @@ Same-origin links stay inside the webview. External `http`/`https` navigations o
 
 Downloads open a native save dialog instead of silently saving to the default downloads folder. Canceling the dialog cancels the download.
 
+The Tauri window disables Tauri's native drag/drop handler so the loaded web app receives standard browser `DataTransfer.files` events when images are dropped onto the composer. This keeps chat image attachment drag/drop behavior consistent with the browser build.
+
 ## Packaging
 
 ```sh
