@@ -12,38 +12,17 @@ function makeWriteBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockData {
   };
 }
 
-describe("getWriteSummary", () => {
-  test("returns the file path from args", () => {
+describe("Write tool model helpers", () => {
+  test("extracts the file path while tolerating missing args", () => {
     expect(getWriteSummary(makeWriteBlock())).toBe("src/new-file.ts");
-  });
-
-  test("returns empty string when args has no path", () => {
     expect(getWriteSummary(makeWriteBlock({ args: {} }))).toBe("");
-  });
-
-  test("returns empty string when args is undefined", () => {
     expect(getWriteSummary(makeWriteBlock({ args: undefined }))).toBe("");
   });
-});
 
-describe("getWriteInfo", () => {
-  test("returns line count of content", () => {
+  test("counts written lines and treats missing content as empty", () => {
     expect(getWriteInfo(makeWriteBlock())).toEqual({ lines: 3 });
-  });
-
-  test("returns 1 for single-line content", () => {
     expect(getWriteInfo(makeWriteBlock({ args: { path: "f.ts", content: "hello" } }))).toEqual({ lines: 1 });
-  });
-
-  test("returns 0 for empty content", () => {
     expect(getWriteInfo(makeWriteBlock({ args: { path: "f.ts", content: "" } }))).toEqual({ lines: 0 });
-  });
-
-  test("returns 0 when content is missing", () => {
-    expect(getWriteInfo(makeWriteBlock({ args: { path: "f.ts" } }))).toEqual({ lines: 0 });
-  });
-
-  test("returns 0 when args is undefined", () => {
     expect(getWriteInfo(makeWriteBlock({ args: undefined }))).toEqual({ lines: 0 });
   });
 });

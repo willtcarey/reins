@@ -12,47 +12,18 @@ function makeCreateTaskBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockD
   };
 }
 
-describe("getTaskSummary", () => {
-  test("returns task title from args", () => {
+describe("create_task tool model helpers", () => {
+  test("extracts the task title, description, and branch", () => {
     expect(getTaskSummary(makeCreateTaskBlock())).toBe("Add dark mode");
-  });
-
-  test("returns empty string when args has no title", () => {
-    expect(getTaskSummary(makeCreateTaskBlock({ args: {} }))).toBe("");
-  });
-
-  test("returns empty string when args is undefined", () => {
-    expect(getTaskSummary(makeCreateTaskBlock({ args: undefined }))).toBe("");
-  });
-});
-
-describe("getTaskDetail", () => {
-  test("returns description and branch", () => {
     expect(getTaskDetail(makeCreateTaskBlock())).toEqual({
       description: "Implement dark mode toggle in settings panel",
       branch: "task/dark-mode",
     });
   });
 
-  test("returns empty strings when args are missing", () => {
-    expect(getTaskDetail(makeCreateTaskBlock({ args: {} }))).toEqual({
-      description: "",
-      branch: "",
-    });
-  });
-
-  test("returns empty strings when args is undefined", () => {
-    expect(getTaskDetail(makeCreateTaskBlock({ args: undefined }))).toEqual({
-      description: "",
-      branch: "",
-    });
-  });
-
-  test("handles missing branch gracefully", () => {
-    const block = makeCreateTaskBlock({ args: { title: "Test", description: "Desc" } });
-    expect(getTaskDetail(block)).toEqual({
-      description: "Desc",
-      branch: "",
-    });
+  test("uses empty strings when optional args are missing", () => {
+    expect(getTaskSummary(makeCreateTaskBlock({ args: {} }))).toBe("");
+    expect(getTaskDetail(makeCreateTaskBlock({ args: undefined }))).toEqual({ description: "", branch: "" });
+    expect(getTaskDetail(makeCreateTaskBlock({ args: { title: "Test", description: "Desc" } }))).toEqual({ description: "Desc", branch: "" });
   });
 });

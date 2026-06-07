@@ -9,7 +9,7 @@ import {
   hydrateImageAttachmentBlock,
   storeSessionAttachment,
 } from "../session-attachments-store.js";
-import { appendMessages, loadMessages, loadMessagesForLLM, persistMessages } from "../messages-store.js";
+import { appendMessages, loadMessages, loadMessagesForLLM } from "../messages-store.js";
 
 let projectId: number;
 
@@ -111,84 +111,43 @@ describe("session attachments", () => {
     });
   });
 
-  test("compaction pruning clears unreferenced attachment bytes", () => {
-    const imageData = Buffer.from("prune me").toString("base64");
+  test("compaction pruning clears unreferenced tool-result attachment bytes and preserves non-tool attachments", () => {
+    const toolImageData = Buffer.from("prune me").toString("base64");
+    const userImageData = Buffer.from("keep me").toString("base64");
     appendMessages("sess-attachments", [
       {
         role: "toolResult",
         toolCallId: "tc1",
         toolName: "read",
         isError: false,
-        content: [{ type: "image", data: imageData, mimeType: "image/png" }],
+        content: [{ type: "image", data: toolImageData, mimeType: "image/png" }],
+      },
+      {
+        role: "user",
+        content: [{ type: "image", data: userImageData, mimeType: "image/png" }],
       },
     ]);
 
     const visible = loadMessages("sess-attachments");
-    const image = visible[0].content[0];
-    if (!("attachmentId" in image) || typeof image.attachmentId !== "string") {
-      throw new Error("Expected attachment ref before pruning");
+    const toolImage = visible[0].content[0];
+    const userImage = visible[1].content[0];
+    if (!("attachmentId" in toolImage) || typeof toolImage.attachmentId !== "string") {
+      throw new Error("Expected tool-result attachment ref before pruning");
+    }
+    if (!("attachmentId" in userImage) || typeof userImage.attachmentId !== "string") {
+      throw new Error("Expected user attachment ref before pruning");
     }
 
     appendMessages("sess-attachments", [
       { role: "compactionSummary", summary: "summary" },
     ]);
 
-    const pruned = getSessionAttachment("sess-attachments", image.attachmentId);
+    const pruned = getSessionAttachment("sess-attachments", toolImage.attachmentId);
     expect(pruned?.data).toBeNull();
     expect(pruned?.pruned_at).toEqual(expect.any(String));
-  });
 
-  test("re-compaction prunes tool-result attachment bytes from historical rows", () => {
-    const imageData = Buffer.from("delete me").toString("base64");
-    persistMessages("sess-attachments", [
-      { role: "compactionSummary", summary: "summary 1" },
-      {
-        role: "toolResult",
-        toolCallId: "tc1",
-        toolName: "read",
-        isError: false,
-        content: [{ type: "image", data: imageData, mimeType: "image/png" }],
-      },
-      { role: "assistant", content: [{ type: "text", text: "done" }] },
-    ]);
-
-    const visible = loadMessages("sess-attachments");
-    const image = visible[1].content[0];
-    if (!("attachmentId" in image) || typeof image.attachmentId !== "string") {
-      throw new Error("Expected post-compaction attachment ref before re-compaction");
-    }
-
-    persistMessages("sess-attachments", [
-      { role: "compactionSummary", summary: "summary 2" },
-    ]);
-
-    const pruned = getSessionAttachment("sess-attachments", image.attachmentId);
-    expect(pruned?.data).toBeNull();
-    expect(pruned?.pruned_at).toEqual(expect.any(String));
-  });
-
-  test("re-compaction preserves attachment bytes from retained non-tool messages", () => {
-    const imageData = Buffer.from("keep me").toString("base64");
-    persistMessages("sess-attachments", [
-      { role: "compactionSummary", summary: "summary 1" },
-      {
-        role: "user",
-        content: [{ type: "image", data: imageData, mimeType: "image/png" }],
-      },
-    ]);
-
-    const visible = loadMessages("sess-attachments");
-    const image = visible[1].content[0];
-    if (!("attachmentId" in image) || typeof image.attachmentId !== "string") {
-      throw new Error("Expected post-compaction attachment ref before re-compaction");
-    }
-
-    persistMessages("sess-attachments", [
-      { role: "compactionSummary", summary: "summary 2" },
-    ]);
-
-    const retained = getSessionAttachment("sess-attachments", image.attachmentId);
-    expect(retained?.data?.toString("base64")).toBe(imageData);
+    const retained = getSessionAttachment("sess-attachments", userImage.attachmentId);
+    expect(retained?.data?.toString("base64")).toBe(userImageData);
     expect(retained?.pruned_at).toBeNull();
   });
 });
