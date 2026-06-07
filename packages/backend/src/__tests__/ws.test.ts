@@ -39,14 +39,6 @@ function createRuntimeStub(overrides: Partial<AgentRuntime> = {}): AgentRuntime 
   const base = createBaseRuntimeStub();
   return {
     ...base.runtime,
-    prompt: bunMock(async (_content: ClientPromptContent) => {}),
-    steer: bunMock(async (_content: ClientPromptContent) => {}),
-    abort: bunMock(async () => {}),
-    setModel: bunMock(async () => {}),
-    subscribe: bunMock(() => () => {}),
-    getMessages: bunMock(async () => []),
-    isStreaming: () => false,
-    close: bunMock(async () => {}),
     ...overrides,
   };
 }
