@@ -5,7 +5,7 @@ import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
-import { createSession } from "../../session-store.js";
+import { createSession, updateActivityState } from "../../session-store.js";
 import { persistMessages } from "../../messages-store.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 
@@ -68,7 +68,7 @@ describe("session routes (top-level)", () => {
       expect(body.state.isStreaming).toBe(true);
     });
 
-    test("returns metadata-only session from DB with project_id", async () => {
+    test("returns metadata-only session from DB with project_id and activityState", async () => {
       const sessionId = "lookup-db";
       createSession(sessionId, projectId, { agentRuntimeType: "pi",});
       persistMessages(sessionId, [
@@ -85,7 +85,17 @@ describe("session routes (top-level)", () => {
       expect(body.project_id).toBe(projectId);
       expect(body.state.isStreaming).toBe(false);
       expect(body.state.messageCount).toBe(1);
+      expect(body.activityState).toBeNull();
       expect(body).not.toHaveProperty("messages");
+
+      // Verify activityState reflects server-side changes
+      updateActivityState(sessionId, "finished");
+      const res2 = await router.handle(
+        makeRequest("GET", `/api/sessions/${sessionId}`),
+        state,
+      );
+      const body2 = await res2!.json();
+      expect(body2.activityState).toBe("finished");
     });
 
     test("returns 404 for nonexistent session", async () => {
@@ -95,6 +105,7 @@ describe("session routes (top-level)", () => {
       );
       expect(res!.status).toBe(404);
     });
+
   });
 
   describe("GET /api/sessions/:sessionId/messages", () => {
