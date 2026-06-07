@@ -23,9 +23,11 @@ For where tests should live, follow [testing-structure.md](testing-structure.md)
 ### Philosophy
 
 - Tests describe **contracts** (inputs → outputs), not implementation details.
+- Prefer boundary tests that would survive an internal refactor and fail for user-visible or contract-visible regressions.
 - Use **real dependencies** where cheap — SQLite in-memory is instant, temp git repos are fast.
 - Only **mock expensive externals** (LLM calls, pi SDK sessions).
 - Do **not** add defensive compatibility layers (fallback reads, dual-schema handling, etc.) unless explicitly requested by the user.
+- When touching an area, remove or merge redundant tests instead of only adding new coverage.
 
 ## Before You Finish
 
