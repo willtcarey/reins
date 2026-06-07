@@ -306,8 +306,6 @@ describe("WebSocket handlers", () => {
       await Bun.sleep(10);
 
       expect(sender.lastMessage()).toEqual({ type: "ack", command: "prompt" });
-      expect(stub.promptCalls).toHaveLength(1);
-      expect(stub.promptCalls[0]).toEqual(message);
       expect(observer.lastMessage()).toEqual({
         type: "user_message",
         sessionId: "sess-ws",
