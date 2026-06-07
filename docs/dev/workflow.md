@@ -5,6 +5,7 @@ This is the implementation playbook. Read it before starting any code change.
 ## Before You Start
 
 - Check for a planning doc in [`docs/plans/`](../plans/) for the work you're doing. Follow it.
+- Treat files in [`docs/plans/completed/`](../plans/completed/) as historical records: do not edit completed plans for follow-up or unrelated changes; create or update an active plan or dev doc instead.
 - Read relevant [`docs/dev/`](./) docs for the area you're touching.
 - Check [`docs/tech-debt.md`](../tech-debt.md) for known issues in the area.
 
