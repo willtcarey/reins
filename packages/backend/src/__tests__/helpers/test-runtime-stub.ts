@@ -10,7 +10,7 @@
  */
 
 import type { AgentRuntime, AgentRuntimeEvent } from "../../runtimes/registry.js";
-import type { RuntimeMessage } from "../../messages-store.js";
+import type { ClientPromptContent, RuntimeMessage } from "../../messages-store.js";
 
 export interface RuntimeStubOptions {
   /** Messages returned by getMessages() */
@@ -25,17 +25,32 @@ export interface RuntimeStub {
   emit(event: AgentRuntimeEvent): void;
   /** Number of times getMessages() was called */
   getMessagesCalls: number;
+  /** Arguments passed to prompt() calls, in order */
+  promptCalls: ClientPromptContent[];
+  /** Arguments passed to steer() calls, in order */
+  steerCalls: ClientPromptContent[];
+  /** Whether abort() was called */
+  abortCalled: boolean;
 }
 
 export function createRuntimeStub(options: RuntimeStubOptions = {}): RuntimeStub {
   const { messages = [], isStreaming = false } = options;
   const listeners = new Set<(event: AgentRuntimeEvent) => void>();
   let getMessagesCalls = 0;
+  const promptCalls: ClientPromptContent[] = [];
+  const steerCalls: ClientPromptContent[] = [];
+  let abortCalled = false;
 
   const runtime: AgentRuntime = {
-    async prompt() {},
-    async steer() {},
-    async abort() {},
+    async prompt(content: ClientPromptContent) {
+      promptCalls.push(content);
+    },
+    async steer(content: ClientPromptContent) {
+      steerCalls.push(content);
+    },
+    async abort() {
+      abortCalled = true;
+    },
     async setModel() {},
     subscribe(listener: (event: AgentRuntimeEvent) => void): () => void {
       listeners.add(listener);
@@ -52,6 +67,9 @@ export function createRuntimeStub(options: RuntimeStubOptions = {}): RuntimeStub
   return {
     runtime,
     get getMessagesCalls() { return getMessagesCalls; },
+    get promptCalls() { return promptCalls; },
+    get steerCalls() { return steerCalls; },
+    get abortCalled() { return abortCalled; },
     emit(event: AgentRuntimeEvent) {
       for (const listener of listeners) listener(event);
     },

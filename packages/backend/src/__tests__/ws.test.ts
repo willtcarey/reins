@@ -1,13 +1,11 @@
-import { describe, test, expect, beforeEach, mock as bunMock } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { handleWsOpen, handleWsMessage, handleWsClose } from "../ws.js";
 import { createServerState } from "./helpers/server-state.js";
 import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "../project-store.js";
 import { createSession } from "../session-store.js";
 import { storeSessionAttachment } from "../session-attachments-store.js";
-import type { ClientPromptContent } from "../messages-store.js";
-import type { AgentRuntime } from "../runtimes/registry.js";
-import { createRuntimeStub as createBaseRuntimeStub } from "./helpers/test-runtime-stub.js";
+import { createRuntimeStub } from "./helpers/test-runtime-stub.js";
 import type { ServerState } from "../state.js";
 
 /**
@@ -35,13 +33,7 @@ function createMockWs() {
   };
 }
 
-function createRuntimeStub(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
-  const base = createBaseRuntimeStub();
-  return {
-    ...base.runtime,
-    ...overrides,
-  };
-}
+
 
 describe("WebSocket handlers", () => {
   let state: ServerState;
@@ -297,9 +289,8 @@ describe("WebSocket handlers", () => {
           height: attachment.height,
         },
       ];
-      const prompt = bunMock(async (_content: ClientPromptContent) => {});
-      const runtime = createRuntimeStub({ prompt });
-      state.sessions.set("sess-ws", { id: "sess-ws", runtime, lastActivity: 0 });
+      const stub = createRuntimeStub();
+      state.sessions.set("sess-ws", { id: "sess-ws", runtime: stub.runtime, lastActivity: 0 });
 
       const sender = createMockWs();
       const observer = createMockWs();
@@ -315,8 +306,8 @@ describe("WebSocket handlers", () => {
       await Bun.sleep(10);
 
       expect(sender.lastMessage()).toEqual({ type: "ack", command: "prompt" });
-      expect(prompt).toHaveBeenCalledTimes(1);
-      expect(prompt.mock.calls[0][0]).toEqual(message);
+      expect(stub.promptCalls).toHaveLength(1);
+      expect(stub.promptCalls[0]).toEqual(message);
       expect(observer.lastMessage()).toEqual({
         type: "user_message",
         sessionId: "sess-ws",
