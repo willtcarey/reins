@@ -7,6 +7,7 @@ import { createSession } from "../session-store.js";
 import { storeSessionAttachment } from "../session-attachments-store.js";
 import type { ClientPromptContent } from "../messages-store.js";
 import type { AgentRuntime } from "../runtimes/registry.js";
+import { createRuntimeStub as createBaseRuntimeStub } from "./helpers/test-runtime-stub.js";
 import type { ServerState } from "../state.js";
 
 /**
@@ -35,7 +36,9 @@ function createMockWs() {
 }
 
 function createRuntimeStub(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
+  const base = createBaseRuntimeStub();
   return {
+    ...base.runtime,
     prompt: bunMock(async (_content: ClientPromptContent) => {}),
     steer: bunMock(async (_content: ClientPromptContent) => {}),
     abort: bunMock(async () => {}),

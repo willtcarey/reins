@@ -3,32 +3,7 @@ import { useTestDb } from "../helpers/test-db.js";
 import { createProject } from "../../project-store.js";
 import { createSession } from "../../session-store.js";
 import { attachRuntimeBroadcastObserver } from "../../runtimes/runtime-broadcast-observer.js";
-import type { AgentRuntime, AgentRuntimeEvent } from "../../runtimes/registry.js";
-
-function createRuntimeStub() {
-  let listener: ((event: AgentRuntimeEvent) => void) | null = null;
-  const runtime: AgentRuntime = {
-    prompt: async () => {},
-    steer: async () => {},
-    abort: async () => {},
-    setModel: async () => {},
-    subscribe: (candidate) => {
-      listener = candidate;
-      return () => { listener = null; };
-    },
-    getMessages: async () => [],
-    isStreaming: () => false,
-    close: async () => {},
-  };
-
-  return {
-    runtime,
-    emit(event: AgentRuntimeEvent) {
-      if (!listener) throw new Error("Runtime listener was not attached");
-      listener(event);
-    },
-  };
-}
+import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 
 function createWsClient() {
   const sent: string[] = [];
