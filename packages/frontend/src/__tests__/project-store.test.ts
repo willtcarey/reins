@@ -4,6 +4,7 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { ProjectStore } from "../models/stores/project-store.js";
 import { TasksCollection, type TaskListItem } from "../models/tasks.js";
+import { ActivityStore } from "../models/stores/activity-store.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 
 // Mock fetch globally
@@ -32,29 +33,11 @@ function task(overrides: Partial<TaskListItem>): TaskListItem {
   };
 }
 
-function sessionResponse(sessionId: string, isStreaming: boolean): Response {
-  return jsonResponse({
-    id: sessionId,
-    project_id: 42,
-    task_id: null,
-    state: {
-      model: null,
-      thinkingLevel: "high",
-      isStreaming,
-      messageCount: 1,
-    },
-  });
-}
-
-function notFoundResponse(): Response {
-  return new Response("Session not found", { status: 404 });
-}
-
 describe("ProjectStore", () => {
   let store: ProjectStore;
 
   beforeEach(() => {
-    store = new ProjectStore(42);
+    store = new ProjectStore(42, new ActivityStore());
     restoreFetch();
   });
 
@@ -72,7 +55,7 @@ describe("ProjectStore", () => {
   test("fetchLists fetches tasks and sessions in parallel", async () => {
     const sessionIds: string[] = [];
     const tasks = [{ id: 1, project_id: 42, title: "Task 1", description: null, branch_name: "", status: "open" as const, created_at: "", updated_at: "", session_count: 0, session_ids: sessionIds, diffStats: null }];
-    const sessions = [{ id: "s1", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null }];
+    const sessions = [{ id: "s1", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null, activity_state: null }];
 
     mockFetch((url) => {
       if (url.includes("/tasks")) return jsonResponse(tasks);
@@ -128,7 +111,7 @@ describe("ProjectStore", () => {
   });
 
   test("fetchTaskSessions fetches and caches task sessions", async () => {
-    const taskSessions = [{ id: "s2", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null }];
+    const taskSessions = [{ id: "s2", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null, activity_state: null }];
 
     mockFetch((url) => {
       if (url.includes("/tasks/1/sessions")) return jsonResponse(taskSessions);
@@ -141,7 +124,7 @@ describe("ProjectStore", () => {
   });
 
   test("fetchTaskSessions skips update if data unchanged", async () => {
-    const taskSessions = [{ id: "s2", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null }];
+    const taskSessions = [{ id: "s2", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null, activity_state: null }];
     let notifyCount = 0;
 
     mockFetch(() => jsonResponse(taskSessions));
@@ -160,11 +143,11 @@ describe("ProjectStore", () => {
     let notifyCount = 0;
     store.subscribe(() => { notifyCount++; });
 
-    mockFetch(() => jsonResponse([{ id: "s1", name: "V1", created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null }]));
+    mockFetch(() => jsonResponse([{ id: "s1", name: "V1", created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null, activity_state: null }]));
     await store.fetchTaskSessions(1);
     const countAfterFirst = notifyCount;
 
-    mockFetch(() => jsonResponse([{ id: "s1", name: "V2", created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null }]));
+    mockFetch(() => jsonResponse([{ id: "s1", name: "V2", created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null, activity_state: null }]));
     await store.fetchTaskSessions(1);
     expect(notifyCount).toBeGreaterThan(countAfterFirst);
   });
@@ -217,7 +200,7 @@ describe("ProjectStore", () => {
     store.taskSessions = new Map([
       [
         7,
-        [{ id: "s-old", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null }],
+        [{ id: "s-old", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null, activity_state: null }],
       ],
     ]);
 
@@ -244,7 +227,7 @@ describe("ProjectStore", () => {
       }
       if (url === "/api/tasks/7/sessions") {
         return jsonResponse([
-          { id: "s-new", name: null, created_at: "", updated_at: "", message_count: 2, first_message: "Hello", parent_session_id: null },
+          { id: "s-new", name: null, created_at: "", updated_at: "", message_count: 2, first_message: "Hello", parent_session_id: null, activity_state: null },
         ]);
       }
       return jsonResponse({}, false);
@@ -253,103 +236,41 @@ describe("ProjectStore", () => {
     await store.fetchLists();
 
     expect(store.taskSessions.get(7)).toEqual([
-      { id: "s-new", name: null, created_at: "", updated_at: "", message_count: 2, first_message: "Hello", parent_session_id: null },
+      { id: "s-new", name: null, created_at: "", updated_at: "", message_count: 2, first_message: "Hello", parent_session_id: null, activity_state: null },
     ]);
   });
 
-  test("owns project-scoped activity and exposes tasksWithActivity", () => {
+  test("exposes activity selectors from shared ActivityStore", () => {
     store.tasks = new TasksCollection(42, [task({ id: 1, session_ids: ["s1"] })]);
 
-    store.markSessionRunning("s1");
+    // Activity is set via the shared store (ProjectsStore in production)
+    store.activityStore.setRunning("s1");
 
     expect(store.activityForSession("s1")).toBe("running");
     expect(store.tasksWithActivity.activityForId(1)).toBe("running");
     expect(store.activityState).toBe("running");
   });
 
-  test("markSessionFinished clears suppressUnread and delegate sessions", () => {
-    store.markSessionRunning("viewed");
-    store.markSessionFinished("viewed", { suppressUnread: true });
+  test("activityState derives running over finished", () => {
+    store.tasks = new TasksCollection(42, [task({ id: 1, session_ids: ["s1"] })]);
+    store.sessions = [{ id: "s2", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null, activity_state: null }];
 
-    store.trackDelegateSession("delegate");
-    store.markSessionRunning("delegate");
-    store.markSessionFinished("delegate");
+    store.activityStore.setRunning("s1");
+    store.activityStore.setFinished("s2");
 
-    expect(store.activityForSession("viewed")).toBeUndefined();
-    expect(store.activityForSession("delegate")).toBeUndefined();
+    // Running wins
+    expect(store.activityState).toBe("running");
+
+    store.activityStore.clearActivity("s1");
+    // Now only finished remains
+    expect(store.activityState).toBe("finished");
   });
 
-  test("closed task sessions suppress and clear activity", () => {
+  test("activityState excludes closed task sessions", () => {
     store.tasks = new TasksCollection(42, [task({ status: "closed", session_ids: ["s1"] })]);
+    store.activityStore.setRunning("s1");
 
-    store.markSessionRunning("s1");
-    expect(store.activityForSession("s1")).toBeUndefined();
-
-    store.tasks = new TasksCollection(42, [task({ status: "open", session_ids: ["s1"] })]);
-    store.markSessionRunning("s1");
-    expect(store.activityForSession("s1")).toBe("running");
-
-    store.tasks = new TasksCollection(42, [task({ status: "closed", session_ids: ["s1"] })]);
-    store.clearActivityForClosedTasks();
-    expect(store.activityForSession("s1")).toBeUndefined();
-  });
-
-  test("fetchLists clears activity for sessions whose task is now closed", async () => {
-    store.markSessionRunning("s1");
-
-    mockFetch((url) => {
-      if (url === "/api/projects/42/tasks") {
-        return jsonResponse([task({ status: "closed", session_ids: ["s1"] })]);
-      }
-      if (url === "/api/projects/42/sessions") return jsonResponse([]);
-      if (url === "/api/projects/42/skills") return jsonResponse({ skills: [] });
-      return jsonResponse({}, false);
-    });
-
-    await store.fetchLists();
-
-    expect(store.activityForSession("s1")).toBeUndefined();
-  });
-
-  test("reconcileRunningActivity converts ended background sessions to finished", async () => {
-    store.markSessionRunning("background");
-    mockFetch((url) => url === "/api/sessions/background"
-      ? sessionResponse("background", false)
-      : notFoundResponse());
-
-    await store.reconcileRunningActivity(null);
-
-    expect(store.activityForSession("background")).toBe("finished");
-  });
-
-  test("reconcileRunningActivity clears ended active sessions", async () => {
-    store.markSessionRunning("active");
-    mockFetch((url) => url === "/api/sessions/active"
-      ? sessionResponse("active", false)
-      : notFoundResponse());
-
-    await store.reconcileRunningActivity("active");
-
-    expect(store.activityForSession("active")).toBeUndefined();
-  });
-
-  test("reconcileRunningActivity keeps sessions that are still streaming", async () => {
-    store.markSessionRunning("still-running");
-    mockFetch((url) => url === "/api/sessions/still-running"
-      ? sessionResponse("still-running", true)
-      : notFoundResponse());
-
-    await store.reconcileRunningActivity(null);
-
-    expect(store.activityForSession("still-running")).toBe("running");
-  });
-
-  test("reconcileRunningActivity clears deleted sessions", async () => {
-    store.markSessionRunning("deleted");
-    mockFetch(() => notFoundResponse());
-
-    await store.reconcileRunningActivity(null);
-
-    expect(store.activityForSession("deleted")).toBeUndefined();
+    // Closed task sessions are excluded from activityState derivation
+    expect(store.activityState).toBeUndefined();
   });
 });

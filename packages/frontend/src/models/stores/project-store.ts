@@ -4,12 +4,16 @@
  * Holds the task collection and session list data for a single project. One instance per project,
  * lazily created by ProjectsStore.
  *
+ * Activity state is NOT owned here — the shared ActivityStore in ProjectsStore is the single
+ * source of truth. ProjectStore reads from it and provides a filtered view (activityMap) for
+ * rendering session-level dots.
+ *
  * Components subscribe via `subscribe()` and read public state directly.
  */
 
-import type { InjectedSkillInfo, SessionData, SessionListItem } from "../ws-client.js";
+import type { InjectedSkillInfo, SessionListItem } from "../ws-client.js";
 import { TasksCollection, type TaskListItem } from "../tasks.js";
-import { ActivityStore, type ActivityFinishOptions, type ActivityState } from "./activity-store.js";
+import type { ActivityStore, ActivityState } from "./activity-store.js";
 
 export type ProjectStoreListener = () => void;
 
@@ -27,13 +31,17 @@ export class ProjectStore {
 
   // ---- Private state --------------------------------------------------------
 
-  private _activity = new ActivityStore();
+  /**
+   * Reference to the shared ActivityStore owned by ProjectsStore.
+   * Read-only — all activity mutations go through ProjectsStore.
+   */
+  private _activity: ActivityStore;
   private _listeners = new Set<ProjectStoreListener>();
 
-  constructor(projectId: number) {
+  constructor(projectId: number, activity: ActivityStore) {
     this.projectId = projectId;
+    this._activity = activity;
     this.tasks = TasksCollection.empty(projectId);
-    this._activity.subscribe(() => this.notify());
   }
 
   // ---- Subscription ---------------------------------------------------------
@@ -47,8 +55,21 @@ export class ProjectStore {
     for (const fn of this._listeners) fn();
   }
 
-  // ---- Activity selectors/actions ------------------------------------------
+  dispose(): void {
+    // no-op — ProjectStore no longer subscribes to ActivityStore
+  }
 
+  // ---- Activity selectors (read-only) --------------------------------------
+
+  /**
+   * Reference to the shared ActivityStore. Exposed for testing and for
+   * direct reads. All mutations should go through ProjectsStore.
+   */
+  get activityStore(): ActivityStore {
+    return this._activity;
+  }
+
+  /** Activity states for sessions in this project. */
   get activityMap(): Map<string, ActivityState> {
     return this._activity.activityMap;
   }
@@ -65,14 +86,11 @@ export class ProjectStore {
     return this._activity.getActivity(sessionId);
   }
 
-  trackDelegateSession(sessionId: string): void {
-    this._activity.trackDelegateSession(sessionId);
-  }
-
-  markSessionViewed(sessionId: string): void {
-    this._activity.markSessionViewed(sessionId);
-  }
-
+  /**
+   * Derive the project-level activity state from per-session activity.
+   * Running wins over finished. Only considers sessions belonging to this
+   * project (in session lists or task lists).
+   */
   get activityState(): ActivityState | undefined {
     let hasFinished = false;
     const merge = (state: ActivityState | undefined) => {
@@ -97,52 +115,6 @@ export class ProjectStore {
     return hasFinished ? "finished" : undefined;
   }
 
-  markSessionRunning(sessionId: string): void {
-    if (this.tasks.hasClosedTaskSession(sessionId)) {
-      this._activity.clearActivity(sessionId);
-      return;
-    }
-    this._activity.setRunning(sessionId);
-  }
-
-  markSessionFinished(sessionId: string, options: ActivityFinishOptions = {}): void {
-    if (this.tasks.hasClosedTaskSession(sessionId)) {
-      this._activity.clearActivity(sessionId);
-      return;
-    }
-    this._activity.setFinished(sessionId, options);
-  }
-
-  clearActivityForClosedTasks(): void {
-    this._activity.clearSessions(this.tasks.closedTaskSessionIds);
-  }
-
-  /**
-   * Reconcile locally-running activity with backend session streaming state.
-   * Called after reconnect, when an agent_end event may have been missed.
-   */
-  async reconcileRunningActivity(activeSessionId: string | null = null): Promise<void> {
-    const runningSessionIds = this._activity.runningSessionIds;
-    await Promise.all(runningSessionIds.map(async (sessionId) => {
-      const session = await this.fetchSession(sessionId);
-      if (session?.state.isStreaming) return;
-
-      if (!session || sessionId === activeSessionId) {
-        this._activity.clearActivity(sessionId);
-        return;
-      }
-
-      this.markSessionFinished(sessionId);
-    }));
-  }
-
-  private async fetchSession(sessionId: string): Promise<SessionData | null> {
-    const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
-    if (resp.status === 404) return null;
-    if (!resp.ok) throw new Error(`Failed to fetch session ${sessionId}: HTTP ${resp.status}`);
-    return await resp.json();
-  }
-
   // ---- Actions --------------------------------------------------------------
 
   /**
@@ -163,7 +135,10 @@ export class ProjectStore {
         const tasks: TaskListItem[] = await tasksResp.json();
         this.tasks = new TasksCollection(this.projectId, tasks);
       }
-      if (sessionsResp.ok) this.sessions = await sessionsResp.json();
+      if (sessionsResp.ok) {
+        const sessions: SessionListItem[] = await sessionsResp.json();
+        this.sessions = sessions;
+      }
       if (skillsResp.ok) {
         const body = await skillsResp.json().catch(() => null);
         this.skills = Array.isArray(body?.skills) ? body.skills : [];
@@ -173,7 +148,6 @@ export class ProjectStore {
           [...this.taskSessions.keys()].map((taskId) => this.fetchTaskSessions(taskId)),
         );
       }
-      this.clearActivityForClosedTasks();
       this.loaded = true;
     } catch {
       // silent — leave loaded as-is (false if first attempt)

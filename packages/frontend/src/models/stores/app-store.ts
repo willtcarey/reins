@@ -65,6 +65,9 @@ export class AppStore {
       if (connected) {
         // Always refresh the project list on (re)connect
         this.projectsStore.fetchProjects();
+        // Fetch server-side activity snapshot so activity indicators appear
+        // immediately — even for projects not yet expanded in the sidebar.
+        void this.projectsStore.fetchActivitySnapshot();
         // Refresh loaded project stores so sidebar data and activity catch up
         // on events missed while disconnected.
         void this.projectsStore.handleReconnect(this._activeSession.sessionId || null);
@@ -115,9 +118,18 @@ export class AppStore {
       if (sessionId && event.type === "agent_start") {
         this.projectsStore.handleAgentStart(projectId, sessionId);
       } else if (sessionId && event.type === "agent_end") {
+        const isActive = sessionId === this._activeSession.sessionId;
         this.projectsStore.handleAgentEnd(projectId, sessionId, {
-          suppressUnread: sessionId === this._activeSession.sessionId,
+          suppressUnread: isActive,
         });
+        // If the session we're viewing just finished, immediately fire the
+        // mark-as-viewed request so the server-side activity_state is cleared
+        // (and broadcast to other tabs). Without this, the server still has
+        // 'finished' for this session, so other tabs and refreshes show it
+        // as unread despite the user watching it complete.
+        if (isActive) {
+          void this.markActiveSessionViewed();
+        }
       }
 
       // Only refresh diff for the session we're viewing

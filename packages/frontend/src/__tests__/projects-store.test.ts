@@ -279,22 +279,24 @@ describe("ProjectsStore per-project data", () => {
     expect(count).toBe(countBefore);
   });
 
-  test("activityForSession reads activity from the target project store", () => {
-    store.getStore(1).markSessionRunning("s1");
-    store.getStore(2).markSessionRunning("s2");
-    store.getStore(2).markSessionFinished("s2");
+  test("activityForSession reads from shared ActivityStore (works for all projects)", () => {
+    store.setRunning("s1", 1);
+    store.setRunning("s2", 2);
+    store.setFinished("s2", 2);
 
     expect(store.activityForSession(1, "s1")).toBe("running");
     expect(store.activityForSession(2, "s2")).toBe("finished");
-    expect(store.activityForSession(1, "s2")).toBeUndefined();
-    expect(store.activityForSession(99, "s1")).toBeUndefined();
+    // Activity is globally visible — projectId is just for the session→project mapping
+    expect(store.activityForSession(1, "s2")).toBe("finished");
+    // Works even for unloaded projects
+    expect(store.activityForSession(99, "s1")).toBe("running");
   });
 
-  test("activityForProject resolves project header activity", () => {
-    store.getStore(1).markSessionRunning("s1");
-    store.getStore(1).markSessionRunning("s2");
-    store.getStore(1).markSessionFinished("s2");
-    store.getStore(2).markSessionRunning("s3");
+  test("activityForProject resolves project header activity via WS events", () => {
+    store.handleAgentStart(1, "s1");
+    store.handleAgentStart(1, "s2");
+    store.handleAgentEnd(1, "s2");
+    store.handleAgentStart(2, "s3");
 
     expect(store.activityForProject(1)).toBe("running");
     expect(store.activityForProject(2)).toBe("running");
@@ -302,10 +304,10 @@ describe("ProjectsStore per-project data", () => {
   });
 
   test("activitySummary aggregates across project stores", () => {
-    store.getStore(1).markSessionRunning("s1");
-    store.getStore(1).markSessionRunning("s2");
-    store.getStore(1).markSessionFinished("s2");
-    store.getStore(2).markSessionRunning("s3");
+    store.setRunning("s1", 1);
+    store.setRunning("s2", 1);
+    store.setFinished("s2", 1);
+    store.setRunning("s3", 2);
 
     expect(store.activitySummary).toEqual({ running: 2, finished: 1 });
   });
@@ -327,25 +329,21 @@ describe("ProjectsStore per-project data", () => {
     expect(clearActivityForClosedTasks).toHaveBeenCalledWith(42);
   });
 
-  test("handleReconnect refreshes loaded data, clears closed activity, and reconciles running sessions", async () => {
+  test("handleReconnect refreshes loaded data and clears closed activity", async () => {
     const calls: string[] = [];
     store.refreshAll = mock(async () => { calls.push("refreshAll"); });
     store.clearActivityForClosedTasks = mock(() => { calls.push("clearActivityForClosedTasks"); });
-    store.reconcileRunningActivity = mock(async (activeSessionId) => {
-      calls.push(`reconcileRunningActivity:${activeSessionId}`);
-    });
 
     await store.handleReconnect("active");
 
     expect(calls).toEqual([
       "refreshAll",
       "clearActivityForClosedTasks",
-      "reconcileRunningActivity:active",
     ]);
   });
 
   test("handleTaskUpdated refreshes existing event-created stores and clears closed activity", async () => {
-    store.getStore(42).markSessionRunning("s1");
+    store.setRunning("s1", 42);
 
     mockFetch((url) => {
       if (url === "/api/projects/42/tasks") {
@@ -356,10 +354,12 @@ describe("ProjectsStore per-project data", () => {
       return jsonResponse({}, false);
     });
 
+    // handleTaskUpdated only acts if the store already exists — create it
+    store.getStore(42);
     await store.handleTaskUpdated(42);
 
     expect(store.getStore(42).loaded).toBe(true);
-    expect(store.getStore(42).activityForSession("s1")).toBeUndefined();
+    expect(store.activityForSession(42, "s1")).toBeUndefined();
   });
 
   test("handleTaskUpdated is a no-op if the project store does not exist", async () => {
@@ -373,5 +373,337 @@ describe("ProjectsStore per-project data", () => {
 
     expect(fetchCount).toBe(0);
     expect(store.peekStore(99)).toBeUndefined();
+  });
+
+  test("fetchActivitySnapshot populates activity without creating stores", async () => {
+    mockFetch((url) => {
+      if (url === "/api/activity") {
+        return jsonResponse([
+          { id: "s1", activity_state: "running", project_id: 1 },
+          { id: "s2", activity_state: "finished", project_id: 2 },
+        ]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    await store.fetchActivitySnapshot();
+
+    // Stores should NOT be created — only lightweight tracker populated
+    expect(store.peekStore(1)).toBeUndefined();
+    expect(store.peekStore(2)).toBeUndefined();
+    // But activityForProject should still return the right state
+    expect(store.activityForProject(1)).toBe("running");
+    expect(store.activityForProject(2)).toBe("finished");
+  });
+
+  test("fetchActivitySnapshot running wins over finished", async () => {
+    mockFetch((url) => {
+      if (url === "/api/activity") {
+        return jsonResponse([
+          { id: "s1", activity_state: "finished", project_id: 1 },
+          { id: "s2", activity_state: "running", project_id: 1 },
+        ]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    await store.fetchActivitySnapshot();
+
+    // Project 1 has both running and finished sessions — running wins
+    expect(store.activityForProject(1)).toBe("running");
+  });
+
+  test("fetchActivitySnapshot is a no-op for empty snapshot", async () => {
+    mockFetch((url) => {
+      if (url === "/api/activity") {
+        return jsonResponse([]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    await store.fetchActivitySnapshot();
+
+    expect(store.activityForProject(1)).toBeUndefined();
+  });
+
+  test("fetchActivitySnapshot handles fetch failure gracefully", async () => {
+    mockFetch(() => { throw new Error("network"); });
+
+    // Should not throw
+    await store.fetchActivitySnapshot();
+
+    expect(store.activityForProject(1)).toBeUndefined();
+  });
+
+  test("activityForProject reflects WS event updates via handleAgentStart", async () => {
+    // Snapshot says project 1 is finished
+    mockFetch((url) => {
+      if (url === "/api/activity") {
+        return jsonResponse([
+          { id: "s1", activity_state: "finished", project_id: 1 },
+        ]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    await store.fetchActivitySnapshot();
+    expect(store.activityForProject(1)).toBe("finished");
+
+    // WS event promotes to running
+    restoreFetch();
+    mockFetch(() => jsonResponse([]));
+    store.handleAgentStart(1, "s2");
+
+    expect(store.activityForProject(1)).toBe("running");
+  });
+
+  test("activityForProject reflects WS event updates via handleAgentEnd", async () => {
+    mockFetch((url) => {
+      if (url === "/api/activity") {
+        return jsonResponse([
+          { id: "s1", activity_state: "running", project_id: 1 },
+        ]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    await store.fetchActivitySnapshot();
+    expect(store.activityForProject(1)).toBe("running");
+
+    // WS event demotes to finished
+    restoreFetch();
+    mockFetch(() => jsonResponse([]));
+    store.handleAgentEnd(1, "s1");
+
+    expect(store.activityForProject(1)).toBe("finished");
+  });
+
+  test("activitySummary includes unloaded projects from snapshot", async () => {
+    mockFetch((url) => {
+      if (url === "/api/activity") {
+        return jsonResponse([
+          { id: "s1", activity_state: "running", project_id: 1 },
+          { id: "s2", activity_state: "finished", project_id: 2 },
+        ]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    await store.fetchActivitySnapshot();
+
+    // No stores loaded, but summary should still count
+    expect(store.activitySummary).toEqual({ running: 1, finished: 1 });
+  });
+
+  test("activitySummary does not double-count loaded projects", async () => {
+    // Snapshot says project 1 has a running session
+    mockFetch((url) => {
+      if (url === "/api/activity") {
+        return jsonResponse([
+          { id: "s1", activity_state: "running", project_id: 1 },
+        ]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    await store.fetchActivitySnapshot();
+
+    // Load the store — the loaded store's activitySummary also sees the running session
+    restoreFetch();
+    mockFetch(() => jsonResponse([]));
+    await store.ensureLoaded(1);
+    store.setRunning("s1", 1);
+
+    // Should count once, not twice
+    expect(store.activitySummary).toEqual({ running: 1, finished: 0 });
+  });
+
+  // ---- setRunning / setFinished with closed-task guard ----------------------
+
+  test("setRunning applies closed-task guard when store is loaded", async () => {
+    // Load the store with a closed task
+    mockFetch((url) => {
+      if (url === "/api/projects/42/tasks") {
+        return jsonResponse([task({ status: "closed", session_ids: ["s1"] })]);
+      }
+      if (url === "/api/projects/42/sessions") return jsonResponse([]);
+      if (url === "/api/projects/42/skills") return jsonResponse({ skills: [] });
+      return jsonResponse({}, false);
+    });
+
+    await store.ensureLoaded(42);
+
+    // Attempt to set running for a closed-task session — should be suppressed
+    store.setRunning("s1", 42);
+    expect(store.activityForSession(42, "s1")).toBeUndefined();
+  });
+
+  test("setRunning works without guard when store is not loaded", () => {
+    // No store loaded for project 99
+    store.setRunning("s99", 99);
+    expect(store.activityForSession(99, "s99")).toBe("running");
+    // And no store was created
+    expect(store.peekStore(99)).toBeUndefined();
+  });
+
+  test("setFinished applies closed-task guard when store is loaded", async () => {
+    mockFetch((url) => {
+      if (url === "/api/projects/42/tasks") {
+        return jsonResponse([task({ status: "closed", session_ids: ["s1"] })]);
+      }
+      if (url === "/api/projects/42/sessions") return jsonResponse([]);
+      if (url === "/api/projects/42/skills") return jsonResponse({ skills: [] });
+      return jsonResponse({}, false);
+    });
+
+    await store.ensureLoaded(42);
+
+    store.setFinished("s1", 42);
+    expect(store.activityForSession(42, "s1")).toBeUndefined();
+  });
+
+  test("setFinished works without guard when store is not loaded", () => {
+    store.setFinished("s99", 99);
+    expect(store.activityForSession(99, "s99")).toBe("finished");
+  });
+
+  // ---- markSessionViewed (moved from ProjectStore) --------------------------
+
+  test("markSessionViewed clears finished activity optimistically", async () => {
+    store.setRunning("s1", 1);
+    store.setFinished("s1", 1);
+
+    mockFetch(() => jsonResponse({ ok: true }));
+
+    // Start the request but don't await — local state should already be updated
+    const promise = store.markSessionViewed(1, "s1");
+    expect(store.activityForSession(1, "s1")).toBeUndefined();
+
+    await promise;
+    expect(store.activityForSession(1, "s1")).toBeUndefined();
+  });
+
+  test("markSessionViewed rolls back to finished if the server request fails", async () => {
+    store.setRunning("s1", 1);
+    store.setFinished("s1", 1);
+
+    mockFetch(() => new Response("fail", { status: 500 }));
+
+    await store.markSessionViewed(1, "s1");
+
+    // Should be restored to finished so reconnect reconciles
+    expect(store.activityForSession(1, "s1")).toBe("finished");
+  });
+
+  test("markSessionViewed rolls back on network error", async () => {
+    store.setRunning("s1", 1);
+    store.setFinished("s1", 1);
+
+    mockFetch(() => { throw new Error("network"); });
+
+    await store.markSessionViewed(1, "s1");
+
+    expect(store.activityForSession(1, "s1")).toBe("finished");
+  });
+
+  test("markSessionViewed is a no-op when activity is not finished", async () => {
+    store.setRunning("s1", 1);
+
+    mockFetch(() => jsonResponse({ ok: true }));
+
+    await store.markSessionViewed(1, "s1");
+
+    // Running activity stays — only finished gets cleared
+    expect(store.activityForSession(1, "s1")).toBe("running");
+  });
+
+  test("markSessionViewed works for unloaded projects", async () => {
+    store.setFinished("s99", 99);
+
+    mockFetch(() => jsonResponse({ ok: true }));
+
+    await store.markSessionViewed(99, "s99");
+
+    expect(store.activityForSession(99, "s99")).toBeUndefined();
+  });
+
+  // ---- trackDelegateSession (moved from ProjectStore) -----------------------
+
+  test("trackDelegateSession suppresses activity on completion", () => {
+    store.trackDelegateSession("delegate-1");
+    store.setRunning("delegate-1", 1);
+    store.setFinished("delegate-1", 1);
+
+    expect(store.activityForSession(1, "delegate-1")).toBeUndefined();
+  });
+
+  // ---- clearActivityForClosedTasks (consolidated) --------------------------
+
+  test("clearActivityForClosedTasks clears for specific project", async () => {
+    mockFetch((url) => {
+      if (url === "/api/projects/42/tasks") {
+        return jsonResponse([task({ status: "closed", session_ids: ["s1"] })]);
+      }
+      if (url === "/api/projects/42/sessions") return jsonResponse([]);
+      if (url === "/api/projects/42/skills") return jsonResponse({ skills: [] });
+      return jsonResponse({}, false);
+    });
+
+    await store.ensureLoaded(42);
+    store.setRunning("s1", 42);
+    // s1 was set running but the ensureLoaded already cleared it via the guard
+    // Let's set it again to verify clearActivityForClosedTasks works
+    store.activityStore.setRunning("s1");
+    expect(store.activityForSession(42, "s1")).toBe("running");
+
+    store.clearActivityForClosedTasks(42);
+    expect(store.activityForSession(42, "s1")).toBeUndefined();
+  });
+
+  test("clearActivityForClosedTasks clears for all projects when no projectId given", async () => {
+    mockFetch((url) => {
+      if (url === "/api/projects/1/tasks") return jsonResponse([task({ id: 1, project_id: 1, status: "closed", session_ids: ["s1"] })]);
+      if (url === "/api/projects/2/tasks") return jsonResponse([task({ id: 1, project_id: 2, status: "closed", session_ids: ["s2"] })]);
+      if (url.includes("/sessions")) return jsonResponse([]);
+      if (url.includes("/skills")) return jsonResponse({ skills: [] });
+      return jsonResponse({}, false);
+    });
+
+    await store.ensureLoaded(1);
+    await store.ensureLoaded(2);
+
+    store.activityStore.setRunning("s1");
+    store.activityStore.setRunning("s2");
+
+    store.clearActivityForClosedTasks();
+
+    expect(store.activityForSession(1, "s1")).toBeUndefined();
+    expect(store.activityForSession(2, "s2")).toBeUndefined();
+  });
+
+  // ---- handleAgentStart / handleAgentEnd use setRunning / setFinished -------
+
+  test("handleAgentStart delegates to setRunning", () => {
+    store.handleAgentStart(1, "s1");
+    expect(store.activityForProject(1)).toBe("running");
+    // Does NOT create a ProjectStore
+    expect(store.peekStore(1)).toBeUndefined();
+  });
+
+  test("handleAgentEnd delegates to setFinished", async () => {
+    const refresh = mock(async () => {});
+    const clearActivityForClosedTasks = mock(() => {});
+    store.refresh = refresh;
+    store.clearActivityForClosedTasks = clearActivityForClosedTasks;
+
+    store.handleAgentStart(42, "s1");
+    store.handleAgentEnd(42, "s1", { suppressUnread: false });
+
+    expect(store.activityForSession(42, "s1")).toBe("finished");
+
+    await new Promise((resolve) => setTimeout(resolve, 510));
+
+    expect(refresh).toHaveBeenCalledWith(42);
+    expect(clearActivityForClosedTasks).toHaveBeenCalledWith(42);
   });
 });

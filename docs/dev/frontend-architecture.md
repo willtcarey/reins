@@ -186,15 +186,19 @@ Views access DiffStore through `store.diffStore` as a read-only surface.
 
 ### ProjectsStore (`models/stores/projects-store.ts`)
 
-Public AppStore sub-store for project-domain UI. Manages the project list, project CRUD, lazily-created `ProjectStore` instances, cross-project activity selectors/event helpers, and project-domain reconnect catch-up. Sidebar and quick-open may read this store directly for project concerns: `activityForProject(projectId)` for project header dots, `activityForSession(projectId, sessionId)` for session indicators, and `activitySummary` for shell-level badge counts.
+Public AppStore sub-store for project-domain UI. Manages the project list, project CRUD, lazily-created `ProjectStore` instances, and **all activity state management**. Owns a single shared `ActivityStore` — the single source of truth for session activity across all projects. Provides:
+- **Activity mutations** — `setRunning()`, `setFinished()`, `markSessionViewed()`, `trackDelegateSession()`, `applyServerState()`, `clearActivityForClosedTasks()` (all with closed-task guards)
+- **Activity selectors** — `activityForProject(projectId)`, `activityForSession(projectId, sessionId)`, `activitySummary`
+- **WS event routing** — `handleAgentStart()`, `handleAgentEnd()`, `handleReconnect()`, `handleTaskUpdated()`, `handleSessionCreated()`
+- **Activity snapshot** — `fetchActivitySnapshot()` for initial page-load reconciliation
 
 ### ProjectStore (`models/stores/project-store.ts`)
 
-One instance per project, lazily created by `ProjectsStore`. Holds a data-only `TasksCollection`, session list, task session sublists, task mutations, and one private project-scoped `ActivityStore`. It exposes semantic activity methods/selectors (`markSessionRunning`, `markSessionFinished`, `markSessionViewed`, `activityForSession`, `tasksWithActivity`, `activityMap`, and `activityState`) so callers do not reach into raw activity internals. Task/list fetches clear activity for sessions on closed tasks, and reconnect reconciliation fetches session detail for locally-running sessions in this project.
+One instance per project, lazily created by `ProjectsStore`. Holds a data-only `TasksCollection`, session list, task session sublists, and task mutations. Provides **read-only activity selectors** (`activityForSession`, `tasksWithActivity`, `activityMap`, `activityState`, `activitySummary`) backed by the shared `ActivityStore`. During `fetchLists()` and `fetchTaskSessions()`, applies server-authoritative `activity_state` from session responses. All activity mutations are handled by `ProjectsStore`.
 
 ### ActivityStore (`models/stores/activity-store.ts`)
 
-Owned by `ProjectStore`. Manages raw per-session notification state (`sessionId → running | finished`), delegate-session tracking, viewed/cleared transitions, and the set of locally-running session ids for one project. It does not know about project ids, project collections, or task data; `ProjectStore` is responsible for combining raw activity with task/session state and for closed-task/reconnect cleanup.
+Owned by `ProjectsStore` (shared across all projects). Manages raw per-session notification state (`sessionId → running | finished`), session-to-project mapping, delegate-session tracking, viewed/cleared transitions, and the set of locally-running session ids. Pure state container — no business logic. `ProjectsStore` is the single entry point for all activity mutations (`setRunning`, `setFinished`, `markSessionViewed`, etc.).
 
 ### QuickOpenStore (`models/stores/quick-open-store.ts`)
 
@@ -275,7 +279,7 @@ The client provides `onConnection(cb)` and `onEvent(cb)` hooks. AppStore is the 
 | WS Event | Store Reaction |
 |---|---|
 | `agent_start` | Route to the event project's activity store and mark the session running |
-| `agent_end` | Route to `ProjectsStore.handleAgentEnd`; mark open sessions finished unless `suppressUnread` is set; clear delegate/closed-task sessions; refetch task list; refresh diff |
+| `agent_end` | Route to `ProjectsStore.handleAgentEnd`; mark open sessions finished unless `suppressUnread` is set; if the active session just finished, fire `markActiveSessionViewed()` to clear server-side activity state and broadcast to other tabs; clear delegate/closed-task sessions; refetch task list; refresh diff |
 | `task_updated` | Refetch that project store if it exists and clear activity for sessions on closed tasks |
 | `session_updated` | Refetch the active session (if selected) and refresh project lists |
 | `tool_execution_end` (file-modifying) | Refresh diff |

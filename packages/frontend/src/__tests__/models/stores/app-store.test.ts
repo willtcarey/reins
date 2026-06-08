@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { AppStore } from "../../../models/stores/app-store.js";
 import { StubClient } from "../../helpers/stub-client.js";
+import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 
 describe("AppStore activity event routing", () => {
   let client: StubClient;
@@ -18,12 +19,14 @@ describe("AppStore activity event routing", () => {
   test("routes agent activity events to the event project store", () => {
     client.fireEvent("s1", 42, { type: "agent_start" });
 
-    const projectStore = store.projectsStore.peekStore(42)!;
-    expect(projectStore.activityForSession("s1")).toBe("running");
+    // Activity is tracked via shared ActivityStore — works even without a loaded ProjectStore
+    expect(store.projectsStore.activityForSession(42, "s1")).toBe("running");
+    // handleAgentStart does NOT create a ProjectStore
+    expect(store.projectsStore.peekStore(42)).toBeUndefined();
 
     client.fireEvent("s1", 42, { type: "agent_end" });
 
-    expect(projectStore.activityForSession("s1")).toBe("finished");
+    expect(store.projectsStore.activityForSession(42, "s1")).toBe("finished");
     expect(store.projectsStore.peekStore(7)).toBeUndefined();
   });
 
@@ -85,6 +88,75 @@ describe("AppStore activity event routing", () => {
     });
 
     expect(activeSession.refreshSession).toHaveBeenCalledTimes(1);
+  });
+
+  test("markActiveSessionViewed delegates to markSessionViewed on projects store", async () => {
+    const activeSession = store["_activeSession"];
+    activeSession.sessionId = "s1";
+    Object.defineProperty(activeSession, "projectId", { value: 42 });
+
+    store.projectsStore.setRunning("s1", 42);
+    store.projectsStore.setFinished("s1", 42);
+
+    mockFetch(() => Response.json({ ok: true }));
+
+    store.markActiveSessionViewed();
+
+    // Activity should be cleared (optimistic update happens synchronously)
+    expect(store.projectsStore.activityForSession(42, "s1")).toBeUndefined();
+  });
+
+  test("fires mark-as-viewed request when active session finishes while being viewed", async () => {
+    const activeSession = store["_activeSession"];
+    activeSession.sessionId = "s1";
+    Object.defineProperty(activeSession, "projectId", { value: 42 });
+
+    // Pre-populate the project store
+    const projectStore = store.projectsStore.getStore(42);
+
+    let capturedUrl: string | undefined;
+    mockFetch((url) => {
+      capturedUrl = url;
+      return Response.json({ ok: true });
+    });
+
+    try {
+      // Session starts running
+      client.fireEvent("s1", 42, { type: "agent_start" });
+      expect(projectStore.activityForSession("s1")).toBe("running");
+
+      // Session ends while being viewed — should suppress local unread AND fire server request
+      client.fireEvent("s1", 42, { type: "agent_end" });
+
+      // Locally, suppressUnread keeps activity cleared (no finished indicator)
+      expect(projectStore.activityForSession("s1")).toBeUndefined();
+
+      // Should have fired the mark-as-viewed request to clear server-side state
+      expect(capturedUrl).toBeDefined();
+      expect(capturedUrl).toContain("/api/sessions/s1/activity");
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  test("does not fire mark-as-viewed for background session agent_end", async () => {
+    let fetchCalled = false;
+    mockFetch(() => {
+      fetchCalled = true;
+      return Response.json({ ok: true });
+    });
+
+    try {
+      // Background session ends — should NOT fire mark-as-viewed
+      client.fireEvent("bg", 42, { type: "agent_end" });
+
+      // Give the handleAgentEnd setTimeout a tick to settle
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(fetchCalled).toBe(false);
+    } finally {
+      restoreFetch();
+    }
   });
 
 });

@@ -1,9 +1,9 @@
 /**
  * Activity Store
  *
- * Project-scoped raw per-session notification state. ProjectStore owns one
- * ActivityStore and combines it with that project's task/session data for
- * UI-facing selectors and closed-task cleanup.
+ * Cross-project per-session notification state. ProjectsStore owns one
+ * ActivityStore as the single source of truth for all session activity.
+ * Maintains both a session-level map and a lightweight per-project summary.
  */
 
 /** Activity state for a session/task: running, finished, or absent (no entry). */
@@ -15,11 +15,25 @@ export interface ActivityFinishOptions {
 
 export type ActivityStoreListener = () => void;
 
+/** Merge two activity states: running wins over finished. */
+function mergeActivity(a: ActivityState | undefined, b: ActivityState | undefined): ActivityState | undefined {
+  if (a === "running" || b === "running") return "running";
+  if (a === "finished" || b === "finished") return "finished";
+  return undefined;
+}
+
 export class ActivityStore {
   private _activityStates = new Map<string, ActivityState>();
   private _activityMapCache: Map<string, ActivityState> | null = null;
   private _delegateSessions = new Set<string>();
   private _listeners = new Set<ActivityStoreListener>();
+
+  /**
+   * Maps session IDs to their project IDs. Maintained by applyServerState
+   * and setProjectForSession. Used to derive per-project activity on the
+   * fly from the single source of truth (_activityStates).
+   */
+  private _sessionProject = new Map<string, number>();
 
   subscribe(fn: ActivityStoreListener): () => void {
     this._listeners.add(fn);
@@ -68,6 +82,20 @@ export class ActivityStore {
     return this._activityStates.size > 0;
   }
 
+  /**
+   * Activity state for a project header. Derived on the fly from
+   * _activityStates + _sessionProject — no cached state to drift.
+   */
+  activityForProject(projectId: number): ActivityState | undefined {
+    let result: ActivityState | undefined;
+    for (const [sessionId, project] of this._sessionProject) {
+      if (project !== projectId) continue;
+      const state = this._activityStates.get(sessionId);
+      result = mergeActivity(result, state);
+    }
+    return result;
+  }
+
   trackDelegateSession(sessionId: string): void {
     this._delegateSessions.add(sessionId);
   }
@@ -92,6 +120,39 @@ export class ActivityStore {
     this._activityStates.set(sessionId, "finished");
     this._activityMapCache = null;
     this.notify();
+  }
+
+  /**
+   * Apply a server-authoritative activity state update (from DB or broadcast).
+   * Synchronizes local state to match the server value. If a projectId is
+   * provided, records the session→project mapping used to derive per-project
+   * activity.
+   */
+  applyServerState(sessionId: string, serverState: "running" | "finished" | null, projectId?: number): void {
+    const current = this._activityStates.get(sessionId);
+    const next = serverState ?? undefined;
+    if (current === next && projectId == null) return;
+
+    if (serverState === null) {
+      this._deleteActivityState(sessionId);
+    } else {
+      this._activityStates.set(sessionId, serverState);
+      this._activityMapCache = null;
+    }
+
+    if (projectId != null) {
+      this._sessionProject.set(sessionId, projectId);
+    }
+
+    this.notify();
+  }
+
+  /**
+   * Record the project ID for a session. Used by WS event handlers so that
+   * per-project activity can be derived from session-level state.
+   */
+  setProjectForSession(sessionId: string, projectId: number): void {
+    this._sessionProject.set(sessionId, projectId);
   }
 
   /**
