@@ -107,7 +107,7 @@ export class AppStore {
       }
 
       if (event.type === "session_updated") {
-        this.projectsStore.refresh(event.projectId);
+        this.projectsStore.handleSessionUpdated(event.projectId, event.sessionId, event.activityState);
         if (sessionId === this._activeSession.sessionId) {
           void this._activeSession.refreshSession();
         }
@@ -128,7 +128,7 @@ export class AppStore {
         // 'finished' for this session, so other tabs and refreshes show it
         // as unread despite the user watching it complete.
         if (isActive) {
-          void this.markActiveSessionViewed();
+          void this.projectsStore.markSessionViewed(projectId, sessionId, { forceServer: true });
         }
       }
 
@@ -183,6 +183,14 @@ export class AppStore {
     const previousProjectId = this._activeSession.projectId;
 
     await this._activeSession.setRoute(sessionId);
+
+    if (this._activeSession.sessionId && this._activeSession.projectId != null) {
+      this.projectsStore.applyServerState(
+        this._activeSession.sessionId,
+        this._activeSession.sessionData.activityState,
+        this._activeSession.projectId,
+      );
+    }
 
     // Update diff store project when it changes
     if (this._activeSession.projectId !== previousProjectId) {

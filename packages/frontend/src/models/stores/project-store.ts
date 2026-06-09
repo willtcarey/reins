@@ -107,8 +107,7 @@ export class ProjectStore {
       if (merge(this.activityMap.get(session.id))) return "running";
     }
 
-    for (const [sessionId, state] of this.activityMap) {
-      if (this.tasks.hasClosedTaskSession(sessionId)) continue;
+    for (const state of this.activityMap.values()) {
       if (merge(state)) return "running";
     }
 
@@ -138,6 +137,12 @@ export class ProjectStore {
       if (sessionsResp.ok) {
         const sessions: SessionListItem[] = await sessionsResp.json();
         this.sessions = sessions;
+        // Sync server-authoritative activity_state to the shared ActivityStore
+        // so session_updated broadcasts (e.g. from markActivityViewed on
+        // another tab/device) reconcile correctly.
+        for (const session of sessions) {
+          this._activity.applyServerState(session.id, session.activity_state, this.projectId);
+        }
       }
       if (skillsResp.ok) {
         const body = await skillsResp.json().catch(() => null);
@@ -255,6 +260,10 @@ export class ProjectStore {
         const next = new Map(this.taskSessions);
         next.set(taskId, sessions);
         this.taskSessions = next;
+        // Sync server-authoritative activity_state to the shared ActivityStore
+        for (const session of sessions) {
+          this._activity.applyServerState(session.id, session.activity_state, this.projectId);
+        }
         this.notify();
       }
     } catch {

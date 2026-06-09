@@ -8,6 +8,7 @@ import { loadMessages as dbLoadMessages, type ClientPromptContent } from "../mes
 import { getProject } from "../project-store.js";
 import { touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
+import { Sessions } from "../models/sessions.js";
 import { createCustomTools } from "../tools/index.js";
 import type { CreateSessionOpts } from "../tools/delegate.js";
 import {
@@ -152,9 +153,12 @@ async function createManagedSessionRuntime(params: {
     runtime,
     clients: state.clients,
   });
+  const broadcast = createBroadcast(state.clients);
+  const sessions = new Sessions(state.sessions, broadcast);
   const detachRuntimePersistenceObserver = attachRuntimePersistenceObserver({
     sessionId,
     runtime,
+    sessions,
   });
 
   let observersDetached = false;

@@ -10,7 +10,8 @@ import { Type } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import type { RouteContext } from "../router.js";
 import { badRequest, notFound } from "../errors.js";
-import { Sessions } from "../models/sessions.js";
+import { SessionNotFoundError, Sessions } from "../models/sessions.js";
+import { createBroadcast } from "../models/broadcast.js";
 import { parseBody } from "./validate.js";
 
 const SessionModelBody = Type.Object({
@@ -59,5 +60,21 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     }
 
     return Response.json(data);
+  });
+
+  // Mark a session's activity as viewed (finished → null)
+  router.patch("/:sessionId/activity", async (ctx) => {
+    const sessionId = ctx.params.sessionId;
+    const broadcast = createBroadcast(ctx.state.clients);
+    const sessions = new Sessions(ctx.state.sessions, broadcast);
+    try {
+      sessions.markActivityViewed(sessionId);
+    } catch (err) {
+      if (err instanceof SessionNotFoundError) {
+        return new Response("Session not found", { status: 404 });
+      }
+      throw err;
+    }
+    return Response.json({ ok: true });
   });
 }

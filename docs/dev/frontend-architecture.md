@@ -194,7 +194,7 @@ Public AppStore sub-store for project-domain UI. Manages the project list, proje
 
 ### ProjectStore (`models/stores/project-store.ts`)
 
-One instance per project, lazily created by `ProjectsStore`. Holds a data-only `TasksCollection`, session list, task session sublists, and task mutations. Provides **read-only activity selectors** (`activityForSession`, `tasksWithActivity`, `activityMap`, `activityState`, `activitySummary`) backed by the shared `ActivityStore`. During `fetchLists()` and `fetchTaskSessions()`, applies server-authoritative `activity_state` from session responses. All activity mutations are handled by `ProjectsStore`.
+One instance per project, lazily created by `ProjectsStore`. Holds a data-only `TasksCollection`, session list, task session sublists, and task mutations. Provides **read-only activity selectors** (`activityForSession`, `tasksWithActivity`, `activityMap`, `activityState`, `activitySummary`) backed by the shared `ActivityStore`. During `fetchLists()` and `fetchTaskSessions()`, applies server-authoritative `activity_state` from session responses to the shared `ActivityStore` — this is the reconciliation path that keeps local activity in sync after `session_updated` broadcasts (e.g., from `markActivityViewed` on another tab/device). All activity mutations flow through `ProjectsStore`.
 
 ### ActivityStore (`models/stores/activity-store.ts`)
 
@@ -297,7 +297,6 @@ Reconnect reconciliation only touches sessions already marked locally `running`:
 
 Known follow-up areas:
 
-- Activity state is in-memory only. A full page reload starts with no unread indicators; restoring running indicators from session metadata (`state.isStreaming`) across loaded session lists would require a separate reconciliation pass.
 - `task_updated` broadcasts do not identify which task changed, so closed-task cleanup has to refetch project task data before pruning finished activity. Including changed task/session identifiers in the broadcast would make this more targeted.
 
 ## Routing (`models/router.ts`)

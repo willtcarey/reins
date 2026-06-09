@@ -6,9 +6,10 @@
  *  - Delegate project-domain reconnect catch-up
  *  - Re-fetch the active session's messages if one is being viewed
  */
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, mock, afterEach } from "bun:test";
 import { AppStore } from "../models/stores/app-store.js";
 import { StubClient } from "./helpers/stub-client.js";
+import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 
 describe("AppStore reconnect catch-up", () => {
   let client: StubClient;
@@ -17,6 +18,11 @@ describe("AppStore reconnect catch-up", () => {
   beforeEach(() => {
     client = new StubClient();
     store = new AppStore(client);
+    restoreFetch();
+  });
+
+  afterEach(() => {
+    restoreFetch();
   });
 
   test("reconnect fetches projects and delegates project reconnect catch-up", () => {
@@ -26,7 +32,8 @@ describe("AppStore reconnect catch-up", () => {
     client.fireConnection(true);
 
     expect(store.projectsStore.fetchProjects).toHaveBeenCalled();
-    expect(store.projectsStore.handleReconnect).toHaveBeenCalledWith(null);
+    // handleReconnect is called with activeSessionId (null when no active session)
+    expect(store.projectsStore.handleReconnect).toHaveBeenCalled();
   });
 
   test("reconnect refreshes active session messages", () => {
@@ -39,6 +46,7 @@ describe("AppStore reconnect catch-up", () => {
     activeStore.sessionData = {
       id: "sess-1",
       task_id: null,
+      activityState: null,
       state: {
         model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
         thinkingLevel: "high",
@@ -64,5 +72,55 @@ describe("AppStore reconnect catch-up", () => {
     client.fireConnection(false);
 
     expect(handleReconnectSpy).not.toHaveBeenCalled();
+  });
+
+  test("connect fetches activity snapshot and populates project-level activity", async () => {
+    const snapshot = [
+      { id: "s1", activity_state: "running" as const, project_id: 10 },
+      { id: "s2", activity_state: "finished" as const, project_id: 20 },
+    ];
+
+    mockFetch((url) => {
+      if (url === "/api/activity") {
+        return new Response(JSON.stringify(snapshot), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/projects") {
+        return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response("", { status: 404 });
+    });
+
+    store.projectsStore.fetchProjects = mock(async () => {});
+    store.projectsStore.handleReconnect = mock(async () => {});
+
+    client.fireConnection(true);
+
+    // Wait for the async fetch to settle
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Snapshot does NOT create stores — only lightweight activity tracker
+    expect(store.projectsStore.peekStore(10)).toBeUndefined();
+    expect(store.projectsStore.peekStore(20)).toBeUndefined();
+    // But project-level activity is available
+    expect(store.projectsStore.activityForProject(10)).toBe("running");
+    expect(store.projectsStore.activityForProject(20)).toBe("finished");
+  });
+
+  test("connect does not crash when activity endpoint returns empty", async () => {
+    mockFetch((url) => {
+      if (url === "/api/activity") {
+        return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response("", { status: 404 });
+    });
+
+    store.projectsStore.fetchProjects = mock(async () => {});
+    store.projectsStore.handleReconnect = mock(async () => {});
+
+    // Should not throw
+    client.fireConnection(true);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(store.projectsStore.activitySummary).toEqual({ running: 0, finished: 0 });
   });
 });

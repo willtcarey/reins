@@ -25,6 +25,7 @@ function makeSession(overrides: Partial<SessionListItem> = {}): SessionListItem 
     message_count: 0,
     first_message: null,
     parent_session_id: null,
+    activity_state: null,
     ...overrides,
   };
 }

@@ -1,6 +1,7 @@
 import { logger } from "../logger.js";
 import { persistMessages, type RuntimeMessage } from "../messages-store.js";
 import { updateSessionMeta } from "../session-store.js";
+import type { Sessions } from "../models/sessions.js";
 import type { AgentRuntime, AgentRuntimeEvent } from "./registry.js";
 
 function shouldPersistForRuntimeEvent(event: AgentRuntimeEvent): boolean {
@@ -15,6 +16,12 @@ function shouldPersistForRuntimeEvent(event: AgentRuntimeEvent): boolean {
   }
 
   return false;
+}
+
+function getActivityStateForEvent(event: AgentRuntimeEvent): "running" | "finished" | null {
+  if (event.type === "agent_start") return "running";
+  if (event.type === "agent_end") return "finished";
+  return null;
 }
 
 function normalizeRuntimeMessagesForPersistence(messages: RuntimeMessage[]): RuntimeMessage[] {
@@ -76,8 +83,14 @@ async function persistRuntimeStateFromRuntime(params: {
   sessionId: string;
   runtime: AgentRuntime;
   event: AgentRuntimeEvent;
+  sessions: Sessions;
 }): Promise<void> {
-  const { sessionId, runtime, event } = params;
+  const { sessionId, runtime, event, sessions } = params;
+
+  const nextActivityState = getActivityStateForEvent(event);
+  if (nextActivityState !== null) {
+    sessions.updateActivityState(sessionId, nextActivityState);
+  }
 
   if (!shouldPersistForRuntimeEvent(event)) return;
 
@@ -92,11 +105,12 @@ async function persistRuntimeStateFromRuntime(params: {
 export function attachRuntimePersistenceObserver(params: {
   sessionId: string;
   runtime: AgentRuntime;
+  sessions: Sessions;
 }): () => void {
-  const { sessionId, runtime } = params;
+  const { sessionId, runtime, sessions } = params;
 
   return runtime.subscribe((event) => {
-    void persistRuntimeStateFromRuntime({ sessionId, runtime, event }).catch((err) => {
+    void persistRuntimeStateFromRuntime({ sessionId, runtime, event, sessions }).catch((err) => {
       logger.error(`  Failed to persist runtime state for ${sessionId}:`, err);
     });
   });

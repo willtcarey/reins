@@ -10,6 +10,8 @@ import { stripLeadingSkillBlocks } from "./models/skill.js";
 
 // ---- Types -----------------------------------------------------------------
 
+export type ActivityStateValue = "running" | "finished";
+
 export interface SessionRow {
   id: string;
   project_id: number;
@@ -22,6 +24,7 @@ export interface SessionRow {
   agent_runtime_type: string;
   task_id: number | null;
   parent_session_id: string | null;
+  activity_state: ActivityStateValue | null;
   /** Present on list/query rows that join session message metadata. */
   message_count?: number;
   /** Present on list/query rows that join the first user-message preview. */
@@ -241,3 +244,60 @@ export function updateSessionMeta(
     id,
   );
 }
+
+/**
+ * Update the activity_state of a session. Used by the persistence observer
+ * to persist running/finished state server-side.
+ */
+export function updateActivityState(
+  id: string,
+  activityState: ActivityStateValue | null,
+): void {
+  const db = getDb();
+  db.query("UPDATE sessions SET activity_state = ? WHERE id = ?").run(activityState, id);
+}
+
+/**
+ * Clear finished activity for all sessions belonging to the given tasks.
+ * Running activity is preserved so active work remains visible.
+ * Returns the session IDs that changed so callers can broadcast reconciliation.
+ */
+export function clearFinishedActivityForTasks(taskIds: number[]): string[] {
+  if (taskIds.length === 0) return [];
+
+  const db = getDb();
+  const placeholders = taskIds.map(() => "?").join(", ");
+  const rows = db
+    .query<{ id: string }, number[]>(
+      `SELECT id FROM sessions
+       WHERE task_id IN (${placeholders}) AND activity_state = 'finished'
+       ORDER BY id`,
+    )
+    .all(...taskIds);
+
+  if (rows.length === 0) return [];
+
+  const sessionIds = rows.map((row) => row.id);
+  const sessionPlaceholders = sessionIds.map(() => "?").join(", ");
+  db.query(
+    `UPDATE sessions SET activity_state = NULL
+     WHERE id IN (${sessionPlaceholders})`,
+  ).run(...sessionIds);
+
+  return sessionIds;
+}
+
+/**
+ * List all sessions with non-null activity_state. Used to build an
+ * initial activity snapshot for newly-connected WebSocket clients.
+ */
+export function listActiveSessions(): { id: string; activity_state: ActivityStateValue; project_id: number }[] {
+  const db = getDb();
+  return db
+    .query<{ id: string; activity_state: ActivityStateValue; project_id: number }, []>(
+      "SELECT id, activity_state, project_id FROM sessions WHERE activity_state IS NOT NULL",
+    )
+    .all();
+}
+
+

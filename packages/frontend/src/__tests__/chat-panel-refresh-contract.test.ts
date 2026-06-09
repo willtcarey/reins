@@ -18,6 +18,7 @@ function makeSessionData(overrides: { isStreaming?: boolean; messageCount?: numb
   return {
     id: "sess-1",
     task_id: null,
+    activityState: null,
     state: {
       model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
       thinkingLevel: "high",

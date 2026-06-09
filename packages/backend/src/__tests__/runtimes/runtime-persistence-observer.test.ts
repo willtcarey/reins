@@ -2,12 +2,17 @@ import { describe, expect, test } from "bun:test";
 import { createProject } from "../../project-store.js";
 import { createSession, getSession } from "../../session-store.js";
 import { loadMessages, type RuntimeMessage } from "../../messages-store.js";
+import { Sessions } from "../../models/sessions.js";
 import { attachRuntimePersistenceObserver } from "../../runtimes/runtime-persistence-observer.js";
 import type { Broadcast } from "../../models/broadcast.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 
 const noopBroadcast: Broadcast = () => {};
+
+function makeSessions(broadcast: Broadcast = noopBroadcast): Sessions {
+  return new Sessions(new Map(), broadcast);
+}
 
 describe("runtime persistence observer", () => {
   useTestDb();
@@ -23,13 +28,11 @@ describe("runtime persistence observer", () => {
     ];
 
     const { runtime, emit } = createRuntimeStub({ messages: snapshot });
-    const broadcast = noopBroadcast;
 
     const detach = attachRuntimePersistenceObserver({
       sessionId: "sess-persist",
-      projectId: project.id,
       runtime,
-      broadcast,
+      sessions: makeSessions(),
     });
 
     emit({ type: "agent_end", messages: [] });
@@ -47,13 +50,11 @@ describe("runtime persistence observer", () => {
     createSession("sess-no-persist", project.id, { agentRuntimeType: "test_runtime" });
 
     const { runtime, emit, getMessagesCalls } = createRuntimeStub();
-    const broadcast = noopBroadcast;
 
     const detach = attachRuntimePersistenceObserver({
       sessionId: "sess-no-persist",
-      projectId: project.id,
       runtime,
-      broadcast,
+      sessions: makeSessions(),
     });
 
     emit({ type: "turn_start" });
@@ -70,13 +71,11 @@ describe("runtime persistence observer", () => {
     createSession("sess-activity", project.id, { agentRuntimeType: "test_runtime" });
 
     const { runtime, emit } = createRuntimeStub();
-    const broadcast = noopBroadcast;
 
     const detach = attachRuntimePersistenceObserver({
       sessionId: "sess-activity",
-      projectId: project.id,
       runtime,
-      broadcast,
+      sessions: makeSessions(),
     });
 
     emit({ type: "agent_start" });
@@ -92,13 +91,11 @@ describe("runtime persistence observer", () => {
     createSession("sess-activity", project.id, { agentRuntimeType: "test_runtime" });
 
     const { runtime, emit } = createRuntimeStub();
-    const broadcast = noopBroadcast;
 
     const detach = attachRuntimePersistenceObserver({
       sessionId: "sess-activity",
-      projectId: project.id,
       runtime,
-      broadcast,
+      sessions: makeSessions(),
     });
 
     emit({ type: "agent_start" });
@@ -112,32 +109,39 @@ describe("runtime persistence observer", () => {
     detach();
   });
 
-  test("broadcasts activity_updated on agent_start and agent_end", async () => {
+  test("broadcasts session_updated with activityState on agent_start and agent_end", async () => {
     const project = createProject("Reins", "/tmp/reins-activity");
     createSession("sess-bcast", project.id, { agentRuntimeType: "test_runtime" });
 
     const { runtime, emit } = createRuntimeStub();
-    const broadcasts: Array<{ type: string; activityState: string | null }> = [];
+    const broadcasts: unknown[] = [];
     const broadcast: Broadcast = (msg) => {
-      if (msg.type === "activity_updated") {
-        broadcasts.push({ type: msg.type, activityState: msg.activityState });
-      }
+      broadcasts.push(msg);
     };
 
     const detach = attachRuntimePersistenceObserver({
       sessionId: "sess-bcast",
-      projectId: project.id,
       runtime,
-      broadcast,
+      sessions: makeSessions(broadcast),
     });
 
     emit({ type: "agent_start" });
     await Bun.sleep(50);
-    expect(broadcasts).toContainEqual({ type: "activity_updated", activityState: "running" });
+    expect(broadcasts).toContainEqual({
+      type: "session_updated",
+      sessionId: "sess-bcast",
+      projectId: project.id,
+      activityState: "running",
+    });
 
     emit({ type: "agent_end", messages: [] });
     await Bun.sleep(50);
-    expect(broadcasts).toContainEqual({ type: "activity_updated", activityState: "finished" });
+    expect(broadcasts).toContainEqual({
+      type: "session_updated",
+      sessionId: "sess-bcast",
+      projectId: project.id,
+      activityState: "finished",
+    });
 
     detach();
   });

@@ -149,33 +149,17 @@ export class ProjectsStore {
     return this._activity.activitySummary;
   }
 
-  /**
-   * Mark a session as running. Applies the closed-task guard if the project
-   * store is loaded; otherwise sets running unconditionally.
-   */
+  /** Mark a session as running. */
   setRunning(sessionId: string, projectId: number): void {
     this._activity.setProjectForSession(sessionId, projectId);
-    const store = this.peekStore(projectId);
-    if (store?.tasks.hasClosedTaskSession(sessionId)) {
-      this._activity.clearActivity(sessionId);
-    } else {
-      this._activity.setRunning(sessionId);
-    }
+    this._activity.setRunning(sessionId);
     this.notify();
   }
 
-  /**
-   * Mark a session as finished. Applies the closed-task guard if the project
-   * store is loaded; otherwise sets finished unconditionally.
-   */
+  /** Mark a session as finished. */
   setFinished(sessionId: string, projectId: number, options: ActivityFinishOptions = {}): void {
     this._activity.setProjectForSession(sessionId, projectId);
-    const store = this.peekStore(projectId);
-    if (store?.tasks.hasClosedTaskSession(sessionId)) {
-      this._activity.clearActivity(sessionId);
-    } else {
-      this._activity.setFinished(sessionId, options);
-    }
+    this._activity.setFinished(sessionId, options);
     this.notify();
   }
 
@@ -192,23 +176,36 @@ export class ProjectsStore {
    * the server REST endpoint (transitions 'finished' → NULL, broadcasts to
    * other tabs). Rolls back the local update if the request fails.
    */
-  async markSessionViewed(projectId: number, sessionId: string): Promise<void> {
-    // Optimistic local update — UI responds immediately
-    this._activity.markSessionViewed(sessionId);
-    this.notify();
+  async markSessionViewed(
+    projectId: number,
+    sessionId: string,
+    options: { forceServer?: boolean } = {},
+  ): Promise<void> {
+    const previous = this._activity.getActivity(sessionId);
+    if (previous !== "finished" && !options.forceServer) return;
+
+    // Optimistic local update — UI responds immediately when there is
+    // finished activity to clear. Forced calls only reconcile the server.
+    if (previous === "finished") {
+      this._activity.markSessionViewed(sessionId);
+      this.notify();
+    }
+
     try {
       const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/activity`, {
         method: "PATCH",
       });
-      if (!resp.ok) {
-        // Roll back: restore finished state so reconnect reconciles
+      if (!resp.ok && previous === "finished") {
+        // Roll back: restore the state that was actually cleared.
         this._activity.setFinished(sessionId);
         this.notify();
       }
     } catch {
-      // Roll back on network failure too
-      this._activity.setFinished(sessionId);
-      this.notify();
+      if (previous === "finished") {
+        // Roll back on network failure too.
+        this._activity.setFinished(sessionId);
+        this.notify();
+      }
     }
   }
 
@@ -219,29 +216,6 @@ export class ProjectsStore {
   applyServerState(sessionId: string, serverState: "running" | "finished" | null, projectId: number): void {
     this._activity.applyServerState(sessionId, serverState, projectId);
     this.notify();
-  }
-
-  /**
-   * Clear activity for sessions belonging to closed tasks. If projectId is
-   * given, only that project; otherwise all loaded projects.
-   */
-  clearActivityForClosedTasks(projectId?: number): void {
-    const closedIds = new Set<string>();
-
-    const storesToCheck: ProjectStore[] = projectId != null
-      ? [this.peekStore(projectId)].filter((s): s is ProjectStore => s !== undefined)
-      : [...this._stores.values()];
-
-    for (const store of storesToCheck) {
-      for (const id of store.tasks.closedTaskSessionIds) {
-        closedIds.add(id);
-      }
-    }
-
-    if (closedIds.size > 0) {
-      this._activity.clearSessions(closedIds);
-      this.notify();
-    }
   }
 
   // ---- Activity snapshot ----------------------------------------------------
@@ -276,8 +250,7 @@ export class ProjectsStore {
   handleAgentEnd(projectId: number, sessionId: string, options: ActivityFinishOptions = {}): void {
     this.setFinished(sessionId, projectId, options);
     setTimeout(() => {
-      void this.refresh(projectId)
-        .then(() => this.clearActivityForClosedTasks(projectId));
+      void this.refresh(projectId);
     }, 500);
   }
 
@@ -290,7 +263,6 @@ export class ProjectsStore {
    */
   async handleReconnect(_activeSessionId: string | null = null): Promise<void> {
     await this.refreshAll();
-    this.clearActivityForClosedTasks();
   }
 
   async handleTaskUpdated(projectId: number): Promise<void> {
@@ -298,7 +270,17 @@ export class ProjectsStore {
     if (!projectStore) return;
 
     await projectStore.fetchLists();
-    this.clearActivityForClosedTasks(projectId);
+  }
+
+  handleSessionUpdated(
+    projectId: number,
+    sessionId: string,
+    activityState?: "running" | "finished" | null,
+  ): void {
+    if (activityState !== undefined) {
+      this.applyServerState(sessionId, activityState, projectId);
+    }
+    void this.refresh(projectId);
   }
 
   async handleSessionCreated(event: {
@@ -354,7 +336,6 @@ export class ProjectsStore {
     const child = this.getStore(projectId);
     if (!child.loaded && !child.loading) {
       await child.fetchLists();
-      this.clearActivityForClosedTasks(projectId);
     }
   }
 
@@ -366,7 +347,6 @@ export class ProjectsStore {
     const child = this.peekStore(projectId);
     if (child) {
       await child.fetchLists();
-      this.clearActivityForClosedTasks(projectId);
     }
   }
 

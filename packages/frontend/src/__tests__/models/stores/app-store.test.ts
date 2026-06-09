@@ -90,6 +90,19 @@ describe("AppStore activity event routing", () => {
     expect(activeSession.refreshSession).toHaveBeenCalledTimes(1);
   });
 
+  test("session_updated applies activityState from the server", () => {
+    store.projectsStore.setFinished("sess-1", 42);
+
+    client.fireEvent("sess-1", 42, {
+      type: "session_updated",
+      sessionId: "sess-1",
+      projectId: 42,
+      activityState: null,
+    });
+
+    expect(store.projectsStore.activityForSession(42, "sess-1")).toBeUndefined();
+  });
+
   test("markActiveSessionViewed delegates to markSessionViewed on projects store", async () => {
     const activeSession = store["_activeSession"];
     activeSession.sessionId = "s1";

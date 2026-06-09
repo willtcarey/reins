@@ -101,6 +101,23 @@ describe("WS client EventListener contract", () => {
     });
   });
 
+  it("passes session update activityState through to listeners", () => {
+    const received = simulateMessage({
+      type: "session_updated",
+      sessionId: "sess-1",
+      projectId: 42,
+      activityState: null,
+    });
+
+    expect(received).toHaveLength(1);
+    expect(received[0].event).toEqual({
+      type: "session_updated",
+      sessionId: "sess-1",
+      projectId: 42,
+      activityState: null,
+    });
+  });
+
   it("event argument is always an object, never a number", () => {
     const received = simulateMessage({
       type: "event",

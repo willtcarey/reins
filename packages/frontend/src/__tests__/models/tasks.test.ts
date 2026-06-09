@@ -36,16 +36,6 @@ describe("TasksCollection", () => {
     expect(tasks.closed).toEqual([closed]);
   });
 
-  test("activityFor returns undefined for closed tasks even with session activity", () => {
-    const activityMap = new Map<string, ActivityState>([
-      ["s1", "running"],
-      ["s2", "finished"],
-    ]);
-
-    expect(collection([], activityMap).activityFor(task({ status: "closed", session_ids: ["s1", "s2"] })))
-      .toBeUndefined();
-  });
-
   test("activityFor prioritizes running over finished for open tasks", () => {
     const activityMap = new Map<string, ActivityState>([
       ["s1", "finished"],
@@ -71,10 +61,11 @@ describe("TasksCollection", () => {
     expect(collection([
       task({ id: 1, session_ids: ["s1"] }),
       task({ id: 2, session_ids: ["s2"] }),
-      task({ id: 3, status: "closed", session_ids: ["s3"] }),
+      task({ id: 3, session_ids: ["s3"] }),
     ], activityMap).activityByTask).toEqual(new Map([
       [1, "finished"],
       [2, "running"],
+      [3, "running"],
     ]));
   });
 
@@ -97,25 +88,6 @@ describe("TasksCollection", () => {
 
     expect(tasks.activityForId(7)).toBe("running");
     expect(tasks.activityForId(8)).toBeUndefined();
-  });
-
-  test("hasClosedTaskSession detects sessions that belong to closed tasks", () => {
-    const tasks = collection([
-      task({ id: 1, status: "open", session_ids: ["s1"] }),
-      task({ id: 2, status: "closed", session_ids: ["s2"] }),
-    ]);
-
-    expect(tasks.hasClosedTaskSession("s2")).toBe(true);
-    expect(tasks.hasClosedTaskSession("s1")).toBe(false);
-  });
-
-  test("closedTaskSessionIds returns all sessions from closed tasks", () => {
-    const tasks = collection([
-      task({ id: 1, status: "open", session_ids: ["s1"] }),
-      task({ id: 2, status: "closed", session_ids: ["s2", "s3"] }),
-    ]);
-
-    expect(tasks.closedTaskSessionIds).toEqual(new Set(["s2", "s3"]));
   });
 
   test("findBySessionId finds the task containing a session", () => {

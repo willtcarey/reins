@@ -13,6 +13,7 @@
 
 import type { ClientPromptContent } from "../messages-store.js";
 import type { ExternalizedAgentRuntimeEvent } from "../runtimes/runtime-image-externalization.js";
+import type { ActivityStateValue } from "../session-store.js";
 import type { WsClient } from "../state.js";
 
 // ---------------------------------------------------------------------------
@@ -23,7 +24,7 @@ export type ServerMessage =
   | { type: "event"; sessionId: string; projectId: number; event: ExternalizedAgentRuntimeEvent }
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
-  | { type: "session_updated"; sessionId: string; projectId: number }
+  | { type: "session_updated"; sessionId: string; projectId: number; activityState?: ActivityStateValue | null }
   | { type: "user_message"; sessionId: string; projectId: number; message: ClientPromptContent }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number };
 

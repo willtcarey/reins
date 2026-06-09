@@ -4,7 +4,6 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { ProjectsStore } from "../models/stores/projects-store.js";
 import { ProjectStore } from "../models/stores/project-store.js";
-import type { TaskListItem } from "../models/tasks.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 
 // Mock fetch globally
@@ -14,23 +13,6 @@ function jsonResponse(data: unknown, ok = true): Response {
     status: ok ? 200 : 500,
     headers: { "Content-Type": "application/json" },
   });
-}
-
-function task(overrides: Partial<TaskListItem>): TaskListItem {
-  return {
-    id: 1,
-    project_id: 42,
-    title: "Task",
-    description: null,
-    branch_name: "task/example",
-    status: "open",
-    created_at: "",
-    updated_at: "",
-    session_count: 1,
-    session_ids: ["s1"],
-    diffStats: null,
-    ...overrides,
-  };
 }
 
 describe("ProjectsStore per-project data", () => {
@@ -312,11 +294,9 @@ describe("ProjectsStore per-project data", () => {
     expect(store.activitySummary).toEqual({ running: 2, finished: 1 });
   });
 
-  test("handleAgentEnd marks activity and schedules project refresh reconciliation", async () => {
+  test("handleAgentEnd marks activity and schedules project refresh", async () => {
     const refresh = mock(async () => {});
-    const clearActivityForClosedTasks = mock(() => {});
     store.refresh = refresh;
-    store.clearActivityForClosedTasks = clearActivityForClosedTasks;
 
     store.handleAgentStart(42, "s1");
     store.handleAgentEnd(42, "s1", { suppressUnread: false });
@@ -326,40 +306,30 @@ describe("ProjectsStore per-project data", () => {
     await new Promise((resolve) => setTimeout(resolve, 510));
 
     expect(refresh).toHaveBeenCalledWith(42);
-    expect(clearActivityForClosedTasks).toHaveBeenCalledWith(42);
   });
 
-  test("handleReconnect refreshes loaded data and clears closed activity", async () => {
-    const calls: string[] = [];
-    store.refreshAll = mock(async () => { calls.push("refreshAll"); });
-    store.clearActivityForClosedTasks = mock(() => { calls.push("clearActivityForClosedTasks"); });
+  test("handleReconnect refreshes loaded data", async () => {
+    const refreshAll = mock(async () => {});
+    store.refreshAll = refreshAll;
 
     await store.handleReconnect("active");
 
-    expect(calls).toEqual([
-      "refreshAll",
-      "clearActivityForClosedTasks",
-    ]);
+    expect(refreshAll).toHaveBeenCalled();
   });
 
-  test("handleTaskUpdated refreshes existing event-created stores and clears closed activity", async () => {
-    store.setRunning("s1", 42);
-
+  test("handleTaskUpdated refreshes existing event-created stores", async () => {
     mockFetch((url) => {
-      if (url === "/api/projects/42/tasks") {
-        return jsonResponse([task({ status: "closed", session_ids: ["s1"] })]);
-      }
+      if (url === "/api/projects/42/tasks") return jsonResponse([]);
       if (url === "/api/projects/42/sessions") return jsonResponse([]);
       if (url === "/api/projects/42/skills") return jsonResponse({ skills: [] });
       return jsonResponse({}, false);
     });
 
-    // handleTaskUpdated only acts if the store already exists — create it
+    // handleTaskUpdated only fetches lists if the store already exists — create it
     store.getStore(42);
     await store.handleTaskUpdated(42);
 
     expect(store.getStore(42).loaded).toBe(true);
-    expect(store.activityForSession(42, "s1")).toBeUndefined();
   });
 
   test("handleTaskUpdated is a no-op if the project store does not exist", async () => {
@@ -518,25 +488,7 @@ describe("ProjectsStore per-project data", () => {
     expect(store.activitySummary).toEqual({ running: 1, finished: 0 });
   });
 
-  // ---- setRunning / setFinished with closed-task guard ----------------------
-
-  test("setRunning applies closed-task guard when store is loaded", async () => {
-    // Load the store with a closed task
-    mockFetch((url) => {
-      if (url === "/api/projects/42/tasks") {
-        return jsonResponse([task({ status: "closed", session_ids: ["s1"] })]);
-      }
-      if (url === "/api/projects/42/sessions") return jsonResponse([]);
-      if (url === "/api/projects/42/skills") return jsonResponse({ skills: [] });
-      return jsonResponse({}, false);
-    });
-
-    await store.ensureLoaded(42);
-
-    // Attempt to set running for a closed-task session — should be suppressed
-    store.setRunning("s1", 42);
-    expect(store.activityForSession(42, "s1")).toBeUndefined();
-  });
+  // ---- setRunning / setFinished --------------------------------------------
 
   test("setRunning works without guard when store is not loaded", () => {
     // No store loaded for project 99
@@ -544,22 +496,6 @@ describe("ProjectsStore per-project data", () => {
     expect(store.activityForSession(99, "s99")).toBe("running");
     // And no store was created
     expect(store.peekStore(99)).toBeUndefined();
-  });
-
-  test("setFinished applies closed-task guard when store is loaded", async () => {
-    mockFetch((url) => {
-      if (url === "/api/projects/42/tasks") {
-        return jsonResponse([task({ status: "closed", session_ids: ["s1"] })]);
-      }
-      if (url === "/api/projects/42/sessions") return jsonResponse([]);
-      if (url === "/api/projects/42/skills") return jsonResponse({ skills: [] });
-      return jsonResponse({}, false);
-    });
-
-    await store.ensureLoaded(42);
-
-    store.setFinished("s1", 42);
-    expect(store.activityForSession(42, "s1")).toBeUndefined();
   });
 
   test("setFinished works without guard when store is not loaded", () => {
@@ -617,6 +553,14 @@ describe("ProjectsStore per-project data", () => {
     expect(store.activityForSession(1, "s1")).toBe("running");
   });
 
+  test("markSessionViewed does not mark inactive sessions finished when the request fails", async () => {
+    mockFetch(() => new Response("fail", { status: 500 }));
+
+    await store.markSessionViewed(1, "s1");
+
+    expect(store.activityForSession(1, "s1")).toBeUndefined();
+  });
+
   test("markSessionViewed works for unloaded projects", async () => {
     store.setFinished("s99", 99);
 
@@ -637,48 +581,14 @@ describe("ProjectsStore per-project data", () => {
     expect(store.activityForSession(1, "delegate-1")).toBeUndefined();
   });
 
-  // ---- clearActivityForClosedTasks (consolidated) --------------------------
+  // ---- session_updated activity reconciliation -----------------------------
 
-  test("clearActivityForClosedTasks clears for specific project", async () => {
-    mockFetch((url) => {
-      if (url === "/api/projects/42/tasks") {
-        return jsonResponse([task({ status: "closed", session_ids: ["s1"] })]);
-      }
-      if (url === "/api/projects/42/sessions") return jsonResponse([]);
-      if (url === "/api/projects/42/skills") return jsonResponse({ skills: [] });
-      return jsonResponse({}, false);
-    });
+  test("handleSessionUpdated applies provided server activity state", () => {
+    store.setFinished("s1", 42);
 
-    await store.ensureLoaded(42);
-    store.setRunning("s1", 42);
-    // s1 was set running but the ensureLoaded already cleared it via the guard
-    // Let's set it again to verify clearActivityForClosedTasks works
-    store.activityStore.setRunning("s1");
-    expect(store.activityForSession(42, "s1")).toBe("running");
+    store.handleSessionUpdated(42, "s1", null);
 
-    store.clearActivityForClosedTasks(42);
     expect(store.activityForSession(42, "s1")).toBeUndefined();
-  });
-
-  test("clearActivityForClosedTasks clears for all projects when no projectId given", async () => {
-    mockFetch((url) => {
-      if (url === "/api/projects/1/tasks") return jsonResponse([task({ id: 1, project_id: 1, status: "closed", session_ids: ["s1"] })]);
-      if (url === "/api/projects/2/tasks") return jsonResponse([task({ id: 1, project_id: 2, status: "closed", session_ids: ["s2"] })]);
-      if (url.includes("/sessions")) return jsonResponse([]);
-      if (url.includes("/skills")) return jsonResponse({ skills: [] });
-      return jsonResponse({}, false);
-    });
-
-    await store.ensureLoaded(1);
-    await store.ensureLoaded(2);
-
-    store.activityStore.setRunning("s1");
-    store.activityStore.setRunning("s2");
-
-    store.clearActivityForClosedTasks();
-
-    expect(store.activityForSession(1, "s1")).toBeUndefined();
-    expect(store.activityForSession(2, "s2")).toBeUndefined();
   });
 
   // ---- handleAgentStart / handleAgentEnd use setRunning / setFinished -------
@@ -692,9 +602,7 @@ describe("ProjectsStore per-project data", () => {
 
   test("handleAgentEnd delegates to setFinished", async () => {
     const refresh = mock(async () => {});
-    const clearActivityForClosedTasks = mock(() => {});
     store.refresh = refresh;
-    store.clearActivityForClosedTasks = clearActivityForClosedTasks;
 
     store.handleAgentStart(42, "s1");
     store.handleAgentEnd(42, "s1", { suppressUnread: false });
@@ -704,6 +612,5 @@ describe("ProjectsStore per-project data", () => {
     await new Promise((resolve) => setTimeout(resolve, 510));
 
     expect(refresh).toHaveBeenCalledWith(42);
-    expect(clearActivityForClosedTasks).toHaveBeenCalledWith(42);
   });
 });

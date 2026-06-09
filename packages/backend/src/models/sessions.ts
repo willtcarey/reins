@@ -9,6 +9,7 @@
 import {
   getSession,
   listSessions,
+  updateActivityState,
   updateSessionMeta,
   type SessionRow,
 } from "../session-store.js";
@@ -68,6 +69,7 @@ export interface SessionView {
   project_id: number;
   task_id: number | null;
   runtimeType: string;
+  activityState: SessionRow["activity_state"];
   state: {
     model: { provider: string; id: string } | null;
     thinkingLevel: string;
@@ -131,6 +133,7 @@ export class Sessions {
       project_id: row.project_id,
       task_id: row.task_id,
       runtimeType: row.agent_runtime_type,
+      activityState: row.activity_state,
       state: {
         model: row.model_provider && row.model_id
           ? { provider: row.model_provider, id: row.model_id }
@@ -208,6 +211,35 @@ export class Sessions {
 
   listByTask(taskId: number): SessionRow[] {
     return listSessions({ taskId });
+  }
+
+  /**
+   * Persist a server-authoritative activity state and notify clients so they
+   * can reload the session/list rows that include activityState.
+   */
+  updateActivityState(sessionId: string, activityState: SessionRow["activity_state"]): void {
+    const row = getSession(sessionId);
+    if (!row) throw new SessionNotFoundError();
+
+    updateActivityState(sessionId, activityState);
+    this.broadcast({
+      type: "session_updated",
+      sessionId,
+      projectId: row.project_id,
+      activityState,
+    });
+  }
+
+  /**
+   * Mark completed activity as viewed. Only finished activity is cleared;
+   * running or absent activity is left unchanged.
+   */
+  markActivityViewed(sessionId: string): void {
+    const row = getSession(sessionId);
+    if (!row) throw new SessionNotFoundError();
+    if (row.activity_state !== "finished") return;
+
+    this.updateActivityState(sessionId, null);
   }
 
   /**

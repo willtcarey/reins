@@ -33,6 +33,7 @@ function blankSessionData(sessionId = ""): SessionData {
     id: sessionId,
     task_id: null,
     runtimeType: undefined,
+    activityState: null,
     state: {
       model: null,
       thinkingLevel: "high",

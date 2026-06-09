@@ -265,12 +265,4 @@ describe("ProjectStore", () => {
     // Now only finished remains
     expect(store.activityState).toBe("finished");
   });
-
-  test("activityState excludes closed task sessions", () => {
-    store.tasks = new TasksCollection(42, [task({ status: "closed", session_ids: ["s1"] })]);
-    store.activityStore.setRunning("s1");
-
-    // Closed task sessions are excluded from activityState derivation
-    expect(store.activityState).toBeUndefined();
-  });
 });

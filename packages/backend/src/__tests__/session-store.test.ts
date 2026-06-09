@@ -8,6 +8,7 @@ import {
   listSessions,
   listPaletteItems,
   updateSessionMeta,
+  updateActivityState,
 } from "../session-store.js";
 import { persistMessages } from "../messages-store.js";
 
@@ -33,6 +34,7 @@ describe("session-store", () => {
       expect(s.agent_runtime_type).toBe("pi");
       expect(s.task_id).toBeNull();
       expect(s.parent_session_id).toBeNull();
+      expect(s.activity_state).toBeNull();
       expect(s.created_at).toBeString();
       expect(s.updated_at).toBeString();
     });
@@ -375,5 +377,23 @@ describe("session-store", () => {
     });
   });
 
+  describe("activity state", () => {
+    describe("updateActivityState", () => {
+      test("cycles NULL → running → finished → NULL", () => {
+        const session = createSession("sess-1", projectId, { agentRuntimeType: "pi" });
+        expect(session.activity_state).toBeNull();
+
+        updateActivityState("sess-1", "running");
+        expect(getSession("sess-1")!.activity_state).toBe("running");
+
+        updateActivityState("sess-1", "finished");
+        expect(getSession("sess-1")!.activity_state).toBe("finished");
+
+        updateActivityState("sess-1", null);
+        expect(getSession("sess-1")!.activity_state).toBeNull();
+      });
+    });
+
+  });
 
 });

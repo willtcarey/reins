@@ -167,6 +167,10 @@ const MIGRATIONS: Migration[] = [
     "020_canonicalize_message_content",
     canonicalizeMessageContentMigration,
   ],
+  [
+    "021_add_session_activity_state",
+    `ALTER TABLE sessions ADD COLUMN activity_state TEXT CHECK(activity_state IN ('running', 'finished'))`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

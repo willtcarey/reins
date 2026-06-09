@@ -2,7 +2,8 @@ import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo, commitFile } from "../helpers/test-repo.js";
 import { createProject } from "../../project-store.js";
-import { getTask } from "../../task-store.js";
+import { createTask, getTask } from "../../task-store.js";
+import { createSession, getSession, updateActivityState } from "../../session-store.js";
 import { branchExists, revParse, mergeBase, createBranch } from "../../git.js";
 import { ProjectModel } from "../../models/projects.js";
 import type { CreateTaskParams } from "../../models/tasks.js";
@@ -115,6 +116,26 @@ describe("createTaskWithBranch", () => {
 
     expect(task.title).toBe("Trimmed Title");
     expect(task.description).toBe("Trimmed Desc");
+  });
+
+  test("closing a task clears finished session activity but preserves running activity", () => {
+    const task = createTask(projectId, "Close me", null, "task/close-me");
+    createSession("finished-session", projectId, { agentRuntimeType: "pi", taskId: task.id });
+    createSession("running-session", projectId, { agentRuntimeType: "pi", taskId: task.id });
+    updateActivityState("finished-session", "finished");
+    updateActivityState("running-session", "running");
+
+    model.tasks().close(task.id);
+
+    expect(getSession("finished-session")!.activity_state).toBeNull();
+    expect(getSession("running-session")!.activity_state).toBe("running");
+    expect(broadcastSpy).toHaveBeenCalledWith({ type: "task_updated", projectId });
+    expect(broadcastSpy).toHaveBeenCalledWith({
+      type: "session_updated",
+      sessionId: "finished-session",
+      projectId,
+      activityState: null,
+    });
   });
 
   test("adopts an existing local branch when branch_name is explicitly provided", async () => {

@@ -22,6 +22,7 @@ function makeSessionData(overrides: { isStreaming?: boolean; messageCount?: numb
     task_id: null,
     project_id: overrides.projectId ?? 42,
     runtimeType: overrides.runtimeType ?? "pi",
+    activityState: null,
     state: {
       model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
       thinkingLevel: "high",

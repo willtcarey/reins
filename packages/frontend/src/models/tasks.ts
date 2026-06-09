@@ -62,17 +62,6 @@ export class TasksCollection {
     return result;
   }
 
-  get closedTaskSessionIds(): Set<string> {
-    const ids = new Set<string>();
-    for (const task of this.items) {
-      if (task.status !== "closed") continue;
-      for (const sessionId of task.session_ids) {
-        ids.add(sessionId);
-      }
-    }
-    return ids;
-  }
-
   find(taskId: number): TaskListItem | undefined {
     return this.items.find((task) => task.id === taskId);
   }
@@ -81,8 +70,7 @@ export class TasksCollection {
     return this.items.find((task) => task.session_ids.includes(sessionId));
   }
 
-  activityFor(task: Pick<TaskListItem, "status" | "session_ids">): ActivityState | undefined {
-    if (task.status === "closed") return undefined;
+  activityFor(task: Pick<TaskListItem, "session_ids">): ActivityState | undefined {
     if (!task.session_ids.length) return undefined;
 
     let hasFinished = false;
@@ -97,11 +85,5 @@ export class TasksCollection {
   activityForId(taskId: number): ActivityState | undefined {
     const task = this.find(taskId);
     return task ? this.activityFor(task) : undefined;
-  }
-
-  hasClosedTaskSession(sessionId: string): boolean {
-    return this.items.some((task) =>
-      task.status === "closed" && task.session_ids.includes(sessionId)
-    );
   }
 }

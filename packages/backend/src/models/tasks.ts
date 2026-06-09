@@ -20,6 +20,7 @@ import {
   type TaskListItem,
   type TaskStatus,
 } from "../task-store.js";
+import { clearFinishedActivityForTasks } from "../session-store.js";
 import { slugifyBranchName } from "../branch-namer.js";
 import {
   branchExists,
@@ -189,7 +190,16 @@ export class ProjectTasks {
     if (!this.get(taskId)) throw new TaskNotFoundError();
     const task = setTaskStatus(taskId, "closed");
     if (!task) throw new TaskNotFoundError();
+    const clearedFinishedSessionIds = clearFinishedActivityForTasks([taskId]);
     this.broadcast({ type: "task_updated", projectId: this.projectId });
+    for (const sessionId of clearedFinishedSessionIds) {
+      this.broadcast({
+        type: "session_updated",
+        sessionId,
+        projectId: this.projectId,
+        activityState: null,
+      });
+    }
     return task;
   }
 

@@ -18,6 +18,7 @@ import {
   type Project,
 } from "../project-store.js";
 import { listOpenTasks, markTasksClosed } from "../task-store.js";
+import { clearFinishedActivityForTasks } from "../session-store.js";
 import {
   detectDefaultBranch,
   fetchAll,
@@ -390,8 +391,18 @@ export class ProjectModel {
 
     if (toClose.length === 0) return;
 
-    markTasksClosed(toClose.map((t) => t.id));
+    const closedTaskIds = toClose.map((t) => t.id);
+    markTasksClosed(closedTaskIds);
+    const clearedFinishedSessionIds = clearFinishedActivityForTasks(closedTaskIds);
     this.broadcast({ type: "task_updated", projectId: this.projectId });
+    for (const sessionId of clearedFinishedSessionIds) {
+      this.broadcast({
+        type: "session_updated",
+        sessionId,
+        projectId: this.projectId,
+        activityState: null,
+      });
+    }
 
     // Clean up local branches for tasks that were detected via --merged
     const currentBranch = await getCurrentBranch(this.projectDir);

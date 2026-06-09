@@ -68,7 +68,7 @@ describe("session routes (top-level)", () => {
       expect(body.state.isStreaming).toBe(true);
     });
 
-    test("returns metadata-only session from DB with project_id and activityState", async () => {
+    test("returns metadata-only session from DB with project_id", async () => {
       const sessionId = "lookup-db";
       createSession(sessionId, projectId, { agentRuntimeType: "pi",});
       persistMessages(sessionId, [
@@ -87,15 +87,20 @@ describe("session routes (top-level)", () => {
       expect(body.state.messageCount).toBe(1);
       expect(body.activityState).toBeNull();
       expect(body).not.toHaveProperty("messages");
+    });
 
-      // Verify activityState reflects server-side changes
+    test("returns server-side activityState", async () => {
+      const sessionId = "activity-state";
+      createSession(sessionId, projectId, { agentRuntimeType: "pi",});
       updateActivityState(sessionId, "finished");
-      const res2 = await router.handle(
+
+      const res = await router.handle(
         makeRequest("GET", `/api/sessions/${sessionId}`),
         state,
       );
-      const body2 = await res2!.json();
-      expect(body2.activityState).toBe("finished");
+      expect(res!.status).toBe(200);
+      const body = await res!.json();
+      expect(body.activityState).toBe("finished");
     });
 
     test("returns 404 for nonexistent session", async () => {
