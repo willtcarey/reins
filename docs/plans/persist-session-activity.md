@@ -54,3 +54,7 @@ Added `_fetchActivitySnapshot()` that calls `GET /api/activity` and applies the 
 When a task is closed, the server clears only `finished` activity for that task's sessions. `running` activity remains visible so active work can still be seen, and future activity for closed task sessions is still persisted normally. The activity snapshot endpoint remains a raw read of persisted `running`/`finished` state with no closed-task filtering.
 
 Cleared sessions are reconciled through standard `session_updated` broadcasts. The broadcast now optionally carries `activityState`; task-close clears emit `activityState: null`, and runtime activity transitions emit `running`/`finished`. The frontend applies this server value directly, so it no longer needs closed-task session guards or closed-task activity tests.
+
+## Follow-up: Delegate session activity
+
+Delegate sessions (`parent_session_id IS NOT NULL`) do not participate in server-side activity tracking. Runtime `agent_start` / `agent_end` activity transitions for delegate sessions are ignored, so delegates are never marked `running` or `finished`. The activity snapshot endpoint remains a raw read of persisted activity state; delegate sessions are naturally absent because they never receive activity. The parent session's activity is the only indicator used while delegated work is in progress.

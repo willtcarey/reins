@@ -248,13 +248,29 @@ export function updateSessionMeta(
 /**
  * Update the activity_state of a session. Used by the persistence observer
  * to persist running/finished state server-side.
+ *
+ * Delegate sessions (parent_session_id != NULL) do not participate in activity
+ * tracking. Attempts to mark them running/finished are ignored when they have no
+ * activity, and clear any stale activity if one is already present.
+ *
+ * Returns the activity state that was actually persisted, or undefined when no
+ * update was applied.
  */
 export function updateActivityState(
   id: string,
   activityState: ActivityStateValue | null,
-): void {
+): ActivityStateValue | null | undefined {
   const db = getDb();
-  db.query("UPDATE sessions SET activity_state = ? WHERE id = ?").run(activityState, id);
+  const session = getSession(id);
+  if (!session) return undefined;
+
+  const nextActivityState = session.parent_session_id === null ? activityState : null;
+  if (session.parent_session_id !== null && session.activity_state === null) {
+    return undefined;
+  }
+
+  db.query("UPDATE sessions SET activity_state = ? WHERE id = ?").run(nextActivityState, id);
+  return nextActivityState;
 }
 
 /**

@@ -221,12 +221,14 @@ export class Sessions {
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();
 
-    updateActivityState(sessionId, activityState);
+    const persistedActivityState = updateActivityState(sessionId, activityState);
+    if (persistedActivityState === undefined) return;
+
     this.broadcast({
       type: "session_updated",
       sessionId,
       projectId: row.project_id,
-      activityState,
+      activityState: persistedActivityState,
     });
   }
 

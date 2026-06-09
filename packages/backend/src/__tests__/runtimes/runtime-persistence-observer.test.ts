@@ -145,4 +145,36 @@ describe("runtime persistence observer", () => {
 
     detach();
   });
+
+  test("does not persist or broadcast running/finished activity for delegate sessions", async () => {
+    const project = createProject("Reins", "/tmp/reins-delegate-activity");
+    createSession("sess-parent", project.id, { agentRuntimeType: "test_runtime" });
+    createSession("sess-child", project.id, {
+      agentRuntimeType: "test_runtime",
+      parentSessionId: "sess-parent",
+    });
+
+    const { runtime, emit } = createRuntimeStub();
+    const broadcasts: unknown[] = [];
+    const broadcast: Broadcast = (msg) => {
+      broadcasts.push(msg);
+    };
+
+    const detach = attachRuntimePersistenceObserver({
+      sessionId: "sess-child",
+      runtime,
+      sessions: makeSessions(broadcast),
+    });
+
+    emit({ type: "agent_start" });
+    await Bun.sleep(50);
+    expect(getSession("sess-child")!.activity_state).toBeNull();
+
+    emit({ type: "agent_end", messages: [] });
+    await Bun.sleep(50);
+    expect(getSession("sess-child")!.activity_state).toBeNull();
+    expect(broadcasts).toEqual([]);
+
+    detach();
+  });
 });
