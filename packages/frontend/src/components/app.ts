@@ -104,6 +104,14 @@ export class AppShell extends LitElement {
     // bubble to the template handler; document-level events need this listener.
     document.addEventListener("open-in-browser", this.handleOpenInBrowser);
 
+    // When the user returns to the tab, mark the active session as viewed so
+    // any finished/unread activity that accumulated while away is cleared.
+    //
+    // In Tauri the Rust side also dispatches visibilitychange on document when
+    // the window gains/loses focus (the Page Visibility API doesn't fire
+    // reliably on all webview backends).
+    document.addEventListener("visibilitychange", this.handleVisibilityChange);
+
     this.appStore.connect();
 
     // Detect virtual keyboard open/close to toggle safe-area bottom padding.
@@ -125,6 +133,7 @@ export class AppShell extends LitElement {
     this._unsubscribeStore?.();
     window.removeEventListener("hashchange", this.onHashChange);
     document.removeEventListener("open-in-browser", this.handleOpenInBrowser);
+    document.removeEventListener("visibilitychange", this.handleVisibilityChange);
     this.appStore.disconnect();
     this.appStore.dispose();
   }
@@ -134,6 +143,17 @@ export class AppShell extends LitElement {
     const previousProjectId = this.appStore.projectId;
     const route = parseHash();
     this.applyRoute(route, previousProjectId);
+  };
+
+  /**
+   * When the user returns to the tab, mark the active session as viewed.
+   * This clears any finished/unread activity that accumulated while the
+   * window was in the background.
+   */
+  private handleVisibilityChange = () => {
+    if (document.visibilityState === "visible") {
+      this.appStore.markActiveSessionViewed();
+    }
   };
 
   private async applyRoute(route: Route, previousProjectId?: number | null) {

@@ -6,7 +6,7 @@ use std::process::Command;
 use tauri::{
     menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
     webview::DownloadEvent,
-    AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder, Wry,
+    AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder, Wry, WindowEvent,
 };
 
 const DEFAULT_BACKEND_URL: &str = "http://localhost:3100";
@@ -198,6 +198,20 @@ fn main() {
 });"#,
                 )
                 .build()?;
+
+            // Dispatch a standard visibilitychange event on document whenever
+            // the Tauri window gains or loses focus. This supplements the Page
+            // Visibility API which doesn't fire reliably on all webview backends.
+            let webview_window = app.get_webview_window("main").unwrap();
+            webview_window.on_window_event(move |event| {
+                if let WindowEvent::Focused(focused) = event {
+                    let state = if *focused { "visible" } else { "hidden" };
+                    let _ = webview_window.eval(&format!(
+                        r#"document.visibilityState = "{state}";
+                         document.dispatchEvent(new Event("visibilitychange"));"#,
+                    ));
+                }
+            });
 
             Ok(())
         })
