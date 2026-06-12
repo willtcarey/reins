@@ -99,6 +99,15 @@ export class FileBrowser extends LitElement {
     this.dispatchEvent(openFileSearchEvent());
   }
 
+  private _downloadUrl(): string | null {
+    const contentUrl = this.store?.contentUrl;
+    return contentUrl ? `${contentUrl}&download=1` : null;
+  }
+
+  private _downloadFilename(path: string): string {
+    return path.split("/").pop() || path;
+  }
+
   private _onGlobalKeydown = (e: KeyboardEvent) => {
     if (e.key === "Escape" && this._open) {
       e.preventDefault();
@@ -121,6 +130,7 @@ export class FileBrowser extends LitElement {
   override render() {
     if (!this._open) return nothing;
     const path = this.store?.selectedFile;
+    const downloadUrl = this._downloadUrl();
 
     return html`
       <div
@@ -154,6 +164,21 @@ export class FileBrowser extends LitElement {
               </svg>
             </button>
             <span class="text-sm text-zinc-300 font-mono truncate flex-1">${path}</span>
+            ${path && downloadUrl ? html`
+              <a
+                class="p-1 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/60 cursor-pointer shrink-0 transition-colors"
+                href=${downloadUrl}
+                download=${this._downloadFilename(path)}
+                title="Download file"
+                aria-label=${`Download ${path}`}
+                @click=${(e: Event) => e.stopPropagation()}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>
+                </svg>
+              </a>
+            ` : nothing}
             <kbd class="hidden sm:inline text-[10px] text-zinc-500 bg-zinc-700 px-1.5 py-0.5 rounded">Esc</kbd>
             <button
               class="p-1 text-zinc-400 hover:text-zinc-200 cursor-pointer shrink-0"

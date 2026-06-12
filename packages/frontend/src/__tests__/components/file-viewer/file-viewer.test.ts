@@ -132,7 +132,19 @@ describe("FileViewerHtml", () => {
   });
 });
 
-describe("FileBrowser HTML preview escape", () => {
+describe("FileBrowser header actions", () => {
+  test("renders a download link for the selected file", () => {
+    const browser = new FileBrowser();
+    browser.store = storeFor("docs/report.pdf", "PDF-ish");
+    browser["_open"] = true;
+
+    const output = templateToString(browser.render());
+
+    expect(output).toContain("/api/projects/7/files/content?path=docs%2Freport.pdf&download=1");
+    expect(output).toContain("report.pdf");
+    expect(output).toContain("Download docs/report.pdf");
+  });
+
   test("closes the overlay when HTML preview requests Escape dismissal", () => {
     const browser = new FileBrowser();
     browser.store = storeFor("public/index.html", "<h1>Hello</h1>");
