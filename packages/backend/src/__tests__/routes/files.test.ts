@@ -227,6 +227,46 @@ describe("file routes", () => {
       expect([...body]).toEqual([...bytes]);
     });
 
+    test("non-download working-tree binary content returns a placeholder instead of bytes", async () => {
+      const bytes = Buffer.alloc(2 * 1024 * 1024);
+      bytes[1024] = 0xff;
+      writeFileSync(join(repo.dir, "large.bin"), bytes);
+
+      const res = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/files/content?path=large.bin`),
+        state,
+      );
+
+      expect(res!.status).toBe(200);
+      expect(res!.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
+      expect(res!.headers.get("Content-Disposition")).toBeNull();
+      const body = await res!.text();
+      expect(body).toContain("Binary file (2.0 MB)");
+      expect(body.length).toBeLessThan(100);
+    });
+
+    test("non-download git-ref binary content returns a placeholder instead of bytes", async () => {
+      const bytes = Buffer.alloc(2 * 1024 * 1024);
+      bytes[1024] = 0xff;
+      await git(repo.dir, ["checkout", "-b", "feature/binary-preview"]);
+      writeFileSync(join(repo.dir, "artifact.bin"), bytes);
+      await git(repo.dir, ["add", "artifact.bin"]);
+      await git(repo.dir, ["commit", "-m", "Add binary artifact"]);
+      await git(repo.dir, ["checkout", "main"]);
+
+      const res = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/files/content?path=artifact.bin&ref=feature%2Fbinary-preview`),
+        state,
+      );
+
+      expect(res!.status).toBe(200);
+      expect(res!.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
+      expect(res!.headers.get("Content-Disposition")).toBeNull();
+      const body = await res!.text();
+      expect(body).toContain("Binary file (2.0 MB)");
+      expect(body.length).toBeLessThan(100);
+    });
+
     // ---- Download mode tests -----------------------------------------------
 
     test("download=1 sets Content-Disposition attachment header", async () => {

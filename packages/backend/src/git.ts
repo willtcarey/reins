@@ -420,6 +420,103 @@ export async function showFileBinary(
   return new Uint8Array(stdout);
 }
 
+export interface GitBlobInfo {
+  objectId: string;
+  size: number;
+}
+
+/** Resolve a file at a git ref to a blob object and size without reading it. */
+export async function getGitBlobInfo(
+  projectDir: string,
+  ref: string,
+  filePath: string,
+): Promise<GitBlobInfo> {
+  const objectId = (await runChecked(projectDir, ["rev-parse", "--verify", `${ref}:${filePath}`])).trim();
+  const type = (await runChecked(projectDir, ["cat-file", "-t", objectId])).trim();
+  if (type !== "blob") {
+    throw new Error(`Not a file blob: ${ref}:${filePath}`);
+  }
+
+  const sizeText = (await runChecked(projectDir, ["cat-file", "-s", objectId])).trim();
+  return { objectId, size: Number.parseInt(sizeText, 10) || 0 };
+}
+
+/** Read only the leading bytes from a git blob for MIME sniffing. */
+export async function readGitBlobPrefix(
+  projectDir: string,
+  objectId: string,
+  maxBytes = 8192,
+): Promise<Uint8Array> {
+  const proc = Bun.spawn(["git", "cat-file", "blob", objectId], {
+    cwd: projectDir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  void new Response(proc.stderr).text().catch(() => undefined);
+
+  const reader = proc.stdout.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let done = false;
+
+  try {
+    while (total < maxBytes) {
+      const next = await reader.read();
+      if (next.done) {
+        done = true;
+        break;
+      }
+
+      const bytes = next.value;
+      const take = Math.min(bytes.byteLength, maxBytes - total);
+      chunks.push(bytes.slice(0, take));
+      total += take;
+
+      if (take < bytes.byteLength) break;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    if (!done) proc.kill();
+    await proc.exited.catch(() => undefined);
+  }
+
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}
+
+/** Stream a git blob without buffering the full content in memory. */
+export function streamGitBlob(projectDir: string, objectId: string): ReadableStream<Uint8Array> {
+  const proc = Bun.spawn(["git", "cat-file", "blob", objectId], {
+    cwd: projectDir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  void new Response(proc.stderr).text().catch(() => undefined);
+
+  const reader = proc.stdout.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const next = await reader.read();
+      if (next.done) {
+        controller.close();
+        await proc.exited.catch(() => undefined);
+        return;
+      }
+      controller.enqueue(next.value);
+    },
+    async cancel() {
+      await reader.cancel().catch(() => undefined);
+      proc.kill();
+      await proc.exited.catch(() => undefined);
+    },
+  });
+}
+
 // ---- Large / binary file detection -----------------------------------------
 
 /** Default size threshold for skipping diffs (1 MB). */
