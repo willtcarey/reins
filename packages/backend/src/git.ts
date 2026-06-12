@@ -4,6 +4,9 @@
  * Utilities for retrieving git diffs and branch info from a project directory.
  */
 
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
+
 async function run(projectDir: string, args: string[]): Promise<string> {
   const proc = Bun.spawn(["git", ...args], {
     cwd: projectDir,
@@ -426,6 +429,7 @@ const DEFAULT_SIZE_THRESHOLD = 1_048_576;
  * Check whether a file is too large or binary to diff safely.
  *
  * Returns `true` when:
+ * - The path is an un-diffable directory entry,
  * - The file size exceeds `threshold` bytes (default 1 MB), or
  * - The first 8 KB of the file contains a null byte (binary heuristic).
  *
@@ -444,12 +448,19 @@ export async function isLargeOrBinary(
 /**
  * Internal: classify a file as "large", "binary", or false (normal text).
  */
+type FileClassification = "large" | "binary" | "directory" | false;
+
 async function classifyFile(
   projectDir: string,
   filePath: string,
   threshold = DEFAULT_SIZE_THRESHOLD,
-): Promise<"large" | "binary" | false> {
-  const file = Bun.file(`${projectDir}/${filePath}`);
+): Promise<FileClassification> {
+  const absolutePath = join(projectDir, filePath);
+  const stats = await stat(absolutePath);
+  if (stats.isDirectory()) return "directory";
+  if (!stats.isFile()) return "binary";
+
+  const file = Bun.file(absolutePath);
   const size = file.size;
   if (size > threshold) return "large";
 
@@ -543,7 +554,15 @@ async function diffUntrackedFiles(
   if (files.length === 0) return "";
   const diffs = await Promise.all(
     files.map(async (file) => {
-      const kind = await classifyFile(projectDir, file);
+      let kind: FileClassification;
+      try {
+        kind = await classifyFile(projectDir, file);
+      } catch {
+        return syntheticNewFileDiff(file, "Unable to read untracked file");
+      }
+      if (kind === "directory") {
+        return syntheticNewFileDiff(file, "Untracked directory");
+      }
       if (kind === "large") {
         return syntheticNewFileDiff(file, "File too large to diff");
       }
@@ -729,7 +748,7 @@ export async function getChangedFiles(
       if (skip) {
         fileMap.set(filePath, { path: filePath, additions: 0, removals: 0 });
       } else {
-        const content = await Bun.file(`${projectDir}/${filePath}`).text();
+        const content = await Bun.file(join(projectDir, filePath)).text();
         const lineCount = content.split("\n").filter(Boolean).length;
         fileMap.set(filePath, { path: filePath, additions: lineCount, removals: 0 });
       }

@@ -1,10 +1,10 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { writeFileSync } from "fs";
+import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
-import { useTestRepo, commitFile } from "../helpers/test-repo.js";
+import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 
@@ -49,6 +49,65 @@ describe("diff routes", () => {
       const body = await res!.json();
       expect(body.files.length).toBeGreaterThan(0);
       expect(body.branch).toBe("feature/test");
+    });
+
+    test("matches /diff paths for a checked-out stacked branch with parent directory changes", async () => {
+      await git(repo.dir, ["checkout", "-b", "feature/parent"]);
+      mkdirSync(join(repo.dir, "nested", "parent-dir"), { recursive: true });
+      await commitFile(repo.dir, "nested/parent-dir/a.txt", "from parent a\n", "Add parent directory file A");
+      await commitFile(repo.dir, "nested/parent-dir/b.txt", "from parent b\n", "Add parent directory file B");
+
+      await git(repo.dir, ["checkout", "-b", "feature/child"]);
+      await commitFile(repo.dir, "child.txt", "from child\n", "Add child file");
+
+      const [diffRes, filesRes] = await Promise.all([
+        router.handle(makeRequest("GET", `/api/projects/${projectId}/diff?mode=branch&branch=feature/child`), state),
+        router.handle(makeRequest("GET", `/api/projects/${projectId}/diff/files?mode=branch&branch=feature/child`), state),
+      ]);
+
+      expect(diffRes!.status).toBe(200);
+      expect(filesRes!.status).toBe(200);
+
+      const diffBody = await diffRes!.json();
+      const filesBody = await filesRes!.json();
+      const diffPaths = diffBody.files.map((file: any) => file.path).toSorted();
+      const filePaths = filesBody.files.map((file: any) => file.path).toSorted();
+
+      expect(diffPaths).toContain("nested/parent-dir/a.txt");
+      expect(diffPaths).toContain("nested/parent-dir/b.txt");
+      for (const path of diffPaths) {
+        expect(filePaths).toContain(path);
+      }
+    });
+
+    test("matches /diff paths for an unchecked-out stacked branch with parent directory changes", async () => {
+      await git(repo.dir, ["checkout", "-b", "feature/parent"]);
+      mkdirSync(join(repo.dir, "nested", "parent-dir"), { recursive: true });
+      await commitFile(repo.dir, "nested/parent-dir/a.txt", "from parent a\n", "Add parent directory file A");
+      await commitFile(repo.dir, "nested/parent-dir/b.txt", "from parent b\n", "Add parent directory file B");
+
+      await git(repo.dir, ["checkout", "-b", "feature/child"]);
+      await commitFile(repo.dir, "child.txt", "from child\n", "Add child file");
+      await git(repo.dir, ["checkout", "main"]);
+
+      const [diffRes, filesRes] = await Promise.all([
+        router.handle(makeRequest("GET", `/api/projects/${projectId}/diff?mode=branch&branch=feature/child`), state),
+        router.handle(makeRequest("GET", `/api/projects/${projectId}/diff/files?mode=branch&branch=feature/child`), state),
+      ]);
+
+      expect(diffRes!.status).toBe(200);
+      expect(filesRes!.status).toBe(200);
+
+      const diffBody = await diffRes!.json();
+      const filesBody = await filesRes!.json();
+      const diffPaths = diffBody.files.map((file: any) => file.path).toSorted();
+      const filePaths = filesBody.files.map((file: any) => file.path).toSorted();
+
+      expect(diffPaths).toContain("nested/parent-dir/a.txt");
+      expect(diffPaths).toContain("nested/parent-dir/b.txt");
+      for (const path of diffPaths) {
+        expect(filePaths).toContain(path);
+      }
     });
 
     test("returns uncommitted changes in uncommitted mode", async () => {

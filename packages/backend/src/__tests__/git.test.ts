@@ -5,12 +5,13 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { writeFileSync } from "fs";
+import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import {
   createTestRepo,
   commitFile,
   useTestRepo,
+  git,
 } from "./helpers/test-repo.js";
 import {
   detectDefaultBranch,
@@ -659,6 +660,19 @@ describe("getChangedFiles — large/binary untracked files", () => {
     expect(file).toBeDefined();
     expect(file!.additions).toBe(3);
   });
+
+  test("reports additions: 0 for an untracked nested git repository", async () => {
+    const nestedRepo = join(repo.dir, "repo");
+    mkdirSync(nestedRepo, { recursive: true });
+    await git(nestedRepo, ["init", "-b", "main"]);
+    writeFileSync(join(nestedRepo, "README.md"), "nested repo\n");
+
+    const files = await getChangedFiles(repo.dir, "main", "uncommitted");
+    const file = files.find((f) => f.path === "repo/");
+    expect(file).toBeDefined();
+    expect(file!.additions).toBe(0);
+    expect(file!.removals).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -689,5 +703,18 @@ describe("getDiff — large/binary untracked files", () => {
     expect(file).toBeDefined();
     expect(file!.hunks).toHaveLength(1);
     expect(file!.hunks[0].lines[0].text).toContain("Binary file");
+  });
+
+  test("returns a synthetic diff entry for an untracked nested git repository", async () => {
+    const nestedRepo = join(repo.dir, "repo");
+    mkdirSync(nestedRepo, { recursive: true });
+    await git(nestedRepo, ["init", "-b", "main"]);
+    writeFileSync(join(nestedRepo, "README.md"), "nested repo\n");
+
+    const diff = await getDiff(repo.dir, 3, "main", "uncommitted");
+    const file = diff.find((f) => f.path === "repo/");
+    expect(file).toBeDefined();
+    expect(file!.hunks).toHaveLength(1);
+    expect(file!.hunks[0].lines[0].text).toContain("Untracked directory");
   });
 });
