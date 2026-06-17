@@ -76,9 +76,9 @@ export class AssistantSession extends LitElement {
         <div class="px-3 py-1 text-[10px] text-zinc-500 uppercase tracking-wide font-semibold">Previous</div>
         <div class="max-h-48 overflow-y-auto">
           ${previous.map(s => {
-            const label = s.name || s.first_message || "Empty session";
+            const label = s.name || s.firstMessage || "Empty session";
             const truncated = label.length > 40 ? label.slice(0, 40) + "…" : label;
-            const date = formatRelativeDate(s.updated_at);
+            const date = formatRelativeDate(s.updatedAt);
             const isActive = s.id === this.activeSessionId;
             return html`
               <button
@@ -87,7 +87,7 @@ export class AssistantSession extends LitElement {
                 @click=${() => this.handleSelectSession(s.id)}
               >
                 <div class="text-xs ${isActive ? "text-blue-300" : "text-zinc-300"} truncate">${truncated}</div>
-                <div class="text-[10px] text-zinc-500">${date} · ${s.message_count} msg</div>
+                <div class="text-[10px] text-zinc-500">${date} · ${s.messageCount} msg</div>
               </button>
             `;
           })}

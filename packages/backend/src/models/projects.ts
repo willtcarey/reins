@@ -400,7 +400,6 @@ export class ProjectModel {
         type: "session_updated",
         sessionId,
         projectId: this.projectId,
-        activityState: null,
       });
     }
 

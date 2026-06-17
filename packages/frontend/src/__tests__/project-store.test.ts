@@ -3,9 +3,12 @@
  */
 import { describe, test, expect, beforeEach } from "bun:test";
 import { ProjectStore } from "../models/stores/project-store.js";
+import { ProjectsStore } from "../models/stores/projects-store.js";
 import { TasksCollection, type TaskListItem } from "../models/tasks.js";
 import { ActivityStore } from "../models/stores/activity-store.js";
+import { SessionCache } from "../models/stores/session-cache.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
+import type { SessionListItem } from "../models/ws-client.js";
 
 // Mock fetch globally
 
@@ -33,6 +36,22 @@ function task(overrides: Partial<TaskListItem>): TaskListItem {
   };
 }
 
+function session(overrides: Partial<SessionListItem> = {}): SessionListItem {
+  return {
+    id: "s1",
+    projectId: 42,
+    taskId: null,
+    parentSessionId: null,
+    name: null,
+    createdAt: "",
+    updatedAt: "",
+    messageCount: 0,
+    firstMessage: null,
+    activityState: null,
+    ...overrides,
+  };
+}
+
 describe("ProjectStore", () => {
   let store: ProjectStore;
 
@@ -52,10 +71,60 @@ describe("ProjectStore", () => {
     expect(store.loaded).toBe(false);
   });
 
+  test("fetchLists remembers fetched session list metadata", async () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, new ActivityStore(), sessionCache);
+    const sessions = [session({ firstMessage: "hello", activityState: "running" })];
+
+    mockFetch((url) => {
+      if (url.includes("/tasks")) return jsonResponse([]);
+      if (url.includes("/sessions")) return jsonResponse(sessions);
+      return jsonResponse({}, false);
+    });
+
+    await store.fetchLists();
+
+    expect(sessionCache.get("s1")?.projectId).toBe(42);
+    expect(sessionCache.get("s1")?.firstMessage).toBe("hello");
+    expect(sessionCache.get("s1")?.activityState).toBe("running");
+  });
+
+  test("fetchLists syncs session activity through SessionCache subscription", async () => {
+    const sessionCache = new SessionCache();
+    const projectsStore = new ProjectsStore(sessionCache);
+    store = projectsStore.getStore(42);
+
+    mockFetch((url) => {
+      if (url.includes("/tasks")) return jsonResponse([]);
+      if (url.includes("/sessions")) return jsonResponse([session({ activityState: "running" })]);
+      return jsonResponse({}, false);
+    });
+
+    await store.fetchLists();
+
+    expect(store.activityForSession("s1")).toBe("running");
+
+    sessionCache.set("s1", { activityState: null });
+
+    expect(store.activityForSession("s1")).toBeUndefined();
+  });
+
+  test("fetchTaskSessions syncs session activity through SessionCache subscription", async () => {
+    const sessionCache = new SessionCache();
+    const projectsStore = new ProjectsStore(sessionCache);
+    store = projectsStore.getStore(42);
+
+    mockFetch(() => jsonResponse([session({ id: "s-task", taskId: 1, activityState: "finished" })]));
+
+    await store.fetchTaskSessions(1);
+
+    expect(store.activityForSession("s-task")).toBe("finished");
+  });
+
   test("fetchLists fetches tasks and sessions in parallel", async () => {
     const sessionIds: string[] = [];
     const tasks = [{ id: 1, project_id: 42, title: "Task 1", description: null, branch_name: "", status: "open" as const, created_at: "", updated_at: "", session_count: 0, session_ids: sessionIds, diffStats: null }];
-    const sessions = [{ id: "s1", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null, activity_state: null }];
+    const sessions = [session()];
 
     mockFetch((url) => {
       if (url.includes("/tasks")) return jsonResponse(tasks);
@@ -111,7 +180,7 @@ describe("ProjectStore", () => {
   });
 
   test("fetchTaskSessions fetches and caches task sessions", async () => {
-    const taskSessions = [{ id: "s2", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null, activity_state: null }];
+    const taskSessions = [session({ id: "s2" })];
 
     mockFetch((url) => {
       if (url.includes("/tasks/1/sessions")) return jsonResponse(taskSessions);
@@ -124,7 +193,7 @@ describe("ProjectStore", () => {
   });
 
   test("fetchTaskSessions skips update if data unchanged", async () => {
-    const taskSessions = [{ id: "s2", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null, activity_state: null }];
+    const taskSessions = [session({ id: "s2" })];
     let notifyCount = 0;
 
     mockFetch(() => jsonResponse(taskSessions));
@@ -143,11 +212,11 @@ describe("ProjectStore", () => {
     let notifyCount = 0;
     store.subscribe(() => { notifyCount++; });
 
-    mockFetch(() => jsonResponse([{ id: "s1", name: "V1", created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null, activity_state: null }]));
+    mockFetch(() => jsonResponse([session({ name: "V1" })]));
     await store.fetchTaskSessions(1);
     const countAfterFirst = notifyCount;
 
-    mockFetch(() => jsonResponse([{ id: "s1", name: "V2", created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null, activity_state: null }]));
+    mockFetch(() => jsonResponse([session({ name: "V2" })]));
     await store.fetchTaskSessions(1);
     expect(notifyCount).toBeGreaterThan(countAfterFirst);
   });
@@ -200,7 +269,7 @@ describe("ProjectStore", () => {
     store.taskSessions = new Map([
       [
         7,
-        [{ id: "s-old", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null, activity_state: null }],
+        [session({ id: "s-old" })],
       ],
     ]);
 
@@ -227,7 +296,7 @@ describe("ProjectStore", () => {
       }
       if (url === "/api/tasks/7/sessions") {
         return jsonResponse([
-          { id: "s-new", name: null, created_at: "", updated_at: "", message_count: 2, first_message: "Hello", parent_session_id: null, activity_state: null },
+          session({ id: "s-new", messageCount: 2, firstMessage: "Hello" }),
         ]);
       }
       return jsonResponse({}, false);
@@ -236,7 +305,7 @@ describe("ProjectStore", () => {
     await store.fetchLists();
 
     expect(store.taskSessions.get(7)).toEqual([
-      { id: "s-new", name: null, created_at: "", updated_at: "", message_count: 2, first_message: "Hello", parent_session_id: null, activity_state: null },
+      session({ id: "s-new", messageCount: 2, firstMessage: "Hello" }),
     ]);
   });
 
@@ -253,7 +322,7 @@ describe("ProjectStore", () => {
 
   test("activityState derives running over finished", () => {
     store.tasks = new TasksCollection(42, [task({ id: 1, session_ids: ["s1"] })]);
-    store.sessions = [{ id: "s2", name: null, created_at: "", updated_at: "", message_count: 0, first_message: null, parent_session_id: null, activity_state: null }];
+    store.sessions = [session({ id: "s2" })];
 
     store.activityStore.setRunning("s1");
     store.activityStore.setFinished("s2");

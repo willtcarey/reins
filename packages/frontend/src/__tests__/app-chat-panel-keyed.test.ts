@@ -24,7 +24,13 @@ describe("AppShell chat panel rendering", () => {
       sessionId: "sess-1",
       sessionData: {
         id: "sess-1",
-        task_id: null,
+        projectId: 42,
+      taskId: null,
+      parentSessionId: null,
+      name: null,
+      createdAt: "",
+      updatedAt: "",
+      messageCount: 0,
         state: {
           model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
           thinkingLevel: "high",

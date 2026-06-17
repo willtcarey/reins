@@ -109,7 +109,7 @@ describe("runtime persistence observer", () => {
     detach();
   });
 
-  test("broadcasts session_updated with activityState on agent_start and agent_end", async () => {
+  test("broadcasts session_updated on agent_start and agent_end", async () => {
     const project = createProject("Reins", "/tmp/reins-activity");
     createSession("sess-bcast", project.id, { agentRuntimeType: "test_runtime" });
 
@@ -131,7 +131,6 @@ describe("runtime persistence observer", () => {
       type: "session_updated",
       sessionId: "sess-bcast",
       projectId: project.id,
-      activityState: "running",
     });
 
     emit({ type: "agent_end", messages: [] });
@@ -140,7 +139,6 @@ describe("runtime persistence observer", () => {
       type: "session_updated",
       sessionId: "sess-bcast",
       projectId: project.id,
-      activityState: "finished",
     });
 
     detach();

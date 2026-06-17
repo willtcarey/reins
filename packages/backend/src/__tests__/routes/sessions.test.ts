@@ -29,7 +29,7 @@ describe("session routes (top-level)", () => {
   });
 
   describe("GET /api/sessions/:sessionId", () => {
-    test("returns session from memory with project_id", async () => {
+    test("returns session from memory with projectId", async () => {
       const sessionId = "lookup-memory";
       createSession(sessionId, projectId, { agentRuntimeType: "pi",});
 
@@ -42,8 +42,12 @@ describe("session routes (top-level)", () => {
       expect(res!.status).toBe(200);
       const body = await res!.json();
       expect(body.id).toBe(sessionId);
-      expect(body.project_id).toBe(projectId);
+      expect(body.projectId).toBe(projectId);
+      expect(body.taskId).toBeNull();
+      expect(body.messageCount).toBe(0);
       expect(body.state.isStreaming).toBe(false);
+      expect(body).not.toHaveProperty("project_id");
+      expect(body).not.toHaveProperty("task_id");
     });
 
     test("uses DB model metadata and overlays in-memory streaming state", async () => {
@@ -68,7 +72,7 @@ describe("session routes (top-level)", () => {
       expect(body.state.isStreaming).toBe(true);
     });
 
-    test("returns metadata-only session from DB with project_id", async () => {
+    test("returns metadata-only session from DB with projectId", async () => {
       const sessionId = "lookup-db";
       createSession(sessionId, projectId, { agentRuntimeType: "pi",});
       persistMessages(sessionId, [
@@ -82,9 +86,10 @@ describe("session routes (top-level)", () => {
       expect(res!.status).toBe(200);
       const body = await res!.json();
       expect(body.id).toBe(sessionId);
-      expect(body.project_id).toBe(projectId);
+      expect(body.projectId).toBe(projectId);
       expect(body.state.isStreaming).toBe(false);
       expect(body.state.messageCount).toBe(1);
+      expect(body.messageCount).toBe(1);
       expect(body.activityState).toBeNull();
       expect(body).not.toHaveProperty("messages");
     });

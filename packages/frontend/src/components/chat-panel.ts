@@ -156,9 +156,29 @@ export class ChatPanel extends LitElement {
         this.messages.length === 0
         || (!this.isStreaming && this.streamingBlocks.length === 0)
       ) {
-        this.messages = sessionMessages;
+        this.messages = this.mergePersistedMessages(sessionMessages);
       }
     }
+  }
+
+  private mergePersistedMessages(persistedMessages: AgentMessage[]): AgentMessage[] {
+    if (this.messages.length === 0) return persistedMessages;
+
+    const persistedKeys = new Set(
+      persistedMessages.map((message) => `${message.role}:${message.timestamp}`),
+    );
+    const latestPersistedTimestamp = persistedMessages.reduce(
+      (latest, message) => Math.max(latest, message.timestamp),
+      -Infinity,
+    );
+    const localOnlyMessages = this.messages.filter((message) => (
+      message.timestamp > latestPersistedTimestamp
+      && !persistedKeys.has(`${message.role}:${message.timestamp}`)
+    ));
+
+    return localOnlyMessages.length === 0
+      ? persistedMessages
+      : [...persistedMessages, ...localOnlyMessages];
   }
 
   private wireStoreEvents() {

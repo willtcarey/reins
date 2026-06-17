@@ -176,7 +176,7 @@ export class TaskListItemElement extends LitElement {
               <div class="mx-2 mt-1 mb-1 rounded-md border border-zinc-800/80 bg-zinc-950/30 overflow-hidden">
                 ${(() => {
                   const childMap = buildChildMap(sessions);
-                  const topLevel = sessions.filter(s => !s.parent_session_id);
+                  const topLevel = sessions.filter(s => !s.parentSessionId);
                   return topLevel.map(s => html`
                     <session-list-item
                       .session=${s}

@@ -14,6 +14,7 @@
 import type { InjectedSkillInfo, SessionListItem } from "../ws-client.js";
 import { TasksCollection, type TaskListItem } from "../tasks.js";
 import type { ActivityStore, ActivityState } from "./activity-store.js";
+import type { SessionCache } from "./session-cache.js";
 
 export type ProjectStoreListener = () => void;
 
@@ -36,11 +37,14 @@ export class ProjectStore {
    * Read-only — all activity mutations go through ProjectsStore.
    */
   private _activity: ActivityStore;
+  private _sessionCache: SessionCache | null;
+  private _sessionUnsubscribes = new Map<string, () => void>();
   private _listeners = new Set<ProjectStoreListener>();
 
-  constructor(projectId: number, activity: ActivityStore) {
+  constructor(projectId: number, activity: ActivityStore, sessionCache: SessionCache | null = null) {
     this.projectId = projectId;
     this._activity = activity;
+    this._sessionCache = sessionCache;
     this.tasks = TasksCollection.empty(projectId);
   }
 
@@ -56,7 +60,8 @@ export class ProjectStore {
   }
 
   dispose(): void {
-    // no-op — ProjectStore no longer subscribes to ActivityStore
+    for (const unsubscribe of this._sessionUnsubscribes.values()) unsubscribe();
+    this._sessionUnsubscribes.clear();
   }
 
   // ---- Activity selectors (read-only) --------------------------------------
@@ -137,12 +142,8 @@ export class ProjectStore {
       if (sessionsResp.ok) {
         const sessions: SessionListItem[] = await sessionsResp.json();
         this.sessions = sessions;
-        // Sync server-authoritative activity_state to the shared ActivityStore
-        // so session_updated broadcasts (e.g. from markActivityViewed on
-        // another tab/device) reconcile correctly.
-        for (const session of sessions) {
-          this._activity.applyServerState(session.id, session.activity_state, this.projectId);
-        }
+        this.reconcileSessionSubscriptions();
+        this._sessionCache?.setMany(sessions);
       }
       if (skillsResp.ok) {
         const body = await skillsResp.json().catch(() => null);
@@ -260,14 +261,34 @@ export class ProjectStore {
         const next = new Map(this.taskSessions);
         next.set(taskId, sessions);
         this.taskSessions = next;
-        // Sync server-authoritative activity_state to the shared ActivityStore
-        for (const session of sessions) {
-          this._activity.applyServerState(session.id, session.activity_state, this.projectId);
-        }
+        this.reconcileSessionSubscriptions();
+        this._sessionCache?.setMany(sessions);
         this.notify();
       }
     } catch {
       // silent
+    }
+  }
+
+  private reconcileSessionSubscriptions(): void {
+    if (!this._sessionCache) return;
+
+    const nextSessionIds = new Set<string>();
+    for (const session of this.sessions) nextSessionIds.add(session.id);
+    for (const sessions of this.taskSessions.values()) {
+      for (const session of sessions) nextSessionIds.add(session.id);
+    }
+
+    for (const [sessionId, unsubscribe] of this._sessionUnsubscribes) {
+      if (nextSessionIds.has(sessionId)) continue;
+      unsubscribe();
+      this._sessionUnsubscribes.delete(sessionId);
+    }
+
+    for (const sessionId of nextSessionIds) {
+      if (this._sessionUnsubscribes.has(sessionId)) continue;
+      const unsubscribe = this._sessionCache.subscribe(sessionId, () => this.notify());
+      this._sessionUnsubscribes.set(sessionId, unsubscribe);
     }
   }
 }

@@ -165,8 +165,8 @@ The central store. Constructed with an `AppClient` (WebSocket client) and intern
 - **Owns server communication boundaries** — AppStore and its sub-stores perform REST/WS work; components do not call `fetch()` directly.
 - **Handles WS events internally** — `agent_start` / `agent_end` update activity state and trigger refetches. `task_updated` refreshes the task list and clears activity for sessions on closed tasks. `session_updated` refreshes the active session and project lists. `tool_execution_end` for file-modifying tools refreshes the diff. Views don't participate in these decisions.
 - **Manages reconnect** — On WebSocket reconnect, refetches the project list, refreshes loaded project stores, refreshes active session metadata/messages, and reconciles locally-running activity against backend session streaming state to catch up on missed events.
-- **Splits active session state** — Session metadata (`sessionData`) and persisted history (`sessionMessages`) are fetched separately so metadata refreshes can't clobber in-flight chat rendering.
-- **Uses blank session metadata while loading** — `ActiveSessionStore` keeps `sessionData` as a placeholder object for the active `sessionId` until the metadata request completes, so views don't need null checks for the selected session.
+- **Splits active session state** — Session metadata is fetched into the shared `SessionCache` and read by `ActiveSessionStore`; persisted history (`sessionMessages`) is loaded separately so metadata refreshes can't clobber in-flight chat rendering.
+- **Uses blank session metadata while loading** — `ActiveSessionStore` keeps `sessionData` as a placeholder object for the active `sessionId` until `SessionCache` has full detail, so views don't need null checks for the selected session.
 - **Exposes the active session store directly to the chat view** — `chat-panel` receives `ActiveSessionStore`, reads `sessionData` / `sessionMessages` from it, and sends prompt/steer/abort/model-update intents back through the same store.
 - **Coordinates sub-stores** — When the session or project changes, AppStore updates DiffStore's branch and project. When an agent completes, AppStore tells DiffStore to refresh.
 - **Routes activity events** — WS events are dispatched by `projectId` to `ProjectsStore`, which owns cross-project activity event helpers. AppStore does not mutate raw activity state directly.
@@ -184,17 +184,21 @@ Owned by AppStore. Manages git diff state: file listings, full diffs, commit spr
 
 Views access DiffStore through `store.diffStore` as a read-only surface.
 
+### SessionCache (`models/stores/session-cache.ts`)
+
+Shared client-side cache for canonical session metadata. `AppStore`, `ProjectsStore`, and `ProjectStore` populate it from session detail/list endpoints. `ActiveSessionStore` subscribes to the current session ID and reads from this store instead of fetching session metadata directly; `ProjectsStore` subscribes globally to reconcile cached `activityState` into the shared activity model; `ProjectStore` subscribes to session IDs in its lists so project views update when cached metadata changes. Use `getDetail(sessionId)` when a consumer needs a complete `SessionData` record rather than a partial list/activity cache entry.
+
 ### ProjectsStore (`models/stores/projects-store.ts`)
 
 Public AppStore sub-store for project-domain UI. Manages the project list, project CRUD, lazily-created `ProjectStore` instances, and **all activity state management**. Owns a single shared `ActivityStore` — the single source of truth for session activity across all projects. Provides:
-- **Activity mutations** — `setRunning()`, `setFinished()`, `markSessionViewed()`, `trackDelegateSession()`, `applyServerState()`, `clearActivityForClosedTasks()` (all with closed-task guards)
+- **Activity mutations** — `setRunning()`, `setFinished()`, `markSessionViewed()`, `trackDelegateSession()`
 - **Activity selectors** — `activityForProject(projectId)`, `activityForSession(projectId, sessionId)`, `activitySummary`
 - **WS event routing** — `handleAgentStart()`, `handleAgentEnd()`, `handleReconnect()`, `handleTaskUpdated()`, `handleSessionCreated()`
 - **Activity snapshot** — `fetchActivitySnapshot()` for initial page-load reconciliation
 
 ### ProjectStore (`models/stores/project-store.ts`)
 
-One instance per project, lazily created by `ProjectsStore`. Holds a data-only `TasksCollection`, session list, task session sublists, and task mutations. Provides **read-only activity selectors** (`activityForSession`, `tasksWithActivity`, `activityMap`, `activityState`, `activitySummary`) backed by the shared `ActivityStore`. During `fetchLists()` and `fetchTaskSessions()`, applies server-authoritative `activity_state` from session responses to the shared `ActivityStore` — this is the reconciliation path that keeps local activity in sync after `session_updated` broadcasts (e.g., from `markActivityViewed` on another tab/device). All activity mutations flow through `ProjectsStore`.
+One instance per project, lazily created by `ProjectsStore`. Holds a data-only `TasksCollection`, session list, task session sublists, and task mutations. Provides **read-only activity selectors** (`activityForSession`, `tasksWithActivity`, `activityMap`, `activityState`, `activitySummary`) backed by the shared `ActivityStore`. During `fetchLists()` and `fetchTaskSessions()`, writes session records into `SessionCache` and subscribes to those session IDs for view updates; server-authoritative `activityState` reconciliation happens through `ProjectsStore`'s global `SessionCache` subscription. All activity mutations flow through `ProjectsStore`.
 
 ### ActivityStore (`models/stores/activity-store.ts`)
 

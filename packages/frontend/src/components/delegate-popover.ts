@@ -19,10 +19,10 @@ import "./popover-menu.js";
 export function buildChildMap(sessions: SessionListItem[]): Map<string, SessionListItem[]> {
   const map = new Map<string, SessionListItem[]>();
   for (const s of sessions) {
-    if (s.parent_session_id) {
-      const children = map.get(s.parent_session_id) ?? [];
+    if (s.parentSessionId) {
+      const children = map.get(s.parentSessionId) ?? [];
       children.push(s);
-      map.set(s.parent_session_id, children);
+      map.set(s.parentSessionId, children);
     }
   }
   return map;
@@ -62,10 +62,10 @@ export class DelegatePopover extends LitElement {
       <div class="px-3 py-1 text-[10px] text-zinc-500 uppercase tracking-wide font-semibold">Delegate sub-sessions</div>
       <div class="max-h-48 overflow-y-auto">
         ${this.childSessions.map(child => {
-          const label = child.name || child.first_message || "Sub-session";
+          const label = child.name || child.firstMessage || "Sub-session";
           const truncated = label.length > 40 ? label.slice(0, 40) + "…" : label;
           const isActive = child.id === this.activeSessionId;
-          const date = formatRelativeDate(child.updated_at);
+          const date = formatRelativeDate(child.updatedAt);
           return html`
             <button
               data-session-id=${child.id}
@@ -76,7 +76,7 @@ export class DelegatePopover extends LitElement {
               <activity-dot .state=${this.activityMap.get(child.id)} .runningOnly=${true}></activity-dot>
               <div class="min-w-0 flex-1">
                 <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
-                <div class="text-[10px] text-zinc-500">${date} · ${child.message_count} msg</div>
+                <div class="text-[10px] text-zinc-500">${date} · ${child.messageCount} msg</div>
               </div>
             </button>
           `;

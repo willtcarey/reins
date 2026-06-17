@@ -45,7 +45,13 @@ describe("SessionModelPicker", () => {
     el.sessionId = "sess-1";
     el.sessionData = {
       id: "sess-1",
-      task_id: null,
+      projectId: 42,
+      taskId: null,
+      parentSessionId: null,
+      name: null,
+      createdAt: "",
+      updatedAt: "",
+      messageCount: 0,
       runtimeType: "pi",
       activityState: null,
       state: {

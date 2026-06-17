@@ -134,7 +134,6 @@ describe("createTaskWithBranch", () => {
       type: "session_updated",
       sessionId: "finished-session",
       projectId,
-      activityState: null,
     });
   });
 

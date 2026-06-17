@@ -9,7 +9,13 @@ describe("ChatPanel session model affordance", () => {
     store.sessionId = "sess-1";
     store.sessionData = {
       id: "sess-1",
-      task_id: null,
+      projectId: 42,
+      taskId: null,
+      parentSessionId: null,
+      name: null,
+      createdAt: "",
+      updatedAt: "",
+      messageCount: 0,
       activityState: null,
       state: {
         model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },

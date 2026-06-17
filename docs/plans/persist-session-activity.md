@@ -58,3 +58,7 @@ Cleared sessions are reconciled through standard `session_updated` broadcasts. T
 ## Follow-up: Delegate session activity
 
 Delegate sessions (`parent_session_id IS NOT NULL`) do not participate in server-side activity tracking. Runtime `agent_start` / `agent_end` activity transitions for delegate sessions are ignored, so delegates are never marked `running` or `finished`. The activity snapshot endpoint remains a raw read of persisted activity state; delegate sessions are naturally absent because they never receive activity. The parent session's activity is the only indicator used while delegated work is in progress.
+
+## Follow-up: Browser sleep / resume reconciliation
+
+A sleeping laptop can miss the terminal `agent_end` WebSocket message without always producing an immediate WebSocket reconnect. AppStore now uses the same server reconciliation path for WebSocket reconnects and browser resume signals (`focus`, `online`, `pageshow`, and visible `visibilitychange`). On resume it refreshes the project list, activity snapshot, loaded project stores, and active session metadata/messages so a stale `isStreaming` flag is cleared from the server-authoritative session state.

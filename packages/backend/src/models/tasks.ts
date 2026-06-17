@@ -197,7 +197,6 @@ export class ProjectTasks {
         type: "session_updated",
         sessionId,
         projectId: this.projectId,
-        activityState: null,
       });
     }
     return task;

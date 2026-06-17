@@ -16,6 +16,7 @@ import type { ProjectInfo } from "../ws-client.js";
 import type { ActivityFinishOptions, ActivityState } from "./activity-store.js";
 import { ActivityStore } from "./activity-store.js";
 import { ProjectStore } from "./project-store.js";
+import { SessionCache } from "./session-cache.js";
 
 type ProjectsStoreListener = () => void;
 
@@ -37,6 +38,10 @@ export class ProjectsStore {
   private _stores = new Map<number, ProjectStore>();
   private _unsubscribes = new Map<number, () => void>();
   private _listeners = new Set<ProjectsStoreListener>();
+
+  constructor(private _sessionCache: SessionCache = new SessionCache()) {
+    this._sessionCache.subscribeAll((sessionId) => this.syncSessionActivity(sessionId));
+  }
 
   // ---- Subscription ---------------------------------------------------------
 
@@ -209,30 +214,33 @@ export class ProjectsStore {
     }
   }
 
-  /**
-   * Apply a server-authoritative activity state update. Called from
-   * fetchActivitySnapshot() and by ProjectStore during list fetches.
-   */
-  applyServerState(sessionId: string, serverState: "running" | "finished" | null, projectId: number): void {
-    this._activity.applyServerState(sessionId, serverState, projectId);
+  private recordSessionActivity(sessionId: string, serverState: "running" | "finished" | null, projectId: number): void {
+    this._sessionCache.set(sessionId, { projectId, activityState: serverState });
+  }
+
+  private syncSessionActivity(sessionId: string): void {
+    const session = this._sessionCache.get(sessionId);
+    if (!session || session.projectId == null) return;
+
+    this._activity.applyServerState(sessionId, session.activityState, session.projectId);
     this.notify();
   }
 
   // ---- Activity snapshot ----------------------------------------------------
 
   /**
-   * Fetch the server-side activity snapshot and apply it to the shared
-   * ActivityStore. Activity dots are available immediately without needing
-   * to expand any project.
+   * Fetch the server-side activity snapshot into SessionCache. The global
+   * session subscription reconciles it to ActivityStore, so activity dots are
+   * available immediately without needing to expand any project.
    */
   async fetchActivitySnapshot(): Promise<void> {
     try {
       const resp = await fetch("/api/activity");
       if (!resp.ok) return;
-      const sessions: Array<{ id: string; activity_state: "running" | "finished"; project_id: number }> = await resp.json();
+      const sessions: Array<{ id: string; activityState: "running" | "finished"; projectId: number }> = await resp.json();
 
       for (const entry of sessions) {
-        this.applyServerState(entry.id, entry.activity_state, entry.project_id);
+        this.recordSessionActivity(entry.id, entry.activityState, entry.projectId);
       }
     } catch {
       // silent — activity will be populated via session list fetches
@@ -258,7 +266,7 @@ export class ProjectsStore {
 
   /**
    * Refresh loaded project data and reconcile activity after a WebSocket reconnect.
-   * Since activity_state is now server-authoritative (persisted in DB),
+   * Since activityState is now server-authoritative (persisted in DB),
    * refreshing session lists restores the correct activity state.
    */
   async handleReconnect(_activeSessionId: string | null = null): Promise<void> {
@@ -270,17 +278,6 @@ export class ProjectsStore {
     if (!projectStore) return;
 
     await projectStore.fetchLists();
-  }
-
-  handleSessionUpdated(
-    projectId: number,
-    sessionId: string,
-    activityState?: "running" | "finished" | null,
-  ): void {
-    if (activityState !== undefined) {
-      this.applyServerState(sessionId, activityState, projectId);
-    }
-    void this.refresh(projectId);
   }
 
   async handleSessionCreated(event: {
@@ -314,7 +311,7 @@ export class ProjectsStore {
     let child = this._stores.get(projectId);
     if (child) return child;
 
-    child = new ProjectStore(projectId, this._activity);
+    child = new ProjectStore(projectId, this._activity, this._sessionCache);
     const unsub = child.subscribe(() => this.notify());
     this._stores.set(projectId, child);
     this._unsubscribes.set(projectId, unsub);

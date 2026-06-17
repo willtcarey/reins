@@ -55,9 +55,9 @@ export class SessionListItem extends LitElement {
     const s = this.session;
     if (!s) return nothing;
 
-    const label = s.name || s.first_message || "Empty session";
+    const label = s.name || s.firstMessage || "Empty session";
     const truncated = label.length > 60 ? label.slice(0, 60) + "..." : label;
-    const date = formatRelativeDate(s.updated_at);
+    const date = formatRelativeDate(s.updatedAt);
     const childCount = this.childSessions.length;
 
     return html`
@@ -71,7 +71,7 @@ export class SessionListItem extends LitElement {
             <activity-dot .state=${this.activityState}></activity-dot>
             <div class="text-xs ${this.active ? "text-blue-300" : "text-zinc-300"} truncate">${truncated}</div>
           </div>
-          <div class="text-[10px] text-zinc-500 mt-0.5">${date} · ${s.message_count} messages</div>
+          <div class="text-[10px] text-zinc-500 mt-0.5">${date} · ${s.messageCount} messages</div>
         </button>
         ${childCount > 0 ? html`
           <delegate-popover

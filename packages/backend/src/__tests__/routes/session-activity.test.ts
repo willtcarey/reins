@@ -78,7 +78,7 @@ describe("GET /api/activity", () => {
     projectId2 = p2.id;
   });
 
-  test("returns sessions with non-null activity_state", async () => {
+  test("returns sessions with non-null activityState", async () => {
     createSession("s-running", projectId, { agentRuntimeType: "pi" });
     updateActivityState("s-running", "running");
 
@@ -96,8 +96,9 @@ describe("GET /api/activity", () => {
     expect(res!.status).toBe(200);
     const body = await res!.json();
     expect(body).toHaveLength(2);
-    expect(body).toContainEqual({ id: "s-running", activity_state: "running", project_id: projectId });
-    expect(body).toContainEqual({ id: "s-finished", activity_state: "finished", project_id: projectId });
+    expect(body).toContainEqual({ id: "s-running", activityState: "running", projectId });
+    expect(body).toContainEqual({ id: "s-finished", activityState: "finished", projectId });
+    expect(body[0]).not.toHaveProperty("activity_state");
   });
 
   test("returns empty array when no active sessions", async () => {
@@ -128,7 +129,7 @@ describe("GET /api/activity", () => {
     expect(res!.status).toBe(200);
     const body = await res!.json();
     expect(body).toHaveLength(2);
-    expect(body).toContainEqual({ id: "s-a", activity_state: "running", project_id: projectId });
-    expect(body).toContainEqual({ id: "s-b", activity_state: "finished", project_id: projectId2 });
+    expect(body).toContainEqual({ id: "s-a", activityState: "running", projectId });
+    expect(body).toContainEqual({ id: "s-b", activityState: "finished", projectId: projectId2 });
   });
 });

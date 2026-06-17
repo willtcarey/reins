@@ -19,13 +19,15 @@ function hasRunningChild(
 function makeSession(overrides: Partial<SessionListItem> = {}): SessionListItem {
   return {
     id: "s-" + Math.random().toString(36).slice(2, 8),
+    projectId: 42,
+    taskId: null,
+    parentSessionId: null,
     name: null,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    message_count: 0,
-    first_message: null,
-    parent_session_id: null,
-    activity_state: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    messageCount: 0,
+    firstMessage: null,
+    activityState: null,
     ...overrides,
   };
 }

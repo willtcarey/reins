@@ -76,10 +76,28 @@ describe("AppStore activity event routing", () => {
     expect(projectStore.activityForSession("delegate-1")).toBeUndefined();
   });
 
-  test("session_updated refreshes the active session data", () => {
+  test("session_updated applies fetched data to the active session", async () => {
     const activeSession = store["_activeSession"];
-    activeSession.sessionId = "sess-1";
-    activeSession.refreshSession = mock(async () => {});
+    mockFetch((url) => {
+      if (url === "/api/sessions/sess-1") {
+        return Response.json({
+          id: "sess-1",
+          projectId: 42,
+          taskId: null,
+          parentSessionId: null,
+          name: "Updated session",
+          createdAt: "",
+          updatedAt: "",
+          activityState: "running",
+          messageCount: 2,
+          state: { model: null, thinkingLevel: "off", isStreaming: false, messageCount: 2 },
+        });
+      }
+      if (url === "/api/sessions/sess-1/messages") return Response.json([]);
+      return Response.json([], { status: 404 });
+    });
+
+    await store.setRoute("sess-1");
 
     client.fireEvent("sess-1", 42, {
       type: "session_updated",
@@ -87,18 +105,39 @@ describe("AppStore activity event routing", () => {
       projectId: 42,
     });
 
-    expect(activeSession.refreshSession).toHaveBeenCalledTimes(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(activeSession.sessionData.name).toBe("Updated session");
+    expect(activeSession.sessionData.messageCount).toBe(2);
   });
 
-  test("session_updated applies activityState from the server", () => {
+  test("session_updated fetches canonical session data and applies activityState", async () => {
     store.projectsStore.setFinished("sess-1", 42);
+    mockFetch((url) => {
+      if (url === "/api/sessions/sess-1") {
+        return Response.json({
+          id: "sess-1",
+          projectId: 42,
+          taskId: null,
+          parentSessionId: null,
+          name: null,
+          createdAt: "",
+          updatedAt: "",
+          activityState: null,
+          messageCount: 0,
+          state: { model: null, thinkingLevel: "off", isStreaming: false, messageCount: 0 },
+        });
+      }
+      return Response.json([], { status: 404 });
+    });
 
     client.fireEvent("sess-1", 42, {
       type: "session_updated",
       sessionId: "sess-1",
       projectId: 42,
-      activityState: null,
     });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(store.projectsStore.activityForSession(42, "sess-1")).toBeUndefined();
   });

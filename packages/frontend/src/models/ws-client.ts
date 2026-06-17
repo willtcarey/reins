@@ -20,21 +20,29 @@ export interface SessionState {
 
 export interface SessionData {
   id: string;
-  task_id: number | null;
+  projectId: number;
+  taskId: number | null;
+  parentSessionId: string | null;
+  name: string | null;
+  createdAt: string;
+  updatedAt: string;
   runtimeType?: string;
   activityState: "running" | "finished" | null;
+  messageCount: number;
   state: SessionState;
 }
 
 export interface SessionListItem {
   id: string;
+  projectId: number;
+  taskId: number | null;
+  parentSessionId: string | null;
   name: string | null;
-  created_at: string;
-  updated_at: string;
-  message_count: number;
-  first_message: string | null;
-  parent_session_id: string | null;
-  activity_state: "running" | "finished" | null;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  firstMessage: string | null;
+  activityState: "running" | "finished" | null;
 }
 
 export interface ProjectInfo {
@@ -59,7 +67,7 @@ export type ServerMessage =
   | { type: "event"; sessionId: string; projectId: number; event: ChatEvent }
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
-  | { type: "session_updated"; sessionId: string; projectId: number; activityState?: "running" | "finished" | null }
+  | { type: "session_updated"; sessionId: string; projectId: number }
   | { type: "user_message"; sessionId: string; projectId: number; message: ClientPromptContent }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
   | { type: "ack"; command: string }
@@ -74,7 +82,7 @@ export type FrontendEvent =
   | ChatEvent
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
-  | { type: "session_updated"; sessionId: string; projectId: number; activityState?: "running" | "finished" | null }
+  | { type: "session_updated"; sessionId: string; projectId: number }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
   | { type: "ws_ack"; command: string }
   | { type: "ws_error"; error: string };
@@ -283,7 +291,6 @@ export class AppClient implements IAppClient {
             type: "session_updated",
             sessionId: msg.sessionId,
             projectId: msg.projectId,
-            ...(msg.activityState !== undefined ? { activityState: msg.activityState } : {}),
           });
         }
         break;

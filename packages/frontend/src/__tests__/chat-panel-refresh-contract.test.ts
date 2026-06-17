@@ -17,7 +17,13 @@ function get(obj: object, key: string) { return Reflect.get(obj, key); }
 function makeSessionData(overrides: { isStreaming?: boolean; messageCount?: number } = {}) {
   return {
     id: "sess-1",
-    task_id: null,
+    projectId: 42,
+    taskId: null,
+    parentSessionId: null,
+    name: null,
+    createdAt: "",
+    updatedAt: "",
+    messageCount: overrides.messageCount ?? 0,
     activityState: null,
     state: {
       model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
@@ -99,6 +105,35 @@ describe("ChatPanel refresh contract", () => {
     ]);
     expect(get(el, "isStreaming")).toBe(true);
     expect(get(el, "streamingBlocks")).toHaveLength(1);
+
+    cleanup(el);
+  });
+
+  test("stale persisted messages do not drop an optimistic user message", () => {
+    globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
+
+    const client = new StubClient();
+    client.prompt = mock(() => {});
+    const { el, store } = setup({ client });
+    const persisted: AgentMessage[] = [{ role: "user", content: "earlier prompt", timestamp: 100 }];
+
+    store.sessionData = makeSessionData({ messageCount: 1 });
+    store.sessionMessages = persisted;
+    notify(store);
+
+    callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: [{ type: "text", text: "new prompt" }] } }));
+
+    // A quick metadata/messages refresh can still reflect the DB state before
+    // the just-sent prompt has been committed. The UI should layer the local
+    // optimistic user message on top of that stale persisted snapshot.
+    store.sessionData = makeSessionData({ messageCount: 1 });
+    store.sessionMessages = [...persisted];
+    notify(store);
+
+    expect(get(el, "messages")).toEqual([
+      { role: "user", content: "earlier prompt", timestamp: 100 },
+      { role: "user", content: [{ type: "text", text: "new prompt" }], timestamp: expect.any(Number) },
+    ]);
 
     cleanup(el);
   });

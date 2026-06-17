@@ -51,7 +51,11 @@ export function buildRouter() {
   // List all sessions with non-null activity_state — for initial page-load
   // reconciliation without needing to expand every project first.
   router.get("/api/activity", () => {
-    return Response.json(listActiveSessions());
+    return Response.json(listActiveSessions().map((session) => ({
+      id: session.id,
+      activityState: session.activity_state,
+      projectId: session.project_id,
+    })));
   });
   registerPaletteRoutes(router);
   registerSettingsRoutes(router);

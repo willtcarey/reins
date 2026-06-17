@@ -64,12 +64,30 @@ export class SessionAttachmentUploadError extends Error {
   }
 }
 
+export interface SessionListView {
+  id: string;
+  projectId: number;
+  taskId: number | null;
+  parentSessionId: string | null;
+  name: string | null;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  firstMessage: string | null;
+  activityState: SessionRow["activity_state"];
+}
+
 export interface SessionView {
   id: string;
-  project_id: number;
-  task_id: number | null;
+  projectId: number;
+  taskId: number | null;
+  parentSessionId: string | null;
+  name: string | null;
+  createdAt: string;
+  updatedAt: string;
   runtimeType: string;
   activityState: SessionRow["activity_state"];
+  messageCount: number;
   state: {
     model: { provider: string; id: string } | null;
     thinkingLevel: string;
@@ -92,6 +110,21 @@ interface TextBlock {
 function isTextBlock(value: unknown): value is TextBlock {
   if (typeof value !== "object" || value === null) return false;
   return "type" in value && value.type === "text" && "text" in value && typeof value.text === "string";
+}
+
+function toSessionListView(row: SessionRow): SessionListView {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    taskId: row.task_id,
+    parentSessionId: row.parent_session_id,
+    name: row.name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    messageCount: row.message_count ?? 0,
+    firstMessage: row.first_message ?? null,
+    activityState: row.activity_state,
+  };
 }
 
 /**
@@ -128,19 +161,26 @@ export class Sessions {
 
     const isStreaming = this.sessions.get(sessionId)?.runtime.isStreaming() ?? false;
 
+    const messageCount = loadMessages(sessionId).length;
+
     return {
       id: row.id,
-      project_id: row.project_id,
-      task_id: row.task_id,
+      projectId: row.project_id,
+      taskId: row.task_id,
+      parentSessionId: row.parent_session_id,
+      name: row.name,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
       runtimeType: row.agent_runtime_type,
       activityState: row.activity_state,
+      messageCount,
       state: {
         model: row.model_provider && row.model_id
           ? { provider: row.model_provider, id: row.model_id }
           : null,
         thinkingLevel: row.thinking_level,
         isStreaming,
-        messageCount: loadMessages(sessionId).length,
+        messageCount,
       },
     };
   }
@@ -205,12 +245,12 @@ export class Sessions {
     return { data: attachment.data, mimeType: attachment.mime_type };
   }
 
-  listByProject(projectId: number): SessionRow[] {
-    return listSessions({ projectId, taskId: null });
+  listByProject(projectId: number): SessionListView[] {
+    return listSessions({ projectId, taskId: null }).map(toSessionListView);
   }
 
-  listByTask(taskId: number): SessionRow[] {
-    return listSessions({ taskId });
+  listByTask(taskId: number): SessionListView[] {
+    return listSessions({ taskId }).map(toSessionListView);
   }
 
   /**
@@ -228,7 +268,6 @@ export class Sessions {
       type: "session_updated",
       sessionId,
       projectId: row.project_id,
-      activityState: persistedActivityState,
     });
   }
 
