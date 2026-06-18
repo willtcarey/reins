@@ -52,16 +52,28 @@ describe("ActiveSessionStore.updateSessionModel", () => {
       if (url === "/api/sessions/sess-1/model" && init?.method === "PUT") {
         return jsonResponse({ ok: true });
       }
+      if (url === "/api/sessions/sess-1") {
+        return jsonResponse({
+          ...makeSessionData({ runtimeType: "pi" }),
+          state: {
+            model: { provider: "openai", id: "gpt-5" },
+            thinkingLevel: "medium",
+            isStreaming: false,
+            messageCount: 0,
+          },
+        });
+      }
       throw new Error(`Unexpected fetch: ${url}`);
     });
   });
 
   afterEach(() => { restoreFetch(); });
 
-  test("persists the session model and updates local session state", async () => {
-    const store = new ActiveSessionStore();
+  test("persists the session model and refreshes metadata from the server", async () => {
+    const sessionCache = new SessionCache();
+    const store = new ActiveSessionStore(null, sessionCache);
     store.sessionId = "sess-1";
-    store.sessionData = makeSessionData();
+    sessionCache.set("sess-1", makeSessionData());
 
     const result = await store.updateSessionModel({
       provider: "openai",
@@ -71,9 +83,10 @@ describe("ActiveSessionStore.updateSessionModel", () => {
     });
 
     expect(result).toEqual({ ok: true });
-    expect(store.sessionData?.state.model).toEqual({ provider: "openai", id: "gpt-5" });
-    expect(store.sessionData?.state.thinkingLevel).toBe("medium");
-    expect(store.sessionData?.runtimeType).toBe("pi");
+    expect(sessionCache.getDetail("sess-1")?.state.model).toEqual({ provider: "openai", id: "gpt-5" });
+    expect(sessionCache.getDetail("sess-1")?.state.thinkingLevel).toBe("medium");
+    expect(sessionCache.getDetail("sess-1")?.runtimeType).toBe("pi");
+    expect(store.sessionData.state.model).toEqual({ provider: "openai", id: "gpt-5" });
   });
 });
 
@@ -195,9 +208,7 @@ describe("ActiveSessionStore session loading contract", () => {
   test("setRoute leaves metadata blank when SessionCache has no detail", async () => {
     const store = new ActiveSessionStore(null, new SessionCache());
     const calls: string[] = [];
-    store.projectId = 42;
     store.sessionId = "previous";
-    store.sessionData = makeSessionData({ projectId: 42 });
 
     mockFetch((url) => {
       calls.push(url);
@@ -280,7 +291,8 @@ describe("ActiveSessionStore session loading contract", () => {
     const calls: string[] = [];
 
     store.sessionId = "sess-1";
-    store.sessionData = makeSessionData({ isStreaming: true, messageCount: 1 });
+    sessionCache.set("sess-1", makeSessionData({ isStreaming: true, messageCount: 1 }));
+    await store.refreshSession();
     store.sessionMessages = [{ role: "user", content: "hello", timestamp: 1000 }];
     sessionCache.set("sess-1", makeSessionData({ messageCount: 3 }));
 
@@ -307,7 +319,8 @@ describe("ActiveSessionStore session loading contract", () => {
     const calls: string[] = [];
 
     store.sessionId = "sess-1";
-    store.sessionData = makeSessionData({ isStreaming: true, messageCount: 1 });
+    sessionCache.set("sess-1", makeSessionData({ isStreaming: true, messageCount: 1 }));
+    await store.refreshSession();
     sessionCache.set("sess-1", makeSessionData({ isStreaming: true, messageCount: 2 }));
 
     mockFetch((url) => {
@@ -374,10 +387,11 @@ describe("ActiveSessionStore session loading contract", () => {
   });
 
   test("clearing the route resets session data to a blank session", async () => {
-    const store = new ActiveSessionStore();
-    store.projectId = 42;
+    const sessionCache = new SessionCache();
+    const store = new ActiveSessionStore(null, sessionCache);
     store.sessionId = "sess-1";
-    store.sessionData = makeSessionData({ isStreaming: true, messageCount: 3 });
+    sessionCache.set("sess-1", makeSessionData({ isStreaming: true, messageCount: 3 }));
+    await store.refreshSession();
     store.sessionMessages = [{ role: "user", content: "hello", timestamp: 1000 }];
 
     await store.setRoute(null);

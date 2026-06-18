@@ -109,22 +109,15 @@ export class TaskListItemElement extends LitElement {
     `;
   }
 
-  private isTaskActive(): boolean {
-    if (!this.activeSessionId) return false;
-    return this.task.session_ids.includes(this.activeSessionId);
-  }
-
   override render() {
     const task = this.task;
     const isExpanded = this.expanded;
     const sessions = this.sessions;
     const date = formatRelativeDate(task.updated_at);
     const isClosed = task.status === "closed";
-    const isActive = this.isTaskActive();
-
     return html`
       <div class="px-1 pb-1 group/task ${isClosed ? "opacity-50" : ""}">
-        <div class="flex items-start rounded-md transition-colors ${isActive && !isExpanded ? "bg-blue-500/15" : "hover:bg-zinc-800/70"}">
+        <div class="flex items-start rounded-md transition-colors hover:bg-zinc-800/70">
           <button
             class="flex-1 text-left px-3 py-2.5 cursor-pointer flex items-start gap-2 min-w-0"
             @click=${() => this.handleExpand()}
@@ -132,7 +125,7 @@ export class TaskListItemElement extends LitElement {
             <span class="text-zinc-500 text-[10px] mt-0.5 shrink-0">${isClosed ? "✓" : isExpanded ? "▼" : "▶"}</span>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-1.5">
-                <div class="text-xs ${isClosed ? "text-zinc-400" : isActive && !isExpanded ? "text-blue-300" : "text-zinc-200"} truncate">${task.title}</div>
+                <div class="text-xs ${isClosed ? "text-zinc-400" : "text-zinc-200"} truncate">${task.title}</div>
                 ${this.renderActivityDot()}
               </div>
               ${this.renderBranchInfo()}

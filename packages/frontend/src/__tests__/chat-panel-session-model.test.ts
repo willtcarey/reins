@@ -1,13 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { ChatPanel } from "../components/chat-panel.js";
 import { ActiveSessionStore } from "../models/stores/active-session-store.js";
+import { SessionCache } from "../models/stores/session-cache.js";
 import { templateToString } from "./helpers/lit-template.js";
 
 describe("ChatPanel session model affordance", () => {
   test("renders a session model button when session data is present", () => {
-    const store = new ActiveSessionStore();
+    const sessionCache = new SessionCache();
+    const store = new ActiveSessionStore(null, sessionCache);
     store.sessionId = "sess-1";
-    store.sessionData = {
+    const sessionData = {
       id: "sess-1",
       projectId: 42,
       taskId: null,
@@ -24,6 +26,7 @@ describe("ChatPanel session model affordance", () => {
         messageCount: 0,
       },
     };
+    sessionCache.set("sess-1", sessionData);
 
     const el = new ChatPanel();
     el.store = store;

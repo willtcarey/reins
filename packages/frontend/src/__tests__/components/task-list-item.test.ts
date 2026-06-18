@@ -29,4 +29,5 @@ describe("TaskListItem activity", () => {
 
     expect(el.activityState).toBe("running");
   });
+
 });

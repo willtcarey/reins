@@ -64,8 +64,7 @@ describe("AppStore reconnect catch-up", () => {
     // Set up an active session
     const activeStore = store.activeSessionStore;
     activeStore.sessionId = "sess-1";
-    activeStore.sessionData = {
-      id: "sess-1",
+    store.sessionCache.set("sess-1", {
       projectId: 42,
       taskId: null,
       parentSessionId: null,
@@ -80,7 +79,7 @@ describe("AppStore reconnect catch-up", () => {
         isStreaming: false,
         messageCount: 2,
       },
-    };
+    });
 
     const refreshMessagesSpy = mock(async () => {});
     activeStore.refreshMessages = refreshMessagesSpy;

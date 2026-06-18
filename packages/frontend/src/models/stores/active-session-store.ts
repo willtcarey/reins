@@ -1,9 +1,10 @@
 /**
  * Active Session Store
  *
- * Tracks which session is currently being viewed: the session ID, its full
- * data, and the derived project ID (for diff context). Does NOT hold task
- * or session lists — that data lives in ProjectStore via ProjectsStore.
+ * Tracks which session is currently being viewed: the session ID and message
+ * list. Session metadata and the derived project ID live in SessionCache.
+ * Does NOT hold task or session lists — that data lives in ProjectStore via
+ * ProjectsStore.
  *
  * Components subscribe via `subscribe()` and read public state directly.
  * Mutations go through action methods which call the backend API.
@@ -53,10 +54,16 @@ function blankSessionData(sessionId = ""): SessionData {
 export class ActiveSessionStore {
   // ---- Public reactive state ------------------------------------------------
 
-  projectId: number | null = null;
   sessionId = "";
-  sessionData: SessionData = blankSessionData();
   sessionMessages: AgentMessage[] = [];
+
+  get projectId(): number | null {
+    return this.sessionData.projectId || null;
+  }
+
+  get sessionData(): SessionData {
+    return this._sessionCache.getDetail(this.sessionId) ?? blankSessionData(this.sessionId);
+  }
 
   // ---- Private state --------------------------------------------------------
 
@@ -64,6 +71,7 @@ export class ActiveSessionStore {
   private _unsubscribeSession: (() => void) | null = null;
   private _fetchId = 0; // guards against stale message fetches
   private _markViewedInFlight: string | null = null;
+  private _lastKnownStreaming = false;
 
   constructor(
     private _client: IAppClient | null = null,
@@ -105,21 +113,27 @@ export class ActiveSessionStore {
     if (!newSessionId) {
       // No session — clear everything
       this.setSessionSubscription("");
-      this.projectId = null;
       this.sessionId = "";
-      this.sessionData = blankSessionData();
+      this._lastKnownStreaming = false;
       this.sessionMessages = [];
       this.notify();
       return;
     }
 
     const fetchId = ++this._fetchId;
-    this.projectId = null;
     this.sessionId = newSessionId;
     this.setSessionSubscription(newSessionId);
-    this.sessionData = blankSessionData(newSessionId);
+    this._lastKnownStreaming = false;
     this.sessionMessages = [];
-    if (!this.applySessionFromStore()) {
+
+    const cachedSession = this._sessionCache.getDetail(newSessionId);
+    if (cachedSession) {
+      this._lastKnownStreaming = cachedSession.state.isStreaming;
+      this.notify();
+      if (cachedSession.activityState === "finished") {
+        void this.markViewed();
+      }
+    } else {
       this.notify();
     }
 
@@ -180,13 +194,19 @@ export class ActiveSessionStore {
   async refreshSession() {
     if (!this.sessionId) return;
 
-    const wasStreaming = this.sessionData.state.isStreaming;
-    const applied = this.applySessionFromStore();
-    if (!applied) return;
+    const data = this._sessionCache.getDetail(this.sessionId);
+    if (!data) return;
+
+    const wasStreaming = this._lastKnownStreaming;
+    this._lastKnownStreaming = data.state.isStreaming;
+    this.notify();
+    if (data.activityState === "finished") {
+      void this.markViewed();
+    }
 
     // If streaming just ended (missed agent_end during disconnect/navigation),
     // also refresh messages to pick up the completed turn's results.
-    if (wasStreaming && !this.sessionData.state.isStreaming) {
+    if (wasStreaming && !data.state.isStreaming) {
       await this.fetchSessionMessages(this.sessionId);
     }
   }
@@ -246,26 +266,11 @@ export class ActiveSessionStore {
         return { error: body.error || "Failed to update session model" };
       }
 
-      this.applySessionModelChange(this.sessionId, update);
+      await this._sessionCache.fetchDetail(this.sessionId);
       return { ok: true };
     } catch {
       return { error: "Network error" };
     }
-  }
-
-  applySessionModelChange(sessionId: string, update: SessionModelUpdate): void {
-    if (sessionId !== this.sessionId) return;
-
-    this.sessionData = {
-      ...this.sessionData,
-      runtimeType: update.runtimeType ?? this.sessionData.runtimeType,
-      state: {
-        ...this.sessionData.state,
-        model: { provider: update.provider, id: update.modelId },
-        thinkingLevel: update.thinkingLevel,
-      },
-    };
-    this.notify();
   }
 
   // ---- Internal fetching ----------------------------------------------------
@@ -275,19 +280,6 @@ export class ActiveSessionStore {
     this._unsubscribeSession = sessionId
       ? this._sessionCache.subscribe(sessionId, () => { void this.refreshSession(); })
       : null;
-  }
-
-  private applySessionFromStore(): boolean {
-    const data = this._sessionCache.getDetail(this.sessionId);
-    if (!data) return false;
-
-    this.sessionData = data;
-    this.projectId = data.projectId;
-    this.notify();
-    if (data.activityState === "finished") {
-      void this.markViewed();
-    }
-    return true;
   }
 
   private async fetchSessionMessages(sessionId: string, fetchId = this._fetchId): Promise<boolean> {
