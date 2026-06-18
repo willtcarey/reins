@@ -5,7 +5,6 @@ import { describe, test, expect, beforeEach } from "bun:test";
 import { ProjectStore } from "../models/stores/project-store.js";
 import { ProjectsStore } from "../models/stores/projects-store.js";
 import { TasksCollection, type TaskListItem } from "../models/tasks.js";
-import { ActivityStore } from "../models/stores/activity-store.js";
 import { SessionCache } from "../models/stores/session-cache.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 import type { SessionListItem } from "../models/ws-client.js";
@@ -56,7 +55,7 @@ describe("ProjectStore", () => {
   let store: ProjectStore;
 
   beforeEach(() => {
-    store = new ProjectStore(42, new ActivityStore());
+    store = new ProjectStore(42, new SessionCache());
     restoreFetch();
   });
 
@@ -73,7 +72,7 @@ describe("ProjectStore", () => {
 
   test("fetchLists remembers fetched session list metadata", async () => {
     const sessionCache = new SessionCache();
-    store = new ProjectStore(42, new ActivityStore(), sessionCache);
+    store = new ProjectStore(42, sessionCache);
     const sessions = [session({ firstMessage: "hello", activityState: "running" })];
 
     mockFetch((url) => {
@@ -106,7 +105,7 @@ describe("ProjectStore", () => {
 
     sessionCache.set("s1", { activityState: null });
 
-    expect(store.activityForSession("s1")).toBeUndefined();
+    expect(store.activityForSession("s1")).toBeNull();
   });
 
   test("fetchTaskSessions syncs session activity through SessionCache subscription", async () => {
@@ -309,11 +308,12 @@ describe("ProjectStore", () => {
     ]);
   });
 
-  test("exposes activity selectors from shared ActivityStore", () => {
+  test("exposes activity selectors from SessionCache", () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
     store.tasks = new TasksCollection(42, [task({ id: 1, session_ids: ["s1"] })]);
 
-    // Activity is set via the shared store (ProjectsStore in production)
-    store.activityStore.setRunning("s1");
+    sessionCache.set("s1", { projectId: 42, activityState: "running" });
 
     expect(store.activityForSession("s1")).toBe("running");
     expect(store.tasksWithActivity.activityForId(1)).toBe("running");
@@ -321,16 +321,18 @@ describe("ProjectStore", () => {
   });
 
   test("activityState derives running over finished", () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
     store.tasks = new TasksCollection(42, [task({ id: 1, session_ids: ["s1"] })]);
     store.sessions = [session({ id: "s2" })];
 
-    store.activityStore.setRunning("s1");
-    store.activityStore.setFinished("s2");
+    sessionCache.set("s1", { projectId: 42, activityState: "running" });
+    sessionCache.set("s2", { projectId: 42, activityState: "finished" });
 
     // Running wins
     expect(store.activityState).toBe("running");
 
-    store.activityStore.clearActivity("s1");
+    sessionCache.set("s1", { activityState: null });
     // Now only finished remains
     expect(store.activityState).toBe("finished");
   });

@@ -5,7 +5,7 @@
  * derive task-level notification state from raw per-session activity.
  */
 
-import type { ActivityState } from "./stores/activity-store.js";
+import type { ActivityState } from "./stores/session-cache.js";
 
 export type TaskStatus = "open" | "closed";
 

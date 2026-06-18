@@ -9,6 +9,7 @@
 import {
   getSession,
   listSessions,
+  listSessionsWithActivity,
   updateActivityState,
   updateSessionMeta,
   type SessionRow,
@@ -251,6 +252,31 @@ export class Sessions {
 
   listByTask(taskId: number): SessionListView[] {
     return listSessions({ taskId }).map(toSessionListView);
+  }
+
+  /**
+   * List sessions with non-null activity_state for initial activity snapshots.
+   * Persisted running states are reconciled against in-memory runtime state so
+   * sessions left running by a backend restart surface as finished, not active.
+   */
+  activeSessions() {
+    return listSessionsWithActivity().map((row) => {
+      let activityState = row.activity_state;
+      // Update persisted sessions with actual runtime data in case the server crashed mid-run.
+      if (activityState === "running") {
+        const runtime = this.sessions.get(row.id)?.runtime;
+        if (!runtime?.isStreaming()) {
+          updateActivityState(row.id, "finished");
+          activityState = "finished";
+        }
+      }
+
+      return {
+        id: row.id,
+        projectId: row.project_id,
+        activityState,
+      };
+    });
   }
 
   /**

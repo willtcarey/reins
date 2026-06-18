@@ -4,17 +4,15 @@
  * Holds the task collection and session list data for a single project. One instance per project,
  * lazily created by ProjectsStore.
  *
- * Activity state is NOT owned here — the shared ActivityStore in ProjectsStore is the single
- * source of truth. ProjectStore reads from it and provides a filtered view (activityMap) for
- * rendering session-level dots.
+ * Activity state is NOT owned here — it lives in the shared SessionCache.
+ * ProjectStore derives read-only activity selectors for rendering session-level dots.
  *
  * Components subscribe via `subscribe()` and read public state directly.
  */
 
 import type { InjectedSkillInfo, SessionListItem } from "../ws-client.js";
 import { TasksCollection, type TaskListItem } from "../tasks.js";
-import type { ActivityStore, ActivityState } from "./activity-store.js";
-import type { SessionCache } from "./session-cache.js";
+import type { ActivityState, SessionCache } from "./session-cache.js";
 
 export type ProjectStoreListener = () => void;
 
@@ -32,18 +30,12 @@ export class ProjectStore {
 
   // ---- Private state --------------------------------------------------------
 
-  /**
-   * Reference to the shared ActivityStore owned by ProjectsStore.
-   * Read-only — all activity mutations go through ProjectsStore.
-   */
-  private _activity: ActivityStore;
   private _sessionCache: SessionCache | null;
   private _sessionUnsubscribes = new Map<string, () => void>();
   private _listeners = new Set<ProjectStoreListener>();
 
-  constructor(projectId: number, activity: ActivityStore, sessionCache: SessionCache | null = null) {
+  constructor(projectId: number, sessionCache: SessionCache | null = null) {
     this.projectId = projectId;
-    this._activity = activity;
     this._sessionCache = sessionCache;
     this.tasks = TasksCollection.empty(projectId);
   }
@@ -66,17 +58,15 @@ export class ProjectStore {
 
   // ---- Activity selectors (read-only) --------------------------------------
 
-  /**
-   * Reference to the shared ActivityStore. Exposed for testing and for
-   * direct reads. All mutations should go through ProjectsStore.
-   */
-  get activityStore(): ActivityStore {
-    return this._activity;
-  }
-
   /** Activity states for sessions in this project. */
   get activityMap(): Map<string, ActivityState> {
-    return this._activity.activityMap;
+    return new Map(
+      (this._sessionCache?.entries() ?? []).flatMap((session) =>
+        session.projectId === this.projectId && session.activityState
+          ? [[session.id, session.activityState] as const]
+          : []
+      ),
+    );
   }
 
   get tasksWithActivity(): TasksCollection {
@@ -84,39 +74,29 @@ export class ProjectStore {
   }
 
   get activitySummary(): { running: number; finished: number } {
-    return this._activity.activitySummary;
+    let running = 0;
+    let finished = 0;
+    for (const session of this._sessionCache?.entries() ?? []) {
+      if (session.projectId !== this.projectId) continue;
+      if (session.activityState === "running") running++;
+      else if (session.activityState === "finished") finished++;
+    }
+    return { running, finished };
   }
 
-  activityForSession(sessionId: string): ActivityState | undefined {
-    return this._activity.getActivity(sessionId);
+  activityForSession(sessionId: string): ActivityState {
+    return this._sessionCache?.get(sessionId)?.activityState ?? null;
   }
 
-  /**
-   * Derive the project-level activity state from per-session activity.
-   * Running wins over finished. Only considers sessions belonging to this
-   * project (in session lists or task lists).
-   */
-  get activityState(): ActivityState | undefined {
-    let hasFinished = false;
-    const merge = (state: ActivityState | undefined) => {
-      if (state === "running") return true;
-      if (state === "finished") hasFinished = true;
-      return false;
-    };
+  /** Derive the project-level activity state from SessionCache project metadata. */
+  get activityState(): ActivityState {
+    const states = (this._sessionCache?.entries() ?? [])
+      .filter((session) => session.projectId === this.projectId)
+      .map((session) => session.activityState);
 
-    for (const state of this.tasksWithActivity.activityByTask.values()) {
-      if (merge(state)) return "running";
-    }
-
-    for (const session of this.sessions) {
-      if (merge(this.activityMap.get(session.id))) return "running";
-    }
-
-    for (const state of this.activityMap.values()) {
-      if (merge(state)) return "running";
-    }
-
-    return hasFinished ? "finished" : undefined;
+    if (states.includes("running")) return "running";
+    if (states.includes("finished")) return "finished";
+    return null;
   }
 
   // ---- Actions --------------------------------------------------------------

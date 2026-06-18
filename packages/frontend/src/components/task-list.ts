@@ -10,7 +10,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { SessionListItem } from "../models/ws-client.js";
 import { TasksCollection, type TaskListItem } from "../models/tasks.js";
-import type { ActivityState } from "../models/stores/activity-store.js";
+import type { ActivityState } from "../models/stores/session-cache.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import "./delete-task-dialog.js";
 import "./task-list-item.js";

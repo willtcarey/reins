@@ -12,20 +12,20 @@ afterEach(() => {
 });
 
 describe("AppShell visibility change", () => {
-  test("calls markActiveSessionViewed when visibility becomes visible", async () => {
+  test("calls active session markViewed when visibility becomes visible", async () => {
     Reflect.set(globalThis, "location", { protocol: "http:", host: "localhost:3000" });
     Reflect.set(globalThis, "window", { matchMedia: () => ({ matches: false }) });
     Reflect.set(globalThis, "navigator", { standalone: false });
 
     const el = new AppShell();
-    const markActiveSessionViewed = mock(() => {});
+    const markViewed = mock(() => {});
 
     const appStore = {
       projectId: 42,
       sessionId: "s1",
       setRoute: mock(async () => {}),
       diffStore: { refresh: mock(() => {}) },
-      markActiveSessionViewed,
+      activeSessionStore: { markViewed },
     };
 
     Reflect.set(el, "appStore", appStore);
@@ -39,7 +39,7 @@ describe("AppShell visibility change", () => {
 
     try {
       Reflect.get(el, "handleVisibilityChange").call(el);
-      expect(markActiveSessionViewed).toHaveBeenCalledTimes(1);
+      expect(markViewed).toHaveBeenCalledTimes(1);
     } finally {
       Object.defineProperty(globalThis, "document", {
         configurable: true,
@@ -49,20 +49,20 @@ describe("AppShell visibility change", () => {
     }
   });
 
-  test("does not call markActiveSessionViewed when visibility is hidden", async () => {
+  test("does not call active session markViewed when visibility is hidden", async () => {
     Reflect.set(globalThis, "location", { protocol: "http:", host: "localhost:3000" });
     Reflect.set(globalThis, "window", { matchMedia: () => ({ matches: false }) });
     Reflect.set(globalThis, "navigator", { standalone: false });
 
     const el = new AppShell();
-    const markActiveSessionViewed = mock(() => {});
+    const markViewed = mock(() => {});
 
     const appStore = {
       projectId: 42,
       sessionId: "s1",
       setRoute: mock(async () => {}),
       diffStore: { refresh: mock(() => {}) },
-      markActiveSessionViewed,
+      activeSessionStore: { markViewed },
     };
 
     Reflect.set(el, "appStore", appStore);
@@ -76,7 +76,7 @@ describe("AppShell visibility change", () => {
 
     try {
       Reflect.get(el, "handleVisibilityChange").call(el);
-      expect(markActiveSessionViewed).toHaveBeenCalledTimes(0);
+      expect(markViewed).toHaveBeenCalledTimes(0);
     } finally {
       Object.defineProperty(globalThis, "document", {
         configurable: true,
@@ -88,13 +88,13 @@ describe("AppShell visibility change", () => {
 });
 
 describe("AppShell activity routing", () => {
-  test("viewing a session routes the viewed transition through AppStore", async () => {
+  test("viewing a session routes the viewed transition through ActiveSessionStore", async () => {
     Reflect.set(globalThis, "location", { protocol: "http:", host: "localhost:3000" });
     Reflect.set(globalThis, "window", { matchMedia: () => ({ matches: false }) });
     Reflect.set(globalThis, "navigator", { standalone: false });
 
     const el = new AppShell();
-    const markActiveSessionViewed = mock(() => {});
+    const markViewed = mock(() => {});
     const refreshDiff = mock(() => {});
     const recordVisit = mock(() => {});
 
@@ -105,7 +105,7 @@ describe("AppShell activity routing", () => {
         appStore.sessionId = sessionId ?? "";
       }),
       diffStore: { refresh: refreshDiff },
-      markActiveSessionViewed,
+      activeSessionStore: { markViewed },
     };
 
     Reflect.set(el, "appStore", appStore);
@@ -113,6 +113,6 @@ describe("AppShell activity routing", () => {
 
     await Reflect.get(el, "applyRoute").call(el, { sessionId: "s1" });
 
-    expect(markActiveSessionViewed).toHaveBeenCalledTimes(1);
+    expect(markViewed).toHaveBeenCalledTimes(1);
   });
 });

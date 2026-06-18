@@ -17,7 +17,13 @@ function jsonResponse(data: unknown) {
   return new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
-function makeSessionData(overrides: { isStreaming?: boolean; messageCount?: number; projectId?: number; runtimeType?: string } = {}) {
+function makeSessionData(overrides: {
+  isStreaming?: boolean;
+  messageCount?: number;
+  projectId?: number;
+  runtimeType?: string;
+  activityState?: "running" | "finished" | null;
+} = {}) {
   const messageCount = overrides.messageCount ?? 0;
   return {
     id: "sess-1",
@@ -28,7 +34,7 @@ function makeSessionData(overrides: { isStreaming?: boolean; messageCount?: numb
     createdAt: "",
     updatedAt: "",
     runtimeType: overrides.runtimeType ?? "pi",
-    activityState: null,
+    activityState: overrides.activityState ?? null,
     messageCount,
     state: {
       model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
@@ -311,6 +317,60 @@ describe("ActiveSessionStore session loading contract", () => {
 
     await store.refreshSession();
     expect(calls).toEqual([]);
+  });
+
+  test("markViewed clears finished activity optimistically", async () => {
+    const sessionCache = new SessionCache();
+    const store = new ActiveSessionStore(null, sessionCache);
+    sessionCache.set("sess-1", makeSessionData({ activityState: "finished" }));
+
+    const calls: Array<{ url: string; method: string }> = [];
+    mockFetch((url, init) => {
+      calls.push({ url, method: init?.method ?? "GET" });
+      if (url === "/api/sessions/sess-1/messages") return jsonResponse([]);
+      if (url === "/api/sessions/sess-1/activity" && init?.method === "PATCH") return jsonResponse({ ok: true });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await store.setRoute("sess-1");
+    expect(sessionCache.get("sess-1")?.activityState).toBeNull();
+    expect(calls).toContainEqual({ url: "/api/sessions/sess-1/activity", method: "PATCH" });
+  });
+
+  test("markViewed rolls back finished activity if the server request fails", async () => {
+    const sessionCache = new SessionCache();
+    const store = new ActiveSessionStore(null, sessionCache);
+    sessionCache.set("sess-1", makeSessionData({ activityState: "finished" }));
+
+    mockFetch((url, init) => {
+      if (url === "/api/sessions/sess-1/messages") return jsonResponse([]);
+      if (url === "/api/sessions/sess-1/activity" && init?.method === "PATCH") return new Response("fail", { status: 500 });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await store.setRoute("sess-1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sessionCache.get("sess-1")?.activityState).toBe("finished");
+  });
+
+  test("markViewed is a no-op when activity is not finished", async () => {
+    const sessionCache = new SessionCache();
+    const store = new ActiveSessionStore(null, sessionCache);
+    sessionCache.set("sess-1", makeSessionData({ activityState: "running" }));
+
+    const calls: string[] = [];
+    mockFetch((url) => {
+      calls.push(url);
+      if (url === "/api/sessions/sess-1/messages") return jsonResponse([]);
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await store.setRoute("sess-1");
+    await store.markViewed();
+
+    expect(calls).toEqual(["/api/sessions/sess-1/messages"]);
+    expect(sessionCache.get("sess-1")?.activityState).toBe("running");
   });
 
   test("clearing the route resets session data to a blank session", async () => {

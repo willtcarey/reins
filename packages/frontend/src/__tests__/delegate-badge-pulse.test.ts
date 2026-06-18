@@ -5,7 +5,7 @@
  * (animate) when any child delegate session is in "running" state.
  */
 import { describe, test, expect } from "bun:test";
-import type { ActivityState } from "../models/stores/activity-store.js";
+import type { ActivityState } from "../models/stores/session-cache.js";
 import type { SessionListItem } from "../models/ws-client.js";
 
 /** Pure helper extracted from task-list: determines if any child is running. */

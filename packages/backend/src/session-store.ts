@@ -303,11 +303,8 @@ export function clearFinishedActivityForTasks(taskIds: number[]): string[] {
   return sessionIds;
 }
 
-/**
- * List all sessions with non-null activity_state. Used to build an
- * initial activity snapshot for newly-connected WebSocket clients.
- */
-export function listActiveSessions(): { id: string; activity_state: ActivityStateValue; project_id: number }[] {
+/** Rows with non-null activity_state for session activity snapshots. */
+export function listSessionsWithActivity() {
   const db = getDb();
   return db
     .query<{ id: string; activity_state: ActivityStateValue; project_id: number }, []>(
@@ -315,5 +312,4 @@ export function listActiveSessions(): { id: string; activity_state: ActivityStat
     )
     .all();
 }
-
 

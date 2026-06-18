@@ -8,7 +8,7 @@
 
 import type { SessionData, SessionState } from "../ws-client.js";
 
-export type SessionActivityState = "running" | "finished" | null;
+export type ActivityState = "running" | "finished" | null;
 
 export interface CachedSession {
   id: string;
@@ -20,7 +20,7 @@ export interface CachedSession {
   updatedAt: string | null;
   firstMessage: string | null;
   messageCount: number | null;
-  activityState: SessionActivityState;
+  activityState: ActivityState;
   runtimeType: string | null;
   state: SessionState | null;
 }
@@ -116,6 +116,10 @@ export class SessionCache {
     return this._entries.get(sessionId);
   }
 
+  entries(): CachedSession[] {
+    return Array.from(this._entries.values());
+  }
+
   getDetail(sessionId: string): SessionData | null {
     const entry = this._entries.get(sessionId);
     if (!entry) return null;
@@ -158,6 +162,17 @@ export class SessionCache {
       const { id, ...data } = session;
       this.set(id, data);
     }
+  }
+
+  removeMany(sessionIds: readonly string[]): string[] {
+    const removedSessionIds: string[] = [];
+    for (const sessionId of sessionIds) {
+      if (!this._entries.delete(sessionId)) continue;
+      this._detailFetches.delete(sessionId);
+      removedSessionIds.push(sessionId);
+      this.notify(sessionId);
+    }
+    return removedSessionIds;
   }
 
   async fetchDetail(sessionId: string): Promise<SessionData | null> {

@@ -4,7 +4,7 @@
  * Centralized reactive store that owns all server communication and
  * internal event handling. Wraps ActiveSessionStore for the viewed
  * session, ProjectsStore for the project list, per-project data and
- * project-scoped activity stores, and DiffStore for diff/sync state.
+ * activity selectors, and DiffStore for diff/sync state.
  * Handles WebSocket events
  * internally — views never participate in fetch/event decisions.
  */
@@ -98,27 +98,8 @@ export class AppStore {
       }
 
       if (event.type === "session_updated") {
-        void this.projectsStore.refresh(event.projectId);
-        void this.sessionCache.fetchDetail(event.sessionId);
+        void this.handleSessionUpdated(event.sessionId, event.projectId);
         return;
-      }
-
-      // Track activity for all sessions
-      if (sessionId && event.type === "agent_start") {
-        this.projectsStore.handleAgentStart(projectId, sessionId);
-      } else if (sessionId && event.type === "agent_end") {
-        const isActive = sessionId === this._activeSession.sessionId;
-        this.projectsStore.handleAgentEnd(projectId, sessionId, {
-          suppressUnread: isActive,
-        });
-        // If the session we're viewing just finished, immediately fire the
-        // mark-as-viewed request so the server-side activityState is cleared
-        // (and broadcast to other tabs). Without this, the server still has
-        // 'finished' for this session, so other tabs and refreshes show it
-        // as unread despite the user watching it complete.
-        if (isActive) {
-          void this.projectsStore.markSessionViewed(projectId, sessionId, { forceServer: true });
-        }
       }
 
       // Only refresh diff for the session we're viewing
@@ -160,13 +141,6 @@ export class AppStore {
   }
 
   // ---- ActiveSessionStore delegate methods -----------------------------------
-
-  markActiveSessionViewed(): void {
-    const projectId = this._activeSession.projectId;
-    const sessionId = this._activeSession.sessionId;
-    if (projectId == null || !sessionId) return;
-    this.projectsStore.markSessionViewed(projectId, sessionId);
-  }
 
   async setRoute(sessionId: string | null): Promise<void> {
     const previousProjectId = this._activeSession.projectId;
@@ -280,6 +254,14 @@ export class AppStore {
 
   // ---- Server reconciliation (internal) --------------------------------------
 
+  private async handleSessionUpdated(sessionId: string, projectId: number): Promise<void> {
+    const detailPromise = this.sessionCache.fetchDetail(sessionId);
+    const refreshPromise = this.projectsStore.refresh(projectId);
+
+    await detailPromise;
+    await refreshPromise;
+  }
+
   private requestServerReconcile(): Promise<void> {
     if (this._serverReconcileInFlight) return this._serverReconcileInFlight;
 
@@ -304,10 +286,9 @@ export class AppStore {
 
     if (activeSessionId) {
       tasks.push((async () => {
-        // Refresh active-session metadata and messages. refreshSession()
-        // auto-triggers a message refresh when it detects streaming ended
-        // (missed agent_end during disconnect/sleep). We also always refresh
-        // messages to catch any events missed during the pause.
+        // Refresh active-session metadata and messages. The active session
+        // subscribes to SessionCache, so fetching detail applies metadata;
+        // always refresh messages to catch any events missed during the pause.
         await this.refreshActiveSessionFromServer();
         await this._activeSession.refreshMessages();
       })());
@@ -342,7 +323,6 @@ export class AppStore {
     if (!sessionId) return;
 
     await this.sessionCache.fetchDetail(sessionId);
-    await this._activeSession.refreshSession();
   }
 
   // ---- Diff branch resolution (internal) ------------------------------------

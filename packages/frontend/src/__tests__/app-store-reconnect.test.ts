@@ -109,7 +109,7 @@ describe("AppStore reconnect catch-up", () => {
     ];
 
     mockFetch((url) => {
-      if (url === "/api/activity") {
+      if (url === "/api/sessions/activity") {
         return new Response(JSON.stringify(snapshot), { status: 200, headers: { "Content-Type": "application/json" } });
       }
       if (url === "/api/projects") {
@@ -136,7 +136,7 @@ describe("AppStore reconnect catch-up", () => {
 
   test("connect does not crash when activity endpoint returns empty", async () => {
     mockFetch((url) => {
-      if (url === "/api/activity") {
+      if (url === "/api/sessions/activity") {
         return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
       }
       return new Response("", { status: 404 });
@@ -150,6 +150,43 @@ describe("AppStore reconnect catch-up", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(store.projectsStore.activitySummary).toEqual({ running: 0, finished: 0 });
+  });
+
+  test("reconnect marks a visible active session viewed when reconciliation finds it finished", async () => {
+    store.projectsStore.fetchProjects = mock(async () => {});
+    store.projectsStore.handleReconnect = mock(async () => {});
+
+    let isStreaming = true;
+    const requests: Array<{ url: string; method: string }> = [];
+    mockFetch((url, init) => {
+      requests.push({ url, method: init?.method ?? "GET" });
+      if (url === "/api/sessions/activity") {
+        return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/sessions/sess-1") {
+        return new Response(JSON.stringify(sessionDetail(isStreaming)), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/sessions/sess-1/messages") {
+        return new Response(JSON.stringify([
+          { role: "user", content: "hello", timestamp: 1000 },
+          { role: "assistant", content: [{ type: "text", text: "Done" }], timestamp: 2000 },
+        ]), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/sessions/sess-1/activity" && init?.method === "PATCH") {
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response("", { status: 404 });
+    });
+
+    await store.setRoute("sess-1");
+    isStreaming = false;
+
+    client.fireConnection(true);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(requests).toContainEqual({ url: "/api/sessions/sess-1/activity", method: "PATCH" });
+    expect(store.projectsStore.activityForSession(42, "sess-1")).toBeNull();
   });
 
   test("browser resume reconciles a missed agent_end without waiting for websocket reconnect", async () => {
@@ -168,16 +205,14 @@ describe("AppStore reconnect catch-up", () => {
       store = new AppStore(client);
       store.connect();
       store.projectsStore.handleReconnect = mock(async () => {});
-      store.activeSessionStore.sessionId = "sess-1";
-      store.activeSessionStore.sessionData = sessionDetail(true);
-      store.activeSessionStore.sessionMessages = [{ role: "user", content: "hello", timestamp: 1000 }];
 
+      let isStreaming = true;
       mockFetch((url) => {
-        if (url === "/api/projects" || url === "/api/activity") {
+        if (url === "/api/projects" || url === "/api/sessions/activity") {
           return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
         }
         if (url === "/api/sessions/sess-1") {
-          return new Response(JSON.stringify(sessionDetail(false)), { status: 200, headers: { "Content-Type": "application/json" } });
+          return new Response(JSON.stringify(sessionDetail(isStreaming)), { status: 200, headers: { "Content-Type": "application/json" } });
         }
         if (url === "/api/sessions/sess-1/messages") {
           return new Response(JSON.stringify([
@@ -187,6 +222,9 @@ describe("AppStore reconnect catch-up", () => {
         }
         return new Response("", { status: 404 });
       });
+
+      await store.setRoute("sess-1");
+      isStreaming = false;
 
       fakeWindow.dispatchEvent(new Event("focus"));
       await new Promise((r) => setTimeout(r, 0));

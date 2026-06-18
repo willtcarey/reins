@@ -24,7 +24,6 @@ import { registerModelsRoutes } from "./models.js";
 import { registerOAuthRoutes } from "./oauth.js";
 import { registerAuthRoutes } from "./auth.js";
 import { registerAttachmentRoutes } from "./attachments.js";
-import { listActiveSessions } from "../session-store.js";
 
 export type ProjectRouteContext = RouteContext & { project: ProjectModel };
 
@@ -47,16 +46,6 @@ export function buildRouter() {
 
   registerHealthRoutes(router);
   registerProjectRoutes(router);
-
-  // List all sessions with non-null activity_state — for initial page-load
-  // reconciliation without needing to expand every project first.
-  router.get("/api/activity", () => {
-    return Response.json(listActiveSessions().map((session) => ({
-      id: session.id,
-      activityState: session.activity_state,
-      projectId: session.project_id,
-    })));
-  });
   registerPaletteRoutes(router);
   registerSettingsRoutes(router);
   registerModelsRoutes(router);

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { TasksCollection, type TaskListItem } from "../../models/tasks.js";
-import type { ActivityState } from "../../models/stores/activity-store.js";
+import type { ActivityState } from "../../models/stores/session-cache.js";
 
 function task(overrides: Partial<TaskListItem> = {}): TaskListItem {
   return {

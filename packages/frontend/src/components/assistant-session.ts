@@ -11,7 +11,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { SessionListItem } from "../models/ws-client.js";
-import type { ActivityState } from "../models/stores/activity-store.js";
+import type { ActivityState } from "../models/stores/session-cache.js";
 import { formatRelativeDate } from "../models/format.js";
 import "./popover-menu.js";
 

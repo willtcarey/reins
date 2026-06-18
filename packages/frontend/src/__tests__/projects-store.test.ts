@@ -4,6 +4,7 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { ProjectsStore } from "../models/stores/projects-store.js";
 import { ProjectStore } from "../models/stores/project-store.js";
+import { SessionCache } from "../models/stores/session-cache.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 
 // Mock fetch globally
@@ -17,11 +18,17 @@ function jsonResponse(data: unknown, ok = true): Response {
 
 describe("ProjectsStore per-project data", () => {
   let store: ProjectsStore;
+  let sessionCache: SessionCache;
 
   beforeEach(() => {
-    store = new ProjectsStore();
+    sessionCache = new SessionCache();
+    store = new ProjectsStore(sessionCache);
     restoreFetch();
   });
+
+  function setActivity(sessionId: string, projectId: number, activityState: "running" | "finished" | null): void {
+    sessionCache.set(sessionId, { projectId, activityState });
+  }
 
   // ---- Lazy creation --------------------------------------------------------
 
@@ -184,13 +191,12 @@ describe("ProjectsStore per-project data", () => {
     expect(notified).toBe(true);
   });
 
-  test("remove is a no-op if store does not exist", () => {
+  test("remove notifies even if store does not exist", () => {
     let notified = false;
     store.subscribe(() => { notified = true; });
 
     store.remove(99);
-    // Should not notify for non-existent stores
-    expect(notified).toBe(false);
+    expect(notified).toBe(true);
   });
 
   test("remove unsubscribes from child store notifications", async () => {
@@ -213,6 +219,55 @@ describe("ProjectsStore per-project data", () => {
     // Now triggering child should NOT bubble
     await child.fetchLists();
     expect(parentNotifyCount).toBe(countAfterRemove);
+  });
+
+  test("remove clears shared activity for the removed loaded project", () => {
+    store.getStore(1);
+    setActivity("p1-running", 1, "running");
+    setActivity("p1-finished", 1, "finished");
+    setActivity("p2-running", 2, "running");
+
+    store.remove(1);
+
+    expect(store.activityForSession(1, "p1-running")).toBeNull();
+    expect(store.activityForSession(1, "p1-finished")).toBeNull();
+    expect(store.activityForProject(1)).toBeNull();
+    expect(store.activityForProject(2)).toBe("running");
+    expect(store.activitySummary).toEqual({ running: 1, finished: 0 });
+  });
+
+  test("remove clears shared activity for snapshot-only unloaded projects", async () => {
+    mockFetch((url) => {
+      if (url === "/api/sessions/activity") {
+        return jsonResponse([
+          { id: "p1-running", activityState: "running", projectId: 1 },
+          { id: "p2-finished", activityState: "finished", projectId: 2 },
+        ]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    await store.fetchActivitySnapshot();
+    expect(store.peekStore(1)).toBeUndefined();
+
+    store.remove(1);
+
+    expect(store.activityForSession(1, "p1-running")).toBeNull();
+    expect(store.activityForProject(1)).toBeNull();
+    expect(store.activityForProject(2)).toBe("finished");
+    expect(store.activitySummary).toEqual({ running: 0, finished: 1 });
+  });
+
+  test("remove drops cached sessions for the removed project", () => {
+    const cache = new SessionCache();
+    store = new ProjectsStore(cache);
+    cache.set("p1-session", { projectId: 1, activityState: "finished" });
+    cache.set("p2-session", { projectId: 2, activityState: "running" });
+
+    store.remove(1);
+
+    expect(cache.get("p1-session")).toBeUndefined();
+    expect(cache.get("p2-session")?.projectId).toBe(2);
   });
 
   // ---- Notification bubbling ------------------------------------------------
@@ -261,10 +316,10 @@ describe("ProjectsStore per-project data", () => {
     expect(count).toBe(countBefore);
   });
 
-  test("activityForSession reads from shared ActivityStore (works for all projects)", () => {
-    store.setRunning("s1", 1);
-    store.setRunning("s2", 2);
-    store.setFinished("s2", 2);
+  test("activityForSession reads from SessionCache (works for all projects)", () => {
+    setActivity("s1", 1, "running");
+    setActivity("s2", 2, "running");
+    setActivity("s2", 2, "finished");
 
     expect(store.activityForSession(1, "s1")).toBe("running");
     expect(store.activityForSession(2, "s2")).toBe("finished");
@@ -274,38 +329,23 @@ describe("ProjectsStore per-project data", () => {
     expect(store.activityForSession(99, "s1")).toBe("running");
   });
 
-  test("activityForProject resolves project header activity via WS events", () => {
-    store.handleAgentStart(1, "s1");
-    store.handleAgentStart(1, "s2");
-    store.handleAgentEnd(1, "s2");
-    store.handleAgentStart(2, "s3");
+  test("activityForProject resolves project header activity from SessionCache", () => {
+    setActivity("s1", 1, "running");
+    setActivity("s2", 1, "finished");
+    setActivity("s3", 2, "running");
 
     expect(store.activityForProject(1)).toBe("running");
     expect(store.activityForProject(2)).toBe("running");
-    expect(store.activityForProject(99)).toBeUndefined();
+    expect(store.activityForProject(99)).toBeNull();
   });
 
   test("activitySummary aggregates across project stores", () => {
-    store.setRunning("s1", 1);
-    store.setRunning("s2", 1);
-    store.setFinished("s2", 1);
-    store.setRunning("s3", 2);
+    setActivity("s1", 1, "running");
+    setActivity("s2", 1, "running");
+    setActivity("s2", 1, "finished");
+    setActivity("s3", 2, "running");
 
     expect(store.activitySummary).toEqual({ running: 2, finished: 1 });
-  });
-
-  test("handleAgentEnd marks activity and schedules project refresh", async () => {
-    const refresh = mock(async () => {});
-    store.refresh = refresh;
-
-    store.handleAgentStart(42, "s1");
-    store.handleAgentEnd(42, "s1", { suppressUnread: false });
-
-    expect(store.activityForSession(42, "s1")).toBe("finished");
-
-    await new Promise((resolve) => setTimeout(resolve, 510));
-
-    expect(refresh).toHaveBeenCalledWith(42);
   });
 
   test("handleReconnect refreshes loaded data", async () => {
@@ -347,7 +387,7 @@ describe("ProjectsStore per-project data", () => {
 
   test("fetchActivitySnapshot populates activity without creating stores", async () => {
     mockFetch((url) => {
-      if (url === "/api/activity") {
+      if (url === "/api/sessions/activity") {
         return jsonResponse([
           { id: "s1", activityState: "running", projectId: 1 },
           { id: "s2", activityState: "finished", projectId: 2 },
@@ -368,7 +408,7 @@ describe("ProjectsStore per-project data", () => {
 
   test("fetchActivitySnapshot running wins over finished", async () => {
     mockFetch((url) => {
-      if (url === "/api/activity") {
+      if (url === "/api/sessions/activity") {
         return jsonResponse([
           { id: "s1", activityState: "finished", projectId: 1 },
           { id: "s2", activityState: "running", projectId: 1 },
@@ -383,9 +423,35 @@ describe("ProjectsStore per-project data", () => {
     expect(store.activityForProject(1)).toBe("running");
   });
 
+  test("fetchActivitySnapshot clears local activity absent from authoritative snapshot", async () => {
+    setActivity("stale-running", 1, "running");
+    setActivity("stale-finished", 2, "finished");
+    setActivity("kept-finished", 3, "finished");
+
+    mockFetch((url) => {
+      if (url === "/api/sessions/activity") {
+        return jsonResponse([
+          { id: "kept-finished", activityState: "finished", projectId: 3 },
+          { id: "new-running", activityState: "running", projectId: 4 },
+        ]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    await store.fetchActivitySnapshot();
+
+    expect(store.activityForSession(1, "stale-running")).toBeNull();
+    expect(store.activityForSession(2, "stale-finished")).toBeNull();
+    expect(store.activityForProject(1)).toBeNull();
+    expect(store.activityForProject(2)).toBeNull();
+    expect(store.activityForProject(3)).toBe("finished");
+    expect(store.activityForProject(4)).toBe("running");
+    expect(store.activitySummary).toEqual({ running: 1, finished: 1 });
+  });
+
   test("fetchActivitySnapshot is a no-op for empty snapshot", async () => {
     mockFetch((url) => {
-      if (url === "/api/activity") {
+      if (url === "/api/sessions/activity") {
         return jsonResponse([]);
       }
       return jsonResponse({}, false);
@@ -393,7 +459,7 @@ describe("ProjectsStore per-project data", () => {
 
     await store.fetchActivitySnapshot();
 
-    expect(store.activityForProject(1)).toBeUndefined();
+    expect(store.activityForProject(1)).toBeNull();
   });
 
   test("fetchActivitySnapshot handles fetch failure gracefully", async () => {
@@ -402,55 +468,12 @@ describe("ProjectsStore per-project data", () => {
     // Should not throw
     await store.fetchActivitySnapshot();
 
-    expect(store.activityForProject(1)).toBeUndefined();
-  });
-
-  test("activityForProject reflects WS event updates via handleAgentStart", async () => {
-    // Snapshot says project 1 is finished
-    mockFetch((url) => {
-      if (url === "/api/activity") {
-        return jsonResponse([
-          { id: "s1", activityState: "finished", projectId: 1 },
-        ]);
-      }
-      return jsonResponse({}, false);
-    });
-
-    await store.fetchActivitySnapshot();
-    expect(store.activityForProject(1)).toBe("finished");
-
-    // WS event promotes to running
-    restoreFetch();
-    mockFetch(() => jsonResponse([]));
-    store.handleAgentStart(1, "s2");
-
-    expect(store.activityForProject(1)).toBe("running");
-  });
-
-  test("activityForProject reflects WS event updates via handleAgentEnd", async () => {
-    mockFetch((url) => {
-      if (url === "/api/activity") {
-        return jsonResponse([
-          { id: "s1", activityState: "running", projectId: 1 },
-        ]);
-      }
-      return jsonResponse({}, false);
-    });
-
-    await store.fetchActivitySnapshot();
-    expect(store.activityForProject(1)).toBe("running");
-
-    // WS event demotes to finished
-    restoreFetch();
-    mockFetch(() => jsonResponse([]));
-    store.handleAgentEnd(1, "s1");
-
-    expect(store.activityForProject(1)).toBe("finished");
+    expect(store.activityForProject(1)).toBeNull();
   });
 
   test("activitySummary includes unloaded projects from snapshot", async () => {
     mockFetch((url) => {
-      if (url === "/api/activity") {
+      if (url === "/api/sessions/activity") {
         return jsonResponse([
           { id: "s1", activityState: "running", projectId: 1 },
           { id: "s2", activityState: "finished", projectId: 2 },
@@ -468,7 +491,7 @@ describe("ProjectsStore per-project data", () => {
   test("activitySummary does not double-count loaded projects", async () => {
     // Snapshot says project 1 has a running session
     mockFetch((url) => {
-      if (url === "/api/activity") {
+      if (url === "/api/sessions/activity") {
         return jsonResponse([
           { id: "s1", activityState: "running", projectId: 1 },
         ]);
@@ -482,125 +505,10 @@ describe("ProjectsStore per-project data", () => {
     restoreFetch();
     mockFetch(() => jsonResponse([]));
     await store.ensureLoaded(1);
-    store.setRunning("s1", 1);
+    setActivity("s1", 1, "running");
 
     // Should count once, not twice
     expect(store.activitySummary).toEqual({ running: 1, finished: 0 });
   });
 
-  // ---- setRunning / setFinished --------------------------------------------
-
-  test("setRunning works without guard when store is not loaded", () => {
-    // No store loaded for project 99
-    store.setRunning("s99", 99);
-    expect(store.activityForSession(99, "s99")).toBe("running");
-    // And no store was created
-    expect(store.peekStore(99)).toBeUndefined();
-  });
-
-  test("setFinished works without guard when store is not loaded", () => {
-    store.setFinished("s99", 99);
-    expect(store.activityForSession(99, "s99")).toBe("finished");
-  });
-
-  // ---- markSessionViewed (moved from ProjectStore) --------------------------
-
-  test("markSessionViewed clears finished activity optimistically", async () => {
-    store.setRunning("s1", 1);
-    store.setFinished("s1", 1);
-
-    mockFetch(() => jsonResponse({ ok: true }));
-
-    // Start the request but don't await — local state should already be updated
-    const promise = store.markSessionViewed(1, "s1");
-    expect(store.activityForSession(1, "s1")).toBeUndefined();
-
-    await promise;
-    expect(store.activityForSession(1, "s1")).toBeUndefined();
-  });
-
-  test("markSessionViewed rolls back to finished if the server request fails", async () => {
-    store.setRunning("s1", 1);
-    store.setFinished("s1", 1);
-
-    mockFetch(() => new Response("fail", { status: 500 }));
-
-    await store.markSessionViewed(1, "s1");
-
-    // Should be restored to finished so reconnect reconciles
-    expect(store.activityForSession(1, "s1")).toBe("finished");
-  });
-
-  test("markSessionViewed rolls back on network error", async () => {
-    store.setRunning("s1", 1);
-    store.setFinished("s1", 1);
-
-    mockFetch(() => { throw new Error("network"); });
-
-    await store.markSessionViewed(1, "s1");
-
-    expect(store.activityForSession(1, "s1")).toBe("finished");
-  });
-
-  test("markSessionViewed is a no-op when activity is not finished", async () => {
-    store.setRunning("s1", 1);
-
-    mockFetch(() => jsonResponse({ ok: true }));
-
-    await store.markSessionViewed(1, "s1");
-
-    // Running activity stays — only finished gets cleared
-    expect(store.activityForSession(1, "s1")).toBe("running");
-  });
-
-  test("markSessionViewed does not mark inactive sessions finished when the request fails", async () => {
-    mockFetch(() => new Response("fail", { status: 500 }));
-
-    await store.markSessionViewed(1, "s1");
-
-    expect(store.activityForSession(1, "s1")).toBeUndefined();
-  });
-
-  test("markSessionViewed works for unloaded projects", async () => {
-    store.setFinished("s99", 99);
-
-    mockFetch(() => jsonResponse({ ok: true }));
-
-    await store.markSessionViewed(99, "s99");
-
-    expect(store.activityForSession(99, "s99")).toBeUndefined();
-  });
-
-  // ---- trackDelegateSession (moved from ProjectStore) -----------------------
-
-  test("trackDelegateSession suppresses activity on completion", () => {
-    store.trackDelegateSession("delegate-1");
-    store.setRunning("delegate-1", 1);
-    store.setFinished("delegate-1", 1);
-
-    expect(store.activityForSession(1, "delegate-1")).toBeUndefined();
-  });
-
-  // ---- handleAgentStart / handleAgentEnd use setRunning / setFinished -------
-
-  test("handleAgentStart delegates to setRunning", () => {
-    store.handleAgentStart(1, "s1");
-    expect(store.activityForProject(1)).toBe("running");
-    // Does NOT create a ProjectStore
-    expect(store.peekStore(1)).toBeUndefined();
-  });
-
-  test("handleAgentEnd delegates to setFinished", async () => {
-    const refresh = mock(async () => {});
-    store.refresh = refresh;
-
-    store.handleAgentStart(42, "s1");
-    store.handleAgentEnd(42, "s1", { suppressUnread: false });
-
-    expect(store.activityForSession(42, "s1")).toBe("finished");
-
-    await new Promise((resolve) => setTimeout(resolve, 510));
-
-    expect(refresh).toHaveBeenCalledWith(42);
-  });
 });

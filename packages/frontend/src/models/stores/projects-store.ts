@@ -4,19 +4,16 @@
  * Public project-domain store for the project list, project CRUD mutations,
  * lazily-created ProjectStore instances, and cross-project activity selectors.
  *
- * Owns a single shared ActivityStore — the single source of truth for all
- * session activity across all projects. ProjectStore instances receive a
- * reference to this store and read/write through it.
+ * Owns cross-project activity behavior. Activity data itself lives in the
+ * shared SessionCache and is derived by ProjectsStore/ProjectStore selectors.
  *
  * Components subscribe via `subscribe()` to get notified when the project list
  * or any child store changes (notifications bubble up).
  */
 
 import type { ProjectInfo } from "../ws-client.js";
-import type { ActivityFinishOptions, ActivityState } from "./activity-store.js";
-import { ActivityStore } from "./activity-store.js";
 import { ProjectStore } from "./project-store.js";
-import { SessionCache } from "./session-cache.js";
+import { SessionCache, type ActivityState } from "./session-cache.js";
 
 type ProjectsStoreListener = () => void;
 
@@ -27,20 +24,12 @@ export class ProjectsStore {
 
   // ---- Private state --------------------------------------------------------
 
-  /**
-   * Single shared ActivityStore — all session activity for all projects.
-   * Populated from the server activity snapshot, WebSocket events, and
-   * session list fetches. ProjectStore instances read through this store.
-   * Maintains both session-level and per-project activity state.
-   */
-  private _activity = new ActivityStore();
-
   private _stores = new Map<number, ProjectStore>();
   private _unsubscribes = new Map<number, () => void>();
   private _listeners = new Set<ProjectsStoreListener>();
 
   constructor(private _sessionCache: SessionCache = new SessionCache()) {
-    this._sessionCache.subscribeAll((sessionId) => this.syncSessionActivity(sessionId));
+    this._sessionCache.subscribeAll(() => this.notify());
   }
 
   // ---- Subscription ---------------------------------------------------------
@@ -128,138 +117,59 @@ export class ProjectsStore {
 
   // ---- Activity mutations ---------------------------------------------------
 
-  /**
-   * The shared ActivityStore. Exposed so ProjectStore instances can
-   * read activity state (read-only selectors).
-   */
-  get activityStore(): ActivityStore {
-    return this._activity;
-  }
-
   /** Activity state for a session (works for loaded and unloaded projects). */
-  activityForSession(projectId: number, sessionId: string): ActivityState | undefined {
-    return this._activity.getActivity(sessionId);
+  activityForSession(projectId: number, sessionId: string): ActivityState {
+    return this._sessionCache.get(sessionId)?.activityState ?? null;
   }
 
-  /**
-   * Activity state for a project header. Derived on the fly from
-   * ActivityStore — works for all projects regardless of load state.
-   */
-  activityForProject(projectId: number): ActivityState | undefined {
-    return this._activity.activityForProject(projectId);
+  /** Activity state for a project header. Running wins over finished. */
+  activityForProject(projectId: number): ActivityState {
+    const projectSessions = this._sessionCache.entries().filter((session) => session.projectId === projectId);
+    if (projectSessions.some((session) => session.activityState === "running")) return "running";
+    if (projectSessions.some((session) => session.activityState === "finished")) return "finished";
+    return null;
   }
 
   /** Summary counts across all project activity, for shell-level title/badge state. */
   get activitySummary(): { running: number; finished: number } {
-    return this._activity.activitySummary;
-  }
-
-  /** Mark a session as running. */
-  setRunning(sessionId: string, projectId: number): void {
-    this._activity.setProjectForSession(sessionId, projectId);
-    this._activity.setRunning(sessionId);
-    this.notify();
-  }
-
-  /** Mark a session as finished. */
-  setFinished(sessionId: string, projectId: number, options: ActivityFinishOptions = {}): void {
-    this._activity.setProjectForSession(sessionId, projectId);
-    this._activity.setFinished(sessionId, options);
-    this.notify();
-  }
-
-  /**
-   * Track a delegate session so its activity is suppressed on completion.
-   */
-  trackDelegateSession(sessionId: string): void {
-    this._activity.trackDelegateSession(sessionId);
-    this.notify();
-  }
-
-  /**
-   * Mark a session's activity as viewed: optimistic local update followed by
-   * the server REST endpoint (transitions 'finished' → NULL, broadcasts to
-   * other tabs). Rolls back the local update if the request fails.
-   */
-  async markSessionViewed(
-    projectId: number,
-    sessionId: string,
-    options: { forceServer?: boolean } = {},
-  ): Promise<void> {
-    const previous = this._activity.getActivity(sessionId);
-    if (previous !== "finished" && !options.forceServer) return;
-
-    // Optimistic local update — UI responds immediately when there is
-    // finished activity to clear. Forced calls only reconcile the server.
-    if (previous === "finished") {
-      this._activity.markSessionViewed(sessionId);
-      this.notify();
+    let running = 0;
+    let finished = 0;
+    for (const session of this._sessionCache.entries()) {
+      if (session.activityState === "running") running++;
+      else if (session.activityState === "finished") finished++;
     }
-
-    try {
-      const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/activity`, {
-        method: "PATCH",
-      });
-      if (!resp.ok && previous === "finished") {
-        // Roll back: restore the state that was actually cleared.
-        this._activity.setFinished(sessionId);
-        this.notify();
-      }
-    } catch {
-      if (previous === "finished") {
-        // Roll back on network failure too.
-        this._activity.setFinished(sessionId);
-        this.notify();
-      }
-    }
-  }
-
-  private recordSessionActivity(sessionId: string, serverState: "running" | "finished" | null, projectId: number): void {
-    this._sessionCache.set(sessionId, { projectId, activityState: serverState });
-  }
-
-  private syncSessionActivity(sessionId: string): void {
-    const session = this._sessionCache.get(sessionId);
-    if (!session || session.projectId == null) return;
-
-    this._activity.applyServerState(sessionId, session.activityState, session.projectId);
-    this.notify();
+    return { running, finished };
   }
 
   // ---- Activity snapshot ----------------------------------------------------
 
   /**
-   * Fetch the server-side activity snapshot into SessionCache. The global
-   * session subscription reconciles it to ActivityStore, so activity dots are
-   * available immediately without needing to expand any project.
+   * Fetch the server-side activity snapshot into SessionCache so activity dots
+   * are available immediately without needing to expand any project.
    */
   async fetchActivitySnapshot(): Promise<void> {
     try {
-      const resp = await fetch("/api/activity");
+      const resp = await fetch("/api/sessions/activity");
       if (!resp.ok) return;
       const sessions: Array<{ id: string; activityState: "running" | "finished"; projectId: number }> = await resp.json();
+      const snapshotIds = new Set(sessions.map((entry) => entry.id));
+      const previousActivityIds = this._sessionCache
+        .entries()
+        .filter((session) => session.activityState)
+        .map((session) => session.id);
 
       for (const entry of sessions) {
-        this.recordSessionActivity(entry.id, entry.activityState, entry.projectId);
+        this._sessionCache.set(entry.id, { projectId: entry.projectId, activityState: entry.activityState });
       }
+      for (const sessionId of previousActivityIds) {
+        if (!snapshotIds.has(sessionId)) {
+          this._sessionCache.set(sessionId, { activityState: null });
+        }
+      }
+      this.notify();
     } catch {
       // silent — activity will be populated via session list fetches
     }
-  }
-
-  // ---- WS event routing -----------------------------------------------------
-
-  /** Route an agent_start event into the activity model. */
-  handleAgentStart(projectId: number, sessionId: string): void {
-    this.setRunning(sessionId, projectId);
-  }
-
-  /** Route an agent_end event into the activity model and reconcile project lists. */
-  handleAgentEnd(projectId: number, sessionId: string, options: ActivityFinishOptions = {}): void {
-    this.setFinished(sessionId, projectId, options);
-    setTimeout(() => {
-      void this.refresh(projectId);
-    }, 500);
   }
 
   // ---- Reconnect / event handling -------------------------------------------
@@ -290,9 +200,11 @@ export class ProjectsStore {
       ? this.getStore(event.projectId)
       : this.peekStore(event.projectId);
 
-    if (event.parentSessionId) {
-      this.trackDelegateSession(event.sessionId);
-    }
+    this._sessionCache.set(event.sessionId, {
+      projectId: event.projectId,
+      taskId: event.taskId,
+      parentSessionId: event.parentSessionId,
+    });
 
     await this.refresh(event.projectId);
 
@@ -311,7 +223,7 @@ export class ProjectsStore {
     let child = this._stores.get(projectId);
     if (child) return child;
 
-    child = new ProjectStore(projectId, this._activity, this._sessionCache);
+    child = new ProjectStore(projectId, this._sessionCache);
     const unsub = child.subscribe(() => this.notify());
     this._stores.set(projectId, child);
     this._unsubscribes.set(projectId, unsub);
@@ -423,17 +335,30 @@ export class ProjectsStore {
 
   /**
    * Drop a project data store (e.g. project deleted). Unsubscribes from
-   * child notifications and removes from the map.
+   * child notifications, removes from the map, and clears shared activity and
+   * cached sessions for the project (including snapshot-only sessions where no
+   * ProjectStore was ever created).
    */
   remove(projectId: number): void {
-    const unsub = this._unsubscribes.get(projectId);
-    if (!unsub) return;
+    const removedSessionIds = this.sessionIdsForProject(projectId);
+    this._sessionCache.removeMany(removedSessionIds);
 
-    const child = this._stores.get(projectId);
-    child?.dispose();
-    unsub();
-    this._unsubscribes.delete(projectId);
-    this._stores.delete(projectId);
+    const unsub = this._unsubscribes.get(projectId);
+    if (unsub) {
+      const child = this._stores.get(projectId);
+      child?.dispose();
+      unsub();
+      this._unsubscribes.delete(projectId);
+      this._stores.delete(projectId);
+    }
+
     this.notify();
+  }
+
+  private sessionIdsForProject(projectId: number): string[] {
+    return this._sessionCache
+      .entries()
+      .filter((session) => session.projectId === projectId)
+      .map((session) => session.id);
   }
 }

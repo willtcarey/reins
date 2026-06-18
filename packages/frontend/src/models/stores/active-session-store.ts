@@ -63,6 +63,7 @@ export class ActiveSessionStore {
   private _listeners = new Set<ActiveSessionStoreListener>();
   private _unsubscribeSession: (() => void) | null = null;
   private _fetchId = 0; // guards against stale message fetches
+  private _markViewedInFlight: string | null = null;
 
   constructor(
     private _client: IAppClient | null = null,
@@ -197,6 +198,39 @@ export class ActiveSessionStore {
     }
   }
 
+  /**
+   * Mark the displayed session's finished activity as viewed. Activity state
+   * itself lives in SessionCache, so clearing it there updates project/sidebar
+   * selectors immediately while the server request reconciles other clients.
+   */
+  async markViewed(): Promise<void> {
+    const sessionId = this.sessionId;
+    const projectId = this.projectId;
+    if (!sessionId || projectId == null) return;
+    if (this.sessionData.activityState !== "finished") return;
+    if (this._markViewedInFlight === sessionId) return;
+
+    this._markViewedInFlight = sessionId;
+    this._sessionCache.set(sessionId, { activityState: null });
+
+    try {
+      const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/activity`, {
+        method: "PATCH",
+      });
+      if (!resp.ok && this.sessionId === sessionId) {
+        this._sessionCache.set(sessionId, { projectId, activityState: "finished" });
+      }
+    } catch {
+      if (this.sessionId === sessionId) {
+        this._sessionCache.set(sessionId, { projectId, activityState: "finished" });
+      }
+    } finally {
+      if (this._markViewedInFlight === sessionId) {
+        this._markViewedInFlight = null;
+      }
+    }
+  }
+
   async updateSessionModel(update: SessionModelUpdate): Promise<{ ok: true } | { error: string }> {
     if (!this.sessionId) return { error: "No active session" };
 
@@ -250,6 +284,9 @@ export class ActiveSessionStore {
     this.sessionData = data;
     this.projectId = data.projectId;
     this.notify();
+    if (data.activityState === "finished") {
+      void this.markViewed();
+    }
     return true;
   }
 

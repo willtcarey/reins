@@ -18,7 +18,7 @@ import { customElement, property, state, query } from "lit/decorators.js";
 import { navigateToSession } from "../models/router.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import { TasksCollection, type TaskListItem } from "../models/tasks.js";
-import type { ActivityState } from "../models/stores/activity-store.js";
+import type { ActivityState } from "../models/stores/session-cache.js";
 
 import type { ProjectInfo } from "../models/ws-client.js";
 import type { TaskForm } from "./task-form.js";

@@ -22,6 +22,12 @@ const SessionModelBody = Type.Object({
 });
 
 export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
+  // List all sessions with non-null activity_state — for initial page-load
+  // reconciliation without needing to expand every project first.
+  router.get("/activity", (ctx) => {
+    return Response.json(new Sessions(ctx.state.sessions).activeSessions());
+  });
+
   router.put("/:sessionId/model", async (ctx) => {
     const sessionId = ctx.params.sessionId;
     const body = await parseBody(SessionModelBody, ctx.req);

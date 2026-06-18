@@ -116,6 +116,24 @@ describe("SessionCache", () => {
     expect(calls).toEqual(["sess-1"]);
   });
 
+  test("removeMany removes cached sessions by id", () => {
+    const store = new SessionCache();
+    const calls: string[] = [];
+    store.subscribeAll((sessionId) => calls.push(sessionId));
+
+    store.set("sess-1", listItem({ id: "sess-1", projectId: 42 }));
+    store.set("sess-2", listItem({ id: "sess-2", projectId: 42 }));
+    store.set("sess-3", listItem({ id: "sess-3", projectId: 99 }));
+
+    const removed = store.removeMany(["sess-1", "sess-2", "missing"]);
+
+    expect(removed).toEqual(["sess-1", "sess-2"]);
+    expect(store.get("sess-1")).toBeUndefined();
+    expect(store.get("sess-2")).toBeUndefined();
+    expect(store.get("sess-3")?.projectId).toBe(99);
+    expect(calls).toEqual(["sess-1", "sess-2", "sess-3", "sess-1", "sess-2"]);
+  });
+
   test("dedupes concurrent detail fetches", async () => {
     const store = new SessionCache();
     let fetchCount = 0;

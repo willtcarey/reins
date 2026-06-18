@@ -152,7 +152,7 @@ export class AppShell extends LitElement {
    */
   private handleVisibilityChange = () => {
     if (document.visibilityState === "visible") {
-      this.appStore.markActiveSessionViewed();
+      void this.appStore.activeSessionStore.markViewed();
     }
   };
 
@@ -172,7 +172,7 @@ export class AppShell extends LitElement {
     // Clear unread completion when viewing a session, but keep the green
     // running indicator visible until the agent loop actually ends.
     if (store.sessionId) {
-      store.markActiveSessionViewed();
+      void store.activeSessionStore.markViewed();
     }
     // Track session visit for quick-open recency ordering
     if (store.sessionId) {
