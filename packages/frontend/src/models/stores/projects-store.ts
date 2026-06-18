@@ -151,7 +151,7 @@ export class ProjectsStore {
     try {
       const resp = await fetch("/api/sessions/activity");
       if (!resp.ok) return;
-      const sessions: Array<{ id: string; activityState: "running" | "finished"; projectId: number }> = await resp.json();
+      const sessions: Array<{ id: string; activityState: "running" | "finished"; projectId: number; taskId: number | null }> = await resp.json();
       const snapshotIds = new Set(sessions.map((entry) => entry.id));
       const previousActivityIds = this._sessionCache
         .entries()
@@ -159,7 +159,7 @@ export class ProjectsStore {
         .map((session) => session.id);
 
       for (const entry of sessions) {
-        this._sessionCache.set(entry.id, { projectId: entry.projectId, activityState: entry.activityState });
+        this._sessionCache.set(entry.id, { projectId: entry.projectId, taskId: entry.taskId, activityState: entry.activityState });
       }
       for (const sessionId of previousActivityIds) {
         if (!snapshotIds.has(sessionId)) {

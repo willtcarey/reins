@@ -274,6 +274,7 @@ export class Sessions {
       return {
         id: row.id,
         projectId: row.project_id,
+        taskId: row.task_id,
         activityState,
       };
     });

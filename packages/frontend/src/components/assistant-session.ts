@@ -11,7 +11,6 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { SessionListItem } from "../models/ws-client.js";
-import type { ActivityState } from "../models/stores/session-cache.js";
 import { formatRelativeDate } from "../models/format.js";
 import "./popover-menu.js";
 
@@ -29,10 +28,6 @@ export class AssistantSession extends LitElement {
 
   @property({ type: String })
   activeSessionId = "";
-
-  /** Activity states for sessions (running/finished indicators). */
-  @property({ attribute: false })
-  activityMap = new Map<string, ActivityState>();
 
   private handleSelectSession(sessionId: string) {
     this.dispatchEvent(
@@ -54,13 +49,12 @@ export class AssistantSession extends LitElement {
     );
   }
 
-  private renderActivityDot(sessionId: string) {
-    const state = this.activityMap.get(sessionId);
-    if (!state) return nothing;
-    const classes = state === "running"
+  private renderActivityDot(session: SessionListItem) {
+    if (!session.activityState) return nothing;
+    const classes = session.activityState === "running"
       ? "w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"
       : "w-2 h-2 rounded-full bg-amber-500 shrink-0";
-    return html`<span class="${classes}" title="${state === "running" ? "Running" : "New activity"}"></span>`;
+    return html`<span class="${classes}" title="${session.activityState === "running" ? "Running" : "New activity"}"></span>`;
   }
 
   private renderSessionMenuContent() {
@@ -110,7 +104,7 @@ export class AssistantSession extends LitElement {
               @click=${() => this.handleSelectSession(assistant.id)}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-zinc-500"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              ${this.renderActivityDot(assistant.id)}
+              ${this.renderActivityDot(assistant)}
               <span class="text-xs ${isActive ? "text-blue-300 font-medium" : "text-zinc-300"} truncate">Assistant</span>
             </button>
             <popover-menu

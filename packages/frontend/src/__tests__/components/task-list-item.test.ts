@@ -23,8 +23,6 @@ describe("TaskListItem activity", () => {
   test("uses parent-derived task activity instead of deriving from session activity", () => {
     const el = new TaskListItemElement();
     el.task = task({ status: "closed" });
-    el.activityMap = new Map([["s1", "running"]]);
-
     expect(el.activityState).toBeUndefined();
 
     el.activityState = "running";

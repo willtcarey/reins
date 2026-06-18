@@ -17,8 +17,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { navigateToSession } from "../models/router.js";
 import type { AppStore } from "../models/stores/app-store.js";
-import { TasksCollection, type TaskListItem } from "../models/tasks.js";
-import type { ActivityState } from "../models/stores/session-cache.js";
+import type { TaskListItem } from "../models/tasks.js";
 
 import type { ProjectInfo } from "../models/ws-client.js";
 import type { TaskForm } from "./task-form.js";
@@ -305,7 +304,6 @@ export class SessionSidebar extends LitElement {
     const isExpanded = this.expandedProjects.has(project.id);
     const isActive = project.id === store.projectId;
     const projectData = store.projectsStore.peekStore(project.id);
-    const projectActivityMap = projectData?.activityMap ?? new Map<string, ActivityState>();
 
     return html`
       <div class="px-1.5 py-0.5">
@@ -370,17 +368,13 @@ export class SessionSidebar extends LitElement {
                   .projectId=${project.id}
                   .sessions=${projectData?.sessions ?? []}
                   .activeSessionId=${store.sessionId ?? ""}
-                  .activityMap=${projectActivityMap}
                 ></assistant-session>
 
                 <task-list
                   @new-task=${() => { this.taskForm?.open(project.id); }}
                   .projectId=${project.id}
                   .projectStore=${projectData ?? null}
-                  .tasksCollection=${projectData?.tasksWithActivity ?? TasksCollection.empty(project.id)}
-                  .taskSessions=${projectData?.taskSessions ?? new Map()}
                   .activeSessionId=${store.sessionId ?? ""}
-                  .activityMap=${projectActivityMap}
                 ></task-list>
               `}
             </div>

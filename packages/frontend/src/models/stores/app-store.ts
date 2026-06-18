@@ -339,7 +339,7 @@ export class AppStore {
     }
     const projectId = this._activeSession.projectId;
     const task = projectId != null
-      ? this.projectsStore.peekStore(projectId)?.tasksWithActivity.find(session.taskId)
+      ? this.projectsStore.peekStore(projectId)?.findTask(session.taskId)
       : undefined;
     this.diffStore.setBranch(task?.branch_name ?? null);
   }

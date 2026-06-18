@@ -240,8 +240,8 @@ describe("ProjectsStore per-project data", () => {
     mockFetch((url) => {
       if (url === "/api/sessions/activity") {
         return jsonResponse([
-          { id: "p1-running", activityState: "running", projectId: 1 },
-          { id: "p2-finished", activityState: "finished", projectId: 2 },
+          { id: "p1-running", activityState: "running", projectId: 1, taskId: null },
+          { id: "p2-finished", activityState: "finished", projectId: 2, taskId: null },
         ]);
       }
       return jsonResponse({}, false);
@@ -389,8 +389,8 @@ describe("ProjectsStore per-project data", () => {
     mockFetch((url) => {
       if (url === "/api/sessions/activity") {
         return jsonResponse([
-          { id: "s1", activityState: "running", projectId: 1 },
-          { id: "s2", activityState: "finished", projectId: 2 },
+          { id: "s1", activityState: "running", projectId: 1, taskId: 7 },
+          { id: "s2", activityState: "finished", projectId: 2, taskId: null },
         ]);
       }
       return jsonResponse({}, false);
@@ -401,8 +401,9 @@ describe("ProjectsStore per-project data", () => {
     // Stores should NOT be created — only lightweight tracker populated
     expect(store.peekStore(1)).toBeUndefined();
     expect(store.peekStore(2)).toBeUndefined();
-    // But activityForProject should still return the right state
+    // But activityForProject should still return the right state, and task metadata is cached.
     expect(store.activityForProject(1)).toBe("running");
+    expect(sessionCache.get("s1")?.taskId).toBe(7);
     expect(store.activityForProject(2)).toBe("finished");
   });
 
@@ -410,8 +411,8 @@ describe("ProjectsStore per-project data", () => {
     mockFetch((url) => {
       if (url === "/api/sessions/activity") {
         return jsonResponse([
-          { id: "s1", activityState: "finished", projectId: 1 },
-          { id: "s2", activityState: "running", projectId: 1 },
+          { id: "s1", activityState: "finished", projectId: 1, taskId: null },
+          { id: "s2", activityState: "running", projectId: 1, taskId: null },
         ]);
       }
       return jsonResponse({}, false);
@@ -431,8 +432,8 @@ describe("ProjectsStore per-project data", () => {
     mockFetch((url) => {
       if (url === "/api/sessions/activity") {
         return jsonResponse([
-          { id: "kept-finished", activityState: "finished", projectId: 3 },
-          { id: "new-running", activityState: "running", projectId: 4 },
+          { id: "kept-finished", activityState: "finished", projectId: 3, taskId: null },
+          { id: "new-running", activityState: "running", projectId: 4, taskId: null },
         ]);
       }
       return jsonResponse({}, false);
@@ -475,8 +476,8 @@ describe("ProjectsStore per-project data", () => {
     mockFetch((url) => {
       if (url === "/api/sessions/activity") {
         return jsonResponse([
-          { id: "s1", activityState: "running", projectId: 1 },
-          { id: "s2", activityState: "finished", projectId: 2 },
+          { id: "s1", activityState: "running", projectId: 1, taskId: null },
+          { id: "s2", activityState: "finished", projectId: 2, taskId: null },
         ]);
       }
       return jsonResponse({}, false);
@@ -493,7 +494,7 @@ describe("ProjectsStore per-project data", () => {
     mockFetch((url) => {
       if (url === "/api/sessions/activity") {
         return jsonResponse([
-          { id: "s1", activityState: "running", projectId: 1 },
+          { id: "s1", activityState: "running", projectId: 1, taskId: null },
         ]);
       }
       return jsonResponse({}, false);

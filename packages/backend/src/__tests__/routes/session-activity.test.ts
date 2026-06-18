@@ -5,6 +5,7 @@ import { createServerState } from "../helpers/server-state.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createSession, getSession, updateActivityState } from "../../session-store.js";
+import { createTask } from "../../task-store.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 
 describe("PATCH /api/sessions/:sessionId/activity", () => {
@@ -99,9 +100,24 @@ describe("GET /api/sessions/activity", () => {
     expect(res!.status).toBe(200);
     const body = await res!.json();
     expect(body).toHaveLength(2);
-    expect(body).toContainEqual({ id: "s-running", activityState: "running", projectId });
-    expect(body).toContainEqual({ id: "s-finished", activityState: "finished", projectId });
+    expect(body).toContainEqual({ id: "s-running", activityState: "running", projectId, taskId: null });
+    expect(body).toContainEqual({ id: "s-finished", activityState: "finished", projectId, taskId: null });
     expect(body[0]).not.toHaveProperty("activity_state");
+  });
+
+  test("includes taskId for task sessions", async () => {
+    const task = createTask(projectId, "Task", null, "task/activity");
+    createSession("s-task", projectId, { agentRuntimeType: "pi", taskId: task.id });
+    updateActivityState("s-task", "finished");
+
+    const res = await router.handle(
+      makeRequest("GET", "/api/sessions/activity"),
+      state,
+    );
+
+    expect(res!.status).toBe(200);
+    const body = await res!.json();
+    expect(body).toEqual([{ id: "s-task", activityState: "finished", projectId, taskId: task.id }]);
   });
 
   test("returns empty array when no active sessions", async () => {
@@ -128,7 +144,7 @@ describe("GET /api/sessions/activity", () => {
 
     expect(res!.status).toBe(200);
     const body = await res!.json();
-    expect(body).toEqual([{ id: "s-stale", activityState: "finished", projectId }]);
+    expect(body).toEqual([{ id: "s-stale", activityState: "finished", projectId, taskId: null }]);
     expect(getSession("s-stale")!.activity_state).toBe("finished");
   });
 
@@ -145,7 +161,7 @@ describe("GET /api/sessions/activity", () => {
 
     expect(res!.status).toBe(200);
     const body = await res!.json();
-    expect(body).toEqual([{ id: "s-streaming", activityState: "running", projectId }]);
+    expect(body).toEqual([{ id: "s-streaming", activityState: "running", projectId, taskId: null }]);
     expect(getSession("s-streaming")!.activity_state).toBe("running");
   });
 
@@ -166,7 +182,7 @@ describe("GET /api/sessions/activity", () => {
     expect(res!.status).toBe(200);
     const body = await res!.json();
     expect(body).toHaveLength(2);
-    expect(body).toContainEqual({ id: "s-a", activityState: "running", projectId });
-    expect(body).toContainEqual({ id: "s-b", activityState: "finished", projectId: projectId2 });
+    expect(body).toContainEqual({ id: "s-a", activityState: "running", projectId, taskId: null });
+    expect(body).toContainEqual({ id: "s-b", activityState: "finished", projectId: projectId2, taskId: null });
   });
 });

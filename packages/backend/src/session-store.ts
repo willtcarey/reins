@@ -307,8 +307,8 @@ export function clearFinishedActivityForTasks(taskIds: number[]): string[] {
 export function listSessionsWithActivity() {
   const db = getDb();
   return db
-    .query<{ id: string; activity_state: ActivityStateValue; project_id: number }, []>(
-      "SELECT id, activity_state, project_id FROM sessions WHERE activity_state IS NOT NULL",
+    .query<{ id: string; activity_state: ActivityStateValue; project_id: number; task_id: number | null }, []>(
+      "SELECT id, activity_state, project_id, task_id FROM sessions WHERE activity_state IS NOT NULL",
     )
     .all();
 }

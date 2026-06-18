@@ -37,9 +37,6 @@ export class TaskListItemElement extends LitElement {
   @property({ attribute: false })
   activityState: ActivityState | undefined = undefined;
 
-  @property({ attribute: false })
-  activityMap = new Map<string, ActivityState>();
-
   @property({ type: Number })
   projectId: number | null = null;
 
@@ -181,9 +178,8 @@ export class TaskListItemElement extends LitElement {
                     <session-list-item
                       .session=${s}
                       .active=${s.id === this.activeSessionId}
-                      .activityState=${this.activityMap.get(s.id)}
+                      .activityState=${s.activityState}
                       .childSessions=${childMap.get(s.id) ?? []}
-                      .activityMap=${this.activityMap}
                       .activeSessionId=${this.activeSessionId}
                       .projectId=${this.projectId}
                     ></session-list-item>

@@ -8,7 +8,6 @@
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { SessionListItem } from "../models/ws-client.js";
-import type { ActivityState } from "../models/stores/session-cache.js";
 import { formatRelativeDate } from "../models/format.js";
 import "./activity-dot.js";
 import "./popover-menu.js";
@@ -37,14 +36,11 @@ export class DelegatePopover extends LitElement {
   @property({ attribute: false })
   childSessions: SessionListItem[] = [];
 
-  @property({ attribute: false })
-  activityMap = new Map<string, ActivityState>();
-
   @property({ type: String })
   activeSessionId = "";
 
   private hasRunningChild(): boolean {
-    return this.childSessions.some(c => this.activityMap.get(c.id) === "running");
+    return this.childSessions.some(c => c.activityState === "running");
   }
 
   private handleSelectSession(sessionId: string) {
@@ -73,7 +69,7 @@ export class DelegatePopover extends LitElement {
                 ${isActive ? "bg-zinc-700/60" : "hover:bg-zinc-700"}"
               @click=${() => this.handleSelectSession(child.id)}
             >
-              <activity-dot .state=${this.activityMap.get(child.id)} .runningOnly=${true}></activity-dot>
+              <activity-dot .state=${child.activityState} .runningOnly=${true}></activity-dot>
               <div class="min-w-0 flex-1">
                 <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
                 <div class="text-[10px] text-zinc-500">${date} · ${child.messageCount} msg</div>

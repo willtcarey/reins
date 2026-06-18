@@ -5,15 +5,11 @@
  * (animate) when any child delegate session is in "running" state.
  */
 import { describe, test, expect } from "bun:test";
-import type { ActivityState } from "../models/stores/session-cache.js";
 import type { SessionListItem } from "../models/ws-client.js";
 
-/** Pure helper extracted from task-list: determines if any child is running. */
-function hasRunningChild(
-  children: SessionListItem[],
-  activityMap: Map<string, ActivityState>,
-): boolean {
-  return children.some(c => activityMap.get(c.id) === "running");
+/** Pure helper extracted from delegate-popover: determines if any child is running. */
+function hasRunningChild(children: SessionListItem[]): boolean {
+  return children.some(c => c.activityState === "running");
 }
 
 function makeSession(overrides: Partial<SessionListItem> = {}): SessionListItem {
@@ -35,39 +31,34 @@ function makeSession(overrides: Partial<SessionListItem> = {}): SessionListItem 
 describe("delegate badge pulse", () => {
   test("returns false when no children have activity", () => {
     const children = [makeSession({ id: "child-1" }), makeSession({ id: "child-2" })];
-    const activityMap = new Map<string, ActivityState>();
-    expect(hasRunningChild(children, activityMap)).toBe(false);
+    expect(hasRunningChild(children)).toBe(false);
   });
 
   test("returns false when children are finished but not running", () => {
-    const children = [makeSession({ id: "child-1" }), makeSession({ id: "child-2" })];
-    const activityMap = new Map<string, ActivityState>([
-      ["child-1", "finished"],
-      ["child-2", "finished"],
-    ]);
-    expect(hasRunningChild(children, activityMap)).toBe(false);
+    const children = [
+      makeSession({ id: "child-1", activityState: "finished" }),
+      makeSession({ id: "child-2", activityState: "finished" }),
+    ];
+    expect(hasRunningChild(children)).toBe(false);
   });
 
   test("returns true when at least one child is running", () => {
-    const children = [makeSession({ id: "child-1" }), makeSession({ id: "child-2" })];
-    const activityMap = new Map<string, ActivityState>([
-      ["child-1", "finished"],
-      ["child-2", "running"],
-    ]);
-    expect(hasRunningChild(children, activityMap)).toBe(true);
+    const children = [
+      makeSession({ id: "child-1", activityState: "finished" }),
+      makeSession({ id: "child-2", activityState: "running" }),
+    ];
+    expect(hasRunningChild(children)).toBe(true);
   });
 
   test("returns true when all children are running", () => {
-    const children = [makeSession({ id: "child-1" }), makeSession({ id: "child-2" })];
-    const activityMap = new Map<string, ActivityState>([
-      ["child-1", "running"],
-      ["child-2", "running"],
-    ]);
-    expect(hasRunningChild(children, activityMap)).toBe(true);
+    const children = [
+      makeSession({ id: "child-1", activityState: "running" }),
+      makeSession({ id: "child-2", activityState: "running" }),
+    ];
+    expect(hasRunningChild(children)).toBe(true);
   });
 
   test("returns false for empty children array", () => {
-    const activityMap = new Map<string, ActivityState>([["other", "running"]]);
-    expect(hasRunningChild([], activityMap)).toBe(false);
+    expect(hasRunningChild([])).toBe(false);
   });
 });

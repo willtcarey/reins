@@ -32,9 +32,6 @@ export class SessionListItem extends LitElement {
   @property({ attribute: false })
   childSessions: SessionListItemData[] = [];
 
-  @property({ attribute: false })
-  activityMap = new Map<string, ActivityState>();
-
   @property({ type: String })
   activeSessionId = "";
 
@@ -76,7 +73,6 @@ export class SessionListItem extends LitElement {
         ${childCount > 0 ? html`
           <delegate-popover
             .childSessions=${this.childSessions}
-            .activityMap=${this.activityMap}
             .activeSessionId=${this.activeSessionId}
           ></delegate-popover>
         ` : nothing}

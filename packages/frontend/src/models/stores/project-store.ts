@@ -11,19 +11,35 @@
  */
 
 import type { InjectedSkillInfo, SessionListItem } from "../ws-client.js";
-import { TasksCollection, type TaskListItem } from "../tasks.js";
-import type { ActivityState, SessionCache } from "./session-cache.js";
+import type { TaskListItem } from "../tasks.js";
+import type { ActivityState, CachedSession, SessionCache } from "./session-cache.js";
 
 export type ProjectStoreListener = () => void;
+
+type CachedSessionListItem = CachedSession & SessionListItem;
+
+function isSessionListItem(session: CachedSession): session is CachedSessionListItem {
+  return session.projectId != null &&
+    session.createdAt != null &&
+    session.updatedAt != null &&
+    session.messageCount != null;
+}
+
+function compareSessionListItems(a: SessionListItem, b: SessionListItem): number {
+  const updated = b.updatedAt.localeCompare(a.updatedAt);
+  return updated !== 0 ? updated : b.id.localeCompare(a.id);
+}
 
 export class ProjectStore {
   readonly projectId: number;
 
   // ---- Public reactive state ------------------------------------------------
 
-  tasks: TasksCollection;
-  sessions: SessionListItem[] = [];
-  taskSessions: Map<number, SessionListItem[]> = new Map();
+  tasks: TaskListItem[] = [];
+  /** Server-provided ordering for project scratch sessions. Metadata lives in SessionCache. */
+  sessionIds: string[] = [];
+  /** Task IDs whose session sublists have been explicitly loaded and should be refreshed. */
+  loadedTaskSessionIds: Set<number> = new Set();
   skills: InjectedSkillInfo[] = [];
   loading = false;
   loaded = false;
@@ -31,13 +47,16 @@ export class ProjectStore {
   // ---- Private state --------------------------------------------------------
 
   private _sessionCache: SessionCache | null;
-  private _sessionUnsubscribes = new Map<string, () => void>();
+  private _sessionCacheUnsubscribe: (() => void) | null = null;
   private _listeners = new Set<ProjectStoreListener>();
 
   constructor(projectId: number, sessionCache: SessionCache | null = null) {
     this.projectId = projectId;
     this._sessionCache = sessionCache;
-    this.tasks = TasksCollection.empty(projectId);
+    this._sessionCacheUnsubscribe = sessionCache?.subscribeAll((sessionId) => {
+      const session = sessionCache.get(sessionId);
+      if (session?.projectId === this.projectId) this.notify();
+    }) ?? null;
   }
 
   // ---- Subscription ---------------------------------------------------------
@@ -52,51 +71,72 @@ export class ProjectStore {
   }
 
   dispose(): void {
-    for (const unsubscribe of this._sessionUnsubscribes.values()) unsubscribe();
-    this._sessionUnsubscribes.clear();
+    this._sessionCacheUnsubscribe?.();
+    this._sessionCacheUnsubscribe = null;
   }
 
-  // ---- Activity selectors (read-only) --------------------------------------
+  // ---- Task selectors -------------------------------------------------------
 
-  /** Activity states for sessions in this project. */
-  get activityMap(): Map<string, ActivityState> {
-    return new Map(
-      (this._sessionCache?.entries() ?? []).flatMap((session) =>
-        session.projectId === this.projectId && session.activityState
-          ? [[session.id, session.activityState] as const]
-          : []
-      ),
-    );
+  get openTasks(): TaskListItem[] {
+    return this.tasks.filter((task) => task.status !== "closed");
   }
 
-  get tasksWithActivity(): TasksCollection {
-    return this.tasks.withActivity(this.activityMap);
+  get closedTasks(): TaskListItem[] {
+    return this.tasks.filter((task) => task.status === "closed");
   }
 
-  get activitySummary(): { running: number; finished: number } {
-    let running = 0;
-    let finished = 0;
-    for (const session of this._sessionCache?.entries() ?? []) {
-      if (session.projectId !== this.projectId) continue;
-      if (session.activityState === "running") running++;
-      else if (session.activityState === "finished") finished++;
-    }
-    return { running, finished };
+  findTask(taskId: number): TaskListItem | undefined {
+    return this.tasks.find((task) => task.id === taskId);
   }
+
+  // ---- Session selectors ----------------------------------------------------
+
+  getSession(sessionId: string): CachedSession | undefined {
+    const session = this._sessionCache?.get(sessionId);
+    return session?.projectId === this.projectId ? session : undefined;
+  }
+
+  /** Project scratch sessions derived from SessionCache in the latest server order. */
+  get sessions(): SessionListItem[] {
+    return this.sessionIds.flatMap((sessionId) => {
+      const session = this._sessionCache?.get(sessionId);
+      return session && isSessionListItem(session) ? [session] : [];
+    });
+  }
+
+  /** Task sessions derived live from SessionCache for one task, ordered like the server list endpoint. */
+  taskSessionsFor(taskId: number): SessionListItem[] {
+    return (this._sessionCache?.entries() ?? [])
+      .filter((session) => session.projectId === this.projectId && session.taskId === taskId)
+      .filter(isSessionListItem)
+      .toSorted(compareSessionListItems);
+  }
+
+  // ---- Activity selectors ---------------------------------------------------
 
   activityForSession(sessionId: string): ActivityState {
     return this._sessionCache?.get(sessionId)?.activityState ?? null;
   }
 
+  activityForTask(taskId: number): ActivityState {
+    return this.activityForSessions(
+      (session) => session.projectId === this.projectId && session.taskId === taskId,
+    );
+  }
+
   /** Derive the project-level activity state from SessionCache project metadata. */
   get activityState(): ActivityState {
-    const states = (this._sessionCache?.entries() ?? [])
-      .filter((session) => session.projectId === this.projectId)
-      .map((session) => session.activityState);
+    return this.activityForSessions((session) => session.projectId === this.projectId);
+  }
 
-    if (states.includes("running")) return "running";
-    if (states.includes("finished")) return "finished";
-    return null;
+  private activityForSessions(predicate: (session: CachedSession) => boolean): ActivityState {
+    let hasFinished = false;
+    for (const session of this._sessionCache?.entries() ?? []) {
+      if (!predicate(session)) continue;
+      if (session.activityState === "running") return "running";
+      if (session.activityState === "finished") hasFinished = true;
+    }
+    return hasFinished ? "finished" : null;
   }
 
   // ---- Actions --------------------------------------------------------------
@@ -116,22 +156,20 @@ export class ProjectStore {
       ]);
 
       if (tasksResp.ok) {
-        const tasks: TaskListItem[] = await tasksResp.json();
-        this.tasks = new TasksCollection(this.projectId, tasks);
+        this.tasks = await tasksResp.json();
       }
       if (sessionsResp.ok) {
         const sessions: SessionListItem[] = await sessionsResp.json();
-        this.sessions = sessions;
-        this.reconcileSessionSubscriptions();
         this._sessionCache?.setMany(sessions);
+        this.sessionIds = sessions.map((session) => session.id);
       }
       if (skillsResp.ok) {
         const body = await skillsResp.json().catch(() => null);
         this.skills = Array.isArray(body?.skills) ? body.skills : [];
       }
-      if (this.taskSessions.size > 0) {
+      if (this.loadedTaskSessionIds.size > 0) {
         await Promise.all(
-          [...this.taskSessions.keys()].map((taskId) => this.fetchTaskSessions(taskId)),
+          [...this.loadedTaskSessionIds].map((taskId) => this.fetchTaskSessions(taskId)),
         );
       }
       this.loaded = true;
@@ -224,7 +262,8 @@ export class ProjectStore {
 
   /**
    * Fetch sessions for a specific task (for expanded task sublists).
-   * Skips notification if data hasn't changed.
+   * Session metadata changes notify through SessionCache subscriptions; this
+   * only notifies directly when the loaded state or task session ordering changes.
    */
   async fetchTaskSessions(taskId: number): Promise<void> {
     try {
@@ -233,42 +272,17 @@ export class ProjectStore {
       );
       if (resp.ok) {
         const sessions: SessionListItem[] = await resp.json();
-        // Skip update if data hasn't changed
-        const existing = this.taskSessions.get(taskId);
-        if (existing && JSON.stringify(existing) === JSON.stringify(sessions)) {
-          return;
-        }
-        const next = new Map(this.taskSessions);
-        next.set(taskId, sessions);
-        this.taskSessions = next;
-        this.reconcileSessionSubscriptions();
+        const wasLoaded = this.loadedTaskSessionIds.has(taskId);
+        const previousIds = this.taskSessionsFor(taskId).map((session) => session.id);
+        this.loadedTaskSessionIds.add(taskId);
         this._sessionCache?.setMany(sessions);
-        this.notify();
+        const nextIds = this.taskSessionsFor(taskId).map((session) => session.id);
+        if (!wasLoaded || JSON.stringify(previousIds) !== JSON.stringify(nextIds)) {
+          this.notify();
+        }
       }
     } catch {
       // silent
-    }
-  }
-
-  private reconcileSessionSubscriptions(): void {
-    if (!this._sessionCache) return;
-
-    const nextSessionIds = new Set<string>();
-    for (const session of this.sessions) nextSessionIds.add(session.id);
-    for (const sessions of this.taskSessions.values()) {
-      for (const session of sessions) nextSessionIds.add(session.id);
-    }
-
-    for (const [sessionId, unsubscribe] of this._sessionUnsubscribes) {
-      if (nextSessionIds.has(sessionId)) continue;
-      unsubscribe();
-      this._sessionUnsubscribes.delete(sessionId);
-    }
-
-    for (const sessionId of nextSessionIds) {
-      if (this._sessionUnsubscribes.has(sessionId)) continue;
-      const unsubscribe = this._sessionCache.subscribe(sessionId, () => this.notify());
-      this._sessionUnsubscribes.set(sessionId, unsubscribe);
     }
   }
 }

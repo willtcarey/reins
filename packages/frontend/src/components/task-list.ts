@@ -8,9 +8,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { SessionListItem } from "../models/ws-client.js";
-import { TasksCollection, type TaskListItem } from "../models/tasks.js";
-import type { ActivityState } from "../models/stores/session-cache.js";
+import type { TaskListItem } from "../models/tasks.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import "./delete-task-dialog.js";
 import "./task-list-item.js";
@@ -27,31 +25,36 @@ export class TaskList extends LitElement {
   @property({ attribute: false })
   projectStore: ProjectStore | null = null;
 
-  @property({ attribute: false })
-  tasksCollection: TasksCollection = TasksCollection.empty();
-
   @property({ type: String })
   activeSessionId = "";
-
-  /** Activity states for sessions (running/finished indicators). */
-  @property({ attribute: false })
-  activityMap = new Map<string, ActivityState>();
-
-  @property({ attribute: false })
-  taskSessions = new Map<number, SessionListItem[]>();
 
   @state() private expandedTaskId: number | null = null;
   @state() private deleteConfirmTask: TaskListItem | null = null;
   @state() private closedExpanded = false;
 
+  private _projectStoreUnsubscribe: (() => void) | null = null;
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this._projectStoreUnsubscribe?.();
+    this._projectStoreUnsubscribe = null;
+  }
 
   override willUpdate(changed: Map<string, unknown>) {
+    if (changed.has("projectStore")) {
+      this._subscribeToProjectStore();
+    }
     if (changed.has("projectId")) {
       this.expandedTaskId = null;
     }
-    if (changed.has("activeSessionId") || changed.has("tasksCollection")) {
-      this.autoExpandForActiveSession();
-    }
+    this.autoExpandForActiveSession();
+  }
+
+  private _subscribeToProjectStore() {
+    this._projectStoreUnsubscribe?.();
+    this._projectStoreUnsubscribe = this.projectStore?.subscribe(() => {
+      this.requestUpdate();
+    }) ?? null;
   }
 
   /**
@@ -59,10 +62,10 @@ export class TaskList extends LitElement {
    */
   private autoExpandForActiveSession() {
     if (!this.activeSessionId) return;
-    const task = this.tasksCollection.findBySessionId(this.activeSessionId);
-    if (task && task.id !== this.expandedTaskId) {
-      this.expandedTaskId = task.id;
-      this.projectStore?.fetchTaskSessions(task.id);
+    const taskId = this.projectStore?.getSession(this.activeSessionId)?.taskId;
+    if (taskId != null && taskId !== this.expandedTaskId) {
+      this.expandedTaskId = taskId;
+      this.projectStore?.fetchTaskSessions(taskId);
     }
   }
 
@@ -102,10 +105,9 @@ export class TaskList extends LitElement {
       <task-list-item
         .task=${task}
         .expanded=${this.expandedTaskId === task.id}
-        .sessions=${this.taskSessions.get(task.id) ?? []}
+        .sessions=${this.projectStore?.taskSessionsFor(task.id) ?? []}
         .activeSessionId=${this.activeSessionId}
-        .activityState=${this.tasksCollection.activityFor(task)}
-        .activityMap=${this.activityMap}
+        .activityState=${this.projectStore?.activityForTask(task.id)}
         .projectId=${this.projectId}
         @toggle-expand=${this.handleToggleExpand}
         @delete-task=${this.handleDeleteTask}
@@ -114,8 +116,8 @@ export class TaskList extends LitElement {
   }
 
   override render() {
-    const openTasks = this.tasksCollection.open;
-    const closedTasks = this.tasksCollection.closed;
+    const openTasks = this.projectStore?.openTasks ?? [];
+    const closedTasks = this.projectStore?.closedTasks ?? [];
 
     return html`
       <div class="flex items-center px-3 pt-3 pb-1">

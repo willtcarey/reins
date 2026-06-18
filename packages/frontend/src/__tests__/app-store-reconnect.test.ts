@@ -104,8 +104,8 @@ describe("AppStore reconnect catch-up", () => {
 
   test("connect fetches activity snapshot and populates project-level activity", async () => {
     const snapshot = [
-      { id: "s1", activityState: "running" as const, projectId: 10 },
-      { id: "s2", activityState: "finished" as const, projectId: 20 },
+      { id: "s1", activityState: "running" as const, projectId: 10, taskId: null },
+      { id: "s2", activityState: "finished" as const, projectId: 20, taskId: null },
     ];
 
     mockFetch((url) => {

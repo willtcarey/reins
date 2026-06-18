@@ -48,7 +48,11 @@ Activity state was split across three stores with overlapping responsibilities:
 - `activityStore` getter — exposes the ActivityStore reference (for testing and direct reads)
 
 **Kept (read-only selectors):**
-- `activityMap`, `activityForSession()`, `activityState`, `tasksWithActivity`, `activitySummary`
+- `activityForSession()`, `activityForTask(taskId)`, `activityState`
+
+**Follow-up refactor:**
+- Removed `activityMap` and `tasksWithActivity`; task activity is now derived directly from `SessionCache` by project/task IDs.
+- Removed the `TasksCollection` wrapper. `ProjectStore` now stores `TaskListItem[]` directly and exposes `openTasks`, `closedTasks`, `findTask()`, and `getSession()` selectors.
 
 ### Test Changes
 
@@ -81,4 +85,4 @@ User actions:
   └─ markSessionViewed() → optimistic update → notify() → REST → rollback if needed → notify()
 ```
 
-UI updates flow: ProjectsStore mutation → `this.notify()` → AppStore → app.ts re-render → Lit property update → components re-render.
+UI updates flow: SessionCache/ProjectsStore mutation → store notifications → AppStore/sidebar re-render and subscribed task lists request updates → components render primitive activity values from ProjectStore selectors.

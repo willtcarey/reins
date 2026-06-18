@@ -25,6 +25,8 @@ Added `applyServerState()` calls in `fetchTaskSessions()` matching the pattern a
 - `packages/backend/src/models/sessions.ts` — Added `activeSessions()` on `Sessions` to return active session activity and reconcile stale persisted running state
 - `packages/backend/src/routes/sessions.ts` — Registered `GET /api/sessions/activity` returning the result
 
+The snapshot includes `id`, `projectId`, `taskId`, and `activityState` so frontend task activity selectors can derive task-level state directly from cached session metadata.
+
 ### 3. Expose `applyServerActivity` on ProjectStore (Frontend)
 
 **File:** `packages/frontend/src/models/stores/project-store.ts`

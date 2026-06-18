@@ -4,7 +4,7 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { ProjectStore } from "../models/stores/project-store.js";
 import { ProjectsStore } from "../models/stores/projects-store.js";
-import { TasksCollection, type TaskListItem } from "../models/tasks.js";
+import type { TaskListItem } from "../models/tasks.js";
 import { SessionCache } from "../models/stores/session-cache.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 import type { SessionListItem } from "../models/ws-client.js";
@@ -61,11 +61,13 @@ describe("ProjectStore", () => {
 
   test("constructor sets projectId and initial state", () => {
     expect(store.projectId).toBe(42);
-    expect(store.tasks).toBeInstanceOf(TasksCollection);
-    expect(store.tasks.projectId).toBe(42);
-    expect(store.tasks.items).toEqual([]);
+    expect(store.tasks).toEqual([]);
+    expect(store.openTasks).toEqual([]);
+    expect(store.closedTasks).toEqual([]);
+    expect(store.sessionIds).toEqual([]);
     expect(store.sessions).toEqual([]);
-    expect(store.taskSessions).toEqual(new Map());
+    expect(store.loadedTaskSessionIds).toEqual(new Set());
+    expect(store.taskSessionsFor(1)).toEqual([]);
     expect(store.loading).toBe(false);
     expect(store.loaded).toBe(false);
   });
@@ -120,6 +122,15 @@ describe("ProjectStore", () => {
     expect(store.activityForSession("s-task")).toBe("finished");
   });
 
+  test("openTasks and closedTasks split task rows", () => {
+    const open = task({ id: 1, status: "open" });
+    const closed = task({ id: 2, status: "closed" });
+    store.tasks = [open, closed];
+
+    expect(store.openTasks).toEqual([open]);
+    expect(store.closedTasks).toEqual([closed]);
+  });
+
   test("fetchLists fetches tasks and sessions in parallel", async () => {
     const sessionIds: string[] = [];
     const tasks = [{ id: 1, project_id: 42, title: "Task 1", description: null, branch_name: "", status: "open" as const, created_at: "", updated_at: "", session_count: 0, session_ids: sessionIds, diffStats: null }];
@@ -133,9 +144,11 @@ describe("ProjectStore", () => {
 
     await store.fetchLists();
 
-    expect(store.tasks).toBeInstanceOf(TasksCollection);
-    expect(store.tasks.items).toEqual(tasks);
-    expect(store.sessions).toEqual(sessions);
+    expect(store.tasks).toEqual(tasks);
+    expect(store.openTasks).toEqual(tasks);
+    expect(store.closedTasks).toEqual([]);
+    expect(store.sessionIds).toEqual(["s1"]);
+    expect(store.sessions).toMatchObject(sessions);
     expect(store.loading).toBe(false);
     expect(store.loaded).toBe(true);
   });
@@ -167,7 +180,7 @@ describe("ProjectStore", () => {
     await store.fetchLists();
     expect(store.loading).toBe(false);
     expect(store.loaded).toBe(false);
-    expect(store.tasks.items).toEqual([]);
+    expect(store.tasks).toEqual([]);
     expect(store.sessions).toEqual([]);
   });
 
@@ -179,7 +192,7 @@ describe("ProjectStore", () => {
   });
 
   test("fetchTaskSessions fetches and caches task sessions", async () => {
-    const taskSessions = [session({ id: "s2" })];
+    const taskSessions = [session({ id: "s2", taskId: 1 })];
 
     mockFetch((url) => {
       if (url.includes("/tasks/1/sessions")) return jsonResponse(taskSessions);
@@ -188,11 +201,12 @@ describe("ProjectStore", () => {
 
     await store.fetchTaskSessions(1);
 
-    expect(store.taskSessions.get(1)).toEqual(taskSessions);
+    expect(store.loadedTaskSessionIds.has(1)).toBe(true);
+    expect(store.taskSessionsFor(1)).toMatchObject(taskSessions);
   });
 
   test("fetchTaskSessions skips update if data unchanged", async () => {
-    const taskSessions = [session({ id: "s2" })];
+    const taskSessions = [session({ id: "s2", taskId: 1 })];
     let notifyCount = 0;
 
     mockFetch(() => jsonResponse(taskSessions));
@@ -207,23 +221,52 @@ describe("ProjectStore", () => {
     expect(notifyCount).toBe(countAfterFirst);
   });
 
-  test("fetchTaskSessions notifies on data change", async () => {
+  test("fetchTaskSessions notifies on metadata change with unchanged ordering", async () => {
     let notifyCount = 0;
     store.subscribe(() => { notifyCount++; });
 
-    mockFetch(() => jsonResponse([session({ name: "V1" })]));
+    mockFetch(() => jsonResponse([session({ id: "s2", taskId: 1, name: "V1" })]));
     await store.fetchTaskSessions(1);
     const countAfterFirst = notifyCount;
 
-    mockFetch(() => jsonResponse([session({ name: "V2" })]));
+    mockFetch(() => jsonResponse([session({ id: "s2", taskId: 1, name: "V2" })]));
     await store.fetchTaskSessions(1);
+
+    expect(store.loadedTaskSessionIds.has(1)).toBe(true);
+    expect(store.taskSessionsFor(1)[0]?.name).toBe("V2");
     expect(notifyCount).toBeGreaterThan(countAfterFirst);
+  });
+
+  test("getSession returns project-scoped cached session metadata", () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+
+    sessionCache.set("s1", session({ id: "s1", taskId: 7 }));
+    sessionCache.set("other-project", session({ id: "other-project", projectId: 99, taskId: 7 }));
+
+    expect(store.getSession("s1")?.taskId).toBe(7);
+    expect(store.getSession("other-project")).toBeUndefined();
+    expect(store.getSession("missing")).toBeUndefined();
+  });
+
+  test("taskSessionsFor derives cached sessions by taskId", () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+
+    sessionCache.set("older", session({ id: "older", taskId: 1, updatedAt: "2024-01-01T00:00:00Z" }));
+    sessionCache.set("newer", session({ id: "newer", taskId: 1, updatedAt: "2024-01-02T00:00:00Z" }));
+    sessionCache.set("other-task", session({ id: "other-task", taskId: 2 }));
+    sessionCache.set("scratch", session({ id: "scratch", taskId: null }));
+    sessionCache.set("other-project", session({ id: "other-project", projectId: 99, taskId: 1 }));
+
+    expect(store.taskSessionsFor(1).map((s) => s.id)).toEqual(["newer", "older"]);
+    expect(store.taskSessionsFor(2).map((s) => s.id)).toEqual(["other-task"]);
   });
 
   test("fetchTaskSessions handles errors gracefully", async () => {
     mockFetch(() => { throw new Error("network error"); });
     await store.fetchTaskSessions(1);
-    expect(store.taskSessions.get(1)).toBeUndefined();
+    expect(store.taskSessionsFor(1)).toEqual([]);
   });
 
   test("subscribe returns unsubscribe function", async () => {
@@ -265,12 +308,7 @@ describe("ProjectStore", () => {
   });
 
   test("fetchLists refreshes already-loaded task session lists", async () => {
-    store.taskSessions = new Map([
-      [
-        7,
-        [session({ id: "s-old" })],
-      ],
-    ]);
+    store.loadedTaskSessionIds = new Set([7]);
 
     mockFetch((url) => {
       if (url === "/api/projects/42/tasks") {
@@ -295,7 +333,7 @@ describe("ProjectStore", () => {
       }
       if (url === "/api/tasks/7/sessions") {
         return jsonResponse([
-          session({ id: "s-new", messageCount: 2, firstMessage: "Hello" }),
+          session({ id: "s-new", taskId: 7, messageCount: 2, firstMessage: "Hello" }),
         ]);
       }
       return jsonResponse({}, false);
@@ -303,28 +341,46 @@ describe("ProjectStore", () => {
 
     await store.fetchLists();
 
-    expect(store.taskSessions.get(7)).toEqual([
-      session({ id: "s-new", messageCount: 2, firstMessage: "Hello" }),
+    expect(store.loadedTaskSessionIds.has(7)).toBe(true);
+    expect(store.taskSessionsFor(7)).toMatchObject([
+      session({ id: "s-new", taskId: 7, messageCount: 2, firstMessage: "Hello" }),
     ]);
   });
 
   test("exposes activity selectors from SessionCache", () => {
     const sessionCache = new SessionCache();
     store = new ProjectStore(42, sessionCache);
-    store.tasks = new TasksCollection(42, [task({ id: 1, session_ids: ["s1"] })]);
+    store.tasks = [task({ id: 1, session_ids: [] })];
 
-    sessionCache.set("s1", { projectId: 42, activityState: "running" });
+    sessionCache.set("s1", { projectId: 42, taskId: 1, activityState: "running" });
 
     expect(store.activityForSession("s1")).toBe("running");
-    expect(store.tasksWithActivity.activityForId(1)).toBe("running");
+    expect(store.activityForTask(1)).toBe("running");
     expect(store.activityState).toBe("running");
+  });
+
+  test("activityForTask derives by cached taskId and prioritizes running", () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+
+    sessionCache.set("finished", { projectId: 42, taskId: 7, activityState: "finished" });
+    sessionCache.set("running", { projectId: 42, taskId: 7, activityState: "running" });
+    sessionCache.set("other-task", { projectId: 42, taskId: 8, activityState: "running" });
+    sessionCache.set("other-project", { projectId: 99, taskId: 7, activityState: "running" });
+
+    expect(store.activityForTask(7)).toBe("running");
+    expect(store.activityForTask(8)).toBe("running");
+    expect(store.activityForTask(9)).toBeNull();
+
+    sessionCache.set("running", { activityState: null });
+    expect(store.activityForTask(7)).toBe("finished");
   });
 
   test("activityState derives running over finished", () => {
     const sessionCache = new SessionCache();
     store = new ProjectStore(42, sessionCache);
-    store.tasks = new TasksCollection(42, [task({ id: 1, session_ids: ["s1"] })]);
-    store.sessions = [session({ id: "s2" })];
+    store.tasks = [task({ id: 1, session_ids: ["s1"] })];
+    store.sessionIds = ["s2"];
 
     sessionCache.set("s1", { projectId: 42, activityState: "running" });
     sessionCache.set("s2", { projectId: 42, activityState: "finished" });
