@@ -2,77 +2,131 @@
 
 ## Problem
 
-Session activity indicators (`running` green dot, `finished` amber dot) are maintained entirely in frontend memory via `ActivityStore`. This causes several issues:
+Session activity indicators (`running` green dots and `finished` amber unread dots) were previously transient frontend state. Reloads, reconnects, missed WebSocket events, and multiple tabs could disagree about whether a session was active or unread.
 
-- **Full page reload** clears all activity indicators — no unread dots survive.
-- **Reconnect after missing both start and end** — if an agent started and finished while disconnected, no indicator appears (reconciliation only checks sessions already marked `running`).
-- **Multiple tabs** — each tab has independent activity state with no cross-tab consistency.
-- **`activity_viewed_at` is local** — viewing a session in one tab doesn't clear indicators in another tab.
+The branch moved activity into server-managed session metadata so reconnects, refreshes, and other clients reconcile from one authoritative source.
 
-## Current Flow
+## Final Behavior
 
-```
-WS agent_start → AppStore → ProjectsStore → ProjectStore → ActivityStore._activityStates.set("running")
-WS agent_end   → AppStore → ProjectsStore → ProjectStore → ActivityStore._activityStates.set("finished") or clear
-User views     → AppStore → ProjectsStore → ProjectStore → ActivityStore._activityStates.delete()
-```
-
-All in-memory, all lost on reload.
-
-Reconnect reconciliation is best-effort: it fetches `/api/sessions/:id` for each locally-`running` session and checks `isStreaming` (a live runtime check). Sessions that started and ended during the disconnect are invisible.
-
-## Solution
-
-Add a single `activity_state` column to the `sessions` table with three values:
+The `sessions` table has nullable `activity_state`:
 
 | Value | Meaning | UI |
 |---|---|---|
-| `NULL` | Idle or already viewed — nothing to show | no dot |
-| `'running'` | Agent is actively streaming | green dot |
-| `'finished'` | Agent ended, user hasn't viewed | amber dot |
+| `NULL` | idle or already viewed | no dot |
+| `running` | runtime is actively streaming | green dot |
+| `finished` | runtime ended and completed work is unread | amber dot |
 
-### State Transitions
+State transitions are server-owned:
 
 | Trigger | Transition |
 |---|---|
-| `agent_start` | → `'running'` |
-| `agent_end` (user was viewing this session) | → `NULL` |
-| `agent_end` (user was NOT viewing) | → `'finished'` |
-| user views a `'finished'` session | → `NULL` |
+| runtime `agent_start` | `NULL`/`finished` -> `running` |
+| runtime `agent_end` | `running` -> `finished` |
+| user views a finished active session | `finished` -> `NULL` |
+| task close cleanup | finished task-session activity -> `NULL`; running activity is preserved |
 
-The "viewed" dimension is folded into the state itself — no separate `activity_viewed_at` column. `NULL` means either idle or already viewed, which is indistinguishable from the UI's perspective (no dot either way).
+Delegate sessions (`parent_session_id IS NOT NULL`) do not participate in activity tracking. Delegate runtime activity is ignored/cleared, and the parent session remains the visible activity indicator.
 
-### Server-Side Changes
+## Backend Changes
 
-1. **Migration** — `ALTER TABLE sessions ADD COLUMN activity_state TEXT CHECK(activity_state IN ('running', 'finished'))`
-2. **Persistence observer** — update `runtime-persistence-observer.ts` to persist `activity_state` on `agent_start` and `agent_end` events (alongside existing message persistence).
-3. **Session list response** — include `activity_state` in session list and session detail responses so the sidebar renders dots on initial load.
-4. **REST endpoint** — add `PATCH /api/sessions/:sessionId/activity` (or similar) for the frontend to report "user viewed this session" → transition `finished` → `NULL`.
-5. **Broadcast** — broadcast an `activity_updated` event (or piggyback on existing events) so other tabs reconcile immediately.
+### Migration
 
-### Frontend-Side Changes
+**File:** `packages/backend/src/migrations.ts`
 
-1. **Read `activity_state` from session data** on initial load — no reconciliation pass needed, the DB is the source of truth.
-2. **Keep WS-driven activity updates** for real-time responsiveness — `agent_start`/`agent_end` events still update the local ActivityStore immediately for snappy UI.
-3. **On reconnect** — refresh session lists (already done) and let `activity_state` from the DB restore indicators. The reconciliation step (`reconcileRunningActivity`) can be simplified or removed since the server has the authoritative state.
-4. **On view** — call the REST endpoint to persist the "viewed" transition server-side.
-5. **Multi-tab consistency** — listen for `activity_updated` broadcasts from other tabs' actions.
-
-### What Stays Frontend-Only
-
-- **Streaming UI state** (`isStreaming`, `streamingBlocks`, `isCompacting` in `ChatState`) — these are render concerns, not activity indicators.
-- **Real-time dot updates** — WS events still drive immediate UI changes; the DB is the reconciliation source, not the real-time path.
-
-## Migration Details
+Added migration `021_add_session_activity_state`:
 
 ```sql
-ALTER TABLE sessions ADD COLUMN activity_state TEXT CHECK(activity_state IN ('running', 'finished'));
+ALTER TABLE sessions ADD COLUMN activity_state TEXT CHECK(activity_state IN ('running', 'finished'))
 ```
 
-No data migration needed — existing rows get `NULL` (idle), which is correct for a fresh start.
+### Session persistence and queries
 
-## Open Questions
+**Files:**
 
-- Should `activity_updated` be a new broadcast type, or can we reuse `session_updated`?
-- Does the "user was viewing" check on `agent_end` need to be per-connection (i.e., which WS client had this session selected), or is it sufficient to check if the session ID matches the active session in the runtime persistence observer?
-- Should we add a bulk "mark all viewed for project" endpoint for convenience?
+- `packages/backend/src/session-store.ts`
+- `packages/backend/src/models/sessions.ts`
+
+Added server-side helpers to:
+
+- persist `activity_state`
+- ignore delegate-session activity
+- list sessions with non-null activity for snapshots
+- clear finished activity for closed task sessions
+- mark finished activity as viewed
+- broadcast `session_updated` whenever persisted activity changes
+
+`Sessions.activeSessions()` reconciles stale persisted `running` rows against live runtime state. If a backend restart or crash left a row marked `running` with no streaming runtime, it is downgraded to `finished` before being returned in the snapshot.
+
+### Runtime observer
+
+**File:** `packages/backend/src/runtimes/runtime-persistence-observer.ts`
+
+The runtime persistence observer now persists activity transitions:
+
+- `agent_start` -> `running`
+- `agent_end` -> `finished`
+
+Message persistence remains tied to turn/agent/compaction completion as before.
+
+### REST API
+
+**File:** `packages/backend/src/routes/sessions.ts`
+
+Added:
+
+- `GET /api/sessions/activity` — returns all sessions with non-null activity as `{ id, projectId, taskId, activityState }`
+- `PATCH /api/sessions/:sessionId/activity` — marks finished activity as viewed (`finished` -> `NULL`); running/idle states no-op
+
+Activity changes use the existing `session_updated` broadcast so clients fetch canonical session/list data instead of handling a separate activity event type.
+
+## Frontend Changes
+
+### Server-authoritative cache
+
+**Files:**
+
+- `packages/frontend/src/models/stores/session-cache.ts`
+- `packages/frontend/src/models/stores/projects-store.ts`
+- `packages/frontend/src/models/stores/project-store.ts`
+- `packages/frontend/src/models/stores/active-session-store.ts`
+
+Activity is stored as `activityState` on cached session metadata in `SessionCache`. Project, task, session, sidebar, and title/badge indicators derive from the cache.
+
+`ProjectsStore.fetchActivitySnapshot()` loads `/api/sessions/activity` on initial WebSocket connect, reconnect, and browser resume. It also clears locally cached activity for sessions absent from the snapshot.
+
+`ActiveSessionStore.markViewed()` clears finished activity optimistically when the active session is viewed, then calls `PATCH /api/sessions/:sessionId/activity`; failures roll back the cache entry.
+
+### Raw runtime events no longer mutate activity
+
+The frontend no longer changes notification dots directly from `agent_start` / `agent_end` WebSocket events. Those events still drive active chat streaming state and diff refresh timing, but activity indicators wait for backend-persisted state via:
+
+- `session_updated` reconciliation
+- session detail/list responses
+- `/api/sessions/activity` snapshots
+
+### Browser sleep / resume reconciliation
+
+A sleeping laptop can miss terminal WebSocket messages without always causing an immediate reconnect. AppStore now uses the same server reconciliation path for reconnects and resume signals (`focus`, `online`, `pageshow`, and visible `visibilitychange`): project list, activity snapshot, loaded project stores, active session metadata, and messages are refreshed from the server.
+
+## Streaming and Compaction Scope
+
+This work persists notification activity only.
+
+- `activity_state` represents session-level notification dots.
+- Runtime streaming status is still exposed in session detail as `state.isStreaming` for active-session reconciliation.
+- Active chat render state (`isStreaming`, streaming blocks, `isCompacting`) remains in `ChatState` and is driven by live events.
+- Compaction summaries are persisted as message history, but compaction in-progress UI is not persisted as activity state.
+
+## Tests Added / Updated
+
+Representative coverage includes:
+
+- migration/default `activity_state` behavior
+- runtime observer `agent_start` / `agent_end` persistence
+- delegate sessions excluded from activity tracking
+- `GET /api/sessions/activity` snapshots, including stale-running reconciliation
+- `PATCH /api/sessions/:sessionId/activity` viewed behavior
+- task close clearing finished activity while preserving running activity
+- reconnect/resume snapshot fetches in AppStore/ProjectsStore
+- ProjectStore/ProjectsStore selectors deriving activity from `SessionCache`
+- ActiveSessionStore viewed optimistic update and rollback
