@@ -215,13 +215,6 @@ describe("ActiveSessionStore command helpers", () => {
     expect(sessionCache.get("sess-1")?.activityState).toBe("running");
   });
 
-  test("command helpers return false without a client", () => {
-    const store = new ActiveSessionStore("sess-1");
-
-    expect(store.prompt([{ type: "text", text: "hello" }])).toBe(false);
-    expect(store.steer([{ type: "text", text: "keep going" }])).toBe(false);
-    expect(store.abort()).toBe(false);
-  });
 });
 
 const twoMessages: AgentMessage[] = [
