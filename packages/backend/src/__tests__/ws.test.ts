@@ -136,6 +136,7 @@ describe("WebSocket handlers", () => {
 
       expect(mock.lastMessage()).toEqual({
         type: "error",
+        sessionId: "sess-1",
         error: "Unknown command: nonexistent_command",
       });
     });
@@ -156,6 +157,7 @@ describe("WebSocket handlers", () => {
 
       expect(mock.lastMessage()).toEqual({
         type: "error",
+        sessionId: "nonexistent-session",
         error: "Session not active",
       });
     });
@@ -206,7 +208,7 @@ describe("WebSocket handlers", () => {
   });
 
   describe("handleWsMessage — prompt/steer missing message field", () => {
-    test("prompt without message field sends error", async () => {
+    test("prompt without message field sends session-scoped error", async () => {
       const mock = createMockWs();
       handleWsOpen(state, mock.ws);
 
@@ -220,6 +222,7 @@ describe("WebSocket handlers", () => {
 
       expect(mock.lastMessage()).toEqual({
         type: "error",
+        sessionId: "sess-1",
         error: "Missing message field",
       });
     });
@@ -238,6 +241,7 @@ describe("WebSocket handlers", () => {
 
       expect(mock.lastMessage()).toEqual({
         type: "error",
+        sessionId: "sess-1",
         error: "Missing message field",
       });
     });
@@ -256,6 +260,7 @@ describe("WebSocket handlers", () => {
 
       expect(mock.lastMessage()).toEqual({
         type: "error",
+        sessionId: "missing-session",
         error: "Invalid message field: expected content blocks array",
       });
     });

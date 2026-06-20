@@ -101,6 +101,23 @@ describe("WS client EventListener contract", () => {
     });
   });
 
+  it("passes sessionId for session-scoped error messages", () => {
+    const received = simulateMessage({
+      type: "error",
+      sessionId: "sess-1",
+      error: "Missing message field",
+    });
+
+    expect(received).toHaveLength(1);
+    expect(received[0].sessionId).toBe("sess-1");
+    expect(received[0].projectId).toBe(0);
+    expect(received[0].event).toEqual({
+      type: "ws_error",
+      sessionId: "sess-1",
+      error: "Missing message field",
+    });
+  });
+
   it("event argument is always an object, never a number", () => {
     const received = simulateMessage({
       type: "event",

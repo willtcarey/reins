@@ -52,21 +52,25 @@ async function handleWsCommand(
     return;
   }
 
+  const sessionId = cmd.sessionId;
+  const sendError = (error: string) => {
+    sendToWs(client.ws, { type: "error", sessionId, error });
+  };
+
   switch (cmd.type) {
     case "prompt": {
-      if (cmd.message === undefined) { sendToWs(client.ws, { type: "error", error: "Missing message field" }); return; }
-      const sessionId = cmd.sessionId;
+      if (cmd.message === undefined) { sendError("Missing message field"); return; }
       let message: ClientPromptContent;
       try {
         message = parseClientPromptContent(cmd.message);
       } catch (err: unknown) {
         const detail = err instanceof Error ? err.message : String(err);
-        sendToWs(client.ws, { type: "error", error: `Invalid message field: ${detail}` });
+        sendError(`Invalid message field: ${detail}`);
         return;
       }
       try {
         const row = getSession(sessionId);
-        if (!row) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
+        if (!row) { sendError("Session not found"); return; }
         const managed = await ensureSessionOpen(state, sessionId);
 
         sendToWs(client.ws, { type: "ack", command: "prompt" });
@@ -83,55 +87,54 @@ async function handleWsCommand(
 
         void managed.runtime.prompt(message).catch((err: unknown) => {
           const errorMessage = err instanceof Error ? err.message : String(err);
-          sendToWs(client.ws, { type: "error", error: `prompt failed: ${errorMessage}` });
+          sendError(`prompt failed: ${errorMessage}`);
         });
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
-        sendToWs(client.ws, { type: "error", error: `prompt failed: ${errorMessage}` });
+        sendError(`prompt failed: ${errorMessage}`);
       }
       break;
     }
 
     case "steer": {
-      if (cmd.message === undefined) { sendToWs(client.ws, { type: "error", error: "Missing message field" }); return; }
-      const sessionId = cmd.sessionId;
+      if (cmd.message === undefined) { sendError("Missing message field"); return; }
       let message: ClientPromptContent;
       try {
         message = parseClientPromptContent(cmd.message);
       } catch (err: unknown) {
         const detail = err instanceof Error ? err.message : String(err);
-        sendToWs(client.ws, { type: "error", error: `Invalid message field: ${detail}` });
+        sendError(`Invalid message field: ${detail}`);
         return;
       }
       try {
-        if (!getSession(sessionId)) { sendToWs(client.ws, { type: "error", error: "Session not found" }); return; }
+        if (!getSession(sessionId)) { sendError("Session not found"); return; }
         const managed = await ensureSessionOpen(state, sessionId);
 
         sendToWs(client.ws, { type: "ack", command: "steer" });
         await managed.runtime.steer(message);
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
-        sendToWs(client.ws, { type: "error", error: `steer failed: ${errorMessage}` });
+        sendError(`steer failed: ${errorMessage}`);
       }
       break;
     }
 
     case "abort": {
-      const managed = state.sessions.get(cmd.sessionId);
-      if (!managed) { sendToWs(client.ws, { type: "error", error: "Session not active" }); return; }
+      const managed = state.sessions.get(sessionId);
+      if (!managed) { sendError("Session not active"); return; }
       managed.lastActivity = Date.now();
       sendToWs(client.ws, { type: "ack", command: "abort" });
       try {
         await managed.runtime.abort();
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        sendToWs(client.ws, { type: "error", error: `abort failed: ${message}` });
+        sendError(`abort failed: ${message}`);
       }
       break;
     }
 
     default: {
-      sendToWs(client.ws, { type: "error", error: `Unknown command: ${cmd.type}` });
+      sendError(`Unknown command: ${cmd.type}`);
     }
   }
 }

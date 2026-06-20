@@ -31,6 +31,7 @@ models/
 │   ├── app-store.ts
 │   ├── active-session-store.ts
 │   ├── diff-store.ts
+│   ├── conversations-store.ts
 │   ├── project-store.ts
 │   ├── projects-store.ts
 │   ├── file-browser-store.ts
@@ -140,7 +141,7 @@ All server communication — fetching, WebSocket event handling, polling, and in
                            │  - tasks + taskSessions│
                            │  - sessions            │
                            │  - sessionData         │
-                           │  - sessionMessages     │
+                           │  - active conversations  │
                            │  - connection status    │
                            │                        │
                            │  Sub-stores:           │
@@ -162,11 +163,11 @@ All server communication — fetching, WebSocket event handling, polling, and in
 The central store. Constructed with an `AppClient` (WebSocket client) and internally subscribes to connection and event callbacks. Responsibilities:
 
 - **Owns server communication boundaries** — AppStore and its sub-stores perform REST/WS work; components do not call `fetch()` directly.
-- **Handles WS events internally** — `agent_start` / `agent_end` update active chat streaming state only. `task_updated` refreshes the task list, `session_updated` refreshes canonical session metadata/project lists, and `tool_execution_end` for file-modifying tools refreshes the diff. Views don't participate in these decisions.
+- **Handles WS side effects internally** — `task_updated` refreshes the task list, `session_updated` refreshes canonical session metadata/project lists, `tool_execution_end` for file-modifying tools refreshes the diff, and chat conversation events are written into the keyed `ConversationsStore` even for sessions that are not currently visible. Views don't participate in these decisions.
 - **Manages reconnect** — On WebSocket reconnect, refetches the project list, fetches the server-side activity snapshot, refreshes loaded project stores, and refreshes active session metadata/messages to catch up on missed events.
-- **Splits active session state** — Session metadata is fetched into the shared `SessionCache` and derived by `ActiveSessionStore`; persisted history (`sessionMessages`) is loaded separately so metadata refreshes can't clobber in-flight chat rendering.
+- **Splits active session state** — Session metadata, including `activityState`, is fetched into the shared `SessionCache` and derived by `ActiveSessionStore`; per-session conversation presentation data lives in `ConversationsStore` so metadata refreshes can't clobber in-flight chat rendering.
 - **Uses blank session metadata while loading** — `ActiveSessionStore` returns placeholder `sessionData` for the active `sessionId` until `SessionCache` has full detail, so views don't need null checks for the selected session. Its `projectId` getter is derived from that metadata rather than stored independently.
-- **Exposes the active session store directly to the chat view** — `chat-panel` receives `ActiveSessionStore`, reads `sessionData` / `sessionMessages` from it, and sends prompt/steer/abort/model-update intents back through the same store.
+- **Exposes a route-scoped active session store directly to the chat view** — when a session route is active, `chat-panel` receives `ActiveSessionStore`, reads `sessionData` / `conversation` from it, and sends prompt/steer/abort/model-update intents back through the same store. AppStore creates an `ActiveSessionStore` only for real session IDs and replaces/disposes it when the route session changes, so metadata/conversation subscriptions are tied to the active route object's lifecycle instead of being manually reset in place.
 - **Coordinates sub-stores** — When the session or project changes, AppStore updates DiffStore's branch and project. When an agent completes, AppStore tells DiffStore to refresh.
 - **Routes activity events** — WS events are dispatched by `projectId` to `ProjectsStore`, which owns cross-project activity event helpers. AppStore does not mutate raw activity state directly.
 
@@ -185,7 +186,11 @@ Views access DiffStore through `store.diffStore` as a read-only surface.
 
 ### SessionCache (`models/stores/session-cache.ts`)
 
-Shared client-side cache for canonical session metadata, including `activityState`. `AppStore`, `ProjectsStore`, `ProjectStore`, and active-session metadata mutations populate it from session detail/list endpoints, activity snapshots, and successful session edits such as model changes. `ActiveSessionStore` subscribes to the current session ID and reads from this store instead of fetching session metadata directly; activity is server-authoritative and enters the cache through fetched session data/snapshots rather than raw runtime events. `ProjectStore` stores only server-provided scratch session ID ordering, derives `SessionListItem[]` view models from this cache, and exposes task/session/project activity selectors over cached metadata. Use `getDetail(sessionId)` when a consumer needs a complete `SessionData` record rather than a partial list/activity cache entry.
+Shared client-side cache for canonical session metadata, including `activityState`. `AppStore`, `ProjectsStore`, `ProjectStore`, and active-session metadata mutations populate it from session detail/list endpoints, activity snapshots, and successful session edits such as model changes. `ActiveSessionStore` subscribes to the current session ID and reads from this store instead of fetching session metadata directly; activity is server-authoritative and enters the cache through fetched session data/snapshots rather than raw runtime events. Prompt sends may optimistically patch the active session's cached `activityState` to `"running"` to keep the composer/Thinking UI responsive; the next server detail refresh remains authoritative. `ProjectStore` stores only server-provided scratch session ID ordering, derives `SessionListItem[]` view models from this cache, and exposes task/session/project activity selectors over cached metadata. Use `getDetail(sessionId)` when a consumer needs a complete `SessionData` record rather than a partial list/activity cache entry.
+
+### ConversationsStore (`models/stores/conversations-store.ts`)
+
+Keyed per-session store for active chat conversation presentation state. It stores the last persisted message snapshot, local optimistic user messages, renderable messages, streaming blocks, compaction state, and command error text for retained session IDs. It does not own the session running signal; views derive that from `SessionCache` through `ActiveSessionStore.sessionData.activityState === "running"`. `AppStore` forwards any session-tagged WebSocket event to this cache by `sessionId`; the cache applies chat conversation events, stores session-scoped WebSocket command errors, and ignores the rest. Global/unscoped WebSocket errors are not attached to conversation state. `ActiveSessionStore` is only the route-scoped facade over the keyed store. Persisted message refreshes call `setPersistedMessages()`, optimistic sends call `addOptimisticUserMessage()`, and session metadata reconciliation calls `clearStreamingState()` when server activity transitions from running to not running after missed terminal events. AppStore exposes this as `activeConversationsStore`. Retention is based on canonical session state, not raw runtime events: `ConversationsStore` subscribes to `SessionCache` and evicts unobserved retained sessions once cached `activityState !== "running"`; active/viewed sessions are retained by their conversation subscription, and revisiting evicted sessions fetches persisted messages from the server.
 
 ### ProjectsStore (`models/stores/projects-store.ts`)
 
@@ -270,14 +275,14 @@ Thin WebSocket wrapper. Two roles:
 1. **Receives** — All active session events, each tagged with a `sessionId`. Events include `agent_start`, `agent_end`, `tool_execution_end`, `task_updated`, `session_updated`, streaming tokens, etc.
 2. **Sends** — Commands (`prompt`, `steer`, `abort`) with an explicit `sessionId`.
 
-The client provides `onConnection(cb)` and `onEvent(cb)` hooks. AppStore is the sole consumer of these hooks — no other code listens to WS events.
+The client provides `onConnection(cb)` and `onEvent(cb)` hooks. `AppStore` is the store-layer consumer of these hooks: it handles app-level side effects and routes chat events into `ConversationsStore`. Components never listen to WS events.
 
 ## WS event → store reaction
 
 | WS Event | Store Reaction |
 |---|---|
-| `agent_start` | Chat streaming state only; activity waits for the server's `session_updated` reconciliation |
-| `agent_end` | Chat streaming state and active-session diff refresh only; activity waits for the server's `session_updated` reconciliation |
+| `agent_start` | AppStore applies streaming blocks to `ConversationsStore`; `activityState` waits for `SessionCache` reconciliation, except active prompt sends optimistically patch the active session metadata to `"running"` |
+| `agent_end` | AppStore finalizes `ConversationsStore` state and refreshes active-session diff; conversation retention and `activityState` wait for the server's `session_updated` reconciliation |
 | `task_updated` | Refetch that project store if it exists |
 | `session_updated` | Fetch canonical session detail into `SessionCache` and refresh project lists; `ActiveSessionStore` clears finished activity when the active session applies a finished cache update |
 | `tool_execution_end` (file-modifying) | Refresh diff |

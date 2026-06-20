@@ -45,12 +45,11 @@ describe("session routes (top-level)", () => {
       expect(body.projectId).toBe(projectId);
       expect(body.taskId).toBeNull();
       expect(body.messageCount).toBe(0);
-      expect(body.state.isStreaming).toBe(false);
       expect(body).not.toHaveProperty("project_id");
       expect(body).not.toHaveProperty("task_id");
     });
 
-    test("uses DB model metadata and overlays in-memory streaming state", async () => {
+    test("uses DB model metadata", async () => {
       const sessionId = "lookup-memory-db-first";
       createSession(sessionId, projectId, {
         agentRuntimeType: "pi",
@@ -59,7 +58,7 @@ describe("session routes (top-level)", () => {
         thinkingLevel: "minimal",
       });
 
-      state.sessions.set(sessionId, await createTestManagedSession(sessionId, { isStreaming: true }));
+      state.sessions.set(sessionId, await createTestManagedSession(sessionId));
 
       const res = await router.handle(
         makeRequest("GET", `/api/sessions/${sessionId}`),
@@ -69,7 +68,6 @@ describe("session routes (top-level)", () => {
       const body = await res!.json();
       expect(body.state.model).toEqual({ provider: "openai", id: "gpt-5" });
       expect(body.state.thinkingLevel).toBe("minimal");
-      expect(body.state.isStreaming).toBe(true);
     });
 
     test("returns metadata-only session from DB with projectId", async () => {
@@ -87,8 +85,6 @@ describe("session routes (top-level)", () => {
       const body = await res!.json();
       expect(body.id).toBe(sessionId);
       expect(body.projectId).toBe(projectId);
-      expect(body.state.isStreaming).toBe(false);
-      expect(body.state.messageCount).toBe(1);
       expect(body.messageCount).toBe(1);
       expect(body.activityState).toBeNull();
       expect(body).not.toHaveProperty("messages");

@@ -89,7 +89,7 @@ export class SessionModelPicker extends LitElement {
 
   private get _pickerProviders() {
     const providers = this._registryStore.availableProviders;
-    if ((this.sessionData?.state.messageCount ?? 0) === 0) {
+    if ((this.sessionData?.messageCount ?? 0) === 0) {
       return providers;
     }
 

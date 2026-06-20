@@ -2,6 +2,9 @@ import { describe, expect, mock, test } from "bun:test";
 import { ChatPanel } from "../../components/chat-panel.js";
 import type { ClientPromptContent } from "../../models/chat-content.js";
 import { ActiveSessionStore } from "../../models/stores/active-session-store.js";
+import { ConversationsStore } from "../../models/stores/conversations-store.js";
+import { SessionCache } from "../../models/stores/session-cache.js";
+import type { AgentMessage } from "../../models/chat-state.js";
 import { templateToString } from "../helpers/lit-template.js";
 import { StubClient } from "../helpers/stub-client.js";
 
@@ -11,11 +14,35 @@ function callPrivate(obj: object, key: string, ...args: unknown[]) {
   return Reflect.apply(fn, obj, args);
 }
 
+function cacheSessionData(sessionCache: SessionCache, sessionId: string) {
+  sessionCache.set(sessionId, {
+    projectId: 42,
+    taskId: null,
+    parentSessionId: null,
+    name: null,
+    createdAt: "",
+    updatedAt: "",
+    activityState: null,
+    messageCount: 0,
+    state: {
+      model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
+      thinkingLevel: "high",
+    },
+  });
+}
+
+function panelWithMessages(messages: AgentMessage[], sessionId = "sess-attachments") {
+  const el = new ChatPanel();
+  const cache = new ConversationsStore();
+  const store = new ActiveSessionStore(sessionId, null, undefined, cache);
+  cache.setPersistedMessages(sessionId, messages);
+  el.store = store;
+  return el;
+}
+
 describe("chat-panel attachment rendering", () => {
   test("renders user image attachments above text as size-preserving viewer buttons", () => {
-    const el = new ChatPanel();
-    Reflect.set(el, "store", { sessionId: "sess-attachments" });
-    Reflect.set(el, "messages", [
+    const el = panelWithMessages([
       {
         role: "user",
         timestamp: 1,
@@ -54,9 +81,7 @@ describe("chat-panel attachment rendering", () => {
   });
 
   test("right-aligns attached image previews without centering them in a stretched object box", () => {
-    const el = new ChatPanel();
-    Reflect.set(el, "store", { sessionId: "sess-attachments" });
-    Reflect.set(el, "messages", [
+    const el = panelWithMessages([
       {
         role: "user",
         timestamp: 1,
@@ -112,12 +137,11 @@ describe("ChatPanel send animation", () => {
       borderRadius: "12px",
     };
 
-    Reflect.set(el, "messages", [{ role: "user", content: "before", timestamp: 1 }]);
-
     const client = new StubClient();
     client.prompt = prompt;
-    const store = new ActiveSessionStore(client);
-    store.sessionId = "sess-1";
+    const sessionCache = new SessionCache();
+    cacheSessionData(sessionCache, "sess-1");
+    const store = new ActiveSessionStore("sess-1", client, sessionCache);
     el.store = store;
 
     Object.defineProperty(el, "composer", {
@@ -149,8 +173,9 @@ describe("ChatPanel send animation", () => {
 
     const client = new StubClient();
     client.prompt = prompt;
-    const store = new ActiveSessionStore(client);
-    store.sessionId = "sess-1";
+    const sessionCache = new SessionCache();
+    cacheSessionData(sessionCache, "sess-1");
+    const store = new ActiveSessionStore("sess-1", client, sessionCache);
     el.store = store;
 
     Object.defineProperty(el, "composer", {
@@ -165,7 +190,7 @@ describe("ChatPanel send animation", () => {
 
     callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: [{ type: "text", text: "hello" }] } }));
 
-    const messages = Reflect.get(el, "messages");
+    const messages = store.conversation.messages;
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({ role: "user", content: [{ type: "text", text: "hello" }] });
 

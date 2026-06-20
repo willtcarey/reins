@@ -8,7 +8,6 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
-import type { FrontendEvent } from "../models/ws-client.js";
 import type { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import "./markdown-content.js";
@@ -16,7 +15,6 @@ import "./session-model-picker.js";
 import "./chat-composer.js";
 import { getToolRenderer } from "./tools/index.js";
 import {
-  applyChatEvent,
   type AgentMessage,
   type AssistantMessage,
   type CompactionSummaryMessage,
@@ -63,44 +61,44 @@ export class ChatPanel extends LitElement {
   @property({ type: Boolean })
   visible = false;
 
-  @state() private messages: AgentMessage[] = [];
-  @state() private isStreaming = false;
-  @state() private streamingBlocks: StreamingBlock[] = [];
   @state() private expandedSections = new Set<string>();
-  @state() private isCompacting = false;
-  @state() private errorMessage = "";
   @state() private animatingUserMessageKeys = new Set<string>();
-
-  private errorTimeout?: ReturnType<typeof setTimeout>;
 
   @query("chat-composer") private composer?: ChatComposer;
 
   private sendAnimator = new ChatSendAnimator(this);
-  private unsubscribeEvent?: () => void;
   private unsubscribeStore?: () => void;
   private scrollContainer: HTMLElement | null = null;
   private shouldAutoScroll = true;
-  private lastSessionData: ActiveSessionStore["sessionData"] | undefined;
-  private lastSessionMessages: AgentMessage[] = [];
 
   override connectedCallback() {
     super.connectedCallback();
     this.subscribeToStore();
-    this.wireStoreEvents();
-    this.syncFromStore();
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    this.unsubscribeEvent?.();
     this.unsubscribeStore?.();
-    if (this.errorTimeout) clearTimeout(this.errorTimeout);
   }
 
-  private showError(message: string) {
-    if (this.errorTimeout) clearTimeout(this.errorTimeout);
-    this.errorMessage = message;
-    this.errorTimeout = setTimeout(() => { this.errorMessage = ""; }, 5000);
+  private get messages(): AgentMessage[] {
+    return this.store?.conversation.messages ?? [];
+  }
+
+  private get isStreaming(): boolean {
+    return this.store?.sessionData.activityState === "running";
+  }
+
+  private get streamingBlocks(): StreamingBlock[] {
+    return this.store?.conversation.streamingBlocks ?? [];
+  }
+
+  private get isCompacting(): boolean {
+    return this.store?.conversation.isCompacting ?? false;
+  }
+
+  private get errorMessage(): string {
+    return this.store?.conversation.errorMessage ?? "";
   }
 
   override updated(changed: Map<string, unknown>) {
@@ -123,115 +121,10 @@ export class ChatPanel extends LitElement {
   private subscribeToStore() {
     this.unsubscribeStore?.();
     this.unsubscribeStore = this.store?.subscribe(() => {
-      this.syncFromStore();
       this.requestUpdate();
     }) ?? undefined;
   }
 
-  private syncFromStore() {
-    const sessionData = this.store?.sessionData;
-    // Track whether streaming just ended via metadata so we can reconcile
-    // stale in-flight blocks that were never cleaned up by a missed agent_end.
-    let streamingJustEnded = false;
-    if (sessionData && sessionData !== this.lastSessionData) {
-      const wasStreaming = this.isStreaming;
-      this.lastSessionData = sessionData;
-      this.isStreaming = sessionData.state.isStreaming;
-
-      if (wasStreaming && !this.isStreaming) {
-        // Streaming ended while we weren't watching (missed agent_end).
-        // Clear stale streaming blocks so persisted messages can load.
-        this.streamingBlocks = [];
-        streamingJustEnded = true;
-      }
-    }
-
-    const sessionMessages = this.store?.sessionMessages ?? [];
-    if (sessionMessages !== this.lastSessionMessages || streamingJustEnded) {
-      this.lastSessionMessages = sessionMessages;
-      // Session switches remount the component via keyed(sessionId), so the
-      // only time we reuse persisted messages is when this panel is empty or
-      // when no in-flight streaming UI needs to be preserved.
-      if (
-        this.messages.length === 0
-        || (!this.isStreaming && this.streamingBlocks.length === 0)
-      ) {
-        this.messages = this.mergePersistedMessages(sessionMessages);
-      }
-    }
-  }
-
-  private mergePersistedMessages(persistedMessages: AgentMessage[]): AgentMessage[] {
-    if (this.messages.length === 0) return persistedMessages;
-
-    const persistedKeys = new Set(
-      persistedMessages.map((message) => `${message.role}:${message.timestamp}`),
-    );
-    const latestPersistedTimestamp = persistedMessages.reduce(
-      (latest, message) => Math.max(latest, message.timestamp),
-      -Infinity,
-    );
-    const localOnlyMessages = this.messages.filter((message) => (
-      message.timestamp > latestPersistedTimestamp
-      && !persistedKeys.has(`${message.role}:${message.timestamp}`)
-    ));
-
-    return localOnlyMessages.length === 0
-      ? persistedMessages
-      : [...persistedMessages, ...localOnlyMessages];
-  }
-
-  private wireStoreEvents() {
-    this.unsubscribeEvent?.();
-    if (!this.store) return;
-
-    this.unsubscribeEvent = this.store.onEvent((sessionId, _projectId, event) => {
-      // WS-level errors (e.g. command failures) arrive with empty sessionId
-      if (event.type === "ws_error") {
-        this.handleAgentEvent(event);
-        return;
-      }
-      // Only handle session events for our session
-      if (sessionId !== this.store?.sessionId) return;
-      this.handleAgentEvent(event);
-    });
-  }
-
-  private handleAgentEvent(event: FrontendEvent) {
-    // ws_error is handled locally (needs DOM method); non-chat events
-    // (task_updated, session_created, ws_ack, etc.) are ignored by this component.
-    if (event.type === "ws_error") {
-      this.showError(event.error || "Something went wrong");
-      return;
-    }
-    if (
-      event.type === "task_updated"
-      || event.type === "session_created"
-      || event.type === "session_updated"
-      || event.type === "open_file"
-      || event.type === "ws_ack"
-    ) {
-      return;
-    }
-
-    const prev = {
-      messages: this.messages,
-      isStreaming: this.isStreaming,
-      streamingBlocks: this.streamingBlocks,
-      isCompacting: this.isCompacting,
-      shouldAutoScroll: this.shouldAutoScroll,
-      errorMessage: this.errorMessage,
-    };
-    const next = applyChatEvent(prev, event);
-
-    // Apply only changed fields to trigger minimal Lit reactivity.
-    if (next.messages !== prev.messages) this.messages = next.messages;
-    if (next.isStreaming !== prev.isStreaming) this.isStreaming = next.isStreaming;
-    if (next.streamingBlocks !== prev.streamingBlocks) this.streamingBlocks = next.streamingBlocks;
-    if (next.isCompacting !== prev.isCompacting) this.isCompacting = next.isCompacting;
-    if (next.shouldAutoScroll !== prev.shouldAutoScroll) this.shouldAutoScroll = next.shouldAutoScroll;
-    if (next.errorMessage !== prev.errorMessage) this.errorMessage = next.errorMessage;
-  }
 
   private handleSend(e: CustomEvent<ChatComposerSubmitDetail>) {
     const content = e.detail.content;
@@ -253,27 +146,12 @@ export class ChatPanel extends LitElement {
       ? this.captureConversationShiftSnapshot()
       : [];
 
-    if (!wasStreaming) {
-      // Mirror the imminent agent_start locally so the outgoing bubble's
-      // measured target already includes the Thinking row. Otherwise the
-      // row can appear mid-flight and push the hidden real bubble upward,
-      // producing a jump when the animation reveals it.
-      this.isStreaming = true;
-      this.streamingBlocks = [];
-    }
+    this.store.addOptimisticUserMessage(content, timestamp);
+    this.requestUpdate();
 
     if (shouldAnimate) {
       this.animatingUserMessageKeys = new Set([...this.animatingUserMessageKeys, messageKey]);
     }
-
-    this.messages = [
-      ...this.messages,
-      {
-        role: "user",
-        content,
-        timestamp,
-      },
-    ];
 
     this.shouldAutoScroll = true;
     this.composer?.closeSuggestions();
@@ -611,7 +489,7 @@ export class ChatPanel extends LitElement {
           ${this.errorMessage ? html`
             <div class="flex items-center gap-2 mb-2 px-3 py-1.5 bg-red-900/30 border border-red-800/50 rounded-lg text-xs text-red-300">
               <span class="flex-1">${this.errorMessage}</span>
-              <button class="text-red-400 hover:text-red-200 cursor-pointer" @click=${() => { this.errorMessage = ""; }}>✕</button>
+              <button class="text-red-400 hover:text-red-200 cursor-pointer" @click=${() => { this.store?.clearConversationError(); }}>✕</button>
             </div>
           ` : nothing}
           ${sessionData?.state.model ? html`

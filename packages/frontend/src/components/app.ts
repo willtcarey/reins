@@ -152,7 +152,7 @@ export class AppShell extends LitElement {
    */
   private handleVisibilityChange = () => {
     if (document.visibilityState === "visible") {
-      void this.appStore.activeSessionStore.markViewed();
+      void this.appStore.activeSessionStore?.markViewed();
     }
   };
 
@@ -172,7 +172,7 @@ export class AppShell extends LitElement {
     // Clear unread completion when viewing a session, but keep the green
     // running indicator visible until the agent loop actually ends.
     if (store.sessionId) {
-      void store.activeSessionStore.markViewed();
+      void store.activeSessionStore?.markViewed();
     }
     // Track session visit for quick-open recency ordering
     if (store.sessionId) {
@@ -296,7 +296,8 @@ export class AppShell extends LitElement {
     // Read from store (the _storeVersion state ensures re-renders on changes)
     void this._storeVersion;
     const store = this.appStore;
-    const hasProject = store.projectId != null;
+    const activeSessionStore = store.activeSessionStore;
+    const hasProject = store.projectId != null && activeSessionStore != null;
 
     return html`
       <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"
@@ -380,7 +381,7 @@ export class AppShell extends LitElement {
               <div class="flex-1 flex min-h-0 ${this.activeTab === "chat" ? "" : "hidden"}">
                 ${keyed(store.sessionId, html`<chat-panel
                   class="flex-1 min-h-0 min-w-0"
-                  .store=${store.activeSessionStore}
+                  .store=${activeSessionStore}
                   .projectStore=${store.activeProjectStore}
                   ?visible=${this.activeTab === "chat"}
                 ></chat-panel>`)}

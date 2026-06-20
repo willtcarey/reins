@@ -22,8 +22,6 @@ function sessionDetail(overrides: Partial<SessionData> = {}): SessionData {
     state: {
       model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
       thinkingLevel: "high",
-      isStreaming: false,
-      messageCount: 0,
     },
     ...overrides,
   };
@@ -60,7 +58,7 @@ describe("SessionCache", () => {
 
     const detailSession = sessionDetail({ activityState: "finished" });
     store.set(detailSession.id, detailSession);
-    expect(store.get("sess-1")?.state?.messageCount).toBe(0);
+    expect(store.get("sess-1")?.messageCount).toBe(0);
     expect(store.get("sess-1")?.activityState).toBe("finished");
     expect(store.get("sess-1")?.firstMessage).toBe("hello");
   });
@@ -141,7 +139,7 @@ describe("SessionCache", () => {
     mockFetch((url) => {
       expect(url).toBe("/api/sessions/sess-1");
       fetchCount++;
-      return jsonResponse(sessionDetail({ messageCount: 5, state: { ...sessionDetail().state, messageCount: 5 } }));
+      return jsonResponse(sessionDetail({ messageCount: 5 }));
     });
 
     const [a, b] = await Promise.all([
@@ -151,7 +149,6 @@ describe("SessionCache", () => {
 
     expect(fetchCount).toBe(1);
     expect(a).toBe(b);
-    expect(store.get("sess-1")?.state?.messageCount).toBe(5);
     expect(store.get("sess-1")?.messageCount).toBe(5);
   });
 });

@@ -1,8 +1,8 @@
 /**
  * Active Session Store
  *
- * Tracks which session is currently being viewed: the session ID and message
- * list. Session metadata and the derived project ID live in SessionCache.
+ * Tracks which session is currently being viewed. Session metadata and the
+ * derived project ID live in SessionCache; conversation state lives in ConversationsStore.
  * Does NOT hold task or session lists — that data lives in ProjectStore via
  * ProjectsStore.
  *
@@ -10,10 +10,11 @@
  * Mutations go through action methods which call the backend API.
  */
 
-import type { AgentMessage } from "../chat-state.js";
+import type { AgentMessage, UserMessage } from "../chat-state.js";
 import type { AttachmentInfo, ClientPromptContent } from "../chat-content.js";
-import type { EventListener, IAppClient, SessionData } from "../ws-client.js";
+import type { IAppClient, SessionData } from "../ws-client.js";
 import { SessionCache } from "./session-cache.js";
+import { ConversationsStore, type SessionConversationState } from "./conversations-store.js";
 
 export interface SessionModelUpdate {
   runtimeType?: string;
@@ -45,8 +46,6 @@ function blankSessionData(sessionId = ""): SessionData {
     state: {
       model: null,
       thinkingLevel: "high",
-      isStreaming: false,
-      messageCount: 0,
     },
   };
 }
@@ -54,8 +53,7 @@ function blankSessionData(sessionId = ""): SessionData {
 export class ActiveSessionStore {
   // ---- Public reactive state ------------------------------------------------
 
-  sessionId = "";
-  sessionMessages: AgentMessage[] = [];
+  readonly sessionId: string;
 
   get projectId(): number | null {
     return this.sessionData.projectId || null;
@@ -65,18 +63,32 @@ export class ActiveSessionStore {
     return this._sessionCache.getDetail(this.sessionId) ?? blankSessionData(this.sessionId);
   }
 
+  get conversation(): SessionConversationState {
+    return this._conversationsStore.get(this.sessionId);
+  }
+
   // ---- Private state --------------------------------------------------------
 
   private _listeners = new Set<ActiveSessionStoreListener>();
   private _unsubscribeSession: (() => void) | null = null;
+  private _unsubscribeConversation: (() => void) | null = null;
   private _fetchId = 0; // guards against stale message fetches
   private _markViewedInFlight: string | null = null;
-  private _lastKnownStreaming = false;
+  private _lastKnownRunning = false;
+  private _disposed = false;
 
   constructor(
+    sessionId: string,
     private _client: IAppClient | null = null,
     private _sessionCache: SessionCache = new SessionCache(),
-  ) {}
+    private _conversationsStore: ConversationsStore = new ConversationsStore(),
+  ) {
+    this.sessionId = sessionId;
+    this._unsubscribeSession = this._sessionCache.subscribe(sessionId, () => { void this.handleSessionCacheUpdate(); });
+    this._unsubscribeConversation = this._conversationsStore.subscribe(sessionId, () => {
+      this.notify();
+    });
+  }
 
   // ---- Subscription ---------------------------------------------------------
 
@@ -86,49 +98,36 @@ export class ActiveSessionStore {
   }
 
   private notify() {
+    if (this._disposed) return;
     for (const fn of this._listeners) fn();
   }
 
   dispose(): void {
+    this._disposed = true;
+    this._fetchId++;
     this._unsubscribeSession?.();
     this._unsubscribeSession = null;
+    this._unsubscribeConversation?.();
+    this._unsubscribeConversation = null;
     this._listeners.clear();
   }
 
-  onEvent(listener: EventListener): () => void {
-    return this._client?.onEvent(listener) ?? (() => {});
-  }
-
-  // ---- Route changes --------------------------------------------------------
+  // ---- Initialization -------------------------------------------------------
 
   /**
-   * Called when the URL route changes. Metadata is read from SessionCache;
-   * callers are responsible for fetching/populating that cache.
+   * Initialize the route-scoped session facade. Metadata is read from
+   * SessionCache; callers are responsible for fetching/populating that cache.
    */
-  async setRoute(sessionId: string | null): Promise<void> {
-    const newSessionId = sessionId ?? "";
-
-    if (newSessionId === this.sessionId) return;
-
-    if (!newSessionId) {
-      // No session — clear everything
-      this.setSessionSubscription("");
-      this.sessionId = "";
-      this._lastKnownStreaming = false;
-      this.sessionMessages = [];
-      this.notify();
-      return;
-    }
+  async initialize(): Promise<void> {
+    if (this._disposed) return;
 
     const fetchId = ++this._fetchId;
-    this.sessionId = newSessionId;
-    this.setSessionSubscription(newSessionId);
-    this._lastKnownStreaming = false;
-    this.sessionMessages = [];
-
-    const cachedSession = this._sessionCache.getDetail(newSessionId);
+    const cachedSession = this._sessionCache.getDetail(this.sessionId);
     if (cachedSession) {
-      this._lastKnownStreaming = cachedSession.state.isStreaming;
+      this._lastKnownRunning = cachedSession.activityState === "running";
+      if (!this._lastKnownRunning) {
+        this._conversationsStore.clearStreamingState(this.sessionId);
+      }
       this.notify();
       if (cachedSession.activityState === "finished") {
         void this.markViewed();
@@ -137,32 +136,46 @@ export class ActiveSessionStore {
       this.notify();
     }
 
-    await this.fetchSessionMessages(newSessionId, fetchId);
+    await this.fetchSessionMessages(this.sessionId, fetchId);
   }
 
   // ---- Actions --------------------------------------------------------------
 
   prompt(message: ClientPromptContent): boolean {
-    if (!this._client || !this.sessionId) return false;
+    if (this._disposed || !this._client) return false;
     this._client.prompt(this.sessionId, message);
+    this.setOptimisticRunning();
     return true;
   }
 
   steer(message: ClientPromptContent): boolean {
-    if (!this._client || !this.sessionId) return false;
+    if (this._disposed || !this._client) return false;
     this._client.steer(this.sessionId, message);
     return true;
   }
 
+  addOptimisticUserMessage(
+    message: ClientPromptContent,
+    timestamp = Date.now(),
+  ): UserMessage | null {
+    if (this._disposed) return null;
+    return this._conversationsStore.addOptimisticUserMessage(this.sessionId, message, timestamp);
+  }
+
+  clearConversationError(): void {
+    if (this._disposed) return;
+    this._conversationsStore.clearError(this.sessionId);
+  }
+
   abort(): boolean {
-    if (!this._client || !this.sessionId) return false;
+    if (this._disposed || !this._client) return false;
     this._client.abort(this.sessionId);
     return true;
   }
 
   async uploadAttachments(attachments: readonly SessionAttachmentUpload[]): Promise<AttachmentInfo[]> {
     if (attachments.length === 0) return [];
-    if (!this.sessionId) throw new Error("No active session");
+    if (this._disposed) throw new Error("No active session");
 
     const form = new FormData();
     for (const attachment of attachments) {
@@ -186,34 +199,34 @@ export class ActiveSessionStore {
     return body.attachments ?? [];
   }
 
-  /**
-   * Re-read the active session's metadata from the shared SessionCache.
-   * The active store does not fetch session metadata itself; AppStore owns
-   * server refresh decisions and writes results into SessionCache.
-   */
-  async refreshSession() {
-    if (!this.sessionId) return;
+  /** React to canonical metadata changes for the active session. */
+  private async handleSessionCacheUpdate() {
+    if (this._disposed) return;
 
     const data = this._sessionCache.getDetail(this.sessionId);
     if (!data) return;
 
-    const wasStreaming = this._lastKnownStreaming;
-    this._lastKnownStreaming = data.state.isStreaming;
+    const wasRunning = this._lastKnownRunning;
+    const isRunning = data.activityState === "running";
+    this._lastKnownRunning = isRunning;
+    if (wasRunning && !isRunning) {
+      this._conversationsStore.clearStreamingState(this.sessionId);
+    }
     this.notify();
     if (data.activityState === "finished") {
       void this.markViewed();
     }
 
-    // If streaming just ended (missed agent_end during disconnect/navigation),
+    // If running activity just ended (missed agent_end during disconnect/navigation),
     // also refresh messages to pick up the completed turn's results.
-    if (wasStreaming && !data.state.isStreaming) {
+    if (wasRunning && !isRunning) {
       await this.fetchSessionMessages(this.sessionId);
     }
   }
 
   /** Load persisted messages for the active session. */
   async refreshMessages() {
-    if (this.sessionId) {
+    if (!this._disposed) {
       await this.fetchSessionMessages(this.sessionId);
     }
   }
@@ -224,9 +237,10 @@ export class ActiveSessionStore {
    * selectors immediately while the server request reconciles other clients.
    */
   async markViewed(): Promise<void> {
+    if (this._disposed) return;
     const sessionId = this.sessionId;
     const projectId = this.projectId;
-    if (!sessionId || projectId == null) return;
+    if (projectId == null) return;
     if (this.sessionData.activityState !== "finished") return;
     if (this._markViewedInFlight === sessionId) return;
 
@@ -237,13 +251,13 @@ export class ActiveSessionStore {
       const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/activity`, {
         method: "PATCH",
       });
-      if (!resp.ok && this.sessionId === sessionId) {
+      if (this._disposed) return;
+      if (!resp.ok) {
         this._sessionCache.set(sessionId, { projectId, activityState: "finished" });
       }
     } catch {
-      if (this.sessionId === sessionId) {
-        this._sessionCache.set(sessionId, { projectId, activityState: "finished" });
-      }
+      if (this._disposed) return;
+      this._sessionCache.set(sessionId, { projectId, activityState: "finished" });
     } finally {
       if (this._markViewedInFlight === sessionId) {
         this._markViewedInFlight = null;
@@ -252,7 +266,7 @@ export class ActiveSessionStore {
   }
 
   async updateSessionModel(update: SessionModelUpdate): Promise<{ ok: true } | { error: string }> {
-    if (!this.sessionId) return { error: "No active session" };
+    if (this._disposed) return { error: "No active session" };
 
     try {
       const resp = await fetch(`/api/sessions/${encodeURIComponent(this.sessionId)}/model`, {
@@ -275,11 +289,10 @@ export class ActiveSessionStore {
 
   // ---- Internal fetching ----------------------------------------------------
 
-  private setSessionSubscription(sessionId: string): void {
-    this._unsubscribeSession?.();
-    this._unsubscribeSession = sessionId
-      ? this._sessionCache.subscribe(sessionId, () => { void this.refreshSession(); })
-      : null;
+  private setOptimisticRunning(): void {
+    const sessionId = this.sessionId;
+    if (!this._sessionCache.getDetail(sessionId)) return;
+    this._sessionCache.set(sessionId, { activityState: "running" });
   }
 
   private async fetchSessionMessages(sessionId: string, fetchId = this._fetchId): Promise<boolean> {
@@ -288,8 +301,8 @@ export class ActiveSessionStore {
       if (!resp.ok) return false;
       if (fetchId !== this._fetchId) return false; // stale
       const data: AgentMessage[] = await resp.json();
-      this.sessionMessages = data;
-      this.notify();
+      if (this._disposed || fetchId !== this._fetchId) return false;
+      this._conversationsStore.setPersistedMessages(sessionId, data);
       return true;
     } catch {
       return false;

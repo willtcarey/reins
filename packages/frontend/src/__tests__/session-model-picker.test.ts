@@ -51,14 +51,12 @@ describe("SessionModelPicker", () => {
       name: null,
       createdAt: "",
       updatedAt: "",
-      messageCount: 0,
+      messageCount,
       runtimeType: "pi",
       activityState: null,
       state: {
         model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
         thinkingLevel: "high",
-        isStreaming: false,
-        messageCount,
       },
     };
     return el;

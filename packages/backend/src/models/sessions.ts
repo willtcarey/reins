@@ -65,19 +65,6 @@ export class SessionAttachmentUploadError extends Error {
   }
 }
 
-export interface SessionListView {
-  id: string;
-  projectId: number;
-  taskId: number | null;
-  parentSessionId: string | null;
-  name: string | null;
-  createdAt: string;
-  updatedAt: string;
-  messageCount: number;
-  firstMessage: string | null;
-  activityState: SessionRow["activity_state"];
-}
-
 export interface SessionView {
   id: string;
   projectId: number;
@@ -86,15 +73,17 @@ export interface SessionView {
   name: string | null;
   createdAt: string;
   updatedAt: string;
-  runtimeType: string;
   activityState: SessionRow["activity_state"];
-  messageCount: number;
-  state: {
+  messageCount?: number;
+  runtimeType?: string;
+  state?: {
     model: { provider: string; id: string } | null;
     thinkingLevel: string;
-    isStreaming: boolean;
-    messageCount: number;
   };
+}
+
+export interface SessionListView extends SessionView {
+  firstMessage?: string | null;
 }
 
 export interface SessionAttachmentBytes {
@@ -113,7 +102,7 @@ function isTextBlock(value: unknown): value is TextBlock {
   return "type" in value && value.type === "text" && "text" in value && typeof value.text === "string";
 }
 
-function toSessionListView(row: SessionRow): SessionListView {
+function toSessionView(row: SessionRow): SessionView {
   return {
     id: row.id,
     projectId: row.project_id,
@@ -122,9 +111,15 @@ function toSessionListView(row: SessionRow): SessionListView {
     name: row.name,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    activityState: row.activity_state,
+  };
+}
+
+function toSessionListView(row: SessionRow): SessionListView {
+  return {
+    ...toSessionView(row),
     messageCount: row.message_count ?? 0,
     firstMessage: row.first_message ?? null,
-    activityState: row.activity_state,
   };
 }
 
@@ -160,28 +155,17 @@ export class Sessions {
     const row = getSession(sessionId);
     if (!row) return null;
 
-    const isStreaming = this.sessions.get(sessionId)?.runtime.isStreaming() ?? false;
-
     const messageCount = loadMessages(sessionId).length;
 
     return {
-      id: row.id,
-      projectId: row.project_id,
-      taskId: row.task_id,
-      parentSessionId: row.parent_session_id,
-      name: row.name,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      runtimeType: row.agent_runtime_type,
-      activityState: row.activity_state,
+      ...toSessionView(row),
       messageCount,
+      runtimeType: row.agent_runtime_type,
       state: {
         model: row.model_provider && row.model_id
           ? { provider: row.model_provider, id: row.model_id }
           : null,
         thinkingLevel: row.thinking_level,
-        isStreaming,
-        messageCount,
       },
     };
   }

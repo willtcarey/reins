@@ -11,7 +11,7 @@ import { AppStore } from "../models/stores/app-store.js";
 import { StubClient } from "./helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 
-function sessionDetail(isStreaming: boolean) {
+function sessionDetail(isRunning: boolean) {
   return {
     id: "sess-1",
     projectId: 42,
@@ -20,13 +20,12 @@ function sessionDetail(isStreaming: boolean) {
     name: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
-    messageCount: isStreaming ? 1 : 2,
-    activityState: isStreaming ? "running" as const : "finished" as const,
+    messageCount: isRunning ? 1 : 2,
+    activityState: isRunning ? "running" as const : "finished" as const,
     state: {
       model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
       thinkingLevel: "high",
-      isStreaming,
-      messageCount: isStreaming ? 1 : 2,
+      messageCount: isRunning ? 1 : 2,
     },
   };
 }
@@ -62,28 +61,18 @@ describe("AppStore reconnect catch-up", () => {
     store.projectsStore.handleReconnect = mock(async () => {});
 
     // Set up an active session
-    const activeStore = store.activeSessionStore;
-    activeStore.sessionId = "sess-1";
-    store.sessionCache.set("sess-1", {
-      projectId: 42,
-      taskId: null,
-      parentSessionId: null,
-      name: null,
-      createdAt: "",
-      updatedAt: "",
-      messageCount: 0,
-      activityState: null,
-      state: {
-        model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
-        thinkingLevel: "high",
-        isStreaming: false,
-        messageCount: 2,
-      },
+    mockFetch((url) => {
+      if (url === "/api/sessions/sess-1") return Response.json(sessionDetail(false));
+      if (url === "/api/sessions/sess-1/messages") return Response.json([]);
+      if (url === "/api/sessions/activity") return Response.json([]);
+      if (url === "/api/projects") return Response.json([]);
+      return new Response("", { status: 404 });
     });
-
+    await store.setRoute("sess-1");
+    const activeStore = store.activeSessionStore;
+    if (!activeStore) throw new Error("Expected active session store");
     const refreshMessagesSpy = mock(async () => {});
     activeStore.refreshMessages = refreshMessagesSpy;
-    activeStore.refreshSession = mock(async () => {});
 
     client.fireConnection(true);
     await new Promise((r) => setTimeout(r, 0));
@@ -155,7 +144,7 @@ describe("AppStore reconnect catch-up", () => {
     store.projectsStore.fetchProjects = mock(async () => {});
     store.projectsStore.handleReconnect = mock(async () => {});
 
-    let isStreaming = true;
+    let isRunning = true;
     const requests: Array<{ url: string; method: string }> = [];
     mockFetch((url, init) => {
       requests.push({ url, method: init?.method ?? "GET" });
@@ -163,7 +152,7 @@ describe("AppStore reconnect catch-up", () => {
         return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
       }
       if (url === "/api/sessions/sess-1") {
-        return new Response(JSON.stringify(sessionDetail(isStreaming)), { status: 200, headers: { "Content-Type": "application/json" } });
+        return new Response(JSON.stringify(sessionDetail(isRunning)), { status: 200, headers: { "Content-Type": "application/json" } });
       }
       if (url === "/api/sessions/sess-1/messages") {
         return new Response(JSON.stringify([
@@ -178,7 +167,7 @@ describe("AppStore reconnect catch-up", () => {
     });
 
     await store.setRoute("sess-1");
-    isStreaming = false;
+    isRunning = false;
 
     client.fireConnection(true);
     await new Promise((r) => setTimeout(r, 0));
@@ -205,13 +194,13 @@ describe("AppStore reconnect catch-up", () => {
       store.connect();
       store.projectsStore.handleReconnect = mock(async () => {});
 
-      let isStreaming = true;
+      let isRunning = true;
       mockFetch((url) => {
         if (url === "/api/projects" || url === "/api/sessions/activity") {
           return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
         }
         if (url === "/api/sessions/sess-1") {
-          return new Response(JSON.stringify(sessionDetail(isStreaming)), { status: 200, headers: { "Content-Type": "application/json" } });
+          return new Response(JSON.stringify(sessionDetail(isRunning)), { status: 200, headers: { "Content-Type": "application/json" } });
         }
         if (url === "/api/sessions/sess-1/messages") {
           return new Response(JSON.stringify([
@@ -223,14 +212,14 @@ describe("AppStore reconnect catch-up", () => {
       });
 
       await store.setRoute("sess-1");
-      isStreaming = false;
+      isRunning = false;
 
       fakeWindow.dispatchEvent(new Event("focus"));
       await new Promise((r) => setTimeout(r, 0));
       await new Promise((r) => setTimeout(r, 0));
 
-      expect(store.activeSessionStore.sessionData.state.isStreaming).toBe(false);
-      expect(store.activeSessionStore.sessionMessages).toHaveLength(2);
+      expect(store.activeSessionStore?.sessionData.activityState).toBe("finished");
+      expect(store.activeSessionStore?.conversation.persistedMessages).toHaveLength(2);
     } finally {
       store.dispose();
       if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);

@@ -14,8 +14,6 @@
 export interface SessionState {
   model: { provider: string; id: string } | null;
   thinkingLevel: string;
-  isStreaming: boolean;
-  messageCount: number;
 }
 
 export interface SessionData {
@@ -71,7 +69,7 @@ export type ServerMessage =
   | { type: "user_message"; sessionId: string; projectId: number; message: ClientPromptContent }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
   | { type: "ack"; command: string }
-  | { type: "error"; error: string };
+  | { type: "error"; sessionId?: string; error: string };
 
 /**
  * All event shapes dispatched to `EventListener` subscribers.
@@ -85,7 +83,7 @@ export type FrontendEvent =
   | { type: "session_updated"; sessionId: string; projectId: number }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
   | { type: "ws_ack"; command: string }
-  | { type: "ws_error"; error: string };
+  | { type: "ws_error"; sessionId?: string; error: string };
 
 export type EventListener = (sessionId: string, projectId: number, event: FrontendEvent) => void;
 export type ConnectionListener = (connected: boolean) => void;
@@ -324,12 +322,18 @@ export class AppClient implements IAppClient {
         }
         break;
 
-      case "error":
+      case "error": {
         this.clearReplayBuffer();
+        const sessionId = msg.sessionId ?? "";
         for (const listener of this.eventListeners) {
-          listener("", 0, { ...msg, type: `ws_${msg.type}` });
+          listener(sessionId, 0, {
+            type: "ws_error",
+            ...(msg.sessionId ? { sessionId: msg.sessionId } : {}),
+            error: msg.error,
+          });
         }
         break;
+      }
     }
   }
 

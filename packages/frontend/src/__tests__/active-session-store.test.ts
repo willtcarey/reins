@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AgentMessage } from "../models/chat-state.js";
 import { ActiveSessionStore } from "../models/stores/active-session-store.js";
+import { ConversationsStore } from "../models/stores/conversations-store.js";
 import { SessionCache } from "../models/stores/session-cache.js";
 import { StubClient } from "./helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
@@ -8,8 +9,8 @@ import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 type IsAny<T> = 0 extends (1 & T) ? true : false;
 type AssertFalse<T extends false> = T;
 type AssertTrue<T extends true> = T;
-type _SessionMessagesElementIsTyped = AssertFalse<IsAny<ActiveSessionStore["sessionMessages"][number]>>;
-type _SessionMessagesMatchAgentMessages = AssertTrue<ActiveSessionStore["sessionMessages"] extends AgentMessage[] ? true : false>;
+type _ConversationMessagesElementIsTyped = AssertFalse<IsAny<ActiveSessionStore["conversation"]["persistedMessages"][number]>>;
+type _ConversationMessagesMatchAgentMessages = AssertTrue<ActiveSessionStore["conversation"]["persistedMessages"] extends AgentMessage[] ? true : false>;
 
 // ---- Helpers ----------------------------------------------------------------
 
@@ -17,8 +18,13 @@ function jsonResponse(data: unknown) {
   return new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
+function callPrivate(obj: object, key: string, ...args: unknown[]) {
+  const fn = Reflect.get(obj, key);
+  if (typeof fn !== "function") throw new Error(`${key} is not callable`);
+  return Reflect.apply(fn, obj, args);
+}
+
 function makeSessionData(overrides: {
-  isStreaming?: boolean;
   messageCount?: number;
   projectId?: number;
   runtimeType?: string;
@@ -39,8 +45,6 @@ function makeSessionData(overrides: {
     state: {
       model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
       thinkingLevel: "high",
-      isStreaming: overrides.isStreaming ?? false,
-      messageCount,
     },
   };
 }
@@ -58,7 +62,6 @@ describe("ActiveSessionStore.updateSessionModel", () => {
           state: {
             model: { provider: "openai", id: "gpt-5" },
             thinkingLevel: "medium",
-            isStreaming: false,
             messageCount: 0,
           },
         });
@@ -71,8 +74,7 @@ describe("ActiveSessionStore.updateSessionModel", () => {
 
   test("persists the session model and refreshes metadata from the server", async () => {
     const sessionCache = new SessionCache();
-    const store = new ActiveSessionStore(null, sessionCache);
-    store.sessionId = "sess-1";
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
     sessionCache.set("sess-1", makeSessionData());
 
     const result = await store.updateSessionModel({
@@ -94,8 +96,7 @@ describe("ActiveSessionStore.uploadAttachments", () => {
   afterEach(() => { restoreFetch(); });
 
   test("posts files through the active session store boundary", async () => {
-    const store = new ActiveSessionStore();
-    store.sessionId = "sess-1";
+    const store = new ActiveSessionStore("sess-1");
     const uploadState: { form?: FormData } = {};
 
     mockFetch((url, init) => {
@@ -140,6 +141,50 @@ describe("ActiveSessionStore.uploadAttachments", () => {
   });
 });
 
+describe("ActiveSessionStore conversation notifications", () => {
+  afterEach(() => { restoreFetch(); });
+
+  test("optimistic message updates notify through the conversation subscription only", async () => {
+    const sessionCache = new SessionCache();
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
+    sessionCache.set("sess-1", makeSessionData());
+    mockFetch((url) => {
+      if (url === "/api/sessions/sess-1/messages") return jsonResponse([]);
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await store.initialize();
+
+    let notifyCount = 0;
+    store.subscribe(() => { notifyCount += 1; });
+
+    store.addOptimisticUserMessage([{ type: "text", text: "hello" }], 500);
+
+    expect(notifyCount).toBe(1);
+  });
+
+  test("message refresh updates notify through the conversation subscription only", async () => {
+    const sessionCache = new SessionCache();
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
+    sessionCache.set("sess-1", makeSessionData());
+    const responses: AgentMessage[][] = [[], twoMessages];
+    mockFetch((url) => {
+      if (url === "/api/sessions/sess-1/messages") return jsonResponse(responses.shift() ?? []);
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await store.initialize();
+
+    let notifyCount = 0;
+    store.subscribe(() => { notifyCount += 1; });
+
+    await store.refreshMessages();
+
+    expect(notifyCount).toBe(1);
+    expect(store.conversation.persistedMessages).toEqual(twoMessages);
+  });
+});
+
 describe("ActiveSessionStore command helpers", () => {
   test("prompt, steer, and abort target the active session", () => {
     const client = new StubClient();
@@ -147,8 +192,7 @@ describe("ActiveSessionStore command helpers", () => {
     client.steer = mock(() => {});
     client.abort = mock(() => {});
 
-    const store = new ActiveSessionStore(client);
-    store.sessionId = "sess-1";
+    const store = new ActiveSessionStore("sess-1", client);
 
     expect(store.prompt([{ type: "text", text: "hello" }])).toBe(true);
     expect(store.steer([{ type: "text", text: "keep going" }])).toBe(true);
@@ -159,21 +203,24 @@ describe("ActiveSessionStore command helpers", () => {
     expect(client.abort).toHaveBeenCalledWith("sess-1");
   });
 
-  test("command helpers return false without an active session", () => {
+  test("prompt optimistically marks cached activityState running", () => {
     const client = new StubClient();
     client.prompt = mock(() => {});
-    client.steer = mock(() => {});
-    client.abort = mock(() => {});
+    const sessionCache = new SessionCache();
+    sessionCache.set("sess-1", makeSessionData({ activityState: null }));
+    const store = new ActiveSessionStore("sess-1", client, sessionCache);
 
-    const store = new ActiveSessionStore(client);
+    expect(store.prompt([{ type: "text", text: "hello" }])).toBe(true);
+
+    expect(sessionCache.get("sess-1")?.activityState).toBe("running");
+  });
+
+  test("command helpers return false without a client", () => {
+    const store = new ActiveSessionStore("sess-1");
 
     expect(store.prompt([{ type: "text", text: "hello" }])).toBe(false);
     expect(store.steer([{ type: "text", text: "keep going" }])).toBe(false);
     expect(store.abort()).toBe(false);
-
-    expect(client.prompt).not.toHaveBeenCalled();
-    expect(client.steer).not.toHaveBeenCalled();
-    expect(client.abort).not.toHaveBeenCalled();
   });
 });
 
@@ -185,9 +232,9 @@ const twoMessages: AgentMessage[] = [
 describe("ActiveSessionStore session loading contract", () => {
   afterEach(() => { restoreFetch(); });
 
-  test("setRoute reads cached metadata from SessionCache and only fetches messages", async () => {
+  test("initialize reads cached metadata from SessionCache and only fetches messages", async () => {
     const sessionCache = new SessionCache();
-    const store = new ActiveSessionStore(null, sessionCache);
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
     const calls: string[] = [];
     sessionCache.set("sess-1", makeSessionData({ messageCount: 2 }));
 
@@ -197,18 +244,17 @@ describe("ActiveSessionStore session loading contract", () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    await store.setRoute("sess-1");
+    await store.initialize();
 
     expect(calls).toEqual(["/api/sessions/sess-1/messages"]);
     expect(store.projectId).toBe(42);
     expect(store.sessionData.messageCount).toBe(2);
-    expect(store.sessionMessages).toEqual(twoMessages);
+    expect(store.conversation.persistedMessages).toEqual(twoMessages);
   });
 
-  test("setRoute leaves metadata blank when SessionCache has no detail", async () => {
-    const store = new ActiveSessionStore(null, new SessionCache());
+  test("initialize leaves metadata blank when SessionCache has no detail", async () => {
+    const store = new ActiveSessionStore("sess-1", null, new SessionCache());
     const calls: string[] = [];
-    store.sessionId = "previous";
 
     mockFetch((url) => {
       calls.push(url);
@@ -216,7 +262,7 @@ describe("ActiveSessionStore session loading contract", () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    await store.setRoute("sess-1");
+    await store.initialize();
 
     expect(calls).toEqual(["/api/sessions/sess-1/messages"]);
     expect(store.projectId).toBeNull();
@@ -224,21 +270,21 @@ describe("ActiveSessionStore session loading contract", () => {
       ...makeSessionData({ messageCount: 0, projectId: 0, runtimeType: undefined }),
       id: "sess-1",
       runtimeType: undefined,
-      state: { model: null, thinkingLevel: "high", isStreaming: false, messageCount: 0 },
+      state: { model: null, thinkingLevel: "high" },
     });
-    expect(store.sessionMessages).toEqual(twoMessages);
+    expect(store.conversation.persistedMessages).toEqual(twoMessages);
   });
 
   test("subscribes to SessionCache updates for the active session", async () => {
     const sessionCache = new SessionCache();
-    const store = new ActiveSessionStore(null, sessionCache);
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
 
     mockFetch((url) => {
       if (url === "/api/sessions/sess-1/messages") return jsonResponse(twoMessages);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    await store.setRoute("sess-1");
+    await store.initialize();
     expect(store.projectId).toBeNull();
 
     sessionCache.set("sess-1", makeSessionData({ messageCount: 5 }));
@@ -249,23 +295,23 @@ describe("ActiveSessionStore session loading contract", () => {
 
   test("ignores SessionCache updates for other sessions", async () => {
     const sessionCache = new SessionCache();
-    const store = new ActiveSessionStore(null, sessionCache);
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
 
     mockFetch((url) => {
       if (url === "/api/sessions/sess-1/messages") return jsonResponse(twoMessages);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    await store.setRoute("sess-1");
+    await store.initialize();
     sessionCache.set("sess-2", makeSessionData({ projectId: 99 }));
 
     expect(store.projectId).toBeNull();
     expect(store.sessionData.id).toBe("sess-1");
   });
 
-  test("refreshSession does not invalidate an in-flight initial messages load", async () => {
+  test("session cache update does not invalidate an in-flight initial messages load", async () => {
     const sessionCache = new SessionCache();
-    const store = new ActiveSessionStore(null, sessionCache);
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
     let resolveMessages!: (value: Response) => void;
     sessionCache.set("sess-1", makeSessionData({ messageCount: 2 }));
 
@@ -274,27 +320,46 @@ describe("ActiveSessionStore session loading contract", () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    const routePromise = store.setRoute("sess-1");
+    const routePromise = store.initialize();
     await Promise.resolve();
     await Promise.resolve();
-    await store.refreshSession();
+    await callPrivate(store, "handleSessionCacheUpdate");
 
     resolveMessages(jsonResponse(twoMessages));
     await routePromise;
 
-    expect(store.sessionMessages).toEqual(twoMessages);
+    expect(store.conversation.persistedMessages).toEqual(twoMessages);
   });
 
-  test("refreshSession auto-refreshes messages when cached isStreaming transitions to false", async () => {
+  test("dispose prevents an in-flight initial messages load from committing", async () => {
     const sessionCache = new SessionCache();
-    const store = new ActiveSessionStore(null, sessionCache);
+    const conversationsStore = new ConversationsStore();
+    const store = new ActiveSessionStore("sess-1", null, sessionCache, conversationsStore);
+    let resolveMessages!: (value: Response) => void;
+    sessionCache.set("sess-1", makeSessionData({ messageCount: 2 }));
+
+    mockFetch((url) => {
+      if (url === "/api/sessions/sess-1/messages") return new Promise<Response>((r) => { resolveMessages = r; });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const initializePromise = store.initialize();
+    await Promise.resolve();
+    store.dispose();
+
+    resolveMessages(jsonResponse(twoMessages));
+    await initializePromise;
+
+    expect(conversationsStore.get("sess-1").persistedMessages).toEqual([]);
+  });
+
+  test("session cache update auto-refreshes messages when cached activityState transitions from running", async () => {
+    const sessionCache = new SessionCache();
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
     const calls: string[] = [];
 
-    store.sessionId = "sess-1";
-    sessionCache.set("sess-1", makeSessionData({ isStreaming: true, messageCount: 1 }));
-    await store.refreshSession();
-    store.sessionMessages = [{ role: "user", content: "hello", timestamp: 1000 }];
-    sessionCache.set("sess-1", makeSessionData({ messageCount: 3 }));
+    sessionCache.set("sess-1", makeSessionData({ activityState: "running", messageCount: 1 }));
+    await callPrivate(store, "handleSessionCacheUpdate");
 
     mockFetch((url) => {
       calls.push(url);
@@ -306,36 +371,36 @@ describe("ActiveSessionStore session loading contract", () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    await store.refreshSession();
+    sessionCache.set("sess-1", makeSessionData({ messageCount: 3 }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(calls).toEqual(["/api/sessions/sess-1/messages"]);
-    expect(store.sessionData.state.isStreaming).toBe(false);
-    expect(store.sessionMessages).toHaveLength(3);
+    expect(store.sessionData.activityState).not.toBe("running");
+    expect(store.conversation.persistedMessages).toHaveLength(3);
   });
 
-  test("refreshSession does NOT auto-refresh messages when cached session is still streaming", async () => {
+  test("session cache update does NOT auto-refresh messages when cached session is still running", async () => {
     const sessionCache = new SessionCache();
-    const store = new ActiveSessionStore(null, sessionCache);
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
     const calls: string[] = [];
 
-    store.sessionId = "sess-1";
-    sessionCache.set("sess-1", makeSessionData({ isStreaming: true, messageCount: 1 }));
-    await store.refreshSession();
-    sessionCache.set("sess-1", makeSessionData({ isStreaming: true, messageCount: 2 }));
+    sessionCache.set("sess-1", makeSessionData({ activityState: "running", messageCount: 1 }));
+    await callPrivate(store, "handleSessionCacheUpdate");
+    sessionCache.set("sess-1", makeSessionData({ activityState: "running", messageCount: 2 }));
 
     mockFetch((url) => {
       calls.push(url);
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    await store.refreshSession();
+    await callPrivate(store, "handleSessionCacheUpdate");
     expect(calls).toEqual([]);
   });
 
   test("markViewed clears finished activity optimistically", async () => {
     const sessionCache = new SessionCache();
-    const store = new ActiveSessionStore(null, sessionCache);
     sessionCache.set("sess-1", makeSessionData({ activityState: "finished" }));
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
 
     const calls: Array<{ url: string; method: string }> = [];
     mockFetch((url, init) => {
@@ -345,15 +410,15 @@ describe("ActiveSessionStore session loading contract", () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    await store.setRoute("sess-1");
+    await store.initialize();
     expect(sessionCache.get("sess-1")?.activityState).toBeNull();
     expect(calls).toContainEqual({ url: "/api/sessions/sess-1/activity", method: "PATCH" });
   });
 
   test("markViewed rolls back finished activity if the server request fails", async () => {
     const sessionCache = new SessionCache();
-    const store = new ActiveSessionStore(null, sessionCache);
     sessionCache.set("sess-1", makeSessionData({ activityState: "finished" }));
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
 
     mockFetch((url, init) => {
       if (url === "/api/sessions/sess-1/messages") return jsonResponse([]);
@@ -361,7 +426,7 @@ describe("ActiveSessionStore session loading contract", () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    await store.setRoute("sess-1");
+    await store.initialize();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(sessionCache.get("sess-1")?.activityState).toBe("finished");
@@ -369,7 +434,7 @@ describe("ActiveSessionStore session loading contract", () => {
 
   test("markViewed is a no-op when activity is not finished", async () => {
     const sessionCache = new SessionCache();
-    const store = new ActiveSessionStore(null, sessionCache);
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
     sessionCache.set("sess-1", makeSessionData({ activityState: "running" }));
 
     const calls: string[] = [];
@@ -379,26 +444,11 @@ describe("ActiveSessionStore session loading contract", () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    await store.setRoute("sess-1");
+    await store.initialize();
     await store.markViewed();
 
     expect(calls).toEqual(["/api/sessions/sess-1/messages"]);
     expect(sessionCache.get("sess-1")?.activityState).toBe("running");
   });
 
-  test("clearing the route resets session data to a blank session", async () => {
-    const sessionCache = new SessionCache();
-    const store = new ActiveSessionStore(null, sessionCache);
-    store.sessionId = "sess-1";
-    sessionCache.set("sess-1", makeSessionData({ isStreaming: true, messageCount: 3 }));
-    await store.refreshSession();
-    store.sessionMessages = [{ role: "user", content: "hello", timestamp: 1000 }];
-
-    await store.setRoute(null);
-
-    expect(store.projectId).toBeNull();
-    expect(store.sessionId).toBe("");
-    expect(store.sessionData.state.isStreaming).toBe(false);
-    expect(store.sessionMessages).toEqual([]);
-  });
 });

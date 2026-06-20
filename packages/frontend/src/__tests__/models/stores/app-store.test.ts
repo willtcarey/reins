@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { AppStore } from "../../../models/stores/app-store.js";
 import { StubClient } from "../../helpers/stub-client.js";
-import { mockFetch } from "../../helpers/mock-fetch.js";
+import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 
 describe("AppStore activity event routing", () => {
   let client: StubClient;
@@ -14,15 +14,121 @@ describe("AppStore activity event routing", () => {
 
   afterEach(() => {
     store.dispose();
+    restoreFetch();
   });
 
-  test("raw agent activity events do not mutate project activity", () => {
+  test("raw agent events update conversation cache but do not mutate project activity", () => {
     client.fireEvent("s1", 42, { type: "agent_start" });
-    client.fireEvent("s1", 42, { type: "agent_end" });
+    client.fireEvent("s1", 42, {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "working" },
+    });
 
+    expect(store.activeConversationsStore.get("s1").streamingBlocks).toEqual([{ type: "text", text: "working" }]);
     expect(store.projectsStore.activityForSession(42, "s1")).toBeNull();
     expect(store.projectsStore.peekStore(42)).toBeUndefined();
     expect(store.activitySummary).toEqual({ running: 0, finished: 0 });
+  });
+
+  test("keeps inactive conversation state on agent_end until canonical session state is not streaming", async () => {
+    mockFetch((url) => {
+      if (url === "/api/sessions/active-session") {
+        return Response.json({
+          id: "active-session",
+          projectId: 42,
+          taskId: null,
+          parentSessionId: null,
+          name: null,
+          createdAt: "",
+          updatedAt: "",
+          activityState: null,
+          messageCount: 0,
+          state: { model: null, thinkingLevel: "off" },
+        });
+      }
+      if (url === "/api/sessions/active-session/messages") return Response.json([]);
+      return Response.json([], { status: 404 });
+    });
+    await store.setRoute("active-session");
+
+    client.fireEvent("background-session", 42, { type: "agent_start" });
+    client.fireEvent("background-session", 42, {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "working" },
+    });
+    expect(store.activeConversationsStore.get("background-session").streamingBlocks).toEqual([{ type: "text", text: "working" }]);
+
+    client.fireEvent("background-session", 42, {
+      type: "agent_end",
+      messages: [{ role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 1000 }],
+    });
+
+    expect(store.activeConversationsStore.get("background-session").messages).toEqual([
+      { role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 1000 },
+    ]);
+
+    store.sessionCache.set("background-session", {
+      projectId: 42,
+      taskId: null,
+      parentSessionId: null,
+      name: null,
+      createdAt: "",
+      updatedAt: "",
+      activityState: "finished",
+      messageCount: 1,
+      state: { model: null, thinkingLevel: "off" },
+    });
+
+    expect(store.activeConversationsStore.get("background-session")).toMatchObject({
+      messages: [],
+      streamingBlocks: [],
+      persistedMessages: [],
+    });
+  });
+
+  test("keeps active conversation state when an agent run ends", async () => {
+    mockFetch((url) => {
+      if (url === "/api/sessions/active-session") {
+        return Response.json({
+          id: "active-session",
+          projectId: 42,
+          taskId: null,
+          parentSessionId: null,
+          name: null,
+          createdAt: "",
+          updatedAt: "",
+          activityState: null,
+          messageCount: 0,
+          state: { model: null, thinkingLevel: "off" },
+        });
+      }
+      if (url === "/api/sessions/active-session/messages") return Response.json([]);
+      return Response.json([], { status: 404 });
+    });
+    await store.setRoute("active-session");
+
+    client.fireEvent("active-session", 42, { type: "agent_start" });
+    client.fireEvent("active-session", 42, {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "working" },
+    });
+    client.fireEvent("active-session", 42, {
+      type: "agent_end",
+      messages: [{ role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 1000 }],
+    });
+
+    expect(store.activeConversationsStore.get("active-session").messages).toEqual([
+      { role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 1000 },
+    ]);
+    expect(store.activeConversationsStore.get("active-session").streamingBlocks).toEqual([]);
+  });
+
+  test("stores session-scoped websocket errors but ignores global websocket errors", () => {
+    client.fireEvent("", 0, { type: "ws_error", error: "Invalid JSON" });
+    expect(store.activeConversationsStore.get("s1").errorMessage).toBe("");
+
+    client.fireEvent("s1", 0, { type: "ws_error", sessionId: "s1", error: "Missing message field" });
+    expect(store.activeConversationsStore.get("s1").errorMessage).toBe("Missing message field");
   });
 
   test("routes task_updated to project activity reconciliation", () => {
@@ -49,8 +155,52 @@ describe("AppStore activity event routing", () => {
     expect(store.sessionCache.get("delegate-1")?.projectId).toBe(42);
   });
 
+  test("setRoute replaces the active session store when the route session changes", async () => {
+    mockFetch((url) => {
+      if (url === "/api/sessions/sess-1") {
+        return Response.json({
+          id: "sess-1",
+          projectId: 42,
+          taskId: null,
+          parentSessionId: null,
+          name: null,
+          createdAt: "",
+          updatedAt: "",
+          activityState: null,
+          messageCount: 0,
+          state: { model: null, thinkingLevel: "off" },
+        });
+      }
+      if (url === "/api/sessions/sess-2") {
+        return Response.json({
+          id: "sess-2",
+          projectId: 42,
+          taskId: null,
+          parentSessionId: null,
+          name: null,
+          createdAt: "",
+          updatedAt: "",
+          activityState: null,
+          messageCount: 0,
+          state: { model: null, thinkingLevel: "off" },
+        });
+      }
+      if (url === "/api/sessions/sess-1/messages") return Response.json([]);
+      if (url === "/api/sessions/sess-2/messages") return Response.json([]);
+      return Response.json([], { status: 404 });
+    });
+
+    const initialStore = store.activeSessionStore;
+    await store.setRoute("sess-1");
+    const firstSessionStore = store.activeSessionStore;
+    await store.setRoute("sess-2");
+
+    expect(firstSessionStore).not.toBe(initialStore);
+    expect(store.activeSessionStore).not.toBe(firstSessionStore);
+    expect(store.activeSessionStore?.sessionId).toBe("sess-2");
+  });
+
   test("session_updated applies fetched data to the active session", async () => {
-    const activeSession = store["_activeSession"];
     mockFetch((url) => {
       if (url === "/api/sessions/sess-1") {
         return Response.json({
@@ -63,7 +213,7 @@ describe("AppStore activity event routing", () => {
           updatedAt: "",
           activityState: "running",
           messageCount: 2,
-          state: { model: null, thinkingLevel: "off", isStreaming: false, messageCount: 2 },
+          state: { model: null, thinkingLevel: "off" },
         });
       }
       if (url === "/api/sessions/sess-1/messages") return Response.json([]);
@@ -71,6 +221,8 @@ describe("AppStore activity event routing", () => {
     });
 
     await store.setRoute("sess-1");
+    const activeSession = store.activeSessionStore;
+    if (!activeSession) throw new Error("Expected active session store");
 
     client.fireEvent("sess-1", 42, {
       type: "session_updated",
@@ -98,7 +250,7 @@ describe("AppStore activity event routing", () => {
           updatedAt: "",
           activityState: null,
           messageCount: 0,
-          state: { model: null, thinkingLevel: "off", isStreaming: false, messageCount: 0 },
+          state: { model: null, thinkingLevel: "off" },
         });
       }
       return Response.json([], { status: 404 });
@@ -131,7 +283,7 @@ describe("AppStore activity event routing", () => {
           updatedAt: "",
           activityState,
           messageCount: 0,
-          state: { model: null, thinkingLevel: "off", isStreaming: false, messageCount: 0 },
+          state: { model: null, thinkingLevel: "off" },
         });
       }
       if (url === "/api/sessions/s1/messages") return Response.json([]);
@@ -168,7 +320,7 @@ describe("AppStore activity event routing", () => {
           updatedAt: "",
           activityState: "finished",
           messageCount: 0,
-          state: { model: null, thinkingLevel: "off", isStreaming: false, messageCount: 0 },
+          state: { model: null, thinkingLevel: "off" },
         });
       }
       return Response.json({ ok: true });

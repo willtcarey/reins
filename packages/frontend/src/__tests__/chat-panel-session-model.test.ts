@@ -7,8 +7,7 @@ import { templateToString } from "./helpers/lit-template.js";
 describe("ChatPanel session model affordance", () => {
   test("renders a session model button when session data is present", () => {
     const sessionCache = new SessionCache();
-    const store = new ActiveSessionStore(null, sessionCache);
-    store.sessionId = "sess-1";
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
     const sessionData = {
       id: "sess-1",
       projectId: 42,
@@ -22,7 +21,6 @@ describe("ChatPanel session model affordance", () => {
       state: {
         model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
         thinkingLevel: "high",
-        isStreaming: false,
         messageCount: 0,
       },
     };

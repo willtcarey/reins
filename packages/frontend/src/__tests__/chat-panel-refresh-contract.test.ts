@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { ChatPanel } from "../components/chat-panel.js";
 import { ActiveSessionStore } from "../models/stores/active-session-store.js";
+import { ConversationsStore } from "../models/stores/conversations-store.js";
 import { SessionCache } from "../models/stores/session-cache.js";
 import { StubClient } from "./helpers/stub-client.js";
 import type { AgentMessage } from "../models/chat-state.js";
@@ -15,7 +16,7 @@ function callPrivate(obj: object, key: string, ...args: unknown[]) {
 
 function get(obj: object, key: string) { return Reflect.get(obj, key); }
 
-function makeSessionData(overrides: { isStreaming?: boolean; messageCount?: number } = {}) {
+function makeSessionData(overrides: { activityState?: "running" | "finished" | null; messageCount?: number } = {}) {
   return {
     id: "sess-1",
     projectId: 42,
@@ -25,11 +26,10 @@ function makeSessionData(overrides: { isStreaming?: boolean; messageCount?: numb
     createdAt: "",
     updatedAt: "",
     messageCount: overrides.messageCount ?? 0,
-    activityState: null,
+    activityState: overrides.activityState ?? null,
     state: {
       model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
       thinkingLevel: "high",
-      isStreaming: overrides.isStreaming ?? false,
       messageCount: overrides.messageCount ?? 0,
     },
   };
@@ -45,38 +45,31 @@ const sessionCaches = new WeakMap<ActiveSessionStore, SessionCache>();
 function setup(opts: { client?: StubClient } = {}) {
   const client = opts.client ?? new StubClient();
   const sessionCache = new SessionCache();
-  const store = new ActiveSessionStore(client, sessionCache);
+  const conversationsStore = new ConversationsStore();
+  const store = new ActiveSessionStore("sess-1", client, sessionCache, conversationsStore);
   sessionCaches.set(store, sessionCache);
-  store.sessionId = "sess-1";
 
   const el = new ChatPanel();
   Reflect.set(el, "querySelector", () => null);
   el.store = store;
   callPrivate(el, "subscribeToStore");
-  callPrivate(el, "wireStoreEvents");
-  callPrivate(el, "syncFromStore");
 
-  return { el, store, client };
+  return { el, store, client, conversationsStore };
 }
 
 function cleanup(el: ChatPanel) {
   const unsub1 = get(el, "unsubscribeStore");
   if (typeof unsub1 === "function") unsub1();
-  const unsub2 = get(el, "unsubscribeEvent");
-  if (typeof unsub2 === "function") unsub2();
 }
 
 function notify(store: ActiveSessionStore) {
+  void callPrivate(store, "handleSessionCacheUpdate");
   callPrivate(store, "notify");
 }
 
-function fireEvent(el: ChatPanel, event: unknown) {
-  callPrivate(el, "handleAgentEvent", event);
-}
-
-function startStreamingWithTool(el: ChatPanel) {
-  fireEvent(el, { type: "agent_start" });
-  fireEvent(el, {
+function startStreamingWithTool(conversationsStore: ConversationsStore) {
+  conversationsStore.applyEvent("sess-1", { type: "agent_start" });
+  conversationsStore.applyEvent("sess-1", {
     type: "tool_execution_start",
     toolCallId: "tool-1",
     toolName: "bash",
@@ -95,17 +88,16 @@ describe("ChatPanel refresh contract", () => {
 
     const client = new StubClient();
     client.prompt = mock(() => {});
-    const { el, store } = setup({ client });
+    const { el, store, conversationsStore } = setup({ client });
 
     setSessionData(store, makeSessionData({ messageCount: 1 }));
     notify(store);
-    store.sessionMessages = [{ role: "user", content: "earlier prompt", timestamp: 100 }];
-    notify(store);
+    conversationsStore.setPersistedMessages("sess-1", [{ role: "user", content: "earlier prompt", timestamp: 100 }]);
 
     callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: [{ type: "text", text: "new prompt" }] } }));
-    startStreamingWithTool(el);
+    startStreamingWithTool(conversationsStore);
 
-    setSessionData(store, makeSessionData({ isStreaming: true, messageCount: 1 }));
+    setSessionData(store, makeSessionData({ activityState: "running", messageCount: 1 }));
     notify(store);
 
     expect(get(el, "messages")).toEqual([
@@ -123,11 +115,11 @@ describe("ChatPanel refresh contract", () => {
 
     const client = new StubClient();
     client.prompt = mock(() => {});
-    const { el, store } = setup({ client });
+    const { el, store, conversationsStore } = setup({ client });
     const persisted: AgentMessage[] = [{ role: "user", content: "earlier prompt", timestamp: 100 }];
 
     setSessionData(store, makeSessionData({ messageCount: 1 }));
-    store.sessionMessages = persisted;
+    conversationsStore.setPersistedMessages("sess-1", persisted);
     notify(store);
 
     callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: [{ type: "text", text: "new prompt" }] } }));
@@ -136,7 +128,7 @@ describe("ChatPanel refresh contract", () => {
     // the just-sent prompt has been committed. The UI should layer the local
     // optimistic user message on top of that stale persisted snapshot.
     setSessionData(store, makeSessionData({ messageCount: 1 }));
-    store.sessionMessages = [...persisted];
+    conversationsStore.setPersistedMessages("sess-1", [...persisted]);
     notify(store);
 
     expect(get(el, "messages")).toEqual([
@@ -147,39 +139,41 @@ describe("ChatPanel refresh contract", () => {
     cleanup(el);
   });
 
-  test("sessionMessages hydrate an empty panel even when streaming", () => {
+  test("persisted conversation messages hydrate an empty panel even when streaming", () => {
     globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
-    const { el, store } = setup();
+    const { el, store, conversationsStore } = setup();
 
-    setSessionData(store, makeSessionData({ isStreaming: true, messageCount: 2 }));
+    setSessionData(store, makeSessionData({ activityState: "running", messageCount: 2 }));
     notify(store);
 
-    store.sessionMessages = [
+    conversationsStore.setPersistedMessages("sess-1", [
       { role: "user", content: "hello", timestamp: 1000 },
       { role: "assistant", content: [{ type: "text", text: "hi" }], timestamp: 2000 },
-    ];
-    notify(store);
+    ]);
 
     expect(get(el, "isStreaming")).toBe(true);
-    expect(get(el, "messages")).toEqual(store.sessionMessages);
+    expect(get(el, "messages")).toEqual(store.conversation.persistedMessages);
   });
 
-  test("disconnect unsubscribes from the store", () => {
-    const { el, store } = setup();
+  test("disconnect unsubscribes from store render notifications", () => {
+    const { el, store, conversationsStore } = setup();
 
     setSessionData(store, makeSessionData({ messageCount: 1 }));
-    store.sessionMessages = [{ role: "user", content: "before", timestamp: 100 }];
+    conversationsStore.setPersistedMessages("sess-1", [{ role: "user", content: "before", timestamp: 100 }]);
     notify(store);
-    expect(get(el, "messages")).toEqual(store.sessionMessages);
+    expect(get(el, "messages")).toEqual(store.conversation.persistedMessages);
+
+    const requestUpdate = mock(() => undefined);
+    Reflect.set(el, "requestUpdate", requestUpdate);
 
     const unsub = get(el, "unsubscribeStore");
     if (typeof unsub === "function") unsub();
     Reflect.set(el, "unsubscribeStore", undefined);
 
-    store.sessionMessages = [{ role: "user", content: "after", timestamp: 200 }];
+    conversationsStore.setPersistedMessages("sess-1", [{ role: "user", content: "after", timestamp: 200 }]);
     notify(store);
 
-    expect(get(el, "messages")).toEqual([{ role: "user", content: "before", timestamp: 100 }]);
+    expect(requestUpdate).not.toHaveBeenCalled();
   });
 });
 
@@ -187,14 +181,14 @@ describe("ChatPanel stale streaming reconciliation", () => {
   const originalRaf = globalThis.requestAnimationFrame;
   afterEach(() => { globalThis.requestAnimationFrame = originalRaf; });
 
-  test("clears streaming blocks when metadata transitions isStreaming to false", () => {
+  test("clears streaming blocks when metadata transitions activityState from running", () => {
     globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
-    const { el, store } = setup();
+    const { el, store, conversationsStore } = setup();
 
-    setSessionData(store, makeSessionData({ isStreaming: true, messageCount: 1 }));
+    setSessionData(store, makeSessionData({ activityState: "running", messageCount: 1 }));
     notify(store);
-    startStreamingWithTool(el);
-    fireEvent(el, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Running..." } });
+    startStreamingWithTool(conversationsStore);
+    conversationsStore.applyEvent("sess-1", { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Running..." } });
 
     expect(get(el, "streamingBlocks")).toHaveLength(2);
 
@@ -207,23 +201,23 @@ describe("ChatPanel stale streaming reconciliation", () => {
     cleanup(el);
   });
 
-  test("accepts persisted messages when metadata transitions isStreaming to false", () => {
+  test("accepts persisted messages when metadata transitions activityState from running", () => {
     globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
-    const { el, store } = setup();
+    const { el, store, conversationsStore } = setup();
 
-    store.sessionMessages = [{ role: "user", content: "hello", timestamp: 1000 }];
+    conversationsStore.setPersistedMessages("sess-1", [{ role: "user", content: "hello", timestamp: 1000 }]);
     notify(store);
 
-    setSessionData(store, makeSessionData({ isStreaming: true, messageCount: 1 }));
+    setSessionData(store, makeSessionData({ activityState: "running", messageCount: 1 }));
     notify(store);
-    startStreamingWithTool(el);
+    startStreamingWithTool(conversationsStore);
 
     const finalMessages: AgentMessage[] = [
       { role: "user", content: "hello", timestamp: 1000 },
       { role: "assistant", content: [{ type: "text", text: "Here are your files" }], timestamp: 2000 },
       { role: "toolResult", toolCallId: "tool-1", toolName: "bash", content: [{ type: "text", text: "file1.txt" }], isError: false, timestamp: 3000 },
     ];
-    store.sessionMessages = finalMessages;
+    conversationsStore.setPersistedMessages("sess-1", finalMessages);
     setSessionData(store, makeSessionData({ messageCount: 3 }));
     notify(store);
 
@@ -235,19 +229,19 @@ describe("ChatPanel stale streaming reconciliation", () => {
 
   test("messages arriving before metadata are accepted once metadata catches up", () => {
     globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
-    const { el, store } = setup();
+    const { el, store, conversationsStore } = setup();
 
-    setSessionData(store, makeSessionData({ isStreaming: true, messageCount: 1 }));
-    store.sessionMessages = [{ role: "user", content: "hello", timestamp: 1000 }];
+    setSessionData(store, makeSessionData({ activityState: "running", messageCount: 1 }));
+    conversationsStore.setPersistedMessages("sess-1", [{ role: "user", content: "hello", timestamp: 1000 }]);
     notify(store);
-    startStreamingWithTool(el);
+    startStreamingWithTool(conversationsStore);
 
-    // Messages arrive first, metadata still says streaming
+    // Messages arrive first, metadata still says running
     const finalMessages: AgentMessage[] = [
       { role: "user", content: "hello", timestamp: 1000 },
       { role: "assistant", content: [{ type: "text", text: "Done" }], timestamp: 2000 },
     ];
-    store.sessionMessages = finalMessages;
+    conversationsStore.setPersistedMessages("sess-1", finalMessages);
     notify(store);
 
     expect(get(el, "isStreaming")).toBe(true);

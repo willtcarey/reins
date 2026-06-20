@@ -34,11 +34,9 @@ describe("AppShell chat panel rendering", () => {
         state: {
           model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
           thinkingLevel: "high",
-          isStreaming: false,
           messageCount: 0,
         },
       },
-      sessionMessages: [],
     };
 
     Reflect.set(el, "appStore", {
