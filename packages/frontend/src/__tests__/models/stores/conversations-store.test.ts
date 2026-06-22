@@ -92,7 +92,7 @@ describe("ConversationsStore", () => {
     expect(conversations.get("sess-1").messages).toEqual(finalMessages);
   });
 
-  test("evicts retained inactive conversation state when cached activityState is not running", () => {
+  test("prunes unobserved conversation state when cached activity is not running", () => {
     const sessionCache = new SessionCache();
     const conversations = new ConversationsStore({ sessionCache });
 
@@ -114,7 +114,7 @@ describe("ConversationsStore", () => {
     });
   });
 
-  test("keeps active conversation state when cached activityState is not running", () => {
+  test("keeps observed conversation state when cached activity is not running", () => {
     const sessionCache = new SessionCache();
     const conversations = new ConversationsStore({ sessionCache });
     const unsubscribe = conversations.subscribe("active-session", () => {});
@@ -131,7 +131,7 @@ describe("ConversationsStore", () => {
     unsubscribe();
   });
 
-  test("reconciles retention when a completed conversation is no longer observed", () => {
+  test("prunes completed conversation after last subscriber unsubscribes", () => {
     const sessionCache = new SessionCache();
     const conversations = new ConversationsStore({ sessionCache });
     const unsubscribe = conversations.subscribe("sess-1", () => {});

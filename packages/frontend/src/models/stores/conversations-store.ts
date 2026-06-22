@@ -97,7 +97,7 @@ export class ConversationsStore {
   constructor(options: ConversationsStoreOptions = {}) {
     this._sessionCache = options.sessionCache ?? null;
     this._unsubscribeSessionCache = this._sessionCache?.subscribeAll((sessionId) => {
-      this.reconcileSessionRetention(sessionId);
+      this.pruneSessionIfInactive(sessionId);
     }) ?? null;
   }
 
@@ -120,7 +120,7 @@ export class ConversationsStore {
       current.delete(listener);
       if (current.size === 0) {
         this._listeners.delete(sessionId);
-        this.reconcileSessionRetention(sessionId);
+        this.pruneSessionIfInactive(sessionId);
       }
     };
   }
@@ -224,6 +224,12 @@ export class ConversationsStore {
     this.setError(sessionId, "");
   }
 
+  pruneInactive(): void {
+    for (const sessionId of this._states.keys()) {
+      this.pruneSessionIfInactive(sessionId);
+    }
+  }
+
   dispose(): void {
     this._unsubscribeSessionCache?.();
     this._unsubscribeSessionCache = null;
@@ -231,14 +237,12 @@ export class ConversationsStore {
     this._states.clear();
   }
 
-  private reconcileSessionRetention(sessionId: string): void {
+  private pruneSessionIfInactive(sessionId: string): void {
     if (!this._states.has(sessionId)) return;
     if (this._listeners.has(sessionId)) return;
+    if (this._sessionCache?.get(sessionId)?.activityState === "running") return;
 
-    const session = this._sessionCache?.get(sessionId);
-    if (session && session.activityState !== "running") {
-      this.evict(sessionId);
-    }
+    this.evict(sessionId);
   }
 
   private evict(sessionId: string): void {

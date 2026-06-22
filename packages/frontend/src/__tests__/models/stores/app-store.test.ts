@@ -30,62 +30,6 @@ describe("AppStore activity event routing", () => {
     expect(store.activitySummary).toEqual({ running: 0, finished: 0 });
   });
 
-  test("keeps inactive conversation state on agent_end until canonical session state is not streaming", async () => {
-    mockFetch((url) => {
-      if (url === "/api/sessions/active-session") {
-        return Response.json({
-          id: "active-session",
-          projectId: 42,
-          taskId: null,
-          parentSessionId: null,
-          name: null,
-          createdAt: "",
-          updatedAt: "",
-          activityState: null,
-          messageCount: 0,
-          state: { model: null, thinkingLevel: "off" },
-        });
-      }
-      if (url === "/api/sessions/active-session/messages") return Response.json([]);
-      return Response.json([], { status: 404 });
-    });
-    await store.setRoute("active-session");
-
-    client.fireEvent("background-session", 42, { type: "agent_start" });
-    client.fireEvent("background-session", 42, {
-      type: "message_update",
-      assistantMessageEvent: { type: "text_delta", delta: "working" },
-    });
-    expect(store.activeConversationsStore.get("background-session").streamingBlocks).toEqual([{ type: "text", text: "working" }]);
-
-    client.fireEvent("background-session", 42, {
-      type: "agent_end",
-      messages: [{ role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 1000 }],
-    });
-
-    expect(store.activeConversationsStore.get("background-session").messages).toEqual([
-      { role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 1000 },
-    ]);
-
-    store.sessionCache.set("background-session", {
-      projectId: 42,
-      taskId: null,
-      parentSessionId: null,
-      name: null,
-      createdAt: "",
-      updatedAt: "",
-      activityState: "finished",
-      messageCount: 1,
-      state: { model: null, thinkingLevel: "off" },
-    });
-
-    expect(store.activeConversationsStore.get("background-session")).toMatchObject({
-      messages: [],
-      streamingBlocks: [],
-      persistedMessages: [],
-    });
-  });
-
   test("keeps active conversation state when an agent run ends", async () => {
     mockFetch((url) => {
       if (url === "/api/sessions/active-session") {
@@ -121,6 +65,42 @@ describe("AppStore activity event routing", () => {
       { role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 1000 },
     ]);
     expect(store.activeConversationsStore.get("active-session").streamingBlocks).toEqual([]);
+  });
+
+  test("prunes completed active conversation state after route unsubscribe", async () => {
+    mockFetch((url) => {
+      if (url === "/api/sessions/active-session") {
+        return Response.json({
+          id: "active-session",
+          projectId: 42,
+          taskId: null,
+          parentSessionId: null,
+          name: null,
+          createdAt: "",
+          updatedAt: "",
+          activityState: null,
+          messageCount: 0,
+          state: { model: null, thinkingLevel: "off" },
+        });
+      }
+      if (url === "/api/sessions/active-session/messages") return Response.json([]);
+      return Response.json([], { status: 404 });
+    });
+    await store.setRoute("active-session");
+
+    client.fireEvent("active-session", 42, {
+      type: "agent_end",
+      messages: [{ role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 1000 }],
+    });
+    store.sessionCache.set("active-session", { activityState: "finished" });
+
+    await store.setRoute(null);
+
+    expect(store.activeConversationsStore.get("active-session")).toMatchObject({
+      messages: [],
+      streamingBlocks: [],
+      persistedMessages: [],
+    });
   });
 
   test("stores session-scoped websocket errors but ignores global websocket errors", () => {

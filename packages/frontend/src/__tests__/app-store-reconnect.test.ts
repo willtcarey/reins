@@ -140,6 +140,33 @@ describe("AppStore reconnect catch-up", () => {
     expect(store.projectsStore.activitySummary).toEqual({ running: 0, finished: 0 });
   });
 
+  test("reconnect prunes unobserved conversation state when no running activity remains", async () => {
+    client.fireEvent("bg-session", 42, { type: "agent_start" });
+    client.fireEvent("bg-session", 42, {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "working" },
+    });
+    expect(store.activeConversationsStore.get("bg-session").streamingBlocks).toEqual([{ type: "text", text: "working" }]);
+
+    mockFetch((url) => {
+      if (url === "/api/sessions/activity") {
+        return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response("", { status: 404 });
+    });
+    store.projectsStore.fetchProjects = mock(async () => {});
+    store.projectsStore.handleReconnect = mock(async () => {});
+
+    client.fireConnection(true);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(store.activeConversationsStore.get("bg-session")).toMatchObject({
+      messages: [],
+      streamingBlocks: [],
+      persistedMessages: [],
+    });
+  });
+
   test("reconnect marks a visible active session viewed when reconciliation finds it finished", async () => {
     store.projectsStore.fetchProjects = mock(async () => {});
     store.projectsStore.handleReconnect = mock(async () => {});

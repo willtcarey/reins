@@ -333,6 +333,7 @@ export class AppStore {
     }
 
     await Promise.allSettled(tasks);
+    this.activeConversationsStore.pruneInactive();
   }
 
   private installBrowserResumeHandlers(): () => void {
