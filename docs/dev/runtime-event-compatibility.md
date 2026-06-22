@@ -50,6 +50,15 @@ Reins persists messages when it observes:
 
 Reins does not persist on aborted compaction.
 
+Session activity indicators are also event-driven:
+
+- `agent_start` marks a non-delegate session `activity_state = 'running'`
+- `compaction_start` marks a non-delegate session `activity_state = 'running'`
+- `agent_end` marks a non-delegate session `activity_state = 'finished'`
+- `compaction_end` with `willRetry === false` marks a non-delegate session `activity_state = 'finished'`
+
+Do not assume compaction is nested inside an already-started agent run, and do not assume compaction is followed by `agent_end`. Pi can emit `compaction_start` before `agent_start` when it compacts at the beginning of a turn, and can also compact after `agent_end` with no retry. See [Pi Runtime Event Ordering](pi-runtime-event-order.md).
+
 On `agent_end`, Reins may also update session metadata (`model_provider`, `model_id`, `thinking_level`) from `runtime.getSessionMetadata()` when available.
 
 ## Tool event contract

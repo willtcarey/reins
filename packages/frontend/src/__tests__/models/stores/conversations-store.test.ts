@@ -141,6 +141,17 @@ describe("ConversationsStore", () => {
     expect(conversations.get("sess-1").messages).toEqual(finalMessages);
   });
 
+  test("when server state leaves streaming it clears stale compacting state", () => {
+    const conversations = new ConversationsStore();
+    conversations.applyEvent("sess-1", { type: "compaction_start", reason: "threshold" });
+
+    expect(conversations.get("sess-1").isCompacting).toBe(true);
+
+    conversations.clearStreamingState("sess-1");
+
+    expect(conversations.get("sess-1").isCompacting).toBe(false);
+  });
+
   test("prunes unobserved conversation state when cached activity is not running", () => {
     const sessionCache = new SessionCache();
     const conversations = new ConversationsStore({ sessionCache });

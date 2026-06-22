@@ -52,7 +52,7 @@ export interface RuntimeSessionTools {
 
 type RuntimeCompactionEvent =
   | { type: "compaction_start"; reason: string }
-  | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean; errorMessage?: string };
+  | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean; errorMessage?: string; willRetry?: boolean };
 
 /**
  * Streaming delta event for assistant messages. Intentionally loose so both

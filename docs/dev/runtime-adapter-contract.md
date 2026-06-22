@@ -121,6 +121,8 @@ Tool names should be normalized to Reins names where possible (`read`, `write`, 
   - Useful for pi compatibility and mid-loop persistence.
 - `compaction_start`, `compaction_end`
   - Required if the runtime performs context compaction/summarization.
+  - `compaction_start` may occur before `agent_start` for runtimes that compact before entering the agent loop for a new turn. Reins treats it as active session work.
+  - Set `compaction_end.willRetry` when known. `willRetry: true` means active work will continue after compaction; `willRetry: false` means compaction is terminal and Reins should not wait for a later `agent_end` to clear activity.
 - `auto_retry_start`, `auto_retry_end`
   - Optional UI diagnostics for retrying runtimes.
 

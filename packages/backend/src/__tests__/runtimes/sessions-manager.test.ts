@@ -502,6 +502,11 @@ describe("runtime sessions manager", () => {
         event: { type: "compaction_start", reason: "auto" },
       },
       {
+        type: "session_updated",
+        sessionId: "sess-broadcast-observer",
+        projectId: project.id,
+      },
+      {
         type: "event",
         sessionId: "sess-broadcast-observer",
         projectId: project.id,

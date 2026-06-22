@@ -20,5 +20,6 @@
 | [tool-renderers.md](tool-renderers.md) | frontend | Tool renderer registry, per-tool rendering tiers, adding new renderers |
 | [lit-conventions.md](lit-conventions.md) | frontend | Lit gotchas: cross-component template `this` binding, conventions |
 | [runtime-event-compatibility.md](runtime-event-compatibility.md) | backend | Runtime adapter event compatibility contract for persistence, WS broadcast, and normalization |
+| [pi-runtime-event-order.md](pi-runtime-event-order.md) | backend | Pi lifecycle event ordering notes, especially compaction before `agent_start` |
 | [runtime-adapter-contract.md](runtime-adapter-contract.md) | backend | Minimum viable runtime adapter contract: adapter methods, runtime methods, events, messages, tools, and resume expectations |
 

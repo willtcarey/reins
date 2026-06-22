@@ -136,10 +136,11 @@ export class ConversationsStore {
   clearStreamingState(sessionId: string): void {
     if (!sessionId) return;
     const state = this.ensure(sessionId);
-    if (state.streamingBlocks.length === 0) return;
+    if (state.streamingBlocks.length === 0 && !state.isCompacting) return;
     this.set(sessionId, {
       ...state,
       streamingBlocks: [],
+      isCompacting: false,
       messages: state.persistedMessages,
     });
   }

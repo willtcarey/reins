@@ -86,6 +86,90 @@ describe("runtime persistence observer", () => {
     detach();
   });
 
+  test("persists activity_state='running' on compaction_start", async () => {
+    const project = createProject("Reins", "/tmp/reins-compaction-activity");
+    createSession("sess-compacting", project.id, { agentRuntimeType: "test_runtime" });
+
+    const { runtime, emit, getMessagesCalls } = createRuntimeStub();
+    const broadcasts: unknown[] = [];
+    const broadcast: Broadcast = (msg) => {
+      broadcasts.push(msg);
+    };
+
+    const detach = attachRuntimePersistenceObserver({
+      sessionId: "sess-compacting",
+      runtime,
+      sessions: makeSessions(broadcast),
+    });
+
+    emit({ type: "compaction_start", reason: "threshold" });
+    await Bun.sleep(50);
+
+    expect(getSession("sess-compacting")!.activity_state).toBe("running");
+    expect(getMessagesCalls).toBe(0);
+    expect(broadcasts).toContainEqual({
+      type: "session_updated",
+      sessionId: "sess-compacting",
+      projectId: project.id,
+    });
+
+    detach();
+  });
+
+  test("persists activity_state='finished' on terminal compaction_end", async () => {
+    const project = createProject("Reins", "/tmp/reins-terminal-compaction-activity");
+    createSession("sess-terminal-compaction", project.id, { agentRuntimeType: "test_runtime" });
+
+    const { runtime, emit } = createRuntimeStub();
+
+    const detach = attachRuntimePersistenceObserver({
+      sessionId: "sess-terminal-compaction",
+      runtime,
+      sessions: makeSessions(),
+    });
+
+    emit({ type: "agent_start" });
+    await Bun.sleep(50);
+    expect(getSession("sess-terminal-compaction")!.activity_state).toBe("running");
+
+    emit({ type: "agent_end", messages: [] });
+    await Bun.sleep(50);
+    expect(getSession("sess-terminal-compaction")!.activity_state).toBe("finished");
+
+    emit({ type: "compaction_start", reason: "threshold" });
+    await Bun.sleep(50);
+    expect(getSession("sess-terminal-compaction")!.activity_state).toBe("running");
+
+    emit({ type: "compaction_end", result: { summary: "done" }, aborted: false, willRetry: false });
+    await Bun.sleep(50);
+    expect(getSession("sess-terminal-compaction")!.activity_state).toBe("finished");
+
+    detach();
+  });
+
+  test("keeps activity_state='running' on retrying compaction_end", async () => {
+    const project = createProject("Reins", "/tmp/reins-retrying-compaction-activity");
+    createSession("sess-retrying-compaction", project.id, { agentRuntimeType: "test_runtime" });
+
+    const { runtime, emit } = createRuntimeStub();
+
+    const detach = attachRuntimePersistenceObserver({
+      sessionId: "sess-retrying-compaction",
+      runtime,
+      sessions: makeSessions(),
+    });
+
+    emit({ type: "compaction_start", reason: "overflow" });
+    await Bun.sleep(50);
+    expect(getSession("sess-retrying-compaction")!.activity_state).toBe("running");
+
+    emit({ type: "compaction_end", result: { summary: "done" }, aborted: false, willRetry: true });
+    await Bun.sleep(50);
+    expect(getSession("sess-retrying-compaction")!.activity_state).toBe("running");
+
+    detach();
+  });
+
   test("persists activity_state='finished' on agent_end", async () => {
     const project = createProject("Reins", "/tmp/reins-activity");
     createSession("sess-activity", project.id, { agentRuntimeType: "test_runtime" });
@@ -163,6 +247,10 @@ describe("runtime persistence observer", () => {
       runtime,
       sessions: makeSessions(broadcast),
     });
+
+    emit({ type: "compaction_start", reason: "threshold" });
+    await Bun.sleep(50);
+    expect(getSession("sess-child")!.activity_state).toBeNull();
 
     emit({ type: "agent_start" });
     await Bun.sleep(50);

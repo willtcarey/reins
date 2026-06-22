@@ -19,8 +19,13 @@ function shouldPersistForRuntimeEvent(event: AgentRuntimeEvent): boolean {
 }
 
 function getActivityStateForEvent(event: AgentRuntimeEvent): "running" | "finished" | null {
-  if (event.type === "agent_start") return "running";
+  if (event.type === "agent_start" || event.type === "compaction_start") return "running";
   if (event.type === "agent_end") return "finished";
+
+  // A non-retrying compaction may be terminal after a prior agent_end, so do
+  // not wait for another agent_end to clear the running state from compaction_start.
+  if (event.type === "compaction_end" && event.willRetry === false) return "finished";
+
   return null;
 }
 
