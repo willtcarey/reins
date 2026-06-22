@@ -174,13 +174,13 @@ export class ProjectsStore {
 
   // ---- Reconnect / event handling -------------------------------------------
 
-  /**
-   * Refresh loaded project data and reconcile activity after a WebSocket reconnect.
-   * Since activityState is now server-authoritative (persisted in DB),
-   * refreshing session lists restores the correct activity state.
-   */
-  async handleReconnect(_activeSessionId: string | null = null): Promise<void> {
-    await this.refreshAll();
+  /** Refresh project list, activity snapshot, and all loaded project stores from the server. */
+  async refreshFromServer(): Promise<void> {
+    await Promise.allSettled([
+      this.fetchProjects(),
+      this.fetchActivitySnapshot(),
+      this.refreshAll(),
+    ]);
   }
 
   async handleTaskUpdated(projectId: number): Promise<void> {

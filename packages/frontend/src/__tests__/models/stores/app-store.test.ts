@@ -135,6 +135,66 @@ describe("AppStore activity event routing", () => {
     expect(store.sessionCache.get("delegate-1")?.projectId).toBe(42);
   });
 
+  test("setRoute exposes the active session store while initialization is in flight", async () => {
+    let resolveDetail!: (response: Response) => void;
+    let resolveMessages!: (response: Response) => void;
+    mockFetch((url) => {
+      if (url === "/api/sessions/sess-1") return new Promise<Response>((resolve) => { resolveDetail = resolve; });
+      if (url === "/api/sessions/sess-1/messages") return new Promise<Response>((resolve) => { resolveMessages = resolve; });
+      return Response.json([], { status: 404 });
+    });
+
+    const routePromise = store.setRoute("sess-1");
+    let settled = false;
+    routePromise.then(() => { settled = true; });
+    await Promise.resolve();
+
+    expect(store.activeSessionStore?.sessionId).toBe("sess-1");
+    expect(settled).toBe(false);
+
+    resolveDetail(Response.json({
+      id: "sess-1",
+      projectId: 42,
+      taskId: null,
+      parentSessionId: null,
+      name: null,
+      createdAt: "",
+      updatedAt: "",
+      activityState: null,
+      messageCount: 0,
+      state: { model: null, thinkingLevel: "off" },
+    }));
+    resolveMessages(Response.json([]));
+    await routePromise;
+  });
+
+  test("setRoute refreshes the diff after session initialization", async () => {
+    mockFetch((url) => {
+      if (url === "/api/sessions/sess-1") {
+        return Response.json({
+          id: "sess-1",
+          projectId: 42,
+          taskId: null,
+          parentSessionId: null,
+          name: null,
+          createdAt: "",
+          updatedAt: "",
+          activityState: null,
+          messageCount: 0,
+          state: { model: null, thinkingLevel: "off" },
+        });
+      }
+      if (url === "/api/sessions/sess-1/messages") return Response.json([]);
+      return Response.json([], { status: 404 });
+    });
+    const refresh = mock(async () => {});
+    store.diffStore.refresh = refresh;
+
+    await store.setRoute("sess-1");
+
+    expect(refresh).toHaveBeenCalled();
+  });
+
   test("setRoute replaces the active session store when the route session changes", async () => {
     mockFetch((url) => {
       if (url === "/api/sessions/sess-1") {
@@ -245,44 +305,6 @@ describe("AppStore activity event routing", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(store.projectsStore.activityForSession(42, "sess-1")).toBeNull();
-  });
-
-  test("fires mark-as-viewed request when active session update fetches finished activity", async () => {
-    let activityState: "running" | "finished" = "running";
-    const requestedUrls: string[] = [];
-    mockFetch((url) => {
-      requestedUrls.push(String(url));
-      if (url === "/api/sessions/s1") {
-        return Response.json({
-          id: "s1",
-          projectId: 42,
-          taskId: null,
-          parentSessionId: null,
-          name: null,
-          createdAt: "",
-          updatedAt: "",
-          activityState,
-          messageCount: 0,
-          state: { model: null, thinkingLevel: "off" },
-        });
-      }
-      if (url === "/api/sessions/s1/messages") return Response.json([]);
-      return Response.json({ ok: true });
-    });
-
-    await store.setRoute("s1");
-    activityState = "finished";
-
-    client.fireEvent("s1", 42, {
-      type: "session_updated",
-      sessionId: "s1",
-      projectId: 42,
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(store.projectsStore.activityForSession(42, "s1")).toBeNull();
-    expect(requestedUrls).toContain("/api/sessions/s1/activity");
   });
 
   test("does not fire mark-as-viewed for background session updates", async () => {

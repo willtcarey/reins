@@ -114,10 +114,7 @@ export class ActiveSessionStore {
 
   // ---- Initialization -------------------------------------------------------
 
-  /**
-   * Initialize the route-scoped session facade. Metadata is read from
-   * SessionCache; callers are responsible for fetching/populating that cache.
-   */
+  /** Initialize the route-scoped session facade and refresh server-backed state. */
   async initialize(): Promise<void> {
     if (this._disposed) return;
 
@@ -136,7 +133,20 @@ export class ActiveSessionStore {
       this.notify();
     }
 
-    await this.fetchSessionMessages(this.sessionId, fetchId);
+    await Promise.allSettled([
+      this._sessionCache.fetchDetail(this.sessionId),
+      this.fetchSessionMessages(this.sessionId, fetchId),
+    ]);
+  }
+
+  /** Refresh canonical metadata and persisted messages for the active session. */
+  async refreshFromServer(): Promise<void> {
+    if (this._disposed) return;
+    const fetchId = ++this._fetchId;
+    await Promise.allSettled([
+      this._sessionCache.fetchDetail(this.sessionId),
+      this.fetchSessionMessages(this.sessionId, fetchId),
+    ]);
   }
 
   // ---- Actions --------------------------------------------------------------

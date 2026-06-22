@@ -159,20 +159,18 @@ export class AppShell extends LitElement {
   private async applyRoute(route: Route, previousProjectId?: number | null) {
     const store = this.appStore;
     const previousSessionId = store.sessionId;
+    const nextSessionId = route.sessionId ?? "";
+
+    // Show the chat shell immediately; session metadata and messages hydrate
+    // through the active store subscription.
+    if (nextSessionId && nextSessionId !== previousSessionId) {
+      this.activeTab = "chat";
+    }
+
     await store.setRoute(route.sessionId);
     // Reset file tree when project changes (derived from session)
     if (previousProjectId !== undefined && store.projectId !== previousProjectId) {
       this.fileTreeState.reset();
-    }
-    // When switching sessions, jump to chat and refresh the diff
-    if (store.sessionId && store.sessionId !== previousSessionId) {
-      this.activeTab = "chat";
-      store.diffStore.refresh();
-    }
-    // Clear unread completion when viewing a session, but keep the green
-    // running indicator visible until the agent loop actually ends.
-    if (store.sessionId) {
-      void store.activeSessionStore?.markViewed();
     }
     // Track session visit for quick-open recency ordering
     if (store.sessionId) {

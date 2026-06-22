@@ -45,20 +45,16 @@ describe("AppStore reconnect catch-up", () => {
     restoreFetch();
   });
 
-  test("reconnect fetches projects and delegates project reconnect catch-up", () => {
-    store.projectsStore.fetchProjects = mock(async () => {});
-    store.projectsStore.handleReconnect = mock(async () => {});
+  test("reconnect refreshes project state", () => {
+    store.projectsStore.refreshFromServer = mock(async () => {});
 
     client.fireConnection(true);
 
-    expect(store.projectsStore.fetchProjects).toHaveBeenCalled();
-    // handleReconnect is called with activeSessionId (null when no active session)
-    expect(store.projectsStore.handleReconnect).toHaveBeenCalled();
+    expect(store.projectsStore.refreshFromServer).toHaveBeenCalled();
   });
 
-  test("reconnect refreshes active session messages", async () => {
-    store.projectsStore.fetchProjects = mock(async () => {});
-    store.projectsStore.handleReconnect = mock(async () => {});
+  test("reconnect refreshes active session state", async () => {
+    store.projectsStore.refreshFromServer = mock(async () => {});
 
     // Set up an active session
     mockFetch((url) => {
@@ -71,23 +67,23 @@ describe("AppStore reconnect catch-up", () => {
     await store.setRoute("sess-1");
     const activeStore = store.activeSessionStore;
     if (!activeStore) throw new Error("Expected active session store");
-    const refreshMessagesSpy = mock(async () => {});
-    activeStore.refreshMessages = refreshMessagesSpy;
+    const refreshFromServerSpy = mock(async () => {});
+    activeStore.refreshFromServer = refreshFromServerSpy;
 
     client.fireConnection(true);
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(store.projectsStore.handleReconnect).toHaveBeenCalledWith("sess-1");
-    expect(refreshMessagesSpy).toHaveBeenCalled();
+    expect(store.projectsStore.refreshFromServer).toHaveBeenCalled();
+    expect(refreshFromServerSpy).toHaveBeenCalled();
   });
 
-  test("reconnect does not call handleReconnect when disconnecting", () => {
-    const handleReconnectSpy = mock(async () => {});
-    store.projectsStore.handleReconnect = handleReconnectSpy;
+  test("reconnect does not refresh project state when disconnecting", () => {
+    const refreshFromServerSpy = mock(async () => {});
+    store.projectsStore.refreshFromServer = refreshFromServerSpy;
 
     client.fireConnection(false);
 
-    expect(handleReconnectSpy).not.toHaveBeenCalled();
+    expect(refreshFromServerSpy).not.toHaveBeenCalled();
   });
 
   test("connect fetches activity snapshot and populates project-level activity", async () => {
@@ -107,7 +103,7 @@ describe("AppStore reconnect catch-up", () => {
     });
 
     store.projectsStore.fetchProjects = mock(async () => {});
-    store.projectsStore.handleReconnect = mock(async () => {});
+    store.projectsStore.refreshAll = mock(async () => {});
 
     client.fireConnection(true);
 
@@ -131,7 +127,7 @@ describe("AppStore reconnect catch-up", () => {
     });
 
     store.projectsStore.fetchProjects = mock(async () => {});
-    store.projectsStore.handleReconnect = mock(async () => {});
+    store.projectsStore.refreshAll = mock(async () => {});
 
     // Should not throw
     client.fireConnection(true);
@@ -155,7 +151,7 @@ describe("AppStore reconnect catch-up", () => {
       return new Response("", { status: 404 });
     });
     store.projectsStore.fetchProjects = mock(async () => {});
-    store.projectsStore.handleReconnect = mock(async () => {});
+    store.projectsStore.refreshAll = mock(async () => {});
 
     client.fireConnection(true);
     await new Promise((r) => setTimeout(r, 0));
@@ -169,7 +165,7 @@ describe("AppStore reconnect catch-up", () => {
 
   test("reconnect marks a visible active session viewed when reconciliation finds it finished", async () => {
     store.projectsStore.fetchProjects = mock(async () => {});
-    store.projectsStore.handleReconnect = mock(async () => {});
+    store.projectsStore.refreshAll = mock(async () => {});
 
     let isRunning = true;
     const requests: Array<{ url: string; method: string }> = [];
@@ -219,7 +215,7 @@ describe("AppStore reconnect catch-up", () => {
       client = new StubClient();
       store = new AppStore(client);
       store.connect();
-      store.projectsStore.handleReconnect = mock(async () => {});
+      store.projectsStore.refreshAll = mock(async () => {});
 
       let isRunning = true;
       mockFetch((url) => {

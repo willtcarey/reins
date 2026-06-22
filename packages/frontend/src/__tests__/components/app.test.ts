@@ -88,14 +88,44 @@ describe("AppShell visibility change", () => {
 });
 
 describe("AppShell activity routing", () => {
-  test("viewing a session routes the viewed transition through ActiveSessionStore", async () => {
+  test("switches to chat before route initialization finishes", async () => {
     Reflect.set(globalThis, "location", { protocol: "http:", host: "localhost:3000" });
     Reflect.set(globalThis, "window", { matchMedia: () => ({ matches: false }) });
     Reflect.set(globalThis, "navigator", { standalone: false });
 
     const el = new AppShell();
-    const markViewed = mock(() => {});
-    const refreshDiff = mock(() => {});
+    Reflect.set(el, "activeTab", "changes");
+
+    let resolveRoute!: () => void;
+    const appStore = {
+      projectId: 42,
+      sessionId: "",
+      setRoute: mock((sessionId: string | null) => {
+        appStore.sessionId = sessionId ?? "";
+        return new Promise<void>((resolve) => { resolveRoute = resolve; });
+      }),
+      diffStore: { refresh: mock(() => {}) },
+      activeSessionStore: { markViewed: mock(() => {}) },
+    };
+
+    Reflect.set(el, "appStore", appStore);
+    Reflect.set(el, "quickOpenStore", { recordVisit: mock(() => {}) });
+
+    const routePromise = Reflect.get(el, "applyRoute").call(el, { sessionId: "s1" });
+    await Promise.resolve();
+
+    expect(Reflect.get(el, "activeTab")).toBe("chat");
+
+    resolveRoute();
+    await routePromise;
+  });
+
+  test("viewing a session records the quick-open visit", async () => {
+    Reflect.set(globalThis, "location", { protocol: "http:", host: "localhost:3000" });
+    Reflect.set(globalThis, "window", { matchMedia: () => ({ matches: false }) });
+    Reflect.set(globalThis, "navigator", { standalone: false });
+
+    const el = new AppShell();
     const recordVisit = mock(() => {});
 
     const appStore = {
@@ -104,8 +134,7 @@ describe("AppShell activity routing", () => {
       setRoute: mock(async (sessionId: string | null) => {
         appStore.sessionId = sessionId ?? "";
       }),
-      diffStore: { refresh: refreshDiff },
-      activeSessionStore: { markViewed },
+      activeSessionStore: { markViewed: mock(() => {}) },
     };
 
     Reflect.set(el, "appStore", appStore);
@@ -113,6 +142,6 @@ describe("AppShell activity routing", () => {
 
     await Reflect.get(el, "applyRoute").call(el, { sessionId: "s1" });
 
-    expect(markViewed).toHaveBeenCalledTimes(1);
+    expect(recordVisit).toHaveBeenCalledWith("s1");
   });
 });

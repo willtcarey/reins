@@ -348,12 +348,18 @@ describe("ProjectsStore per-project data", () => {
     expect(store.activitySummary).toEqual({ running: 2, finished: 1 });
   });
 
-  test("handleReconnect refreshes loaded data", async () => {
+  test("refreshFromServer refreshes project list, activity, and loaded data", async () => {
+    const fetchProjects = mock(async () => {});
+    const fetchActivitySnapshot = mock(async () => {});
     const refreshAll = mock(async () => {});
+    store.fetchProjects = fetchProjects;
+    store.fetchActivitySnapshot = fetchActivitySnapshot;
     store.refreshAll = refreshAll;
 
-    await store.handleReconnect("active");
+    await store.refreshFromServer();
 
+    expect(fetchProjects).toHaveBeenCalled();
+    expect(fetchActivitySnapshot).toHaveBeenCalled();
     expect(refreshAll).toHaveBeenCalled();
   });
 

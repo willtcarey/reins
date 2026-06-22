@@ -26,7 +26,7 @@ export type AppStoreListener = () => void;
 export class AppStore {
   // ---- Delegates ------------------------------------------------------------
 
-  private _activeSession: ActiveSessionStore | null = null;
+  #activeSessionStore: ActiveSessionStore | null = null;
   private _client: IAppClient;
 
   // ---- Sub-stores -----------------------------------------------------------
@@ -88,7 +88,7 @@ export class AppStore {
       // Handle open_file broadcast (agent triggered ui.openFile()).
       // Only open if the user is viewing the session that sent it.
       if (event.type === "open_file") {
-        if (sessionId !== this._activeSession?.sessionId) return;
+        if (sessionId !== this.activeSessionStore?.sessionId) return;
         const lineRange = event.startLine != null && event.endLine != null
           ? { startLine: event.startLine, endLine: event.endLine }
           : undefined;
@@ -103,12 +103,15 @@ export class AppStore {
       }
 
       if (event.type === "session_updated") {
-        void this.handleSessionUpdated(event.sessionId, event.projectId);
+        void Promise.all([
+          this.sessionCache.fetchDetail(event.sessionId),
+          this.projectsStore.refresh(event.projectId),
+        ]);
         return;
       }
 
       // Only refresh diff for the session we're viewing
-      if (sessionId !== this._activeSession?.sessionId) return;
+      if (sessionId !== this.activeSessionStore?.sessionId) return;
 
       const refreshDiff =
         (event.type === "tool_execution_end" && FILE_MODIFYING_TOOLS.has(event.toolName)) ||
@@ -120,24 +123,12 @@ export class AppStore {
     });
   }
 
-  private createActiveSessionStore(sessionId: string): ActiveSessionStore {
-    return new ActiveSessionStore(sessionId, this._client, this.sessionCache, this.activeConversationsStore);
-  }
-
   private clearActiveSessionStore(): void {
     this._unsubscribeActiveSession?.();
     this._unsubscribeActiveSession = null;
-    this._activeSession?.dispose();
-    this._activeSession = null;
+    this.activeSessionStore?.dispose();
+    this.activeSessionStore = null;
     this.notify();
-  }
-
-  private replaceActiveSessionStore(sessionId: string): ActiveSessionStore {
-    this.clearActiveSessionStore();
-    this._activeSession = this.createActiveSessionStore(sessionId);
-    this._unsubscribeActiveSession = this._activeSession.subscribe(() => this.notify());
-    this.notify();
-    return this._activeSession;
   }
 
   // ---- Project list accessors ------------------------------------------------
@@ -146,9 +137,10 @@ export class AppStore {
 
   // ---- ActiveSessionStore delegate accessors ---------------------------------
 
-  get activeSessionStore(): ActiveSessionStore | null { return this._activeSession; }
-  get projectId() { return this._activeSession?.projectId ?? null; }
-  get sessionId() { return this._activeSession?.sessionId ?? ""; }
+  get activeSessionStore(): ActiveSessionStore | null { return this.#activeSessionStore; }
+  private set activeSessionStore(value: ActiveSessionStore | null) { this.#activeSessionStore = value; }
+  get projectId() { return this.activeSessionStore?.projectId ?? null; }
+  get sessionId() { return this.activeSessionStore?.sessionId ?? ""; }
 
   /** Summary counts across all project activity, for shell-level title/badge state. */
   get activitySummary(): { running: number; finished: number } {
@@ -160,7 +152,7 @@ export class AppStore {
    * when no project is active or its store hasn't been loaded yet.
    */
   get activeProjectStore(): ProjectStore | null {
-    const projectId = this._activeSession?.projectId ?? null;
+    const projectId = this.activeSessionStore?.projectId ?? null;
     if (projectId == null) return null;
     return this.projectsStore.peekStore(projectId) ?? null;
   }
@@ -179,31 +171,39 @@ export class AppStore {
       return;
     }
 
-    const activeSession = this.replaceActiveSessionStore(nextSessionId);
-    const detailPromise = this.sessionCache.fetchDetail(nextSessionId);
+    this.clearActiveSessionStore();
+    const activeSession = new ActiveSessionStore(
+      nextSessionId,
+      this._client,
+      this.sessionCache,
+      this.activeConversationsStore,
+    );
+    this.activeSessionStore = activeSession;
+    this._unsubscribeActiveSession = activeSession.subscribe(() => this.notify());
+    this.notify();
 
-    const initializePromise = activeSession.initialize();
-    await Promise.all([initializePromise, detailPromise]);
+    await activeSession.initialize();
 
     // A newer route may have replaced this ActiveSessionStore while the
     // previous route was still fetching. The newer route owns AppStore-level
     // coordination from here.
-    if (this._activeSession !== activeSession) return;
+    if (this.activeSessionStore !== activeSession) return;
 
     // Update diff store project when it changes
     if (this.projectId !== previousProjectId) {
       this.diffStore.setProject(this.projectId);
     }
 
-    // After route is applied, resolve the branch for the diff store
+    // After route is applied, resolve the branch and refresh the diff store.
     this._updateDiffBranch();
+    void this.diffStore.refresh();
   }
 
   async updateTask(
     taskId: number,
     updates: { title?: string; description?: string | null },
   ): Promise<{ ok: true } | { error: string }> {
-    const projectId = this._activeSession?.projectId ?? null;
+    const projectId = this.activeSessionStore?.projectId ?? null;
     if (projectId == null) return { error: "No project" };
     const store = this.projectsStore.peekStore(projectId);
     if (!store) return { error: "No project data" };
@@ -211,12 +211,12 @@ export class AppStore {
   }
 
   async deleteTask(taskId: number): Promise<{ ok: true } | { error: string }> {
-    const projectId = this._activeSession?.projectId ?? null;
+    const projectId = this.activeSessionStore?.projectId ?? null;
     if (projectId == null) return { error: "No project" };
     const store = this.projectsStore.peekStore(projectId);
     if (!store) return { error: "No project data" };
     const result = await store.deleteTask(taskId);
-    if ("ok" in result && this._activeSession?.sessionData?.taskId === taskId) {
+    if ("ok" in result && this.activeSessionStore?.sessionData?.taskId === taskId) {
       // Active session belonged to deleted task — clear it
       await this.setRoute(null);
     }
@@ -292,48 +292,20 @@ export class AppStore {
 
   // ---- Server reconciliation (internal) --------------------------------------
 
-  private async handleSessionUpdated(sessionId: string, projectId: number): Promise<void> {
-    const detailPromise = this.sessionCache.fetchDetail(sessionId);
-    const refreshPromise = this.projectsStore.refresh(projectId);
-
-    await detailPromise;
-    await refreshPromise;
-  }
-
   private requestServerReconcile(): Promise<void> {
     if (this._serverReconcileInFlight) return this._serverReconcileInFlight;
 
-    this._serverReconcileInFlight = this.reconcileFromServer().finally(() => {
+    this._serverReconcileInFlight = (async () => {
+      const activeSessionStore = this.activeSessionStore;
+      await Promise.allSettled([
+        this.projectsStore.refreshFromServer(),
+        activeSessionStore?.refreshFromServer(),
+      ]);
+      this.activeConversationsStore.pruneInactive();
+    })().finally(() => {
       this._serverReconcileInFlight = null;
     });
     return this._serverReconcileInFlight;
-  }
-
-  private async reconcileFromServer(): Promise<void> {
-    const activeSessionId = this._activeSession?.sessionId || null;
-    const tasks: Promise<unknown>[] = [
-      // Always refresh the project list on reconnect/resume.
-      this.projectsStore.fetchProjects(),
-      // Fetch server-side activity snapshot so activity indicators appear
-      // immediately — even for projects not yet expanded in the sidebar.
-      this.projectsStore.fetchActivitySnapshot(),
-      // Refresh loaded project stores so sidebar data and activity catch up
-      // on events missed while disconnected/asleep.
-      this.projectsStore.handleReconnect(activeSessionId),
-    ];
-
-    if (activeSessionId) {
-      tasks.push((async () => {
-        // Refresh active-session metadata and messages. The active session
-        // subscribes to SessionCache, so fetching detail applies metadata;
-        // always refresh messages to catch any events missed during the pause.
-        await this.refreshActiveSessionFromServer();
-        await this._activeSession?.refreshMessages();
-      })());
-    }
-
-    await Promise.allSettled(tasks);
-    this.activeConversationsStore.pruneInactive();
   }
 
   private installBrowserResumeHandlers(): () => void {
@@ -357,13 +329,6 @@ export class AppStore {
     };
   }
 
-  private async refreshActiveSessionFromServer(): Promise<void> {
-    const sessionId = this._activeSession?.sessionId;
-    if (!sessionId) return;
-
-    await this.sessionCache.fetchDetail(sessionId);
-  }
-
   // ---- Diff branch resolution (internal) ------------------------------------
 
   /**
@@ -371,12 +336,12 @@ export class AppStore {
    * Task sessions → task's branch_name; scratch sessions → null (HEAD).
    */
   private _updateDiffBranch() {
-    const session = this._activeSession?.sessionData;
+    const session = this.activeSessionStore?.sessionData;
     if (!session?.taskId) {
       this.diffStore.setBranch(null);
       return;
     }
-    const projectId = this._activeSession?.projectId ?? null;
+    const projectId = this.activeSessionStore?.projectId ?? null;
     const task = projectId != null
       ? this.projectsStore.peekStore(projectId)?.findTask(session.taskId)
       : undefined;
@@ -414,7 +379,7 @@ export class AppStore {
     this._unsubChildren = [];
     this._unsubscribeActiveSession?.();
     this._unsubscribeActiveSession = null;
-    this._activeSession?.dispose();
+    this.activeSessionStore?.dispose();
     this.activeConversationsStore.dispose();
     this.diffStore.dispose();
     this._listeners.clear();
