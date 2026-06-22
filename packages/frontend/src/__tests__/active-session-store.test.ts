@@ -144,23 +144,10 @@ describe("ActiveSessionStore.uploadAttachments", () => {
 describe("ActiveSessionStore conversation notifications", () => {
   afterEach(() => { restoreFetch(); });
 
-  test("optimistic message updates notify through the conversation subscription only", async () => {
-    const sessionCache = new SessionCache();
-    const store = new ActiveSessionStore("sess-1", null, sessionCache);
-    sessionCache.set("sess-1", makeSessionData());
-    mockFetch((url) => {
-      if (url === "/api/sessions/sess-1/messages") return jsonResponse([]);
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
+  test("does not expose optimistic user message mutation", () => {
+    const store = new ActiveSessionStore("sess-1", null, new SessionCache());
 
-    await store.initialize();
-
-    let notifyCount = 0;
-    store.subscribe(() => { notifyCount += 1; });
-
-    store.addOptimisticUserMessage([{ type: "text", text: "hello" }], 500);
-
-    expect(notifyCount).toBe(1);
+    expect(Reflect.get(store, "addOptimisticUserMessage")).toBeUndefined();
   });
 
   test("message refresh updates notify through the conversation subscription only", async () => {

@@ -11,17 +11,13 @@ import {
   initialChatState,
   type AgentMessage,
   type ChatState,
-  type UserMessage,
 } from "../chat-state.js";
-import type { ClientPromptContent } from "../chat-content.js";
 import type { FrontendEvent } from "../ws-client.js";
 import type { SessionCache } from "./session-cache.js";
 
 export interface SessionConversationState extends Omit<ChatState, "isStreaming"> {
   /** Last persisted full-message snapshot loaded for this session. */
   persistedMessages: AgentMessage[];
-  /** Locally sent user messages that may not be present in persistedMessages yet. */
-  optimisticMessages: UserMessage[];
 }
 
 export type ConversationsStoreListener = () => void;
@@ -36,56 +32,13 @@ function blankConversationState(): SessionConversationState {
     messages: state.messages,
     streamingBlocks: state.streamingBlocks,
     isCompacting: state.isCompacting,
-    shouldAutoScroll: state.shouldAutoScroll,
     errorMessage: state.errorMessage,
     persistedMessages: [],
-    optimisticMessages: [],
   };
 }
 
-function messageKey(message: AgentMessage): string {
-  return `${message.role}:${message.timestamp}`;
-}
-
-function mergePersistedMessages(
-  currentMessages: AgentMessage[],
-  persistedMessages: AgentMessage[],
-): AgentMessage[] {
-  if (currentMessages.length === 0) return persistedMessages;
-
-  const persistedKeys = new Set(persistedMessages.map(messageKey));
-  const latestPersistedTimestamp = persistedMessages.reduce(
-    (latest, message) => Math.max(latest, message.timestamp),
-    -Infinity,
-  );
-  const localOnlyMessages = currentMessages.filter((message) => (
-    message.timestamp > latestPersistedTimestamp
-    && !persistedKeys.has(messageKey(message))
-  ));
-
-  return localOnlyMessages.length === 0
-    ? persistedMessages
-    : [...persistedMessages, ...localOnlyMessages];
-}
-
-function reconcileOptimisticMessages(
-  optimisticMessages: UserMessage[],
-  persistedMessages: AgentMessage[],
-): UserMessage[] {
-  if (optimisticMessages.length === 0 || persistedMessages.length === 0) {
-    return optimisticMessages;
-  }
-
-  const persistedKeys = new Set(persistedMessages.map(messageKey));
-  const latestPersistedTimestamp = persistedMessages.reduce(
-    (latest, message) => Math.max(latest, message.timestamp),
-    -Infinity,
-  );
-
-  return optimisticMessages.filter((message) => (
-    message.timestamp > latestPersistedTimestamp
-    && !persistedKeys.has(messageKey(message))
-  ));
+function latestMessageTimestamp(messages: AgentMessage[]): number {
+  return messages.reduce((latest, message) => Math.max(latest, message.timestamp), -Infinity);
 }
 
 export class ConversationsStore {
@@ -128,36 +81,15 @@ export class ConversationsStore {
   setPersistedMessages(sessionId: string, persistedMessages: AgentMessage[]): void {
     if (!sessionId) return;
     const state = this.ensure(sessionId);
-    const optimisticMessages = reconcileOptimisticMessages(state.optimisticMessages, persistedMessages);
-    const shouldApplyToRenderableMessages =
-      state.messages.length === 0
-      || state.streamingBlocks.length === 0;
+    const persistedSnapshotAdvanced = state.messages.length > 0
+      && latestMessageTimestamp(persistedMessages) > latestMessageTimestamp(state.messages);
 
     this.set(sessionId, {
       ...state,
       persistedMessages,
-      optimisticMessages,
-      messages: shouldApplyToRenderableMessages
-        ? mergePersistedMessages(state.messages, persistedMessages)
-        : state.messages,
+      streamingBlocks: persistedSnapshotAdvanced ? [] : state.streamingBlocks,
+      messages: persistedMessages,
     });
-  }
-
-  addOptimisticUserMessage(
-    sessionId: string,
-    content: ClientPromptContent,
-    timestamp = Date.now(),
-  ): UserMessage | null {
-    if (!sessionId) return null;
-    const state = this.ensure(sessionId);
-    const message: UserMessage = { role: "user", content, timestamp };
-    this.set(sessionId, {
-      ...state,
-      optimisticMessages: [...state.optimisticMessages, message],
-      messages: [...state.messages, message],
-      shouldAutoScroll: true,
-    });
-    return message;
   }
 
   applyEvent(sessionId: string, event: FrontendEvent): void {
@@ -182,7 +114,6 @@ export class ConversationsStore {
           next.messages === state.messages
           && next.streamingBlocks === state.streamingBlocks
           && next.isCompacting === state.isCompacting
-          && next.shouldAutoScroll === state.shouldAutoScroll
           && next.errorMessage === state.errorMessage
         ) return;
         this.set(sessionId, {
@@ -190,7 +121,6 @@ export class ConversationsStore {
           messages: next.messages,
           streamingBlocks: next.streamingBlocks,
           isCompacting: next.isCompacting,
-          shouldAutoScroll: next.shouldAutoScroll,
           errorMessage: next.errorMessage,
         });
         return;
@@ -210,7 +140,7 @@ export class ConversationsStore {
     this.set(sessionId, {
       ...state,
       streamingBlocks: [],
-      messages: mergePersistedMessages(state.messages, state.persistedMessages),
+      messages: state.persistedMessages,
     });
   }
 

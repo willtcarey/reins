@@ -139,6 +139,28 @@ describe("ChatPanel refresh contract", () => {
     cleanup(el);
   });
 
+  test("pending local user messages drop once persisted messages catch up", () => {
+    globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
+
+    const client = new StubClient();
+    client.prompt = mock(() => {});
+    const { el, store, conversationsStore } = setup({ client });
+
+    setSessionData(store, makeSessionData({ messageCount: 1 }));
+    notify(store);
+    callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: [{ type: "text", text: "new prompt" }] } }));
+    const pendingTimestamp = get(el, "messages")[0].timestamp;
+
+    const persisted: AgentMessage[] = [
+      { role: "user", content: [{ type: "text", text: "new prompt" }], timestamp: pendingTimestamp + 1 },
+    ];
+    conversationsStore.setPersistedMessages("sess-1", persisted);
+    notify(store);
+
+    expect(get(el, "messages")).toEqual(persisted);
+    cleanup(el);
+  });
+
   test("persisted conversation messages hydrate an empty panel even when streaming", () => {
     globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
     const { el, store, conversationsStore } = setup();
@@ -227,7 +249,7 @@ describe("ChatPanel stale streaming reconciliation", () => {
     cleanup(el);
   });
 
-  test("messages arriving before metadata are accepted once metadata catches up", () => {
+  test("persisted output clears streaming blocks before metadata catches up", () => {
     globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
     const { el, store, conversationsStore } = setup();
 
@@ -236,7 +258,7 @@ describe("ChatPanel stale streaming reconciliation", () => {
     notify(store);
     startStreamingWithTool(conversationsStore);
 
-    // Messages arrive first, metadata still says running
+    // Messages arrive first, metadata still says running.
     const finalMessages: AgentMessage[] = [
       { role: "user", content: "hello", timestamp: 1000 },
       { role: "assistant", content: [{ type: "text", text: "Done" }], timestamp: 2000 },
@@ -245,9 +267,10 @@ describe("ChatPanel stale streaming reconciliation", () => {
     notify(store);
 
     expect(get(el, "isStreaming")).toBe(true);
-    expect(get(el, "streamingBlocks")).toHaveLength(1);
+    expect(get(el, "streamingBlocks")).toEqual([]);
+    expect(get(el, "messages")).toEqual(finalMessages);
 
-    // Metadata catches up
+    // Metadata catches up.
     setSessionData(store, makeSessionData({ messageCount: 2 }));
     notify(store);
 

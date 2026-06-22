@@ -190,9 +190,10 @@ describe("ChatPanel send animation", () => {
 
     callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: [{ type: "text", text: "hello" }] } }));
 
-    const messages = store.conversation.messages;
+    const messages = Reflect.get(el, "messages");
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({ role: "user", content: [{ type: "text", text: "hello" }] });
+    expect(store.conversation.messages).toEqual([]);
 
     const messageKey = `user-${messages[0].timestamp}`;
     expect(Reflect.get(el, "isStreaming")).toBe(true);

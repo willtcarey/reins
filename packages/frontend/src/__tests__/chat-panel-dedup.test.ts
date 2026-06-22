@@ -284,7 +284,7 @@ describe("applyChatEvent — other event types", () => {
     expect(state.messages).toHaveLength(0);
   });
 
-  test("user_message appends and sets shouldAutoScroll", () => {
+  test("user_message appends a user message", () => {
     const state = applyChatEvent(initialChatState(), {
       type: "user_message",
       message: [{ type: "text", text: "hello from another client" }],
@@ -292,7 +292,6 @@ describe("applyChatEvent — other event types", () => {
 
     expect(state.messages).toHaveLength(1);
     expect(state.messages[0].role).toBe("user");
-    expect(state.shouldAutoScroll).toBe(true);
   });
 
   test("no-op event type returns state unchanged", () => {

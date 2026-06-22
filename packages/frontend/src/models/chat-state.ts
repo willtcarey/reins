@@ -112,7 +112,6 @@ export interface ChatState {
   isStreaming: boolean;
   streamingBlocks: StreamingBlock[];
   isCompacting: boolean;
-  shouldAutoScroll: boolean;
   errorMessage: string;
 }
 
@@ -122,7 +121,6 @@ export function initialChatState(): ChatState {
     isStreaming: false,
     streamingBlocks: [],
     isCompacting: false,
-    shouldAutoScroll: true,
     errorMessage: "",
   };
 }
@@ -318,7 +316,6 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
     case "user_message":
       return {
         ...state,
-        shouldAutoScroll: true,
         messages: [
           ...state.messages,
           {

@@ -10,7 +10,7 @@
  * Mutations go through action methods which call the backend API.
  */
 
-import type { AgentMessage, UserMessage } from "../chat-state.js";
+import type { AgentMessage } from "../chat-state.js";
 import type { AttachmentInfo, ClientPromptContent } from "../chat-content.js";
 import type { IAppClient, SessionData } from "../ws-client.js";
 import { SessionCache } from "./session-cache.js";
@@ -152,14 +152,6 @@ export class ActiveSessionStore {
     if (this._disposed || !this._client) return false;
     this._client.steer(this.sessionId, message);
     return true;
-  }
-
-  addOptimisticUserMessage(
-    message: ClientPromptContent,
-    timestamp = Date.now(),
-  ): UserMessage | null {
-    if (this._disposed) return null;
-    return this._conversationsStore.addOptimisticUserMessage(this.sessionId, message, timestamp);
   }
 
   clearConversationError(): void {

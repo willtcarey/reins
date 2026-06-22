@@ -57,18 +57,67 @@ describe("ConversationsStore", () => {
     ]);
   });
 
-  test("stale persisted snapshots do not drop optimistic user messages", () => {
+  test("persisted snapshots are the store-owned message source outside active streaming", () => {
     const conversations = new ConversationsStore();
     const persisted = [textUser("earlier", 100)];
 
     conversations.setPersistedMessages("sess-1", persisted);
-    conversations.addOptimisticUserMessage("sess-1", [{ type: "text", text: "new prompt" }], 500);
     conversations.setPersistedMessages("sess-1", [...persisted]);
 
-    expect(conversations.get("sess-1").messages).toEqual([
+    expect(conversations.get("sess-1")).toMatchObject({
+      messages: persisted,
+      persistedMessages: persisted,
+    });
+  });
+
+  test("stale persisted snapshots do not clear active streaming blocks", () => {
+    const conversations = new ConversationsStore();
+    const persisted = [textUser("earlier", 100)];
+    conversations.setPersistedMessages("sess-1", persisted);
+    conversations.applyEvent("sess-1", {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "working" },
+    });
+
+    conversations.setPersistedMessages("sess-1", [...persisted]);
+
+    expect(conversations.get("sess-1").streamingBlocks).toEqual([{ type: "text", text: "working" }]);
+    expect(conversations.get("sess-1").messages).toEqual(persisted);
+  });
+
+  test("persisted snapshots hydrate history without clearing active streaming blocks", () => {
+    const conversations = new ConversationsStore();
+    conversations.applyEvent("sess-1", {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "working" },
+    });
+
+    const persisted = [
       textUser("earlier", 100),
-      { role: "user", content: [{ type: "text", text: "new prompt" }], timestamp: 500 },
-    ]);
+      { role: "assistant" as const, content: [{ type: "text" as const, text: "old reply" }], timestamp: 200 },
+    ];
+    conversations.setPersistedMessages("sess-1", persisted);
+
+    expect(conversations.get("sess-1").streamingBlocks).toEqual([{ type: "text", text: "working" }]);
+    expect(conversations.get("sess-1").messages).toEqual(persisted);
+  });
+
+  test("persisted snapshots that advance past rendered messages clear active streaming blocks", () => {
+    const conversations = new ConversationsStore();
+    conversations.setPersistedMessages("sess-1", [textUser("hello", 100)]);
+    conversations.applyEvent("sess-1", {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "working" },
+    });
+
+    const finalMessages: AgentMessage[] = [
+      textUser("hello", 100),
+      { role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 200 },
+    ];
+    conversations.setPersistedMessages("sess-1", finalMessages);
+
+    expect(conversations.get("sess-1").streamingBlocks).toEqual([]);
+    expect(conversations.get("sess-1").messages).toEqual(finalMessages);
   });
 
   test("when server state leaves streaming it clears stale blocks and accepts persisted messages", () => {

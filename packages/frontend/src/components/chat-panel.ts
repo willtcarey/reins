@@ -63,6 +63,7 @@ export class ChatPanel extends LitElement {
 
   @state() private expandedSections = new Set<string>();
   @state() private animatingUserMessageKeys = new Set<string>();
+  @state() private pendingUserMessages: UserMessage[] = [];
 
   @query("chat-composer") private composer?: ChatComposer;
 
@@ -81,8 +82,14 @@ export class ChatPanel extends LitElement {
     this.unsubscribeStore?.();
   }
 
-  private get messages(): AgentMessage[] {
+  private get storeMessages(): AgentMessage[] {
     return this.store?.conversation.messages ?? [];
+  }
+
+  private get messages(): AgentMessage[] {
+    return this.pendingUserMessages.length === 0
+      ? this.storeMessages
+      : [...this.storeMessages, ...this.pendingUserMessages];
   }
 
   private get isStreaming(): boolean {
@@ -121,10 +128,23 @@ export class ChatPanel extends LitElement {
   private subscribeToStore() {
     this.unsubscribeStore?.();
     this.unsubscribeStore = this.store?.subscribe(() => {
+      this.reconcilePendingUserMessages();
       this.requestUpdate();
     }) ?? undefined;
   }
 
+  private reconcilePendingUserMessages() {
+    if (this.pendingUserMessages.length === 0) return;
+
+    const latestPersistedTimestamp = (this.store?.conversation.persistedMessages ?? []).reduce(
+      (latest, candidate) => Math.max(latest, candidate.timestamp),
+      -Infinity,
+    );
+    const pending = this.pendingUserMessages.filter((message) => message.timestamp > latestPersistedTimestamp);
+
+    if (pending.length === this.pendingUserMessages.length) return;
+    this.pendingUserMessages = pending;
+  }
 
   private handleSend(e: CustomEvent<ChatComposerSubmitDetail>) {
     const content = e.detail.content;
@@ -146,7 +166,10 @@ export class ChatPanel extends LitElement {
       ? this.captureConversationShiftSnapshot()
       : [];
 
-    this.store.addOptimisticUserMessage(content, timestamp);
+    this.pendingUserMessages = [
+      ...this.pendingUserMessages,
+      { role: "user", content, timestamp },
+    ];
     this.requestUpdate();
 
     if (shouldAnimate) {
