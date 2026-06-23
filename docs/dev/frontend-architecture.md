@@ -23,7 +23,7 @@ src/
 
 ### models/
 
-Pure TypeScript with no Lit dependency. Contains all business logic, state management, data extraction, and server communication. Everything here is directly testable with bun:test — no DOM, no browser.
+Pure TypeScript with no Lit dependency. Contains business/domain logic, state management, data extraction, and server communication. Components keep view-local state; anything that decides what data means, when to fetch, how to persist, or how cross-component state changes belongs here. Everything here is directly testable with bun:test — no DOM, no browser.
 
 ```
 models/
@@ -113,7 +113,7 @@ The overall data flow is one-directional:
   models/stores/     ← handles intents, triggers fetches
 ```
 
-Views never call `fetch()` directly or listen to WebSocket events. All server communication and event→refetch logic is internal to the stores.
+Views never call `fetch()` directly or listen to WebSocket events. Stores own business/domain decisions, persisted or server-derived state, async state, and event→refetch logic. Components own presentation and ephemeral interaction state.
 
 ## Error handling
 
@@ -122,6 +122,12 @@ Follow the repo-wide [error handling guide](error-handling.md). For frontend cod
 ## Store layer
 
 All server communication — fetching, WebSocket event handling, polling, and invalidation — lives in a centralized store layer. Views read state and render; they never fetch data or decide when to refetch.
+
+Store/component boundary:
+
+- **Stores own business logic** — domain mutations, persistence, server synchronization, derived selectors, validation that affects saved state, async flags/errors, and cross-component state.
+- **Components own view state** — open/closed toggles, active tabs, drafts, hover/focus, scroll/measurement, and other transient state that only affects presentation.
+- **Promote deliberately** — if state must survive remounts, be shared across routes/components, or drive server work, move it into a store; otherwise keep it local or extract it to a reactive controller.
 
 ```
                     ┌──────────────────────────────────────────────┐
@@ -136,20 +142,9 @@ All server communication — fetching, WebSocket event handling, polling, and in
                            │       AppStore         │
                            │   (models/stores/)     │
                            │                        │
-                           │  State:                │
-                           │  - projects            │
-                           │  - tasks + taskSessions│
-                           │  - sessions            │
-                           │  - sessionData         │
-                           │  - active conversations  │
-                           │  - connection status    │
-                           │                        │
-                           │  Sub-stores:           │
-                           │  - diffStore (diff,    │
-                           │    spread, polling)     │
-                           │  - project stores       │
-                           │    (tasks/sessions +    │
-                           │    activity selectors)  │
+                           │  Owns app/domain state │
+                           │  and coordinates        │
+                           │  sub-stores             │
                            └───────────┬────────────┘
                                        │ subscribe()
                     ┌──────────┬───────┴───────┬──────────┐
@@ -158,88 +153,19 @@ All server communication — fetching, WebSocket event handling, polling, and in
                               (components/)
 ```
 
-### AppStore (`models/stores/app-store.ts`)
+### Store map
 
-The central store. Constructed with an `AppClient` (WebSocket client) and internally subscribes to connection and event callbacks. Responsibilities:
+Keep store descriptions at the ownership-boundary level. Avoid listing every endpoint, event, or feature a store currently supports; those details belong in code, tests, or feature-specific docs when they affect behavior.
 
-- **Owns server communication boundaries** — AppStore and its sub-stores perform REST/WS work; components do not call `fetch()` directly.
-- **Handles WS side effects internally** — `task_updated` refreshes the task list, `session_updated` refreshes canonical session metadata/project lists, `tool_execution_end` for file-modifying tools refreshes the diff, and chat conversation events are written into the keyed `ConversationsStore` even for sessions that are not currently visible. Views don't participate in these decisions.
-- **Manages reconnect** — On WebSocket reconnect, refetches the project list, fetches the server-side activity snapshot, refreshes loaded project stores, and refreshes active session metadata/messages to catch up on missed events.
-- **Splits active session state** — Session metadata, including `activityState`, is fetched into the shared `SessionCache` and derived by `ActiveSessionStore`; per-session conversation presentation data lives in `ConversationsStore` so metadata refreshes can't clobber in-flight chat rendering.
-- **Uses blank session metadata while loading** — `ActiveSessionStore` returns placeholder `sessionData` for the active `sessionId` until `SessionCache` has full detail, so views don't need null checks for the selected session. Its `projectId` getter is derived from that metadata rather than stored independently.
-- **Exposes a route-scoped active session store directly to the chat view** — when a session route is active, `chat-panel` receives `ActiveSessionStore`, reads `sessionData` / `conversation` from it, and sends prompt/steer/abort/model-update intents back through the same store. AppStore creates an `ActiveSessionStore` only for real session IDs and replaces/disposes it when the route session changes, so metadata/conversation subscriptions are tied to the active route object's lifecycle instead of being manually reset in place.
-- **Coordinates sub-stores** — When the session or project changes, AppStore updates DiffStore's branch and project. When an agent completes, AppStore tells DiffStore to refresh.
-- **Routes activity events** — WS events are dispatched by `projectId` to `ProjectsStore`, which owns cross-project activity event helpers. AppStore does not mutate raw activity state directly.
-
-AppStore exposes `projectsStore` as the public project-domain sub-store for sidebar/project UI. Components should prefer semantic AppStore/ProjectsStore methods over reaching into lower-level store internals.
-
-### DiffStore (`models/stores/diff-store.ts`)
-
-Owned by AppStore. Manages git diff state: file listings, full diffs, commit spread, and diff mode (branch vs. uncommitted). Handles its own polling timers:
-
-- **File polling** — Polls `/diff/files` every 5 seconds when a project is active.
-- **Spread polling** — Polls `/diff/spread` every 60 seconds (every 6th file poll cycle).
-- **Syntax highlighting** — Moved to `HighlightController` (see [reactive-controllers.md](reactive-controllers.md)). The store is pure data; it notifies subscribers after mutations and the controller handles web worker communication.
-- **Per-hunk expansion** — `expandHunk(filePath, hunkIndex, direction)` fetches the full file content on demand (cached per fetch cycle), builds context lines, and inserts them into the hunk. When expansion closes the gap between adjacent hunks, they auto-merge. Scroll position is preserved for upward expansion.
-
-Views access DiffStore through `store.diffStore` as a read-only surface.
-
-### SessionCache (`models/stores/session-cache.ts`)
-
-Shared client-side cache for canonical session metadata, including `activityState`. `AppStore`, `ProjectsStore`, `ProjectStore`, and active-session metadata mutations populate it from session detail/list endpoints, activity snapshots, and successful session edits such as model changes. `ActiveSessionStore` subscribes to the current session ID and reads from this store instead of fetching session metadata directly; activity is server-authoritative and enters the cache through fetched session data/snapshots rather than raw runtime events. Prompt sends may optimistically patch the active session's cached `activityState` to `"running"` to keep the composer/Thinking UI responsive; the next server detail refresh remains authoritative. `ProjectStore` stores only server-provided scratch session ID ordering, derives `SessionListItem[]` view models from this cache, and exposes task/session/project activity selectors over cached metadata. Use `getDetail(sessionId)` when a consumer needs a complete `SessionData` record rather than a partial list/activity cache entry.
-
-### ConversationsStore (`models/stores/conversations-store.ts`)
-
-Keyed per-session store for active chat conversation presentation state. It stores the last persisted message snapshot, local optimistic user messages, renderable messages, streaming blocks, compaction state, and command error text for retained session IDs. It does not own the session running signal; views derive that from `SessionCache` through `ActiveSessionStore.sessionData.activityState === "running"`. `AppStore` forwards any session-tagged WebSocket event to this store by `sessionId`; the store applies chat conversation events, stores session-scoped WebSocket command errors, and ignores the rest. Global/unscoped WebSocket errors are not attached to conversation state. `ActiveSessionStore` is only the route-scoped facade over the keyed store. Persisted message refreshes call `setPersistedMessages()`, optimistic sends call `addOptimisticUserMessage()`, and session metadata reconciliation calls `clearStreamingState()` when server activity transitions from running to not running after missed terminal events. `clearStreamingState()` clears stale streaming blocks and compacting indicators back to the latest persisted message snapshot. AppStore exposes this as `activeConversationsStore`. Retention is owned by `ConversationsStore` using `SessionCache` as a narrow activity lookup: unobserved retained conversations are evicted when cached `activityState` is missing or not `"running"` on cache updates, when the last subscriber unsubscribes, or when AppStore asks the store to prune inactive retained conversations after reconnect/resume. Active/viewed sessions are retained by their conversation subscription, and revisiting evicted sessions fetches persisted messages from the server.
-
-### ProjectsStore (`models/stores/projects-store.ts`)
-
-Public AppStore sub-store for project-domain UI. Manages the project list, project CRUD, lazily-created `ProjectStore` instances, and cross-project activity selectors. Activity data itself lives in `SessionCache`; `ProjectsStore` derives cross-project selectors from cached session metadata. Provides:
-- **Activity selectors** — `activityForProject(projectId)`, `activityForSession(projectId, sessionId)`, `activitySummary`
-- **WS event routing** — `handleReconnect()`, `handleTaskUpdated()`, `handleSessionCreated()`
-- **Activity snapshot** — `fetchActivitySnapshot()` for initial page-load reconciliation
-
-### ProjectStore (`models/stores/project-store.ts`)
-
-One instance per project, lazily created by `ProjectsStore`. Holds task rows (`tasks`), server ordering for scratch sessions (`sessionIds`), a set of task session lists to refresh (`loadedTaskSessionIds`), and task mutations. The `sessions` accessor derives scratch `SessionListItem[]` view models from `SessionCache` in `sessionIds` order; `taskSessionsFor(taskId)` derives that task's sessions live from `SessionCache` and orders them by `updatedAt` like the server list endpoint. Do not store duplicate full session list records here. Provides task/session selectors (`openTasks`, `closedTasks`, `findTask`, `getSession`) and **read-only activity selectors** (`activityForSession`, `activityForTask`, `activityState`) derived from `SessionCache`. `activityForTask(taskId)` scans cached sessions matching the project/task IDs, with `running` taking precedence over `finished`. During `fetchLists()` and `fetchTaskSessions()`, writes session records into `SessionCache`; project views update through store subscriptions.
-
-### QuickOpenStore (`models/stores/quick-open-store.ts`)
-
-Standalone store owned by the app shell (not by AppStore — it has no WS event dependencies). Manages data for the quick-open palette (`Cmd+K`):
-
-- **Fetches palette items** — Calls `/api/palette` when the overlay opens.
-- **Fuzzy filtering** — Pure functions for fuzzy match scoring and item filtering.
-- **Recent session tracking** — Persists recently visited session IDs to localStorage for recency-based ordering.
-
-### FileBrowserStore (`models/stores/file-browser-store.ts`)
-
-Standalone store for the file browser overlay. Manages:
-
-- **File list** — Fetches project files via `GET /api/projects/:id/files` (git-tracked + untracked non-ignored), cached per project.
-- **Fuzzy filtering** — Reuses `fuzzyMatch` from `quick-open-store.ts` for file search.
-- **File content** — Loads file content via `GET /api/projects/:id/file?path=...` for the viewer.
-
-Shared by `<file-search>` (palette) and `<file-browser>` (viewer overlay). Both components and `<app-shell>` hold a reference to the same store instance.
-
-### ModelRegistryStore (`models/stores/model-registry-store.ts`)
-
-Standalone store for the shared `/api/models` registry. Manages:
-
-- **Provider/model loading** — Fetches the provider registry, including key availability and model metadata.
-- **Derived registry helpers** — Exposes configured/unconfigured providers, API-key badges, and provider/model lookup helpers for UI components.
-- **Shared model metadata** — Keeps model naming and option lists decoupled from settings form state.
-
-Used by `<settings-panel>` and `<session-model-picker>` so both flows read from the same dedicated registry boundary.
-
-### SettingsStore (`models/stores/settings-store.ts`)
-
-Standalone store for persisted settings and auth-related mutations. Manages:
-
-- **Settings fetches** — Loads OAuth providers and only the requested setting keys via the batched `/api/settings?key=...` endpoint.
-- **Settings mutations** — Saves/removes API keys, starts/completes OAuth flows, and updates model settings.
-- **Panel state boundary** — Holds stored settings state and async action flags; the component keeps only overlay visibility and ephemeral input values.
-
-Used alongside `ModelRegistryStore` via `StoreController` so the view renders from store state instead of calling `fetch()` directly.
+- **AppStore** (`models/stores/app-store.ts`) — Top-level orchestration for route-derived app state, WebSocket/reconnect side effects, and sub-store coordination. Components should prefer semantic AppStore/sub-store methods over reaching into lower-level internals.
+- **DiffStore** (`models/stores/diff-store.ts`) — Git diff domain state and mutations, including polling and expansion. Rendering concerns such as syntax highlighting stay in controllers/components.
+- **SessionCache** (`models/stores/session-cache.ts`) — Canonical client cache for server-provided session metadata. Stores derive session/activity views from it rather than duplicating complete session records.
+- **ConversationsStore** (`models/stores/conversations-store.ts`) — Keyed per-session conversation presentation state that must survive route changes or missed streaming events. Session running/activity state remains derived from `SessionCache`.
+- **ProjectsStore / ProjectStore** (`models/stores/projects-store.ts`, `models/stores/project-store.ts`) — Project/task/session list ownership and project-scoped mutations. Activity and session metadata are derived from `SessionCache` instead of stored redundantly.
+- **QuickOpenStore** (`models/stores/quick-open-store.ts`) — Shared quick-open data, filtering, and recency state. Overlay open/closed state remains component-local.
+- **FileBrowserStore** (`models/stores/file-browser-store.ts`) — Shared file browser data and file-content loading. Viewer overlay state remains component-local.
+- **ModelRegistryStore** (`models/stores/model-registry-store.ts`) — Shared provider/model registry data and derived selectors. Components keep form-specific selection/draft state.
+- **SettingsStore** (`models/stores/settings-store.ts`) — Persisted settings and auth/OAuth mutations. Settings components keep only form/view-local state such as drafts and overlay visibility.
 
 ### Subscription model
 
@@ -270,33 +196,15 @@ connectedCallback() {
 
 ## WebSocket client (`models/ws-client.ts`)
 
-Thin WebSocket wrapper. Two roles:
+Thin WebSocket wrapper for receiving server events and sending session-scoped commands. It exposes callbacks only; it does not decide how events affect UI state.
 
-1. **Receives** — All active session events, each tagged with a `sessionId`. Events include `agent_start`, `agent_end`, `tool_execution_end`, `task_updated`, `session_updated`, streaming tokens, etc.
-2. **Sends** — Commands (`prompt`, `steer`, `abort`) with an explicit `sessionId`.
-
-The client provides `onConnection(cb)` and `onEvent(cb)` hooks. `AppStore` is the store-layer consumer of these hooks: it handles app-level side effects and routes chat events into `ConversationsStore`. Components never listen to WS events.
-
-## WS event → store reaction
-
-| WS Event | Store Reaction |
-|---|---|
-| `agent_start` | AppStore applies streaming blocks to `ConversationsStore`; `activityState` waits for `SessionCache` reconciliation, except active prompt sends optimistically patch the active session metadata to `"running"` |
-| `agent_end` | AppStore finalizes `ConversationsStore` state and refreshes active-session diff; conversation retention and `activityState` wait for the server's `session_updated` reconciliation |
-| `task_updated` | Refetch that project store if it exists |
-| `session_updated` | Fetch canonical session detail into `SessionCache` and refresh project lists; `ActiveSessionStore` clears finished activity when the active session applies a finished cache update |
-| `tool_execution_end` (file-modifying) | Refresh diff |
-| WS reconnect | Refetch project list, fetch `/api/sessions/activity`, refresh loaded project stores, and refetch active session data/messages |
+`AppStore` is the store-layer consumer of WebSocket connection/event hooks. It translates events into store mutations, refreshes, and conversation updates. Components never listen to WS events directly.
 
 ### Activity indicator semantics
 
-Session activity is stored on cached session metadata as `activityState` (`running | finished | null`), and the `ActivityState` type is exported from `models/stores/session-cache.ts`. Task list types live in `models/tasks.ts`. `ProjectStore` exposes `activityForSession(sessionId)`, `activityForTask(taskId)`, and project activity (`activityState`) by deriving directly from `SessionCache.entries()`. `ProjectsStore` offers cross-project `activityForProject(projectId)`, `activityForSession(projectId, sessionId)`, and `activitySummary`. AppStore delegates title/sidebar badge counts to `ProjectsStore.activitySummary`.
+Session activity is server-authoritative and enters the frontend through `SessionCache`. Project/session views derive activity indicators from cached session metadata rather than raw runtime events or duplicated component state.
 
-Running indicators are green and remain visible while the agent loop is active, even if the user views that session. Finished indicators are amber, represent unread completed work, and are cleared by `ActiveSessionStore.markViewed()` when the session is viewed. Server snapshots from `GET /api/sessions/activity` reconcile cached activity on reconnect/resume; sessions absent from the snapshot are cleared locally. Raw `agent_start` / `agent_end` events do not mutate activity directly; the backend persists activity and emits `session_updated`, then the frontend fetches canonical session state.
-
-Known follow-up areas:
-
-- `task_updated` broadcasts do not identify which task changed, so closed-task cleanup has to refetch project task data before pruning finished activity. Including changed task/session identifiers in the broadcast would make this more targeted.
+Running indicators remain visible while the agent loop is active. Finished indicators represent unread completed work and are cleared when the session is viewed. Reconnect/resume flows reconcile from the server snapshot instead of trusting missed client events.
 
 ## Routing (`models/router.ts`)
 
@@ -372,6 +280,7 @@ Per-component state and behavior (collapse toggles, markdown preview, clipboard 
 
 ### View conventions
 
+- **Business logic in stores, view state in components** — Stores decide what data means and how it changes; components keep transient UI state needed to render and interact.
 - **Read from store, don't fetch** — Views receive the store (or store state) as Lit properties and render from it. No direct `fetch()` calls.
 - **Pass callbacks for action-only dependencies** — If a child only needs to trigger an action and does not subscribe to or render from store state, pass a narrow callback like `onSave` / `updateSessionModel` instead of the whole store.
 - **Dispatch intents via events** — Views emit custom events (`new-session`, `delete-task`, etc.) for actions. The parent component or store handles the intent.
