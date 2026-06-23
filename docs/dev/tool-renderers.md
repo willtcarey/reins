@@ -150,7 +150,7 @@ Each tool chooses its own expand/collapse UX:
 
 | Tool | Collapsed | Expanded | Toggle target |
 |------|-----------|----------|---------------|
-| **read** | File path + first 4 lines preview | Full content (scrollable) | Card-click to expand, header-click to collapse |
+| **read** | File path + first 4 lines preview; image results also show a compact preview | Full content (scrollable) plus larger image preview | Card-click to expand, header-click to collapse |
 | **bash** | Command with `$` prompt | Command + output below divider | Whole block click |
 | **edit** | File path + `+N −M` stats badge | Inline diff with context lines | Header click (small diffs auto-expand) |
 | **write** | File path + first 4 lines preview | Full content, all lines as additions | Card-click to expand, header-click to collapse |
