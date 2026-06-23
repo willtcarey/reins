@@ -8,6 +8,9 @@ import { isImageAttachmentBlock, isInlineImageBlock, type ChatImageBlock } from 
 /** Regex matching the trailing "[N more lines..." metadata line from the Read tool. */
 const TRAILER_RE = /\n*\[(\d+ more lines in file\. Use offset=\d+ to continue.*)\]\s*$/;
 
+/** Regex matching the read tool's image-only notice. */
+const IMAGE_READ_NOTICE_RE = /^Read image file \[[^\]\r\n]+\]\r?$/;
+
 /** Number of preview lines to show when collapsed. */
 export const PREVIEW_LINES = 4;
 
@@ -16,13 +19,22 @@ function stripLineNumbers(text: string): string {
   return text.replace(/^\s*\d+\t/gm, "");
 }
 
+function stripImageReadNotice(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => !IMAGE_READ_NOTICE_RE.test(line.trim()))
+    .join("\n")
+    .replace(/^\n+|\n+$/g, "");
+}
+
 /** Get the joined text from a Read tool block's result, with `cat -n` prefixes stripped. */
 function getRawText(block: ToolBlockData): string {
   const joined = block.result?.content
     ?.filter((c): c is { type: "text"; text: string } => c.type === "text")
     .map((c) => c.text)
     .join("\n") ?? "";
-  return stripLineNumbers(joined);
+  const text = stripLineNumbers(joined);
+  return getReadImages(block).length > 0 ? stripImageReadNotice(text) : text;
 }
 
 /** Strip the trailing metadata line (e.g. "[163 more lines...]") from result text. */

@@ -145,8 +145,9 @@ export class ReadToolBlock extends LitElement {
 
     const hasContent = !!fullContent?.trim();
     const hasPreview = !!preview?.trim();
+    const hasImages = images.length > 0;
     const canInteract =
-      !this.showSpinner && (hasContent || images.length > 0);
+      !this.showSpinner && (hasContent || hasImages);
     const previewLines = preview?.split("\n").length ?? 0;
     const hasMore = totalLines > previewLines;
 
@@ -229,7 +230,7 @@ export class ReadToolBlock extends LitElement {
           : nothing}
 
         <!-- No content message -->
-        ${!this.showSpinner && !hasContent && !this.expanded
+        ${!this.showSpinner && !hasContent && !hasImages && !this.expanded
           ? html`
               <div class="border-t border-zinc-800 px-3 py-2">
                 <span class="text-xs text-zinc-600 italic">No content</span>
@@ -238,12 +239,13 @@ export class ReadToolBlock extends LitElement {
           : nothing}
 
         <!-- Images -->
-        ${images.length > 0 && (this.expanded || !hasContent)
+        ${hasImages
           ? html`
               <div class="border-t border-zinc-800 p-2">
                 ${images.map((img) => {
                   const src = imageBlockSrc(this.sessionId, img);
                   const alt = "filename" in img && img.filename ? img.filename : "Tool result image";
+                  const imageSizeClass = this.expanded ? "max-h-96" : "max-h-48";
                   return html`
                     <button
                       type="button"
@@ -254,7 +256,7 @@ export class ReadToolBlock extends LitElement {
                     >
                       <img
                         src=${src}
-                        class="max-w-full max-h-96 rounded transition-opacity group-hover:opacity-90"
+                        class="max-w-full ${imageSizeClass} rounded transition-opacity group-hover:opacity-90"
                         alt=${alt}
                         loading="lazy"
                       />
