@@ -120,6 +120,15 @@ describe("settings routes", () => {
       expect(await res!.json()).toEqual({ key: "utility_model", value: model });
     });
 
+    test("returns value for diff_renderer", async () => {
+      const { router, state } = setup();
+      setSetting("diff_renderer", "virtual");
+
+      const res = await router.handle(makeRequest("GET", "/api/settings/diff_renderer"), state);
+      expect(res!.status).toBe(200);
+      expect(await res!.json()).toEqual({ key: "diff_renderer", value: "virtual" });
+    });
+
     test("returns 400 for unknown key", async () => {
       const { router, state } = setup();
       const res = await router.handle(makeRequest("GET", "/api/settings/api_key_anthropic"), state);
@@ -174,6 +183,23 @@ describe("settings routes", () => {
         state,
       );
       expect(res!.status).toBe(400);
+    });
+
+    test("persists valid diff_renderer values and rejects unknown values", async () => {
+      const { router, state } = setup();
+
+      const putRes = await router.handle(
+        makeRequest("PUT", "/api/settings/diff_renderer", "virtual"),
+        state,
+      );
+      expect(putRes!.status).toBe(200);
+      expect(getSetting("diff_renderer")).toBe("virtual");
+
+      const invalidRes = await router.handle(
+        makeRequest("PUT", "/api/settings/diff_renderer", "virtualized"),
+        state,
+      );
+      expect(invalidRes!.status).toBe(400);
     });
 
     test("returns 400 for invalid JSON body", async () => {

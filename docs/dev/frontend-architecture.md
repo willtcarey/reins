@@ -164,8 +164,8 @@ Keep store descriptions at the ownership-boundary level. Avoid listing every end
 - **ProjectsStore / ProjectStore** (`models/stores/projects-store.ts`, `models/stores/project-store.ts`) — Project/task/session list ownership and project-scoped mutations. Activity and session metadata are derived from `SessionCache` instead of stored redundantly.
 - **QuickOpenStore** (`models/stores/quick-open-store.ts`) — Shared quick-open data, filtering, and recency state. Overlay open/closed state remains component-local.
 - **FileBrowserStore** (`models/stores/file-browser-store.ts`) — Shared file browser data and file-content loading. Viewer overlay state remains component-local.
-- **ModelRegistryStore** (`models/stores/model-registry-store.ts`) — Shared provider/model registry data and derived selectors. Components keep form-specific selection/draft state.
-- **SettingsStore** (`models/stores/settings-store.ts`) — Persisted settings and auth/OAuth mutations. Settings components keep only form/view-local state such as drafts and overlay visibility.
+- **ModelRegistryStore** (`models/stores/model-registry-store.ts`) — Provider/model registry data and derived selectors. Settings UI uses the instance owned by `SettingsStore`; other features may own their own registry instance when their data lifecycle is independent.
+- **SettingsStore** (`models/stores/settings-store.ts`) — Persisted settings, auth/OAuth mutations, and settings-panel model registry loading. Settings components keep only form/view-local state such as drafts and overlay visibility. Settings panel declarations in `components/settings/panel.ts` declare each setting's persisted keys, visibility, and render function; the panel filters visible declarations and passes them to `SettingsStore.loadSettingsSections(...)` for data loading.
 
 ### Subscription model
 

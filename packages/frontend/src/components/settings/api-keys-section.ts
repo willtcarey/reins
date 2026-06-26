@@ -2,7 +2,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import { providerLabel } from "../../models/settings.js";
-import { ModelRegistryStore, type ApiKeyState } from "../../models/stores/model-registry-store.js";
+import type { ApiKeyState } from "../../models/stores/model-registry-store.js";
 import { SettingsStore } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
 
@@ -13,7 +13,6 @@ export class SettingsApiKeysSection extends LitElement {
   }
 
   private _storeCtrl = new StoreController<SettingsStore>(this);
-  private _registryStoreCtrl = new StoreController<ModelRegistryStore>(this);
 
   @property({ attribute: false })
   set store(store: SettingsStore | null) {
@@ -22,15 +21,6 @@ export class SettingsApiKeysSection extends LitElement {
 
   get store(): SettingsStore | null {
     return this._storeCtrl.store;
-  }
-
-  @property({ attribute: false })
-  set registryStore(store: ModelRegistryStore | null) {
-    this._registryStoreCtrl.store = store;
-  }
-
-  get registryStore(): ModelRegistryStore | null {
-    return this._registryStoreCtrl.store;
   }
 
   @state() private _addKeyProvider = "";
@@ -44,7 +34,7 @@ export class SettingsApiKeysSection extends LitElement {
   }
 
   private async _reloadRegistry(): Promise<boolean> {
-    const result = await this.registryStore?.load();
+    const result = await this.store?.registryStore.load();
     if (result && "error" in result) {
       showToast(`Failed to refresh model registry: ${result.error}`, "error");
       return false;
@@ -271,7 +261,7 @@ export class SettingsApiKeysSection extends LitElement {
 
   private _renderAddProviderTrigger() {
     const store = this.store;
-    const registryStore = this.registryStore;
+    const registryStore = store?.registryStore;
     if (!store || !registryStore) return nothing;
 
     const unconfigured = registryStore.unconfiguredProviders;
@@ -350,8 +340,17 @@ export class SettingsApiKeysSection extends LitElement {
 
   override render() {
     const store = this.store;
-    const registryStore = this.registryStore;
+    const registryStore = store?.registryStore;
     if (!store || !registryStore) return nothing;
+
+    if (registryStore.loading && registryStore.providers.length === 0) {
+      return html`
+        <div class="space-y-2">
+          <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider">API Keys</h3>
+          <div class="text-xs text-zinc-500 py-2">Loading model registry...</div>
+        </div>
+      `;
+    }
 
     return html`
       <div class="space-y-2">

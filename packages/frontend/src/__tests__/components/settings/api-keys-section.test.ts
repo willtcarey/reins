@@ -1,14 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { SettingsApiKeysSection } from "../components/settings/api-keys-section.js";
-import { ModelRegistryStore } from "../models/stores/model-registry-store.js";
-import { SettingsStore } from "../models/stores/settings-store.js";
-import { templateToString } from "./helpers/lit-template.js";
+import { SettingsApiKeysSection } from "../../../components/settings/api-keys-section.js";
+import { SettingsStore } from "../../../models/stores/settings-store.js";
+import { templateToString } from "../../helpers/lit-template.js";
 
 describe("SettingsApiKeysSection", () => {
   test("renders the API Keys header inline with the + trigger", () => {
     const store = new SettingsStore();
-    const registryStore = new ModelRegistryStore();
-    registryStore.providers = [
+    store.registryStore.providers = [
       {
         runtimeType: "pi",
         provider: "anthropic",
@@ -29,7 +27,6 @@ describe("SettingsApiKeysSection", () => {
 
     const el = new SettingsApiKeysSection();
     el.store = store;
-    el.registryStore = registryStore;
 
     const output = templateToString(el.render());
 

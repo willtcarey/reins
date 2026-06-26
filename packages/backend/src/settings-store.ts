@@ -18,9 +18,15 @@ export const ModelSettingSchema = Type.Object({
   thinkingLevel: ModelSettingThinkingLevelSchema,
 });
 
+export const DiffRendererSchema = Type.Union([
+  Type.Literal("classic"),
+  Type.Literal("virtual"),
+]);
+
 export const SETTINGS_SCHEMA = {
   default_model: ModelSettingSchema,
   utility_model: ModelSettingSchema,
+  diff_renderer: DiffRendererSchema,
 } as const;
 
 type SettingsSchema = typeof SETTINGS_SCHEMA;
@@ -33,6 +39,7 @@ type KeysMatchingSchema<TTarget extends TSchema> = {
 export type SettingsKey = keyof SettingsSchema;
 export type SettingValue<K extends SettingsKey> = Static<SettingsSchema[K]>;
 export type ModelSetting = Static<typeof ModelSettingSchema>;
+export type DiffRenderer = Static<typeof DiffRendererSchema>;
 export type ModelSettingsKey = KeysMatchingSchema<typeof ModelSettingSchema>;
 
 export interface SettingEntry<K extends SettingsKey = SettingsKey> {

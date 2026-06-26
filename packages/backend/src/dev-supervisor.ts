@@ -36,6 +36,8 @@ function createDevServices(repoRoot = process.cwd()): DevService[] {
         "--outdir",
         FRONTEND_DIST_DIR,
         "--splitting",
+        "--define",
+        "REINS_DEV=true",
         "--watch",
       ],
     },

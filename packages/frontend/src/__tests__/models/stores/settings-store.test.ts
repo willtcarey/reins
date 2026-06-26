@@ -2,8 +2,8 @@
  * Tests for SettingsStore — settings values and settings-related mutations.
  */
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { SettingsStore } from "../models/stores/settings-store.js";
-import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
+import { SettingsStore } from "../../../models/stores/settings-store.js";
+import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 
 function jsonResponse(data: unknown, ok = true): Response {
   return new Response(JSON.stringify(data), {
@@ -17,7 +17,6 @@ describe("SettingsStore", () => {
 
   beforeEach(() => {
     store = new SettingsStore();
-    restoreFetch();
   });
 
   afterEach(() => {
@@ -29,7 +28,7 @@ describe("SettingsStore", () => {
 
     mockFetch((url) => {
       requests.push(url);
-      if (url === "/api/settings?key=default_model&key=utility_model") {
+      if (url === "/api/settings?key=default_model&key=utility_model&key=diff_renderer") {
         return jsonResponse([
           {
             key: "default_model",
@@ -50,6 +49,10 @@ describe("SettingsStore", () => {
               thinkingLevel: "minimal",
             },
             redacted: false,
+          },
+          {
+            key: "diff_renderer",
+            value: "virtual",
           },
         ]);
       }
@@ -90,7 +93,44 @@ describe("SettingsStore", () => {
       runtimeType: "pi",
       thinkingLevel: "minimal",
     });
+    expect(store.diffRenderer).toBe("virtual");
     expect(store.oauthProviders.map((provider) => provider.id)).toEqual(["openrouter"]);
+  });
+
+  test("load defaults diffRenderer to classic when unset", async () => {
+    mockFetch((url) => {
+      if (url === "/api/settings?key=default_model&key=utility_model&key=diff_renderer") {
+        return jsonResponse([]);
+      }
+      if (url === "/api/oauth/providers") {
+        return jsonResponse([]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    const result = await store.load();
+
+    expect(result).toEqual({ ok: true });
+    expect(store.diffRenderer).toBe("classic");
+  });
+
+  test("selectDiffRenderer persists the renderer setting", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+
+    mockFetch((url, init) => {
+      requests.push({ url, init });
+      if (url === "/api/settings/diff_renderer" && init?.method === "PUT") {
+        return new Response(null, { status: 200 });
+      }
+      return jsonResponse({}, false);
+    });
+
+    const result = await store.selectDiffRenderer("virtual");
+
+    expect(result).toEqual({ ok: true });
+    expect(store.diffRenderer).toBe("virtual");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.init?.body).toBe(JSON.stringify("virtual"));
   });
 
   test("load can request a subset of setting keys", async () => {
@@ -111,6 +151,57 @@ describe("SettingsStore", () => {
 
     expect(result).toEqual({ ok: true });
     expect(requests).toContain("/api/settings?key=default_model");
+  });
+
+  test("loadDeclaredSettings requests the keys declared by settings sections", async () => {
+    const requests: string[] = [];
+
+    mockFetch((url) => {
+      requests.push(url);
+      if (url === "/api/settings?key=default_model&key=utility_model") {
+        return jsonResponse([]);
+      }
+      if (url === "/api/oauth/providers") {
+        return jsonResponse([]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    const result = await store.loadDeclaredSettings([
+      { settingKeys: ["default_model"] },
+      {},
+      { settingKeys: ["default_model", "utility_model"] },
+    ]);
+
+    expect(result).toEqual({ ok: true });
+    expect(requests).toContain("/api/settings?key=default_model&key=utility_model");
+  });
+
+  test("loadSettingsSections loads data for the setting declarations it receives", async () => {
+    const requests: string[] = [];
+
+    mockFetch((url) => {
+      requests.push(url);
+      if (url === "/api/settings?key=default_model") {
+        return jsonResponse([]);
+      }
+      if (url === "/api/oauth/providers") {
+        return jsonResponse([]);
+      }
+      if (url === "/api/models") {
+        return jsonResponse([]);
+      }
+      return jsonResponse({}, false);
+    });
+
+    const result = await store.loadSettingsSections([
+      { settingKeys: ["default_model"] },
+      {},
+    ]);
+
+    expect(result).toEqual({ ok: true });
+    expect(requests).toContain("/api/settings?key=default_model");
+    expect(requests).toContain("/api/models");
   });
 
   test("saveApiKey persists the key via auth API endpoints without reloading /api/models", async () => {

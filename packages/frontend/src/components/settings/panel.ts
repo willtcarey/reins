@@ -2,18 +2,77 @@
  * Settings Panel
  *
  * Full-screen overlay for managing global settings.
- * Server-backed state and mutations live in SettingsStore and ModelRegistryStore.
- * This shell owns only overlay visibility, data loading, and section composition.
+ * Server-backed state and mutations live in SettingsStore.
+ * This shell owns overlay visibility and visible setting composition.
  */
 
-import { LitElement, html, nothing } from "lit";
+import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
-import { ModelRegistryStore } from "../../models/stores/model-registry-store.js";
-import { SettingsStore } from "../../models/stores/settings-store.js";
+import { SettingsStore, type SettingsLoadDeclaration } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
 import "./api-keys-section.js";
+import "./diff-renderer-section.js";
 import "./model-setting-section.js";
+
+interface SettingsSectionContext {
+  settingsStore: SettingsStore;
+}
+
+interface SettingsSectionDefinition extends SettingsLoadDeclaration {
+  id: string;
+  visible?: () => boolean;
+  render: (context: SettingsSectionContext) => TemplateResult;
+}
+
+const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
+  {
+    id: "api-keys",
+    render: ({ settingsStore }) => html`
+      <settings-api-keys-section .store=${settingsStore}></settings-api-keys-section>
+    `,
+  },
+  {
+    id: "default-model",
+    settingKeys: ["default_model"],
+    render: ({ settingsStore }) => html`
+      <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">Default Model</h3>
+      <p class="text-[10px] text-zinc-500 mb-3">New sessions will use this model. Existing sessions are not affected.</p>
+      <settings-model-setting-section
+        .store=${settingsStore}
+        settingKey="default_model"
+        emptyMessage="Configure at least one API key above to select a default model."
+        successLabel="Default model updated"
+        currentLabel="Current"
+        clearSuccessLabel="Default model cleared"
+      ></settings-model-setting-section>
+    `,
+  },
+  {
+    id: "diff-renderer",
+    settingKeys: ["diff_renderer"],
+    visible: () => typeof REINS_DEV !== "undefined" && REINS_DEV,
+    render: ({ settingsStore }) => html`
+      <settings-diff-renderer-section .store=${settingsStore}></settings-diff-renderer-section>
+    `,
+  },
+  {
+    id: "utility-model",
+    settingKeys: ["utility_model"],
+    render: ({ settingsStore }) => html`
+      <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">Utility Model</h3>
+      <p class="text-[10px] text-zinc-500 mb-3">Used for lightweight internal tasks like task generation and branch naming. Falls back to the default model when unset.</p>
+      <settings-model-setting-section
+        .store=${settingsStore}
+        settingKey="utility_model"
+        emptyMessage="Configure at least one API key above to select a utility model."
+        successLabel="Utility model updated"
+        currentLabel="Utility model"
+        clearSuccessLabel="Utility model cleared"
+      ></settings-model-setting-section>
+    `,
+  },
+];
 
 @customElement("settings-panel")
 export class SettingsPanel extends LitElement {
@@ -24,22 +83,15 @@ export class SettingsPanel extends LitElement {
   @state() private _open = false;
 
   private _store = new SettingsStore();
-  private _registryStore = new ModelRegistryStore();
   private _storeCtrl = new StoreController<SettingsStore>(this);
-  private _registryStoreCtrl = new StoreController<ModelRegistryStore>(this);
 
   constructor() {
     super();
     this._storeCtrl.store = this._store;
-    this._registryStoreCtrl.store = this._registryStore;
   }
 
   private get store(): SettingsStore {
     return this._store;
-  }
-
-  private get registryStore(): ModelRegistryStore {
-    return this._registryStore;
   }
 
   open() {
@@ -51,18 +103,20 @@ export class SettingsPanel extends LitElement {
     this._open = false;
   }
 
-  private async _loadData() {
-    const [settingsResult, registryResult] = await Promise.all([
-      this.store.load(),
-      this.registryStore.load(),
-    ]);
+  private _loadData() {
+    void this._loadSettingsSections();
+  }
 
-    if ("error" in settingsResult) {
-      showToast(`Failed to load settings: ${settingsResult.error}`, "error");
+  private async _loadSettingsSections() {
+    const result = await this.store.loadSettingsSections(this._visibleSections);
+
+    if ("error" in result) {
+      showToast(`Failed to load settings: ${result.error}`, "error");
     }
-    if ("error" in registryResult) {
-      showToast(`Failed to load model registry: ${registryResult.error}`, "error");
-    }
+  }
+
+  private get _visibleSections(): readonly SettingsSectionDefinition[] {
+    return SETTINGS_SECTIONS.filter((section) => section.visible?.() ?? true);
   }
 
   private _handleBackdropClick(e: MouseEvent) {
@@ -73,6 +127,8 @@ export class SettingsPanel extends LitElement {
 
   override render() {
     if (!this._open) return nothing;
+
+    const sections = this._visibleSections;
 
     return html`
       <div
@@ -94,41 +150,13 @@ export class SettingsPanel extends LitElement {
             </button>
           </div>
 
-          ${this.store.loading || this.registryStore.loading
+          ${this.store.loading
             ? html`<div class="text-xs text-zinc-500 py-4 text-center">Loading settings...</div>`
-            : html`
-              <div class="mb-5">
-                <settings-api-keys-section .store=${this.store} .registryStore=${this.registryStore}></settings-api-keys-section>
+            : sections.map((section, index) => html`
+              <div class=${index < sections.length - 1 ? "mb-5" : ""}>
+                ${section.render({ settingsStore: this.store })}
               </div>
-
-              <div class="mb-5">
-                <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">Default Model</h3>
-                <p class="text-[10px] text-zinc-500 mb-3">New sessions will use this model. Existing sessions are not affected.</p>
-                <settings-model-setting-section
-                  .store=${this.store}
-                  .registryStore=${this.registryStore}
-                  settingKey="default_model"
-                  emptyMessage="Configure at least one API key above to select a default model."
-                  successLabel="Default model updated"
-                  currentLabel="Current"
-                  clearSuccessLabel="Default model cleared"
-                ></settings-model-setting-section>
-              </div>
-
-              <div>
-                <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">Utility Model</h3>
-                <p class="text-[10px] text-zinc-500 mb-3">Used for lightweight internal tasks like task generation and branch naming. Falls back to the default model when unset.</p>
-                <settings-model-setting-section
-                  .store=${this.store}
-                  .registryStore=${this.registryStore}
-                  settingKey="utility_model"
-                  emptyMessage="Configure at least one API key above to select a utility model."
-                  successLabel="Utility model updated"
-                  currentLabel="Utility model"
-                  clearSuccessLabel="Utility model cleared"
-                ></settings-model-setting-section>
-              </div>
-            `}
+            `)}
         </div>
       </div>
     `;

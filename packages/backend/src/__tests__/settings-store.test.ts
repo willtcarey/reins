@@ -17,6 +17,7 @@ describe("settings-store", () => {
     test("accepts static settings keys", () => {
       expect(isValidSettingsKey("default_model")).toBe(true);
       expect(isValidSettingsKey("utility_model")).toBe(true);
+      expect(isValidSettingsKey("diff_renderer")).toBe(true);
     });
 
     test("rejects legacy auth keys", () => {
@@ -42,6 +43,12 @@ describe("settings-store", () => {
       setSetting("utility_model", model);
 
       expect(getSetting("utility_model")).toEqual(model);
+    });
+
+    test("returns typed value for diff_renderer", () => {
+      setSetting("diff_renderer", "virtual");
+
+      expect(getSetting("diff_renderer")).toBe("virtual");
     });
 
     test("throws when a stored setting no longer matches its schema", () => {
@@ -87,6 +94,9 @@ describe("settings-store", () => {
       expect(() => validateSettingValue("default_model", { provider: "a" })).toThrow(/Invalid value/);
       expect(() => validateSettingValue("default_model", { provider: 123, modelId: "b", runtimeType: "pi", thinkingLevel: "medium" })).toThrow(/Invalid value/);
       expect(() => validateSettingValue("default_model", { provider: "a", modelId: "b", thinkingLevel: "off" })).toThrow(/Invalid value/);
+      expect(() => validateSettingValue("diff_renderer", "virtualized")).toThrow(/Invalid value/);
+      expect(() => validateSettingValue("diff_renderer", "classic")).not.toThrow();
+      expect(() => validateSettingValue("diff_renderer", "virtual")).not.toThrow();
     });
   });
 

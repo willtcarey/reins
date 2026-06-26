@@ -1,7 +1,6 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
-import { ModelRegistryStore } from "../../models/stores/model-registry-store.js";
 import { SettingsStore, type ModelSettingKey } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
 import "./model-selector-controls.js";
@@ -13,7 +12,6 @@ export class SettingsModelSettingSection extends LitElement {
   }
 
   private _storeCtrl = new StoreController<SettingsStore>(this);
-  private _registryStoreCtrl = new StoreController<ModelRegistryStore>(this);
 
   @property({ attribute: false })
   set store(store: SettingsStore | null) {
@@ -22,15 +20,6 @@ export class SettingsModelSettingSection extends LitElement {
 
   get store(): SettingsStore | null {
     return this._storeCtrl.store;
-  }
-
-  @property({ attribute: false })
-  set registryStore(store: ModelRegistryStore | null) {
-    this._registryStoreCtrl.store = store;
-  }
-
-  get registryStore(): ModelRegistryStore | null {
-    return this._registryStoreCtrl.store;
   }
 
   @property()
@@ -118,8 +107,12 @@ export class SettingsModelSettingSection extends LitElement {
 
   override render() {
     const store = this.store;
-    const registryStore = this.registryStore;
+    const registryStore = store?.registryStore;
     if (!store || !registryStore) return nothing;
+
+    if (registryStore.loading && registryStore.providers.length === 0) {
+      return html`<div class="text-xs text-zinc-500 py-2">Loading model registry...</div>`;
+    }
 
     return html`
       <model-selector-controls

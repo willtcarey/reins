@@ -2,9 +2,10 @@
  * Settings Store
  *
  * Owns server-backed state for settings values, OAuth provider metadata,
- * and settings-related mutations. Model/provider registry data lives in
- * ModelRegistryStore.
+ * and settings-related mutations, including model/provider registry loading.
  */
+
+import { ModelRegistryStore } from "./model-registry-store.js";
 
 export interface OAuthProviderInfo {
   id: string;
@@ -22,6 +23,12 @@ export interface ModelSetting {
 export type SettingsStoreResult = { ok: true } | { error: string };
 export type SettingsStoreListener = () => void;
 export type ModelSettingKey = "default_model" | "utility_model";
+export type DiffRenderer = "classic" | "virtual";
+export type SettingsKey = ModelSettingKey | "diff_renderer";
+
+export interface SettingsLoadDeclaration {
+  settingKeys?: readonly SettingsKey[];
+}
 
 type ModelSelection = {
   provider: string;
@@ -34,6 +41,10 @@ type ModelSettingState = {
   stored: ModelSetting | null;
   selected: ModelSelection;
 };
+
+type LoadedSettingEntry =
+  | { key: ModelSettingKey; value: ModelSetting }
+  | { key: "diff_renderer"; value: DiffRenderer };
 
 const MODEL_SETTING_KEYS: ModelSettingKey[] = ["default_model", "utility_model"];
 
@@ -57,12 +68,16 @@ export class SettingsStore {
   apiKeySaving = false;
   oauthLoading = false;
   savingModel = false;
+  savingDiffRenderer = false;
 
   oauthProviders: OAuthProviderInfo[] = [];
 
   oauthLoginProvider = "";
   oauthAuthUrl = "";
   oauthInstructions = "";
+
+  diffRenderer: DiffRenderer = "classic";
+  readonly registryStore = new ModelRegistryStore();
 
   private _modelSettings: Record<ModelSettingKey, ModelSettingState> = {
     default_model: {
@@ -76,6 +91,10 @@ export class SettingsStore {
   };
 
   private _listeners = new Set<SettingsStoreListener>();
+
+  constructor() {
+    this.registryStore.subscribe(() => this.notify());
+  }
 
   subscribe(fn: SettingsStoreListener): () => void {
     this._listeners.add(fn);
@@ -106,21 +125,21 @@ export class SettingsStore {
     return this.oauthProviders.some((oauthProvider) => oauthProvider.id === provider);
   }
 
-  async load(settingKeys: ModelSettingKey[] = ["default_model", "utility_model"]): Promise<SettingsStoreResult> {
+  async load(settingKeys: readonly SettingsKey[] = ["default_model", "utility_model", "diff_renderer"]): Promise<SettingsStoreResult> {
     this.loading = true;
     this.notify();
 
     try {
       const settingsQuery = settingKeys.map((key) => `key=${encodeURIComponent(key)}`).join("&");
       const [settingsRes, oauthRes] = await Promise.all([
-        fetch(`/api/settings?${settingsQuery}`),
+        settingKeys.length > 0 ? fetch(`/api/settings?${settingsQuery}`) : jsonResponse([]),
         fetch("/api/oauth/providers"),
       ]);
 
       if (!settingsRes.ok) {
         return { error: await errorDetail(settingsRes) };
       }
-      this._applyLoadedModelSettings(await settingsRes.json());
+      this._applyLoadedSettings(await settingsRes.json(), settingKeys);
 
       if (!oauthRes.ok) {
         return { error: await errorDetail(oauthRes) };
@@ -137,6 +156,17 @@ export class SettingsStore {
       this.loading = false;
       this.notify();
     }
+  }
+
+  async loadDeclaredSettings(declarations: readonly SettingsLoadDeclaration[]): Promise<SettingsStoreResult> {
+    return this.load(settingsKeysForDeclarations(declarations));
+  }
+
+  async loadSettingsSections(declarations: readonly SettingsLoadDeclaration[]): Promise<SettingsStoreResult> {
+    const settingsResult = await this.loadDeclaredSettings(declarations);
+    if ("error" in settingsResult) return settingsResult;
+
+    return await this.registryStore.load();
   }
 
   async saveApiKey(provider: string, value: string): Promise<SettingsStoreResult> {
@@ -306,6 +336,31 @@ export class SettingsStore {
     return this._persistModelSetting(settingKey);
   }
 
+  async selectDiffRenderer(renderer: DiffRenderer): Promise<SettingsStoreResult> {
+    this.savingDiffRenderer = true;
+    this.notify();
+
+    try {
+      const res = await fetch("/api/settings/diff_renderer", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(renderer),
+      });
+
+      if (!res.ok) {
+        return { error: await errorDetail(res) };
+      }
+
+      this.diffRenderer = renderer;
+      return { ok: true };
+    } catch (err: unknown) {
+      return { error: errorMessage(err) };
+    } finally {
+      this.savingDiffRenderer = false;
+      this.notify();
+    }
+  }
+
   async clearModelSetting(settingKey: ModelSettingKey): Promise<SettingsStoreResult> {
     this.savingModel = true;
     this.notify();
@@ -366,11 +421,11 @@ export class SettingsStore {
     }
   }
 
-  private _applyLoadedModelSettings(entries: Array<{ key: ModelSettingKey; value: ModelSetting }>) {
+  private _applyLoadedSettings(entries: LoadedSettingEntry[], settingKeys: readonly SettingsKey[]) {
     const loadedKeys = new Set(entries.map((entry) => entry.key));
 
     for (const settingKey of MODEL_SETTING_KEYS) {
-      if (!loadedKeys.has(settingKey)) {
+      if (settingKeys.includes(settingKey) && !loadedKeys.has(settingKey)) {
         this._modelSettings[settingKey] = {
           ...this._modelSettings[settingKey],
           stored: null,
@@ -378,7 +433,16 @@ export class SettingsStore {
       }
     }
 
+    if (settingKeys.includes("diff_renderer") && !loadedKeys.has("diff_renderer")) {
+      this.diffRenderer = "classic";
+    }
+
     for (const entry of entries) {
+      if (entry.key === "diff_renderer") {
+        this.diffRenderer = entry.value === "virtual" ? "virtual" : "classic";
+        continue;
+      }
+
       this._modelSettings[entry.key] = {
         ...this._modelSettings[entry.key],
         stored: entry.value,
@@ -386,8 +450,9 @@ export class SettingsStore {
     }
   }
 
-  private _syncSelectionsFromSettings(settingKeys: ModelSettingKey[]) {
+  private _syncSelectionsFromSettings(settingKeys: readonly SettingsKey[]) {
     for (const settingKey of settingKeys) {
+      if (settingKey === "diff_renderer") continue;
       const model = this.getStoredModelSetting(settingKey);
       this._modelSettings[settingKey] = {
         stored: model,
@@ -415,8 +480,24 @@ export class SettingsStore {
   }
 }
 
+function settingsKeysForDeclarations(declarations: readonly SettingsLoadDeclaration[]): SettingsKey[] {
+  const keys = new Set<SettingsKey>();
+  for (const declaration of declarations) {
+    for (const key of declaration.settingKeys ?? []) {
+      keys.add(key);
+    }
+  }
+  return [...keys];
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function jsonResponse(data: unknown): Response {
+  return new Response(JSON.stringify(data), {
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 async function errorDetail(response: Response): Promise<string> {

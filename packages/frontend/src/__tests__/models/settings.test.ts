@@ -6,7 +6,7 @@ import {
   formatModelSelectionOptionLabel,
   formatModelSettingLabel,
   providerLabel,
-} from "../models/settings.js";
+} from "../../models/settings.js";
 
 describe("settings helpers", () => {
   const providers = [
