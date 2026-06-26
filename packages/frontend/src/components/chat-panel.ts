@@ -23,6 +23,7 @@ import {
   type ToolCall,
   type ToolBlockData,
   type StreamingBlock,
+  userMessageContentKey,
 } from "../models/chat-state.js";
 import {
   imageAspectRatioStyle,
@@ -64,6 +65,7 @@ export class ChatPanel extends LitElement {
   @state() private expandedSections = new Set<string>();
   @state() private animatingUserMessageKeys = new Set<string>();
   @state() private pendingUserMessages: UserMessage[] = [];
+  private pendingUserMessageBaselines = new Map<number, number>();
 
   @query("chat-composer") private composer?: ChatComposer;
 
@@ -136,13 +138,34 @@ export class ChatPanel extends LitElement {
   private reconcilePendingUserMessages() {
     if (this.pendingUserMessages.length === 0) return;
 
+    const conversationMessages = this.store?.conversation.messages ?? [];
     const latestPersistedTimestamp = (this.store?.conversation.persistedMessages ?? []).reduce(
       (latest, candidate) => Math.max(latest, candidate.timestamp),
       -Infinity,
     );
-    const pending = this.pendingUserMessages.filter((message) => message.timestamp > latestPersistedTimestamp);
 
+    const shouldKeepPending = (message: UserMessage) => {
+      if (message.timestamp <= latestPersistedTimestamp) return false;
+
+      const baseline = this.pendingUserMessageBaselines.get(message.timestamp);
+      if (baseline === undefined) return true;
+
+      const conversationTail = conversationMessages.slice(baseline);
+      if (conversationTail.length === 0) return true;
+
+      const pendingKey = userMessageContentKey(message.content);
+      return !conversationTail.some((candidate) => (
+        candidate.role === "user" && userMessageContentKey(candidate.content) === pendingKey
+      ));
+    };
+
+    const pending = this.pendingUserMessages.filter(shouldKeepPending);
     if (pending.length === this.pendingUserMessages.length) return;
+
+    const pendingTimestamps = new Set(pending.map((message) => message.timestamp));
+    for (const timestamp of this.pendingUserMessageBaselines.keys()) {
+      if (!pendingTimestamps.has(timestamp)) this.pendingUserMessageBaselines.delete(timestamp);
+    }
     this.pendingUserMessages = pending;
   }
 
@@ -166,6 +189,7 @@ export class ChatPanel extends LitElement {
       ? this.captureConversationShiftSnapshot()
       : [];
 
+    this.pendingUserMessageBaselines.set(timestamp, this.storeMessages.length);
     this.pendingUserMessages = [
       ...this.pendingUserMessages,
       { role: "user", content, timestamp },

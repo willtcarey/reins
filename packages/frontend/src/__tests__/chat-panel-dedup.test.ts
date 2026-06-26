@@ -75,6 +75,25 @@ describe("applyChatEvent — agent_end deduplication", () => {
     expect(state.isStreaming).toBe(false);
   });
 
+  test("agent_end appends run user when it is not already in conversation state", () => {
+    const oldUser = makeUserMsg("older question", 100);
+    const oldAssistant = makeAssistantMsg("older answer", 200);
+    const newUser = makeUserMsg("hello", 900);
+    const newAssistant = makeAssistantMsg("hi there", 800);
+
+    let state: ChatState = {
+      ...initialChatState(),
+      messages: [oldUser, oldAssistant],
+    };
+    state = applyChatEvent(state, { type: "agent_start" });
+    state = applyChatEvent(state, {
+      type: "agent_end",
+      messages: [newUser, newAssistant],
+    });
+
+    expect(state.messages).toEqual([oldUser, oldAssistant, newUser, newAssistant]);
+  });
+
   test("agent_end deduplicates when sessionData refreshed mid-run", () => {
     const oldUser = makeUserMsg("older question", 100);
     const newUser = makeUserMsg("hello", 1000);

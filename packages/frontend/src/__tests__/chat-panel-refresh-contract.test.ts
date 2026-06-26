@@ -161,6 +161,29 @@ describe("ChatPanel refresh contract", () => {
     cleanup(el);
   });
 
+  test("agent_end runtime user message replaces optimistic user before persisted refresh", () => {
+    globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
+
+    const client = new StubClient();
+    client.prompt = mock(() => {});
+    const { el, store, conversationsStore } = setup({ client });
+    const promptContent = [{ type: "text" as const, text: "new prompt" }];
+
+    setSessionData(store, makeSessionData({ messageCount: 0 }));
+    notify(store);
+    callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: promptContent } }));
+    const pendingTimestamp = get(el, "messages")[0].timestamp;
+
+    const runMessages: AgentMessage[] = [
+      { role: "user", content: promptContent, timestamp: pendingTimestamp - 1000 },
+      { role: "assistant", content: [{ type: "text", text: "done" }], timestamp: pendingTimestamp - 500 },
+    ];
+    conversationsStore.applyEvent("sess-1", { type: "agent_end", messages: runMessages });
+
+    expect(get(el, "messages")).toEqual(runMessages);
+    cleanup(el);
+  });
+
   test("persisted conversation messages hydrate an empty panel even when streaming", () => {
     globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
     const { el, store, conversationsStore } = setup();
