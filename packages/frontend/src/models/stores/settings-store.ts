@@ -25,10 +25,8 @@ export type SettingsStoreListener = () => void;
 export type ModelSettingKey = "default_model" | "utility_model";
 export type DiffRenderer = "classic" | "virtual";
 export type SettingsKey = ModelSettingKey | "diff_renderer";
-
-export interface SettingsLoadDeclaration {
-  settingKeys?: readonly SettingsKey[];
-}
+export type SettingsChange = { key: string };
+export type SettingsChangeListener = (change: SettingsChange) => void;
 
 type ModelSelection = {
   provider: string;
@@ -91,6 +89,7 @@ export class SettingsStore {
   };
 
   private _listeners = new Set<SettingsStoreListener>();
+  private _settingChangeListeners = new Set<SettingsChangeListener>();
 
   constructor() {
     this.registryStore.subscribe(() => this.notify());
@@ -101,8 +100,17 @@ export class SettingsStore {
     return () => this._listeners.delete(fn);
   }
 
+  subscribeSettingChanges(fn: SettingsChangeListener): () => void {
+    this._settingChangeListeners.add(fn);
+    return () => this._settingChangeListeners.delete(fn);
+  }
+
   private notify() {
     for (const fn of this._listeners) fn();
+  }
+
+  private notifySettingChanged(change: SettingsChange) {
+    for (const fn of this._settingChangeListeners) fn(change);
   }
 
   get defaultModel(): ModelSetting | null {
@@ -125,14 +133,14 @@ export class SettingsStore {
     return this.oauthProviders.some((oauthProvider) => oauthProvider.id === provider);
   }
 
-  async load(settingKeys: readonly SettingsKey[] = ["default_model", "utility_model", "diff_renderer"]): Promise<SettingsStoreResult> {
+  async loadSettings(settingKeys: readonly SettingsKey[] = ["default_model", "utility_model", "diff_renderer"]): Promise<SettingsStoreResult> {
     this.loading = true;
     this.notify();
 
     try {
       const settingsQuery = settingKeys.map((key) => `key=${encodeURIComponent(key)}`).join("&");
       const [settingsRes, oauthRes] = await Promise.all([
-        settingKeys.length > 0 ? fetch(`/api/settings?${settingsQuery}`) : jsonResponse([]),
+        settingKeys.length > 0 ? fetch(`/api/settings?${settingsQuery}`) : emptyJsonResponse(),
         fetch("/api/oauth/providers"),
       ]);
 
@@ -158,14 +166,7 @@ export class SettingsStore {
     }
   }
 
-  async loadDeclaredSettings(declarations: readonly SettingsLoadDeclaration[]): Promise<SettingsStoreResult> {
-    return this.load(settingsKeysForDeclarations(declarations));
-  }
-
-  async loadSettingsSections(declarations: readonly SettingsLoadDeclaration[]): Promise<SettingsStoreResult> {
-    const settingsResult = await this.loadDeclaredSettings(declarations);
-    if ("error" in settingsResult) return settingsResult;
-
+  async loadModelRegistry(): Promise<SettingsStoreResult> {
     return await this.registryStore.load();
   }
 
@@ -184,6 +185,7 @@ export class SettingsStore {
         return { error: await errorDetail(res) };
       }
 
+      this.notifySettingChanged({ key: `api_key_${provider}` });
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
@@ -206,6 +208,7 @@ export class SettingsStore {
         return { error: await errorDetail(res) };
       }
 
+      this.notifySettingChanged({ key: `api_key_${provider}` });
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
@@ -254,7 +257,8 @@ export class SettingsStore {
     this.notify();
 
     try {
-      const res = await fetch(`/api/oauth/callback/${this.oauthLoginProvider}`, {
+      const providerId = this.oauthLoginProvider;
+      const res = await fetch(`/api/oauth/callback/${providerId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
@@ -264,7 +268,11 @@ export class SettingsStore {
         return { error: await errorDetail(res) };
       }
 
-      return await this.load();
+      const result = await this.loadSettings();
+      if ("error" in result) return result;
+
+      this.notifySettingChanged({ key: `oauth_${providerId}` });
+      return result;
     } catch (err: unknown) {
       return { error: errorMessage(err) };
     } finally {
@@ -286,7 +294,11 @@ export class SettingsStore {
         return { error: await errorDetail(res) };
       }
 
-      return await this.load();
+      const result = await this.loadSettings();
+      if ("error" in result) return result;
+
+      this.notifySettingChanged({ key: `oauth_${providerId}` });
+      return result;
     } catch (err: unknown) {
       return { error: errorMessage(err) };
     } finally {
@@ -352,6 +364,7 @@ export class SettingsStore {
       }
 
       this.diffRenderer = renderer;
+      this.notifySettingChanged({ key: "diff_renderer" });
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
@@ -378,6 +391,7 @@ export class SettingsStore {
         stored: null,
         selected: { ...MODEL_SETTING_DEFAULTS[settingKey] },
       };
+      this.notifySettingChanged({ key: settingKey });
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
@@ -412,6 +426,7 @@ export class SettingsStore {
         ...this._modelSettings[settingKey],
         stored: body,
       };
+      this.notifySettingChanged({ key: settingKey });
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
@@ -480,22 +495,12 @@ export class SettingsStore {
   }
 }
 
-function settingsKeysForDeclarations(declarations: readonly SettingsLoadDeclaration[]): SettingsKey[] {
-  const keys = new Set<SettingsKey>();
-  for (const declaration of declarations) {
-    for (const key of declaration.settingKeys ?? []) {
-      keys.add(key);
-    }
-  }
-  return [...keys];
-}
-
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function jsonResponse(data: unknown): Response {
-  return new Response(JSON.stringify(data), {
+function emptyJsonResponse(): Response {
+  return new Response("[]", {
     headers: { "Content-Type": "application/json" },
   });
 }

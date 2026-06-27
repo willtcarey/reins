@@ -9,23 +9,24 @@
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
-import { SettingsStore, type SettingsLoadDeclaration } from "../../models/stores/settings-store.js";
+import { SettingsStore, type SettingsChange, type SettingsKey } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
 import "./api-keys-section.js";
 import "./diff-renderer-section.js";
 import "./model-setting-section.js";
 
-interface SettingsSectionContext {
+interface SettingRenderContext {
   settingsStore: SettingsStore;
 }
 
-interface SettingsSectionDefinition extends SettingsLoadDeclaration {
+interface SettingDefinition {
   id: string;
+  settingKeys?: readonly SettingsKey[];
   visible?: () => boolean;
-  render: (context: SettingsSectionContext) => TemplateResult;
+  render: (context: SettingRenderContext) => TemplateResult;
 }
 
-const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
+const SETTINGS: readonly SettingDefinition[] = [
   {
     id: "api-keys",
     render: ({ settingsStore }) => html`
@@ -42,9 +43,7 @@ const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
         .store=${settingsStore}
         settingKey="default_model"
         emptyMessage="Configure at least one API key above to select a default model."
-        successLabel="Default model updated"
         currentLabel="Current"
-        clearSuccessLabel="Default model cleared"
       ></settings-model-setting-section>
     `,
   },
@@ -66,13 +65,23 @@ const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
         .store=${settingsStore}
         settingKey="utility_model"
         emptyMessage="Configure at least one API key above to select a utility model."
-        successLabel="Utility model updated"
         currentLabel="Utility model"
-        clearSuccessLabel="Utility model cleared"
       ></settings-model-setting-section>
     `,
   },
 ];
+
+function settingKeysForSettings(settings: readonly SettingDefinition[]): SettingsKey[] {
+  const keys = new Set<SettingsKey>();
+  for (const setting of settings) {
+    for (const key of setting.settingKeys ?? []) keys.add(key);
+  }
+  return [...keys];
+}
+
+function settingChangeToastMessage(change: SettingsChange): string {
+  return `${change.key} was updated`;
+}
 
 @customElement("settings-panel")
 export class SettingsPanel extends LitElement {
@@ -84,14 +93,35 @@ export class SettingsPanel extends LitElement {
 
   private _store = new SettingsStore();
   private _storeCtrl = new StoreController<SettingsStore>(this);
+  private _unsubscribeSettingChanges: (() => void) | null = null;
 
   constructor() {
     super();
     this._storeCtrl.store = this._store;
+    this._subscribeSettingChanges();
   }
 
   private get store(): SettingsStore {
     return this._store;
+  }
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this._subscribeSettingChanges();
+  }
+
+  override disconnectedCallback() {
+    this._unsubscribeSettingChanges?.();
+    this._unsubscribeSettingChanges = null;
+    super.disconnectedCallback();
+  }
+
+  private _subscribeSettingChanges() {
+    this._unsubscribeSettingChanges ??= this.store.subscribeSettingChanges((change) => this._handleSettingChanged(change));
+  }
+
+  private _handleSettingChanged(change: SettingsChange) {
+    showToast(settingChangeToastMessage(change), "success");
   }
 
   open() {
@@ -104,19 +134,20 @@ export class SettingsPanel extends LitElement {
   }
 
   private _loadData() {
-    void this._loadSettingsSections();
+    void this._loadVisibleSettings();
+    void this.store.loadModelRegistry();
   }
 
-  private async _loadSettingsSections() {
-    const result = await this.store.loadSettingsSections(this._visibleSections);
+  private async _loadVisibleSettings() {
+    const result = await this.store.loadSettings(settingKeysForSettings(this._visibleSettings));
 
     if ("error" in result) {
       showToast(`Failed to load settings: ${result.error}`, "error");
     }
   }
 
-  private get _visibleSections(): readonly SettingsSectionDefinition[] {
-    return SETTINGS_SECTIONS.filter((section) => section.visible?.() ?? true);
+  private get _visibleSettings(): readonly SettingDefinition[] {
+    return SETTINGS.filter((setting) => setting.visible?.() ?? true);
   }
 
   private _handleBackdropClick(e: MouseEvent) {
@@ -128,7 +159,7 @@ export class SettingsPanel extends LitElement {
   override render() {
     if (!this._open) return nothing;
 
-    const sections = this._visibleSections;
+    const settings = this._visibleSettings;
 
     return html`
       <div
@@ -152,9 +183,9 @@ export class SettingsPanel extends LitElement {
 
           ${this.store.loading
             ? html`<div class="text-xs text-zinc-500 py-4 text-center">Loading settings...</div>`
-            : sections.map((section, index) => html`
-              <div class=${index < sections.length - 1 ? "mb-5" : ""}>
-                ${section.render({ settingsStore: this.store })}
+            : settings.map((setting, index) => html`
+              <div class=${index < settings.length - 1 ? "mb-5" : ""}>
+                ${setting.render({ settingsStore: this.store })}
               </div>
             `)}
         </div>

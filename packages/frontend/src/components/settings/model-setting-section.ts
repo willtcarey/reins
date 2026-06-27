@@ -29,16 +29,10 @@ export class SettingsModelSettingSection extends LitElement {
   emptyMessage = "Configure at least one API key above to select a model.";
 
   @property()
-  successLabel = "Model updated";
-
-  @property()
   clearLabel = "Clear";
 
   @property()
   currentLabel = "Current";
-
-  @property()
-  clearSuccessLabel = "Model setting cleared";
 
   private async _handleProviderModelChange(e: CustomEvent<{ runtimeType: string; provider: string; modelId: string }>) {
     const store = this.store;
@@ -56,11 +50,6 @@ export class SettingsModelSettingSection extends LitElement {
       showToast(`Failed to save model setting: ${result.error}`, "error");
       return;
     }
-
-    const selected = this._selected;
-    if (selected.provider && selected.modelId) {
-      showToast(this.successLabel, "success");
-    }
   }
 
   private async _handleThinkingChange(e: CustomEvent<{ thinkingLevel: string }>) {
@@ -71,11 +60,6 @@ export class SettingsModelSettingSection extends LitElement {
     if ("error" in result) {
       showToast(`Failed to save model setting: ${result.error}`, "error");
       return;
-    }
-
-    const selected = this._selected;
-    if (selected.provider && selected.modelId) {
-      showToast(this.successLabel, "success");
     }
   }
 
@@ -88,8 +72,6 @@ export class SettingsModelSettingSection extends LitElement {
       showToast(`Failed to clear model setting: ${result.error}`, "error");
       return;
     }
-
-    showToast(this.clearSuccessLabel, "success");
   }
 
   private get _currentModel() {

@@ -23,7 +23,7 @@ describe("SettingsStore", () => {
     restoreFetch();
   });
 
-  test("load populates settings and oauth state without fetching the model registry", async () => {
+  test("loadSettings populates settings and oauth state without fetching the model registry", async () => {
     const requests: string[] = [];
 
     mockFetch((url) => {
@@ -64,7 +64,7 @@ describe("SettingsStore", () => {
       return jsonResponse({}, false);
     });
 
-    const result = await store.load();
+    const result = await store.loadSettings();
 
     expect(result).toEqual({ ok: true });
     expect(store.loading).toBe(false);
@@ -97,7 +97,7 @@ describe("SettingsStore", () => {
     expect(store.oauthProviders.map((provider) => provider.id)).toEqual(["openrouter"]);
   });
 
-  test("load defaults diffRenderer to classic when unset", async () => {
+  test("loadSettings defaults diffRenderer to classic when unset", async () => {
     mockFetch((url) => {
       if (url === "/api/settings?key=default_model&key=utility_model&key=diff_renderer") {
         return jsonResponse([]);
@@ -108,14 +108,16 @@ describe("SettingsStore", () => {
       return jsonResponse({}, false);
     });
 
-    const result = await store.load();
+    const result = await store.loadSettings();
 
     expect(result).toEqual({ ok: true });
     expect(store.diffRenderer).toBe("classic");
   });
 
-  test("selectDiffRenderer persists the renderer setting", async () => {
+  test("selectDiffRenderer persists the renderer setting and notifies setting-change listeners", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const changes: unknown[] = [];
+    store.subscribeSettingChanges((change) => changes.push(change));
 
     mockFetch((url, init) => {
       requests.push({ url, init });
@@ -131,9 +133,10 @@ describe("SettingsStore", () => {
     expect(store.diffRenderer).toBe("virtual");
     expect(requests).toHaveLength(1);
     expect(requests[0]?.init?.body).toBe(JSON.stringify("virtual"));
+    expect(changes).toEqual([{ key: "diff_renderer" }]);
   });
 
-  test("load can request a subset of setting keys", async () => {
+  test("loadSettings can request a subset of setting keys", async () => {
     const requests: string[] = [];
 
     mockFetch((url) => {
@@ -147,65 +150,17 @@ describe("SettingsStore", () => {
       return jsonResponse({}, false);
     });
 
-    const result = await store.load(["default_model"]);
+    const result = await store.loadSettings(["default_model"]);
 
     expect(result).toEqual({ ok: true });
     expect(requests).toContain("/api/settings?key=default_model");
   });
 
-  test("loadDeclaredSettings requests the keys declared by settings sections", async () => {
-    const requests: string[] = [];
-
-    mockFetch((url) => {
-      requests.push(url);
-      if (url === "/api/settings?key=default_model&key=utility_model") {
-        return jsonResponse([]);
-      }
-      if (url === "/api/oauth/providers") {
-        return jsonResponse([]);
-      }
-      return jsonResponse({}, false);
-    });
-
-    const result = await store.loadDeclaredSettings([
-      { settingKeys: ["default_model"] },
-      {},
-      { settingKeys: ["default_model", "utility_model"] },
-    ]);
-
-    expect(result).toEqual({ ok: true });
-    expect(requests).toContain("/api/settings?key=default_model&key=utility_model");
-  });
-
-  test("loadSettingsSections loads data for the setting declarations it receives", async () => {
-    const requests: string[] = [];
-
-    mockFetch((url) => {
-      requests.push(url);
-      if (url === "/api/settings?key=default_model") {
-        return jsonResponse([]);
-      }
-      if (url === "/api/oauth/providers") {
-        return jsonResponse([]);
-      }
-      if (url === "/api/models") {
-        return jsonResponse([]);
-      }
-      return jsonResponse({}, false);
-    });
-
-    const result = await store.loadSettingsSections([
-      { settingKeys: ["default_model"] },
-      {},
-    ]);
-
-    expect(result).toEqual({ ok: true });
-    expect(requests).toContain("/api/settings?key=default_model");
-    expect(requests).toContain("/api/models");
-  });
 
   test("saveApiKey persists the key via auth API endpoints without reloading /api/models", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const changes: unknown[] = [];
+    store.subscribeSettingChanges((change) => changes.push(change));
 
     mockFetch((url, init) => {
       requests.push({ url, init });
@@ -223,10 +178,13 @@ describe("SettingsStore", () => {
     const saveRequest = requests.find((request) => request.url === "/api/auth/api-keys/openai");
     expect(saveRequest?.init?.method).toBe("PUT");
     expect(saveRequest?.init?.body).toBe(JSON.stringify({ apiKey: "sk-live" }));
+    expect(changes).toEqual([{ key: "api_key_openai" }]);
   });
 
   test("deleteApiKey removes the key via auth API endpoints without reloading /api/models", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const changes: unknown[] = [];
+    store.subscribeSettingChanges((change) => changes.push(change));
 
     mockFetch((url, init) => {
       requests.push({ url, init });
@@ -243,6 +201,7 @@ describe("SettingsStore", () => {
     expect(requests.map((request) => request.url)).not.toContain("/api/models");
     const deleteRequest = requests.find((request) => request.url === "/api/auth/api-keys/openai");
     expect(deleteRequest?.init?.method).toBe("DELETE");
+    expect(changes).toEqual([{ key: "api_key_openai" }]);
   });
 
   test("startOAuthLogin stores the auth URL and instructions", async () => {
@@ -267,6 +226,8 @@ describe("SettingsStore", () => {
 
   test("selectModelSetting persists a chosen provider/model pair in one request", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const changes: unknown[] = [];
+    store.subscribeSettingChanges((change) => changes.push(change));
     mockFetch((url, init) => {
       requests.push({ url, init });
       if (url === "/api/settings/default_model" && init?.method === "PUT") {
@@ -278,6 +239,7 @@ describe("SettingsStore", () => {
     await store.selectModelSetting("default_model", "anthropic", "claude-sonnet-4", "pi");
     await store.selectModelSettingThinkingLevel("default_model", "medium");
     requests.length = 0;
+    changes.length = 0;
 
     const result = await store.selectModelSetting("default_model", "openai", "gpt-4.1", "pi");
 
@@ -301,6 +263,7 @@ describe("SettingsStore", () => {
       runtimeType: "pi",
       thinkingLevel: "high",
     }));
+    expect(changes).toEqual([{ key: "default_model" }]);
   });
 
   test("selectModelSetting persists utility-model selections in one request", async () => {
@@ -338,6 +301,9 @@ describe("SettingsStore", () => {
   });
 
   test("clearModelSetting removes the saved selection and resets local fields", async () => {
+    const changes: unknown[] = [];
+    store.subscribeSettingChanges((change) => changes.push(change));
+
     mockFetch((url, init) => {
       if (url === "/api/settings/default_model" && init?.method === "PUT") {
         return new Response(null, { status: 200 });
@@ -350,6 +316,7 @@ describe("SettingsStore", () => {
 
     await store.selectModelSetting("default_model", "anthropic", "claude-sonnet-4", "pi");
     await store.selectModelSettingThinkingLevel("default_model", "medium");
+    changes.length = 0;
 
     const result = await store.clearModelSetting("default_model");
 
@@ -362,5 +329,6 @@ describe("SettingsStore", () => {
       thinkingLevel: "high",
     });
     expect(store.savingModel).toBe(false);
+    expect(changes).toEqual([{ key: "default_model" }]);
   });
 });

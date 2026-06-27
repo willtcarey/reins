@@ -43,8 +43,6 @@ export class SettingsDiffRendererSection extends LitElement {
       showToast(`Failed to update diff renderer: ${result.error}`, "error");
       return;
     }
-
-    showToast("Diff renderer preference updated", "success");
   }
 }
 

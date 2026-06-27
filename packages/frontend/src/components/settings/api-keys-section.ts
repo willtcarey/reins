@@ -34,7 +34,7 @@ export class SettingsApiKeysSection extends LitElement {
   }
 
   private async _reloadRegistry(): Promise<boolean> {
-    const result = await this.store?.registryStore.load();
+    const result = await this.store?.loadModelRegistry();
     if (result && "error" in result) {
       showToast(`Failed to refresh model registry: ${result.error}`, "error");
       return false;
@@ -57,7 +57,6 @@ export class SettingsApiKeysSection extends LitElement {
 
     await this._reloadRegistry();
     this._resetLocalState();
-    showToast(`${providerLabel(provider)} API key saved`, "success");
   }
 
   private async _deleteApiKey(provider: string) {
@@ -72,7 +71,6 @@ export class SettingsApiKeysSection extends LitElement {
 
     await this._reloadRegistry();
     this._resetLocalState();
-    showToast(`${providerLabel(provider)} API key removed`, "success");
   }
 
   private _handleAddKeyKeyDown(e: KeyboardEvent) {
@@ -97,7 +95,6 @@ export class SettingsApiKeysSection extends LitElement {
     const code = this._oauthCallbackValue.trim();
     if (!store || !code || !store.oauthLoginProvider) return;
 
-    const providerId = store.oauthLoginProvider;
     const result = await store.completeOAuthLogin(code);
     if ("error" in result) {
       showToast(`OAuth login failed: ${result.error}`, "error");
@@ -106,7 +103,6 @@ export class SettingsApiKeysSection extends LitElement {
 
     await this._reloadRegistry();
     this._resetLocalState();
-    showToast(`${providerLabel(providerId)} connected via OAuth`, "success");
   }
 
   private async _disconnectOAuth(providerId: string) {
@@ -121,7 +117,6 @@ export class SettingsApiKeysSection extends LitElement {
 
     await this._reloadRegistry();
     this._resetLocalState();
-    showToast(`${providerLabel(providerId)} disconnected`, "success");
   }
 
   private _handleOAuthCallbackKeyDown(e: KeyboardEvent) {
