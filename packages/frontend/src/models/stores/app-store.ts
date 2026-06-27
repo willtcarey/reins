@@ -16,6 +16,7 @@ import type { ProjectStore } from "./project-store.js";
 import { DiffStore } from "./diff-store.js";
 import { ConversationsStore } from "./conversations-store.js";
 import { SessionCache } from "./session-cache.js";
+import { SettingsStore } from "./settings-store.js";
 import { openInBrowserEvent } from "../../components/events.js";
 
 // Tools that modify files and should trigger a diff refresh
@@ -43,6 +44,9 @@ export class AppStore {
   /** Diff/sync sub-store — owned and coordinated by AppStore. */
   readonly diffStore = new DiffStore();
 
+  /** Shared persisted settings state for app-wide preferences and the settings panel. */
+  readonly settingsStore = new SettingsStore();
+
   // ---- Connection state -----------------------------------------------------
 
   connected = false;
@@ -62,6 +66,7 @@ export class AppStore {
     this._unsubChildren = [
       this.projectsStore.subscribe(() => this.notify()),
       this.diffStore.subscribe(() => this.notify()),
+      this.settingsStore.subscribe(() => this.notify()),
     ];
 
     // ---- WS event handling (moved from app.ts) ------------------------------

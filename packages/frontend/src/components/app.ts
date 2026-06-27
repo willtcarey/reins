@@ -422,7 +422,7 @@ export class AppShell extends LitElement {
         <image-lightbox></image-lightbox>
 
         <!-- Settings panel overlay -->
-        <settings-panel></settings-panel>
+        <settings-panel .store=${store.settingsStore}></settings-panel>
       </div>
     `;
   }

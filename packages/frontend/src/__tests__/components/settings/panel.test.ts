@@ -1,7 +1,8 @@
 import { describe, expect, test, afterEach } from "bun:test";
 import { SettingsPanel } from "../../../components/settings/panel.js";
+import { SettingsStore } from "../../../models/stores/settings-store.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { templateToString } from "../../helpers/lit-template.js";
+import { isTemplateResult, templateToString } from "../../helpers/lit-template.js";
 
 type TestGlobal = typeof globalThis & { REINS_DEV?: boolean };
 const testGlobal: TestGlobal = globalThis;
@@ -19,6 +20,19 @@ function deferred<T>() {
     resolve = res;
   });
   return { promise, resolve };
+}
+
+function templateContainsValue(value: unknown, target: unknown): boolean {
+  if (value === target) return true;
+  if (Array.isArray(value)) return value.some((entry) => templateContainsValue(entry, target));
+  if (isTemplateResult(value)) return value.values.some((entry) => templateContainsValue(entry, target));
+  return false;
+}
+
+function makePanel(store = new SettingsStore()): SettingsPanel {
+  const el = new SettingsPanel();
+  el.store = store;
+  return el;
 }
 
 function mockSettingsPanelFetch(modelsResponse: Response | Promise<Response> = jsonResponse([])): string[] {
@@ -40,16 +54,17 @@ describe("SettingsPanel", () => {
   });
 
   test("renders nothing while closed", () => {
-    const el = new SettingsPanel();
+    const el = makePanel();
 
     expect(templateToString(el.render())).toBe("");
   });
+
 
   test("renders visible settings after settings load while the model registry is still loading", async () => {
     const modelRegistry = deferred<Response>();
     mockSettingsPanelFetch(modelRegistry.promise);
 
-    const el = new SettingsPanel();
+    const el = makePanel();
     el.open();
 
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -68,7 +83,7 @@ describe("SettingsPanel", () => {
   test("hides the diff renderer setting outside frontend dev builds", async () => {
     const requests = mockSettingsPanelFetch();
 
-    const el = new SettingsPanel();
+    const el = makePanel();
     el.open();
 
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -79,11 +94,21 @@ describe("SettingsPanel", () => {
     expect(requests).toContain("/api/settings?key=default_model&key=utility_model");
   });
 
+  test("renders with an injected shared settings store", () => {
+    testGlobal.REINS_DEV = true;
+    const store = new SettingsStore();
+
+    const el = makePanel(store);
+    Reflect.set(el, "_open", true);
+
+    expect(templateContainsValue(el.render(), store)).toBe(true);
+  });
+
   test("renders the diff renderer setting in frontend dev builds", async () => {
     testGlobal.REINS_DEV = true;
     const requests = mockSettingsPanelFetch();
 
-    const el = new SettingsPanel();
+    const el = makePanel();
     el.open();
 
     await new Promise((resolve) => setTimeout(resolve, 0));

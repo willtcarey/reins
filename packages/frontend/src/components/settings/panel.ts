@@ -6,8 +6,8 @@
  * This shell owns overlay visibility and visible setting composition.
  */
 
-import { LitElement, html, nothing, type TemplateResult } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { LitElement, html, nothing, type PropertyValues, type TemplateResult } from "lit";
+import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import { SettingsStore, type SettingsChange, type SettingsKey } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
@@ -22,54 +22,62 @@ interface SettingRenderContext {
 interface SettingDefinition {
   id: string;
   settingKeys?: readonly SettingsKey[];
-  visible?: () => boolean;
   render: (context: SettingRenderContext) => TemplateResult;
 }
 
-const SETTINGS: readonly SettingDefinition[] = [
-  {
-    id: "api-keys",
-    render: ({ settingsStore }) => html`
-      <settings-api-keys-section .store=${settingsStore}></settings-api-keys-section>
-    `,
-  },
-  {
-    id: "default-model",
-    settingKeys: ["default_model"],
-    render: ({ settingsStore }) => html`
-      <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">Default Model</h3>
-      <p class="text-[10px] text-zinc-500 mb-3">New sessions will use this model. Existing sessions are not affected.</p>
-      <settings-model-setting-section
-        .store=${settingsStore}
-        settingKey="default_model"
-        emptyMessage="Configure at least one API key above to select a default model."
-        currentLabel="Current"
-      ></settings-model-setting-section>
-    `,
-  },
-  {
-    id: "diff-renderer",
-    settingKeys: ["diff_renderer"],
-    visible: () => typeof REINS_DEV !== "undefined" && REINS_DEV,
-    render: ({ settingsStore }) => html`
-      <settings-diff-renderer-section .store=${settingsStore}></settings-diff-renderer-section>
-    `,
-  },
-  {
-    id: "utility-model",
-    settingKeys: ["utility_model"],
-    render: ({ settingsStore }) => html`
-      <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">Utility Model</h3>
-      <p class="text-[10px] text-zinc-500 mb-3">Used for lightweight internal tasks like task generation and branch naming. Falls back to the default model when unset.</p>
-      <settings-model-setting-section
-        .store=${settingsStore}
-        settingKey="utility_model"
-        emptyMessage="Configure at least one API key above to select a utility model."
-        currentLabel="Utility model"
-      ></settings-model-setting-section>
-    `,
-  },
-];
+const API_KEYS_SETTING: SettingDefinition = {
+  id: "api-keys",
+  render: ({ settingsStore }) => html`
+    <settings-api-keys-section .store=${settingsStore}></settings-api-keys-section>
+  `,
+};
+
+const DEFAULT_MODEL_SETTING: SettingDefinition = {
+  id: "default-model",
+  settingKeys: ["default_model"],
+  render: ({ settingsStore }) => html`
+    <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">Default Model</h3>
+    <p class="text-[10px] text-zinc-500 mb-3">New sessions will use this model. Existing sessions are not affected.</p>
+    <settings-model-setting-section
+      .store=${settingsStore}
+      settingKey="default_model"
+      emptyMessage="Configure at least one API key above to select a default model."
+      currentLabel="Current"
+    ></settings-model-setting-section>
+  `,
+};
+
+const DIFF_RENDERER_SETTING: SettingDefinition = {
+  id: "diff-renderer",
+  settingKeys: ["diff_renderer"],
+  render: ({ settingsStore }) => html`
+    <settings-diff-renderer-section .store=${settingsStore}></settings-diff-renderer-section>
+  `,
+};
+
+const UTILITY_MODEL_SETTING: SettingDefinition = {
+  id: "utility-model",
+  settingKeys: ["utility_model"],
+  render: ({ settingsStore }) => html`
+    <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">Utility Model</h3>
+    <p class="text-[10px] text-zinc-500 mb-3">Used for lightweight internal tasks like task generation and branch naming. Falls back to the default model when unset.</p>
+    <settings-model-setting-section
+      .store=${settingsStore}
+      settingKey="utility_model"
+      emptyMessage="Configure at least one API key above to select a utility model."
+      currentLabel="Utility model"
+    ></settings-model-setting-section>
+  `,
+};
+
+function visibleSettings(): readonly SettingDefinition[] {
+  return [
+    API_KEYS_SETTING,
+    DEFAULT_MODEL_SETTING,
+    ...(typeof REINS_DEV !== "undefined" && REINS_DEV ? [DIFF_RENDERER_SETTING] : []),
+    UTILITY_MODEL_SETTING,
+  ];
+}
 
 function settingKeysForSettings(settings: readonly SettingDefinition[]): SettingsKey[] {
   const keys = new Set<SettingsKey>();
@@ -91,23 +99,20 @@ export class SettingsPanel extends LitElement {
 
   @state() private _open = false;
 
-  private _store = new SettingsStore();
+  @property({ attribute: false }) store!: SettingsStore;
+
   private _storeCtrl = new StoreController<SettingsStore>(this);
   private _unsubscribeSettingChanges: (() => void) | null = null;
 
-  constructor() {
-    super();
-    this._storeCtrl.store = this._store;
-    this._subscribeSettingChanges();
-  }
-
-  private get store(): SettingsStore {
-    return this._store;
-  }
-
   override connectedCallback() {
     super.connectedCallback();
-    this._subscribeSettingChanges();
+    this._syncStoreSubscriptions();
+  }
+
+  override willUpdate(changed: PropertyValues<this>) {
+    if (changed.has("store")) {
+      this._syncStoreSubscriptions();
+    }
   }
 
   override disconnectedCallback() {
@@ -116,8 +121,11 @@ export class SettingsPanel extends LitElement {
     super.disconnectedCallback();
   }
 
-  private _subscribeSettingChanges() {
-    this._unsubscribeSettingChanges ??= this.store.subscribeSettingChanges((change) => this._handleSettingChanged(change));
+  private _syncStoreSubscriptions() {
+    this._unsubscribeSettingChanges?.();
+    this._unsubscribeSettingChanges = null;
+    this._storeCtrl.store = this.store;
+    this._unsubscribeSettingChanges = this.store.subscribeSettingChanges((change) => this._handleSettingChanged(change));
   }
 
   private _handleSettingChanged(change: SettingsChange) {
@@ -139,15 +147,11 @@ export class SettingsPanel extends LitElement {
   }
 
   private async _loadVisibleSettings() {
-    const result = await this.store.loadSettings(settingKeysForSettings(this._visibleSettings));
+    const result = await this.store.loadSettings(settingKeysForSettings(visibleSettings()));
 
     if ("error" in result) {
       showToast(`Failed to load settings: ${result.error}`, "error");
     }
-  }
-
-  private get _visibleSettings(): readonly SettingDefinition[] {
-    return SETTINGS.filter((setting) => setting.visible?.() ?? true);
   }
 
   private _handleBackdropClick(e: MouseEvent) {
@@ -159,7 +163,8 @@ export class SettingsPanel extends LitElement {
   override render() {
     if (!this._open) return nothing;
 
-    const settings = this._visibleSettings;
+    const settings = visibleSettings();
+    const store = this.store;
 
     return html`
       <div
@@ -181,11 +186,11 @@ export class SettingsPanel extends LitElement {
             </button>
           </div>
 
-          ${this.store.loading
+          ${store.loading
             ? html`<div class="text-xs text-zinc-500 py-4 text-center">Loading settings...</div>`
             : settings.map((setting, index) => html`
               <div class=${index < settings.length - 1 ? "mb-5" : ""}>
-                ${setting.render({ settingsStore: this.store })}
+                ${setting.render({ settingsStore: store })}
               </div>
             `)}
         </div>
