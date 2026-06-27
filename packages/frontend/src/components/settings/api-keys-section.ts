@@ -270,7 +270,7 @@ export class SettingsApiKeysSection extends LitElement {
                  hover:border-zinc-500 cursor-pointer transition-colors disabled:opacity-50"
           aria-label="Add new provider"
           title="Add new provider"
-          ?disabled=${store.apiKeySaving || store.oauthLoading}
+          ?disabled=${store.oauthLoading}
         >+</button>
         <select
           aria-label="Add new provider"
@@ -282,7 +282,7 @@ export class SettingsApiKeysSection extends LitElement {
               this._selectAddKeyProvider(e.target.value);
             }
           }}
-          ?disabled=${store.apiKeySaving || store.oauthLoading}
+          ?disabled=${store.oauthLoading}
         >
           <option value="">Add provider...</option>
           ${unconfigured.map(
@@ -320,14 +320,13 @@ export class SettingsApiKeysSection extends LitElement {
               }
             }}
             @keydown=${this._handleAddKeyKeyDown}
-            ?disabled=${store.apiKeySaving}
           />
           <button
             class="px-2.5 py-1.5 text-xs text-zinc-100 bg-blue-600 hover:bg-blue-500 rounded cursor-pointer
                    transition-colors disabled:opacity-50"
             @click=${() => void this._saveNewApiKey()}
-            ?disabled=${store.apiKeySaving || !this._addKeyValue.trim()}
-          >${store.apiKeySaving ? "Saving..." : "Save"}</button>
+            ?disabled=${!this._addKeyValue.trim()}
+          >Save</button>
         </div>
       </div>
     `;

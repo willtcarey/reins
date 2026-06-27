@@ -63,10 +63,7 @@ const MODEL_SETTING_DEFAULTS: Record<ModelSettingKey, ModelSelection> = {
 
 export class SettingsStore {
   loading = false;
-  apiKeySaving = false;
   oauthLoading = false;
-  savingModel = false;
-  savingDiffRenderer = false;
 
   oauthProviders: OAuthProviderInfo[] = [];
 
@@ -133,7 +130,7 @@ export class SettingsStore {
     return this.oauthProviders.some((oauthProvider) => oauthProvider.id === provider);
   }
 
-  async loadSettings(settingKeys: readonly SettingsKey[] = ["default_model", "utility_model", "diff_renderer"]): Promise<SettingsStoreResult> {
+  async loadSettings(settingKeys: readonly SettingsKey[]): Promise<SettingsStoreResult> {
     this.loading = true;
     this.notify();
 
@@ -171,9 +168,6 @@ export class SettingsStore {
   }
 
   async saveApiKey(provider: string, value: string): Promise<SettingsStoreResult> {
-    this.apiKeySaving = true;
-    this.notify();
-
     try {
       const res = await fetch(`/api/auth/api-keys/${provider}`, {
         method: "PUT",
@@ -189,16 +183,10 @@ export class SettingsStore {
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
-    } finally {
-      this.apiKeySaving = false;
-      this.notify();
     }
   }
 
   async deleteApiKey(provider: string): Promise<SettingsStoreResult> {
-    this.apiKeySaving = true;
-    this.notify();
-
     try {
       const res = await fetch(`/api/auth/api-keys/${provider}`, {
         method: "DELETE",
@@ -212,9 +200,6 @@ export class SettingsStore {
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
-    } finally {
-      this.apiKeySaving = false;
-      this.notify();
     }
   }
 
@@ -268,7 +253,7 @@ export class SettingsStore {
         return { error: await errorDetail(res) };
       }
 
-      const result = await this.loadSettings();
+      const result = await this.loadSettings([]);
       if ("error" in result) return result;
 
       this.notifySettingChanged({ key: `oauth_${providerId}` });
@@ -294,7 +279,7 @@ export class SettingsStore {
         return { error: await errorDetail(res) };
       }
 
-      const result = await this.loadSettings();
+      const result = await this.loadSettings([]);
       if ("error" in result) return result;
 
       this.notifySettingChanged({ key: `oauth_${providerId}` });
@@ -349,7 +334,7 @@ export class SettingsStore {
   }
 
   async selectDiffRenderer(renderer: DiffRenderer): Promise<SettingsStoreResult> {
-    this.savingDiffRenderer = true;
+    this.diffRenderer = renderer;
     this.notify();
 
     try {
@@ -363,21 +348,14 @@ export class SettingsStore {
         return { error: await errorDetail(res) };
       }
 
-      this.diffRenderer = renderer;
       this.notifySettingChanged({ key: "diff_renderer" });
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
-    } finally {
-      this.savingDiffRenderer = false;
-      this.notify();
     }
   }
 
   async clearModelSetting(settingKey: ModelSettingKey): Promise<SettingsStoreResult> {
-    this.savingModel = true;
-    this.notify();
-
     try {
       const res = await fetch(`/api/settings/${settingKey}`, {
         method: "DELETE",
@@ -395,9 +373,6 @@ export class SettingsStore {
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
-    } finally {
-      this.savingModel = false;
-      this.notify();
     }
   }
 
@@ -406,9 +381,6 @@ export class SettingsStore {
   }
 
   private async _persistModelSetting(settingKey: ModelSettingKey): Promise<SettingsStoreResult> {
-    this.savingModel = true;
-    this.notify();
-
     try {
       const body: ModelSetting = { ...this.getSelectedModelSetting(settingKey) };
 
@@ -430,9 +402,6 @@ export class SettingsStore {
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
-    } finally {
-      this.savingModel = false;
-      this.notify();
     }
   }
 

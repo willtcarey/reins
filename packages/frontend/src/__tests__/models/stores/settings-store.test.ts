@@ -64,7 +64,7 @@ describe("SettingsStore", () => {
       return jsonResponse({}, false);
     });
 
-    const result = await store.loadSettings();
+    const result = await store.loadSettings(["default_model", "utility_model", "diff_renderer"]);
 
     expect(result).toEqual({ ok: true });
     expect(store.loading).toBe(false);
@@ -108,7 +108,7 @@ describe("SettingsStore", () => {
       return jsonResponse({}, false);
     });
 
-    const result = await store.loadSettings();
+    const result = await store.loadSettings(["default_model", "utility_model", "diff_renderer"]);
 
     expect(result).toEqual({ ok: true });
     expect(store.diffRenderer).toBe("classic");
@@ -134,6 +134,28 @@ describe("SettingsStore", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0]?.init?.body).toBe(JSON.stringify("virtual"));
     expect(changes).toEqual([{ key: "diff_renderer" }]);
+  });
+
+  test("selectDiffRenderer updates local preference while persisting in the background", async () => {
+    let resolveSave: ((response: Response) => void) | undefined;
+    mockFetch((url, init) => {
+      if (url === "/api/settings/diff_renderer" && init?.method === "PUT") {
+        return new Promise<Response>((resolve) => {
+          resolveSave = resolve;
+        });
+      }
+      return jsonResponse({}, false);
+    });
+
+    const pending = store.selectDiffRenderer("virtual");
+
+    expect(store.diffRenderer).toBe("virtual");
+
+    if (!resolveSave) throw new Error("Expected diff renderer save request");
+    resolveSave(new Response(null, { status: 200 }));
+    const result = await pending;
+
+    expect(result).toEqual({ ok: true });
   });
 
   test("loadSettings can request a subset of setting keys", async () => {
@@ -173,7 +195,6 @@ describe("SettingsStore", () => {
     const result = await store.saveApiKey("openai", "sk-live");
 
     expect(result).toEqual({ ok: true });
-    expect(store.apiKeySaving).toBe(false);
     expect(requests.map((request) => request.url)).not.toContain("/api/models");
     const saveRequest = requests.find((request) => request.url === "/api/auth/api-keys/openai");
     expect(saveRequest?.init?.method).toBe("PUT");
@@ -197,7 +218,6 @@ describe("SettingsStore", () => {
     const result = await store.deleteApiKey("openai");
 
     expect(result).toEqual({ ok: true });
-    expect(store.apiKeySaving).toBe(false);
     expect(requests.map((request) => request.url)).not.toContain("/api/models");
     const deleteRequest = requests.find((request) => request.url === "/api/auth/api-keys/openai");
     expect(deleteRequest?.init?.method).toBe("DELETE");
@@ -328,7 +348,6 @@ describe("SettingsStore", () => {
       runtimeType: "",
       thinkingLevel: "high",
     });
-    expect(store.savingModel).toBe(false);
     expect(changes).toEqual([{ key: "default_model" }]);
   });
 });

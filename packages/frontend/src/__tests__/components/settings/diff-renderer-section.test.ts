@@ -18,5 +18,6 @@ describe("SettingsDiffRendererSection", () => {
     expect(output).toContain("Virtualized prototype");
     expect(output).toContain("experimental");
     expect(output).toContain("not wired to the diff panel yet");
+    expect(output).not.toContain("?disabled=");
   });
 });

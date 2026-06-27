@@ -35,9 +35,6 @@ export class ModelSelectorControls extends LitElement {
   @property({ attribute: false })
   currentModel: ModelSetting | null = null;
 
-  @property({ type: Boolean })
-  saving = false;
-
   @property({ type: String })
   emptyMessage = "Configure at least one API key above to select a model.";
 
@@ -151,7 +148,6 @@ export class ModelSelectorControls extends LitElement {
             class=${selectClass}
             .value=${selectedValue}
             @change=${this._handleProviderModelChange}
-            ?disabled=${this.saving}
           >
             <option value="">${this.selectPlaceholder}</option>
             ${this.providers.flatMap((provider) =>
@@ -174,7 +170,6 @@ export class ModelSelectorControls extends LitElement {
                 class=${selectClass}
                 .value=${this.selectedThinking}
                 @change=${this._handleThinkingChange}
-                ?disabled=${this.saving}
               >
                 ${THINKING_LEVELS.map(
                   (level) =>

@@ -22,7 +22,6 @@ export class SettingsDiffRendererSection extends LitElement {
       <select
         class="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 disabled:opacity-60"
         .value=${selected}
-        ?disabled=${this.store?.savingDiffRenderer}
         @change=${this._handleChange}
         aria-label="Diff renderer"
       >

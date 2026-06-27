@@ -21,13 +21,16 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function mockSettingsPanelFetch(modelsResponse: Response | Promise<Response> = jsonResponse([])) {
+function mockSettingsPanelFetch(modelsResponse: Response | Promise<Response> = jsonResponse([])): string[] {
+  const requests: string[] = [];
   mockFetch((url) => {
+    requests.push(url);
     if (url.startsWith("/api/settings")) return jsonResponse([]);
     if (url === "/api/oauth/providers") return jsonResponse([]);
     if (url === "/api/models") return modelsResponse;
     return jsonResponse({}, false);
   });
+  return requests;
 }
 
 describe("SettingsPanel", () => {
@@ -63,7 +66,7 @@ describe("SettingsPanel", () => {
   });
 
   test("hides the diff renderer setting outside frontend dev builds", async () => {
-    mockSettingsPanelFetch();
+    const requests = mockSettingsPanelFetch();
 
     const el = new SettingsPanel();
     el.open();
@@ -73,11 +76,12 @@ describe("SettingsPanel", () => {
     const output = templateToString(el.render());
 
     expect(output).not.toContain("<settings-diff-renderer-section");
+    expect(requests).toContain("/api/settings?key=default_model&key=utility_model");
   });
 
   test("renders the diff renderer setting in frontend dev builds", async () => {
     testGlobal.REINS_DEV = true;
-    mockSettingsPanelFetch();
+    const requests = mockSettingsPanelFetch();
 
     const el = new SettingsPanel();
     el.open();
@@ -87,5 +91,6 @@ describe("SettingsPanel", () => {
     const output = templateToString(el.render());
 
     expect(output).toContain("<settings-diff-renderer-section");
+    expect(requests).toContain("/api/settings?key=default_model&key=diff_renderer&key=utility_model");
   });
 });

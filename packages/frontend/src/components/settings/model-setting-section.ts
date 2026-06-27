@@ -104,7 +104,6 @@ export class SettingsModelSettingSection extends LitElement {
         .selectedModel=${this._selected.modelId}
         .selectedThinking=${this._selected.thinkingLevel}
         .currentModel=${this._currentModel}
-        .saving=${store.savingModel}
         .emptyMessage=${this.emptyMessage}
         .clearLabel=${this.clearLabel}
         .currentLabel=${this.currentLabel}
