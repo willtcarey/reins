@@ -22,6 +22,18 @@ A persisted `diff_renderer` setting has been added with values:
 
 The setting is not wired to the diff panel yet. Its UI is included only in dev builds (`REINS_DEV=true` as a frontend build constant, matching the backend `process.env.REINS_DEV`) so this work can land across multiple PRs without exposing or shipping a no-op preference in production builds.
 
+## Implementation checklist
+
+- [x] Settings groundwork: persist `diff_renderer`, default to `classic`, validate `classic`/`virtual`, expose the control only in dev builds, cover it with tests, and keep the preference unwired until the virtual renderer path lands.
+- [ ] Add the raw patch backend path with existing diff branch/mode/context semantics.
+- [ ] Add the streaming file-chunker and `@pierre/diffs` parser adapter.
+- [ ] Add the virtual diff state/model separate from the classic `DiffStore.fullData` path.
+- [ ] Add the virtual renderer shell with incremental append/render behavior.
+- [ ] Wire `diff_renderer` to select classic vs virtual, keeping classic as default/fallback.
+- [ ] Integrate file tree navigation and active-file scroll behavior with the virtual renderer.
+- [ ] Add highlighting/cache strategy and performance instrumentation.
+- [ ] Document compatibility gaps and follow-up decisions for hunk expansion, highlighting, renames, binaries, untracked files, previews, actions, and inline word diff.
+
 ## Key architectural decision
 
 Do **not** directly adopt `FileDiff` as the top-level replacement.
