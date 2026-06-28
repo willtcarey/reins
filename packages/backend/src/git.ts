@@ -7,32 +7,40 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
-async function run(projectDir: string, args: string[]): Promise<string> {
-  const proc = Bun.spawn(["git", ...args], {
+type GitProcess = Bun.Subprocess<"pipe", "pipe", "pipe">;
+type ByteStreamFactory = () => ReadableStream<Uint8Array>;
+
+const textEncoder = new TextEncoder();
+
+function spawnGit(projectDir: string, args: string[]): GitProcess {
+  return Bun.spawn(["git", ...args], {
     cwd: projectDir,
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  await proc.exited;
-  return stdout;
+}
+
+function gitStdoutStream(projectDir: string, args: string[]): ReadableStream<Uint8Array> {
+  const proc = spawnGit(projectDir, args);
+
+  // Keep stderr drained so the child cannot block on a full stderr pipe.
+  void Bun.readableStreamToText(proc.stderr).catch(() => undefined);
+
+  return proc.stdout;
+}
+
+async function run(projectDir: string, args: string[]): Promise<string> {
+  return await Bun.readableStreamToText(gitStdoutStream(projectDir, args));
 }
 
 /**
  * Like run(), but throws with stderr on non-zero exit.
  */
 async function runChecked(projectDir: string, args: string[]): Promise<string> {
-  const proc = Bun.spawn(["git", ...args], {
-    cwd: projectDir,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const proc = spawnGit(projectDir, args);
   const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
+    Bun.readableStreamToText(proc.stdout),
+    Bun.readableStreamToText(proc.stderr),
   ]);
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
@@ -40,6 +48,67 @@ async function runChecked(projectDir: string, args: string[]): Promise<string> {
   }
   return stdout;
 }
+
+async function pipePatchPart(
+  stream: ReadableStream<Uint8Array>,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  needsSeparator: boolean,
+  setReader: (reader: ReadableStreamDefaultReader<Uint8Array> | null) => void,
+): Promise<boolean> {
+  const reader = stream.getReader();
+  let wroteBytes = false;
+  setReader(reader);
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return wroteBytes;
+      if (!value || value.byteLength === 0) continue;
+
+      if (!wroteBytes && needsSeparator) controller.enqueue(textEncoder.encode("\n"));
+      wroteBytes = true;
+      controller.enqueue(value);
+    }
+  } finally {
+    setReader(null);
+    reader.releaseLock();
+  }
+}
+
+function concatPatchStreams(factories: ByteStreamFactory[]): ReadableStream<Uint8Array> {
+  let currentReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let canceled = false;
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let wroteAnyPart = false;
+
+      try {
+        for (const factory of factories) {
+          if (canceled) break;
+          const wrotePart = await pipePatchPart(
+            factory(),
+            controller,
+            wroteAnyPart,
+            (reader) => { currentReader = reader; },
+          );
+          wroteAnyPart ||= wrotePart;
+        }
+        if (!canceled) controller.close();
+      } catch (err) {
+        controller.error(err);
+      } finally {
+        currentReader = null;
+      }
+    },
+
+    cancel(reason) {
+      canceled = true;
+      return currentReader?.cancel(reason).catch(() => undefined);
+    },
+  });
+}
+
 
 /**
  * Detect the default branch for a repo (checks for main, master, develop).
@@ -588,7 +657,7 @@ async function isWorkingTreeAvailable(
 }
 
 /**
- * Build a raw unified-diff string for a single diff mode.
+ * Build a raw unified-diff stream for a single diff mode.
  *
  * - `"branch"` mode: all changes (committed + uncommitted) against the merge
  *   base. When the branch is checked out, diffs the working tree directly
@@ -601,76 +670,84 @@ async function isWorkingTreeAvailable(
  * Untracked files are included in both modes (when the branch is checked out)
  * by synthesising diffs via `git diff --no-index /dev/null <file>`.
  */
-async function getGitDiff(
+export async function getDiffPatchStream(
+  projectDir: string,
+  contextLines = 3,
+  baseBranch = "main",
+  mode: "branch" | "uncommitted" = "branch",
+  branch?: string,
+): Promise<ReadableStream<Uint8Array>> {
+  const ctxFlag = `-U${contextLines}`;
+  const ref = branch ?? "HEAD";
+  const hasWorkingTree = await isWorkingTreeAvailable(projectDir, branch);
+
+  // Can't see uncommitted state for a branch that isn't checked out.
+  if (!hasWorkingTree) {
+    if (mode === "uncommitted") return new Blob().stream();
+    return gitStdoutStream(projectDir, ["diff", ctxFlag, `${baseBranch}...${ref}`]);
+  }
+
+  // Working tree is available — choose the diff base by mode.
+  if (mode === "uncommitted") {
+    // Uncommitted only: diff against HEAD.
+    const untrackedList = await run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => "");
+    const untracked = await diffUntrackedFileStreams(projectDir, ctxFlag, untrackedList);
+    const tracked = () => gitStdoutStream(projectDir, ["diff", ctxFlag, "HEAD"]);
+    return untracked.length === 0 ? tracked() : concatPatchStreams([tracked, ...untracked]);
+  }
+
+  // Branch mode: diff working tree against merge base (captures committed +
+  // uncommitted in one pass, no overlap).
+  const [mergeBaseSha, untrackedList] = await Promise.all([
+    mergeBase(projectDir, baseBranch, "HEAD").catch(() => ""),
+    run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
+  ]);
+  const diffBase = mergeBaseSha || baseBranch;
+  const untracked = await diffUntrackedFileStreams(projectDir, ctxFlag, untrackedList);
+  const tracked = () => gitStdoutStream(projectDir, ["diff", ctxFlag, diffBase]);
+  return untracked.length === 0 ? tracked() : concatPatchStreams([tracked, ...untracked]);
+}
+
+export async function getDiffPatch(
   projectDir: string,
   contextLines = 3,
   baseBranch = "main",
   mode: "branch" | "uncommitted" = "branch",
   branch?: string,
 ): Promise<string> {
-  const ctxFlag = `-U${contextLines}`;
-  const ref = branch ?? "HEAD";
-  const hasWorkingTree = await isWorkingTreeAvailable(projectDir, branch);
-
-  // Can't see uncommitted state for a branch that isn't checked out
-  if (!hasWorkingTree) {
-    if (mode === "uncommitted") return "";
-    return await run(projectDir, ["diff", ctxFlag, `${baseBranch}...${ref}`]).catch(() => "");
-  }
-
-  // Working tree is available — choose the diff base by mode
-  if (mode === "uncommitted") {
-    // Uncommitted only: diff against HEAD
-    const [tracked, untrackedList] = await Promise.all([
-      run(projectDir, ["diff", ctxFlag, "HEAD"]).catch(() => ""),
-      run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
-    ]);
-    const untracked = await diffUntrackedFiles(projectDir, ctxFlag, untrackedList);
-    return [tracked, untracked].filter(Boolean).join("\n");
-  }
-
-  // Branch mode: diff working tree against merge base (captures committed +
-  // uncommitted in one pass, no overlap)
-  const [mergeBaseSha, untrackedList] = await Promise.all([
-    mergeBase(projectDir, baseBranch, "HEAD").catch(() => ""),
-    run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
-  ]);
-  const diffBase = mergeBaseSha || baseBranch;
-  const tracked = await run(projectDir, ["diff", ctxFlag, diffBase]).catch(() => "");
-  const untracked = await diffUntrackedFiles(projectDir, ctxFlag, untrackedList);
-  return [tracked, untracked].filter(Boolean).join("\n");
+  const stream = await getDiffPatchStream(projectDir, contextLines, baseBranch, mode, branch);
+  return await Bun.readableStreamToText(stream);
 }
 
 /** Synthesise unified diffs for untracked files so they appear as new files. */
-async function diffUntrackedFiles(
+async function diffUntrackedFileStreams(
   projectDir: string,
   ctxFlag: string,
   untrackedList: string,
-): Promise<string> {
+): Promise<ByteStreamFactory[]> {
   const files = untrackedList.trim().split("\n").filter(Boolean);
-  if (files.length === 0) return "";
-  const diffs = await Promise.all(
-    files.map(async (file) => {
+  if (files.length === 0) return [];
+
+  return await Promise.all(
+    files.map(async (file): Promise<ByteStreamFactory> => {
       let kind: FileClassification;
       try {
         kind = await classifyFile(projectDir, file);
       } catch {
-        return syntheticNewFileDiff(file, "Unable to read untracked file");
+        return () => new Blob([syntheticNewFileDiff(file, "Unable to read untracked file")]).stream();
       }
       if (kind === "directory") {
-        return syntheticNewFileDiff(file, "Untracked directory");
+        return () => new Blob([syntheticNewFileDiff(file, "Untracked directory")]).stream();
       }
       if (kind === "large") {
-        return syntheticNewFileDiff(file, "File too large to diff");
+        return () => new Blob([syntheticNewFileDiff(file, "File too large to diff")]).stream();
       }
       if (kind === "binary") {
-        return syntheticNewFileDiff(file, "Binary file");
+        return () => new Blob([syntheticNewFileDiff(file, "Binary file")]).stream();
       }
-      return run(projectDir, ["diff", ctxFlag, "--no-index", "--", "/dev/null", file])
-        .catch(() => "");
+      return () => gitStdoutStream(projectDir, ["diff", ctxFlag, "--no-index", "--", "/dev/null", file]);
     }),
   );
-  return diffs.filter(Boolean).join("\n");
 }
 
 /**
@@ -875,7 +952,7 @@ export async function getDiff(
   mode: "branch" | "uncommitted" = "branch",
   branch?: string,
 ): Promise<DiffFile[]> {
-  const raw = await getGitDiff(projectDir, contextLines, baseBranch, mode, branch);
+  const raw = await Bun.readableStreamToText(await getDiffPatchStream(projectDir, contextLines, baseBranch, mode, branch));
   const parsed = parseUnifiedDiff(raw);
 
   if (parsed.length === 0) return [];

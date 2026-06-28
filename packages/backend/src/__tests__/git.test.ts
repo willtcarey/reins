@@ -26,6 +26,8 @@ import {
   getBranchTip,
   revParse,
   getDiff,
+  getDiffPatch,
+  getDiffPatchStream,
   getChangedFiles,
   rebaseBranch,
   fetchOrigin,
@@ -251,6 +253,28 @@ describe("getBranchTip / revParse", () => {
   test("revParse works with HEAD", async () => {
     const sha = await revParse(repo.dir, "HEAD");
     expect(sha).toMatch(/^[0-9a-f]{40}$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getDiffPatchStream
+// ---------------------------------------------------------------------------
+
+describe("getDiffPatchStream", () => {
+  const repo = useTestRepo();
+
+  test("streams the same raw patch text exposed by getDiffPatch", async () => {
+    await createBranch(repo.dir, "stream-patch", "main");
+    await checkoutBranch(repo.dir, "stream-patch");
+    await commitFile(repo.dir, "streamed.txt", "hello\nstream\n", "add streamed file");
+
+    const stream = await getDiffPatchStream(repo.dir, 3, "main", "branch", "stream-patch");
+    const streamedPatch = await new Response(stream).text();
+    const bufferedPatch = await getDiffPatch(repo.dir, 3, "main", "branch", "stream-patch");
+
+    expect(streamedPatch).toBe(bufferedPatch);
+    expect(streamedPatch).toContain("diff --git a/streamed.txt b/streamed.txt");
+    expect(streamedPatch).toContain("+stream");
   });
 });
 
