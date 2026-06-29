@@ -7,37 +7,48 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
-type GitProcess = Bun.Subprocess<"pipe", "pipe", "pipe">;
-type ByteStreamFactory = () => ReadableStream<Uint8Array>;
-
-const textEncoder = new TextEncoder();
-
-function spawnGit(projectDir: string, args: string[]): GitProcess {
-  return Bun.spawn(["git", ...args], {
+function runGitStream(projectDir: string, args: string[], env?: Record<string, string | undefined>): AsyncGenerator<Uint8Array> {
+  const proc = Bun.spawn(["git", ...args], {
     cwd: projectDir,
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
+
+  // Keep stderr drained so the child cannot block on a full stderr pipe, and
+  // retain it so stream consumers see git failures instead of silent EOF.
+  const stderr = Bun.readableStreamToText(proc.stderr).catch(() => "");
+
+  return (async function* gitStream() {
+    let stdoutDone = false;
+
+    try {
+      for await (const chunk of proc.stdout) {
+        yield chunk;
+      }
+      stdoutDone = true;
+
+      const [exitCode, stderrText] = await Promise.all([proc.exited, stderr]);
+      if (exitCode !== 0) {
+        throw new Error(`git ${args[0]} failed (exit ${exitCode}): ${stderrText.trim()}`);
+      }
+    } finally {
+      if (!stdoutDone) {
+        proc.kill();
+        await proc.exited.catch(() => undefined);
+        await stderr.catch(() => undefined);
+      }
+    }
+  })();
 }
 
-function gitStdoutStream(projectDir: string, args: string[]): ReadableStream<Uint8Array> {
-  const proc = spawnGit(projectDir, args);
-
-  // Keep stderr drained so the child cannot block on a full stderr pipe.
-  void Bun.readableStreamToText(proc.stderr).catch(() => undefined);
-
-  return proc.stdout;
-}
-
-async function run(projectDir: string, args: string[]): Promise<string> {
-  return await Bun.readableStreamToText(gitStdoutStream(projectDir, args));
-}
-
-/**
- * Like run(), but throws with stderr on non-zero exit.
- */
-async function runChecked(projectDir: string, args: string[]): Promise<string> {
-  const proc = spawnGit(projectDir, args);
+async function runGit(projectDir: string, args: string[], env?: Record<string, string | undefined>): Promise<string> {
+  const proc = Bun.spawn(["git", ...args], {
+    cwd: projectDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr] = await Promise.all([
     Bun.readableStreamToText(proc.stdout),
     Bun.readableStreamToText(proc.stderr),
@@ -49,66 +60,10 @@ async function runChecked(projectDir: string, args: string[]): Promise<string> {
   return stdout;
 }
 
-async function pipePatchPart(
-  stream: ReadableStream<Uint8Array>,
-  controller: ReadableStreamDefaultController<Uint8Array>,
-  needsSeparator: boolean,
-  setReader: (reader: ReadableStreamDefaultReader<Uint8Array> | null) => void,
-): Promise<boolean> {
-  const reader = stream.getReader();
-  let wroteBytes = false;
-  setReader(reader);
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) return wroteBytes;
-      if (!value || value.byteLength === 0) continue;
-
-      if (!wroteBytes && needsSeparator) controller.enqueue(textEncoder.encode("\n"));
-      wroteBytes = true;
-      controller.enqueue(value);
-    }
-  } finally {
-    setReader(null);
-    reader.releaseLock();
-  }
+/** Resolve a path inside Git's metadata area, respecting worktree git files. */
+export async function getGitPath(projectDir: string, pathName: string): Promise<string> {
+  return (await runGit(projectDir, ["rev-parse", "--git-path", pathName])).trim();
 }
-
-function concatPatchStreams(factories: ByteStreamFactory[]): ReadableStream<Uint8Array> {
-  let currentReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-  let canceled = false;
-
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      let wroteAnyPart = false;
-
-      try {
-        for (const factory of factories) {
-          if (canceled) break;
-          const wrotePart = await pipePatchPart(
-            factory(),
-            controller,
-            wroteAnyPart,
-            (reader) => { currentReader = reader; },
-          );
-          wroteAnyPart ||= wrotePart;
-        }
-        if (!canceled) controller.close();
-      } catch (err) {
-        controller.error(err);
-      } finally {
-        currentReader = null;
-      }
-    },
-
-    cancel(reason) {
-      canceled = true;
-      return currentReader?.cancel(reason).catch(() => undefined);
-    },
-  });
-}
-
 
 /**
  * Detect the default branch for a repo (checks for main, master, develop).
@@ -116,7 +71,7 @@ function concatPatchStreams(factories: ByteStreamFactory[]): ReadableStream<Uint
  */
 export async function detectDefaultBranch(projectDir: string): Promise<string> {
   const candidates = ["main", "master", "develop"];
-  const branches = await run(projectDir, ["branch", "--list", ...candidates]).catch(() => "");
+  const branches = await runGit(projectDir, ["branch", "--list", ...candidates]).catch(() => "");
   for (const candidate of candidates) {
     // `git branch --list` output has "  branch" or "* branch" format
     if (branches.split("\n").some((l) => l.trim().replace(/^\* /, "") === candidate)) {
@@ -137,7 +92,7 @@ export async function fetchOrigin(
   branch: string,
 ): Promise<boolean> {
   try {
-    await runChecked(projectDir, ["fetch", "origin", branch]);
+    await runGit(projectDir, ["fetch", "origin", branch]);
     return true;
   } catch {
     return false;
@@ -170,7 +125,7 @@ export async function fastForwardBaseBranch(
   projectDir: string,
   baseBranch: string,
 ): Promise<void> {
-  await run(projectDir, ["fetch", ".", `origin/${baseBranch}:${baseBranch}`]);
+  await runGit(projectDir, ["fetch", ".", `origin/${baseBranch}:${baseBranch}`]).catch(() => undefined);
 }
 
 /**
@@ -187,7 +142,7 @@ export async function createBranch(
   baseBranch: string,
 ): Promise<void> {
   await pullBaseBranch(projectDir, baseBranch);
-  await runChecked(projectDir, ["branch", branchName, baseBranch]);
+  await runGit(projectDir, ["branch", branchName, baseBranch]);
 }
 
 /**
@@ -221,13 +176,21 @@ export async function remoteBranchExists(
 }
 
 /**
+ * Get the current branch name (HEAD).
+ */
+export async function getCurrentBranch(projectDir: string): Promise<string> {
+  const result = await runGit(projectDir, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  return result.trim() || "HEAD";
+}
+
+/**
  * Check out a branch.
  */
 export async function checkoutBranch(
   projectDir: string,
   branchName: string,
 ): Promise<void> {
-  await runChecked(projectDir, ["checkout", branchName]);
+  await runGit(projectDir, ["checkout", branchName]);
 }
 
 /**
@@ -238,15 +201,7 @@ export async function deleteBranch(
   projectDir: string,
   branchName: string,
 ): Promise<void> {
-  await runChecked(projectDir, ["branch", "-D", branchName]);
-}
-
-/**
- * Get the current branch name (HEAD).
- */
-export async function getCurrentBranch(projectDir: string): Promise<string> {
-  const result = await run(projectDir, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  return result.trim() || "HEAD";
+  await runGit(projectDir, ["branch", "-D", branchName]);
 }
 
 // ---- Remote sync operations ------------------------------------------------
@@ -257,7 +212,7 @@ export async function getCurrentBranch(projectDir: string): Promise<string> {
  */
 export async function fetchAll(projectDir: string): Promise<boolean> {
   try {
-    await runChecked(projectDir, ["fetch", "origin"]);
+    await runGit(projectDir, ["fetch", "origin"]);
     return true;
   } catch {
     return false;
@@ -282,14 +237,14 @@ export async function getSpread(
   baseBranch: string,
 ): Promise<Spread> {
   const [aheadBase, behindBase, aheadRemote, behindRemote] = await Promise.all([
-    run(projectDir, ["rev-list", "--count", `${baseBranch}..${branch}`])
+    runGit(projectDir, ["rev-list", "--count", `${baseBranch}..${branch}`])
       .then((s) => parseInt(s.trim(), 10) || 0),
-    run(projectDir, ["rev-list", "--count", `${branch}..${baseBranch}`])
+    runGit(projectDir, ["rev-list", "--count", `${branch}..${baseBranch}`])
       .then((s) => parseInt(s.trim(), 10) || 0),
-    runChecked(projectDir, ["rev-list", "--count", `origin/${branch}..${branch}`])
+    runGit(projectDir, ["rev-list", "--count", `origin/${branch}..${branch}`])
       .then((s) => parseInt(s.trim(), 10) || 0)
       .catch(() => null),
-    runChecked(projectDir, ["rev-list", "--count", `${branch}..origin/${branch}`])
+    runGit(projectDir, ["rev-list", "--count", `${branch}..origin/${branch}`])
       .then((s) => parseInt(s.trim(), 10) || 0)
       .catch(() => null),
   ]);
@@ -302,6 +257,25 @@ export interface DiffStats {
   removals: number;
 }
 
+/** Return raw numstat output for a diff against a base or range expression. */
+export async function getDiffNumstat(
+  projectDir: string,
+  baseOrRange: string,
+  env?: Record<string, string | undefined>,
+): Promise<string> {
+  return await runGit(projectDir, ["diff", "--numstat", baseOrRange], env);
+}
+
+/** Stream raw unified diff output for a diff against a base or range expression. */
+export function streamDiffPatch(
+  projectDir: string,
+  baseOrRange: string,
+  contextLines = 3,
+  env?: Record<string, string | undefined>,
+): AsyncGenerator<Uint8Array> {
+  return runGitStream(projectDir, ["diff", `-U${contextLines}`, baseOrRange], env);
+}
+
 /**
  * Return total line additions/removals for a branch vs its base branch.
  * Uses `git diff --numstat baseBranch...branch` — local only, cheap.
@@ -311,7 +285,7 @@ export async function getDiffStats(
   branch: string,
   baseBranch: string,
 ): Promise<DiffStats> {
-  const raw = await run(projectDir, ["diff", "--numstat", `${baseBranch}...${branch}`])
+  const raw = await runGit(projectDir, ["diff", "--numstat", `${baseBranch}...${branch}`])
     .catch(() => "");
   let additions = 0;
   let removals = 0;
@@ -330,7 +304,7 @@ export async function pushBranch(
   projectDir: string,
   branch: string,
 ): Promise<void> {
-  await runChecked(projectDir, ["push", "origin", branch]);
+  await runGit(projectDir, ["push", "origin", branch]);
 }
 
 /**
@@ -347,21 +321,21 @@ export async function rebaseBranch(
   const needsRestore = previousBranch !== branch;
 
   // Ensure we're on the target branch
-  await runChecked(projectDir, ["checkout", branch]);
+  await runGit(projectDir, ["checkout", branch]);
   try {
-    await runChecked(projectDir, ["rebase", baseBranch]);
+    await runGit(projectDir, ["rebase", baseBranch]);
   } catch (err) {
     // Abort the in-progress rebase so the repo isn't left in a broken state
-    await run(projectDir, ["rebase", "--abort"]);
+    await runGit(projectDir, ["rebase", "--abort"]);
     if (needsRestore) {
-      await runChecked(projectDir, ["checkout", previousBranch]).catch(() => {});
+      await runGit(projectDir, ["checkout", previousBranch]).catch(() => {});
     }
     throw err;
   }
 
   // Restore the previously checked-out branch
   if (needsRestore) {
-    await runChecked(projectDir, ["checkout", previousBranch]).catch(() => {});
+    await runGit(projectDir, ["checkout", previousBranch]).catch(() => {});
   }
 }
 
@@ -375,7 +349,7 @@ export async function getMergedBranches(
 ): Promise<string[]> {
   // Use -a to include remote tracking branches so we detect merges even when
   // the local branch has already been deleted (e.g. merged via PR or CLI).
-  const raw = await run(projectDir, ["branch", "-a", "--merged", baseBranch]);
+  const raw = await runGit(projectDir, ["branch", "-a", "--merged", baseBranch]);
   const names = new Set<string>();
   for (const line of raw.split("\n")) {
     const trimmed = line.trim().replace(/^\* /, "");
@@ -403,7 +377,7 @@ export async function getBranchTip(
       ? `origin/${branch}`
       : null;
   if (!ref) return null;
-  const sha = await run(projectDir, ["rev-parse", ref]);
+  const sha = await runGit(projectDir, ["rev-parse", ref]);
   return sha.trim() || null;
 }
 
@@ -415,7 +389,7 @@ export async function revParse(
   projectDir: string,
   ref: string,
 ): Promise<string> {
-  const sha = await runChecked(projectDir, ["rev-parse", ref]);
+  const sha = await runGit(projectDir, ["rev-parse", ref]);
   return sha.trim();
 }
 
@@ -429,7 +403,7 @@ export async function mergeBase(
   ref1: string,
   ref2: string,
 ): Promise<string> {
-  const sha = await runChecked(projectDir, ["merge-base", ref1, ref2]);
+  const sha = await runGit(projectDir, ["merge-base", ref1, ref2]);
   return sha.trim();
 }
 
@@ -442,7 +416,7 @@ export async function trackBranch(
   projectDir: string,
   branchName: string,
 ): Promise<void> {
-  await runChecked(projectDir, [
+  await runGit(projectDir, [
     "branch",
     "--track",
     branchName,
@@ -461,7 +435,7 @@ export async function showFile(
   ref: string,
   filePath: string,
 ): Promise<string> {
-  return await runChecked(projectDir, ["show", `${ref}:${filePath}`]);
+  return await runGit(projectDir, ["show", `${ref}:${filePath}`]);
 }
 
 /**
@@ -500,13 +474,13 @@ export async function getGitBlobInfo(
   ref: string,
   filePath: string,
 ): Promise<GitBlobInfo> {
-  const objectId = (await runChecked(projectDir, ["rev-parse", "--verify", `${ref}:${filePath}`])).trim();
-  const type = (await runChecked(projectDir, ["cat-file", "-t", objectId])).trim();
+  const objectId = (await runGit(projectDir, ["rev-parse", "--verify", `${ref}:${filePath}`])).trim();
+  const type = (await runGit(projectDir, ["cat-file", "-t", objectId])).trim();
   if (type !== "blob") {
     throw new Error(`Not a file blob: ${ref}:${filePath}`);
   }
 
-  const sizeText = (await runChecked(projectDir, ["cat-file", "-s", objectId])).trim();
+  const sizeText = (await runGit(projectDir, ["cat-file", "-s", objectId])).trim();
   return { objectId, size: Number.parseInt(sizeText, 10) || 0 };
 }
 
@@ -639,364 +613,8 @@ async function classifyFile(
   return false;
 }
 
-// ---- Working-tree diff -----------------------------------------------------
-
-/**
- * Is the working tree accessible for this branch?
- * True when `branch` is omitted (HEAD mode) or is the currently checked-out
- * branch. When false, we can only diff committed state — the working tree
- * belongs to a different branch.
- */
-async function isWorkingTreeAvailable(
-  projectDir: string,
-  branch?: string,
-): Promise<boolean> {
-  if (!branch) return true;
-  const head = await getCurrentBranch(projectDir);
-  return branch === head;
-}
-
-/**
- * Build a raw unified-diff stream for a single diff mode.
- *
- * - `"branch"` mode: all changes (committed + uncommitted) against the merge
- *   base. When the branch is checked out, diffs the working tree directly
- *   against the merge base so committed and uncommitted changes are captured
- *   in one pass with no overlap. When the branch is not checked out, falls
- *   back to `baseBranch...ref` (committed only — no working tree access).
- *
- * - `"uncommitted"` mode: only uncommitted changes relative to HEAD.
- *
- * Untracked files are included in both modes (when the branch is checked out)
- * by synthesising diffs via `git diff --no-index /dev/null <file>`.
- */
-export async function getDiffPatchStream(
-  projectDir: string,
-  contextLines = 3,
-  baseBranch = "main",
-  mode: "branch" | "uncommitted" = "branch",
-  branch?: string,
-): Promise<ReadableStream<Uint8Array>> {
-  const ctxFlag = `-U${contextLines}`;
-  const ref = branch ?? "HEAD";
-  const hasWorkingTree = await isWorkingTreeAvailable(projectDir, branch);
-
-  // Can't see uncommitted state for a branch that isn't checked out.
-  if (!hasWorkingTree) {
-    if (mode === "uncommitted") return new Blob().stream();
-    return gitStdoutStream(projectDir, ["diff", ctxFlag, `${baseBranch}...${ref}`]);
-  }
-
-  // Working tree is available — choose the diff base by mode.
-  if (mode === "uncommitted") {
-    // Uncommitted only: diff against HEAD.
-    const untrackedList = await run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => "");
-    const untracked = await diffUntrackedFileStreams(projectDir, ctxFlag, untrackedList);
-    const tracked = () => gitStdoutStream(projectDir, ["diff", ctxFlag, "HEAD"]);
-    return untracked.length === 0 ? tracked() : concatPatchStreams([tracked, ...untracked]);
-  }
-
-  // Branch mode: diff working tree against merge base (captures committed +
-  // uncommitted in one pass, no overlap).
-  const [mergeBaseSha, untrackedList] = await Promise.all([
-    mergeBase(projectDir, baseBranch, "HEAD").catch(() => ""),
-    run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
-  ]);
-  const diffBase = mergeBaseSha || baseBranch;
-  const untracked = await diffUntrackedFileStreams(projectDir, ctxFlag, untrackedList);
-  const tracked = () => gitStdoutStream(projectDir, ["diff", ctxFlag, diffBase]);
-  return untracked.length === 0 ? tracked() : concatPatchStreams([tracked, ...untracked]);
-}
-
-export async function getDiffPatch(
-  projectDir: string,
-  contextLines = 3,
-  baseBranch = "main",
-  mode: "branch" | "uncommitted" = "branch",
-  branch?: string,
-): Promise<string> {
-  const stream = await getDiffPatchStream(projectDir, contextLines, baseBranch, mode, branch);
-  return await Bun.readableStreamToText(stream);
-}
-
-/** Synthesise unified diffs for untracked files so they appear as new files. */
-async function diffUntrackedFileStreams(
-  projectDir: string,
-  ctxFlag: string,
-  untrackedList: string,
-): Promise<ByteStreamFactory[]> {
-  const files = untrackedList.trim().split("\n").filter(Boolean);
-  if (files.length === 0) return [];
-
-  return await Promise.all(
-    files.map(async (file): Promise<ByteStreamFactory> => {
-      let kind: FileClassification;
-      try {
-        kind = await classifyFile(projectDir, file);
-      } catch {
-        return () => new Blob([syntheticNewFileDiff(file, "Unable to read untracked file")]).stream();
-      }
-      if (kind === "directory") {
-        return () => new Blob([syntheticNewFileDiff(file, "Untracked directory")]).stream();
-      }
-      if (kind === "large") {
-        return () => new Blob([syntheticNewFileDiff(file, "File too large to diff")]).stream();
-      }
-      if (kind === "binary") {
-        return () => new Blob([syntheticNewFileDiff(file, "Binary file")]).stream();
-      }
-      return () => gitStdoutStream(projectDir, ["diff", ctxFlag, "--no-index", "--", "/dev/null", file]);
-    }),
-  );
-}
-
-/**
- * Build a synthetic unified-diff string for a new file that can't be diffed
- * (too large or binary). Matches the structure that parseUnifiedDiff expects.
- */
-function syntheticNewFileDiff(filePath: string, reason: string): string {
-  return [
-    `diff --git a/${filePath} b/${filePath}`,
-    `new file mode 100644`,
-    `--- /dev/null`,
-    `+++ b/${filePath}`,
-    `@@ -0,0 +1 @@`,
-    `+${reason}`,
-  ].join("\n");
-}
-
-// ---- Diff types ------------------------------------------------------------
-
-export interface DiffLine {
-  type: "context" | "add" | "remove";
-  text: string;
-  oldLine?: number;
-  newLine?: number;
-}
-
-export interface DiffHunk {
-  header: string;
-  lines: DiffLine[];
-}
-
-export interface DiffFile {
-  path: string;
-  additions: number;
-  removals: number;
-  hunks: DiffHunk[];
-}
-
-// ---- Diff parser -----------------------------------------------------------
-
-export interface ParsedHunk {
-  header: string;
-  oldStart: number;
-  newStart: number;
-  lines: { prefix: "+" | "-" | " "; text: string }[];
-}
-
-export interface ParsedFile {
-  path: string;
-  hunks: ParsedHunk[];
-}
-
-export function parseUnifiedDiff(raw: string): ParsedFile[] {
-  if (!raw?.trim()) return [];
-
-  const files: ParsedFile[] = [];
-  const lines = raw.split("\n");
-  let currentFile: ParsedFile | null = null;
-  let currentHunk: ParsedHunk | null = null;
-
-  for (const line of lines) {
-    if (line.startsWith("diff --git")) {
-      const match = line.match(/diff --git a\/(.*?) b\/(.*)/);
-      currentFile = { path: match ? match[2] : line, hunks: [] };
-      files.push(currentFile);
-      currentHunk = null;
-      continue;
-    }
-
-    if (
-      line.startsWith("index ") || line.startsWith("---") || line.startsWith("+++") ||
-      line.startsWith("new file mode") || line.startsWith("deleted file mode") ||
-      line.startsWith("old mode") || line.startsWith("new mode") ||
-      line.startsWith("rename from") || line.startsWith("rename to") ||
-      line.startsWith("similarity index") || line.startsWith("Binary files")
-    ) continue;
-
-    if (line.startsWith("@@")) {
-      if (!currentFile) continue;
-      const match = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-      currentHunk = {
-        header: line,
-        oldStart: match ? parseInt(match[1], 10) : 0,
-        newStart: match ? parseInt(match[2], 10) : 0,
-        lines: [],
-      };
-      currentFile.hunks.push(currentHunk);
-      continue;
-    }
-
-    if (currentHunk) {
-      if (line.startsWith("+")) {
-        currentHunk.lines.push({ prefix: "+", text: line.slice(1) });
-      } else if (line.startsWith("-")) {
-        currentHunk.lines.push({ prefix: "-", text: line.slice(1) });
-      } else if (line.startsWith(" ")) {
-        currentHunk.lines.push({ prefix: " ", text: line.slice(1) });
-      }
-    }
-  }
-
-  return files;
-}
-
-// ---- Lightweight file summary ----------------------------------------------
-
-export interface DiffFileSummary {
-  path: string;
-  additions: number;
-  removals: number;
-}
-
-/**
- * Parse `git diff --numstat` output into file summaries.
- */
-export function parseNumstat(raw: string): DiffFileSummary[] {
-  if (!raw?.trim()) return [];
-  return raw.trim().split("\n").filter(Boolean).map((line) => {
-    const [add, rem, ...pathParts] = line.split("\t");
-    return {
-      path: pathParts.join("\t"),
-      additions: add === "-" ? 0 : parseInt(add, 10) || 0,
-      removals: rem === "-" ? 0 : parseInt(rem, 10) || 0,
-    };
-  });
-}
-
-/**
- * Get a lightweight list of changed files with +/− counts.
- *
- * @param mode - `"branch"` (default) shows all changes against the base branch
- *               (committed + uncommitted). `"uncommitted"` shows only uncommitted
- *               working-tree changes.
- * @param branch - Optional branch to diff. When provided and not currently
- *                 checked out, only committed changes are included.
- */
-export async function getChangedFiles(
-  projectDir: string,
-  baseBranch = "main",
-  mode: "branch" | "uncommitted" = "branch",
-  branch?: string,
-): Promise<DiffFileSummary[]> {
-  const ref = branch ?? "HEAD";
-  const hasWorkingTree = await isWorkingTreeAvailable(projectDir, branch);
-
-  // Can't see uncommitted state for a branch that isn't checked out
-  if (!hasWorkingTree) {
-    if (mode === "uncommitted") return [];
-    const committed = await run(projectDir, ["diff", "--numstat", `${baseBranch}...${ref}`]).catch(() => "");
-    return parseNumstat(committed);
-  }
-
-  // Working tree is available — choose the diff base by mode
-  const [numstatBase, untrackedList] = await Promise.all([
-    mode === "uncommitted"
-      ? Promise.resolve("HEAD")
-      : mergeBase(projectDir, baseBranch, "HEAD")
-          .then((s) => s || baseBranch).catch(() => baseBranch),
-    run(projectDir, ["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
-  ]);
-  const numstat = await run(projectDir, ["diff", "--numstat", numstatBase]).catch(() => "");
-
-  const fileMap = new Map<string, DiffFileSummary>();
-  for (const f of parseNumstat(numstat)) {
-    fileMap.set(f.path, f);
-  }
-  const untrackedFiles = untrackedList.trim().split("\n").filter(Boolean);
-  for (const filePath of untrackedFiles) {
-    if (fileMap.has(filePath)) continue;
-    try {
-      const skip = await isLargeOrBinary(projectDir, filePath);
-      if (skip) {
-        fileMap.set(filePath, { path: filePath, additions: 0, removals: 0 });
-      } else {
-        const content = await Bun.file(join(projectDir, filePath)).text();
-        const lineCount = content.split("\n").filter(Boolean).length;
-        fileMap.set(filePath, { path: filePath, additions: lineCount, removals: 0 });
-      }
-    } catch {
-      fileMap.set(filePath, { path: filePath, additions: 0, removals: 0 });
-    }
-  }
-  return [...fileMap.values()];
-}
-
-// ---- Build diff (no highlighting) ------------------------------------------
-
-/**
- * Get a fully parsed diff structure with raw text lines (no syntax highlighting).
- * Highlighting is handled client-side.
- *
- * @param mode - `"branch"` (default) shows all changes against the base branch
- *               (committed + uncommitted). `"uncommitted"` shows only uncommitted
- *               working-tree changes.
- * @param branch - Optional branch to diff. When provided and not currently
- *                 checked out, only committed changes are included.
- */
-export async function getDiff(
-  projectDir: string,
-  contextLines = 3,
-  baseBranch = "main",
-  mode: "branch" | "uncommitted" = "branch",
-  branch?: string,
-): Promise<DiffFile[]> {
-  const raw = await Bun.readableStreamToText(await getDiffPatchStream(projectDir, contextLines, baseBranch, mode, branch));
-  const parsed = parseUnifiedDiff(raw);
-
-  if (parsed.length === 0) return [];
-
-  return parsed.map((file) => {
-    let additions = 0;
-    let removals = 0;
-
-    const hunks: DiffHunk[] = file.hunks.map((hunk) => {
-      let oldLineNo = hunk.oldStart;
-      let newLineNo = hunk.newStart;
-
-      const lines: DiffLine[] = hunk.lines.map((line) => {
-        switch (line.prefix) {
-          case "+": {
-            additions++;
-            const result: DiffLine = { type: "add", text: line.text, newLine: newLineNo };
-            newLineNo++;
-            return result;
-          }
-          case "-": {
-            removals++;
-            const result: DiffLine = { type: "remove", text: line.text, oldLine: oldLineNo };
-            oldLineNo++;
-            return result;
-          }
-          default: {
-            const result: DiffLine = { type: "context", text: line.text, oldLine: oldLineNo, newLine: newLineNo };
-            oldLineNo++;
-            newLineNo++;
-            return result;
-          }
-        }
-      });
-
-      return { header: hunk.header, lines };
-    });
-
-    return { path: file.path, additions, removals, hunks };
-  });
-}
-
 // ---------------------------------------------------------------------------
-// File listing
+// File index/listing commands
 // ---------------------------------------------------------------------------
 
 /** Parse newline-delimited git output into a list of non-empty strings. */
@@ -1014,7 +632,7 @@ function parseLines(output: string): string[] {
  * Returns relative paths for all files in the index.
  */
 export async function listTrackedFiles(projectDir: string): Promise<string[]> {
-  return parseLines(await run(projectDir, ["ls-files"]));
+  return parseLines(await runGit(projectDir, ["ls-files"]));
 }
 
 /**
@@ -1023,5 +641,17 @@ export async function listTrackedFiles(projectDir: string): Promise<string[]> {
  * Returns relative paths for files on disk but not in the index.
  */
 export async function listUntrackedFiles(projectDir: string): Promise<string[]> {
-  return parseLines(await run(projectDir, ["ls-files", "--others", "--exclude-standard"]));
+  return parseLines(await runGit(projectDir, ["ls-files", "--others", "--exclude-standard"]));
+}
+
+/**
+ * Mark a file with Git's intent-to-add bit (`git add -N`) in the active index.
+ * Pass `GIT_INDEX_FILE` via env to target a temporary index.
+ */
+export async function trackFile(
+  projectDir: string,
+  filePath: string,
+  env?: Record<string, string | undefined>,
+): Promise<void> {
+  await runGit(projectDir, ["add", "-N", "--", filePath], env);
 }

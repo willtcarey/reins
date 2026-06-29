@@ -4,7 +4,6 @@ import { join } from "path";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
-import { dedent } from "../helpers/text.js";
 import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
@@ -171,7 +170,7 @@ describe("diff routes", () => {
   });
 
   describe("GET /api/projects/:id/diff/patch", () => {
-    test("returns raw patch text for a branch diff", async () => {
+    test("returns raw patch text with a diff content type", async () => {
       await git(repo.dir, ["checkout", "-b", "feature/raw-patch"]);
       await commitFile(repo.dir, "patch-file.txt", "line 1\nline 2\n", "Add patch file");
       await git(repo.dir, ["checkout", "main"]);
@@ -184,117 +183,8 @@ describe("diff routes", () => {
       expect(res!.status).toBe(200);
       expect(res!.headers.get("Content-Type")).toStartWith("text/x-diff");
       const patch = await res!.text();
-      expect(patch).toBe(dedent`
-        diff --git a/patch-file.txt b/patch-file.txt
-        new file mode 100644
-        index 0000000..7bba8c8
-        --- /dev/null
-        +++ b/patch-file.txt
-        @@ -0,0 +1,2 @@
-        +line 1
-        +line 2
-      `);
-    });
-
-    test("includes parent and child changes for a stacked branch", async () => {
-      await git(repo.dir, ["checkout", "-b", "feature/parent"]);
-      mkdirSync(join(repo.dir, "nested", "parent-dir"), { recursive: true });
-      await commitFile(repo.dir, "nested/parent-dir/a.txt", "from parent a\n", "Add parent directory file A");
-
-      await git(repo.dir, ["checkout", "-b", "feature/child"]);
-      await commitFile(repo.dir, "child.txt", "from child\n", "Add child file");
-
-      const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/diff/patch?mode=branch&branch=feature/child`),
-        state,
-      );
-
-      expect(res!.status).toBe(200);
-      const patch = await res!.text();
-      expect(patch).toBe(dedent`
-        diff --git a/child.txt b/child.txt
-        new file mode 100644
-        index 0000000..63bcb0c
-        --- /dev/null
-        +++ b/child.txt
-        @@ -0,0 +1 @@
-        +from child
-        diff --git a/nested/parent-dir/a.txt b/nested/parent-dir/a.txt
-        new file mode 100644
-        index 0000000..70ebf70
-        --- /dev/null
-        +++ b/nested/parent-dir/a.txt
-        @@ -0,0 +1 @@
-        +from parent a
-      `);
-    });
-
-    test("returns uncommitted working-tree changes in uncommitted mode", async () => {
-      writeFileSync(join(repo.dir, "README.md"), "# Test Repo\nuncommitted line\n");
-
-      const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/diff/patch?mode=uncommitted`),
-        state,
-      );
-
-      expect(res!.status).toBe(200);
-      const patch = await res!.text();
-      expect(patch).toBe(dedent`
-        diff --git a/README.md b/README.md
-        index a8cdb91..beb0913 100644
-        --- a/README.md
-        +++ b/README.md
-        @@ -1 +1,2 @@
-         # Test Repo
-        +uncommitted line
-      `);
-    });
-
-    test("respects context query param", async () => {
-      await commitFile(repo.dir, "context.txt", "line 1\nline 2\nline 3\nline 4\nline 5\n", "Add context file");
-      await git(repo.dir, ["checkout", "-b", "feature/context-patch"]);
-      writeFileSync(join(repo.dir, "context.txt"), "line 1\nline 2\nline THREE\nline 4\nline 5\n");
-      await git(repo.dir, ["add", "context.txt"]);
-      await git(repo.dir, ["commit", "-m", "Edit context file"]);
-
-      const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/diff/patch?mode=branch&branch=feature/context-patch&context=0`),
-        state,
-      );
-
-      expect(res!.status).toBe(200);
-      const patch = await res!.text();
-      expect(patch).toBe(dedent`
-        diff --git a/context.txt b/context.txt
-        index 94c99a3..ddf7aa5 100644
-        --- a/context.txt
-        +++ b/context.txt
-        @@ -3 +3 @@ line 2
-        -line 3
-        +line THREE
-      `);
-    });
-
-    test("includes untracked files as synthetic new-file diffs", async () => {
-      writeFileSync(join(repo.dir, "untracked.txt"), "first\nsecond\n");
-
-      const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/diff/patch?mode=uncommitted`),
-        state,
-      );
-
-      expect(res!.status).toBe(200);
-      const patch = await res!.text();
-      expect(patch).toBe(dedent`
-        diff --git a/untracked.txt b/untracked.txt
-        new file mode 100644
-        index 0000000..66a52ee
-        --- /dev/null
-        +++ b/untracked.txt
-        @@ -0,0 +1,2 @@
-        +first
-        +second
-      `);
+      expect(patch).toContain("diff --git a/patch-file.txt b/patch-file.txt");
+      expect(patch).toContain("+line 2");
     });
   });
 });

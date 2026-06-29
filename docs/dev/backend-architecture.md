@@ -49,7 +49,7 @@ Schema-only migrations can be SQL strings. Data migrations that need application
 
 ### Utilities
 
-- `src/git.ts` — git operations (branch, checkout, diff, etc.)
+- `src/git.ts` — low-level git operations (branch, checkout, refs, blobs, diff streams). Raw process runners stay internal; add semantic helpers instead of exporting command runners.
 - `src/branch-namer.ts` — branch name generation and slugification
 - `src/task-generator.ts` — LLM-powered task generation from freeform input
 
@@ -88,7 +88,8 @@ Key entry points:
 The models layer covers all route handlers and some backend domain helpers:
 
 - `models/tasks.ts` — task create/update/delete with branch orchestration, list with diff stats
-- `models/projects.ts` — project creation, remote sync + task reconciliation, file content reads
+- `models/workspace.ts` — checkout-scoped git workspace behavior, including changed-file summaries, raw patch streams, parsed diff DTOs, and orchestration of temporary indexes for untracked-file diffing
+- `models/projects.ts` — project creation, remote sync + task reconciliation, file content reads; exposes scoped model getters such as `workspace`
 - `models/sessions.ts` — session model mutations, message reads, attachment upload/fetch, and related broadcast behavior
 - `models/uploaded-file.ts` — wraps browser `File` uploads at the HTTP/model boundary and extracts validated attachment bytes/metadata
 - `models/auth-credentials.ts` — auth credential mutations plus live session auth reload orchestration

@@ -5,13 +5,13 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
+import { writeFileSync } from "fs";
 import { join } from "path";
 import {
   createTestRepo,
   commitFile,
-  useTestRepo,
   git,
+  useTestRepo,
 } from "./helpers/test-repo.js";
 import {
   detectDefaultBranch,
@@ -25,10 +25,6 @@ import {
   getMergedBranches,
   getBranchTip,
   revParse,
-  getDiff,
-  getDiffPatch,
-  getDiffPatchStream,
-  getChangedFiles,
   rebaseBranch,
   fetchOrigin,
   fetchAll,
@@ -36,7 +32,40 @@ import {
   mergeBase,
   trackBranch,
   isLargeOrBinary,
+  trackFile,
+  getDiffNumstat,
 } from "../git.js";
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+describe("git module public API", () => {
+  test("does not export low-level unchecked runGit", async () => {
+    const gitModule = await import("../git.js");
+    expect(Object.hasOwn(gitModule, "runGit")).toBe(false);
+  });
+
+  test("uses only explicit env vars when git helpers receive env overrides", async () => {
+    const repo = await createTestRepo();
+    const previousGitIndexFile = process.env.GIT_INDEX_FILE;
+    try {
+      process.env.GIT_INDEX_FILE = join(repo.dir, "missing-parent-index");
+      writeFileSync(join(repo.dir, "README.md"), "# Test Repo\nchanged\n");
+
+      const numstat = await getDiffNumstat(repo.dir, "HEAD", {});
+
+      expect(numstat.trim()).toBe("1\t0\tREADME.md");
+    } finally {
+      if (previousGitIndexFile === undefined) {
+        delete process.env.GIT_INDEX_FILE;
+      } else {
+        process.env.GIT_INDEX_FILE = previousGitIndexFile;
+      }
+      repo.cleanup();
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // detectDefaultBranch
@@ -257,181 +286,6 @@ describe("getBranchTip / revParse", () => {
 });
 
 // ---------------------------------------------------------------------------
-// getDiffPatchStream
-// ---------------------------------------------------------------------------
-
-describe("getDiffPatchStream", () => {
-  const repo = useTestRepo();
-
-  test("streams the same raw patch text exposed by getDiffPatch", async () => {
-    await createBranch(repo.dir, "stream-patch", "main");
-    await checkoutBranch(repo.dir, "stream-patch");
-    await commitFile(repo.dir, "streamed.txt", "hello\nstream\n", "add streamed file");
-
-    const stream = await getDiffPatchStream(repo.dir, 3, "main", "branch", "stream-patch");
-    const streamedPatch = await new Response(stream).text();
-    const bufferedPatch = await getDiffPatch(repo.dir, 3, "main", "branch", "stream-patch");
-
-    expect(streamedPatch).toBe(bufferedPatch);
-    expect(streamedPatch).toContain("diff --git a/streamed.txt b/streamed.txt");
-    expect(streamedPatch).toContain("+stream");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getDiff
-// ---------------------------------------------------------------------------
-
-describe("getDiff", () => {
-  const repo = useTestRepo();
-
-  test("returns empty array when branches are identical", async () => {
-    await createBranch(repo.dir, "feat", "main");
-    const diff = await getDiff(repo.dir, 3, "main", "branch", "feat");
-    expect(diff).toEqual([]);
-  });
-
-  test("returns DiffFile array with correct structure for additions", async () => {
-    await createBranch(repo.dir, "feat", "main");
-    await checkoutBranch(repo.dir, "feat");
-    await commitFile(repo.dir, "hello.txt", "hello\nworld\n", "add hello");
-    const diff = await getDiff(repo.dir, 3, "main", "branch", "feat");
-
-    expect(diff.length).toBeGreaterThanOrEqual(1);
-    const file = diff.find((f) => f.path === "hello.txt");
-    expect(file).toBeDefined();
-    expect(file!.additions).toBe(2);
-    expect(file!.removals).toBe(0);
-    expect(file!.hunks.length).toBeGreaterThanOrEqual(1);
-
-    // Check hunk structure
-    const hunk = file!.hunks[0];
-    expect(hunk.header).toMatch(/^@@/);
-    expect(hunk.lines.length).toBeGreaterThan(0);
-
-    // All lines should be additions
-    for (const line of hunk.lines) {
-      expect(line.type).toBe("add");
-      expect(line.newLine).toBeDefined();
-    }
-  });
-
-  test("returns DiffFile with removals for deleted content", async () => {
-    await createBranch(repo.dir, "feat", "main");
-    await checkoutBranch(repo.dir, "feat");
-    await commitFile(repo.dir, "README.md", "", "clear readme");
-    const diff = await getDiff(repo.dir, 3, "main", "branch", "feat");
-
-    const file = diff.find((f) => f.path === "README.md");
-    expect(file).toBeDefined();
-    expect(file!.removals).toBeGreaterThan(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getChangedFiles
-// ---------------------------------------------------------------------------
-
-describe("getChangedFiles", () => {
-  const repo = useTestRepo();
-
-  test("returns empty array for identical branches", async () => {
-    await createBranch(repo.dir, "feat", "main");
-    const files = await getChangedFiles(repo.dir, "main", "branch", "feat");
-    expect(files).toEqual([]);
-  });
-
-  test("returns file summaries with addition counts", async () => {
-    await createBranch(repo.dir, "feat", "main");
-    await checkoutBranch(repo.dir, "feat");
-    await commitFile(repo.dir, "new.txt", "one\ntwo\n", "add new");
-    const files = await getChangedFiles(repo.dir, "main", "branch", "feat");
-
-    expect(files.length).toBeGreaterThanOrEqual(1);
-    const file = files.find((f) => f.path === "new.txt");
-    expect(file).toBeDefined();
-    expect(file!.additions).toBe(2);
-    expect(file!.removals).toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getDiff / getChangedFiles — committed + uncommitted overlap
-// ---------------------------------------------------------------------------
-
-describe("getDiff — committed + uncommitted overlap", () => {
-  const repo = useTestRepo();
-
-  test("does not show intermediate state when a line is modified in both committed and uncommitted", async () => {
-    // Base has "line1\nline2\nline3", commit changes line2, uncommitted changes it again
-    await createBranch(repo.dir, "feat", "main");
-    await checkoutBranch(repo.dir, "feat");
-    // Overwrite README.md (base has "# Test Repo\n")
-    await commitFile(repo.dir, "README.md", "# Test Repo\ncommitted\n", "edit readme");
-
-    // Further uncommitted edit: replace committed line
-    writeFileSync(join(repo.dir, "README.md"), "# Test Repo\nfinal\n");
-
-    const diff = await getDiff(repo.dir, 3, "main", "branch");
-
-    const file = diff.find((f) => f.path === "README.md");
-    expect(file).toBeDefined();
-    // Should show working tree vs base: +final, not both +committed/-committed/+final
-    expect(file!.additions).toBe(1);
-    expect(file!.removals).toBe(0);
-
-    // Should have exactly 1 hunk, not 2 overlapping ones
-    expect(file!.hunks).toHaveLength(1);
-
-    // The intermediate "committed" value should not appear at all
-    const allLineTexts = file!.hunks.flatMap((h) => h.lines.map((l) => l.text));
-    expect(allLineTexts).not.toContain("committed");
-  });
-
-  test("shows correct counts when committed adds a file and uncommitted modifies it", async () => {
-    await createBranch(repo.dir, "feat", "main");
-    await checkoutBranch(repo.dir, "feat");
-    await commitFile(repo.dir, "file.txt", "line1\nline2\n", "add file");
-
-    // Uncommitted: modify line2
-    writeFileSync(join(repo.dir, "file.txt"), "line1\nchanged\n");
-
-    const diff = await getDiff(repo.dir, 3, "main", "branch");
-
-    const file = diff.find((f) => f.path === "file.txt");
-    expect(file).toBeDefined();
-    // Working tree vs base: new file with "line1\nchanged\n" → 2 additions, 0 removals
-    expect(file!.additions).toBe(2);
-    expect(file!.removals).toBe(0);
-  });
-
-});
-
-describe("getChangedFiles — committed + uncommitted overlap", () => {
-  const repo = useTestRepo();
-
-  test("does not inflate counts when a file has both committed and uncommitted changes", async () => {
-    await createBranch(repo.dir, "feat", "main");
-    await checkoutBranch(repo.dir, "feat");
-    // Base has "# Test Repo\n" in README.md. Commit replaces content.
-    await commitFile(repo.dir, "README.md", "committed line 1\ncommitted line 2\n", "edit");
-
-    // Uncommitted: modify one of the committed lines
-    writeFileSync(join(repo.dir, "README.md"), "committed line 1\nmodified\n");
-
-    const files = await getChangedFiles(repo.dir, "main", "branch");
-
-    const file = files.find((f) => f.path === "README.md");
-    expect(file).toBeDefined();
-    // Working tree vs base: removed "# Test Repo\n", added "committed line 1\nmodified\n"
-    // = 2 additions, 1 removal. NOT the sum of committed (2 add, 1 rem) + uncommitted (1 add, 1 rem)
-    expect(file!.additions).toBe(2);
-    expect(file!.removals).toBe(1);
-  });
-
-});
-
-// ---------------------------------------------------------------------------
 // rebaseBranch
 // ---------------------------------------------------------------------------
 
@@ -615,6 +469,23 @@ describe("trackBranch", () => {
 });
 
 // ---------------------------------------------------------------------------
+// trackFile
+// ---------------------------------------------------------------------------
+
+describe("trackFile", () => {
+  const repo = useTestRepo();
+
+  test("marks an untracked file as intent-to-add", async () => {
+    writeFileSync(join(repo.dir, "new.txt"), "one\ntwo\n");
+
+    await trackFile(repo.dir, "new.txt");
+
+    const numstat = await git(repo.dir, ["diff", "--numstat", "HEAD"]);
+    expect(numstat).toBe("2\t0\tnew.txt");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // isLargeOrBinary
 // ---------------------------------------------------------------------------
 
@@ -646,99 +517,3 @@ describe("isLargeOrBinary", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// getChangedFiles — large/binary untracked files
-// ---------------------------------------------------------------------------
-
-describe("getChangedFiles — large/binary untracked files", () => {
-  const repo = useTestRepo();
-
-  test("reports additions: 0 for a large untracked file", async () => {
-    const content = "x\n".repeat(600_000); // > 1MB
-    writeFileSync(join(repo.dir, "huge.txt"), content);
-
-    const files = await getChangedFiles(repo.dir, "main", "uncommitted");
-    const file = files.find((f) => f.path === "huge.txt");
-    expect(file).toBeDefined();
-    expect(file!.additions).toBe(0);
-    expect(file!.removals).toBe(0);
-  });
-
-  test("reports additions: 0 for a binary untracked file", async () => {
-    const buf = Buffer.alloc(100);
-    buf[50] = 0; // null byte
-    writeFileSync(join(repo.dir, "image.bin"), buf);
-
-    const files = await getChangedFiles(repo.dir, "main", "uncommitted");
-    const file = files.find((f) => f.path === "image.bin");
-    expect(file).toBeDefined();
-    expect(file!.additions).toBe(0);
-    expect(file!.removals).toBe(0);
-  });
-
-  test("still counts lines for small text untracked files", async () => {
-    writeFileSync(join(repo.dir, "small.txt"), "line1\nline2\nline3\n");
-
-    const files = await getChangedFiles(repo.dir, "main", "uncommitted");
-    const file = files.find((f) => f.path === "small.txt");
-    expect(file).toBeDefined();
-    expect(file!.additions).toBe(3);
-  });
-
-  test("reports additions: 0 for an untracked nested git repository", async () => {
-    const nestedRepo = join(repo.dir, "repo");
-    mkdirSync(nestedRepo, { recursive: true });
-    await git(nestedRepo, ["init", "-b", "main"]);
-    writeFileSync(join(nestedRepo, "README.md"), "nested repo\n");
-
-    const files = await getChangedFiles(repo.dir, "main", "uncommitted");
-    const file = files.find((f) => f.path === "repo/");
-    expect(file).toBeDefined();
-    expect(file!.additions).toBe(0);
-    expect(file!.removals).toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getDiff — large/binary untracked files
-// ---------------------------------------------------------------------------
-
-describe("getDiff — large/binary untracked files", () => {
-  const repo = useTestRepo();
-
-  test("returns a synthetic diff entry for a large untracked file", async () => {
-    const content = "x\n".repeat(600_000); // > 1MB
-    writeFileSync(join(repo.dir, "huge.txt"), content);
-
-    const diff = await getDiff(repo.dir, 3, "main", "uncommitted");
-    const file = diff.find((f) => f.path === "huge.txt");
-    expect(file).toBeDefined();
-    expect(file!.hunks).toHaveLength(1);
-    expect(file!.hunks[0].lines[0].text).toContain("too large to diff");
-  });
-
-  test("returns a synthetic diff entry for a binary untracked file", async () => {
-    const buf = Buffer.alloc(100);
-    buf[50] = 0;
-    writeFileSync(join(repo.dir, "image.bin"), buf);
-
-    const diff = await getDiff(repo.dir, 3, "main", "uncommitted");
-    const file = diff.find((f) => f.path === "image.bin");
-    expect(file).toBeDefined();
-    expect(file!.hunks).toHaveLength(1);
-    expect(file!.hunks[0].lines[0].text).toContain("Binary file");
-  });
-
-  test("returns a synthetic diff entry for an untracked nested git repository", async () => {
-    const nestedRepo = join(repo.dir, "repo");
-    mkdirSync(nestedRepo, { recursive: true });
-    await git(nestedRepo, ["init", "-b", "main"]);
-    writeFileSync(join(nestedRepo, "README.md"), "nested repo\n");
-
-    const diff = await getDiff(repo.dir, 3, "main", "uncommitted");
-    const file = diff.find((f) => f.path === "repo/");
-    expect(file).toBeDefined();
-    expect(file!.hunks).toHaveLength(1);
-    expect(file!.hunks[0].lines[0].text).toContain("Untracked directory");
-  });
-});

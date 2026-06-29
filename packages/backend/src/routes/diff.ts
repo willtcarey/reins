@@ -15,7 +15,7 @@
 
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
-import { getDiff, getDiffPatchStream, getChangedFiles, getCurrentBranch } from "../git.js";
+import { getCurrentBranch } from "../git.js";
 
 type DiffMode = "branch" | "uncommitted";
 
@@ -40,7 +40,7 @@ export function registerDiffRoutes(router: RouterGroup<ProjectRouteContext>) {
     const { mode, branch } = parseDiffParams(ctx.url);
 
     const [files, currentBranch] = await Promise.all([
-      getChangedFiles(ctx.project.projectDir, ctx.project.baseBranch, mode, branch),
+      ctx.project.workspace.getChangedFiles(mode, branch),
       getCurrentBranch(ctx.project.projectDir),
     ]);
     return Response.json({
@@ -58,7 +58,7 @@ export function registerDiffRoutes(router: RouterGroup<ProjectRouteContext>) {
     const { contextLines, mode, branch } = parseDiffParams(ctx.url);
 
     const [files, currentBranch] = await Promise.all([
-      getDiff(ctx.project.projectDir, contextLines, ctx.project.baseBranch, mode, branch),
+      ctx.project.workspace.getDiff(contextLines, mode, branch),
       getCurrentBranch(ctx.project.projectDir),
     ]);
     return Response.json({
@@ -71,15 +71,12 @@ export function registerDiffRoutes(router: RouterGroup<ProjectRouteContext>) {
   /** Raw unified patch text for virtualized/streamed diff consumers. */
   router.get("/diff/patch", async (ctx) => {
     const { contextLines, mode, branch } = parseDiffParams(ctx.url);
-    const patch = await getDiffPatchStream(
-      ctx.project.projectDir,
-      contextLines,
-      ctx.project.baseBranch,
-      mode,
-      branch,
-    );
+    const patch = ctx.project.workspace.getDiffPatchStream(contextLines, mode, branch);
 
-    return new Response(patch, {
+    // Bun accepts async iterables as response bodies; the cast bridges the DOM
+    // Response type used by TypeScript in this package.
+    // oxlint-disable-next-line typescript-eslint/consistent-type-assertions
+    return new Response(patch as unknown as BodyInit, {
       headers: { "Content-Type": "text/x-diff; charset=utf-8" },
     });
   });
