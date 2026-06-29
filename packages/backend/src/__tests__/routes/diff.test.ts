@@ -168,4 +168,23 @@ describe("diff routes", () => {
       expect(body.files).toBeArray();
     });
   });
+
+  describe("GET /api/projects/:id/diff/patch", () => {
+    test("returns raw patch text with a diff content type", async () => {
+      await git(repo.dir, ["checkout", "-b", "feature/raw-patch"]);
+      await commitFile(repo.dir, "patch-file.txt", "line 1\nline 2\n", "Add patch file");
+      await git(repo.dir, ["checkout", "main"]);
+
+      const res = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/diff/patch?mode=branch&branch=feature/raw-patch`),
+        state,
+      );
+
+      expect(res!.status).toBe(200);
+      expect(res!.headers.get("Content-Type")).toStartWith("text/x-diff");
+      const patch = await res!.text();
+      expect(patch).toContain("diff --git a/patch-file.txt b/patch-file.txt");
+      expect(patch).toContain("+line 2");
+    });
+  });
 });

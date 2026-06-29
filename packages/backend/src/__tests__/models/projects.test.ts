@@ -10,10 +10,11 @@ import {
   FileNotFoundError,
 } from "../../models/projects.js";
 import { Sessions } from "../../models/sessions.js";
+import { Workspace } from "../../models/workspace.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 
-describe("ProjectModel.sessions", () => {
+describe("ProjectModel scoped models", () => {
   let model: ProjectModel;
 
   useTestDb();
@@ -27,7 +28,13 @@ describe("ProjectModel.sessions", () => {
   });
 
   test("returns a Sessions instance", () => {
-    expect(Reflect.get(model, "sessions")).toBeInstanceOf(Sessions);
+    expect(model.sessions).toBeInstanceOf(Sessions);
+  });
+
+  test("returns a Workspace instance scoped to the project checkout", () => {
+    expect(model.workspace).toBeInstanceOf(Workspace);
+    expect(model.workspace.projectDir).toBe(repo.dir);
+    expect(model.workspace.baseBranch).toBe("main");
   });
 });
 

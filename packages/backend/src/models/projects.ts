@@ -35,6 +35,7 @@ import {
   listTrackedFiles,
   listUntrackedFiles,
 } from "../git.js";
+import { Workspace } from "./workspace.js";
 import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { logger } from "../logger.js";
@@ -132,6 +133,13 @@ export class ProjectModel {
    */
   get sessions(): Sessions {
     return new Sessions(this.sessionRegistry, this.broadcast);
+  }
+
+  /**
+   * Git workspace operations scoped to this project's checkout.
+   */
+  get workspace(): Workspace {
+    return new Workspace(this.projectDir, this.baseBranch);
   }
 
   /**

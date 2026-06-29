@@ -25,7 +25,7 @@ The setting is not wired to the diff panel yet. Its UI is included only in dev b
 ## Implementation checklist
 
 - [x] Settings groundwork: persist `diff_renderer`, default to `classic`, validate `classic`/`virtual`, expose the control only in dev builds, cover it with tests, and keep the preference unwired until the virtual renderer path lands.
-- [ ] Add the raw patch backend path with existing diff branch/mode/context semantics.
+- [x] Add the raw patch backend path with existing diff branch/mode/context semantics.
 - [ ] Add the streaming file-chunker and `@pierre/diffs` parser adapter.
 - [ ] Add the virtual diff state/model separate from the classic `DiffStore.fullData` path.
 - [ ] Add the virtual renderer shell with incremental append/render behavior.
