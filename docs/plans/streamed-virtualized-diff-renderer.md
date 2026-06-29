@@ -22,14 +22,15 @@ A persisted `diff_renderer` setting has been added with values:
 
 The setting is not wired to the diff panel yet. Its UI is included only in dev builds (`REINS_DEV=true` as a frontend build constant, matching the backend `process.env.REINS_DEV`) so this work can land across multiple PRs without exposing or shipping a no-op preference in production builds.
 
+Sequencing update: get to a visible renderer first, then replace the full-patch loading path with streaming. The next slice should fetch the raw patch as full text, parse it with `@pierre/diffs`, and wire the dev-only `diff_renderer` setting to a basic virtual renderer. This intentionally defers true stream chunking, incremental append behavior, and large-diff performance claims until after the renderer integration is visible.
+
 ## Implementation checklist
 
 - [x] Settings groundwork: persist `diff_renderer`, default to `classic`, validate `classic`/`virtual`, expose the control only in dev builds, cover it with tests, and keep the preference unwired until the virtual renderer path lands.
 - [x] Add the raw patch backend path with existing diff branch/mode/context semantics.
-- [ ] Add the streaming file-chunker and `@pierre/diffs` parser adapter.
-- [ ] Add the virtual diff state/model separate from the classic `DiffStore.fullData` path.
-- [ ] Add the virtual renderer shell with incremental append/render behavior.
-- [ ] Wire `diff_renderer` to select classic vs virtual, keeping classic as default/fallback.
+- [ ] Add the full-patch virtual renderer prototype: fetch `/diff/patch` as text, parse with `@pierre/diffs`, create renderer-specific state separate from `DiffStore.fullData`, render basic diffs, and wire `diff_renderer` to select classic vs virtual.
+- [ ] Deferred until after the visual prototype: add the streaming file-chunker and `@pierre/diffs` per-file parser adapter.
+- [ ] Replace the full-patch prototype path with incremental append/render behavior.
 - [ ] Integrate file tree navigation and active-file scroll behavior with the virtual renderer.
 - [ ] Add highlighting/cache strategy and performance instrumentation.
 - [ ] Document compatibility gaps and follow-up decisions for hunk expansion, highlighting, renames, binaries, untracked files, previews, actions, and inline word diff.
@@ -84,9 +85,32 @@ It should preserve:
 
 Initial implementation can stream `git diff` stdout directly. Untracked synthetic diffs can either be appended or documented as a prototype limitation if that simplifies the first slice.
 
-### Phase 2 — Stream/file chunking layer
+### Phase 2 — Full-patch visual prototype (next)
 
-Implement a small streaming splitter that frames raw patch text into complete file-diff chunks.
+Build the fastest visible prototype before investing in stream chunking.
+
+Initial implementation:
+
+```txt
+fetch /api/projects/:id/diff/patch as full text
+  → parse with @pierre/diffs parsePatchFiles(...) or a simple whole-patch split + processFile(...)
+  → populate a virtual-renderer-specific model
+  → render with the virtual diff panel when diff_renderer === "virtual"
+```
+
+This phase should intentionally defer:
+
+- true streaming file chunking
+- incremental append/render semantics
+- large-diff performance claims
+- final height/measurement cache design
+- full hunk expansion compatibility
+
+The goal is to validate renderer integration, event boundaries, styling, file metadata, and basic scroll behavior quickly while keeping classic as the default/fallback.
+
+### Phase 3 — Stream/file chunking layer (deferred)
+
+After the visible renderer path works, implement a small streaming splitter that frames raw patch text into complete file-diff chunks.
 
 Important: this is **not** a diff parser. It only finds safe boundaries, likely around `diff --git ...` records, and then passes each complete chunk to `@pierre/diffs`.
 
@@ -105,9 +129,9 @@ Fallback path:
 parsePatchFiles(fullPatch);
 ```
 
-for cases where streaming chunking fails or for simpler first tests.
+for cases where streaming chunking fails or for tests.
 
-### Phase 3 — Virtual diff store/model
+### Phase 4 — Virtual diff store/model
 
 Create a renderer-specific data model separate from the existing `DiffStore.fullData` JSON path.
 
@@ -135,7 +159,7 @@ Track separately:
 
 Use deterministic, collision-safe IDs based on file path and occurrence.
 
-### Phase 4 — Virtual renderer
+### Phase 5 — Virtual renderer
 
 Build a new virtualized diff component path, e.g.
 
@@ -154,7 +178,7 @@ Renderer requirements:
 - support collapsed files
 - avoid rendering/highlighting the entire diff up front
 
-### Phase 5 — Wire setting to renderer selection
+### Phase 6 — Wire setting to renderer selection
 
 Once the virtual renderer can show basic parsed diffs, wire the existing setting:
 
@@ -166,7 +190,7 @@ diff_renderer === "virtual"
 
 Classic remains default and fallback.
 
-### Phase 6 — File tree and scroll behavior
+### Phase 7 — File tree and scroll behavior
 
 Preserve the current file tree UX:
 
@@ -181,7 +205,7 @@ Use `CodeView` scroll targets if adopting `CodeView` directly:
 scrollTo({ type: "item", id, align: "start", behavior: "smooth" });
 ```
 
-### Phase 7 — Highlighting and worker/cache strategy
+### Phase 8 — Highlighting and worker/cache strategy
 
 Use stable `cacheKey` values on each `FileDiffMetadata` so the library worker/cache can reuse highlighted output.
 
@@ -196,7 +220,7 @@ Prototype should measure:
 
 Avoid eagerly highlighting every streamed file. Prefer visible/near-visible work where possible.
 
-### Phase 8 — Hunk expansion strategy
+### Phase 9 — Hunk expansion strategy
 
 Raw patch parsing produces partial file metadata (`isPartial: true`). In this mode, library-native hunk expansion is unavailable because full old/new file contents are not present.
 
