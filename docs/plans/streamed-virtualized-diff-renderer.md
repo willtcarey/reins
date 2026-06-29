@@ -20,16 +20,16 @@ A persisted `diff_renderer` setting has been added with values:
 - `classic`
 - `virtual`
 
-The setting is not wired to the diff panel yet. Its UI is included only in dev builds (`REINS_DEV=true` as a frontend build constant, matching the backend `process.env.REINS_DEV`) so this work can land across multiple PRs without exposing or shipping a no-op preference in production builds.
+The setting UI is included only in dev builds (`REINS_DEV=true` as a frontend build constant, matching the backend `process.env.REINS_DEV`) so the prototype remains hidden from production builds.
 
-Sequencing update: get to a visible renderer first, then replace the full-patch loading path with streaming. The next slice should fetch the raw patch as full text, parse it with `@pierre/diffs`, and wire the dev-only `diff_renderer` setting to a basic virtual renderer. This intentionally defers true stream chunking, incremental append behavior, and large-diff performance claims until after the renderer integration is visible.
+Sequencing update: get to a visible renderer first, then replace the full-patch loading path with streaming.
 
 ## Implementation checklist
 
-- [x] Settings groundwork: persist `diff_renderer`, default to `classic`, validate `classic`/`virtual`, expose the control only in dev builds, cover it with tests, and keep the preference unwired until the virtual renderer path lands.
+- [x] Settings groundwork: persist `diff_renderer`, default to `classic`, validate `classic`/`virtual`, expose the control only in dev builds, and cover it with tests.
 - [x] Add the raw patch backend path with existing diff branch/mode/context semantics.
-- [ ] Add the full-patch virtual renderer prototype: fetch `/diff/patch` as text, parse with `@pierre/diffs`, create renderer-specific state separate from `DiffStore.fullData`, render basic diffs, and wire `diff_renderer` to select classic vs virtual.
-- [ ] Deferred until after the visual prototype: add the streaming file-chunker and `@pierre/diffs` per-file parser adapter.
+- [x] Add the full-patch virtual renderer prototype: fetch `/diff/patch` as text, parse with `@pierre/diffs`, create renderer-specific state separate from `DiffStore.fullData`, render basic diffs, and wire `diff_renderer` to select classic vs virtual.
+- [ ] Add the streaming file-chunker and `@pierre/diffs` per-file parser adapter.
 - [ ] Replace the full-patch prototype path with incremental append/render behavior.
 - [ ] Integrate file tree navigation and active-file scroll behavior with the virtual renderer.
 - [ ] Add highlighting/cache strategy and performance instrumentation.
@@ -85,7 +85,7 @@ It should preserve:
 
 Initial implementation can stream `git diff` stdout directly. Untracked synthetic diffs can either be appended or documented as a prototype limitation if that simplifies the first slice.
 
-### Phase 2 — Full-patch visual prototype (next)
+### Phase 2 — Full-patch visual prototype
 
 Build the fastest visible prototype before investing in stream chunking.
 
@@ -98,17 +98,11 @@ fetch /api/projects/:id/diff/patch as full text
   → render with the virtual diff panel when diff_renderer === "virtual"
 ```
 
-This phase should intentionally defer:
-
-- true streaming file chunking
-- incremental append/render semantics
-- large-diff performance claims
-- final height/measurement cache design
-- full hunk expansion compatibility
-
 The goal is to validate renderer integration, event boundaries, styling, file metadata, and basic scroll behavior quickly while keeping classic as the default/fallback.
 
-### Phase 3 — Stream/file chunking layer (deferred)
+Status: the initial visible prototype is wired behind the dev-only `diff_renderer` setting. It intentionally uses a simple Reins-owned Lit renderer over `@pierre/diffs` metadata rather than `CodeView`, so it validates loading/parsing/selection without claiming true virtualization or large-diff performance yet.
+
+### Phase 3 — Stream/file chunking layer
 
 After the visible renderer path works, implement a small streaming splitter that frames raw patch text into complete file-diff chunks.
 

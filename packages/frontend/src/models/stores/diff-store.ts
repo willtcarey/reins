@@ -11,6 +11,7 @@
 
 import type { DiffFile, DiffFileSummary, DiffHunk, DiffLine } from "../changes/types.js";
 import { sortDiffFiles, sortFileSummaries } from "../changes/diff-sort.js";
+import { parseVirtualDiffPatch, type VirtualDiffData } from "../changes/virtual-diff.js";
 
 const DEFAULT_CONTEXT = 3;
 const EXPAND_STEP = 15;
@@ -56,10 +57,17 @@ export class DiffStore {
   /** Full highlighted diff — fetched on demand, may be stale or null. */
   fullData: DiffFullData | null = null;
 
+  /** Renderer-specific virtual diff state, parsed from raw patch text. */
+  virtualData: VirtualDiffData | null = null;
+
   /** Whether the full diff is currently being fetched. */
   fullLoading = false;
 
+  /** Whether the virtual diff patch is currently being fetched and parsed. */
+  virtualLoading = false;
+
   error: string | null = null;
+  virtualError: string | null = null;
   contextLines = DEFAULT_CONTEXT;
 
   /** Which changes to show: all branch changes or only uncommitted. */
@@ -137,6 +145,8 @@ export class DiffStore {
     this._branch = null;
     this.fileData = { files: [], branch: null, baseBranch: null };
     this.fullData = null;
+    this.virtualData = null;
+    this.virtualError = null;
     this.spread = null;
     this.syncAction = "idle";
     this.syncResult = null;
@@ -158,6 +168,8 @@ export class DiffStore {
     if (branch === this._branch) return;
     this._branch = branch;
     this.fullData = null;
+    this.virtualData = null;
+    this.virtualError = null;
     this.spread = null;
     this.notify();
     this.refresh();
@@ -169,13 +181,17 @@ export class DiffStore {
   /** Switch between branch and uncommitted diff modes. Re-fetches data. */
   async setDiffMode(mode: DiffMode) {
     if (mode === this.diffMode) return;
+    const hadVirtualData = this.virtualData !== null;
     this.diffMode = mode;
     this.fullData = null;
+    this.virtualData = null;
+    this.virtualError = null;
     this.notify();
     // Re-poll file list immediately with the new mode
     await this.refresh();
-    // If the full diff was visible, re-fetch it too
+    // Preserve existing behavior: mode switches load the classic full diff.
     await this.fetchFullDiff();
+    if (hadVirtualData) await this.fetchVirtualDiff();
   }
 
   // ---- Per-hunk expansion ---------------------------------------------------
@@ -396,9 +412,12 @@ export class DiffStore {
       this.error = null;
       this.notify();
 
-      // If the file list changed and the full diff is loaded, re-fetch it
+      // If rendered diff data is loaded, re-fetch it when the file list changes.
       if (changed && this.fullData) {
         await this.fetchFullDiff();
+      }
+      if (changed && this.virtualData) {
+        await this.fetchVirtualDiff();
       }
     } catch (err: any) {
       this.error = err.message ?? "Failed to fetch file list";
@@ -448,11 +467,61 @@ export class DiffStore {
     this.notify();
   }
 
+  /** Fetch and parse the raw patch for the virtual renderer prototype. */
+  async fetchVirtualDiff() {
+    if (this._projectId == null) {
+      this.virtualData = null;
+      this.notify();
+      return;
+    }
+
+    this.virtualLoading = true;
+    this.virtualError = null;
+    this.notify();
+
+    try {
+      const resp = await fetch(
+        `/api/projects/${this._projectId}/diff/patch?context=${this.contextLines}&mode=${this.diffMode}${this._branchParam}`
+      );
+      if (!resp.ok) {
+        this.virtualError = `HTTP ${resp.status}`;
+        this.virtualLoading = false;
+        this.notify();
+        return;
+      }
+
+      const patch = await resp.text();
+      const parsed = parseVirtualDiffPatch(patch, {
+        cacheKeyPrefix: `project-${this._projectId}-${this.diffMode}-${this.contextLines}`,
+      });
+      this.virtualData = {
+        ...parsed,
+        branch: this.fileData.branch ?? this._branch,
+        baseBranch: this.fileData.baseBranch,
+      };
+      this.virtualError = null;
+      this.virtualLoading = false;
+      this.notify();
+      return;
+    } catch (err: any) {
+      this.virtualError = err.message ?? "Failed to fetch virtual diff";
+    }
+    this.virtualLoading = false;
+    this.notify();
+  }
+
   /** Discard the full diff data (e.g. when navigating away from the changes view). */
   clearFullDiff() {
     this.fullData = null;
     this.contextLines = DEFAULT_CONTEXT;
     this._fileContentCache.clear();
+    this.notify();
+  }
+
+  /** Discard only the virtual renderer's parsed patch state. */
+  clearVirtualDiff() {
+    this.virtualData = null;
+    this.virtualError = null;
     this.notify();
   }
 

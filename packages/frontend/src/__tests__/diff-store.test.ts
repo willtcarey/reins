@@ -262,6 +262,55 @@ describe("DiffStore", () => {
     });
   });
 
+  // ---- virtual diff ---------------------------------------------------------
+
+  describe("fetchVirtualDiff", () => {
+    const patch = `diff --git a/demo.txt b/demo.txt
+index 1111111..2222222 100644
+--- a/demo.txt
++++ b/demo.txt
+@@ -1 +1 @@
+-old
++new
+`;
+
+    test("fetches the raw patch with existing diff params and stores virtual data separately", async () => {
+      const requests: string[] = [];
+      mockFetch((url) => {
+        requests.push(url);
+        if (url.includes("/diff/files")) {
+          return jsonResponse({ files: [], branch: "feature/raw", baseBranch: "main" });
+        }
+        if (url.includes("/git/spread")) return jsonResponse({});
+        if (url.includes("/diff/patch")) return textResponse(patch);
+        return jsonResponse({}, false);
+      });
+
+      store.setProject(7);
+      store.setBranch("feature/raw");
+      store.fullData = { files: [], branch: "classic", baseBranch: "main" };
+
+      await store.fetchVirtualDiff();
+
+      expect(requests).toContain("/api/projects/7/diff/patch?context=3&mode=branch&branch=feature%2Fraw");
+      expect(store.virtualData?.items[0]?.path).toBe("demo.txt");
+      expect(store.virtualData?.branch).toBe("feature/raw");
+      expect(store.virtualData?.baseBranch).toBe("main");
+      expect(store.fullData?.branch).toBe("classic");
+      expect(store.virtualError).toBeNull();
+    });
+
+    test("clearVirtualDiff discards only virtual renderer state", () => {
+      store.virtualData = { items: [], pathToItemId: new Map(), branch: null, baseBranch: null };
+      store.fullData = { files: [], branch: "classic", baseBranch: "main" };
+
+      store.clearVirtualDiff();
+
+      expect(store.virtualData).toBeNull();
+      expect(store.fullData?.branch).toBe("classic");
+    });
+  });
+
   // ---- expandHunk -----------------------------------------------------------
 
   describe("expandHunk", () => {

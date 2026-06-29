@@ -15,7 +15,7 @@ import { LitElement, html } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { customElement, state, query } from "lit/decorators.js";
 import { AppClient } from "../models/ws-client.js";
-import type { DiffPanel } from "./changes/diff-panel.js";
+import type { DiffRendererShell } from "./changes/diff-renderer-shell.js";
 import { FileTreeState } from "../models/changes/file-tree-state.js";
 import { AppStore } from "../models/stores/app-store.js";
 import { parseHash, getLastHash, saveHash } from "../models/router.js";
@@ -23,7 +23,7 @@ import type { Route } from "../models/router.js";
 
 // Ensure sub-components are registered
 import "./chat-panel.js";
-import "./changes/diff-panel.js";
+import "./changes/diff-renderer-shell.js";
 import "./changes/diff-file-tree.js";
 import "./session-sidebar.js";
 import "./branch-indicator.js";
@@ -112,6 +112,10 @@ export class AppShell extends LitElement {
     // reliably on all webview backends).
     document.addEventListener("visibilitychange", this.handleVisibilityChange);
 
+    if (typeof REINS_DEV !== "undefined" && REINS_DEV) {
+      void this.appStore.settingsStore.loadSettings(["diff_renderer"]);
+    }
+
     this.appStore.connect();
 
     // Detect virtual keyboard open/close to toggle safe-area bottom padding.
@@ -190,8 +194,8 @@ export class AppShell extends LitElement {
     }
   }
 
-  private getDiffPanel(): DiffPanel | null {
-    return this.querySelector("diff-panel");
+  private getDiffPanel(): DiffRendererShell | null {
+    return this.querySelector("diff-renderer-shell");
   }
 
   /**
@@ -296,6 +300,7 @@ export class AppShell extends LitElement {
     const store = this.appStore;
     const activeSessionStore = store.activeSessionStore;
     const hasProject = store.projectId != null && activeSessionStore != null;
+    const useVirtualDiff = typeof REINS_DEV !== "undefined" && REINS_DEV && store.settingsStore.diffRenderer === "virtual";
 
     return html`
       <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"
@@ -392,12 +397,15 @@ export class AppShell extends LitElement {
                   ></diff-file-tree>
                 </div>
               </div>
-              ${keyed(store.projectId, html`<diff-panel
-                class="flex-1 min-h-0 ${this.activeTab === "changes" ? "" : "hidden"}"
-                .store=${store.diffStore}
-                .treeState=${this.fileTreeState}
-                .visible=${this.activeTab === "changes"}
-              ></diff-panel>`)}
+              ${keyed(store.projectId, html`
+                <diff-renderer-shell
+                  class="flex-1 min-h-0 ${this.activeTab === "changes" ? "" : "hidden"}"
+                  .store=${store.diffStore}
+                  .treeState=${this.fileTreeState}
+                  .renderer=${useVirtualDiff ? "virtual" : "classic"}
+                  .visible=${this.activeTab === "changes"}
+                ></diff-renderer-shell>
+              `)}
             </div>
           ` : this.renderEmptyState()}
         </div>

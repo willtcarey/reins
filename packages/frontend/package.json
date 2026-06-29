@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@pierre/diffs": "^1.2.11",
+    "@shikijs/themes": "4.3.0",
     "lit": "^3.3.1",
     "marked": "^15.0.0",
     "mermaid": "^11.13.0",
