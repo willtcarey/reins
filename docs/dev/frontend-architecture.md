@@ -2,6 +2,10 @@
 
 The frontend is a Lit + Tailwind CSS v4 SPA bundled with `bun build`. It communicates with the backend via REST (fetches) and a WebSocket (real-time events and commands).
 
+## Build flags
+
+Frontend dev-only code uses the compile-time `REINS_DEV` Bun define so production builds can exclude dev-only branches. The dev supervisor and frontend `dev` script pass `--define REINS_DEV=true`; the production build script passes `--define REINS_DEV=false`.
+
 ## Source Organization
 
 ```

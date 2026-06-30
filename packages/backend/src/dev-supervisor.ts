@@ -19,6 +19,7 @@ interface DevService {
   command: string[];
   cwd: string;
   restart: boolean;
+  env?: Record<string, string>;
 }
 
 function createDevServices(repoRoot = process.cwd()): DevService[] {
@@ -29,6 +30,7 @@ function createDevServices(repoRoot = process.cwd()): DevService[] {
       name: "frontend:bundle",
       cwd: frontendRoot,
       restart: true,
+      env: { REINS_DEV: "1" },
       command: [
         "bun",
         "build",
@@ -131,7 +133,7 @@ async function runDevSupervisor(): Promise<number> {
       const child = Bun.spawn({
         cmd: service.command,
         cwd: service.cwd,
-        env: process.env,
+        env: { ...process.env, ...service.env },
         stdout: "inherit",
         stderr: "inherit",
       });
