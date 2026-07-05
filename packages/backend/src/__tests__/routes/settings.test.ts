@@ -122,11 +122,11 @@ describe("settings routes", () => {
 
     test("returns value for diff_renderer", async () => {
       const { router, state } = setup();
-      setSetting("diff_renderer", "virtual");
+      setSetting("diff_renderer", "codeview");
 
       const res = await router.handle(makeRequest("GET", "/api/settings/diff_renderer"), state);
       expect(res!.status).toBe(200);
-      expect(await res!.json()).toEqual({ key: "diff_renderer", value: "virtual" });
+      expect(await res!.json()).toEqual({ key: "diff_renderer", value: "codeview" });
     });
 
     test("returns 400 for unknown key", async () => {
@@ -189,14 +189,14 @@ describe("settings routes", () => {
       const { router, state } = setup();
 
       const putRes = await router.handle(
-        makeRequest("PUT", "/api/settings/diff_renderer", "virtual"),
+        makeRequest("PUT", "/api/settings/diff_renderer", "codeview"),
         state,
       );
       expect(putRes!.status).toBe(200);
-      expect(getSetting("diff_renderer")).toBe("virtual");
+      expect(getSetting("diff_renderer")).toBe("codeview");
 
       const invalidRes = await router.handle(
-        makeRequest("PUT", "/api/settings/diff_renderer", "virtualized"),
+        makeRequest("PUT", "/api/settings/diff_renderer", "CodeView"),
         state,
       );
       expect(invalidRes!.status).toBe(400);

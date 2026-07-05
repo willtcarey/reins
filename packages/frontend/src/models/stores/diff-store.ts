@@ -11,7 +11,7 @@
 
 import type { DiffFile, DiffFileSummary, DiffHunk, DiffLine } from "../changes/types.js";
 import { sortDiffFiles, sortFileSummaries } from "../changes/diff-sort.js";
-import { parseVirtualDiffPatch, type VirtualDiffData } from "../changes/virtual-diff.js";
+import { Loadable, type Loadable as LoadableState } from "../../helpers/loadable.js";
 
 const DEFAULT_CONTEXT = 3;
 const EXPAND_STEP = 15;
@@ -45,6 +45,14 @@ export interface DiffFullData {
   baseBranch: string | null;
 }
 
+export interface DiffPatchData {
+  patch: string;
+  cacheKeyPrefix: string;
+  version: number;
+  branch: string | null;
+  baseBranch: string | null;
+}
+
 export type DiffStoreListener = () => void;
 
 export class DiffStore {
@@ -52,22 +60,14 @@ export class DiffStore {
   // ---- Public reactive state ------------------------------------------------
 
   /** Lightweight file listing — always up to date via polling. */
-  fileData: DiffFileData = { files: [], branch: null, baseBranch: null };
+  fileData: LoadableState<DiffFileData> = Loadable.idle<DiffFileData>().asLoaded({ files: [], branch: null, baseBranch: null });
 
   /** Full highlighted diff — fetched on demand, may be stale or null. */
-  fullData: DiffFullData | null = null;
+  fullData: LoadableState<DiffFullData> = Loadable.idle();
 
-  /** Renderer-specific virtual diff state, parsed from raw patch text. */
-  virtualData: VirtualDiffData | null = null;
+  /** Raw patch diff — fetched on demand by patch-backed renderers. */
+  patchData: LoadableState<DiffPatchData> = Loadable.idle();
 
-  /** Whether the full diff is currently being fetched. */
-  fullLoading = false;
-
-  /** Whether the virtual diff patch is currently being fetched and parsed. */
-  virtualLoading = false;
-
-  error: string | null = null;
-  virtualError: string | null = null;
   contextLines = DEFAULT_CONTEXT;
 
   /** Which changes to show: all branch changes or only uncommitted. */
@@ -99,6 +99,8 @@ export class DiffStore {
   private _syncResultTimer: ReturnType<typeof setTimeout> | null = null;
   /** Cache of file content lines (1-indexed: element 0 is unused). */
   private _fileContentCache = new Map<string, string[]>();
+  /** Monotonic version for patch-backed renderer items. */
+  private _patchDiffVersion = 0;
 
   /** Build the `&branch=...` query fragment if a branch is set. */
   private get _branchParam(): string {
@@ -111,17 +113,9 @@ export class DiffStore {
     return this._projectId;
   }
 
-  /** The task branch being viewed (null for scratch sessions using HEAD). */
+  /** The branch being viewed: selected task branch, or current branch for scratch sessions. */
   get branch(): string | null {
-    return this._branch;
-  }
-
-  /**
-   * Convenience accessor used by components that only need file summaries.
-   * Returns the file listing data (always available from polling).
-   */
-  get data(): DiffFileData {
-    return this.fileData;
+    return this._branch ?? this.fileData.data?.branch ?? null;
   }
 
   // ---- Subscription ---------------------------------------------------------
@@ -143,14 +137,13 @@ export class DiffStore {
     if (id === this._projectId) return;
     this._projectId = id;
     this._branch = null;
-    this.fileData = { files: [], branch: null, baseBranch: null };
-    this.fullData = null;
-    this.virtualData = null;
-    this.virtualError = null;
+    this.fileData = this.fileData.asLoaded({ files: [], branch: null, baseBranch: null });
+    this.fullData = Loadable.idle();
+    this.patchData = Loadable.idle();
+    this._patchDiffVersion = 0;
     this.spread = null;
     this.syncAction = "idle";
     this.syncResult = null;
-    this.error = null;
     this.contextLines = DEFAULT_CONTEXT;
     this.notify();
     this._restartPolling();
@@ -167,9 +160,9 @@ export class DiffStore {
   setBranch(branch: string | null) {
     if (branch === this._branch) return;
     this._branch = branch;
-    this.fullData = null;
-    this.virtualData = null;
-    this.virtualError = null;
+    this.fullData = Loadable.idle();
+    this.patchData = Loadable.idle();
+    this._patchDiffVersion = 0;
     this.spread = null;
     this.notify();
     this.refresh();
@@ -181,17 +174,17 @@ export class DiffStore {
   /** Switch between branch and uncommitted diff modes. Re-fetches data. */
   async setDiffMode(mode: DiffMode) {
     if (mode === this.diffMode) return;
-    const hadVirtualData = this.virtualData !== null;
+    const hadPatchData = this.patchData.data !== null;
     this.diffMode = mode;
-    this.fullData = null;
-    this.virtualData = null;
-    this.virtualError = null;
+    this.fullData = Loadable.idle();
+    this.patchData = Loadable.idle();
+    this._patchDiffVersion = 0;
     this.notify();
     // Re-poll file list immediately with the new mode
     await this.refresh();
     // Preserve existing behavior: mode switches load the classic full diff.
     await this.fetchFullDiff();
-    if (hadVirtualData) await this.fetchVirtualDiff();
+    if (hadPatchData) await this.fetchPatchDiff();
   }
 
   // ---- Per-hunk expansion ---------------------------------------------------
@@ -276,8 +269,9 @@ export class DiffStore {
   private async _resolveFileForExpansion(
     filePath: string,
   ): Promise<{ file: DiffFile; fileLines: string[] } | null> {
-    if (!this.fullData) return null;
-    const file = this.fullData.files.find((f) => f.path === filePath);
+    const fullData = this.fullData.data;
+    if (!fullData) return null;
+    const file = fullData.files.find((f) => f.path === filePath);
     if (!file) return null;
     const fileLines = await this._fetchFileLines(filePath);
     if (fileLines.length <= 1) return null;
@@ -308,12 +302,13 @@ export class DiffStore {
       file.hunks[hunkIndex] = { ...hunk, lines: newLines };
     }
 
-    if (this.fullData) {
-      const fileIndex = this.fullData.files.indexOf(file);
+    const fullData = this.fullData.data;
+    if (fullData) {
+      const fileIndex = fullData.files.indexOf(file);
       if (fileIndex >= 0) {
-        this.fullData.files[fileIndex] = { ...file };
+        fullData.files[fileIndex] = { ...file };
       }
-      this.fullData = { ...this.fullData, files: [...this.fullData.files] };
+      this.fullData = this.fullData.asLoaded({ ...fullData, files: [...fullData.files] });
     }
     this.notify();
   }
@@ -360,7 +355,7 @@ export class DiffStore {
     // After _insertLines, the file object in fullData.files is a new shallow copy,
     // so we re-read it to mutate the correct reference.
     if (hasNeighbor && count >= available) {
-      const updatedFile = this.fullData!.files.find((f) => f.path === filePath)!;
+      const updatedFile = this.fullData.data!.files.find((f) => f.path === filePath)!;
       const earlierIdx = Math.min(hunkIndex, neighborIdx);
       const laterIdx = earlierIdx + 1;
       // Create a new hunk object so HighlightController detects the change
@@ -386,41 +381,42 @@ export class DiffStore {
   /** Fetch the lightweight file listing from the backend. */
   async refresh() {
     if (this._projectId == null) {
-      this.fileData = { files: [], branch: null, baseBranch: null };
-      this.error = null;
+      this.fileData = this.fileData.asLoaded({ files: [], branch: null, baseBranch: null });
       this.notify();
       return;
     }
+
+    this.fileData = this.fileData.asLoading();
+    this.notify();
 
     try {
       const resp = await fetch(
         `/api/projects/${this._projectId}/diff/files?mode=${this.diffMode}${this._branchParam}`
       );
       if (!resp.ok) {
-        this.error = `HTTP ${resp.status}`;
+        this.fileData = this.fileData.asError(`HTTP ${resp.status}`);
         this.notify();
         return;
       }
       const json = await resp.json();
       const newFiles = sortFileSummaries(json.files ?? []);
-      const changed = JSON.stringify(newFiles) !== JSON.stringify(this.fileData.files);
-      this.fileData = {
+      const changed = JSON.stringify(newFiles) !== JSON.stringify(this.fileData.data?.files ?? []);
+      this.fileData = this.fileData.asLoaded({
         files: newFiles,
         branch: json.branch ?? null,
         baseBranch: json.baseBranch ?? null,
-      };
-      this.error = null;
+      });
       this.notify();
 
       // If rendered diff data is loaded, re-fetch it when the file list changes.
-      if (changed && this.fullData) {
+      if (changed && this.fullData.data) {
         await this.fetchFullDiff();
       }
-      if (changed && this.virtualData) {
-        await this.fetchVirtualDiff();
+      if (changed && this.patchData.data) {
+        await this.fetchPatchDiff();
       }
     } catch (err: any) {
-      this.error = err.message ?? "Failed to fetch file list";
+      this.fileData = this.fileData.asError(err.message ?? "Failed to fetch file list");
       this.notify();
     }
   }
@@ -430,12 +426,12 @@ export class DiffStore {
   /** Fetch the full diff. Highlighting is done client-side via Shiki worker. */
   async fetchFullDiff() {
     if (this._projectId == null) {
-      this.fullData = null;
+      this.fullData = Loadable.idle();
       this.notify();
       return;
     }
 
-    this.fullLoading = true;
+    this.fullData = this.fullData.asLoading();
     this.notify();
 
     try {
@@ -443,40 +439,35 @@ export class DiffStore {
         `/api/projects/${this._projectId}/diff?context=${this.contextLines}&mode=${this.diffMode}${this._branchParam}`
       );
       if (!resp.ok) {
-        this.error = `HTTP ${resp.status}`;
-        this.fullLoading = false;
+        this.fullData = this.fullData.asError(`HTTP ${resp.status}`);
         this.notify();
         return;
       }
       const json = await resp.json();
       const files = sortDiffFiles(json.files ?? []);
-      this.fullData = {
+      this.fullData = this.fullData.asLoaded({
         files,
         branch: json.branch ?? null,
         baseBranch: json.baseBranch ?? null,
-      };
+      });
       this._fileContentCache.clear();
-      this.error = null;
-      this.fullLoading = false;
       this.notify();
       return;
     } catch (err: any) {
-      this.error = err.message ?? "Failed to fetch diff";
+      this.fullData = this.fullData.asError(err.message ?? "Failed to fetch diff");
     }
-    this.fullLoading = false;
     this.notify();
   }
 
-  /** Fetch and parse the raw patch for the virtual renderer prototype. */
-  async fetchVirtualDiff() {
+  /** Fetch the raw patch diff for patch-backed renderers. */
+  async fetchPatchDiff() {
     if (this._projectId == null) {
-      this.virtualData = null;
+      this.patchData = Loadable.idle();
       this.notify();
       return;
     }
 
-    this.virtualLoading = true;
-    this.virtualError = null;
+    this.patchData = this.patchData.asLoading();
     this.notify();
 
     try {
@@ -484,44 +475,41 @@ export class DiffStore {
         `/api/projects/${this._projectId}/diff/patch?context=${this.contextLines}&mode=${this.diffMode}${this._branchParam}`
       );
       if (!resp.ok) {
-        this.virtualError = `HTTP ${resp.status}`;
-        this.virtualLoading = false;
+        this.patchData = this.patchData.asError(`HTTP ${resp.status}`);
         this.notify();
         return;
       }
 
       const patch = await resp.text();
-      const parsed = parseVirtualDiffPatch(patch, {
-        cacheKeyPrefix: `project-${this._projectId}-${this.diffMode}-${this.contextLines}`,
+      const version = this._patchDiffVersion + 1;
+      this._patchDiffVersion = version;
+      this.patchData = this.patchData.asLoaded({
+        patch,
+        cacheKeyPrefix: `project-${this._projectId}-${this.diffMode}-${this.contextLines}-${this._branch ?? "HEAD"}-v${version}`,
+        version,
+        branch: this.branch,
+        baseBranch: this.fileData.data?.baseBranch ?? null,
       });
-      this.virtualData = {
-        ...parsed,
-        branch: this.fileData.branch ?? this._branch,
-        baseBranch: this.fileData.baseBranch,
-      };
-      this.virtualError = null;
-      this.virtualLoading = false;
       this.notify();
       return;
     } catch (err: any) {
-      this.virtualError = err.message ?? "Failed to fetch virtual diff";
+      this.patchData = this.patchData.asError(err.message ?? "Failed to fetch patch diff");
     }
-    this.virtualLoading = false;
     this.notify();
   }
 
   /** Discard the full diff data (e.g. when navigating away from the changes view). */
   clearFullDiff() {
-    this.fullData = null;
+    this.fullData = Loadable.idle();
     this.contextLines = DEFAULT_CONTEXT;
     this._fileContentCache.clear();
     this.notify();
   }
 
-  /** Discard only the virtual renderer's parsed patch state. */
-  clearVirtualDiff() {
-    this.virtualData = null;
-    this.virtualError = null;
+  /** Discard the parsed patch diff. */
+  clearPatchDiff() {
+    this.patchData = Loadable.idle();
+    this._patchDiffVersion = 0;
     this.notify();
   }
 
@@ -529,7 +517,7 @@ export class DiffStore {
 
   /** Fetch spread, optionally with a remote git fetch first. */
   async fetchSpread(remote = false) {
-    const branch = this._branch ?? this.fileData.branch;
+    const branch = this.branch;
     if (this._projectId == null || !branch) return;
 
     try {
@@ -548,7 +536,7 @@ export class DiffStore {
 
   /** Push the viewed branch to origin. */
   async push() {
-    const branch = this._branch ?? this.fileData.branch;
+    const branch = this.branch;
     if (this._projectId == null || !branch || this.syncAction !== "idle") return;
 
     this.syncAction = "pushing";
@@ -576,7 +564,7 @@ export class DiffStore {
 
   /** Rebase the viewed branch onto the base branch. */
   async rebase() {
-    const branch = this._branch ?? this.fileData.branch;
+    const branch = this.branch;
     if (this._projectId == null || !branch || this.syncAction !== "idle") return;
 
     this.syncAction = "rebasing";

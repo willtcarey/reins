@@ -67,7 +67,7 @@ describe("DiffStore expandHunk (no highlighting)", () => {
 
   test("expandHunk inserts lines and notifies subscribers", async () => {
     store.setProject(1);
-    store.fullData = {
+    store.fullData = store.fullData.asLoaded({
       files: [
         makeFile("src/foo.ts", [
           {
@@ -81,7 +81,7 @@ describe("DiffStore expandHunk (no highlighting)", () => {
       ],
       branch: "feat",
       baseBranch: "main",
-    };
+    });
 
     // Mock fetch for file content
     mockFetch((url) => {
@@ -99,7 +99,7 @@ describe("DiffStore expandHunk (no highlighting)", () => {
 
     // Lines were inserted
     expect(inserted).toBe(2);
-    const hunk = store.fullData!.files[0].hunks[0];
+    const hunk = store.fullData.data!.files[0].hunks[0];
     expect(hunk.lines.length).toBe(4); // 2 original + 2 new
 
     // Subscriber was notified at least once for line insertion
@@ -108,7 +108,7 @@ describe("DiffStore expandHunk (no highlighting)", () => {
 
   test("newly inserted lines have no html (highlighting is the controller's job)", async () => {
     store.setProject(1);
-    store.fullData = {
+    store.fullData = store.fullData.asLoaded({
       files: [
         makeFile("a.ts", [{
           header: "@@ -5,1 +5,1 @@",
@@ -117,7 +117,7 @@ describe("DiffStore expandHunk (no highlighting)", () => {
       ],
       branch: "feat",
       baseBranch: "main",
-    };
+    });
 
     mockFetch((url) => {
       if (url.includes("/files/content?")) return textResponse("l1\nl2\nl3\nl4\nhello world\nl6");
@@ -130,7 +130,7 @@ describe("DiffStore expandHunk (no highlighting)", () => {
 
     // The store only produces DiffLine objects with text — highlighting
     // is the controller's job (stored on HighlightController, not DiffLine).
-    const newLine = store.fullData!.files[0].hunks[0].lines[1];
+    const newLine = store.fullData.data!.files[0].hunks[0].lines[1];
     expect(newLine.text).toBe("l6");
     expect(newLine).toEqual({ type: "context", text: "l6", oldLine: 6, newLine: 6 });
   });
@@ -146,11 +146,11 @@ describe("DiffStore expandHunk (no highlighting)", () => {
         ],
       },
     ]);
-    store.fullData = {
+    store.fullData = store.fullData.asLoaded({
       files: [originalFile],
       branch: "feat",
       baseBranch: "main",
-    };
+    });
 
     mockFetch((url) => {
       if (url.includes("/files/content?")) return textResponse("line1\nline2\nline3\nline4\nline5\nline6");
@@ -162,7 +162,7 @@ describe("DiffStore expandHunk (no highlighting)", () => {
     await store.expandHunk("src/foo.ts", 0, "down", 2);
 
     // The file in fullData should be a different object from the original
-    const updatedFile = store.fullData!.files[0];
+    const updatedFile = store.fullData.data!.files[0];
     expect(updatedFile).not.toBe(originalFile);
     // But should still have the same path and expanded content
     expect(updatedFile.path).toBe("src/foo.ts");
@@ -171,7 +171,7 @@ describe("DiffStore expandHunk (no highlighting)", () => {
 
   test("subscribers are notified so the highlight controller can react", async () => {
     store.setProject(1);
-    store.fullData = {
+    store.fullData = store.fullData.asLoaded({
       files: [
         makeFile("b.ts", [{
           header: "@@ -2,1 +2,1 @@",
@@ -180,7 +180,7 @@ describe("DiffStore expandHunk (no highlighting)", () => {
       ],
       branch: "feat",
       baseBranch: "main",
-    };
+    });
 
     mockFetch((url) => {
       if (url.includes("/files/content?")) return textResponse("line1\nline2\nline3");
@@ -191,7 +191,7 @@ describe("DiffStore expandHunk (no highlighting)", () => {
 
     const notifications: number[] = [];
     store.subscribe(() => {
-      const lines = store.fullData?.files[0]?.hunks[0]?.lines;
+      const lines = store.fullData.data?.files[0]?.hunks[0]?.lines;
       notifications.push(lines?.length ?? 0);
     });
 

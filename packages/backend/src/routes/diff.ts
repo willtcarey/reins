@@ -68,7 +68,7 @@ export function registerDiffRoutes(router: RouterGroup<ProjectRouteContext>) {
     });
   });
 
-  /** Raw unified patch text for virtualized/streamed diff consumers. */
+  /** Raw unified patch text for CodeView/streamed diff consumers. */
   router.get("/diff/patch", async (ctx) => {
     const { contextLines, mode, branch } = parseDiffParams(ctx.url);
     const patch = ctx.project.workspace.getDiffPatchStream(contextLines, mode, branch);

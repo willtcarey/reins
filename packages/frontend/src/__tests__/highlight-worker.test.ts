@@ -18,9 +18,17 @@ let createHighlighterImpl: () => Promise<FakeHighlighter> = async () => ({
 
 mock.module("shiki/bundle/full", () => ({
   createHighlighter: () => createHighlighterImpl(),
+  getSingletonHighlighter: () => createHighlighterImpl(),
+  getLastGrammarState: () => undefined,
+  codeToHast: () => undefined,
+  codeToHtml: (source: string) => source,
+  codeToTokens: () => [],
+  codeToTokensBase: () => [],
+  codeToTokensWithThemes: () => [],
   bundledLanguages: {
     javascript: {},
   },
+  bundledThemes: {},
 }));
 
 function deferred<T>() {

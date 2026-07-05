@@ -18,6 +18,7 @@ import { AppClient } from "../models/ws-client.js";
 import type { DiffRendererShell } from "./changes/diff-renderer-shell.js";
 import { FileTreeState } from "../models/changes/file-tree-state.js";
 import { AppStore } from "../models/stores/app-store.js";
+import type { DiffRenderer } from "../models/stores/settings-store.js";
 import { parseHash, getLastHash, saveHash } from "../models/router.js";
 import type { Route } from "../models/router.js";
 
@@ -112,9 +113,7 @@ export class AppShell extends LitElement {
     // reliably on all webview backends).
     document.addEventListener("visibilitychange", this.handleVisibilityChange);
 
-    if (typeof REINS_DEV !== "undefined" && REINS_DEV) {
-      void this.appStore.settingsStore.loadSettings(["diff_renderer"]);
-    }
+    void this.appStore.settingsStore.loadSettings(["diff_renderer"]);
 
     this.appStore.connect();
 
@@ -300,7 +299,7 @@ export class AppShell extends LitElement {
     const store = this.appStore;
     const activeSessionStore = store.activeSessionStore;
     const hasProject = store.projectId != null && activeSessionStore != null;
-    const useVirtualDiff = typeof REINS_DEV !== "undefined" && REINS_DEV && store.settingsStore.diffRenderer === "virtual";
+    const diffRenderer: DiffRenderer = store.settingsStore.diffRenderer;
 
     return html`
       <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"
@@ -360,7 +359,7 @@ export class AppShell extends LitElement {
                 <div class="min-w-0 flex-1 overflow-hidden flex justify-end">
                   <branch-indicator
                     class="block min-w-0 max-w-full"
-                    .currentBranch=${store.diffStore.branch ?? store.diffStore.fileData.branch}
+                    .currentBranch=${store.diffStore.branch}
                   ></branch-indicator>
                 </div>
                 <div class="flex items-center gap-1 pr-1 shrink-0">
@@ -402,7 +401,7 @@ export class AppShell extends LitElement {
                   class="flex-1 min-h-0 ${this.activeTab === "changes" ? "" : "hidden"}"
                   .store=${store.diffStore}
                   .treeState=${this.fileTreeState}
-                  .renderer=${useVirtualDiff ? "virtual" : "classic"}
+                  .renderer=${diffRenderer}
                   .visible=${this.activeTab === "changes"}
                 ></diff-renderer-shell>
               `)}

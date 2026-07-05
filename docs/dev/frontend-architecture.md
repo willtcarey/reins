@@ -309,17 +309,19 @@ The diff/changes feature spans both `models/changes/` (pure logic) and `componen
 - `scroll-spy.ts` — Tracks which diff card is visible for tree highlighting
 - `highlighter.ts` — Pure-function interface to the Shiki Web Worker: text lines in, HTML lines out via callback. Exports `IHighlighter` for test fakes.
 - `highlight-worker.ts` — Web Worker for off-main-thread Shiki highlighting
+- `pierre-diffs-worker.ts` / `codeview-diff-worker-pool.ts` — Shared `@pierre/diffs` worker-pool entry and sizing/highlighter setup for the CodeView diff prototype.
 - `types.ts` — Shared types for diff data structures
 
 **Components (`components/changes/`):**
 - `diff-panel.ts` — Layout shell: branch header, scroll container, file tree sidebar. Owns state coordination and wires child events to the DiffStore.
-- `diff-renderer-shell.ts` — Chooses the active Changes renderer from the dev-only `diff_renderer` setting while keeping classic as the default path.
+- `diff-renderer-shell.ts` — Chooses the active Changes renderer from the `diff_renderer` setting while keeping classic as the default path.
 - `diff-file-card.ts` — Per-file card: collapsible header with copy/download actions, delegates to `<diff-hunk>` and `<diff-markdown-preview>`.
 - `diff-hunk.ts` — Single hunk: separator/expand-up button, hunk header, diff lines, trailer/expand-down button.
-- `virtual-diff-panel.ts` — Prototype renderer that fetches raw patch state through `DiffStore`, reads renderer-specific virtual diff data, and renders basic parsed hunks without hunk expansion/highlighting parity yet.
+- `codeview-diff-panel.ts` — Prototype renderer that consumes `DiffStore`'s raw `/diff/patch` text, parses renderer-specific CodeView diff data with `@pierre/diffs`, converts it into `CodeView` items, adds Reins header actions/collapse toggles, and lets Pierre own diff row rendering/highlighting/virtualization.
+- `diff-file-action-buttons.ts` — Shared Lit action buttons for opening, copying, and downloading changed files across diff renderers.
 - `diff-markdown-preview.ts` — Markdown Diff/Preview tab bar and rendered content area.
 - `diff-file-tree.ts` — Collapsible file tree with scroll spy integration
 
-`DiffStore.fullData` remains the classic renderer's JSON data path. The virtual diff prototype stores parsed raw-patch state separately in `DiffStore.virtualData`, populated from `/diff/patch` through `@pierre/diffs`, so classic rendering and hunk expansion do not depend on prototype state.
+`DiffStore` owns the diff lifecycle and exposes both the classic JSON representation (`fullData`) and the raw `/diff/patch` text representation (`patchData`). Both are `Loadable<T>` values from `helpers/loadable.ts`, so each representation carries its data/loading/error state as one value. The CodeView prototype calls `fetchPatchDiff()`, then `<codeview-diff-panel>` owns CodeView-specific parsing plus renderer item collapse/version state. The Pierre `CodeView` path uses a shared `WorkerPoolManager` for worker-backed highlighting rather than per-panel workers, with the same `github-dark` Shiki theme as the classic renderer.
 
 `diff-file-card` and `diff-hunk` use `StoreController<DiffStore>` to re-render on store notifications. Each `<diff-hunk>` owns a `HighlightController` that sends the hunk's text lines to the Shiki web worker for syntax highlighting. The controller stores the resulting HTML strings — the highlighter never mutates `DiffLine` objects. During render, `diff-hunk` reads `controller.getLineHtml(index)` and falls back to escaped plain text if highlighting hasn't completed yet (see [reactive-controllers.md](reactive-controllers.md)).

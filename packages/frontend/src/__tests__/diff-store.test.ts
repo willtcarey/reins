@@ -88,15 +88,11 @@ describe("DiffStore", () => {
     });
 
     test("fileData is empty", () => {
-      expect(store.fileData).toEqual({ files: [], branch: null, baseBranch: null });
+      expect(store.fileData.data).toEqual({ files: [], branch: null, baseBranch: null });
     });
 
     test("fullData is null", () => {
-      expect(store.fullData).toBeNull();
-    });
-
-    test("error is null", () => {
-      expect(store.error).toBeNull();
+      expect(store.fullData.data).toBeNull();
     });
 
     test("diffMode defaults to branch", () => {
@@ -157,16 +153,16 @@ describe("DiffStore", () => {
 
     test("resets all state", () => {
       // Pre-populate some state
-      store.fullData = { files: [], branch: "x", baseBranch: "main" };
+      store.fullData = store.fullData.asLoaded({ files: [], branch: "x", baseBranch: "main" });
       store.spread = { branch: "x", aheadBase: 1, behindBase: 0, aheadRemote: null, behindRemote: null };
-      store.error = "stale error";
+      store.fileData = store.fileData.asError("stale error");
 
       store.setProject(1);
 
-      expect(store.fileData).toEqual({ files: [], branch: null, baseBranch: null });
-      expect(store.fullData).toBeNull();
+      expect(store.fileData.data).toEqual({ files: [], branch: null, baseBranch: null });
+      expect(store.fileData.error).toBeNull();
+      expect(store.fullData.data).toBeNull();
       expect(store.spread).toBeNull();
-      expect(store.error).toBeNull();
       expect(store.contextLines).toBe(3);
     });
 
@@ -184,9 +180,9 @@ describe("DiffStore", () => {
   describe("setBranch", () => {
     test("clears fullData", () => {
       store.setProject(1);
-      store.fullData = { files: [], branch: "a", baseBranch: "main" };
+      store.fullData = store.fullData.asLoaded({ files: [], branch: "a", baseBranch: "main" });
       store.setBranch("feat/new");
-      expect(store.fullData).toBeNull();
+      expect(store.fullData.data).toBeNull();
     });
 
     test("notifies listeners", () => {
@@ -218,12 +214,12 @@ describe("DiffStore", () => {
 
     test("clears fullData before re-fetch", async () => {
       store.setProject(1);
-      store.fullData = { files: [], branch: "x", baseBranch: "main" };
+      store.fullData = store.fullData.asLoaded({ files: [], branch: "x", baseBranch: "main" });
 
       // Track whether fullData was nulled during the mode change
       let wasNulled = false;
       store.subscribe(() => {
-        if (store.fullData === null) wasNulled = true;
+        if (store.fullData.data === null) wasNulled = true;
       });
 
       await store.setDiffMode("uncommitted");
@@ -243,9 +239,9 @@ describe("DiffStore", () => {
 
   describe("clearFullDiff", () => {
     test("sets fullData to null", () => {
-      store.fullData = { files: [], branch: null, baseBranch: null };
+      store.fullData = store.fullData.asLoaded({ files: [], branch: null, baseBranch: null });
       store.clearFullDiff();
-      expect(store.fullData).toBeNull();
+      expect(store.fullData.data).toBeNull();
     });
 
     test("resets contextLines to default (3)", () => {
@@ -262,9 +258,9 @@ describe("DiffStore", () => {
     });
   });
 
-  // ---- virtual diff ---------------------------------------------------------
+  // ---- Patch diff -----------------------------------------------------------
 
-  describe("fetchVirtualDiff", () => {
+  describe("fetchPatchDiff", () => {
     const patch = `diff --git a/demo.txt b/demo.txt
 index 1111111..2222222 100644
 --- a/demo.txt
@@ -274,7 +270,7 @@ index 1111111..2222222 100644
 +new
 `;
 
-    test("fetches the raw patch with existing diff params and stores virtual data separately", async () => {
+    test("fetches the streaming diff with existing diff params and stores raw patch data", async () => {
       const requests: string[] = [];
       mockFetch((url) => {
         requests.push(url);
@@ -288,26 +284,60 @@ index 1111111..2222222 100644
 
       store.setProject(7);
       store.setBranch("feature/raw");
-      store.fullData = { files: [], branch: "classic", baseBranch: "main" };
+      store.fullData = store.fullData.asLoaded({ files: [], branch: "classic", baseBranch: "main" });
 
-      await store.fetchVirtualDiff();
+      await store.fetchPatchDiff();
 
       expect(requests).toContain("/api/projects/7/diff/patch?context=3&mode=branch&branch=feature%2Fraw");
-      expect(store.virtualData?.items[0]?.path).toBe("demo.txt");
-      expect(store.virtualData?.branch).toBe("feature/raw");
-      expect(store.virtualData?.baseBranch).toBe("main");
-      expect(store.fullData?.branch).toBe("classic");
-      expect(store.virtualError).toBeNull();
+      expect(store.patchData.data?.patch).toBe(patch);
+      expect(store.patchData.data?.version).toBe(1);
+      expect(store.patchData.data?.cacheKeyPrefix).toBe("project-7-branch-3-feature/raw-v1");
+      expect(store.patchData.data?.branch).toBe("feature/raw");
+      expect(store.patchData.data?.baseBranch).toBe("main");
+      expect(store.fullData.data?.branch).toBe("classic");
+      expect(store.patchData.error).toBeNull();
     });
 
-    test("clearVirtualDiff discards only virtual renderer state", () => {
-      store.virtualData = { items: [], pathToItemId: new Map(), branch: null, baseBranch: null };
-      store.fullData = { files: [], branch: "classic", baseBranch: "main" };
+    test("clearPatchDiff discards only patch renderer state", () => {
+      store.patchData = store.patchData.asLoaded({ patch: "", cacheKeyPrefix: "test", version: 1, branch: null, baseBranch: null });
+      store.fullData = store.fullData.asLoaded({ files: [], branch: "classic", baseBranch: "main" });
 
-      store.clearVirtualDiff();
+      store.clearPatchDiff();
 
-      expect(store.virtualData).toBeNull();
-      expect(store.fullData?.branch).toBe("classic");
+      expect(store.patchData.data).toBeNull();
+      expect(store.fullData.data?.branch).toBe("classic");
+    });
+
+    test("increments patch versions and cache key prefixes on each successful fetch", async () => {
+      const patches = [
+        patch,
+        `diff --git a/demo.txt b/demo.txt
+index 1111111..3333333 100644
+--- a/demo.txt
++++ b/demo.txt
+@@ -1 +1 @@
+-old
++newer
+`,
+      ];
+      mockFetch((url) => {
+        if (url.includes("/diff/patch")) return textResponse(patches.shift() ?? patch);
+        if (url.includes("/diff/files")) return jsonResponse({ files: [] });
+        if (url.includes("/git/spread")) return jsonResponse({});
+        return jsonResponse({});
+      });
+      store.setProject(1);
+
+      await store.fetchPatchDiff();
+      const first = store.patchData.data!;
+      await store.fetchPatchDiff();
+      const second = store.patchData.data!;
+
+      expect(first.patch).toBe(patch);
+      expect(second.patch).toContain("newer");
+      expect(first.version).toBe(1);
+      expect(second.version).toBe(2);
+      expect(second.cacheKeyPrefix).not.toBe(first.cacheKeyPrefix);
     });
   });
 
@@ -323,11 +353,11 @@ index 1111111..2222222 100644
 
     function setupFileAndStore(hunks: DiffHunk[]) {
       store.setProject(1);
-      store.fullData = {
+      store.fullData = store.fullData.asLoaded({
         files: [makeFile(FILE_PATH, hunks)],
         branch: "feat",
         baseBranch: "main",
-      };
+      });
 
       // Mock fetch for file content request
       mockFetch((url) => {
@@ -389,7 +419,7 @@ index 1111111..2222222 100644
       const count = await store.expandHunk(FILE_PATH, 0, "down", 3);
       expect(count).toBe(3);
 
-      const hunk = store.fullData!.files[0].hunks[0];
+      const hunk = store.fullData.data!.files[0].hunks[0];
       // Original 3 + 3 appended = 6
       expect(hunk.lines.length).toBe(6);
       // Appended lines are 6, 7, 8
@@ -413,7 +443,7 @@ index 1111111..2222222 100644
       const count = await store.expandHunk(FILE_PATH, 0, "up", 3);
       expect(count).toBe(3);
 
-      const hunk = store.fullData!.files[0].hunks[0];
+      const hunk = store.fullData.data!.files[0].hunks[0];
       expect(hunk.lines.length).toBe(6);
       // Prepended lines are 2, 3, 4
       expect(hunk.lines[0].newLine).toBe(2);
@@ -434,7 +464,7 @@ index 1111111..2222222 100644
       const count = await store.expandHunk(FILE_PATH, 0, "up", 10);
       expect(count).toBe(1);
 
-      const hunk = store.fullData!.files[0].hunks[0];
+      const hunk = store.fullData.data!.files[0].hunks[0];
       expect(hunk.lines.length).toBe(3);
       expect(hunk.lines[0].newLine).toBe(1);
       expect(hunk.lines[0].text).toBe("line1");
@@ -494,7 +524,7 @@ index 1111111..2222222 100644
       const inserted = await store.expandHunk(FILE_PATH, 0, "down", 15);
       expect(inserted).toBe(1); // only 1 line in the gap (line 5)
 
-      const file = store.fullData!.files[0];
+      const file = store.fullData.data!.files[0];
       // After merge, should be a single hunk
       expect(file.hunks.length).toBe(1);
       // Combined: lines 3,4 + [5 inserted] + 6,7
@@ -524,7 +554,7 @@ index 1111111..2222222 100644
       const inserted = await store.expandHunk(FILE_PATH, 1, "up", 15);
       expect(inserted).toBe(1);
 
-      const file = store.fullData!.files[0];
+      const file = store.fullData.data!.files[0];
       expect(file.hunks.length).toBe(1);
       expect(file.hunks[0].lines.length).toBe(5);
     });
@@ -549,10 +579,10 @@ index 1111111..2222222 100644
         },
       ]);
 
-      const hunk0Before = store.fullData!.files[0].hunks[0];
+      const hunk0Before = store.fullData.data!.files[0].hunks[0];
       await store.expandHunk(FILE_PATH, 0, "down", 15);
 
-      const file = store.fullData!.files[0];
+      const file = store.fullData.data!.files[0];
       expect(file.hunks.length).toBe(1);
       expect(file.hunks[0]).not.toBe(hunk0Before);
       expect(file.hunks[0].lines.map(l => l.newLine)).toEqual([3, 4, 5, 6, 7]);
@@ -578,10 +608,10 @@ index 1111111..2222222 100644
         },
       ]);
 
-      const hunk0Before = store.fullData!.files[0].hunks[0];
+      const hunk0Before = store.fullData.data!.files[0].hunks[0];
       await store.expandHunk(FILE_PATH, 1, "up", 15);
 
-      const file = store.fullData!.files[0];
+      const file = store.fullData.data!.files[0];
       expect(file.hunks.length).toBe(1);
       expect(file.hunks[0]).not.toBe(hunk0Before);
       expect(file.hunks[0].lines.map(l => l.newLine)).toEqual([3, 4, 5, 6, 7]);
@@ -602,7 +632,7 @@ index 1111111..2222222 100644
       const count = await store.expandHunk(FILE_PATH, 0, "down", 2);
       expect(count).toBe(2);
 
-      const hunk = store.fullData!.files[0].hunks[0];
+      const hunk = store.fullData.data!.files[0].hunks[0];
       expect(hunk.lines.length).toBe(6);
       expect(hunk.lines[4].newLine).toBe(7);
       expect(hunk.lines[5].newLine).toBe(8);

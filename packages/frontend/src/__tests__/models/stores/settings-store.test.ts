@@ -52,7 +52,7 @@ describe("SettingsStore", () => {
           },
           {
             key: "diff_renderer",
-            value: "virtual",
+            value: "codeview",
           },
         ]);
       }
@@ -93,7 +93,7 @@ describe("SettingsStore", () => {
       runtimeType: "pi",
       thinkingLevel: "minimal",
     });
-    expect(store.diffRenderer).toBe("virtual");
+    expect(store.diffRenderer).toBe("codeview");
     expect(store.oauthProviders.map((provider) => provider.id)).toEqual(["openrouter"]);
   });
 
@@ -127,12 +127,12 @@ describe("SettingsStore", () => {
       return jsonResponse({}, false);
     });
 
-    const result = await store.selectDiffRenderer("virtual");
+    const result = await store.selectDiffRenderer("codeview");
 
     expect(result).toEqual({ ok: true });
-    expect(store.diffRenderer).toBe("virtual");
+    expect(store.diffRenderer).toBe("codeview");
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.init?.body).toBe(JSON.stringify("virtual"));
+    expect(requests[0]?.init?.body).toBe(JSON.stringify("codeview"));
     expect(changes).toEqual([{ key: "diff_renderer" }]);
   });
 
@@ -147,9 +147,9 @@ describe("SettingsStore", () => {
       return jsonResponse({}, false);
     });
 
-    const pending = store.selectDiffRenderer("virtual");
+    const pending = store.selectDiffRenderer("codeview");
 
-    expect(store.diffRenderer).toBe("virtual");
+    expect(store.diffRenderer).toBe("codeview");
 
     if (!resolveSave) throw new Error("Expected diff renderer save request");
     resolveSave(new Response(null, { status: 200 }));

@@ -74,7 +74,7 @@ function visibleSettings(): readonly SettingDefinition[] {
   return [
     API_KEYS_SETTING,
     DEFAULT_MODEL_SETTING,
-    ...(typeof REINS_DEV !== "undefined" && REINS_DEV ? [DIFF_RENDERER_SETTING] : []),
+    DIFF_RENDERER_SETTING,
     UTILITY_MODEL_SETTING,
   ];
 }

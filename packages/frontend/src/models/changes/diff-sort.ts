@@ -12,7 +12,7 @@ import type { DiffFile, DiffFileSummary } from "./types.js";
  * At each level, directories sort before files; within each group,
  * names are compared alphabetically (locale-aware).
  */
-function compareFilePaths(a: string, b: string): number {
+export function compareFilePaths(a: string, b: string): number {
   const partsA = a.split("/");
   const partsB = b.split("/");
   const len = Math.min(partsA.length, partsB.length);

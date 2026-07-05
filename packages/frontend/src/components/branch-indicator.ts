@@ -1,10 +1,9 @@
 /**
  * Branch Indicator
  *
- * Displays the currently checked-out git branch for the project,
- * sourced from the diff store's polling data. Shows the same branch
- * regardless of whether the active session is a task or scratch session —
- * it always reflects the actual working tree state.
+ * Displays the branch currently being viewed in the diff store.
+ * Task sessions show their task branch; scratch sessions show the current
+ * branch reported by diff polling.
  */
 
 import { LitElement, html, nothing } from "lit";
@@ -18,7 +17,7 @@ export class BranchIndicator extends LitElement {
     return this;
   }
 
-  /** The repo's current checked-out branch, provided by the diff store. */
+  /** The branch currently being viewed, provided by the diff store. */
   @property({ type: String }) currentBranch: string | null = null;
 
   @state() private _tooltipVisible = false;

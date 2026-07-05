@@ -47,8 +47,9 @@ describe("AppShell chat panel rendering", () => {
       projectsStore: { activityForSession: () => undefined },
       diffStore: {
         branch: null,
-        fileData: { branch: "main" },
+        fileData: { data: { files: [], branch: "main", baseBranch: null } },
       },
+      settingsStore: { diffRenderer: "classic" },
     });
 
     const output = el.render();
@@ -65,4 +66,5 @@ describe("AppShell chat panel rendering", () => {
     expect(templateToString(chatPanelTemplate)).toContain("<chat-panel");
     expect(collectTemplateValues(chatPanelTemplate)).toContain(activeSessionStore);
   });
+
 });

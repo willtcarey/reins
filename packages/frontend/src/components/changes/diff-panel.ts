@@ -113,7 +113,7 @@ export class DiffPanel extends LitElement {
 
   /** Called when the store notifies us of new data. */
   private _onStoreUpdate() {
-    if (this._pendingScrollTarget && this.store?.fullData) {
+    if (this._pendingScrollTarget && this.store?.fullData.data) {
       const target = this._pendingScrollTarget;
       this._pendingScrollTarget = null;
       // Wait for Lit to render the new file cards, then scroll
@@ -277,7 +277,7 @@ export class DiffPanel extends LitElement {
         .file=${file}
         .expandingHunks=${this.expandingHunks}
         .projectId=${this.store?.projectId ?? null}
-        .branch=${this.store?.branch ?? this.store?.fileData.branch ?? null}
+        .branch=${this.store?.branch ?? null}
       ></diff-file-card>
     `;
   }
@@ -285,7 +285,7 @@ export class DiffPanel extends LitElement {
   override render() {
     if (!this.store) return nothing;
 
-    const { error } = this.store;
+    const error = this.store.fullData.error ?? this.store.fileData.error;
 
     if (error) {
       return html`
@@ -295,11 +295,11 @@ export class DiffPanel extends LitElement {
       `;
     }
 
-    const isInitialLoading = this.store.fullLoading && !this.store.fullData;
-    const fullData = this.store.fullData;
+    const isInitialLoading = this.store.fullData.loading && !this.store.fullData.data;
+    const fullData = this.store.fullData.data;
     const files = fullData?.files ?? [];
-    const branch = fullData?.branch ?? this.store.fileData.branch;
-    const baseBranch = fullData?.baseBranch ?? this.store.fileData.baseBranch;
+    const branch = fullData?.branch ?? this.store.branch;
+    const baseBranch = fullData?.baseBranch ?? this.store.fileData.data?.baseBranch;
 
     return html`
       <div class="h-full flex min-h-0">

@@ -4,9 +4,6 @@ import { SettingsStore } from "../../../models/stores/settings-store.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { isTemplateResult, templateToString } from "../../helpers/lit-template.js";
 
-type TestGlobal = typeof globalThis & { REINS_DEV?: boolean };
-const testGlobal: TestGlobal = globalThis;
-
 function jsonResponse(data: unknown, ok = true): Response {
   return new Response(JSON.stringify(data), {
     status: ok ? 200 : 500,
@@ -49,7 +46,6 @@ function mockSettingsPanelFetch(modelsResponse: Response | Promise<Response> = j
 
 describe("SettingsPanel", () => {
   afterEach(() => {
-    delete testGlobal.REINS_DEV;
     restoreFetch();
   });
 
@@ -80,32 +76,7 @@ describe("SettingsPanel", () => {
     modelRegistry.resolve(jsonResponse([]));
   });
 
-  test("hides the diff renderer setting outside frontend dev builds", async () => {
-    const requests = mockSettingsPanelFetch();
-
-    const el = makePanel();
-    el.open();
-
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    const output = templateToString(el.render());
-
-    expect(output).not.toContain("<settings-diff-renderer-section");
-    expect(requests).toContain("/api/settings?key=default_model&key=utility_model");
-  });
-
-  test("renders with an injected shared settings store", () => {
-    testGlobal.REINS_DEV = true;
-    const store = new SettingsStore();
-
-    const el = makePanel(store);
-    Reflect.set(el, "_open", true);
-
-    expect(templateContainsValue(el.render(), store)).toBe(true);
-  });
-
-  test("renders the diff renderer setting in frontend dev builds", async () => {
-    testGlobal.REINS_DEV = true;
+  test("renders the diff renderer setting", async () => {
     const requests = mockSettingsPanelFetch();
 
     const el = makePanel();
@@ -118,4 +89,14 @@ describe("SettingsPanel", () => {
     expect(output).toContain("<settings-diff-renderer-section");
     expect(requests).toContain("/api/settings?key=default_model&key=diff_renderer&key=utility_model");
   });
+
+  test("renders with an injected shared settings store", () => {
+    const store = new SettingsStore();
+
+    const el = makePanel(store);
+    Reflect.set(el, "_open", true);
+
+    expect(templateContainsValue(el.render(), store)).toBe(true);
+  });
+
 });

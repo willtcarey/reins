@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { DiffFileCard } from "../../../components/changes/diff-file-card.js";
 import type { DiffFile } from "../../../models/changes/types.js";
+import { templateToString } from "../../helpers/lit-template.js";
 
 function file(path: string): DiffFile {
   return {
@@ -16,32 +17,17 @@ function file(path: string): DiffFile {
   };
 }
 
-describe("DiffFileCard open in browser", () => {
-  test("opens HTML files on the file browser Preview tab", () => {
-    const card = new DiffFileCard();
-    card.file = file("public/index.html");
-
-    let detail: unknown;
-    card.addEventListener("open-in-browser", (event) => {
-      if (event instanceof CustomEvent) detail = event.detail;
-    });
-
-    card["_openInBrowser"](new Event("click"));
-
-    expect(detail).toEqual({ path: "public/index.html", viewMode: "preview" });
-  });
-
-  test("opens non-HTML files without a requested view mode", () => {
+describe("DiffFileCard file actions", () => {
+  test("uses shared file action buttons", () => {
     const card = new DiffFileCard();
     card.file = file("src/app.ts");
+    card.projectId = 1;
 
-    let detail: unknown;
-    card.addEventListener("open-in-browser", (event) => {
-      if (event instanceof CustomEvent) detail = event.detail;
-    });
+    const output = templateToString(card.render());
 
-    card["_openInBrowser"](new Event("click"));
-
-    expect(detail).toEqual({ path: "src/app.ts" });
+    expect(output).toContain("<diff-view-file-button");
+    expect(output).toContain("<diff-copy-path-button");
+    expect(output).toContain("<diff-download-file-button");
+    expect(output).toContain("/api/projects/1/files/content?path=src%2Fapp.ts");
   });
 });

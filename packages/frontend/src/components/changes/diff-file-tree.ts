@@ -191,9 +191,9 @@ export class DiffFileTree extends LitElement {
 
   // ---- Render ---------------------------------------------------------------
 
-  private _renderModeSelector() {
-    const currentMode = this.store?.diffMode ?? "branch";
-    const baseBranch = this.store?.data.baseBranch;
+  private _renderModeSelector(store: DiffStore) {
+    const currentMode = store.diffMode;
+    const baseBranch = store.fileData.data?.baseBranch;
 
     return html`
       <div class="px-3 py-2 border-b border-zinc-700 shrink-0">
@@ -211,12 +211,15 @@ export class DiffFileTree extends LitElement {
   }
 
   override render() {
-    const files = this.store?.data.files ?? [];
+    const store = this.store;
+    if (!store) return nothing;
+
+    const files = store.fileData.data?.files ?? [];
 
     if (files.length === 0) {
       return html`
         <div class="h-full flex flex-col min-w-0">
-          ${this._renderModeSelector()}
+          ${this._renderModeSelector(store)}
           <div class="flex-1 flex items-center justify-center text-zinc-500 text-xs p-4">
             No changes
           </div>
@@ -235,7 +238,7 @@ export class DiffFileTree extends LitElement {
 
     return html`
       <div class="h-full flex flex-col min-w-0">
-        ${this._renderModeSelector()}
+        ${this._renderModeSelector(store)}
         <!-- Summary header -->
         <div class="px-3 py-2 text-xs text-zinc-400 border-b border-zinc-700 flex items-center gap-2 shrink-0">
           <span>${files.length} file${files.length !== 1 ? "s" : ""}</span>

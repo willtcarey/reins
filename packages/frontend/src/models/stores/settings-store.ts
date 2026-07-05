@@ -23,7 +23,7 @@ export interface ModelSetting {
 export type SettingsStoreResult = { ok: true } | { error: string };
 export type SettingsStoreListener = () => void;
 export type ModelSettingKey = "default_model" | "utility_model";
-export type DiffRenderer = "classic" | "virtual";
+export type DiffRenderer = "classic" | "codeview";
 export type SettingsKey = ModelSettingKey | "diff_renderer";
 export type SettingsChange = { key: string };
 export type SettingsChangeListener = (change: SettingsChange) => void;
@@ -423,7 +423,7 @@ export class SettingsStore {
 
     for (const entry of entries) {
       if (entry.key === "diff_renderer") {
-        this.diffRenderer = entry.value === "virtual" ? "virtual" : "classic";
+        this.diffRenderer = entry.value;
         continue;
       }
 

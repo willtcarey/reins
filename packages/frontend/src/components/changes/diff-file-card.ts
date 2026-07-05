@@ -17,8 +17,8 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { DiffFile } from "../../models/changes/types.js";
-import { openInBrowserEvent } from "../events.js";
-import { isMarkdown, isImage, isPdf, isHtml, shouldWrapLines, fileCardId, gutterWidth } from "../../models/changes/diff-utils.js";
+import { isMarkdown, isImage, isPdf, shouldWrapLines, fileCardId, gutterWidth } from "../../models/changes/diff-utils.js";
+import "./diff-file-action-buttons.js";
 import "./diff-hunk.js";
 import "./diff-markdown-preview.js";
 import "../file-viewer/file-viewer-image.js";
@@ -66,15 +66,6 @@ export class DiffFileCard extends LitElement {
 
   // ---- Internal state -------------------------------------------------------
 
-  /** Whether the path was just copied to clipboard. */
-  @state() private copied = false;
-  private _copyTimer: ReturnType<typeof setTimeout> | null = null;
-
-  override disconnectedCallback() {
-    super.disconnectedCallback();
-    if (this._copyTimer) clearTimeout(this._copyTimer);
-  }
-
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has("file") && this.file) {
       const prevPath = this._cachedFilePath;
@@ -113,64 +104,6 @@ export class DiffFileCard extends LitElement {
 
   private _toggleCollapse() {
     this.collapsed = !this.collapsed;
-  }
-
-  private async _copyPath(e: Event) {
-    e.stopPropagation();
-    const path = this.file.path;
-    try {
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(path);
-      } else {
-        this._copyFallback(path);
-      }
-      this._showCopied();
-    } catch {
-      try {
-        this._copyFallback(path);
-        this._showCopied();
-      } catch (err) {
-        console.error("Failed to copy path to clipboard:", err);
-      }
-    }
-  }
-
-  private _copyFallback(text: string) {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand("copy");
-    document.body.removeChild(ta);
-  }
-
-  private _showCopied() {
-    this.copied = true;
-    if (this._copyTimer) clearTimeout(this._copyTimer);
-    this._copyTimer = setTimeout(() => { this.copied = false; }, 1500);
-  }
-
-  private _downloadFile(e: Event) {
-    e.stopPropagation();
-    const url = this._fileUrl();
-    if (!url) return;
-    const a = document.createElement("a");
-    a.href = url + "&download=1";
-    a.download = this.file.path.split("/").pop() || this.file.path;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  }
-
-  /** Open this file in the file browser overlay. */
-  private _openInBrowser(e: Event) {
-    e.stopPropagation();
-    this.dispatchEvent(openInBrowserEvent(
-      this.file.path,
-      isHtml(this.file.path) ? { viewMode: "preview" } : undefined,
-    ));
   }
 
   private async _toggleRendered() {
@@ -265,30 +198,9 @@ export class DiffFileCard extends LitElement {
         >
           <span class="text-zinc-500 font-mono text-xs shrink-0">${this.collapsed ? "▶" : "▼"}</span>
           <span class="font-mono text-zinc-200 flex-1 min-w-0 text-left truncate direction-rtl text-ellipsis" title=${file.path}>${file.path}</span>
-          <span
-            class="inline-flex items-center text-zinc-500 hover:text-zinc-300 transition-colors p-0.5 rounded hover:bg-zinc-700/50 shrink-0"
-            title="View file"
-            @click=${(e: Event) => this._openInBrowser(e)}
-          >
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-          </span>
-          <span
-            class="inline-flex items-center text-zinc-500 hover:text-zinc-300 transition-colors p-0.5 rounded hover:bg-zinc-700/50 shrink-0"
-            title="Copy path"
-            @click=${(e: Event) => this._copyPath(e)}
-          >
-            ${this.copied
-              ? html`<svg class="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>`
-              : html`<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>`
-            }
-          </span>
-          <span
-            class="inline-flex items-center text-zinc-500 hover:text-zinc-300 transition-colors p-0.5 rounded hover:bg-zinc-700/50 shrink-0"
-            title="Download file"
-            @click=${(e: Event) => this._downloadFile(e)}
-          >
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-          </span>
+          <diff-view-file-button .path=${file.path}></diff-view-file-button>
+          <diff-copy-path-button .path=${file.path}></diff-copy-path-button>
+          <diff-download-file-button .path=${file.path} .href=${this._fileUrl() ?? ""}></diff-download-file-button>
           ${isMd ? html`<span class="text-blue-400 text-xs font-mono px-1.5 py-0.5 bg-blue-400/10 rounded shrink-0">MD</span>` : nothing}
           ${isImg ? html`<span class="text-purple-400 text-xs font-mono px-1.5 py-0.5 bg-purple-400/10 rounded shrink-0">IMG</span>` : nothing}
           ${isPdfFile ? html`<span class="text-orange-400 text-xs font-mono px-1.5 py-0.5 bg-orange-400/10 rounded shrink-0">PDF</span>` : nothing}

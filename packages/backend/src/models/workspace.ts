@@ -71,7 +71,7 @@ export class Workspace {
     }
   }
 
-  /** Raw unified diff stream for virtualized diff consumers. */
+  /** Raw unified diff stream. */
   async *getDiffPatchStream(
     contextLines = 3,
     mode: DiffMode = "branch",

@@ -1,264 +1,236 @@
-# Streamed Virtualized Diff Renderer Prototype
+# Virtualized Diff Renderer Direction
 
 ## Goal
 
-Prototype a new Changes diff rendering path optimized for very large diffs by adopting the `@pierre/diffs` pieces and architecture that make DiffsHub performant, without doing another direct `FileDiff` drop-in replacement.
+Build a future Changes renderer that keeps the performance benefits demonstrated by `@pierre/diffs` while preserving Reins review behavior: selected-session branch scoping, file tree navigation, hunk expansion, file actions, markdown/image/PDF previews, and future mixed review content.
 
-Reference: <https://diffshub.com/oven-sh/bun/pull/30412>
+The current CodeView renderer prototype proved an important point: **most of the immediate performance win comes from Pierre's `CodeView` top-level virtualization, not from streaming the raw patch.** That changes the next implementation direction.
 
-The prototype should be selectable from Settings and should preserve current Reins review behavior where practical: selected-session branch scoping, file tree navigation, diff modes, and hunk behavior. Compatibility gaps should be documented explicitly.
+## Current status and decision
 
-## Current direction
+The `diff_renderer` setting now uses `codeview` for the direct Pierre `CodeView` proof point that fetches `/diff/patch` as full text, parses it with `@pierre/diffs`, and mounts Pierre `CodeView`. Classic remains the default, so non-default renderer access is controlled by the stored preference rather than frontend dev-mode gating.
 
-Use a parallel renderer path:
+The direct CodeView diff implementation is complete enough as a proof point. A future implementation step may add a separate Reins-owned virtualized renderer path and compare it against `codeview` while keeping `classic` as the default.
 
-- **Classic** — current Reins diff renderer, default behavior.
-- **Virtualized prototype** — new streamed/virtualized renderer backed by raw git patch input and selected `@pierre/diffs` primitives.
+In particular:
 
-A persisted `diff_renderer` setting has been added with values:
+- Do not continue polishing direct `CodeView` as if it were the final architecture.
+- Do not prioritize streaming/chunked patch loading before replacing the `CodeView`-owned surface.
+- Do not build core behavior on deprecated `hunkSeparators(hunkData, instance)` APIs.
+- Do not switch back to the old `/diff` JSON endpoint for Pierre rendering unless there is a specific reason; raw patch maps naturally to `@pierre/diffs` metadata.
 
-- `classic`
-- `virtual`
+## New direction
 
-The setting UI is included only in dev builds (`REINS_DEV=true` as a frontend build constant, matching the backend `process.env.REINS_DEV`) so the prototype remains hidden from production builds.
+Build a Reins-owned virtual review surface that uses lower-level Pierre primitives where they help, while Reins owns the mixed-content layout and interaction model.
 
-Sequencing update: get to a visible renderer first, then replace the full-patch loading path with streaming.
+Target architecture:
+
+```txt
+GET /api/projects/:id/diff/patch as full text initially
+  → DiffStore fetches raw patch text with active diff params
+  → renderer-specific components parse with @pierre/diffs parsePatchFiles/processFile
+  → store renderer-specific virtual item records outside DiffStore.fullData
+  → render through a Reins-owned top-level virtual list
+       ├─ code diff item: Pierre VirtualizedFileDiff/FileDiff pieces
+       ├─ markdown preview item/panel: Reins renderer
+       ├─ image/PDF/binary preview item/panel: Reins renderer
+       ├─ file actions/header controls: Reins renderer
+       └─ future annotations/comments/actions: Reins renderer
+```
+
+The key requirement is that the Reins-owned surface must be **CodeView-like**, not merely Pierre `Virtualizer` wrapped around thousands of mounted file containers. `CodeView` is fast because it keeps item records/heights for all files but only mounts DOM containers for the visible window plus overscan. The lower-level `Virtualizer` is more flexible but generally mounts every top-level file/diff container, which gives back a large part of the many-file performance win.
+
+## Prototype findings to preserve
+
+- `CodeView` validates that top-level item virtualization, DOM pooling, estimated heights, and worker-backed highlighting are the performance-critical pieces.
+- Full-patch fetch is acceptable for now. Streaming likely helps time-to-first-file on huge diffs but is not required for the next architectural decision.
+- Raw patch parsing produces `FileDiffMetadata.isPartial === true`; Pierre native hunk expansion is unavailable until old/new file contents are available.
+- Seamless lazy expansion requires Reins to show expansion affordances before contents are fetched, then fetch contents on first click and update the rendered item.
+- Direct `CodeView` does not expose a clean public async hunk-expansion interception hook. Lower-level/custom separator escape hatches exist but are deprecated or unsupported for core behavior.
 
 ## Implementation checklist
 
-- [x] Settings groundwork: persist `diff_renderer`, default to `classic`, validate `classic`/`virtual`, expose the control only in dev builds, and cover it with tests.
+### Current proof point
+
+- [x] Settings groundwork: persist `diff_renderer`, default to `classic`, expose the control in Settings, and cover it with tests.
+- [ ] If/when a Reins-owned virtualized renderer is built, expand `diff_renderer` beyond `classic` and `codeview`.
 - [x] Add the raw patch backend path with existing diff branch/mode/context semantics.
-- [x] Add the full-patch virtual renderer prototype: fetch `/diff/patch` as text, parse with `@pierre/diffs`, create renderer-specific state separate from `DiffStore.fullData`, render basic diffs, and wire `diff_renderer` to select classic vs virtual.
-- [ ] Add the streaming file-chunker and `@pierre/diffs` per-file parser adapter.
-- [ ] Replace the full-patch prototype path with incremental append/render behavior.
-- [ ] Integrate file tree navigation and active-file scroll behavior with the virtual renderer.
-- [ ] Add highlighting/cache strategy and performance instrumentation.
-- [ ] Document compatibility gaps and follow-up decisions for hunk expansion, highlighting, renames, binaries, untracked files, previews, actions, and inline word diff.
+- [x] Add the renderer prototype that consumes the `/diff/patch` streaming diff.
+- [x] Mount Pierre `CodeView` in the prototype path to validate performance characteristics; this becomes the `codeview` renderer value.
 
-## Key architectural decision
+### Build the next virtualized implementation
 
-Do **not** directly adopt `FileDiff` as the top-level replacement.
+- [ ] Treat the existing `codeview` renderer as completed proof-of-concept work.
+- [ ] Add a separate renderer value backed by a Reins-owned top-level virtual list.
+- [ ] Keep `codeview` available as the comparison baseline while building it.
+- [ ] Document the CodeView diff prototype compatibility gaps clearly in the plan/results.
+- [ ] Design a Reins-owned top-level virtual list with CodeView-like behavior:
+  - item records for all files/content blocks
+  - estimated heights and measured height corrections
+  - visible-window DOM mounting only
+  - DOM element pooling or recycling
+  - scroll anchoring for item updates and expansion
+  - active-file scroll spy hooks
+  - sticky or pinned file headers if needed
+- [ ] Define virtual item types for mixed review content:
+  - `diff`
+  - `markdown-preview` / markdown tab state
+  - `binary-placeholder`
+  - `image-preview`
+  - `pdf-preview`
+  - future comments/annotations/actions
+- [ ] Integrate Pierre lower-level rendering for code diff items without making Pierre own the whole review surface.
+- [ ] Keep classic renderer as the production default until parity decisions are resolved.
 
-Instead, adopt the DiffsHub-style architecture:
+### Data and parsing
 
-```txt
-git diff raw patch stream
-  → split into complete file diff chunks
-  → parse each file chunk with @pierre/diffs processFile(...)
-  → append parsed file items into a virtualized CodeView-style surface
-```
+- [ ] Keep full `/diff/patch` loading for the first Reins-owned renderer spike.
+- [ ] Continue parsing raw patches into `FileDiffMetadata` with stable cache keys.
+- [x] Consume raw `/diff/patch` text through `DiffStore` with the active branch/session, diff mode, and context-line semantics.
+- [ ] Preserve selected branch/session scoping, diff modes, and context-line semantics.
+- [ ] Defer streaming/file chunking until after the Reins-owned virtual surface demonstrates comparable performance.
 
-Useful `@pierre/diffs` APIs/pieces to evaluate:
+### Lazy hunk expansion
 
-- `processFile(fileDiffString, { cacheKey, isGitDiff: true })`
-- `parsePatchFiles(...)` as a fallback/full-patch parser
-- `FileDiffMetadata`
-- `CodeView`
-- `CodeViewHandle`
-- `CodeViewItem` / `CodeViewDiffItem`
-- `VirtualFileMetrics`
-- worker/highlight cache pieces keyed by `FileDiffMetadata.cacheKey`
+- [ ] Add a backend endpoint to fetch the old/new file contents for one diff file using diff semantics, not simple branch-file reads.
+- [ ] On initial raw patch render, show Reins-owned expansion affordances for hidden context even though the item is partial.
+- [ ] On first expansion click for a partial file:
+  1. show loading state on the clicked control
+  2. fetch old/new contents for the file
+  3. reprocess that file patch with `processFile(filePatch, { oldFile, newFile })`
+  4. update the virtual item and height estimate
+  5. apply the requested expansion
+  6. preserve scroll anchoring
+- [ ] After a file is promoted to full-content metadata, allow further expansion without refetching.
+- [ ] Define fallback behavior for files that cannot be promoted: binary files, deleted/new/untracked edge cases, missing refs, parser errors, and size limits.
 
-## Why this differs from prior rejected attempts
+The per-file content endpoint should understand:
 
-ADR-001 rejected direct `@pierre/diffs` adoption because `FileDiff` was slower, complicated hunk expansion, and increased code. This plan revisits the library for a different reason: DiffsHub demonstrates a performant architecture based on streaming file chunks, imperative append/update APIs, virtualization, measured height caches, and worker-backed highlighting.
+- branch mode for active checked-out branch: old side is merge-base, new side is working tree/index state as appropriate
+- branch mode for non-active selected branch: old side is merge-base, new side is selected branch commit
+- uncommitted mode: old side is `HEAD`, new side is working tree/index state
+- renames: old path may be `prevName`, new path may be `name`
+- new/deleted files: one side may be absent
+- untracked files: old side absent, new side working tree content
 
-The goal is to adopt those pieces/patterns, not repeat the previous `FileDiff` migration.
-
-## Proposed implementation phases
-
-### Phase 1 — Raw patch endpoint
-
-Add a backend endpoint that returns raw unified git patch text using the same semantics as the current diff endpoints:
-
-```txt
-GET /api/projects/:id/diff/patch?context=3&mode=branch&branch=...
-Content-Type: text/x-diff
-```
-
-It should preserve:
-
-- selected task branch vs base branch
-- scratch session fallback to HEAD
-- `branch` vs `uncommitted` diff modes
-- context-line parameter
-
-Initial implementation can stream `git diff` stdout directly. Untracked synthetic diffs can either be appended or documented as a prototype limitation if that simplifies the first slice.
-
-### Phase 2 — Full-patch visual prototype
-
-Build the fastest visible prototype before investing in stream chunking.
-
-Initial implementation:
-
-```txt
-fetch /api/projects/:id/diff/patch as full text
-  → parse with @pierre/diffs parsePatchFiles(...) or a simple whole-patch split + processFile(...)
-  → populate a virtual-renderer-specific model
-  → render with the virtual diff panel when diff_renderer === "virtual"
-```
-
-The goal is to validate renderer integration, event boundaries, styling, file metadata, and basic scroll behavior quickly while keeping classic as the default/fallback.
-
-Status: the initial visible prototype is wired behind the dev-only `diff_renderer` setting. It intentionally uses a simple Reins-owned Lit renderer over `@pierre/diffs` metadata rather than `CodeView`, so it validates loading/parsing/selection without claiming true virtualization or large-diff performance yet.
-
-### Phase 3 — Stream/file chunking layer
-
-After the visible renderer path works, implement a small streaming splitter that frames raw patch text into complete file-diff chunks.
-
-Important: this is **not** a diff parser. It only finds safe boundaries, likely around `diff --git ...` records, and then passes each complete chunk to `@pierre/diffs`.
-
-Use:
+Suggested response shape:
 
 ```ts
-processFile(filePatch, {
-  cacheKey,
-  isGitDiff: true,
-});
-```
-
-Fallback path:
-
-```ts
-parsePatchFiles(fullPatch);
-```
-
-for cases where streaming chunking fails or for tests.
-
-### Phase 4 — Virtual diff store/model
-
-Create a renderer-specific data model separate from the existing `DiffStore.fullData` JSON path.
-
-Suggested item shape:
-
-```ts
-type VirtualDiffItem = {
-  id: string;
-  type: "diff";
-  fileDiff: FileDiffMetadata;
-  version: number;
-  collapsed?: boolean;
+type DiffFileContentsResponse = {
+  oldFile?: { name: string; contents: string; cacheKey?: string };
+  newFile?: { name: string; contents: string; cacheKey?: string };
 };
 ```
 
-Track separately:
+## Proposed phases
 
-- `itemIdToFile`
-- `pathToItemId`
-- file summaries/stats
-- parse/loading status
-- streamed item count
-- stable cache keys
-- measured height cache
+### Phase 1 — Build the future virtualized renderer
 
-Use deterministic, collision-safe IDs based on file path and occurrence.
+Add a new renderer value for the Reins-owned virtualized renderer path. Keep `diff_renderer = "codeview"` pointing at the existing direct Pierre `CodeView` proof point for comparison.
 
-### Phase 5 — Virtual renderer
+Build the smallest Reins-owned top-level virtual list that does not mount every file container.
 
-Build a new virtualized diff component path, e.g.
+Requirements:
 
-```txt
-<virtual-diff-panel>
-```
+- accepts a list of virtual item records with estimated heights
+- mounts only visible/overscan DOM nodes
+- supports scroll-to-item by ID
+- reports active item/file
+- supports item height changes without losing scroll position
+- can render placeholder/custom HTML items before integrating diff rendering
+- preserves the renderer setting and full `/diff/patch` data path
 
-Preferred experiment: use `@pierre/diffs` `CodeView` directly or wrap it thinly. If direct use is too awkward in Lit, reproduce the same architecture with a Reins-owned virtualizer while still using `processFile` / `FileDiffMetadata`.
+This phase answers whether Reins can reproduce enough of `CodeView`'s top-level virtualization behavior while keeping ownership of mixed review layout.
 
-Renderer requirements:
+### Phase 2 — Diff item integration
 
-- append files incrementally as they parse
-- avoid routing every streamed update through large reactive arrays
-- use imperative append/update APIs where possible
-- maintain file selection/scroll target behavior
-- support collapsed files
-- avoid rendering/highlighting the entire diff up front
+Render `diff` items using Pierre lower-level primitives, likely `VirtualizedFileDiff`/`FileDiff` plus the shared `WorkerPoolManager`.
 
-### Phase 6 — Wire setting to renderer selection
+Requirements:
 
-Once the virtual renderer can show basic parsed diffs, wire the existing setting:
+- render parsed `FileDiffMetadata`
+- use stable cache keys for worker/highlight reuse
+- avoid eager highlighting outside the visible window
+- support collapsed file items
+- preserve file header actions through Reins-owned header UI
 
-```ts
-diff_renderer === "virtual"
-  ? html`<virtual-diff-panel ...>`
-  : html`<classic-diff-panel ...>`
-```
+### Phase 3 — Mixed review content
 
-Classic remains default and fallback.
+Add non-code review content that direct `CodeView` cannot own cleanly:
 
-### Phase 7 — File tree and scroll behavior
+- markdown diff/preview tabs
+- image previews
+- PDF previews
+- binary placeholders
+- copy path / download / open in browser actions
+- future comments/annotations/actions
 
-Preserve the current file tree UX:
+### Phase 4 — Lazy expansion
 
-- file tree uses lightweight `/diff/files` data initially
-- clicking a file scrolls the virtual renderer to that file item
-- visible item updates active file highlighting
-- if a clicked file is collapsed, expand it before scrolling
+Implement the per-file old/new content endpoint and first-click promotion flow.
 
-Use `CodeView` scroll targets if adopting `CodeView` directly:
+The user experience should match classic Reins behavior: expansion controls are visible before content is fetched, and clicking one fetches and expands seamlessly.
 
-```ts
-scrollTo({ type: "item", id, align: "start", behavior: "smooth" });
-```
+### Phase 5 — Measurement and parity pass
 
-### Phase 8 — Highlighting and worker/cache strategy
-
-Use stable `cacheKey` values on each `FileDiffMetadata` so the library worker/cache can reuse highlighted output.
-
-Prototype should measure:
+Compare against classic and the previous direct `CodeView` baseline:
 
 - time to first visible diff
-- time to first N parsed files
-- total parse time
-- total render time
-- scroll responsiveness
-- number of mounted DOM nodes/items
+- mounted DOM node count
+- many-file scroll responsiveness
+- large-single-file behavior
+- memory growth
+- hunk expansion responsiveness
+- file tree/active-file correctness
 
-Avoid eagerly highlighting every streamed file. Prefer visible/near-visible work where possible.
+Only after this pass decide whether streaming chunking is still worth implementing.
 
-### Phase 9 — Hunk expansion strategy
+### Phase 6 — Optional streaming/chunking
 
-Raw patch parsing produces partial file metadata (`isPartial: true`). In this mode, library-native hunk expansion is unavailable because full old/new file contents are not present.
+If measurements show full-patch fetch/parse is a bottleneck, add streaming later:
 
-Prototype options:
+```txt
+raw patch stream
+  → frame complete file patches
+  → processFile(filePatch)
+  → append virtual item records in batches
+```
 
-1. Document hunk expansion as unsupported in virtual mode initially.
-2. Preserve Reins-style lazy expansion by fetching file contents on demand and injecting extra rows/items ourselves.
-3. Later evaluate a full-content path for selected files only.
+Streaming remains an optimization, not the foundation of the architecture.
 
-The first prototype can ship with option 1 if performance evaluation is the priority, but the compatibility gap must be visible in the plan/results.
+## Compatibility gaps to track
 
-## Compatibility gaps to document
-
-Track each area explicitly during the prototype:
-
-| Area | Expected prototype status |
-|---|---|
-| Large diffs | Primary success criterion |
-| Selected branch/session scoping | Preserve |
-| Diff modes | Preserve |
-| File tree navigation | Preserve |
-| Active file scroll spy | Preserve if practical |
-| Hunk expansion | Likely limited/unsupported at first |
-| Syntax highlighting | Use library worker/cache; measure carefully |
-| Renames | Parser supports metadata; verify UI behavior |
-| Binary files | Likely metadata-only rows/placeholders |
-| Untracked files | Verify synthetic diff compatibility |
-| Markdown preview | Defer or bridge separately |
-| Image/PDF previews | Defer or bridge separately |
-| Copy/download/open-file actions | Re-add in virtual file headers if practical |
-| Inline word diff | Evaluate after basic renderer works |
+| Area | `codeview` prototype | Future virtualized direction |
+|---|---|---|
+| Large diffs | Good proof point from CodeView | Must match with Reins-owned top-level virtual list |
+| Selected branch/session scoping | Preserved via `/diff/patch` params | Preserve |
+| Diff modes | Preserved | Preserve |
+| File tree navigation | Basic integration | First-class scroll-to-item and active-file state |
+| Hunk expansion | Unsupported for partial raw patches | Reins-owned first-click lazy promotion |
+| Markdown preview | Deferred | First-class mixed item/tab support |
+| Image/PDF previews | Deferred | First-class mixed item/tab support |
+| Binary files | Limited/metadata only | Reins-owned placeholders/previews |
+| File actions | Re-added through CodeView header hooks | Reins-owned header/action UI |
+| Renames | Parser metadata available; verify UI | Preserve old/new path handling for expansion |
+| Untracked files | Raw patch support exists; verify | Preserve and support one-sided content fetch |
+| Inline word diff | Pierre default behavior; evaluate | Evaluate after diff item integration |
+| Streaming | Deferred | Optional later optimization |
 
 ## Testing and measurement
 
-Follow red/green/refactor for implementation.
+Follow red/green/refactor for implementation work.
 
 Suggested tests:
 
 - backend raw patch endpoint preserves mode/branch/context query semantics
-- streaming chunker frames multiple files correctly
-- chunker handles renames/binaries/no-newline markers enough to pass to `processFile`
-- virtual diff store appends parsed items with stable IDs/cache keys
-- renderer setting selects classic/virtual path once wired
-- file tree scroll target resolves to item ID
+- per-file diff content endpoint returns correct old/new sides for branch, non-active branch, and uncommitted modes
+- per-file content endpoint handles rename/new/deleted/untracked files
+- virtual item model creates stable IDs/cache keys
+- top-level virtual list mounts only visible/overscan items
+- scroll-to-item works without all item DOM mounted
+- item height updates preserve scroll anchor
+- lazy hunk expansion promotes one file and applies requested expansion
+- renderer setting selects `classic`, `codeview`, and the future virtualized path while classic remains default
 
 Suggested manual/performance fixtures:
 
@@ -268,23 +240,25 @@ Suggested manual/performance fixtures:
 - mixed rename/change/delete/new files
 - binary file diff
 - markdown file
+- image/PDF file
 - untracked file
 
 Metrics to capture:
 
 - time to first row/file visible
-- total files parsed
-- total lines parsed/rendered
-- total mounted items/DOM nodes
+- total parse time
+- mounted item/container count
+- total DOM nodes
 - scroll FPS/subjective responsiveness
+- expansion click latency before/after promotion
 - memory growth for large diffs
-- comparison against classic renderer
+- comparison against classic renderer and the `codeview` prototype
 
-## Done criteria for prototype
+## Done criteria for the next architecture slice
 
-- Setting can switch between classic and virtual renderer.
-- Virtual renderer can load a raw patch for the selected session/project.
-- Large diffs render progressively or substantially faster than classic.
-- File tree navigation works for parsed files.
-- Compatibility gaps are documented with clear follow-up decisions.
-- Classic renderer remains stable and default.
+- Reins-owned virtual list proves it can avoid mounting every file container.
+- It can render at least basic Pierre-backed diff items from raw patch metadata.
+- File tree navigation works without all item DOM mounted.
+- The design supports mixed Reins review content without relying on deprecated Pierre APIs.
+- Lazy expansion has a concrete endpoint/model plan, even if not fully implemented in the first slice.
+- Classic remains stable and default.

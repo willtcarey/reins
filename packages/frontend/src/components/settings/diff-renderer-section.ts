@@ -17,7 +17,7 @@ export class SettingsDiffRendererSection extends LitElement {
     return html`
       <h3 class="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">Diff renderer</h3>
       <p class="text-[10px] text-zinc-500 mb-3">
-        Choose the stored renderer preference. The virtualized prototype is experimental and is not wired to the diff panel yet.
+        Choose the stored renderer preference. The CodeView diff panel is experimental and may not match every classic feature yet.
       </p>
       <select
         class="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 disabled:opacity-60"
@@ -26,7 +26,7 @@ export class SettingsDiffRendererSection extends LitElement {
         aria-label="Diff renderer"
       >
         <option value="classic">Classic</option>
-        <option value="virtual">Virtualized prototype</option>
+        <option value="codeview">CodeView diff panel</option>
       </select>
     `;
   }
@@ -46,7 +46,7 @@ export class SettingsDiffRendererSection extends LitElement {
 }
 
 function isDiffRenderer(value: string): value is DiffRenderer {
-  return value === "classic" || value === "virtual";
+  return value === "classic" || value === "codeview";
 }
 
 declare global {

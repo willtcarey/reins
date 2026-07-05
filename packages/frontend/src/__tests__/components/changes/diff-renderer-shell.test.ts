@@ -11,18 +11,18 @@ describe("DiffRendererShell", () => {
     const output = templateToString(shell.render());
 
     expect(output).toContain("<diff-panel");
-    expect(output).not.toContain("<virtual-diff-panel");
+    expect(output).not.toContain("<codeview-diff-panel");
     shell.store.dispose();
   });
 
-  test("selects the virtual diff panel when requested", () => {
+  test("selects the CodeView diff panel when requested", () => {
     const shell = new DiffRendererShell();
     shell.store = new DiffStore();
-    shell.renderer = "virtual";
+    shell.renderer = "codeview";
 
     const output = templateToString(shell.render());
 
-    expect(output).toContain("<virtual-diff-panel");
+    expect(output).toContain("<codeview-diff-panel");
     expect(output).not.toContain("<diff-panel");
     shell.store.dispose();
   });
