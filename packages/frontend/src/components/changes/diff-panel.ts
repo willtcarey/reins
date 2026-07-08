@@ -13,7 +13,6 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { DiffFile } from "../../models/changes/types.js";
 import type { DiffStore } from "../../models/stores/diff-store.js";
-import type { FileTreeState } from "../../models/changes/file-tree-state.js";
 import type { ExpandDetail } from "./diff-hunk.js";
 import {
   fileCardId,
@@ -21,7 +20,6 @@ import {
   type ExpansionScrollSnapshot,
 } from "../../models/changes/diff-utils.js";
 import { ScrollSpy } from "../../models/changes/scroll-spy.js";
-import "./diff-file-tree.js";
 import "./diff-file-card.js";
 
 type ExpansionViewportSnapshot = ExpansionScrollSnapshot;
@@ -38,10 +36,6 @@ export class DiffPanel extends LitElement {
   /** Shared diff data store. */
   @property({ attribute: false })
   store: DiffStore | null = null;
-
-  /** Shared file tree UI state. */
-  @property({ attribute: false })
-  treeState: FileTreeState | null = null;
 
   /** Whether this panel is currently visible (set by the parent). */
   @property({ type: Boolean })
@@ -62,7 +56,7 @@ export class DiffPanel extends LitElement {
     containerSelector: "[data-diff-scroll]",
     itemSelector: "[data-file-path]",
     dataAttribute: "filePath",
-    onActiveChange: (path) => { this.activeFile = path; },
+    onActiveChange: (path) => this.setActiveFile(path),
   });
 
   override connectedCallback() {
@@ -130,7 +124,7 @@ export class DiffPanel extends LitElement {
   public scrollToFile(path: string) {
     const card = this.querySelector(`#${CSS.escape(fileCardId(path))}`);
     if (card) {
-      card.scrollIntoView({ behavior: "smooth", block: "start" });
+      this._scrollCardToTop(card);
       this._pendingScrollTarget = null;
     } else {
       // Data not loaded yet — scroll once it arrives
@@ -138,10 +132,32 @@ export class DiffPanel extends LitElement {
     }
   }
 
-  private handleFileSelect(e: Event) {
-    if (!(e instanceof CustomEvent)) return;
-    const path: string = e.detail;
-    this.scrollToFile(path);
+  private _scrollCardToTop(card: Element) {
+    const container = this._scrollContainer;
+    const cardRect = typeof card.getBoundingClientRect === "function"
+      ? card.getBoundingClientRect()
+      : null;
+
+    if (container && cardRect && typeof container.scrollTo === "function") {
+      const containerRect = container.getBoundingClientRect();
+      container.scrollTo({
+        top: container.scrollTop + cardRect.top - containerRect.top,
+        behavior: "smooth",
+      });
+      return;
+    }
+
+    card.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  private setActiveFile(path: string | null) {
+    if (path === this.activeFile) return;
+    this.activeFile = path;
+    this.dispatchEvent(new CustomEvent<string | null>("active-file-change", {
+      detail: path,
+      bubbles: true,
+      composed: true,
+    }));
   }
 
   // ---- Child event handlers -------------------------------------------------
@@ -346,16 +362,6 @@ export class DiffPanel extends LitElement {
               : html`<div class="flex items-center justify-center h-full text-zinc-500 text-sm p-4">No changes yet</div>`
             }
           </div>
-        </div>
-
-        <!-- File tree sidebar — always full height -->
-        <div class="w-60 border-l border-zinc-700 shrink-0 hidden lg:block">
-          <diff-file-tree
-            .store=${this.store}
-            .treeState=${this.treeState}
-            .activeFile=${this.activeFile}
-            @file-select=${this.handleFileSelect}
-          ></diff-file-tree>
         </div>
       </div>
     `;

@@ -2,7 +2,6 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { DiffStore } from "../../models/stores/diff-store.js";
 import type { DiffRenderer } from "../../models/stores/settings-store.js";
-import type { FileTreeState } from "../../models/changes/file-tree-state.js";
 import type { DiffPanel } from "./diff-panel.js";
 import type { CodeViewDiffPanel } from "./codeview-diff-panel.js";
 import "./diff-panel.js";
@@ -15,7 +14,6 @@ export class DiffRendererShell extends LitElement {
   }
 
   @property({ attribute: false }) store: DiffStore | null = null;
-  @property({ attribute: false }) treeState: FileTreeState | null = null;
   @property({ type: Boolean }) visible = false;
   @property() renderer: DiffRenderer = "classic";
 
@@ -36,7 +34,6 @@ export class DiffRendererShell extends LitElement {
           <codeview-diff-panel
             class="block h-full min-h-0 ${this.visible ? "" : "hidden"}"
             .store=${this.store}
-            .treeState=${this.treeState}
             .visible=${this.visible}
           ></codeview-diff-panel>
         `;
@@ -45,7 +42,6 @@ export class DiffRendererShell extends LitElement {
           <diff-panel
             class="block h-full min-h-0 ${this.visible ? "" : "hidden"}"
             .store=${this.store}
-            .treeState=${this.treeState}
             .visible=${this.visible}
           ></diff-panel>
         `;

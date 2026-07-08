@@ -1,9 +1,41 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { AppShell } from "../../components/app.js";
+import { collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 
 const originalLocation = globalThis.location;
 const originalWindow = globalThis.window;
 const originalNavigator = globalThis.navigator;
+
+function isObject(value: unknown): value is Record<PropertyKey, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
+}
+
+function isWorkspacePaneRecord(value: unknown): value is Record<string, unknown> {
+  return isObject(value)
+    && "sessions" in value
+    && "chat" in value
+    && "changes" in value
+    && "files" in value;
+}
+
+function workspacePaneOutput(values: unknown[]): string {
+  const panes = values.find(isWorkspacePaneRecord);
+  if (!panes) return "";
+
+  const paneValues = Object.values(panes);
+  const nestedValues = paneValues.flatMap((value) => [value, ...collectTemplateValues(value)]);
+  const directiveTemplates = nestedValues
+    .map((value) => isObject(value) ? Reflect.get(value, "values") : null)
+    .filter(isUnknownArray)
+    .map((directiveValues) => templateToString(directiveValues[1]))
+    .join("\n");
+
+  return `${templateToString(paneValues)}\n${directiveTemplates}`;
+}
 
 afterEach(() => {
   Reflect.set(globalThis, "location", originalLocation);
@@ -87,61 +119,62 @@ describe("AppShell visibility change", () => {
   });
 });
 
-describe("AppShell activity routing", () => {
-  test("switches to chat before route initialization finishes", async () => {
+describe("AppShell layout selection", () => {
+  test("renders the desktop layout on wider viewports", () => {
     Reflect.set(globalThis, "location", { protocol: "http:", host: "localhost:3000" });
     Reflect.set(globalThis, "window", { matchMedia: () => ({ matches: false }) });
     Reflect.set(globalThis, "navigator", { standalone: false });
 
     const el = new AppShell();
-    Reflect.set(el, "activeTab", "changes");
-
-    let resolveRoute!: () => void;
-    const appStore = {
+    Reflect.set(el, "appStore", {
+      connected: true,
       projectId: 42,
-      sessionId: "",
-      setRoute: mock((sessionId: string | null) => {
-        appStore.sessionId = sessionId ?? "";
-        return new Promise<void>((resolve) => { resolveRoute = resolve; });
-      }),
-      diffStore: { refresh: mock(() => {}) },
-      activeSessionStore: { markViewed: mock(() => {}) },
-    };
+      sessionId: "s1",
+      activeSessionStore: {},
+      activeProjectStore: {},
+      settingsStore: { diffRenderer: "classic" },
+      diffStore: { branch: "main" },
+      projectsStore: { activityForSession() {} },
+    });
+    const rendered = el.render();
+    const output = templateToString(rendered);
+    const layoutValues = collectTemplateValues(rendered);
+    const panesOutput = workspacePaneOutput(layoutValues);
 
-    Reflect.set(el, "appStore", appStore);
-    Reflect.set(el, "quickOpenStore", { recordVisit: mock(() => {}) });
-
-    const routePromise = Reflect.get(el, "applyRoute").call(el, { sessionId: "s1" });
-    await Promise.resolve();
-
-    expect(Reflect.get(el, "activeTab")).toBe("chat");
-
-    resolveRoute();
-    await routePromise;
+    expect(output).toContain("<desktop-layout");
+    expect(panesOutput).toContain("<session-sidebar");
+    expect(panesOutput).toContain("<app-main-toolbar");
+    expect(panesOutput).toContain("<diff-file-tree");
+    expect(panesOutput).toContain("<chat-panel");
+    expect(panesOutput).toContain("<diff-renderer-shell");
+    expect(output).not.toContain("<mobile-layout");
   });
 
-  test("viewing a session records the quick-open visit", async () => {
+  test("renders the mobile layout on mobile viewports", () => {
     Reflect.set(globalThis, "location", { protocol: "http:", host: "localhost:3000" });
-    Reflect.set(globalThis, "window", { matchMedia: () => ({ matches: false }) });
+    Reflect.set(globalThis, "window", { matchMedia: () => ({ matches: true }) });
     Reflect.set(globalThis, "navigator", { standalone: false });
 
     const el = new AppShell();
-    const recordVisit = mock(() => {});
-
-    const appStore = {
+    Reflect.set(el, "appStore", {
+      connected: true,
       projectId: 42,
-      sessionId: "",
-      setRoute: mock(async (sessionId: string | null) => {
-        appStore.sessionId = sessionId ?? "";
-      }),
-      activeSessionStore: { markViewed: mock(() => {}) },
-    };
+      sessionId: "s1",
+      activeSessionStore: {},
+      activeProjectStore: {},
+      settingsStore: { diffRenderer: "classic" },
+      diffStore: { branch: "main" },
+      projectsStore: { activityForSession() {} },
+    });
+    const rendered = el.render();
+    const output = templateToString(rendered);
+    const panesOutput = workspacePaneOutput(collectTemplateValues(rendered));
 
-    Reflect.set(el, "appStore", appStore);
-    Reflect.set(el, "quickOpenStore", { recordVisit });
-
-    await Reflect.get(el, "applyRoute").call(el, { sessionId: "s1" });
-
-    expect(recordVisit).toHaveBeenCalledWith("s1");
+    expect(output).toContain("<mobile-layout");
+    expect(panesOutput).toContain("<session-sidebar");
+    expect(panesOutput).toContain("<app-main-toolbar");
+    expect(output).not.toContain("show-connection-status");
+    expect(panesOutput).toContain("<diff-file-tree");
+    expect(output).not.toContain("<desktop-layout");
   });
 });

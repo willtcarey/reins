@@ -15,6 +15,18 @@ describe("DiffRendererShell", () => {
     shell.store.dispose();
   });
 
+  test("passes visibility through to the classic diff panel", () => {
+    const shell = new DiffRendererShell();
+    shell.store = new DiffStore();
+    shell.visible = true;
+
+    const output = templateToString(shell.render());
+
+    expect(output).toContain("<diff-panel");
+    expect(output).toContain(".visible=true");
+    shell.store.dispose();
+  });
+
   test("selects the CodeView diff panel when requested", () => {
     const shell = new DiffRendererShell();
     shell.store = new DiffStore();

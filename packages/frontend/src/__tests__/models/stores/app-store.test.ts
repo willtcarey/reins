@@ -6,8 +6,33 @@ import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 describe("AppStore activity event routing", () => {
   let client: StubClient;
   let store: AppStore;
+  let originalWindowDescriptor: PropertyDescriptor | undefined;
+  let originalDocumentDescriptor: PropertyDescriptor | undefined;
+  let browserGlobalsInstalled = false;
+
+  function installBrowserGlobals() {
+    originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+    originalDocumentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
+    browserGlobalsInstalled = true;
+    Object.defineProperty(globalThis, "window", {
+      value: { addEventListener: mock(() => {}), removeEventListener: mock(() => {}) },
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "document", {
+      value: {
+        visibilityState: "visible",
+        addEventListener: mock(() => {}),
+        removeEventListener: mock(() => {}),
+        dispatchEvent: mock(() => true),
+      },
+      writable: true,
+      configurable: true,
+    });
+  }
 
   beforeEach(() => {
+    browserGlobalsInstalled = false;
     client = new StubClient();
     store = new AppStore(client);
   });
@@ -15,6 +40,45 @@ describe("AppStore activity event routing", () => {
   afterEach(() => {
     store.dispose();
     restoreFetch();
+    if (!browserGlobalsInstalled) return;
+    if (originalWindowDescriptor) {
+      Object.defineProperty(globalThis, "window", originalWindowDescriptor);
+    } else {
+      Reflect.deleteProperty(globalThis, "window");
+    }
+    if (originalDocumentDescriptor) {
+      Object.defineProperty(globalThis, "document", originalDocumentDescriptor);
+    } else {
+      Reflect.deleteProperty(globalThis, "document");
+    }
+  });
+
+  test("loads the app-wide diff renderer setting on connect", async () => {
+    installBrowserGlobals();
+    const requestedUrls: string[] = [];
+    const loaded = new Promise<void>((resolve) => {
+      const unsubscribe = store.subscribe(() => {
+        if (store.settingsStore.diffRenderer === "codeview") {
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+
+    mockFetch((url) => {
+      requestedUrls.push(url);
+      if (url === "/api/settings?key=diff_renderer") {
+        return Response.json([{ key: "diff_renderer", value: "codeview" }]);
+      }
+      if (url === "/api/oauth/providers") return Response.json([]);
+      return Response.json({}, { status: 404 });
+    });
+
+    store.connect();
+
+    expect(requestedUrls).toContain("/api/settings?key=diff_renderer");
+    await loaded;
+    expect(store.settingsStore.diffRenderer).toBe("codeview");
   });
 
   test("forwards shared settings store updates to app subscribers", async () => {
@@ -214,6 +278,36 @@ describe("AppStore activity event routing", () => {
     await store.setRoute("sess-1");
 
     expect(refresh).toHaveBeenCalled();
+  });
+
+  test("file-modifying tool events use the default full diff refresh", async () => {
+    mockFetch((url) => {
+      if (url === "/api/sessions/sess-1") {
+        return Response.json({
+          id: "sess-1",
+          projectId: 42,
+          taskId: null,
+          parentSessionId: null,
+          name: null,
+          createdAt: "",
+          updatedAt: "",
+          activityState: null,
+          messageCount: 0,
+          state: { model: null, thinkingLevel: "off" },
+        });
+      }
+      if (url === "/api/sessions/sess-1/messages") return Response.json([]);
+      return Response.json([], { status: 404 });
+    });
+    await store.setRoute("sess-1");
+
+    const refresh = mock(async () => {});
+    store.diffStore.refresh = refresh;
+
+    client.fireEvent("sess-1", 42, { type: "tool_execution_end", toolCallId: "tool-1", toolName: "edit" });
+    await new Promise((resolve) => setTimeout(resolve, 550));
+
+    expect(refresh).toHaveBeenCalledWith();
   });
 
   test("setRoute replaces the active session store when the route session changes", async () => {

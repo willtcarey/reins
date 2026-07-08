@@ -43,7 +43,7 @@ export class SessionSidebar extends LitElement {
   @property({ attribute: false })
   store: AppStore | null = null;
 
-  @state() private collapsed = window.matchMedia("(max-width: 768px)").matches;
+  @state() private collapsed = false;
   @state() private expandedProjects = new Set<number>();
 
   /** Upload progress per project: 0–100 while uploading, null when idle. */
@@ -121,16 +121,18 @@ export class SessionSidebar extends LitElement {
 
   // ---- Event handlers from child components ---------------------------------
 
-  /** On mobile, collapse the sidebar after navigating. */
-  private collapseOnMobile() {
-    if (window.innerWidth <= 768) this.collapsed = true;
+  /** Ask the responsive layout to hide the sidebar after navigating. */
+  private requestSidebarClose() {
+    if (window.innerWidth <= 768) {
+      this.dispatchEvent(new CustomEvent("sidebar-close-request", { bubbles: true, composed: true }));
+    }
   }
 
   private handleSelectSession(e: CustomEvent<{ projectId: number; sessionId: string }>) {
     const { sessionId } = e.detail;
     if (!sessionId) return;
     navigateToSession(sessionId);
-    this.collapseOnMobile();
+    this.requestSidebarClose();
   }
 
   private async handleNewSession(e: CustomEvent<{ projectId: number }>) {
@@ -139,7 +141,7 @@ export class SessionSidebar extends LitElement {
     const result = await this.store?.createSession(projectId);
     if (result && "sessionId" in result) {
       navigateToSession(result.sessionId);
-      this.collapseOnMobile();
+      this.requestSidebarClose();
     }
   }
 
@@ -149,7 +151,7 @@ export class SessionSidebar extends LitElement {
     const result = await this.store?.createTaskSession(taskId, projectId);
     if (result && "sessionId" in result) {
       navigateToSession(result.sessionId);
-      this.collapseOnMobile();
+      this.requestSidebarClose();
     } else if (result && "error" in result) {
       showToast(result.error, "error");
     }
@@ -194,12 +196,11 @@ export class SessionSidebar extends LitElement {
   }
 
   private toggleCollapse() {
+    if (window.innerWidth <= 768) {
+      this.dispatchEvent(new CustomEvent("sidebar-close-request", { bubbles: true, composed: true }));
+      return;
+    }
     this.collapsed = !this.collapsed;
-  }
-
-  /** Open the sidebar (used by hamburger button on mobile). */
-  open() {
-    this.collapsed = false;
   }
 
   /** Open the quick-open palette (Cmd+K). */
@@ -388,23 +389,15 @@ export class SessionSidebar extends LitElement {
 
   override render() {
     const store = this.store;
+    const isMobile = window.innerWidth <= 768;
+    const isCollapsed = !isMobile && this.collapsed;
+    const shellClass = `${isCollapsed ? "md:w-10" : "w-full md:w-64"}
+      h-full bg-zinc-900 border-r border-zinc-700 flex flex-col shrink-0 overflow-hidden
+      md:transition-[width] duration-200 ease-out`;
 
     return html`
-      <!-- Mobile backdrop (always rendered, animated) -->
       <div
-        class="fixed inset-0 bg-black/50 z-[var(--layer-sidebar)] md:hidden transition-opacity duration-200 ease-out ${this.collapsed ? "opacity-0 pointer-events-none" : "opacity-100"}"
-        @click=${this.toggleCollapse}
-      ></div>
-
-      <!-- Sidebar: single div, animated on both mobile (slide) and desktop (width) -->
-      <div
-        class="${this.collapsed
-          ? "max-md:-translate-x-full md:w-10"
-          : "max-md:translate-x-0 md:w-64"}
-          max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-[var(--layer-overlay)] max-md:w-64
-          max-md:transition-transform md:transition-[width]
-          duration-200 ease-out
-          h-full bg-zinc-900 border-r border-zinc-700 flex flex-col shrink-0 overflow-hidden"
+        class=${shellClass}
         @select-session=${this.handleSelectSession}
         @new-session=${this.handleNewSession}
         @new-task-session=${this.handleNewTaskSession}
@@ -414,8 +407,8 @@ export class SessionSidebar extends LitElement {
         @toggle-collapse=${this.toggleCollapse}
       >
         <!-- Header: collapse toggle + quick-open -->
-        <div class="flex items-center border-b border-zinc-800/80 shrink-0 ${this.collapsed ? "justify-center" : "h-[50px] px-2 gap-1"}">
-          ${this.collapsed ? html`
+        <div class="flex items-center border-b border-zinc-800/80 shrink-0 ${isCollapsed ? "justify-center" : "h-[50px] px-2 gap-1"}">
+          ${isCollapsed ? html`
             <!-- Collapsed: expand chevron + search icon -->
             <div class="flex flex-col items-center gap-1 py-1">
               <button
@@ -445,13 +438,17 @@ export class SessionSidebar extends LitElement {
         </div>
 
         <!-- Sidebar content (hidden when collapsed) -->
-        ${!this.collapsed ? html`
+        ${!isCollapsed ? html`
           <!-- Shared dialogs -->
           <task-form .store=${store}></task-form>
           <task-detail></task-detail>
 
           <!-- Scrollable content: project sections -->
-          <div class="flex-1 overflow-y-auto" data-sidebar-scroll-container>
+          <div
+            class="flex-1 overflow-y-auto"
+            data-sidebar-scroll-container
+            data-swipe-pager-surface
+          >
             ${this.sortedProjects.map(p => this.renderProjectSection(p))}
 
             <!-- Add Project at the bottom of the list -->

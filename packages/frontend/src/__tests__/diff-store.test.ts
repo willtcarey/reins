@@ -339,6 +339,80 @@ index 1111111..3333333 100644
       expect(second.version).toBe(2);
       expect(second.cacheKeyPrefix).not.toBe(first.cacheKeyPrefix);
     });
+
+    test("refresh refetches a loaded CodeView patch diff when file summaries are unchanged", async () => {
+      const patches = [
+        patch,
+        `diff --git a/demo.txt b/demo.txt
+index 1111111..3333333 100644
+--- a/demo.txt
++++ b/demo.txt
+@@ -1 +1 @@
+-old
++newer
+`,
+      ];
+      mockFetch((url) => {
+        if (url.includes("/diff/patch")) return textResponse(patches.shift() ?? patch);
+        if (url.includes("/diff/files")) {
+          return jsonResponse({
+            files: [{ path: "demo.txt", additions: 1, removals: 1 }],
+            branch: "feature/raw",
+            baseBranch: "main",
+          });
+        }
+        if (url.includes("/git/spread")) return jsonResponse({});
+        return jsonResponse({});
+      });
+      store.setProject(1);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      await store.fetchPatchDiff();
+      const first = store.patchData.data!;
+      await store.refresh();
+      const second = store.patchData.data!;
+
+      expect(first.patch).toBe(patch);
+      expect(second.patch).toContain("newer");
+      expect(second.version).toBe(first.version + 1);
+    });
+
+    test("refresh with onlyFetchDiffIfNeeded updates file summaries without refetching unchanged loaded patch data", async () => {
+      const patches = [
+        patch,
+        `diff --git a/demo.txt b/demo.txt
+index 1111111..3333333 100644
+--- a/demo.txt
++++ b/demo.txt
+@@ -1 +1 @@
+-old
++newer
+`,
+      ];
+      mockFetch((url) => {
+        if (url.includes("/diff/patch")) return textResponse(patches.shift() ?? patch);
+        if (url.includes("/diff/files")) {
+          return jsonResponse({
+            files: [{ path: "demo.txt", additions: 1, removals: 1 }],
+            branch: "feature/raw",
+            baseBranch: "main",
+          });
+        }
+        if (url.includes("/git/spread")) return jsonResponse({});
+        return jsonResponse({});
+      });
+      store.setProject(1);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      await store.fetchPatchDiff();
+      const first = store.patchData.data!;
+      await store.refresh({ onlyFetchDiffIfNeeded: true });
+      const second = store.patchData.data!;
+
+      expect(first.patch).toBe(patch);
+      expect(second).toBe(first);
+      expect(patches.length).toBe(1);
+    });
   });
 
   // ---- expandHunk -----------------------------------------------------------

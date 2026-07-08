@@ -250,7 +250,7 @@ export class DiffFileTree extends LitElement {
             : nothing}
         </div>
         <!-- Tree -->
-        <div class="flex-1 overflow-y-auto">
+        <div class="flex-1 overflow-y-auto pb-4">
           <tree-view
             .nodes=${nodes}
             .activeFile=${this.activeFile}

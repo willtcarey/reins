@@ -55,6 +55,11 @@ export interface DiffPatchData {
 
 export type DiffStoreListener = () => void;
 
+export interface DiffRefreshOptions {
+  /** Only refetch loaded renderer payloads when the lightweight file summary changed. */
+  onlyFetchDiffIfNeeded?: boolean;
+}
+
 export class DiffStore {
 
   // ---- Public reactive state ------------------------------------------------
@@ -165,7 +170,7 @@ export class DiffStore {
     this._patchDiffVersion = 0;
     this.spread = null;
     this.notify();
-    this.refresh();
+    void this.refresh();
     this._restartSpreadPolling();
   }
 
@@ -376,10 +381,10 @@ export class DiffStore {
     return count;
   }
 
-  // ---- Lightweight file listing (polled) ------------------------------------
+  // ---- File listing / rendered diff refresh ---------------------------------
 
-  /** Fetch the lightweight file listing from the backend. */
-  async refresh() {
+  /** Refresh the file listing and, by default, any already-loaded rendered diff payloads. */
+  async refresh(options: DiffRefreshOptions = {}) {
     if (this._projectId == null) {
       this.fileData = this.fileData.asLoaded({ files: [], branch: null, baseBranch: null });
       this.notify();
@@ -409,10 +414,14 @@ export class DiffStore {
       this.notify();
 
       // If rendered diff data is loaded, re-fetch it when the file list changes.
-      if (changed && this.fullData.data) {
+      // Default refreshes force this because path/+/- summaries do not change
+      // when an edit swaps text with the same net line counts. Polling opts into
+      // summary-gated diff refreshes to keep the interval cheap.
+      const shouldRefetchLoadedDiffs = changed || options.onlyFetchDiffIfNeeded !== true;
+      if (shouldRefetchLoadedDiffs && this.fullData.data) {
         await this.fetchFullDiff();
       }
-      if (changed && this.patchData.data) {
+      if (shouldRefetchLoadedDiffs && this.patchData.data) {
         await this.fetchPatchDiff();
       }
     } catch (err: any) {
@@ -628,8 +637,8 @@ export class DiffStore {
   private _restartPolling() {
     this._stopPolling();
     if (this._projectId != null) {
-      this.refresh();
-      this._pollTimer = setInterval(() => this.refresh(), POLL_INTERVAL);
+      void this.refresh({ onlyFetchDiffIfNeeded: true });
+      this._pollTimer = setInterval(() => void this.refresh({ onlyFetchDiffIfNeeded: true }), POLL_INTERVAL);
     }
   }
 

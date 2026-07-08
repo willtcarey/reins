@@ -109,6 +109,40 @@ describe("chat-panel attachment rendering", () => {
 });
 
 
+describe("ChatPanel session switching", () => {
+  test("resubscribes and clears ephemeral state when the store changes", () => {
+    const el = new ChatPanel();
+    const unsubscribeOld = mock(() => undefined);
+    const unsubscribeNew = mock(() => undefined);
+    const oldStore = {
+      sessionId: "sess-old",
+      conversation: { messages: [], persistedMessages: [], streamingBlocks: [] },
+      subscribe: mock(() => unsubscribeOld),
+    };
+    const newStore = {
+      sessionId: "sess-new",
+      conversation: { messages: [], persistedMessages: [], streamingBlocks: [] },
+      subscribe: mock(() => unsubscribeNew),
+    };
+
+    Reflect.set(el, "store", oldStore);
+    Reflect.get(el, "subscribeToStore").call(el);
+    Reflect.set(el, "pendingUserMessages", [{ role: "user", content: [{ type: "text", text: "pending" }], timestamp: 1 }]);
+    Reflect.set(el, "pendingUserMessageBaselines", new Map([[1, 0]]));
+    Reflect.set(el, "expandedSections", new Set(["tool-1"]));
+
+    Reflect.set(el, "store", newStore);
+    callPrivate(el, "willUpdate", new Map<string, unknown>([["store", oldStore]]));
+
+    expect(unsubscribeOld).toHaveBeenCalledTimes(1);
+    expect(newStore.subscribe).toHaveBeenCalledTimes(1);
+    expect(Reflect.get(el, "pendingUserMessages")).toEqual([]);
+    expect(Reflect.get(el, "pendingUserMessageBaselines")).toEqual(new Map());
+    expect(Reflect.get(el, "expandedSections")).toEqual(new Set());
+  });
+});
+
+
 describe("ChatPanel mobile keyboard", () => {
   test("collapses the composer keyboard on message touch scroll", () => {
     const el = new ChatPanel();

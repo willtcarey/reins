@@ -6,7 +6,7 @@
  * Uses light DOM so Tailwind classes work directly.
  */
 
-import { LitElement, html, nothing } from "lit";
+import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
@@ -82,6 +82,21 @@ export class ChatPanel extends LitElement {
   override disconnectedCallback() {
     super.disconnectedCallback();
     this.unsubscribeStore?.();
+  }
+
+  override willUpdate(changed: PropertyValues<this>) {
+    if (changed.has("store")) {
+      this.resetSessionState();
+      this.subscribeToStore();
+    }
+  }
+
+  private resetSessionState() {
+    this.expandedSections = new Set();
+    this.animatingUserMessageKeys = new Set();
+    this.pendingUserMessages = [];
+    this.pendingUserMessageBaselines.clear();
+    this.shouldAutoScroll = true;
   }
 
   private get storeMessages(): AgentMessage[] {

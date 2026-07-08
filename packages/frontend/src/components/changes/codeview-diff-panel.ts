@@ -2,11 +2,9 @@ import { CodeView, parsePatchFiles, type CodeViewDiffItem, type CodeViewOptions,
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
-import type { FileTreeState } from "../../models/changes/file-tree-state.js";
 import { compareFilePaths } from "../../models/changes/diff-sort.js";
 import type { DiffCopyPathButton, DiffDownloadFileButton, DiffViewFileButton } from "./diff-file-action-buttons.js";
 import "./diff-file-action-buttons.js";
-import "./diff-file-tree.js";
 
 export const CODEVIEW_DIFF_CONTRAST_CSS = `
 :host {
@@ -166,7 +164,6 @@ export class CodeViewDiffPanel extends LitElement {
   }
 
   @property({ attribute: false }) store: DiffStore | null = null;
-  @property({ attribute: false }) treeState: FileTreeState | null = null;
   @property({ type: Boolean }) visible = false;
 
   @state() private activeFile: string | null = null;
@@ -357,7 +354,7 @@ export class CodeViewDiffPanel extends LitElement {
 
   private _resetCodeViewItems() {
     this._destroyCodeView();
-    this.activeFile = null;
+    this.setActiveFile(null);
   }
 
   private _resetParsedPatchData() {
@@ -395,7 +392,7 @@ export class CodeViewDiffPanel extends LitElement {
     const rendered = this._codeView.getRenderedItems();
     const activeItem = this._findActiveRenderedItem(rendered, scrollTop);
     const path = data.items.find((item) => item.id === activeItem?.id)?.path ?? data.items[0]?.path ?? null;
-    if (path !== this.activeFile) this.activeFile = path;
+    this.setActiveFile(path);
   }
 
   private _findActiveRenderedItem(rendered: CodeViewRenderedItem<undefined>[], scrollTop: number) {
@@ -409,9 +406,14 @@ export class CodeViewDiffPanel extends LitElement {
     return active;
   }
 
-  private handleFileSelect(e: Event) {
-    if (!(e instanceof CustomEvent)) return;
-    this.scrollToFile(e.detail);
+  private setActiveFile(path: string | null) {
+    if (path === this.activeFile) return;
+    this.activeFile = path;
+    this.dispatchEvent(new CustomEvent<string | null>("active-file-change", {
+      detail: path,
+      bubbles: true,
+      composed: true,
+    }));
   }
 
   override render() {
@@ -464,14 +466,6 @@ export class CodeViewDiffPanel extends LitElement {
           }
         </div>
 
-        <div class="w-60 border-l border-zinc-700 shrink-0 hidden lg:block">
-          <diff-file-tree
-            .store=${this.store}
-            .treeState=${this.treeState}
-            .activeFile=${this.activeFile}
-            @file-select=${this.handleFileSelect}
-          ></diff-file-tree>
-        </div>
       </div>
     `;
   }

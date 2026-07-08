@@ -62,6 +62,8 @@ Lit custom elements that own rendering and user interaction. Import from `models
 
 ```
 components/
+├── layouts/             Top-level responsive layout wrappers and shared pagers
+│   ├── desktop-layout.ts, mobile-layout.ts, swipe-pager.ts
 ├── changes/             Diff viewer components
 │   ├── diff-panel.ts, diff-file-card.ts, diff-file-tree.ts
 │   ├── diff-hunk.ts, diff-markdown-preview.ts
@@ -69,7 +71,7 @@ components/
 │   ├── read.ts, edit.ts, write.ts, bash.ts
 │   ├── create-task.ts, delegate.ts, generic.ts
 │   ├── index.ts (registry), types.ts
-├── app.ts               Root shell
+├── app.ts               Root shell: store/routing/overlays + pane rendering/layout selection
 ├── chat-panel.ts        Message display + composer orchestration
 ├── chat-composer.ts     Prompt input, autosize, skill suggestions, image attachments
 ├── session-sidebar.ts   Sidebar layout
@@ -137,9 +139,9 @@ Store/component boundary:
                     ┌──────────────────────────────────────────────┐
                     │              components/app.ts                │
                     │  - creates AppStore + AppClient               │
-                    │  - applies hash-based routes                  │
+                    │  - wires route/viewport controllers           │
                     │  - passes store to views (read-only)          │
-                    │  - owns UI-local state (active tab, title)    │
+                    │  - owns UI-local state (active pane, title)   │
                     └──────────────────┬───────────────────────────┘
                                        │
                            ┌───────────▼───────────┐
@@ -225,8 +227,11 @@ The router module provides `getLastHash()` and `saveHash()` helpers backed by `l
 
 ## Component structure
 
+`app-shell` renders one canonical named `WorkspacePanes` object (`sessions`, `chat`, `changes`, `files`) and passes that same pane set into the selected desktop or mobile layout wrapper. Layout components arrange caller-provided panes and may add layout chrome such as mobile toolbars; they should not duplicate the app page structure or create their own store-bound sidebar/chat/changes/file-tree instances. App-level navigation should use named `WorkspacePane` values rather than mobile page indexes; only `mobile-layout` translates the mobile order (`sessions → chat → changes → files`) to `swipe-pager` page numbers.
+
 ```
-app-shell                    — root shell, creates store, applies routes
+app-shell                    — root shell, creates store, applies routes, selects layout
+├── desktop-layout/mobile-layout — responsive wrappers around app-shell-provided panes
 ├── session-sidebar          — project list, task list, session list
 │   ├── project-sidebar      — project selector + CRUD
 │   ├── task-list            — tasks with expandable session sublists
@@ -246,6 +251,10 @@ app-shell                    — root shell, creates store, applies routes
 ```
 
 All components live under `components/`. Sub-directories (`changes/`, `tools/`) group related components.
+
+### Mobile swipe pager
+
+`components/layouts/swipe-pager.ts` owns pager rendering and delegates each pointer-driven swipe to a short-lived `SwipePagerSwipe` instance in `models/swipe-pager-swipe.ts`. The swipe instance lasts from accepted `pointerdown` through drag classification, release/cancel spring animation, click suppression, and completion; keep per-swipe mutable state there rather than adding reset-heavy gesture fields to the Lit component. Simple page clamping stays local to the caller; the shared scalar spring animation lifecycle lives in the one-shot `Spring` class in `models/spring.ts`; swipe-specific thresholds and DOM opt-out predicates stay private to `models/swipe-pager-swipe.ts`.
 
 ### Sidebar layout
 
