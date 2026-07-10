@@ -67,7 +67,7 @@ let uninstallRuntimeHooks: (() => void) | null = null;
 
 /**
  * Dev build output directory — placed under packages/backend/ so that
- * bare-specifier imports (e.g. @mariozechner/pi-coding-agent) resolve
+ * bare-specifier imports (e.g. @earendil-works/pi-coding-agent) resolve
  * against the workspace's node_modules via Bun's module resolution.
  */
 const DEV_BUILD_DIR = resolve(SRC_DIR, "../.dev-build");

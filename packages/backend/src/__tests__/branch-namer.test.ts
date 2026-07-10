@@ -37,7 +37,7 @@ describe("generateBranchName", () => {
 
     setSetting("default_model", {
       provider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
+      modelId: "claude-sonnet-4-5",
       runtimeType: "pi",
       thinkingLevel: "medium",
     });
@@ -77,7 +77,7 @@ describe("generateBranchName", () => {
 
     setSetting("default_model", {
       provider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
+      modelId: "claude-sonnet-4-5",
       runtimeType: "claude_agent_sdk",
       thinkingLevel: "medium",
     });
@@ -88,7 +88,7 @@ describe("generateBranchName", () => {
     expect(ask).toHaveBeenCalledWith(expect.objectContaining({
       model: {
         provider: "anthropic",
-        modelId: "claude-sonnet-4-20250514",
+        modelId: "claude-sonnet-4-5",
       },
       thinkingLevel: "medium",
     }));

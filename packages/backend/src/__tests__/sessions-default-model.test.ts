@@ -15,7 +15,7 @@ describe("resolveModelSetting(default_model)", () => {
   test("returns the configured default model from settings", () => {
     setSetting("default_model", {
       provider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
+      modelId: "claude-sonnet-4-5",
       runtimeType: "pi",
       thinkingLevel: "medium",
     });
@@ -23,7 +23,7 @@ describe("resolveModelSetting(default_model)", () => {
     const model = resolveModelSetting("default_model");
 
     expect(model?.provider).toBe("anthropic");
-    expect(model?.id).toBe("claude-sonnet-4-20250514");
+    expect(model?.id).toBe("claude-sonnet-4-5");
   });
 
   test("returns undefined when no default model is configured", () => {
@@ -51,7 +51,7 @@ describe("resolveModelSetting(default_model)", () => {
 
     try {
       process.env.REINS_PROVIDER = "anthropic";
-      process.env.REINS_MODEL = "claude-sonnet-4-20250514";
+      process.env.REINS_MODEL = "claude-sonnet-4-5";
 
       expect(resolveModelSetting("default_model")).toBeUndefined();
     } finally {
@@ -78,7 +78,7 @@ describe("createNewSession", () => {
     const baselineSession = getPiSession(baseline.runtime);
     expect(baselineSession.model).not.toBeNull();
 
-    const configuredThinkingLevel = baselineSession.thinkingLevel === "medium" ? "high" : "medium";
+    const configuredThinkingLevel = baselineSession.thinkingLevel === "low" ? "high" : "low";
 
     setSetting("default_model", {
       provider: baselineSession.model!.provider,
@@ -148,7 +148,7 @@ describe("resumeSession", () => {
 
     setSetting("default_model", {
       provider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
+      modelId: "claude-sonnet-4-5",
       runtimeType: "pi",
       thinkingLevel: "high",
     });
@@ -206,7 +206,7 @@ describe("resumeSession", () => {
 
     createSession("resume-thinking-test", project.id, {
        agentRuntimeType: "pi",modelProvider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
+      modelId: "claude-sonnet-4-5",
       thinkingLevel: "high",
     });
 
@@ -220,7 +220,7 @@ describe("resumeSession", () => {
     const managed = await ensureSessionOpen(state, "resume-thinking-test");
 
     expect(getPiSession(managed.runtime).model?.provider).toBe("anthropic");
-    expect(getPiSession(managed.runtime).model?.id).toBe("claude-sonnet-4-20250514");
+    expect(getPiSession(managed.runtime).model?.id).toBe("claude-sonnet-4-5");
     expect(getPiSession(managed.runtime).thinkingLevel).toBe("high");
   });
 });

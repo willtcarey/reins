@@ -31,7 +31,7 @@ describe("PUT /api/sessions/:sessionId/model", () => {
     const res = await router.handle(
       makeRequest("PUT", `/api/sessions/${sessionId}/model`, {
         provider: "anthropic",
-        modelId: "claude-sonnet-4-20250514",
+        modelId: "claude-sonnet-4-5",
         thinkingLevel: "high",
       }),
       state,
@@ -40,12 +40,12 @@ describe("PUT /api/sessions/:sessionId/model", () => {
     expect(res!.status).toBe(200);
     const body = await res!.json();
     expect(body.model_provider).toBe("anthropic");
-    expect(body.model_id).toBe("claude-sonnet-4-20250514");
+    expect(body.model_id).toBe("claude-sonnet-4-5");
     expect(body.thinking_level).toBe("high");
 
     const updated = getSession(sessionId);
     expect(updated?.model_provider).toBe("anthropic");
-    expect(updated?.model_id).toBe("claude-sonnet-4-20250514");
+    expect(updated?.model_id).toBe("claude-sonnet-4-5");
     expect(updated?.thinking_level).toBe("high");
   });
 
@@ -58,7 +58,7 @@ describe("PUT /api/sessions/:sessionId/model", () => {
       makeRequest("PUT", `/api/sessions/${sessionId}/model`, {
         runtimeType: "claude_agent_sdk",
         provider: "claude_agent_sdk",
-        modelId: "claude-sonnet-4-20250514",
+        modelId: "claude-sonnet-4-5",
         thinkingLevel: "high",
       }),
       state,
@@ -68,13 +68,13 @@ describe("PUT /api/sessions/:sessionId/model", () => {
     const body = await res!.json();
     expect(body.agent_runtime_type).toBe("claude_agent_sdk");
     expect(body.model_provider).toBe("claude_agent_sdk");
-    expect(body.model_id).toBe("claude-sonnet-4-20250514");
+    expect(body.model_id).toBe("claude-sonnet-4-5");
     expect(state.sessions.has(sessionId)).toBe(false);
 
     const updated = getSession(sessionId);
     expect(updated?.agent_runtime_type).toBe("claude_agent_sdk");
     expect(updated?.model_provider).toBe("claude_agent_sdk");
-    expect(updated?.model_id).toBe("claude-sonnet-4-20250514");
+    expect(updated?.model_id).toBe("claude-sonnet-4-5");
   });
 
   test("rejects switching runtime after messages exist", async () => {
@@ -86,7 +86,7 @@ describe("PUT /api/sessions/:sessionId/model", () => {
       makeRequest("PUT", `/api/sessions/${sessionId}/model`, {
         runtimeType: "claude_agent_sdk",
         provider: "claude_agent_sdk",
-        modelId: "claude-sonnet-4-20250514",
+        modelId: "claude-sonnet-4-5",
         thinkingLevel: "high",
       }),
       state,
@@ -101,7 +101,7 @@ describe("PUT /api/sessions/:sessionId/model", () => {
     const res = await router.handle(
       makeRequest("PUT", "/api/sessions/missing/model", {
         provider: "anthropic",
-        modelId: "claude-sonnet-4-20250514",
+        modelId: "claude-sonnet-4-5",
       }),
       state,
     );

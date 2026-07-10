@@ -1,5 +1,5 @@
-import { getModels, getProviders, type Api, type Model } from "@mariozechner/pi-ai";
-import { type ModelRegistry } from "@mariozechner/pi-coding-agent";
+import { getModels, getProviders, type Api, type Model } from "@earendil-works/pi-ai/compat";
+import { type ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 import { getSetting, type ModelSettingsKey, type ModelSetting } from "../settings-store.js";

@@ -7,7 +7,7 @@ import { branchExists } from "../../git.js";
 import { createTaskTool } from "../../tools/create-task.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
-import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
+import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 import { createStrictExtensionContext } from "../helpers/test-pi.js";
 
 /** Extract text from a TextContent | ImageContent, throwing if not text. */

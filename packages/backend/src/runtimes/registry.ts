@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { getTask as storeGetTask, type TaskRow } from "../task-store.js";
 import type { ServerState } from "../state.js";
 import type {

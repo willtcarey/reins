@@ -3,7 +3,7 @@ import {
   getAgentDir,
   ModelRegistry,
   type AuthStorage,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { createDbBackedAuthStorage } from "./auth-storage.js";
 
 type DefaultResourceLoaderOptions = ConstructorParameters<typeof DefaultResourceLoader>[0];

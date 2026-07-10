@@ -29,7 +29,7 @@ describe("buildReinsSystemPrompt", () => {
     expect(prompt).toContain("docs/dev");
     expect(prompt).toContain("docs/features");
     expect(prompt).toContain("docs/features/skills.md");
-    expect(prompt).not.toContain("@mariozechner/pi-coding-agent");
+    expect(prompt).not.toContain("@earendil-works/pi-coding-agent");
     expect(prompt).not.toContain("extensions");
     expect(prompt).not.toContain("themes");
     expect(prompt).not.toContain("TUI");

@@ -8,6 +8,6 @@ describe("pi runtime", () => {
     });
 
     expect(runtime.modelRegistry.getAll().length).toBeGreaterThan(0);
-    expect(runtime.modelRegistry.find("anthropic", "claude-sonnet-4-20250514")).toBeDefined();
+    expect(runtime.modelRegistry.find("anthropic", "claude-sonnet-4-5")).toBeDefined();
   });
 });

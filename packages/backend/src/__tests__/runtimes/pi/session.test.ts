@@ -1,12 +1,12 @@
 import { describe, expect, mock, test } from "bun:test";
 import { Type } from "@sinclair/typebox";
-import { defineTool, SessionManager } from "@mariozechner/pi-coding-agent";
+import { defineTool, SessionManager } from "@earendil-works/pi-coding-agent";
 import { createTestAgentSession } from "../../helpers/test-pi.js";
 import { useTestDb } from "../../helpers/test-db.js";
 import { createServerState } from "../../helpers/server-state.js";
 import { getPiSession } from "../../../runtimes/pi/runtime.js";
 import { ephemeralPrompt, hydrateSessionManager, PiRuntimeAdapter } from "../../../runtimes/pi/session.js";
-import type { SessionEntry, SessionMessageEntry, CompactionEntry } from "@mariozechner/pi-coding-agent";
+import type { SessionEntry, SessionMessageEntry, CompactionEntry } from "@earendil-works/pi-coding-agent";
 
 /** Narrow a SessionEntry to SessionMessageEntry (throws if wrong type). */
 function asMessage(entry: SessionEntry): SessionMessageEntry {

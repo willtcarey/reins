@@ -3,7 +3,7 @@ import {
   registerOAuthProvider,
   unregisterOAuthProvider,
   type OAuthProviderInterface,
-} from "@mariozechner/pi-ai/oauth";
+} from "@earendil-works/pi-ai/oauth";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";

@@ -54,7 +54,7 @@ describe("sessions.setModel", () => {
     // Create session in DB
     createSession("sess-1", project.id, {
        agentRuntimeType: "pi",modelProvider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
+      modelId: "claude-sonnet-4-5",
     });
 
     // Create mock managed session
@@ -63,18 +63,18 @@ describe("sessions.setModel", () => {
 
     const ctx = makeCtx();
     const result = await sessionsSetModelFunction.execute(
-      { sessionId: "sess-1", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
+      { sessionId: "sess-1", provider: "anthropic", modelId: "claude-sonnet-4-5" },
       ctx,
     );
 
     // Check DB was updated
     const updated = getSession("sess-1");
     expect(updated!.model_provider).toBe("anthropic");
-    expect(updated!.model_id).toBe("claude-sonnet-4-20250514");
+    expect(updated!.model_id).toBe("claude-sonnet-4-5");
 
     // Check return value matches DB
     expect(result.model_provider).toBe("anthropic");
-    expect(result.model_id).toBe("claude-sonnet-4-20250514");
+    expect(result.model_id).toBe("claude-sonnet-4-5");
   });
 
   test("calls pi SDK setModel", async () => {
@@ -84,7 +84,7 @@ describe("sessions.setModel", () => {
 
     const ctx = makeCtx();
     await sessionsSetModelFunction.execute(
-      { sessionId: "sess-2", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
+      { sessionId: "sess-2", provider: "anthropic", modelId: "claude-sonnet-4-5" },
       ctx,
     );
 
@@ -98,7 +98,7 @@ describe("sessions.setModel", () => {
 
     const ctx = makeCtx();
     await sessionsSetModelFunction.execute(
-      { sessionId: "sess-3", provider: "anthropic", modelId: "claude-sonnet-4-20250514", thinkingLevel: "high" },
+      { sessionId: "sess-3", provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "high" },
       ctx,
     );
 
@@ -116,7 +116,7 @@ describe("sessions.setModel", () => {
 
     const ctx = makeCtx();
     await sessionsSetModelFunction.execute(
-      { sessionId: "sess-4", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
+      { sessionId: "sess-4", provider: "anthropic", modelId: "claude-sonnet-4-5" },
       ctx,
     );
 
@@ -135,7 +135,7 @@ describe("sessions.setModel", () => {
 
     const ctx = makeCtx();
     await sessionsSetModelFunction.execute(
-      { sessionId: "sess-5", provider: "anthropic", modelId: "claude-sonnet-4-20250514", thinkingLevel: "high" },
+      { sessionId: "sess-5", provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "high" },
       ctx,
     );
 
@@ -153,16 +153,16 @@ describe("sessions.setModel", () => {
 
     const ctx = makeCtx();
     const result = await sessionsSetModelFunction.execute(
-      { sessionId: "sess-5b", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
+      { sessionId: "sess-5b", provider: "anthropic", modelId: "claude-sonnet-4-5" },
       ctx,
     );
 
     const updated = getSession("sess-5b");
     expect(updated!.model_provider).toBe("anthropic");
-    expect(updated!.model_id).toBe("claude-sonnet-4-20250514");
+    expect(updated!.model_id).toBe("claude-sonnet-4-5");
     expect(updated!.thinking_level).toBe("low");
     expect(result.model_provider).toBe("anthropic");
-    expect(result.model_id).toBe("claude-sonnet-4-20250514");
+    expect(result.model_id).toBe("claude-sonnet-4-5");
     expect(result.thinking_level).toBe("low");
     expect(broadcastMessages).toEqual([
       {
@@ -211,7 +211,7 @@ describe("sessions.setModel", () => {
     const ctx = makeCtx(); // ctx.projectId = project.id (different from otherProject)
     await expect(
       sessionsSetModelFunction.execute(
-        { sessionId: "sess-8", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
+        { sessionId: "sess-8", provider: "anthropic", modelId: "claude-sonnet-4-5" },
         ctx,
       ),
     ).rejects.toThrow(/not found/);
@@ -224,14 +224,14 @@ describe("sessions.setModel", () => {
     const ctx = makeCtx();
     await expect(
       sessionsSetModelFunction.execute(
-        { sessionId: "sess-9", provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
+        { sessionId: "sess-9", provider: "anthropic", modelId: "claude-sonnet-4-5" },
         ctx,
       ),
     ).resolves.toBeDefined();
 
     const updated = getSession("sess-9");
     expect(updated!.model_provider).toBe("anthropic");
-    expect(updated!.model_id).toBe("claude-sonnet-4-20250514");
+    expect(updated!.model_id).toBe("claude-sonnet-4-5");
     expect(updated!.thinking_level).toBe("medium");
     expect(broadcastMessages).toEqual([
       {
@@ -253,7 +253,7 @@ describe("sessions.setModel", () => {
     const ctx = makeCtx();
     await expect(
       rawSetModelFunction!.execute(
-        { sessionId: "sess-10", provider: "anthropic", modelId: "claude-sonnet-4-20250514", thinkingLevel: "invalid-level" },
+        { sessionId: "sess-10", provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "invalid-level" },
         ctx,
       ),
     ).rejects.toThrow(/Invalid thinking level/);

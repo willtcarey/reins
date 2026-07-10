@@ -28,7 +28,7 @@ describe("createDelegateTool", () => {
       agentRuntimeType: "pi",
       taskId,
       modelProvider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
+      modelId: "claude-sonnet-4-5",
       thinkingLevel: "high",
     });
     deleteSession = mock<(id: string) => void>();
@@ -78,7 +78,7 @@ describe("createDelegateTool", () => {
         parentSessionId,
         model: {
           provider: "anthropic",
-          modelId: "claude-sonnet-4-20250514",
+          modelId: "claude-sonnet-4-5",
         },
         thinkingLevel: "high",
       },

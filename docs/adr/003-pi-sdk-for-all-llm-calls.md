@@ -47,7 +47,7 @@ additional dependencies.
   follow this same pattern: throwaway Pi session, no tools, custom system
   prompt via inline resource loader.
 - Utility calls should explicitly choose a model via `getModel()` from
-  `@mariozechner/pi-ai` rather than falling through to Pi's default
+  `@earendil-works/pi-ai` rather than falling through to Pi's default
   resolution. The caller knows the task complexity and should pick
   accordingly (e.g. Haiku for branch names, something heavier for
   summarization).

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { createAgentSession, createCodingTools, SessionManager } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, createCodingTools, SessionManager } from "@earendil-works/pi-coding-agent";
 import { createPiResourceLoader } from "../src/pi/resource-loader.js";
 import { buildReinsSystemPrompt } from "../src/pi/system-prompt.js";
 import { createCustomTools } from "../src/tools/index.js";

@@ -2,12 +2,12 @@ import {
   createAgentSession,
   SessionManager,
   type AgentSession,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { loadMessagesForLLM } from "../../messages-store.js";
 import type { TaskRow } from "../../task-store.js";
 import { buildReinsSystemPrompt } from "../system-prompt.js";
 import { createPiContext } from "./factory.js";
-import type { ThinkingLevel as PiThinkingLevel } from "@mariozechner/pi-ai";
+import type { ThinkingLevel as PiThinkingLevel } from "@earendil-works/pi-ai";
 import {
   resolveModel,
   resolveModelSettingWithConfigInRegistry,

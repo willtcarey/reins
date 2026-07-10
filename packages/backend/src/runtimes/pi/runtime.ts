@@ -1,4 +1,4 @@
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { hydratePromptContent } from "../../session-attachments-store.js";
 import { toPiThinkingLevel } from "./session.js";
 import type {

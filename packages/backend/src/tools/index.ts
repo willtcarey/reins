@@ -5,7 +5,7 @@
  * Returns a ToolDefinition[] array for use in createAgentSession().
  */
 
-import { defineTool, type ToolDefinition } from "@mariozechner/pi-coding-agent";
+import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { createTaskTool } from "./create-task.js";

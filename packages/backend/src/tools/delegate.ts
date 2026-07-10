@@ -8,7 +8,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ManagedSession } from "../state.js";
 import { getSession } from "../session-store.js";
 import { getProject } from "../project-store.js";

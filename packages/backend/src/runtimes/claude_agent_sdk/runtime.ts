@@ -136,7 +136,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     resumeOnFirstPrompt: boolean;
     model?: { provider: string; modelId: string } | null;
     thinkingLevel?: string | null;
-    customTools: import("@mariozechner/pi-coding-agent").ToolDefinition[];
+    customTools: import("@earendil-works/pi-coding-agent").ToolDefinition[];
   }) {
     this.modelProvider = params.model?.provider ?? null;
     this.modelId = params.model?.modelId ?? null;

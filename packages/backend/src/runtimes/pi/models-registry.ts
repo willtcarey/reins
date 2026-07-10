@@ -1,9 +1,9 @@
 import {
   getEnvApiKey,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 import {
   getOAuthProviders,
-} from "@mariozechner/pi-ai/oauth";
+} from "@earendil-works/pi-ai/oauth";
 import {
   hasAuthCredential,
 } from "../../auth-credentials-store.js";

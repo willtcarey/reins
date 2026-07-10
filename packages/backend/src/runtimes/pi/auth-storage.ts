@@ -2,7 +2,7 @@ import {
   AuthStorage,
   type AuthCredential,
   type AuthStorageBackend,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { getDb } from "../../db.js";
 import {
   deleteAllAuthCredentials,

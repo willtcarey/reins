@@ -13,12 +13,12 @@ import {
   AuthStorage,
   SessionManager,
   SettingsManager,
-} from "@mariozechner/pi-coding-agent";
-import { getModel } from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-coding-agent";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import type { ManagedSession } from "../../state.js";
 import { PiAgentRuntime } from "../../runtimes/pi/runtime.js";
 
-const defaultModel = getModel("anthropic", "claude-sonnet-4-20250514");
+const defaultModel = getModel("anthropic", "claude-sonnet-4-5");
 
 /**
  * Create a real AgentSession with in-memory storage.

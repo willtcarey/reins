@@ -74,7 +74,7 @@ describe("Sessions.setModel", () => {
     const result = await model.setModel({
       sessionId: "sess-1",
       provider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
+      modelId: "claude-sonnet-4-5",
       thinkingLevel: "high",
     });
 
@@ -84,10 +84,10 @@ describe("Sessions.setModel", () => {
 
     const updated = getSession("sess-1");
     expect(updated!.model_provider).toBe("anthropic");
-    expect(updated!.model_id).toBe("claude-sonnet-4-20250514");
+    expect(updated!.model_id).toBe("claude-sonnet-4-5");
     expect(updated!.thinking_level).toBe("high");
     expect(result.model_provider).toBe("anthropic");
-    expect(result.model_id).toBe("claude-sonnet-4-20250514");
+    expect(result.model_id).toBe("claude-sonnet-4-5");
     expect(result.thinking_level).toBe("high");
 
     expect(broadcastSpy).toHaveBeenCalledWith({
@@ -103,12 +103,12 @@ describe("Sessions.setModel", () => {
     const result = await model.setModel({
       sessionId: "sess-2",
       provider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
+      modelId: "claude-sonnet-4-5",
     });
 
     const updated = getSession("sess-2");
     expect(updated!.model_provider).toBe("anthropic");
-    expect(updated!.model_id).toBe("claude-sonnet-4-20250514");
+    expect(updated!.model_id).toBe("claude-sonnet-4-5");
     expect(updated!.thinking_level).toBe("low");
     expect(result.thinking_level).toBe("low");
     expect(broadcastSpy).toHaveBeenCalledWith({
@@ -127,7 +127,7 @@ describe("Sessions.setModel", () => {
         sessionId: "sess-3",
         projectId: project.id,
         provider: "anthropic",
-        modelId: "claude-sonnet-4-20250514",
+        modelId: "claude-sonnet-4-5",
       }),
     ).rejects.toThrow(/not found/);
   });
@@ -139,7 +139,7 @@ describe("Sessions.setModel", () => {
       model.setModel({
         sessionId: "sess-4",
         provider: "anthropic",
-        modelId: "claude-sonnet-4-20250514",
+        modelId: "claude-sonnet-4-5",
         thinkingLevel: "invalid-level",
       }),
     ).rejects.toThrow(/Invalid thinking level/);
@@ -156,7 +156,7 @@ describe("Sessions.setModel", () => {
         availabilitySource: "env",
         availabilitySources: ["env"],
         models: [{
-          id: "claude-sonnet-4-20250514",
+          id: "claude-sonnet-4-5",
           name: "Claude Sonnet 4",
           reasoning: true,
           contextWindow: 200_000,
@@ -189,18 +189,18 @@ describe("Sessions.setModel", () => {
     const result = await model.setModel({
       sessionId: "sess-runtime",
       provider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
+      modelId: "claude-sonnet-4-5",
       thinkingLevel: "high",
     });
 
     expect(setModel).toHaveBeenCalledWith({
       provider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
+      modelId: "claude-sonnet-4-5",
       thinkingLevel: "high",
     });
 
     expect(result.model_provider).toBe("anthropic");
-    expect(result.model_id).toBe("claude-sonnet-4-20250514");
+    expect(result.model_id).toBe("claude-sonnet-4-5");
     expect(result.thinking_level).toBe("high");
   });
 

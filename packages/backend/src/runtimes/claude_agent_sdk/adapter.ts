@@ -1,4 +1,4 @@
-import { createCodingTools } from "@mariozechner/pi-coding-agent";
+import { createCodingTools } from "@earendil-works/pi-coding-agent";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { buildReinsSystemPrompt } from "../system-prompt.js";
 import { ReinsResourceLoader } from "../resource-loader.js";
@@ -13,7 +13,7 @@ import {
 import { ClaudeSdkAgentRuntime, isThinkingDisabled, mapThinkingEffort } from "./runtime.js";
 import CLAUDE_SDK_MODELS from "./models.json";
 
-function resolvePromptTools(projectDir: string, params: CreateAgentRuntimeParams): import("@mariozechner/pi-coding-agent").ToolDefinition[] {
+function resolvePromptTools(projectDir: string, params: CreateAgentRuntimeParams): import("@earendil-works/pi-coding-agent").ToolDefinition[] {
   const builtinNames = new Set(params.sessionTools?.builtins ?? ["read", "write", "edit", "bash"]);
   const builtins = createCodingTools(projectDir).filter((tool) => builtinNames.has(tool.name));
   return [...builtins, ...(params.sessionTools?.customTools ?? [])];

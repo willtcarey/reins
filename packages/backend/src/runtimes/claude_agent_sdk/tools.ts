@@ -1,5 +1,5 @@
 import { createSdkMcpServer, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { z } from "zod/v4";
 import { isRecord, toRecord } from "./type-guards.js";
 

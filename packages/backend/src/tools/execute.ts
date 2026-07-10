@@ -18,7 +18,7 @@
 
 import { createContext, runInContext } from "node:vm";
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { buildApiObject } from "../scripting/api-registry.js";

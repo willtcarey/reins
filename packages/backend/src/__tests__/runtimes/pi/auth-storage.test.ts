@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, beforeAll, afterAll, afterEach } from "bun:test";
-import { AuthStorage } from "@mariozechner/pi-coding-agent";
-import { registerOAuthProvider, unregisterOAuthProvider, type OAuthProviderInterface } from "@mariozechner/pi-ai/oauth";
+import { AuthStorage } from "@earendil-works/pi-coding-agent";
+import { registerOAuthProvider, unregisterOAuthProvider, type OAuthProviderInterface } from "@earendil-works/pi-ai/oauth";
 import { useTestDb } from "../../helpers/test-db.js";
 import { useTestRepo } from "../../helpers/test-repo.js";
 import { createServerState } from "../../helpers/server-state.js";

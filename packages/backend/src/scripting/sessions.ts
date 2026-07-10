@@ -192,7 +192,7 @@ export const sessionsSetModelFunction = defineFunction({
   parameters: Type.Object({
     sessionId: Type.String({ description: "Session ID to update." }),
     provider: Type.String({ description: "Provider name (e.g. 'anthropic', 'openai')." }),
-    modelId: Type.String({ description: "Model ID (e.g. 'claude-sonnet-4-20250514')." }),
+    modelId: Type.String({ description: "Model ID (e.g. 'claude-sonnet-4-5')." }),
     thinkingLevel: Type.Optional(ThinkingLevelSchema),
   }),
   returns: SessionSchema,

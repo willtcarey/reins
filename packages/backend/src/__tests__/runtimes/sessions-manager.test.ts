@@ -304,7 +304,7 @@ describe("runtime sessions manager", () => {
     createSession("sess-runtime-resume", project.id, {
       agentRuntimeType: "claude_agent_sdk",
       modelProvider: "claude_agent_sdk",
-      modelId: "claude-sonnet-4-20250514",
+      modelId: "claude-sonnet-4-5",
     });
     persistMessages("sess-runtime-resume", [{ role: "user", content: [{ type: "text", text: "hello" }] }]);
 

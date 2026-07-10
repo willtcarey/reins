@@ -14,7 +14,7 @@ describe("model settings resolution", () => {
   test("resolves the configured default model from settings", () => {
     setSetting("default_model", {
       provider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
+      modelId: "claude-sonnet-4-5",
       runtimeType: "pi",
       thinkingLevel: "medium",
     });
@@ -22,7 +22,7 @@ describe("model settings resolution", () => {
     const model = resolveModelSetting("default_model");
 
     expect(model?.provider).toBe("anthropic");
-    expect(model?.id).toBe("claude-sonnet-4-20250514");
+    expect(model?.id).toBe("claude-sonnet-4-5");
   });
 
   test("returns undefined when no default model is configured", () => {
@@ -49,7 +49,7 @@ describe("model settings resolution", () => {
 
     try {
       process.env.REINS_PROVIDER = "anthropic";
-      process.env.REINS_MODEL = "claude-sonnet-4-20250514";
+      process.env.REINS_MODEL = "claude-sonnet-4-5";
 
       expect(resolveModelSetting("default_model")).toBeUndefined();
     } finally {
@@ -90,7 +90,7 @@ describe("model settings resolution", () => {
     deleteSetting("utility_model");
     setSetting("default_model", {
       provider: "anthropic",
-      modelId: "claude-sonnet-4-20250514",
+      modelId: "claude-sonnet-4-5",
       runtimeType: "pi",
       thinkingLevel: "high",
     });
@@ -98,6 +98,6 @@ describe("model settings resolution", () => {
     const model = resolveUtilityModel();
 
     expect(model?.provider).toBe("anthropic");
-    expect(model?.id).toBe("claude-sonnet-4-20250514");
+    expect(model?.id).toBe("claude-sonnet-4-5");
   });
 });

@@ -4,7 +4,7 @@ import {
   getOAuthProviders,
   getOAuthProvider,
   type OAuthCredentials,
-} from "@mariozechner/pi-ai/oauth";
+} from "@earendil-works/pi-ai/oauth";
 import {
   deleteOAuthCredential,
   hasStoredAuthCredential,
@@ -65,8 +65,14 @@ export function registerOAuthRoutes(router: RouterGroup) {
           authInstructions = info.instructions ?? "";
           resolve();
         },
+        onDeviceCode: (info) => {
+          authUrl = info.verificationUri;
+          authInstructions = `Enter code ${info.userCode}`;
+          resolve();
+        },
         onPrompt: async () => manualCodePromise,
         onManualCodeInput: () => manualCodePromise,
+        onSelect: async (prompt) => prompt.options[0]?.id,
       });
 
       pendingLogins.set(providerId, {
