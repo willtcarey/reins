@@ -22,10 +22,19 @@ declare global {
     "open-quick-open": CustomEvent<void>;
     "open-file-search": CustomEvent<void>;
     "open-settings": CustomEvent<void>;
+    "open-file-browser": CustomEvent<void>;
+    "pane-select": CustomEvent<MainPaneSelectDetail>;
+    "reload-request": CustomEvent<void>;
   }
 }
 
 export type FileViewMode = "code" | "preview";
+export type MainWorkspacePane = "chat" | "changes";
+export type WorkspacePane = "sessions" | MainWorkspacePane | "files";
+
+export interface MainPaneSelectDetail {
+  pane: WorkspacePane;
+}
 
 /** Detail payload for the open-image-viewer event. */
 export interface OpenImageViewerDetail {
@@ -82,6 +91,31 @@ export function openFileSearchEvent() {
 /** Request to open the settings panel. */
 export function openSettingsEvent() {
   return new CustomEvent("open-settings", {
+    bubbles: true,
+    composed: true,
+  });
+}
+
+/** Request to open the file browser overlay. */
+export function openFileBrowserEvent() {
+  return new CustomEvent("open-file-browser", {
+    bubbles: true,
+    composed: true,
+  });
+}
+
+/** Request to switch the workspace to another pane. */
+export function paneSelectEvent(pane: WorkspacePane) {
+  return new CustomEvent<MainPaneSelectDetail>("pane-select", {
+    detail: { pane },
+    bubbles: true,
+    composed: true,
+  });
+}
+
+/** Request to reload the application. */
+export function reloadRequestEvent() {
+  return new CustomEvent("reload-request", {
     bubbles: true,
     composed: true,
   });

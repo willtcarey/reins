@@ -23,7 +23,13 @@ import { ViewportController } from "../controllers/viewport-controller.js";
 import { AppStore } from "../models/stores/app-store.js";
 import type { DiffRenderer } from "../models/stores/settings-store.js";
 // Ensure sub-components are registered
-import type { MainPaneSelectDetail } from "./app-main-toolbar.js";
+import type {
+  MainPaneSelectDetail,
+  MainWorkspacePane,
+  OpenImageViewerDetail,
+  OpenInBrowserDetail,
+  WorkspacePane,
+} from "./events.js";
 import "./app-main-toolbar.js";
 import "./chat-panel.js";
 import "./changes/diff-file-tree.js";
@@ -37,15 +43,12 @@ import type { FileSearch } from "./file-search.js";
 import "./file-viewer/file-browser.js";
 import type { FileBrowser } from "./file-viewer/file-browser.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
-import type { OpenImageViewerDetail, OpenInBrowserDetail } from "./events.js";
 import { setProjectDir, toRelativePath } from "../models/path-utils.js";
 import "./image-lightbox.js";
 import type { ImageLightbox } from "./image-lightbox.js";
 import "./settings/panel.js";
 import type { SettingsPanel } from "./settings/panel.js";
 
-type MainWorkspacePane = "chat" | "changes";
-type WorkspacePane = "sessions" | MainWorkspacePane | "files";
 type WorkspacePanes = Record<WorkspacePane, unknown>;
 
 const MOBILE_WORKSPACE_PANE_ORDER = [
@@ -243,7 +246,6 @@ export class AppShell extends LitElement {
         .isStandalone=${this.viewport.isStandalone}
         .connected=${store.connected}
         show-sidebar-button
-        @open-sidebar=${() => { this.activePane = "sessions"; }}
         @open-file-browser=${() => this._fileBrowser?.open()}
         @pane-select=${(e: CustomEvent<MainPaneSelectDetail>) => this.handleMainPaneSelect(e)}
         @reload-request=${() => location.reload()}

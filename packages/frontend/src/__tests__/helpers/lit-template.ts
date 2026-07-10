@@ -29,3 +29,34 @@ export function collectTemplateValues(value: unknown): unknown[] {
   if (!isTemplateResult(value)) return [];
   return value.values.flatMap((entry) => [entry, ...collectTemplateValues(entry)]);
 }
+
+export type TemplateEventListener = (event: Event) => unknown;
+
+function isTemplateEventListener(value: unknown): value is TemplateEventListener {
+  return typeof value === "function";
+}
+
+export function collectTemplateEventListeners(
+  value: unknown,
+  eventName: string,
+): TemplateEventListener[] {
+  if (value == null || value === false || value === nothing) return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => collectTemplateEventListeners(entry, eventName));
+  }
+  if (!isTemplateResult(value)) return [];
+
+  const listeners: TemplateEventListener[] = [];
+  for (let index = 0; index < value.values.length; index += 1) {
+    const entry = value.values[index];
+    const staticBeforeEntry = value.strings[index] ?? "";
+    if (
+      isTemplateEventListener(entry)
+      && staticBeforeEntry.trimEnd().endsWith(`@${eventName}=`)
+    ) {
+      listeners.push(entry);
+    }
+    listeners.push(...collectTemplateEventListeners(entry, eventName));
+  }
+  return listeners;
+}

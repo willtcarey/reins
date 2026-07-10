@@ -1,5 +1,15 @@
 import { describe, test, expect } from "bun:test";
-import { openInBrowserEvent } from "../../components/events.js";
+import {
+  openFileBrowserEvent,
+  openInBrowserEvent,
+  paneSelectEvent,
+  reloadRequestEvent,
+} from "../../components/events.js";
+
+function expectBubblingComposed(event: Event) {
+  expect(event.bubbles).toBe(true);
+  expect(event.composed).toBe(true);
+}
 
 describe("openInBrowserEvent", () => {
   test("creates event with path only", () => {
@@ -7,8 +17,7 @@ describe("openInBrowserEvent", () => {
     expect(event.detail).toEqual({ path: "src/index.ts" });
     expect(event.detail.startLine).toBeUndefined();
     expect(event.detail.endLine).toBeUndefined();
-    expect(event.bubbles).toBe(true);
-    expect(event.composed).toBe(true);
+    expectBubblingComposed(event);
   });
 
   test("creates event with path and line range", () => {
@@ -25,5 +34,29 @@ describe("openInBrowserEvent", () => {
   test("can request the preview tab", () => {
     const event = openInBrowserEvent("index.html", { viewMode: "preview" });
     expect(event.detail).toEqual({ path: "index.html", viewMode: "preview" });
+  });
+});
+
+describe("toolbar event factories", () => {
+  test("creates pane-select events", () => {
+    const event = paneSelectEvent("sessions");
+
+    expect(event.type).toBe("pane-select");
+    expect(event.detail).toEqual({ pane: "sessions" });
+    expectBubblingComposed(event);
+  });
+
+  test("creates open-file-browser events", () => {
+    const event = openFileBrowserEvent();
+
+    expect(event.type).toBe("open-file-browser");
+    expectBubblingComposed(event);
+  });
+
+  test("creates reload-request events", () => {
+    const event = reloadRequestEvent();
+
+    expect(event.type).toBe("reload-request");
+    expectBubblingComposed(event);
   });
 });

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { AppShell } from "../../components/app.js";
-import { collectTemplateValues, templateToString } from "../helpers/lit-template.js";
+import { collectTemplateEventListeners, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 
 const originalLocation = globalThis.location;
 const originalWindow = globalThis.window;
@@ -9,6 +9,52 @@ const originalNavigator = globalThis.navigator;
 function fullTemplateOutput(value: unknown): string {
   const collected = collectTemplateValues(value);
   return `${templateToString(value)}\n${templateToString(collected)}`;
+}
+
+function pointerEvent(fields: {
+  isPrimary?: boolean;
+  target?: EventTarget | null;
+  pointerId: number;
+  clientX: number;
+  clientY: number;
+  timeStamp: number;
+  currentTarget?: EventTarget | null;
+  preventDefault?: () => void;
+  composedPath?: () => EventTarget[];
+}): PointerEvent {
+  // @ts-expect-error The tests supply the PointerEvent fields AppShell's rendered handlers read.
+  return fields;
+}
+
+function installAppShellGlobals(options: {
+  mobile: boolean;
+  frameCallbacks?: FrameRequestCallback[];
+}) {
+  Reflect.set(globalThis, "location", { protocol: "http:", host: "localhost:3000" });
+  Reflect.set(globalThis, "navigator", { standalone: false });
+  Reflect.set(globalThis, "window", {
+    innerWidth: 390,
+    matchMedia: () => ({ matches: options.mobile }),
+    setTimeout(fn: () => void) { fn(); return 0; },
+    requestAnimationFrame(callback: FrameRequestCallback) {
+      options.frameCallbacks?.push(callback);
+      return options.frameCallbacks?.length ?? 1;
+    },
+    cancelAnimationFrame() {},
+  });
+}
+
+function installRenderableStore(el: AppShell) {
+  Reflect.set(el, "appStore", {
+    connected: true,
+    projectId: 42,
+    sessionId: "s1",
+    activeSessionStore: {},
+    activeProjectStore: {},
+    settingsStore: { diffRenderer: "classic" },
+    diffStore: { branch: "main" },
+    projectsStore: { activityForSession() {} },
+  });
 }
 
 afterEach(() => {
@@ -95,21 +141,10 @@ describe("AppShell visibility change", () => {
 
 describe("AppShell layout selection", () => {
   test("renders the desktop layout on wider viewports", () => {
-    Reflect.set(globalThis, "location", { protocol: "http:", host: "localhost:3000" });
-    Reflect.set(globalThis, "window", { matchMedia: () => ({ matches: false }) });
-    Reflect.set(globalThis, "navigator", { standalone: false });
+    installAppShellGlobals({ mobile: false });
 
     const el = new AppShell();
-    Reflect.set(el, "appStore", {
-      connected: true,
-      projectId: 42,
-      sessionId: "s1",
-      activeSessionStore: {},
-      activeProjectStore: {},
-      settingsStore: { diffRenderer: "classic" },
-      diffStore: { branch: "main" },
-      projectsStore: { activityForSession() {} },
-    });
+    installRenderableStore(el);
     const rendered = el.render();
     const output = fullTemplateOutput(rendered);
 
@@ -132,21 +167,10 @@ describe("AppShell layout selection", () => {
   });
 
   test("renders the mobile layout on mobile viewports", () => {
-    Reflect.set(globalThis, "location", { protocol: "http:", host: "localhost:3000" });
-    Reflect.set(globalThis, "window", { matchMedia: () => ({ matches: true }) });
-    Reflect.set(globalThis, "navigator", { standalone: false });
+    installAppShellGlobals({ mobile: true });
 
     const el = new AppShell();
-    Reflect.set(el, "appStore", {
-      connected: true,
-      projectId: 42,
-      sessionId: "s1",
-      activeSessionStore: {},
-      activeProjectStore: {},
-      settingsStore: { diffRenderer: "classic" },
-      diffStore: { branch: "main" },
-      projectsStore: { activityForSession() {} },
-    });
+    installRenderableStore(el);
     const rendered = el.render();
     const output = fullTemplateOutput(rendered);
 
@@ -163,5 +187,87 @@ describe("AppShell layout selection", () => {
     expect(output).not.toContain("Changed files");
     expect(output).not.toContain("<desktop-layout");
     expect(output).not.toContain("<mobile-layout");
+  });
+
+  test("updates the mobile workspace transform during a swipe and settles on the next pane", () => {
+    const frameCallbacks: FrameRequestCallback[] = [];
+    installAppShellGlobals({ mobile: true, frameCallbacks });
+    const el = new AppShell();
+    installRenderableStore(el);
+
+    const rendered = el.render();
+    const [pointerDown] = collectTemplateEventListeners(rendered, "pointerdown");
+    const [pointerMove] = collectTemplateEventListeners(rendered, "pointermove");
+    const [pointerUp] = collectTemplateEventListeners(rendered, "pointerup");
+    expect(pointerDown).toBeDefined();
+    expect(pointerMove).toBeDefined();
+    expect(pointerUp).toBeDefined();
+
+    pointerDown(pointerEvent({
+      isPrimary: true,
+      target: null,
+      pointerId: 1,
+      clientX: 0,
+      clientY: 0,
+      timeStamp: 0,
+    }));
+    pointerMove(pointerEvent({
+      pointerId: 1,
+      clientX: -180,
+      clientY: 0,
+      timeStamp: 16,
+      currentTarget: null,
+      preventDefault() {},
+    }));
+
+    expect(fullTemplateOutput(el.render()))
+      .toContain("transform: translate3d(-570px, 0, 0);");
+
+    pointerUp(pointerEvent({
+      pointerId: 1,
+      clientX: -220,
+      clientY: 0,
+      timeStamp: 48,
+    }));
+
+    for (let index = 0; index < frameCallbacks.length; index += 1) {
+      frameCallbacks[index](index * 16);
+      if (fullTemplateOutput(el.render()).includes("transform: translate3d(-200%, 0, 0);")) break;
+    }
+
+    expect(fullTemplateOutput(el.render()))
+      .toContain("transform: translate3d(-200%, 0, 0);");
+  });
+
+  test("does not move the workspace from pointer drags on desktop", () => {
+    installAppShellGlobals({ mobile: false });
+    const el = new AppShell();
+    installRenderableStore(el);
+
+    const rendered = el.render();
+    const [pointerDown] = collectTemplateEventListeners(rendered, "pointerdown");
+    const [pointerMove] = collectTemplateEventListeners(rendered, "pointermove");
+    let prevented = false;
+
+    pointerDown(pointerEvent({
+      isPrimary: true,
+      target: null,
+      pointerId: 1,
+      clientX: 0,
+      clientY: 0,
+      timeStamp: 0,
+    }));
+    pointerMove(pointerEvent({
+      pointerId: 1,
+      clientX: -180,
+      clientY: 0,
+      timeStamp: 16,
+      currentTarget: null,
+      preventDefault() { prevented = true; },
+    }));
+
+    expect(prevented).toBe(false);
+    expect(fullTemplateOutput(el.render()))
+      .toContain("transform: translate3d(-100%, 0, 0);");
   });
 });

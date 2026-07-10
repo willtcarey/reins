@@ -1,13 +1,9 @@
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import { openFileBrowserEvent, paneSelectEvent, reloadRequestEvent } from "./events.js";
+import type { MainPaneSelectDetail, MainWorkspacePane } from "./events.js";
 import "./branch-indicator.js";
 import "./nav-icon.js";
-
-type MainWorkspacePane = "chat" | "changes";
-
-export interface MainPaneSelectDetail {
-  pane: MainWorkspacePane;
-}
 
 @customElement("app-main-toolbar")
 export class AppMainToolbar extends LitElement {
@@ -21,16 +17,8 @@ export class AppMainToolbar extends LitElement {
   @property({ type: Boolean }) connected = false;
   @property({ type: Boolean, attribute: "show-sidebar-button" }) showSidebarButton = false;
 
-  private dispatchSimple(type: string) {
-    this.dispatchEvent(new CustomEvent(type, { bubbles: true, composed: true }));
-  }
-
-  private selectPane(pane: MainWorkspacePane) {
-    this.dispatchEvent(new CustomEvent<MainPaneSelectDetail>("pane-select", {
-      detail: { pane },
-      bubbles: true,
-      composed: true,
-    }));
+  private selectPane(pane: MainPaneSelectDetail["pane"]) {
+    this.dispatchEvent(paneSelectEvent(pane));
   }
 
   private renderMenuIcon() {
@@ -51,14 +39,14 @@ export class AppMainToolbar extends LitElement {
         ${this.showSidebarButton ? html`
           <button
             class="p-2 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 cursor-pointer shrink-0 transition-colors md:hidden"
-            @click=${() => this.dispatchSimple("open-sidebar")}
+            @click=${() => this.selectPane("sessions")}
             title="Open sidebar"
           >
             ${this.renderMenuIcon()}
           </button>
         ` : ""}
         <nav-icon icon="folder" label="Browse files" .size=${18}
-          @click=${() => this.dispatchSimple("open-file-browser")}></nav-icon>
+          @click=${() => this.dispatchEvent(openFileBrowserEvent())}></nav-icon>
         <div class="relative grid grid-cols-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-1 shrink-0 overflow-hidden">
           <span
             class="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-md bg-blue-500/20 shadow-sm transition-transform duration-200 ease-out will-change-transform ${chatActive ? "translate-x-0" : "translate-x-full"}"
@@ -85,7 +73,7 @@ export class AppMainToolbar extends LitElement {
         ${this.isStandalone ? html`
           <button
             class="p-1.5 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/70 transition-colors cursor-pointer shrink-0"
-            @click=${() => this.dispatchSimple("reload-request")}
+            @click=${() => this.dispatchEvent(reloadRequestEvent())}
             title="Reload"
           >
             ${this.renderReloadIcon()}
