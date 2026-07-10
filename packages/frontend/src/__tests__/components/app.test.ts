@@ -6,35 +6,9 @@ const originalLocation = globalThis.location;
 const originalWindow = globalThis.window;
 const originalNavigator = globalThis.navigator;
 
-function isObject(value: unknown): value is Record<PropertyKey, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function isUnknownArray(value: unknown): value is unknown[] {
-  return Array.isArray(value);
-}
-
-function isWorkspacePaneRecord(value: unknown): value is Record<string, unknown> {
-  return isObject(value)
-    && "sessions" in value
-    && "chat" in value
-    && "changes" in value
-    && "files" in value;
-}
-
-function workspacePaneOutput(values: unknown[]): string {
-  const panes = values.find(isWorkspacePaneRecord);
-  if (!panes) return "";
-
-  const paneValues = Object.values(panes);
-  const nestedValues = paneValues.flatMap((value) => [value, ...collectTemplateValues(value)]);
-  const directiveTemplates = nestedValues
-    .map((value) => isObject(value) ? Reflect.get(value, "values") : null)
-    .filter(isUnknownArray)
-    .map((directiveValues) => templateToString(directiveValues[1]))
-    .join("\n");
-
-  return `${templateToString(paneValues)}\n${directiveTemplates}`;
+function fullTemplateOutput(value: unknown): string {
+  const collected = collectTemplateValues(value);
+  return `${templateToString(value)}\n${templateToString(collected)}`;
 }
 
 afterEach(() => {
@@ -137,16 +111,23 @@ describe("AppShell layout selection", () => {
       projectsStore: { activityForSession() {} },
     });
     const rendered = el.render();
-    const output = templateToString(rendered);
-    const layoutValues = collectTemplateValues(rendered);
-    const panesOutput = workspacePaneOutput(layoutValues);
+    const output = fullTemplateOutput(rendered);
 
-    expect(output).toContain("<desktop-layout");
-    expect(panesOutput).toContain("<session-sidebar");
-    expect(panesOutput).toContain("<app-main-toolbar");
-    expect(panesOutput).toContain("<diff-file-tree");
-    expect(panesOutput).toContain("<chat-panel");
-    expect(panesOutput).toContain("<diff-renderer-shell");
+    expect(output).toContain("data-workspace-shell");
+    expect(output).toContain("overflow-clip swipe-shell");
+    expect(output).toContain("workspace-surface");
+    expect(output).toContain("md:!transform-none");
+    expect(output).toContain("md:![grid-template-columns:auto_minmax(0,1fr)_15rem]");
+    expect(output).not.toContain("swipe-shell md:grid");
+    expect(output).not.toContain("md:grid-cols-[auto_minmax(0,1fr)_15rem]");
+    expect(output).not.toContain("md:col-span-3");
+    expect(output).toContain("grid-template-columns: repeat(4, 100%); transform: translate3d(-100%, 0, 0);");
+    expect(output).not.toContain("data-page-swipe-region");
+    expect(output).not.toContain("sidebar-close-request");
+    expect(output).toContain("<session-sidebar");
+    expect(output).toContain("<app-main-toolbar");
+    expect(output).toContain("<diff-file-tree");
+    expect(output).not.toContain("<desktop-layout");
     expect(output).not.toContain("<mobile-layout");
   });
 
@@ -167,14 +148,18 @@ describe("AppShell layout selection", () => {
       projectsStore: { activityForSession() {} },
     });
     const rendered = el.render();
-    const output = templateToString(rendered);
-    const panesOutput = workspacePaneOutput(collectTemplateValues(rendered));
+    const output = fullTemplateOutput(rendered);
 
-    expect(output).toContain("<mobile-layout");
-    expect(panesOutput).toContain("<session-sidebar");
-    expect(panesOutput).toContain("<app-main-toolbar");
+    expect(output).toContain("data-workspace-shell");
+    expect(output).toContain("overflow-clip swipe-shell");
+    expect(output).toContain("workspace-surface");
+    expect(output).toContain("grid-template-columns: repeat(4, 100%); transform: translate3d(-100%, 0, 0);");
+    expect(output).toContain("<session-sidebar");
+    expect(output).toContain("<app-main-toolbar");
     expect(output).not.toContain("show-connection-status");
-    expect(panesOutput).toContain("<diff-file-tree");
+    expect(output).toContain("<diff-file-tree");
+    expect(output).not.toContain("Changed files");
     expect(output).not.toContain("<desktop-layout");
+    expect(output).not.toContain("<mobile-layout");
   });
 });

@@ -32,15 +32,18 @@ html, body {
   --input-bottom: 0.75rem;
 }
 
-.swipe-pager-shell {
+.swipe-shell {
   touch-action: auto;
   overscroll-behavior-x: contain;
+  /* Do not let mobile browsers restore a horizontal scrollLeft on reload.
+     The swipe pager is transform-driven; making the shell a scroll container
+     can desync the visible page from app-shell's active pane. */
+  overflow: clip;
 }
 
-.swipe-pager-strip {
+.workspace-surface {
   will-change: transform;
 }
-
 
 /* Diff line colors — background only so syntax highlighting shows through */
 .diff-add {

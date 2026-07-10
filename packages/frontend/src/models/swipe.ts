@@ -1,23 +1,19 @@
 import { Spring } from "./spring.js";
 
-type SwipePagerGestureAxis = "pending" | "horizontal" | "vertical";
+type SwipeGestureAxis = "pending" | "horizontal" | "vertical";
 
 const MIN_SWIPE_DISTANCE = 12;
 const HORIZONTAL_DOMINANCE = 1.25;
-const SETTLE_DISTANCE_RATIO = 0.35;
-const SETTLE_INERTIA_MS = 180;
-const EDGE_RESISTANCE = 0.4;
+const SWIPE_SURFACE_SELECTOR = "[data-swipe-surface]";
 
-const SWIPE_PAGER_SURFACE_SELECTOR = "[data-swipe-pager-surface]";
-
-const SWIPE_PAGER_ALWAYS_IGNORE_SELECTOR = [
+const SWIPE_ALWAYS_IGNORE_SELECTOR = [
   "input",
   "textarea",
   "select",
   "[contenteditable]:not([contenteditable='false'])",
 ].join(",");
 
-const SWIPE_PAGER_CONDITIONAL_IGNORE_SELECTOR = [
+const SWIPE_CONDITIONAL_IGNORE_SELECTOR = [
   "button",
   "a",
   "summary",
@@ -26,36 +22,45 @@ const SWIPE_PAGER_CONDITIONAL_IGNORE_SELECTOR = [
   "[role='link']",
 ].join(",");
 
-export interface SwipePagerSwipeState {
+export interface SwipeState {
   translateX: number | null;
   dragging: boolean;
   settling: boolean;
 }
 
-export interface SwipePagerSwipeStartOptions {
-  event: PointerEvent;
-  page: number;
-  pageCount: number;
-  getViewportWidth: () => number;
-  onStateChange: (state: SwipePagerSwipeState) => void;
-  onCommitPage: (page: number) => void;
-  onDone: (swipe: SwipePagerSwipe) => void;
+export interface SwipeTarget {
+  translateX: number;
+  onSettle?: () => void;
 }
 
-interface SwipePagerSwipePointerState {
+export interface SwipeRelease {
+  dx: number;
+  velocityX: number;
+}
+
+export interface SwipeStartOptions {
+  event: PointerEvent;
+  getDragTranslateX: (dx: number) => number;
+  getReleaseTarget: (release: SwipeRelease) => SwipeTarget;
+  getCancelTarget: () => SwipeTarget;
+  onStateChange: (state: SwipeState) => void;
+  onDone: (swipe: Swipe) => void;
+}
+
+interface SwipePointerState {
   pointerId: number;
   startX: number;
   startY: number;
   startPath: readonly EventTarget[];
   lastX: number;
   lastTime: number;
-  axis: SwipePagerGestureAxis;
+  axis: SwipeGestureAxis;
 }
 
-function classifySwipePagerGesture(
+function classifySwipeGesture(
   dx: number,
   dy: number,
-): SwipePagerGestureAxis {
+): SwipeGestureAxis {
   const absX = Math.abs(dx);
   const absY = Math.abs(dy);
 
@@ -70,56 +75,18 @@ function classifySwipePagerGesture(
   return "vertical";
 }
 
-function clampPage(page: number, pageCount: number): number {
-  const lastPage = Math.max(0, Math.floor(pageCount) - 1);
-  return Math.min(Math.max(Math.round(page), 0), lastPage);
-}
-
-function swipePagerDragOffset(
-  currentPage: number,
-  dx: number,
-  pageCount: number,
-): number {
-  const clampedPage = clampPage(currentPage, pageCount);
-  const lastPage = clampPage(Number.POSITIVE_INFINITY, pageCount);
-  if ((clampedPage === 0 && dx > 0) || (clampedPage === lastPage && dx < 0)) {
-    return dx * EDGE_RESISTANCE;
-  }
-
-  return dx;
-}
-
-function settleSwipePagerPage(
-  currentPage: number,
-  dx: number,
-  velocityX: number,
-  viewportWidth: number,
-  pageCount: number,
-): number {
-  const width = Math.max(1, viewportWidth);
-  const clampedPage = clampPage(currentPage, pageCount);
-  const projectedDx = dx + velocityX * SETTLE_INERTIA_MS;
-
-  if (Math.abs(projectedDx) < width * SETTLE_DISTANCE_RATIO) return clampedPage;
-
-  if (projectedDx < 0) return clampPage(clampedPage + 1, pageCount);
-  if (projectedDx > 0) return clampPage(clampedPage - 1, pageCount);
-
-  return clampedPage;
-}
-
-function shouldIgnoreSwipePagerDrag(target: EventTarget | null): boolean {
+function shouldIgnoreSwipeDrag(target: EventTarget | null): boolean {
   if (typeof Element === "undefined" || !(target instanceof Element)) return false;
 
-  if (target.closest(SWIPE_PAGER_ALWAYS_IGNORE_SELECTOR) !== null) return true;
+  if (target.closest(SWIPE_ALWAYS_IGNORE_SELECTOR) !== null) return true;
 
-  const interactive = target.closest(SWIPE_PAGER_CONDITIONAL_IGNORE_SELECTOR) !== null;
+  const interactive = target.closest(SWIPE_CONDITIONAL_IGNORE_SELECTOR) !== null;
   if (!interactive) return false;
 
-  return target.closest(SWIPE_PAGER_SURFACE_SELECTOR) === null;
+  return target.closest(SWIPE_SURFACE_SELECTOR) === null;
 }
 
-function shouldLetHorizontalScrollHandleSwipePagerDrag(
+function shouldLetHorizontalScrollHandleSwipeDrag(
   targetOrPath: EventTarget | readonly EventTarget[] | null,
   dx: number,
 ): boolean {
@@ -157,13 +124,12 @@ function canElementScrollHorizontally(element: HTMLElement): boolean {
  * spring. The hosting component only delegates DOM events and renders emitted
  * state; all per-swipe mutable state stays scoped to this instance.
  */
-export class SwipePagerSwipe {
-  private pointer: SwipePagerSwipePointerState;
+export class Swipe {
+  private pointer: SwipePointerState;
   private translateX: number | null = null;
   private dragging = false;
   private settling = false;
-  private dragOffset = 0;
-  private pendingPage: number | null = null;
+  private pendingTarget: SwipeTarget | null = null;
   private spring: Spring | null = null;
   private suppressNextClick = false;
   private clickSuppressionPending = false;
@@ -171,7 +137,7 @@ export class SwipePagerSwipe {
   private disposed = false;
   private doneNotified = false;
 
-  private constructor(private readonly options: SwipePagerSwipeStartOptions, startPath: readonly EventTarget[]) {
+  private constructor(private readonly options: SwipeStartOptions, startPath: readonly EventTarget[]) {
     const event = options.event;
     this.pointer = {
       pointerId: event.pointerId,
@@ -184,9 +150,9 @@ export class SwipePagerSwipe {
     };
   }
 
-  static start(options: SwipePagerSwipeStartOptions): SwipePagerSwipe | null {
+  static start(options: SwipeStartOptions): Swipe | null {
     const event = options.event;
-    if (!event.isPrimary || shouldIgnoreSwipePagerDrag(event.target)) return null;
+    if (!event.isPrimary || shouldIgnoreSwipeDrag(event.target)) return null;
 
     const startPath: EventTarget[] = [];
     if (typeof event.composedPath === "function") {
@@ -196,7 +162,7 @@ export class SwipePagerSwipe {
     }
     if (startPath.length === 0 && event.target) startPath.push(event.target);
 
-    return new SwipePagerSwipe(options, startPath);
+    return new Swipe(options, startPath);
   }
 
   move(event: PointerEvent) {
@@ -206,13 +172,13 @@ export class SwipePagerSwipe {
     const dy = event.clientY - this.pointer.startY;
 
     if (this.pointer.axis === "pending") {
-      this.pointer.axis = classifySwipePagerGesture(dx, dy);
+      this.pointer.axis = classifySwipeGesture(dx, dy);
       if (this.pointer.axis === "vertical") {
         this.complete();
         return;
       }
       if (this.pointer.axis === "horizontal") {
-        if (shouldLetHorizontalScrollHandleSwipePagerDrag(this.pointer.startPath, dx)) {
+        if (shouldLetHorizontalScrollHandleSwipeDrag(this.pointer.startPath, dx)) {
           this.complete();
           return;
         }
@@ -225,8 +191,7 @@ export class SwipePagerSwipe {
     if (this.pointer.axis !== "horizontal") return;
 
     event.preventDefault();
-    this.dragOffset = swipePagerDragOffset(this.options.page, dx, this.options.pageCount);
-    this.translateX = this.pageTranslateX(this.options.page) + this.dragOffset;
+    this.translateX = this.options.getDragTranslateX(dx);
     this.pointer.lastX = event.clientX;
     this.pointer.lastTime = event.timeStamp;
     this.emitState();
@@ -245,16 +210,9 @@ export class SwipePagerSwipe {
     }
 
     this.startClickSuppression();
-    const targetPage = settleSwipePagerPage(
-      this.options.page,
-      dx,
-      velocityX,
-      this.options.getViewportWidth(),
-      this.options.pageCount,
-    );
     this.startSpringAnimation(
-      targetPage,
-      this.pageTranslateX(this.options.page) + this.dragOffset,
+      this.options.getReleaseTarget({ dx, velocityX }),
+      this.translateX ?? this.options.getDragTranslateX(dx),
       velocityX,
     );
   }
@@ -263,13 +221,13 @@ export class SwipePagerSwipe {
     if (this.disposed || event.pointerId !== this.pointer.pointerId) return;
 
     this.startSpringAnimation(
-      this.options.page,
-      this.pageTranslateX(this.options.page) + this.dragOffset,
+      this.options.getCancelTarget(),
+      this.translateX ?? this.options.getDragTranslateX(event.clientX - this.pointer.startX),
       0,
     );
   }
 
-  touchMoveCapture(event: TouchEvent): boolean {
+  touchMoveCapture(event: { preventDefault(): void }): boolean {
     if (this.disposed || this.pointer.axis !== "horizontal") return false;
 
     event.preventDefault();
@@ -302,10 +260,6 @@ export class SwipePagerSwipe {
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
-  private pageTranslateX(page: number) {
-    return -clampPage(page, this.options.pageCount) * this.options.getViewportWidth();
-  }
-
   private emitState() {
     this.options.onStateChange({
       translateX: this.translateX,
@@ -325,14 +279,14 @@ export class SwipePagerSwipe {
     }, 0);
   }
 
-  private startSpringAnimation(targetPage: number, startX: number, velocityX: number) {
+  private startSpringAnimation(target: SwipeTarget, startX: number, velocityX: number) {
     this.cancelSpringAnimation();
-    this.pendingPage = clampPage(targetPage, this.options.pageCount);
+    this.pendingTarget = target;
     this.dragging = false;
     this.settling = true;
     this.spring = new Spring({
       value: startX,
-      target: this.pageTranslateX(this.pendingPage),
+      target: target.translateX,
       velocity: velocityX,
       onUpdate: (value) => {
         this.translateX = value;
@@ -345,10 +299,10 @@ export class SwipePagerSwipe {
   private finishSpringAnimation() {
     if (this.disposed) return;
 
-    const targetPage = this.pendingPage;
+    const target = this.pendingTarget;
     this.spring = null;
-    if (targetPage !== null) this.options.onCommitPage(targetPage);
-    this.pendingPage = null;
+    target?.onSettle?.();
+    this.pendingTarget = null;
     this.translateX = null;
     this.dragging = false;
     this.settling = false;

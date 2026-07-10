@@ -4,7 +4,7 @@ import {
   ScrollToController,
   type ScrollToElement,
   type ScrollToHost,
-} from "../controllers/scroll-to-controller.js";
+} from "../../controllers/scroll-to-controller.js";
 
 interface FakeHost extends ScrollToHost {
   controllers: ReactiveController[];

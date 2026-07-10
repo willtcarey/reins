@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { ReactiveController, ReactiveControllerHost } from "lit";
-import "./helpers/local-storage.js";
-import { AppRouteController } from "../controllers/app-route-controller.js";
+import "../helpers/local-storage.js";
+import { AppRouteController } from "../../controllers/app-route-controller.js";
 
 function fakeHost(): ReactiveControllerHost {
   return {

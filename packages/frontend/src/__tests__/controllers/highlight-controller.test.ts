@@ -7,8 +7,8 @@
  * Same-ref assignments are skipped.
  */
 import { describe, test, expect } from "bun:test";
-import { HighlightController } from "../controllers/highlight-controller.js";
-import type { IHighlighter, HighlightHunkCallback } from "../models/changes/highlighter.js";
+import { HighlightController } from "../../controllers/highlight-controller.js";
+import type { IHighlighter, HighlightHunkCallback } from "../../models/changes/highlighter.js";
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 
 // ---------------------------------------------------------------------------

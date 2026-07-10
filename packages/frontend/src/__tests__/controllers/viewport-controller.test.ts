@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { ReactiveController, ReactiveControllerHost } from "lit";
-import { ViewportController } from "../controllers/viewport-controller.js";
+import { ViewportController } from "../../controllers/viewport-controller.js";
 
 function fakeHost() {
   const host = {

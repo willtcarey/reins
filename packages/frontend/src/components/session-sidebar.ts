@@ -121,18 +121,10 @@ export class SessionSidebar extends LitElement {
 
   // ---- Event handlers from child components ---------------------------------
 
-  /** Ask the responsive layout to hide the sidebar after navigating. */
-  private requestSidebarClose() {
-    if (window.innerWidth <= 768) {
-      this.dispatchEvent(new CustomEvent("sidebar-close-request", { bubbles: true, composed: true }));
-    }
-  }
-
   private handleSelectSession(e: CustomEvent<{ projectId: number; sessionId: string }>) {
     const { sessionId } = e.detail;
     if (!sessionId) return;
     navigateToSession(sessionId);
-    this.requestSidebarClose();
   }
 
   private async handleNewSession(e: CustomEvent<{ projectId: number }>) {
@@ -141,7 +133,6 @@ export class SessionSidebar extends LitElement {
     const result = await this.store?.createSession(projectId);
     if (result && "sessionId" in result) {
       navigateToSession(result.sessionId);
-      this.requestSidebarClose();
     }
   }
 
@@ -151,7 +142,6 @@ export class SessionSidebar extends LitElement {
     const result = await this.store?.createTaskSession(taskId, projectId);
     if (result && "sessionId" in result) {
       navigateToSession(result.sessionId);
-      this.requestSidebarClose();
     } else if (result && "error" in result) {
       showToast(result.error, "error");
     }
@@ -196,10 +186,7 @@ export class SessionSidebar extends LitElement {
   }
 
   private toggleCollapse() {
-    if (window.innerWidth <= 768) {
-      this.dispatchEvent(new CustomEvent("sidebar-close-request", { bubbles: true, composed: true }));
-      return;
-    }
+    if (window.innerWidth <= 768) return;
     this.collapsed = !this.collapsed;
   }
 
@@ -428,7 +415,7 @@ export class SessionSidebar extends LitElement {
             <nav-icon icon="settings" label="Settings" .size=${18} @click=${this._openSettings}></nav-icon>
             <div class="flex-1 min-w-0"></div>
             <button
-              class="p-2 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 cursor-pointer transition-colors shrink-0"
+              class="hidden md:block p-2 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 cursor-pointer transition-colors shrink-0"
               @click=${this.toggleCollapse}
               title="Hide sidebar"
             >
@@ -447,7 +434,7 @@ export class SessionSidebar extends LitElement {
           <div
             class="flex-1 overflow-y-auto"
             data-sidebar-scroll-container
-            data-swipe-pager-surface
+            data-swipe-surface
           >
             ${this.sortedProjects.map(p => this.renderProjectSection(p))}
 

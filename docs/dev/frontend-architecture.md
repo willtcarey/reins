@@ -62,8 +62,6 @@ Lit custom elements that own rendering and user interaction. Import from `models
 
 ```
 components/
-├── layouts/             Top-level responsive layout wrappers and shared pagers
-│   ├── desktop-layout.ts, mobile-layout.ts, swipe-pager.ts
 ├── changes/             Diff viewer components
 │   ├── diff-panel.ts, diff-file-card.ts, diff-file-tree.ts
 │   ├── diff-hunk.ts, diff-markdown-preview.ts
@@ -93,7 +91,8 @@ Lit reactive controllers — lifecycle-managed glue reused across components. Se
 controllers/
 ├── store-controller.ts          Generic store subscription
 ├── highlight-controller.ts      Shiki web worker bridge
-└── lazy-highlight-controller.ts IntersectionObserver + highlighting
+├── lazy-highlight-controller.ts IntersectionObserver + highlighting
+└── page-swipe-controller.ts     Mobile page swipe event/state wiring
 ```
 
 ## Data Flow
@@ -219,19 +218,18 @@ Hash-based routing with a single pattern:
 - `#/session/:sessionId` — View a specific session
 - (empty hash) — No session selected, show empty state
 
-`components/app.ts` listens for `hashchange`, parses the route, and calls `store.setRoute()`. The store fetches the session data (which includes `project_id`) and derives the active project from it. The chat panel is rendered with `keyed(store.sessionId, ...)` so switching sessions remounts the component and clears any per-session ephemeral UI state.
+`AppRouteController` listens for `hashchange`, parses the route, and calls `store.setRoute()`. The store fetches the session data (which includes `project_id`) and derives the active project from it. The chat panel is rendered with `keyed(store.sessionId, ...)` so switching sessions remounts the component and clears any per-session ephemeral UI state.
 
 ### Last-viewed hash restore
 
-The router module provides `getLastHash()` and `saveHash()` helpers backed by `localStorage` (`reins:last-hash` key). `app.ts` saves `location.hash` on every `hashchange` event, and restores it on fresh page loads when no hash route is present. This is a pure routing concern — the store layer is not involved. If a stored hash points to a deleted session, the normal fetch-404 handling shows the empty state.
+The router module provides `getLastHash()` and `saveHash()` helpers backed by `localStorage` (`reins:last-hash` key). `AppRouteController` saves `location.hash` on every `hashchange` event, and restores it on fresh page loads when no hash route is present. This is a pure routing concern — the store layer is not involved. If a stored hash points to a deleted session, the normal fetch-404 handling shows the empty state.
 
 ## Component structure
 
-`app-shell` renders one canonical named `WorkspacePanes` object (`sessions`, `chat`, `changes`, `files`) and passes that same pane set into the selected desktop or mobile layout wrapper. Layout components arrange caller-provided panes and may add layout chrome such as mobile toolbars; they should not duplicate the app page structure or create their own store-bound sidebar/chat/changes/file-tree instances. App-level navigation should use named `WorkspacePane` values rather than mobile page indexes; only `mobile-layout` translates the mobile order (`sessions → chat → changes → files`) to `swipe-pager` page numbers.
+`app-shell` renders one canonical named pane set (`sessions`, `chat`, `changes`, `files`) into a single responsive workspace DOM. The workspace grid is a four-page mobile swipe surface (`sessions → chat → changes → files`) and becomes a desktop CSS grid at the `md` breakpoint (`sessions | chat/changes | files`) via responsive classes. A single main toolbar is overlaid on mobile chat/changes and occupies the center grid header on desktop. App-level navigation should use named `WorkspacePane` values rather than mobile page indexes; only `app-shell` translates the mobile page order to workspace page numbers.
 
 ```
-app-shell                    — root shell, creates store, applies routes, selects layout
-├── desktop-layout/mobile-layout — responsive wrappers around app-shell-provided panes
+app-shell                    — root shell, creates store, applies routes, renders workspace panes
 ├── session-sidebar          — project list, task list, session list
 │   ├── project-sidebar      — project selector + CRUD
 │   ├── task-list            — tasks with expandable session sublists
@@ -239,10 +237,9 @@ app-shell                    — root shell, creates store, applies routes, sele
 │   ├── task-detail          — task edit/delete
 │   └── session-list         — scratch sessions
 ├── chat-panel               — message display + composer orchestration
-│   ├── chat-composer        — prompt input, autosize, skill suggestions, image attachments
-│   └── diff-file-tree       — file tree sidebar (wide screens)
+│   └── chat-composer        — prompt input, autosize, skill suggestions, image attachments
 ├── diff-panel               — full diff view with file cards
-│   └── diff-file-tree       — file tree with scroll spy
+├── diff-file-tree           — app-owned changed-file pane/sidebar
 ├── quick-open               — Cmd+K fuzzy search across all sessions
 ├── file-search              — Cmd+P fuzzy file search (uses search-palette)
 ├── file-browser             — file viewer overlay shell
@@ -252,9 +249,9 @@ app-shell                    — root shell, creates store, applies routes, sele
 
 All components live under `components/`. Sub-directories (`changes/`, `tools/`) group related components.
 
-### Mobile swipe pager
+### Mobile workspace swipe
 
-`components/layouts/swipe-pager.ts` owns pager rendering and delegates each pointer-driven swipe to a short-lived `SwipePagerSwipe` instance in `models/swipe-pager-swipe.ts`. The swipe instance lasts from accepted `pointerdown` through drag classification, release/cancel spring animation, click suppression, and completion; keep per-swipe mutable state there rather than adding reset-heavy gesture fields to the Lit component. Simple page clamping stays local to the caller; the shared scalar spring animation lifecycle lives in the one-shot `Spring` class in `models/spring.ts`; swipe-specific thresholds and DOM opt-out predicates stay private to `models/swipe-pager-swipe.ts`.
+`components/app.ts` owns workspace rendering and delegates mobile swipe event wiring/state to `PageSwipeController` in `controllers/page-swipe-controller.ts`. The workspace uses a single inner `.workspace-surface` grid as the layout authority: mobile translates the four full-width page columns (`sessions → chat → changes → files`), while the `md` breakpoint changes that same grid to the desktop columns. The outer workspace shell only clips overflow and hosts pointer listeners; keep it `overflow-clip` so it never becomes a restorable scroll container that can desync the visible mobile page from `activePane`. Do not add a second desktop grid wrapper around the surface. The controller owns page-specific behavior — page clamping, edge resistance, release thresholds, translate targets, and page commits — and creates one short-lived `Swipe` instance from `models/swipe.ts` per pointer-driven swipe. The swipe instance lasts from accepted `pointerdown` through drag classification, release/cancel spring animation, click suppression, and completion; keep per-swipe mutable state there rather than adding reset-heavy gesture fields to the Lit component. The shared scalar spring animation lifecycle lives in the one-shot `Spring` class in `models/spring.ts`; swipe-specific pointer classification and DOM opt-out predicates stay private to `models/swipe.ts`.
 
 ### Sidebar layout
 

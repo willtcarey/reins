@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SwipePagerSwipe, type SwipePagerSwipeState } from "../../models/swipe-pager-swipe.js";
+import { Swipe, type SwipeState } from "../../models/swipe.js";
 
 function pointerEvent(fields: {
   isPrimary?: boolean;
@@ -12,17 +12,17 @@ function pointerEvent(fields: {
   preventDefault?: () => void;
   composedPath?: () => EventTarget[];
 }): PointerEvent {
-  // @ts-expect-error The tests supply the PointerEvent fields SwipePagerSwipe reads.
+  // @ts-expect-error The tests supply the PointerEvent fields Swipe reads.
   return fields;
 }
 
-describe("SwipePagerSwipe", () => {
+describe("Swipe", () => {
   test("owns a horizontal swipe through its release spring", () => {
     const originalHTMLElement = globalThis.HTMLElement;
     const originalWindow = globalThis.window;
     const frameCallbacks: FrameRequestCallback[] = [];
-    const states: SwipePagerSwipeState[] = [];
-    const commits: number[] = [];
+    const states: SwipeState[] = [];
+    let committed = false;
     let done = false;
 
     Reflect.set(globalThis, "HTMLElement", function HTMLElement() {});
@@ -37,7 +37,7 @@ describe("SwipePagerSwipe", () => {
     });
 
     try {
-      const swipe = SwipePagerSwipe.start({
+      const swipe = Swipe.start({
         event: pointerEvent({
           isPrimary: true,
           target: null,
@@ -46,11 +46,13 @@ describe("SwipePagerSwipe", () => {
           clientY: 0,
           timeStamp: 0,
         }),
-        page: 4,
-        pageCount: 6,
-        getViewportWidth: () => 390,
+        getDragTranslateX: (dx) => -1560 + dx,
+        getReleaseTarget: () => ({
+          translateX: -1950,
+          onSettle: () => { committed = true; },
+        }),
+        getCancelTarget: () => ({ translateX: -1560 }),
         onStateChange: (state) => states.push({ ...state }),
-        onCommitPage: (page) => commits.push(page),
         onDone: () => { done = true; },
       });
 
@@ -75,7 +77,7 @@ describe("SwipePagerSwipe", () => {
       }));
 
       expect(states.at(-1)).toEqual({ translateX: -1780, dragging: false, settling: true });
-      expect(commits).toEqual([]);
+      expect(committed).toBe(false);
       expect(done).toBe(false);
 
       for (let index = 0; index < frameCallbacks.length; index += 1) {
@@ -83,7 +85,7 @@ describe("SwipePagerSwipe", () => {
         if (done) break;
       }
 
-      expect(commits).toEqual([5]);
+      expect(committed).toBe(true);
       expect(states.at(-1)).toEqual({ translateX: null, dragging: false, settling: false });
       expect(done).toBe(true);
     } finally {
@@ -92,40 +94,15 @@ describe("SwipePagerSwipe", () => {
     }
   });
 
-  test("adds resistance when dragging past either configured end", () => {
-    const states: SwipePagerSwipeState[] = [];
-    const swipe = SwipePagerSwipe.start({
-      event: pointerEvent({ isPrimary: true, target: null, pointerId: 1, clientX: 0, clientY: 0, timeStamp: 0 }),
-      page: 0,
-      pageCount: 4,
-      getViewportWidth: () => 390,
-      onStateChange: (state) => states.push({ ...state }),
-      onCommitPage() {},
-      onDone() {},
-    });
-
-    swipe?.move(pointerEvent({
-      pointerId: 1,
-      clientX: 100,
-      clientY: 0,
-      timeStamp: 16,
-      currentTarget: null,
-      preventDefault() {},
-    }));
-
-    expect(states.at(-1)?.translateX).toBe(40);
-  });
-
   test("abandons vertical drags so scrolling can continue", () => {
-    const states: SwipePagerSwipeState[] = [];
+    const states: SwipeState[] = [];
     let done = false;
-    const swipe = SwipePagerSwipe.start({
+    const swipe = Swipe.start({
       event: pointerEvent({ isPrimary: true, target: null, pointerId: 1, clientX: 0, clientY: 0, timeStamp: 0 }),
-      page: 1,
-      pageCount: 4,
-      getViewportWidth: () => 390,
+      getDragTranslateX: (dx) => dx,
+      getReleaseTarget: () => ({ translateX: 0 }),
+      getCancelTarget: () => ({ translateX: 0 }),
       onStateChange: (state) => states.push({ ...state }),
-      onCommitPage() {},
       onDone: () => { done = true; },
     });
 
@@ -165,17 +142,16 @@ describe("SwipePagerSwipe", () => {
       child.parentElement = scroller;
       child.scrollWidth = 300;
       child.clientWidth = 300;
-      const states: SwipePagerSwipeState[] = [];
+      const states: SwipeState[] = [];
       let done = false;
       let prevented = false;
 
-      const swipe = SwipePagerSwipe.start({
+      const swipe = Swipe.start({
         event: pointerEvent({ isPrimary: true, target: child, pointerId: 1, clientX: 0, clientY: 0, timeStamp: 0 }),
-        page: 1,
-        pageCount: 4,
-        getViewportWidth: () => 390,
+        getDragTranslateX: (dx) => dx,
+        getReleaseTarget: () => ({ translateX: 0 }),
+        getCancelTarget: () => ({ translateX: 0 }),
         onStateChange: (state) => states.push({ ...state }),
-        onCommitPage() {},
         onDone: () => { done = true; },
       });
 
@@ -212,7 +188,7 @@ describe("SwipePagerSwipe", () => {
       }
 
       closest(selector: string) {
-        if (selector === "[data-swipe-pager-surface]") {
+        if (selector === "[data-swipe-surface]") {
           return this.opts.swipeSurface ? this : null;
         }
         if ((selector.includes("input") || selector.includes("textarea") || selector.includes("select")) && this.opts.formControl) {
@@ -225,13 +201,12 @@ describe("SwipePagerSwipe", () => {
       }
     }
 
-    const start = (target: EventTarget) => SwipePagerSwipe.start({
+    const start = (target: EventTarget) => Swipe.start({
       event: pointerEvent({ isPrimary: true, target, pointerId: 1, clientX: 0, clientY: 0, timeStamp: 0 }),
-      page: 1,
-      pageCount: 4,
-      getViewportWidth: () => 390,
+      getDragTranslateX: (dx) => dx,
+      getReleaseTarget: () => ({ translateX: 0 }),
+      getCancelTarget: () => ({ translateX: 0 }),
       onStateChange() {},
-      onCommitPage() {},
       onDone() {},
     });
 

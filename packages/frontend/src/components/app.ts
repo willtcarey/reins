@@ -18,16 +18,13 @@ import { AppClient } from "../models/ws-client.js";
 import type { DiffRendererShell } from "./changes/diff-renderer-shell.js";
 import { FileTreeState } from "../models/changes/file-tree-state.js";
 import { AppRouteController } from "../controllers/app-route-controller.js";
+import { PageSwipeController } from "../controllers/page-swipe-controller.js";
 import { ViewportController } from "../controllers/viewport-controller.js";
 import { AppStore } from "../models/stores/app-store.js";
 import type { DiffRenderer } from "../models/stores/settings-store.js";
 // Ensure sub-components are registered
 import type { MainPaneSelectDetail } from "./app-main-toolbar.js";
-import "./layouts/desktop-layout.js";
-import "./layouts/mobile-layout.js";
-import type { MobileLayoutPaneChangeDetail } from "./layouts/mobile-layout.js";
 import "./app-main-toolbar.js";
-import "./branch-indicator.js";
 import "./chat-panel.js";
 import "./changes/diff-file-tree.js";
 import "./changes/diff-renderer-shell.js";
@@ -50,6 +47,13 @@ import type { SettingsPanel } from "./settings/panel.js";
 type MainWorkspacePane = "chat" | "changes";
 type WorkspacePane = "sessions" | MainWorkspacePane | "files";
 type WorkspacePanes = Record<WorkspacePane, unknown>;
+
+const MOBILE_WORKSPACE_PANE_ORDER = [
+  "sessions",
+  "chat",
+  "changes",
+  "files",
+] as const satisfies readonly WorkspacePane[];
 
 function mainWorkspacePaneFor(pane: WorkspacePane): MainWorkspacePane {
   return pane === "changes" || pane === "files" ? "changes" : "chat";
@@ -86,6 +90,12 @@ export class AppShell extends LitElement {
   @query("file-browser") private _fileBrowser!: FileBrowser;
   @query("image-lightbox") private _imageLightbox!: ImageLightbox;
   @query("settings-panel") private _settingsPanel!: SettingsPanel;
+  private pageSwipe = new PageSwipeController(this, {
+    pageCount: MOBILE_WORKSPACE_PANE_ORDER.length,
+    getPage: () => this.pageForPane(this.activePane),
+    commitPage: (page) => { this.activePane = this.paneForPage(page); },
+    isEnabled: () => this.viewport.isMobileLayout,
+  });
 
   override connectedCallback() {
     super.connectedCallback();
@@ -190,8 +200,13 @@ export class AppShell extends LitElement {
     this.activePane = e.detail.pane;
   }
 
-  private handleMobilePaneChange(e: CustomEvent<MobileLayoutPaneChangeDetail>) {
-    this.activePane = e.detail.pane;
+  private pageForPane(pane: WorkspacePane) {
+    const page = MOBILE_WORKSPACE_PANE_ORDER.indexOf(pane);
+    return page === -1 ? MOBILE_WORKSPACE_PANE_ORDER.indexOf("chat") : page;
+  }
+
+  private paneForPage(page: number): WorkspacePane {
+    return MOBILE_WORKSPACE_PANE_ORDER[page] ?? "chat";
   }
 
   private openQuickOpen() {
@@ -216,7 +231,6 @@ export class AppShell extends LitElement {
         class="block h-full"
         .store=${store}
         @select-session=${() => { this.activePane = "chat"; }}
-        @sidebar-close-request=${() => { this.activePane = "chat"; }}
       ></session-sidebar>
     `;
   }
@@ -266,61 +280,12 @@ export class AppShell extends LitElement {
     return html`
       <diff-file-tree
         class="block h-full min-h-0 flex-1"
-        data-swipe-pager-surface
+        data-swipe-surface
         .store=${store.diffStore}
         .treeState=${this.fileTreeState}
         .activeFile=${this.activeDiffFile}
         @file-select=${(e: CustomEvent<string>) => this.handleChatFileSelect(e)}
       ></diff-file-tree>
-    `;
-  }
-
-  private renderBackIcon() {
-    return html`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>`;
-  }
-
-  private renderFilesToolbar(store: AppStore) {
-    return html`
-      <div class="h-[50px] flex md:hidden items-center gap-2 border-b border-zinc-800/80 bg-zinc-900/80 px-2 py-1.5 overflow-hidden shrink-0">
-        <button
-          class="p-2 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 cursor-pointer shrink-0 transition-colors"
-          @click=${() => { this.activePane = "changes"; }}
-          title="Changes"
-        >
-          ${this.renderBackIcon()}
-        </button>
-        <div class="text-sm font-semibold text-zinc-200">Changed files</div>
-        <div class="min-w-0 flex-1 overflow-hidden flex justify-end">
-          <branch-indicator class="block min-w-0 max-w-full" .currentBranch=${store.diffStore.branch}></branch-indicator>
-        </div>
-      </div>
-    `;
-  }
-
-  private renderChatWorkspacePane(store: AppStore, visible: boolean) {
-    return html`
-      <div class="h-full min-h-0 min-w-0 flex-1 flex flex-col overflow-hidden">
-        ${this.renderMainToolbar(store, "chat")}
-        ${this.renderChatPane(store, visible)}
-      </div>
-    `;
-  }
-
-  private renderChangesWorkspacePane(store: AppStore, diffRenderer: DiffRenderer, visible: boolean) {
-    return html`
-      <div class="h-full min-h-0 min-w-0 flex-1 flex flex-col overflow-hidden">
-        ${this.renderMainToolbar(store, "changes")}
-        ${this.renderChangesPane(store, diffRenderer, visible)}
-      </div>
-    `;
-  }
-
-  private renderFilesWorkspacePane(store: AppStore) {
-    return html`
-      <div class="h-full min-h-0 min-w-0 flex-1 flex flex-col overflow-hidden">
-        ${this.renderFilesToolbar(store)}
-        ${this.renderFileTree(store)}
-      </div>
     `;
   }
 
@@ -330,34 +295,59 @@ export class AppShell extends LitElement {
   ): WorkspacePanes {
     const activeMainPane = mainWorkspacePaneFor(this.activePane);
 
+    const swipeActive = this.pageSwipe.dragging || this.pageSwipe.settling;
+
     return {
       sessions: this.renderSessionSidebar(store),
-      chat: this.renderChatWorkspacePane(store, this.viewport.isMobileLayout || activeMainPane === "chat"),
-      changes: this.renderChangesWorkspacePane(store, diffRenderer, this.viewport.isMobileLayout || activeMainPane === "changes"),
-      files: this.renderFilesWorkspacePane(store),
+      chat: this.renderChatPane(store, this.viewport.isMobileLayout || activeMainPane === "chat" || swipeActive),
+      changes: this.renderChangesPane(store, diffRenderer, this.viewport.isMobileLayout || activeMainPane === "changes" || swipeActive),
+      files: this.renderFileTree(store),
     };
   }
 
-  private renderDesktopLayout(panes: WorkspacePanes) {
+  private renderWorkspace(store: AppStore, panes: WorkspacePanes) {
     const activeMainPane = mainWorkspacePaneFor(this.activePane);
+    const showMobileToolbar = this.activePane === "chat" || this.activePane === "changes";
+    const toolbarMobileColumn = this.activePane === "changes" ? "col-start-3" : "col-start-2";
+    this.pageSwipe.syncPage();
+    const page = this.pageForPane(this.activePane);
+    const swipeTranslateX = this.pageSwipe.translateX == null
+      ? `${-page * 100}%`
+      : `${this.pageSwipe.translateX}px`;
+    const gridStyle = `grid-template-columns: repeat(${MOBILE_WORKSPACE_PANE_ORDER.length}, 100%); transform: translate3d(${swipeTranslateX}, 0, 0);`;
 
     return html`
-      <desktop-layout
-        class="block h-full min-h-0 min-w-0"
-        .activePane=${activeMainPane}
-        .panes=${panes}
-      ></desktop-layout>
-    `;
-  }
-
-  private renderMobileLayout(panes: WorkspacePanes) {
-    return html`
-      <mobile-layout
-        class="block h-full min-h-0 min-w-0"
-        .activePane=${this.activePane}
-        .panes=${panes}
-        @pane-change=${(e: CustomEvent<MobileLayoutPaneChangeDetail>) => this.handleMobilePaneChange(e)}
-      ></mobile-layout>
+      <div
+        class="relative h-full min-h-0 min-w-0 overflow-clip swipe-shell"
+        data-workspace-shell
+        @click=${this.pageSwipe.clickCaptureHandler}
+        @pointerdown=${this.pageSwipe.handlePointerDown}
+        @pointermove=${this.pageSwipe.handlePointerMove}
+        @pointerup=${this.pageSwipe.handlePointerEnd}
+        @pointercancel=${this.pageSwipe.handlePointerCancel}
+      >
+        <div
+          class="workspace-surface grid h-full min-h-0 min-w-0 grid-rows-[50px_minmax(0,1fr)] md:!transform-none md:![grid-template-columns:auto_minmax(0,1fr)_15rem] md:grid-rows-[50px_minmax(0,1fr)]"
+          data-dragging=${this.pageSwipe.dragging || this.pageSwipe.settling ? "true" : "false"}
+          style=${gridStyle}
+        >
+          <div class="z-20 row-start-1 min-w-0 overflow-hidden ${showMobileToolbar ? toolbarMobileColumn : "hidden col-start-2"} md:col-start-2 md:row-start-1 md:block">
+            ${this.renderMainToolbar(store, activeMainPane)}
+          </div>
+          <section class="col-start-1 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-1 md:row-start-1 md:row-span-2">
+            ${panes.sessions}
+          </section>
+          <section class="col-start-2 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 md:row-start-2 ${activeMainPane === "chat" ? "" : "md:hidden"}">
+            ${panes.chat}
+          </section>
+          <section class="col-start-3 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 md:row-start-2 ${activeMainPane === "changes" ? "" : "md:hidden"}">
+            ${panes.changes}
+          </section>
+          <section class="col-start-4 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-3 md:row-start-1 md:row-span-2 md:border-l md:border-zinc-700">
+            ${panes.files}
+          </section>
+        </div>
+      </div>
     `;
   }
 
@@ -403,12 +393,10 @@ export class AppShell extends LitElement {
           </div>
         ` : ""}
 
-        <!-- Main layout: desktop split view, mobile four-pane strip -->
+        <!-- Main layout: one responsive grid with swipe navigation -->
         <div class="flex-1 min-h-0 min-w-0 overflow-hidden">
           ${hasProject && panes ? html`
-            ${this.viewport.isMobileLayout
-              ? this.renderMobileLayout(panes)
-              : this.renderDesktopLayout(panes)}
+            ${this.renderWorkspace(store, panes)}
           ` : html`
             <div class="h-full flex min-h-0 min-w-0 overflow-hidden">
               <session-sidebar .store=${store}></session-sidebar>

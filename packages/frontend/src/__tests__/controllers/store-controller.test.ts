@@ -3,8 +3,8 @@
  * to any store with a subscribe/unsubscribe pattern and triggers host updates.
  */
 import { describe, test, expect } from "bun:test";
-import { StoreController } from "../controllers/store-controller.js";
-import type { Subscribable } from "../controllers/store-controller.js";
+import { StoreController } from "../../controllers/store-controller.js";
+import type { Subscribable } from "../../controllers/store-controller.js";
 import type { ReactiveControllerHost, ReactiveController } from "lit";
 
 // ---------------------------------------------------------------------------

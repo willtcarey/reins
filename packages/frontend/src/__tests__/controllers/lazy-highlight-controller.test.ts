@@ -7,9 +7,9 @@
  * visibility) and update() (triggered from willUpdate).
  */
 import { describe, test, expect } from "bun:test";
-import { LazyHighlightController } from "../controllers/lazy-highlight-controller.js";
-import type { IHighlighter, HighlightHunkCallback } from "../models/changes/highlighter.js";
-import type { DiffHunk, DiffLine } from "../models/changes/types.js";
+import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
+import type { IHighlighter, HighlightHunkCallback } from "../../models/changes/highlighter.js";
+import type { DiffHunk, DiffLine } from "../../models/changes/types.js";
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 
 // ---------------------------------------------------------------------------
