@@ -307,8 +307,6 @@ export class AppShell extends LitElement {
 
   private renderWorkspace(store: AppStore, panes: WorkspacePanes) {
     const activeMainPane = mainWorkspacePaneFor(this.activePane);
-    const showMobileToolbar = this.activePane === "chat" || this.activePane === "changes";
-    const toolbarMobileColumn = this.activePane === "changes" ? "col-start-3" : "col-start-2";
     this.pageSwipe.syncPage();
     const page = this.pageForPane(this.activePane);
     const swipeTranslateX = this.pageSwipe.translateX == null
@@ -331,8 +329,11 @@ export class AppShell extends LitElement {
           data-dragging=${this.pageSwipe.dragging || this.pageSwipe.settling ? "true" : "false"}
           style=${gridStyle}
         >
-          <div class="z-20 row-start-1 min-w-0 overflow-hidden ${showMobileToolbar ? toolbarMobileColumn : "hidden col-start-2"} md:col-start-2 md:row-start-1 md:block">
-            ${this.renderMainToolbar(store, activeMainPane)}
+          <div class="z-20 col-start-2 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "chat" ? "md:block" : "md:hidden"}">
+            ${this.renderMainToolbar(store, "chat")}
+          </div>
+          <div class="z-20 col-start-3 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "changes" ? "md:block" : "md:hidden"}">
+            ${this.renderMainToolbar(store, "changes")}
           </div>
           <section class="col-start-1 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-1 md:row-start-1 md:row-span-2">
             ${panes.sessions}

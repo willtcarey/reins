@@ -156,6 +156,8 @@ describe("AppShell layout selection", () => {
     expect(output).toContain("grid-template-columns: repeat(4, 100%); transform: translate3d(-100%, 0, 0);");
     expect(output).toContain("<session-sidebar");
     expect(output).toContain("<app-main-toolbar");
+    expect(output).toContain(".activePane=chat");
+    expect(output).toContain(".activePane=changes");
     expect(output).not.toContain("show-connection-status");
     expect(output).toContain("<diff-file-tree");
     expect(output).not.toContain("Changed files");

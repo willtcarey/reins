@@ -226,7 +226,7 @@ The router module provides `getLastHash()` and `saveHash()` helpers backed by `l
 
 ## Component structure
 
-`app-shell` renders one canonical named pane set (`sessions`, `chat`, `changes`, `files`) into a single responsive workspace DOM. The workspace grid is a four-page mobile swipe surface (`sessions → chat → changes → files`) and becomes a desktop CSS grid at the `md` breakpoint (`sessions | chat/changes | files`) via responsive classes. A single main toolbar is overlaid on mobile chat/changes and occupies the center grid header on desktop. App-level navigation should use named `WorkspacePane` values rather than mobile page indexes; only `app-shell` translates the mobile page order to workspace page numbers.
+`app-shell` renders one canonical named pane set (`sessions`, `chat`, `changes`, `files`) into a single responsive workspace DOM. The workspace grid is a four-page mobile swipe surface (`sessions → chat → changes → files`) and becomes a desktop CSS grid at the `md` breakpoint (`sessions | chat/changes | files`) via responsive classes. Chat and Changes each render their own main toolbar in their mobile page column so the toolbar travels with the pane during swipes; at the desktop breakpoint those toolbars collapse into the same center grid header and only the active main-pane toolbar is shown. App-level navigation should use named `WorkspacePane` values rather than mobile page indexes; only `app-shell` translates the mobile page order to workspace page numbers.
 
 ```
 app-shell                    — root shell, creates store, applies routes, renders workspace panes
