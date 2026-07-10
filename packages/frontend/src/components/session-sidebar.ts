@@ -32,6 +32,7 @@ import "./popover-menu.js";
 import { showToast } from "./toast.js";
 import { openQuickOpenEvent, openSettingsEvent } from "./events.js";
 import { ScrollToController } from "../controllers/scroll-to-controller.js";
+import { ViewportController } from "../controllers/viewport-controller.js";
 import "./nav-icon.js";
 
 @customElement("session-sidebar")
@@ -50,6 +51,7 @@ export class SessionSidebar extends LitElement {
   @state() private uploadProgress = new Map<number, number>();
 
   private _unsubscribe: (() => void) | null = null;
+  private viewport = new ViewportController(this);
   private _activeSessionScroll = new ScrollToController(this, {
     getTargetId: () => this.store?.sessionId,
     targetSelector: "[data-session-id]",
@@ -186,7 +188,7 @@ export class SessionSidebar extends LitElement {
   }
 
   private toggleCollapse() {
-    if (window.innerWidth <= 768) return;
+    if (this.viewport.isMobileLayout) return;
     this.collapsed = !this.collapsed;
   }
 
@@ -376,8 +378,7 @@ export class SessionSidebar extends LitElement {
 
   override render() {
     const store = this.store;
-    const isMobile = window.innerWidth <= 768;
-    const isCollapsed = !isMobile && this.collapsed;
+    const isCollapsed = !this.viewport.isMobileLayout && this.collapsed;
     const shellClass = `${isCollapsed ? "md:w-10" : "w-full md:w-64"}
       h-full bg-zinc-900 border-r border-zinc-700 flex flex-col shrink-0 overflow-hidden
       md:transition-[width] duration-200 ease-out`;
