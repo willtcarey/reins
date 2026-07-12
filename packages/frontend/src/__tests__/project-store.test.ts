@@ -4,8 +4,8 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { ProjectStore } from "../models/stores/project-store.js";
 import { ProjectsStore } from "../models/stores/projects-store.js";
-import type { TaskListItem } from "../models/tasks.js";
 import { SessionCache } from "../models/stores/session-cache.js";
+import { makeTask } from "./helpers/fixtures.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 import type { SessionListItem } from "../models/ws-client.js";
 
@@ -16,23 +16,6 @@ function jsonResponse(data: unknown, ok = true): Response {
     status: ok ? 200 : 500,
     headers: { "Content-Type": "application/json" },
   });
-}
-
-function task(overrides: Partial<TaskListItem>): TaskListItem {
-  return {
-    id: 1,
-    project_id: 42,
-    title: "Task",
-    description: null,
-    branch_name: "task/example",
-    status: "open",
-    created_at: "",
-    updated_at: "",
-    session_count: 1,
-    session_ids: ["s1"],
-    diffStats: null,
-    ...overrides,
-  };
 }
 
 function session(overrides: Partial<SessionListItem> = {}): SessionListItem {
@@ -123,8 +106,8 @@ describe("ProjectStore", () => {
   });
 
   test("openTasks and closedTasks split task rows", () => {
-    const open = task({ id: 1, status: "open" });
-    const closed = task({ id: 2, status: "closed" });
+    const open = makeTask({ id: 1, status: "open" });
+    const closed = makeTask({ id: 2, status: "closed" });
     store.tasks = [open, closed];
 
     expect(store.openTasks).toEqual([open]);
@@ -350,7 +333,7 @@ describe("ProjectStore", () => {
   test("exposes activity selectors from SessionCache", () => {
     const sessionCache = new SessionCache();
     store = new ProjectStore(42, sessionCache);
-    store.tasks = [task({ id: 1, session_ids: [] })];
+    store.tasks = [makeTask({ id: 1, session_ids: [] })];
 
     sessionCache.set("s1", { projectId: 42, taskId: 1, activityState: "running" });
 
@@ -379,7 +362,7 @@ describe("ProjectStore", () => {
   test("activityState derives running over finished", () => {
     const sessionCache = new SessionCache();
     store = new ProjectStore(42, sessionCache);
-    store.tasks = [task({ id: 1, session_ids: ["s1"] })];
+    store.tasks = [makeTask({ id: 1, session_ids: ["s1"] })];
     store.sessionIds = ["s2"];
 
     sessionCache.set("s1", { projectId: 42, activityState: "running" });

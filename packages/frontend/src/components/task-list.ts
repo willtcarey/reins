@@ -47,7 +47,9 @@ export class TaskList extends LitElement {
     if (changed.has("projectId")) {
       this.expandedTaskId = null;
     }
-    this.autoExpandForActiveSession();
+    if (changed.has("activeSessionId")) {
+      this.autoExpandForActiveSession();
+    }
   }
 
   private _subscribeToProjectStore() {
