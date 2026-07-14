@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, writeFileSync } from "fs";
 import { readdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -363,6 +363,17 @@ describe("workspace diff — untracked files through temporary intent-to-add ind
     expect(file!.additions).toBe(0);
     expect(file!.removals).toBe(0);
     expect(file!.hunks).toEqual([]);
+  });
+
+  test("skips unreadable untracked files without hiding readable changes", async () => {
+    writeFileSync(join(repo.dir, "readable.txt"), "visible\n");
+    writeFileSync(join(repo.dir, "unreadable.key"), "secret\n");
+    chmodSync(join(repo.dir, "unreadable.key"), 0o000);
+
+    const files = await new Workspace(repo.dir).getChangedFiles("uncommitted");
+
+    expect(files.find((file) => file.path === "readable.txt")).toBeDefined();
+    expect(files.find((file) => file.path === "unreadable.key")).toBeUndefined();
   });
 
   test("omits untracked nested repositories that Git cannot represent as intent-to-add", async () => {

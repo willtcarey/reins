@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { copyFile, mkdtemp, rm } from "node:fs/promises";
+import { constants, existsSync } from "node:fs";
+import { access, copyFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import {
@@ -38,6 +38,13 @@ async function createTempDiffIndex(projectDir: string) {
 
     const env: Record<string, string | undefined> = { GIT_INDEX_FILE: tempIndex };
     for (const file of untracked) {
+      // An unreadable intent-to-add file makes the later Git diff fail as a
+      // whole, hiding every otherwise-readable change. Skip it up front.
+      const readable = await access(join(projectDir, file), constants.R_OK)
+        .then(() => true)
+        .catch(() => false);
+      if (!readable) continue;
+
       // Git cannot represent some untracked entries (for example nested repos
       // without a checked-out commit) as intent-to-add. Skip those rather than
       // falling back to synthetic patches; raw patches should stay Git-native.
