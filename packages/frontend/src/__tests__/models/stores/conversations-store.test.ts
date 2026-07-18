@@ -1,7 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { ConversationsStore } from "../../../models/stores/conversations-store.js";
 import { SessionCache } from "../../../models/stores/session-cache.js";
 import type { AgentMessage } from "../../../models/chat-state.js";
+import { conversationPage, setPersistedMessages } from "../../helpers/conversations.js";
+import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 
 function textUser(content: string, timestamp: number): AgentMessage {
   return { role: "user", content, timestamp };
@@ -22,6 +24,48 @@ function cachedSession(isRunning: boolean) {
 }
 
 describe("ConversationsStore", () => {
+  afterEach(() => { restoreFetch(); });
+
+  test("loads latest, forward, and earlier pages through cursor API", async () => {
+    const conversations = new ConversationsStore();
+    const earlier = textUser("earlier", 100);
+    const latest = textUser("latest", 200);
+    const newer = textUser("newer", 300);
+    const calls: string[] = [];
+
+    mockFetch((url) => {
+      calls.push(url);
+      if (url === "/api/sessions/sess-1/messages") {
+        return Response.json(conversationPage(
+          [{ id: "2", parentId: "1", message: latest }],
+          { hasPreviousPage: true, previousCursor: "cursor-2", hasNextPage: true, endCursor: "cursor-2" },
+        ));
+      }
+      if (url === "/api/sessions/sess-1/messages?after=cursor-2") {
+        return Response.json(conversationPage(
+          [{ id: "3", parentId: "2", message: newer }],
+          { endCursor: "cursor-3" },
+        ));
+      }
+      if (url === "/api/sessions/sess-1/messages?before=cursor-2") {
+        return Response.json(conversationPage([
+          { id: "1", parentId: null, message: earlier },
+        ], { hasNextPage: true }));
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    expect(await conversations.syncMessages("sess-1")).toBe(true);
+    expect(await conversations.loadEarlierMessages("sess-1")).toBe(true);
+
+    expect(calls).toEqual([
+      "/api/sessions/sess-1/messages",
+      "/api/sessions/sess-1/messages?after=cursor-2",
+      "/api/sessions/sess-1/messages?before=cursor-2",
+    ]);
+    expect(conversations.get("sess-1").messages).toEqual([earlier, latest, newer]);
+  });
+
   test("stores session-scoped websocket errors", () => {
     const conversations = new ConversationsStore();
 
@@ -37,7 +81,9 @@ describe("ConversationsStore", () => {
     conversations.applyEvent("sess-1", { type: "task_updated", projectId: 42 });
 
     expect(conversations.get("sess-1")).toMatchObject({
+      entries: [],
       messages: [],
+      hasEarlierMessages: false,
       streamingBlocks: [],
     });
   });
@@ -57,46 +103,92 @@ describe("ConversationsStore", () => {
     ]);
   });
 
-  test("persisted snapshots are the store-owned message source outside active streaming", () => {
+  test("prepending history preserves websocket message tail and streaming blocks", () => {
     const conversations = new ConversationsStore();
-    const persisted = [textUser("earlier", 100)];
+    const earlier = textUser("earlier", 100);
+    const latest = textUser("latest", 200);
+    const liveAssistant: AgentMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: "live reply" }],
+      timestamp: 300,
+    };
 
-    conversations.setPersistedMessages("sess-1", persisted);
-    conversations.setPersistedMessages("sess-1", [...persisted]);
-
-    expect(conversations.get("sess-1")).toMatchObject({
-      messages: persisted,
-      persistedMessages: persisted,
+    conversations.mergeMessages("sess-1", conversationPage(
+      [{ id: "2", parentId: "1", message: latest }],
+      { hasPreviousPage: true, previousCursor: "cursor-2" },
+    ));
+    conversations.applyEvent("sess-1", {
+      type: "user_message",
+      message: [{ type: "text", text: "live prompt" }],
     });
+    const liveUser = conversations.get("sess-1").messages.at(-1)!;
+    conversations.applyEvent("sess-1", { type: "agent_end", messages: [liveAssistant] });
+    conversations.applyEvent("sess-1", {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "still working" },
+    });
+
+    conversations.mergeMessages("sess-1", conversationPage(
+      [{ id: "1", parentId: null, message: earlier }],
+      { hasNextPage: true },
+    ), { earlier: true });
+
+    const state = conversations.get("sess-1");
+    expect(state.messages).toEqual([earlier, latest, liveUser, liveAssistant]);
+    expect(state.entries.slice(0, 2)).toEqual([
+      { id: "1", parentId: null, message: earlier },
+      { id: "2", parentId: "1", message: latest },
+    ]);
+    expect(state.entries.slice(2).map((entry) => entry.id)).toEqual([null, null]);
+    expect(state.entries.slice(2).every((entry) => (
+      entry.id === null && entry.localId.length > 0
+    ))).toBe(true);
+    expect(state.streamingBlocks).toEqual([{ type: "text", text: "still working" }]);
+  });
+
+  test("reconciles repeated identical optimistic prompts one-for-one with finalized and persisted copies", () => {
+    const conversations = new ConversationsStore();
+    const content = [{ type: "text" as const, text: "repeat this prompt" }];
+
+    const first = conversations.addOptimisticUserMessage("sess-1", content, 5_000);
+    const second = conversations.addOptimisticUserMessage("sess-1", content, 6_000);
+    if (first === null || second === null) {
+      throw new Error("Expected optimistic entries for a valid session");
+    }
+    conversations.applyEvent("sess-1", {
+      type: "agent_end",
+      messages: [
+        { role: "user", content, timestamp: 5_500 },
+        { role: "user", content, timestamp: 6_500 },
+      ],
+    });
+
+    expect(conversations.get("sess-1").entries).toEqual([
+      { id: null, parentId: null, localId: first.localId, message: { role: "user", content, timestamp: 5_500 } },
+      { id: null, parentId: null, localId: second.localId, message: { role: "user", content, timestamp: 6_500 } },
+    ]);
+
+    conversations.mergeMessages("sess-1", conversationPage([
+      { id: "persisted-1", parentId: null, message: { role: "user", content, timestamp: 5_500 } },
+      { id: "persisted-2", parentId: "persisted-1", message: { role: "user", content, timestamp: 6_500 } },
+    ]));
+
+    expect(conversations.get("sess-1").entries).toEqual([
+      { id: "persisted-1", parentId: null, message: { role: "user", content, timestamp: 5_500 } },
+      { id: "persisted-2", parentId: "persisted-1", message: { role: "user", content, timestamp: 6_500 } },
+    ]);
   });
 
   test("stale persisted snapshots do not clear active streaming blocks", () => {
     const conversations = new ConversationsStore();
     const persisted = [textUser("earlier", 100)];
-    conversations.setPersistedMessages("sess-1", persisted);
+    setPersistedMessages(conversations, "sess-1", persisted);
     conversations.applyEvent("sess-1", {
       type: "message_update",
       assistantMessageEvent: { type: "text_delta", delta: "working" },
     });
 
-    conversations.setPersistedMessages("sess-1", [...persisted]);
-
-    expect(conversations.get("sess-1").streamingBlocks).toEqual([{ type: "text", text: "working" }]);
-    expect(conversations.get("sess-1").messages).toEqual(persisted);
-  });
-
-  test("persisted snapshots hydrate history without clearing active streaming blocks", () => {
-    const conversations = new ConversationsStore();
-    conversations.applyEvent("sess-1", {
-      type: "message_update",
-      assistantMessageEvent: { type: "text_delta", delta: "working" },
-    });
-
-    const persisted = [
-      textUser("earlier", 100),
-      { role: "assistant" as const, content: [{ type: "text" as const, text: "old reply" }], timestamp: 200 },
-    ];
-    conversations.setPersistedMessages("sess-1", persisted);
+    setPersistedMessages(conversations, "sess-1", [...persisted]);
 
     expect(conversations.get("sess-1").streamingBlocks).toEqual([{ type: "text", text: "working" }]);
     expect(conversations.get("sess-1").messages).toEqual(persisted);
@@ -104,7 +196,7 @@ describe("ConversationsStore", () => {
 
   test("persisted snapshots that advance past rendered messages clear active streaming blocks", () => {
     const conversations = new ConversationsStore();
-    conversations.setPersistedMessages("sess-1", [textUser("hello", 100)]);
+    setPersistedMessages(conversations, "sess-1", [textUser("hello", 100)]);
     conversations.applyEvent("sess-1", {
       type: "message_update",
       assistantMessageEvent: { type: "text_delta", delta: "working" },
@@ -114,28 +206,7 @@ describe("ConversationsStore", () => {
       textUser("hello", 100),
       { role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 200 },
     ];
-    conversations.setPersistedMessages("sess-1", finalMessages);
-
-    expect(conversations.get("sess-1").streamingBlocks).toEqual([]);
-    expect(conversations.get("sess-1").messages).toEqual(finalMessages);
-  });
-
-  test("when server state leaves streaming it clears stale blocks and accepts persisted messages", () => {
-    const conversations = new ConversationsStore();
-    conversations.setPersistedMessages("sess-1", [textUser("hello", 100)]);
-    conversations.applyEvent("sess-1", {
-      type: "tool_execution_start",
-      toolCallId: "tool-1",
-      toolName: "bash",
-      args: { command: "ls" },
-    });
-
-    const finalMessages: AgentMessage[] = [
-      textUser("hello", 100),
-      { role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 200 },
-    ];
-    conversations.setPersistedMessages("sess-1", finalMessages);
-    conversations.clearStreamingState("sess-1");
+    setPersistedMessages(conversations, "sess-1", finalMessages);
 
     expect(conversations.get("sess-1").streamingBlocks).toEqual([]);
     expect(conversations.get("sess-1").messages).toEqual(finalMessages);
@@ -169,8 +240,8 @@ describe("ConversationsStore", () => {
 
     expect(conversations.get("background-session")).toMatchObject({
       messages: [],
+      hasEarlierMessages: false,
       streamingBlocks: [],
-      persistedMessages: [],
     });
   });
 
@@ -207,8 +278,8 @@ describe("ConversationsStore", () => {
 
     expect(conversations.get("sess-1")).toMatchObject({
       messages: [],
+      hasEarlierMessages: false,
       streamingBlocks: [],
-      persistedMessages: [],
     });
   });
 });

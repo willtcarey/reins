@@ -133,14 +133,26 @@ describe("session routes (top-level)", () => {
       );
 
       expect(res!.status).toBe(200);
-      expect(await res!.json()).toEqual([
-        { role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1000 },
-        {
-          role: "assistant",
-          content: [{ type: "text", text: "hi" }],
-          timestamp: 2000,
+      expect(await res!.json()).toEqual({
+        items: [
+          { id: expect.any(String), parentId: null, message: { role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1000 } },
+          {
+            id: expect.any(String),
+            parentId: expect.any(String),
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "hi" }],
+              timestamp: 2000,
+            },
+          },
+        ],
+        pageInfo: {
+          hasPreviousPage: false,
+          previousCursor: null,
+          hasNextPage: false,
+          endCursor: expect.any(String),
         },
-      ]);
+      });
     });
 
     test("returns [] for an existing session with no messages", async () => {
@@ -153,7 +165,15 @@ describe("session routes (top-level)", () => {
       );
 
       expect(res!.status).toBe(200);
-      expect(await res!.json()).toEqual([]);
+      expect(await res!.json()).toEqual({
+        items: [],
+        pageInfo: {
+          hasPreviousPage: false,
+          previousCursor: null,
+          hasNextPage: false,
+          endCursor: null,
+        },
+      });
     });
 
     test("returns persisted messages for non-pi sessions", async () => {
@@ -184,9 +204,103 @@ describe("session routes (top-level)", () => {
       );
 
       expect(res!.status).toBe(200);
-      expect(await res!.json()).toEqual([
-        { role: "assistant", content: [{ type: "text", text: "from db" }] },
+      expect(await res!.json()).toEqual({
+        items: [{
+          id: expect.any(String),
+          parentId: null,
+          message: { role: "assistant", content: [{ type: "text", text: "from db" }] },
+        }],
+        pageInfo: {
+          hasPreviousPage: false,
+          previousCursor: null,
+          hasNextPage: false,
+          endCursor: expect.any(String),
+        },
+      });
+    });
+
+    test("paginates backward without splitting tool calls from their results", async () => {
+      const sessionId = "messages-pages";
+      createSession(sessionId, projectId, { agentRuntimeType: "pi" });
+      persistMessages(sessionId, [
+        { role: "user", content: textContent("first") },
+        { role: "assistant", content: [{ type: "text", text: "reply" }] },
+        { role: "assistant", content: [{ type: "toolCall", id: "call-1", name: "read", arguments: {} }] },
+        { role: "toolResult", toolCallId: "call-1", isError: false, content: textContent("result") },
+        { role: "user", content: textContent("latest") },
       ]);
+
+      const latest = await router.handle(
+        makeRequest("GET", `/api/sessions/${sessionId}/messages?limit=2`), state,
+      );
+      const latestBody = await latest!.json();
+      expect(latestBody.items.map((item: any) => item.message.role)).toEqual(["assistant", "toolResult", "user"]);
+      expect(latestBody.items[0].parentId).toEqual(expect.any(String));
+      expect(latestBody.items[1].parentId).toBe(latestBody.items[0].id);
+      expect(latestBody.items[2].parentId).toBe(latestBody.items[1].id);
+      expect(latestBody.pageInfo.hasPreviousPage).toBe(true);
+      expect(latestBody.pageInfo.previousCursor).toEqual(expect.any(String));
+
+      const previous = await router.handle(
+        makeRequest("GET", `/api/sessions/${sessionId}/messages?limit=2&before=${encodeURIComponent(latestBody.pageInfo.previousCursor)}`), state,
+      );
+      const previousBody = await previous!.json();
+      expect(previousBody.items.map((item: any) => item.message.role)).toEqual(["user", "assistant"]);
+      expect(previousBody.items[0].parentId).toBeNull();
+      expect(previousBody.items[1].parentId).toBe(previousBody.items[0].id);
+      expect(latestBody.items[0].parentId).toBe(previousBody.items[1].id);
+      expect(previousBody.pageInfo).toMatchObject({ hasPreviousPage: false, previousCursor: null });
+      expect(new Set([...previousBody.items, ...latestBody.items].map((item: any) => item.id)).size).toBe(5);
+    });
+
+    test("paginates forward from an opaque end cursor without splitting tool results", async () => {
+      const sessionId = "messages-forward-pages";
+      createSession(sessionId, projectId, { agentRuntimeType: "pi" });
+      persistMessages(sessionId, [
+        { role: "user", content: textContent("initial") },
+        { role: "assistant", content: [{ type: "text", text: "initial reply" }] },
+      ]);
+
+      const initial = await router.handle(
+        makeRequest("GET", `/api/sessions/${sessionId}/messages?limit=2`), state,
+      );
+      const initialBody = await initial!.json();
+
+      persistMessages(sessionId, [
+        { role: "user", content: textContent("initial") },
+        { role: "assistant", content: [{ type: "text", text: "initial reply" }] },
+        { role: "assistant", content: [{ type: "toolCall", id: "call-forward", name: "read", arguments: {} }] },
+        { role: "toolResult", toolCallId: "call-forward", isError: false, content: textContent("result") },
+        { role: "user", content: textContent("later") },
+      ]);
+
+      const firstForward = await router.handle(
+        makeRequest("GET", `/api/sessions/${sessionId}/messages?limit=1&after=${encodeURIComponent(initialBody.pageInfo.endCursor)}`), state,
+      );
+      const firstForwardBody = await firstForward!.json();
+      expect(firstForwardBody.items.map((item: any) => item.message.role)).toEqual(["assistant", "toolResult"]);
+      expect(firstForwardBody.pageInfo.hasNextPage).toBe(true);
+      const forwardCursor = firstForwardBody.pageInfo.endCursor;
+      expect(forwardCursor).toEqual(expect.any(String));
+
+      const secondForward = await router.handle(
+        makeRequest("GET", `/api/sessions/${sessionId}/messages?limit=1&after=${encodeURIComponent(forwardCursor)}`), state,
+      );
+      expect(secondForward!.status).toBe(200);
+      const secondForwardBody = await secondForward!.json();
+      expect(secondForwardBody.items.map((item: any) => item.message.role)).toEqual(["user"]);
+      expect(secondForwardBody.pageInfo).toMatchObject({ hasNextPage: false, endCursor: expect.any(String) });
+    });
+
+    test("rejects invalid pagination parameters", async () => {
+      const sessionId = "messages-invalid-page";
+      createSession(sessionId, projectId, { agentRuntimeType: "pi" });
+
+      const badLimit = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}/messages?limit=0`), state);
+      const badCursor = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}/messages?before=not-a-cursor`), state);
+
+      expect(badLimit!.status).toBe(400);
+      expect(badCursor!.status).toBe(400);
     });
 
     test("returns 404 for nonexistent session", async () => {

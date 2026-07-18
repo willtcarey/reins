@@ -92,7 +92,8 @@ controllers/
 ├── store-controller.ts          Generic store subscription
 ├── highlight-controller.ts      Shiki web worker bridge
 ├── lazy-highlight-controller.ts IntersectionObserver + highlighting
-└── page-swipe-controller.ts     Mobile page swipe event/state wiring
+├── page-swipe-controller.ts     Mobile page swipe event/state wiring
+└── chat-history-controller.ts   Prepend loading + scroll-anchor restoration
 ```
 
 ## Data Flow
@@ -165,7 +166,7 @@ Keep store descriptions at the ownership-boundary level. Avoid listing every end
 - **AppStore** (`models/stores/app-store.ts`) — Top-level orchestration for route-derived app state, WebSocket/reconnect side effects, shared app-wide settings, and sub-store coordination. Components should prefer semantic AppStore/sub-store methods over reaching into lower-level internals.
 - **DiffStore** (`models/stores/diff-store.ts`) — Git diff domain state and mutations, including polling and expansion. Rendering concerns such as syntax highlighting stay in controllers/components.
 - **SessionCache** (`models/stores/session-cache.ts`) — Canonical client cache for server-provided session metadata. Stores derive session/activity views from it rather than duplicating complete session records.
-- **ConversationsStore** (`models/stores/conversations-store.ts`) — Keyed per-session conversation presentation state that must survive route changes or missed streaming events. Session running/activity state remains derived from `SessionCache`.
+- **ConversationsStore** (`models/stores/conversations-store.ts`) — Keyed per-session conversation presentation state that must survive route changes or missed streaming events. Its read view exposes stable display entries: persisted entries retain backend record IDs and parent links, while live entries use store-local IDs until persistence catches up. Successful prompt and steer actions add their optimistic user entries here immediately; components own only outgoing animation metadata and must not maintain parallel pending-message or persistence-reconciliation state. Equivalent WebSocket and persisted user records reconcile by content even when server timestamps differ, replacing local identity with the persisted record ID once available. This identity must flow through render keys and history anchors; do not reconstruct persisted identity from message content, roles, timestamps, or array position. The view exposes semantic history availability while keeping cursors private. `ConversationsStore` owns persisted-message queries and cursor traversal; route-scoped stores request forward synchronization or earlier history rather than constructing those queries themselves. Every API result merges into the record graph by ID and is ordered through parent links; initial navigation supplies the latest messages, earlier-history reads supply older messages, and refresh/reconnect/activity-end synchronization follows the persisted tail cursor through every available forward result. Each path preserves already loaded history and reconciles live/streaming state separately. Clearing streaming state must never discard optimistic or finalized live entries. Session running/activity state remains derived from `SessionCache`.
 - **ProjectsStore / ProjectStore** (`models/stores/projects-store.ts`, `models/stores/project-store.ts`) — Project/task/session list ownership and project-scoped mutations. Activity and session metadata are derived from `SessionCache` instead of stored redundantly.
 - **QuickOpenStore** (`models/stores/quick-open-store.ts`) — Shared quick-open data, filtering, and recency state. Overlay open/closed state remains component-local.
 - **FileBrowserStore** (`models/stores/file-browser-store.ts`) — Shared file browser data and file-content loading. Viewer overlay state remains component-local.
@@ -237,6 +238,7 @@ app-shell                    — root shell, creates store, applies routes, rend
 │   ├── task-detail          — task edit/delete
 │   └── session-list         — scratch sessions
 ├── chat-panel               — message display + composer orchestration
+│   ├── ChatHistoryController — earlier-history triggering + viewport preservation
 │   └── chat-composer        — prompt input, autosize, skill suggestions, image attachments
 ├── diff-panel               — full diff view with file cards
 ├── diff-file-tree           — app-owned changed-file pane/sidebar

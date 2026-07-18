@@ -5,8 +5,23 @@ import { ActiveSessionStore } from "../../models/stores/active-session-store.js"
 import { ConversationsStore } from "../../models/stores/conversations-store.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
 import type { AgentMessage } from "../../models/chat-state.js";
-import { templateToString } from "../helpers/lit-template.js";
+import { setPersistedMessages } from "../helpers/conversations.js";
+import { collectTemplateEventListeners, templateToString } from "../helpers/lit-template.js";
 import { StubClient } from "../helpers/stub-client.js";
+
+function isDirectiveResult(value: unknown): value is { values: unknown[] } {
+  return typeof value === "object" && value !== null && Array.isArray(Reflect.get(value, "values"));
+}
+
+function renderConversationEntry(el: ChatPanel, index = 0): string {
+  const messageDirective = el.render().values.find(isDirectiveResult);
+  const entries = messageDirective?.values[0];
+  const renderEntry = messageDirective?.values[2];
+  if (!Array.isArray(entries) || typeof renderEntry !== "function") {
+    throw new Error("Expected rendered conversation entries");
+  }
+  return templateToString(renderEntry(entries[index]));
+}
 
 function callPrivate(obj: object, key: string, ...args: unknown[]) {
   const fn = Reflect.get(obj, key);
@@ -35,7 +50,7 @@ function panelWithMessages(messages: AgentMessage[], sessionId = "sess-attachmen
   const el = new ChatPanel();
   const cache = new ConversationsStore();
   const store = new ActiveSessionStore(sessionId, null, undefined, cache);
-  cache.setPersistedMessages(sessionId, messages);
+  setPersistedMessages(cache, sessionId, messages);
   el.store = store;
   return el;
 }
@@ -61,7 +76,7 @@ describe("chat-panel attachment rendering", () => {
       },
     ]);
 
-    const output = templateToString(el.render());
+    const output = renderConversationEntry(el);
     const attachmentsIndex = output.indexOf('data-role="user-message-attachments"');
     const bubbleIndex = output.indexOf('data-role="user-message-bubble"');
     const bubbleHtml = output.slice(bubbleIndex, output.indexOf("</div>", bubbleIndex));
@@ -99,7 +114,7 @@ describe("chat-panel attachment rendering", () => {
       },
     ]);
 
-    const output = templateToString(el.render());
+    const output = renderConversationEntry(el);
 
     expect(output).toContain("justify-items-end");
     expect(output).toContain("group ml-auto inline-flex max-w-full cursor-zoom-in justify-end");
@@ -114,21 +129,37 @@ describe("ChatPanel session switching", () => {
     const el = new ChatPanel();
     const unsubscribeOld = mock(() => undefined);
     const unsubscribeNew = mock(() => undefined);
+    const oldMessage: AgentMessage = { role: "user", content: [{ type: "text", text: "old session message" }], timestamp: 1 };
+    const newMessage: AgentMessage = { role: "user", content: [{ type: "text", text: "new session message" }], timestamp: 2 };
     const oldStore = {
       sessionId: "sess-old",
-      conversation: { messages: [], persistedMessages: [], streamingBlocks: [] },
+      conversation: {
+        entries: [{ id: "old-message", parentId: null, message: oldMessage }],
+        messages: [oldMessage],
+        hasEarlierMessages: false,
+        streamingBlocks: [],
+        isCompacting: false,
+        errorMessage: "",
+      },
+      sessionData: { activityState: null, state: {} },
       subscribe: mock(() => unsubscribeOld),
     };
     const newStore = {
       sessionId: "sess-new",
-      conversation: { messages: [], persistedMessages: [], streamingBlocks: [] },
+      conversation: {
+        entries: [{ id: "new-message", parentId: null, message: newMessage }],
+        messages: [newMessage],
+        hasEarlierMessages: false,
+        streamingBlocks: [],
+        isCompacting: false,
+        errorMessage: "",
+      },
+      sessionData: { activityState: null, state: {} },
       subscribe: mock(() => unsubscribeNew),
     };
 
     Reflect.set(el, "store", oldStore);
     Reflect.get(el, "subscribeToStore").call(el);
-    Reflect.set(el, "pendingUserMessages", [{ role: "user", content: [{ type: "text", text: "pending" }], timestamp: 1 }]);
-    Reflect.set(el, "pendingUserMessageBaselines", new Map([[1, 0]]));
     Reflect.set(el, "expandedSections", new Set(["tool-1"]));
 
     Reflect.set(el, "store", newStore);
@@ -136,9 +167,61 @@ describe("ChatPanel session switching", () => {
 
     expect(unsubscribeOld).toHaveBeenCalledTimes(1);
     expect(newStore.subscribe).toHaveBeenCalledTimes(1);
-    expect(Reflect.get(el, "pendingUserMessages")).toEqual([]);
-    expect(Reflect.get(el, "pendingUserMessageBaselines")).toEqual(new Map());
+    expect(renderConversationEntry(el)).toContain("new session message");
     expect(Reflect.get(el, "expandedSections")).toEqual(new Set());
+  });
+});
+
+
+describe("ChatPanel history pagination", () => {
+  test("renders persisted record IDs as history anchors", () => {
+    const el = panelWithMessages([{ role: "user", content: "visible", timestamp: 1 }]);
+    expect(renderConversationEntry(el)).toContain("data-conversation-key=1");
+  });
+
+  test("renders a previous-history control that reflects loading state", async () => {
+    const el = new ChatPanel();
+    let finishLoad!: (loaded: boolean) => void;
+    const loadEarlierMessages = mock(() => new Promise<boolean>((resolve) => { finishLoad = resolve; }));
+    const container = {
+      clientHeight: 600,
+      scrollHeight: 1000,
+      scrollTop: 20,
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }),
+      querySelectorAll: () => [],
+    };
+    Reflect.set(el, "store", {
+      conversation: { entries: [], messages: [], hasEarlierMessages: true, streamingBlocks: [], isCompacting: false, errorMessage: "" },
+      sessionData: { activityState: null, state: {} },
+      loadEarlierMessages,
+    });
+    Object.defineProperty(el, "querySelector", {
+      configurable: true,
+      value: () => container,
+    });
+    Object.defineProperty(el, "updateComplete", {
+      configurable: true,
+      value: Promise.resolve(true),
+    });
+
+    const template = el.render();
+    const output = templateToString(template);
+    const [click] = collectTemplateEventListeners(template, "click");
+
+    expect(output).toContain('id="chat-scroll"');
+    expect(output).toContain('data-role="load-previous-messages"');
+    expect(output).toContain("Load previous messages");
+    expect(click).toBeDefined();
+    const loading = Reflect.apply(click!, el, [new Event("click")]);
+    expect(loadEarlierMessages).toHaveBeenCalledWith();
+
+    const loadingOutput = templateToString(el.render());
+    expect(loadingOutput).toContain("Loading previous messages…");
+    expect(loadingOutput).toContain("?disabled=true");
+    expect(loadingOutput).toContain("aria-busy=true");
+
+    finishLoad(false);
+    await loading;
   });
 });
 
@@ -227,9 +310,19 @@ describe("ChatPanel send animation", () => {
     const messages = Reflect.get(el, "messages");
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({ role: "user", content: [{ type: "text", text: "hello" }] });
-    expect(store.conversation.messages).toEqual([]);
+    expect(store.conversation.messages).toEqual(messages);
+    const messageDirective = el.render().values.find(isDirectiveResult);
+    const entries = messageDirective?.values[0];
+    const renderEntry = messageDirective?.values[2];
+    if (!Array.isArray(entries) || typeof renderEntry !== "function") {
+      throw new Error("Expected rendered conversation entries");
+    }
+    expect(entries).toEqual(store.conversation.entries);
+    expect(entries).toHaveLength(1);
+    expect(templateToString(renderEntry(entries[0])).match(/hello/g)).toHaveLength(1);
 
-    const messageKey = `user-${messages[0].timestamp}`;
+    const submittedEntry = store.conversation.entries[0];
+    const messageKey = submittedEntry.id ?? submittedEntry.localId;
     expect(Reflect.get(el, "isStreaming")).toBe(true);
     expect(templateToString(el.render())).toContain("Thinking...");
     expect(Reflect.get(el, "animatingUserMessageKeys")).toEqual(new Set([messageKey]));

@@ -39,6 +39,8 @@ Good boundaries include:
 
 Avoid tests that depend on private implementation details, such as `Reflect.get()` access to private fields, `callPrivate()` helpers, internal render fragments, or exact intermediate state that users and callers cannot observe. Use those only when there is no practical boundary and document why.
 
+Do not add negative tests whose only purpose is proving that an old implementation, method, or UI value is gone. Describe and assert the positive long-term contract at the caller or user boundary instead. Negative assertions remain appropriate when absence itself is the stable contract, such as authorization, validation, or preventing duplicate user-visible output.
+
 Test contracts, not every permutation:
 
 - Cover the happy path.

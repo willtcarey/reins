@@ -90,7 +90,7 @@ The models layer covers all route handlers and some backend domain helpers:
 - `models/tasks.ts` — task create/update/delete with branch orchestration, list with diff stats
 - `models/workspace.ts` — checkout-scoped git workspace behavior, including changed-file summaries, raw patch streams, parsed diff DTOs, and orchestration of temporary indexes for untracked-file diffing
 - `models/projects.ts` — project creation, remote sync + task reconciliation, file content reads; exposes scoped model getters such as `workspace`
-- `models/sessions.ts` — session model mutations, message reads, attachment upload/fetch, and related broadcast behavior
+- `models/sessions.ts` — session model mutations, cursor-paginated display message reads, attachment upload/fetch, and related broadcast behavior. Initial display reads return the latest backward-paginated window; opaque `before` cursors load history and opaque `after` cursors synchronize every forward page from the persisted tail. Display page items expose stable `id` and nullable `parentId` links; the current linear transcript points each item to the immediately preceding persisted message, including parents outside the returned window. Soft page boundaries keep assistant tool calls with their persisted results in both directions.
 - `models/uploaded-file.ts` — wraps browser `File` uploads at the HTTP/model boundary and extracts validated attachment bytes/metadata
 - `models/auth-credentials.ts` — auth credential mutations plus live session auth reload orchestration
 - `models/model-settings.ts` — thinking-level schema/parsing plus resolution of stored model settings into concrete pi model objects

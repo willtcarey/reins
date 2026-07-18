@@ -11,41 +11,104 @@ import {
   initialChatState,
   type AgentMessage,
   type ChatState,
+  userMessageContentKey,
 } from "../chat-state.js";
+import type { ClientPromptContent } from "../chat-content.js";
 import type { FrontendEvent } from "../ws-client.js";
 import type { SessionCache } from "./session-cache.js";
 
-export interface SessionConversationState extends Omit<ChatState, "isStreaming"> {
-  /** Last persisted full-message snapshot loaded for this session. */
-  persistedMessages: AgentMessage[];
+export interface PersistedConversationEntry {
+  id: string;
+  parentId: string | null;
+  message: AgentMessage;
 }
 
-export type ConversationsStoreListener = () => void;
-
-export interface ConversationsStoreOptions {
-  sessionCache?: SessionCache;
+export interface LiveConversationEntry {
+  id: null;
+  parentId: null;
+  localId: string;
+  message: AgentMessage;
 }
 
-function blankConversationState(): SessionConversationState {
-  const state = initialChatState();
-  return {
-    messages: state.messages,
-    streamingBlocks: state.streamingBlocks,
-    isCompacting: state.isCompacting,
-    errorMessage: state.errorMessage,
-    persistedMessages: [],
+export type ConversationEntry = PersistedConversationEntry | LiveConversationEntry;
+
+export interface MessageRecordPage {
+  items: PersistedConversationEntry[];
+  pageInfo: {
+    hasPreviousPage: boolean;
+    previousCursor: string | null;
+    hasNextPage: boolean;
+    endCursor: string | null;
   };
 }
 
-function latestMessageTimestamp(messages: AgentMessage[]): number {
-  return messages.reduce((latest, message) => Math.max(latest, message.timestamp), -Infinity);
+interface ConversationState extends Omit<ChatState, "isStreaming" | "messages"> {
+  records: PersistedConversationEntry[];
+  liveTail: LiveConversationEntry[];
+  previousCursor: string | null;
+  latestCursor: string | null;
+}
+
+interface ConversationUpdate extends Partial<Omit<ConversationState, "records">> {
+  /** Records are always merged by ID and ordered by parent links. */
+  records?: PersistedConversationEntry[];
+}
+
+export interface ConversationView extends Omit<ChatState, "isStreaming"> {
+  entries: ConversationEntry[];
+  hasEarlierMessages: boolean;
+}
+
+type ConversationsStoreListener = () => void;
+
+interface ConversationsStoreOptions {
+  sessionCache?: SessionCache;
+}
+
+function blankConversationState(): ConversationState {
+  const state = initialChatState();
+  return {
+    records: [],
+    liveTail: [],
+    previousCursor: null,
+    latestCursor: null,
+    streamingBlocks: state.streamingBlocks,
+    isCompacting: state.isCompacting,
+    errorMessage: state.errorMessage,
+  };
+}
+
+/** Merge page records and derive their linear display order from parent links. */
+function mergeMessageRecords(...recordSets: PersistedConversationEntry[][]): PersistedConversationEntry[] {
+  const records = new Map<string, PersistedConversationEntry>();
+  for (const record of recordSets.flat()) records.set(record.id, record);
+
+  const ordered: PersistedConversationEntry[] = [];
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (record: PersistedConversationEntry) => {
+    if (visited.has(record.id)) return;
+    if (visiting.has(record.id)) return;
+    visiting.add(record.id);
+    if (record.parentId) {
+      const parent = records.get(record.parentId);
+      if (parent) visit(parent);
+    }
+    visiting.delete(record.id);
+    visited.add(record.id);
+    ordered.push(record);
+  };
+
+  for (const record of records.values()) visit(record);
+  return ordered;
 }
 
 export class ConversationsStore {
-  private _states = new Map<string, SessionConversationState>();
+  private _states = new Map<string, ConversationState>();
   private _listeners = new Map<string, Set<ConversationsStoreListener>>();
   private _sessionCache: SessionCache | null;
   private _unsubscribeSessionCache: (() => void) | null = null;
+  private _nextLiveEntryId = 1;
 
   constructor(options: ConversationsStoreOptions = {}) {
     this._sessionCache = options.sessionCache ?? null;
@@ -54,9 +117,55 @@ export class ConversationsStore {
     }) ?? null;
   }
 
-  get(sessionId: string): SessionConversationState {
-    if (!sessionId) return blankConversationState();
-    return this.ensure(sessionId);
+  get(sessionId: string): ConversationView {
+    const state = sessionId ? this.stateFor(sessionId) : blankConversationState();
+    const entries = this.displayEntries(state);
+    return {
+      entries,
+      messages: entries.map((entry) => entry.message),
+      hasEarlierMessages: state.previousCursor !== null,
+      streamingBlocks: state.streamingBlocks,
+      isCompacting: state.isCompacting,
+      errorMessage: state.errorMessage,
+    };
+  }
+
+  async syncMessages(sessionId: string): Promise<boolean> {
+    if (!sessionId) return false;
+    const path = `/api/sessions/${encodeURIComponent(sessionId)}/messages`;
+    let after = this.stateFor(sessionId).latestCursor;
+
+    try {
+      while (true) {
+        const url = after === null ? path : `${path}?after=${encodeURIComponent(after)}`;
+        const response = await fetch(url);
+        if (!response.ok) return false;
+        const page: MessageRecordPage = await response.json();
+        this.mergeMessages(sessionId, page);
+        if (!page.pageInfo.hasNextPage) return true;
+        if (!page.pageInfo.endCursor || page.pageInfo.endCursor === after) return false;
+        after = page.pageInfo.endCursor;
+      }
+    } catch {
+      return false;
+    }
+  }
+
+  async loadEarlierMessages(sessionId: string): Promise<boolean> {
+    if (!sessionId) return false;
+    const before = this.stateFor(sessionId).previousCursor;
+    if (!before) return false;
+
+    try {
+      const path = `/api/sessions/${encodeURIComponent(sessionId)}/messages`;
+      const response = await fetch(`${path}?before=${encodeURIComponent(before)}`);
+      if (!response.ok) return false;
+      const page: MessageRecordPage = await response.json();
+      this.mergeMessages(sessionId, page, { earlier: true });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   subscribe(sessionId: string, listener: ConversationsStoreListener): () => void {
@@ -78,17 +187,45 @@ export class ConversationsStore {
     };
   }
 
-  setPersistedMessages(sessionId: string, persistedMessages: AgentMessage[]): void {
-    if (!sessionId) return;
-    const state = this.ensure(sessionId);
-    const persistedSnapshotAdvanced = state.messages.length > 0
-      && latestMessageTimestamp(persistedMessages) > latestMessageTimestamp(state.messages);
+  addOptimisticUserMessage(
+    sessionId: string,
+    content: ClientPromptContent,
+    timestamp = Date.now(),
+  ): LiveConversationEntry | null {
+    if (!sessionId) return null;
+    const entry: LiveConversationEntry = {
+      id: null,
+      parentId: null,
+      localId: `live-${this._nextLiveEntryId++}`,
+      message: { role: "user", content, timestamp },
+    };
+    this.update(sessionId, (state) => ({ liveTail: [...state.liveTail, entry] }));
+    return entry;
+  }
 
-    this.set(sessionId, {
-      ...state,
-      persistedMessages,
-      streamingBlocks: persistedSnapshotAdvanced ? [] : state.streamingBlocks,
-      messages: persistedMessages,
+  mergeMessages(
+    sessionId: string,
+    page: MessageRecordPage,
+    options: { earlier?: boolean } = {},
+  ): void {
+    if (!sessionId) return;
+    this.update(sessionId, (state) => {
+      if (options.earlier) {
+        return {
+          records: page.items,
+          previousCursor: page.pageInfo.previousCursor,
+        };
+      }
+
+      const known = new Set(state.records.map(({ id }) => id));
+      const added = page.items.filter(({ id }) => !known.has(id));
+      return {
+        records: page.items,
+        liveTail: this.removePersistedLiveEntries(state.liveTail, added),
+        previousCursor: state.records.length === 0 ? page.pageInfo.previousCursor : state.previousCursor,
+        latestCursor: page.pageInfo.endCursor,
+        streamingBlocks: state.records.length > 0 && added.length > 0 ? [] : state.streamingBlocks,
+      };
     });
   }
 
@@ -108,20 +245,37 @@ export class ConversationsStore {
       case "auto_retry_start":
       case "auto_retry_end":
       case "user_message": {
-        const state = this.ensure(sessionId);
-        const next = applyChatEvent({ ...state, isStreaming: false }, event);
-        if (
-          next.messages === state.messages
-          && next.streamingBlocks === state.streamingBlocks
-          && next.isCompacting === state.isCompacting
-          && next.errorMessage === state.errorMessage
-        ) return;
-        this.set(sessionId, {
-          ...state,
-          messages: next.messages,
-          streamingBlocks: next.streamingBlocks,
-          isCompacting: next.isCompacting,
-          errorMessage: next.errorMessage,
+        this.update(sessionId, (state) => {
+          if (
+            event.type === "user_message"
+            && state.liveTail.some((entry) => (
+              entry.message.role === "user"
+              && userMessageContentKey(entry.message.content) === userMessageContentKey(event.message)
+            ))
+          ) return undefined;
+
+          const reconciledState = event.type === "agent_end" && event.messages
+            ? this.reconcileFinalizedUserMessages(state, event.messages)
+            : state;
+          const messages = this.displayMessages(reconciledState);
+          const next = applyChatEvent({ ...reconciledState, messages, isStreaming: false }, event);
+          if (
+            reconciledState === state
+            && next.messages === messages
+            && next.streamingBlocks === state.streamingBlocks
+            && next.isCompacting === state.isCompacting
+            && next.errorMessage === state.errorMessage
+          ) return undefined;
+
+          return {
+            liveTail: this.liveEntriesForMessages(
+              reconciledState.liveTail,
+              next.messages.slice(reconciledState.records.length),
+            ),
+            streamingBlocks: next.streamingBlocks,
+            isCompacting: next.isCompacting,
+            errorMessage: next.errorMessage,
+          };
         });
         return;
       }
@@ -135,20 +289,16 @@ export class ConversationsStore {
 
   clearStreamingState(sessionId: string): void {
     if (!sessionId) return;
-    const state = this.ensure(sessionId);
-    if (state.streamingBlocks.length === 0 && !state.isCompacting) return;
-    this.set(sessionId, {
-      ...state,
-      streamingBlocks: [],
-      isCompacting: false,
-      messages: state.persistedMessages,
-    });
+    this.update(sessionId, (state) => (
+      state.streamingBlocks.length === 0 && !state.isCompacting
+        ? undefined
+        : { streamingBlocks: [], isCompacting: false }
+    ));
   }
 
   setError(sessionId: string, errorMessage: string): void {
     if (!sessionId) return;
-    const state = this.ensure(sessionId);
-    this.set(sessionId, { ...state, errorMessage });
+    this.update(sessionId, { errorMessage });
   }
 
   clearError(sessionId: string): void {
@@ -172,7 +322,6 @@ export class ConversationsStore {
     if (!this._states.has(sessionId)) return;
     if (this._listeners.has(sessionId)) return;
     if (this._sessionCache?.get(sessionId)?.activityState === "running") return;
-
     this.evict(sessionId);
   }
 
@@ -181,17 +330,86 @@ export class ConversationsStore {
     this.notify(sessionId);
   }
 
-  private ensure(sessionId: string): SessionConversationState {
-    let state = this._states.get(sessionId);
-    if (!state) {
-      state = blankConversationState();
-      this._states.set(sessionId, state);
-    }
-    return state;
+  private displayEntries(state: ConversationState): ConversationEntry[] {
+    return [...state.records, ...state.liveTail];
   }
 
-  private set(sessionId: string, state: SessionConversationState): void {
-    this._states.set(sessionId, state);
+  private displayMessages(state: ConversationState): AgentMessage[] {
+    return this.displayEntries(state).map(({ message }) => message);
+  }
+
+  private reconcileFinalizedUserMessages(
+    state: ConversationState,
+    messages: readonly AgentMessage[],
+  ): ConversationState {
+    const liveTail = [...state.liveTail];
+    const matched = new Set<number>();
+    let changed = false;
+    for (const message of messages) {
+      if (message.role !== "user") continue;
+      const match = liveTail.findIndex((entry, index) => (
+        !matched.has(index)
+        && entry.message.role === "user"
+        && userMessageContentKey(entry.message.content) === userMessageContentKey(message.content)
+      ));
+      if (match === -1) continue;
+      matched.add(match);
+      liveTail[match] = { ...liveTail[match], message };
+      changed = true;
+    }
+    return changed ? { ...state, liveTail } : state;
+  }
+
+  private removePersistedLiveEntries(
+    liveEntries: readonly LiveConversationEntry[],
+    records: readonly PersistedConversationEntry[],
+  ): LiveConversationEntry[] {
+    const remaining = [...liveEntries];
+    for (const record of records) {
+      const match = remaining.findIndex(({ message }) => (
+        message.role === record.message.role
+        && (message.role === "user" && record.message.role === "user"
+          ? userMessageContentKey(message.content) === userMessageContentKey(record.message.content)
+          : message.timestamp === record.message.timestamp)
+      ));
+      if (match !== -1) remaining.splice(match, 1);
+    }
+    return remaining;
+  }
+
+  private liveEntriesForMessages(
+    existing: readonly LiveConversationEntry[],
+    messages: readonly AgentMessage[],
+  ): LiveConversationEntry[] {
+    return messages.map((message) => {
+      const current = existing.find((entry) => entry.message === message);
+      return current ?? {
+        id: null,
+        parentId: null,
+        localId: `live-${this._nextLiveEntryId++}`,
+        message,
+      };
+    });
+  }
+
+  private stateFor(sessionId: string): ConversationState {
+    return this._states.get(sessionId) ?? blankConversationState();
+  }
+
+  private update(
+    sessionId: string,
+    build: ConversationUpdate | ((state: ConversationState) => ConversationUpdate | undefined),
+  ): void {
+    const current = this.stateFor(sessionId);
+    const patch = typeof build === "function" ? build(current) : build;
+    if (!patch) return;
+
+    const { records, ...rest } = patch;
+    this._states.set(sessionId, {
+      ...current,
+      ...rest,
+      records: records ? mergeMessageRecords(current.records, records) : current.records,
+    });
     this.notify(sessionId);
   }
 

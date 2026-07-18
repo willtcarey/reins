@@ -8,7 +8,9 @@
 
 import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
+import { repeat } from "lit/directives/repeat.js";
 import type { ActiveSessionStore } from "../models/stores/active-session-store.js";
+import type { ConversationEntry } from "../models/stores/conversations-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import "./markdown-content.js";
 import "./session-model-picker.js";
@@ -23,7 +25,6 @@ import {
   type ToolCall,
   type ToolBlockData,
   type StreamingBlock,
-  userMessageContentKey,
 } from "../models/chat-state.js";
 import {
   imageAspectRatioStyle,
@@ -40,6 +41,7 @@ import {
   type SendAnimationOrigin,
 } from "../helpers/chat-send-animation.js";
 import { openImageViewerEvent } from "./events.js";
+import { ChatHistoryController } from "../controllers/chat-history-controller.js";
 
 // ---- Component --------------------------------------------------------------
 
@@ -64,14 +66,15 @@ export class ChatPanel extends LitElement {
 
   @state() private expandedSections = new Set<string>();
   @state() private animatingUserMessageKeys = new Set<string>();
-  @state() private pendingUserMessages: UserMessage[] = [];
-  private pendingUserMessageBaselines = new Map<number, number>();
 
   @query("chat-composer") private composer?: ChatComposer;
 
   private sendAnimator = new ChatSendAnimator(this);
+  private history = new ChatHistoryController(this, {
+    hasEarlierMessages: () => this.store?.conversation.hasEarlierMessages ?? false,
+    loadPrevious: () => this.store?.loadEarlierMessages() ?? Promise.resolve(false),
+  });
   private unsubscribeStore?: () => void;
-  private scrollContainer: HTMLElement | null = null;
   private shouldAutoScroll = true;
 
   override connectedCallback() {
@@ -94,19 +97,16 @@ export class ChatPanel extends LitElement {
   private resetSessionState() {
     this.expandedSections = new Set();
     this.animatingUserMessageKeys = new Set();
-    this.pendingUserMessages = [];
-    this.pendingUserMessageBaselines.clear();
     this.shouldAutoScroll = true;
+    this.history.reset();
   }
 
-  private get storeMessages(): AgentMessage[] {
-    return this.store?.conversation.messages ?? [];
+  private get messageEntries(): ConversationEntry[] {
+    return this.store?.conversation.entries ?? [];
   }
 
   private get messages(): AgentMessage[] {
-    return this.pendingUserMessages.length === 0
-      ? this.storeMessages
-      : [...this.storeMessages, ...this.pendingUserMessages];
+    return this.messageEntries.map((entry) => entry.message);
   }
 
   private get isStreaming(): boolean {
@@ -145,43 +145,8 @@ export class ChatPanel extends LitElement {
   private subscribeToStore() {
     this.unsubscribeStore?.();
     this.unsubscribeStore = this.store?.subscribe(() => {
-      this.reconcilePendingUserMessages();
       this.requestUpdate();
     }) ?? undefined;
-  }
-
-  private reconcilePendingUserMessages() {
-    if (this.pendingUserMessages.length === 0) return;
-
-    const conversationMessages = this.store?.conversation.messages ?? [];
-    const latestPersistedTimestamp = (this.store?.conversation.persistedMessages ?? []).reduce(
-      (latest, candidate) => Math.max(latest, candidate.timestamp),
-      -Infinity,
-    );
-
-    const shouldKeepPending = (message: UserMessage) => {
-      if (message.timestamp <= latestPersistedTimestamp) return false;
-
-      const baseline = this.pendingUserMessageBaselines.get(message.timestamp);
-      if (baseline === undefined) return true;
-
-      const conversationTail = conversationMessages.slice(baseline);
-      if (conversationTail.length === 0) return true;
-
-      const pendingKey = userMessageContentKey(message.content);
-      return !conversationTail.some((candidate) => (
-        candidate.role === "user" && userMessageContentKey(candidate.content) === pendingKey
-      ));
-    };
-
-    const pending = this.pendingUserMessages.filter(shouldKeepPending);
-    if (pending.length === this.pendingUserMessages.length) return;
-
-    const pendingTimestamps = new Set(pending.map((message) => message.timestamp));
-    for (const timestamp of this.pendingUserMessageBaselines.keys()) {
-      if (!pendingTimestamps.has(timestamp)) this.pendingUserMessageBaselines.delete(timestamp);
-    }
-    this.pendingUserMessages = pending;
   }
 
   private handleSend(e: CustomEvent<ChatComposerSubmitDetail>) {
@@ -191,8 +156,6 @@ export class ChatPanel extends LitElement {
 
     const animationOrigin = this.composer?.getSendAnimationOrigin() ?? null;
     const shouldAnimate = animationOrigin !== null && this.canAnimateOutgoingMessage();
-    const timestamp = Date.now();
-    const messageKey = this.userMessageKey(timestamp);
 
     const wasStreaming = this.isStreaming;
     const sent = wasStreaming
@@ -200,16 +163,12 @@ export class ChatPanel extends LitElement {
       : this.store.prompt(content);
     if (!sent) return;
 
+    const submittedEntry = this.store.conversation.entries.at(-1);
+    if (!submittedEntry || submittedEntry.message.role !== "user") return;
+    const messageKey = this.conversationEntryKey(submittedEntry);
     const conversationShiftSnapshot = shouldAnimate
       ? this.captureConversationShiftSnapshot()
       : [];
-
-    this.pendingUserMessageBaselines.set(timestamp, this.storeMessages.length);
-    this.pendingUserMessages = [
-      ...this.pendingUserMessages,
-      { role: "user", content, timestamp },
-    ];
-    this.requestUpdate();
 
     if (shouldAnimate) {
       this.animatingUserMessageKeys = new Set([...this.animatingUserMessageKeys, messageKey]);
@@ -231,6 +190,18 @@ export class ChatPanel extends LitElement {
     if (!(e.target instanceof HTMLElement)) return;
     const atBottom = e.target.scrollHeight - e.target.scrollTop - e.target.clientHeight < 50;
     this.shouldAutoScroll = atBottom;
+    this.history.handleScroll(e.target);
+  }
+
+  private handleHistoryTouchStart() {
+    this.history.handleTouchStart();
+  }
+
+  private handleLoadPreviousMessages() {
+    const container = this.querySelector<HTMLElement>("#chat-scroll");
+    if (!container) return;
+    this.shouldAutoScroll = false;
+    return this.history.loadPrevious(container);
   }
 
   private handleMessageTouchMove() {
@@ -249,6 +220,10 @@ export class ChatPanel extends LitElement {
 
   private userMessageKey(timestamp: number): string {
     return `user-${timestamp}`;
+  }
+
+  private conversationEntryKey(entry: ConversationEntry): string {
+    return entry.id ?? entry.localId;
   }
 
   private conversationMessageKey(msg: AgentMessage): string {
@@ -345,20 +320,20 @@ export class ChatPanel extends LitElement {
     `;
   }
 
-  private renderUserMessage(msg: UserMessage) {
+  private renderUserMessage(msg: UserMessage, conversationKey = this.conversationMessageKey(msg)) {
     const text = typeof msg.content === "string"
       ? msg.content
       : textFromClientContent(msg.content);
     const images = imagesFromContent(msg.content);
     const sessionId = this.store?.sessionId ?? "";
-    const messageKey = this.userMessageKey(msg.timestamp);
+    const messageKey = conversationKey;
     const isAnimating = this.animatingUserMessageKeys.has(messageKey);
 
     return html`
       <div
         data-role="user-message-row"
         data-message-key=${messageKey}
-        data-conversation-key=${messageKey}
+        data-conversation-key=${conversationKey}
         class="flex justify-end mb-3 ${isAnimating ? 'sent-message-target-hidden' : ''}"
       >
         <div class="flex max-w-[80%] flex-col items-end gap-2">
@@ -377,7 +352,7 @@ export class ChatPanel extends LitElement {
     `;
   }
 
-  private renderAssistantMessage(msg: AssistantMessage) {
+  private renderAssistantMessage(msg: AssistantMessage, conversationKey = this.conversationMessageKey(msg)) {
     const parts: unknown[] = [];
     const textBuffer: string[] = [];
 
@@ -408,7 +383,7 @@ export class ChatPanel extends LitElement {
     flushText();
 
     return html`
-      <div data-conversation-key=${this.conversationMessageKey(msg)} class="mb-3">
+      <div data-conversation-key=${conversationKey} class="mb-3">
         ${parts}
       </div>
     `;
@@ -439,14 +414,14 @@ export class ChatPanel extends LitElement {
     return nothing;
   }
 
-  private renderCompactionSummary(msg: CompactionSummaryMessage) {
+  private renderCompactionSummary(msg: CompactionSummaryMessage, conversationKey = this.conversationMessageKey(msg)) {
     const rawSummary = msg.content || msg.summary;
     const summary = rawSummary && rawSummary !== "Conversation summarized" ? rawSummary : null;
     const id = `compaction-${msg.timestamp || 0}`;
     const expanded = this.expandedSections.has(id);
 
     return html`
-      <div data-conversation-key=${this.conversationMessageKey(msg)} class="my-4">
+      <div data-conversation-key=${conversationKey} class="my-4">
         <div class="flex items-center gap-3">
           <div class="flex-1 border-t border-zinc-600"></div>
           <button
@@ -468,16 +443,20 @@ export class ChatPanel extends LitElement {
     `;
   }
 
-  private renderMessage(msg: AgentMessage) {
+  private renderMessageEntry(entry: ConversationEntry) {
+    return this.renderMessage(entry.message, this.conversationEntryKey(entry));
+  }
+
+  private renderMessage(msg: AgentMessage, conversationKey = this.conversationMessageKey(msg)) {
     switch (msg.role) {
       case "user":
-        return this.renderUserMessage(msg);
+        return this.renderUserMessage(msg, conversationKey);
       case "assistant":
-        return this.renderAssistantMessage(msg);
+        return this.renderAssistantMessage(msg, conversationKey);
       case "toolResult":
         return this.renderToolResultMessage(msg);
       case "compactionSummary":
-        return this.renderCompactionSummary(msg);
+        return this.renderCompactionSummary(msg, conversationKey);
       default:
         return nothing;
     }
@@ -533,16 +512,35 @@ export class ChatPanel extends LitElement {
         <!-- Messages area -->
         <div
           id="chat-scroll"
-          class="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-1"
+          class="flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none] p-4 space-y-1"
           @scroll=${this.handleScroll}
+          @touchstart=${this.handleHistoryTouchStart}
           @touchmove=${this.handleMessageTouchMove}
         >
+          ${this.store?.conversation.hasEarlierMessages ? html`
+            <div class="flex justify-center pb-2">
+              <button
+                data-role="load-previous-messages"
+                class="rounded-md border border-zinc-700 bg-zinc-800/70 px-2.5 py-1 text-xs text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                ?disabled=${this.history.loading}
+                aria-busy=${this.history.loading ? "true" : "false"}
+                @click=${this.handleLoadPreviousMessages}
+              >
+                ${this.history.loading ? "Loading previous messages…" : "Load previous messages"}
+              </button>
+            </div>
+          ` : nothing}
           ${this.messages.length === 0 && !this.isStreaming && !this.isCompacting ? html`
             <div class="flex items-center justify-center h-full text-zinc-500 text-sm">
               Send a message to start a conversation
             </div>
           ` : nothing}
-          ${this.messages.map((msg) => this.renderMessage(msg))}
+          ${repeat(
+            this.messageEntries,
+            (entry) => this.conversationEntryKey(entry),
+            (entry) => this.renderMessageEntry(entry),
+          )}
           ${this.renderStreamingContent()}
         </div>
 

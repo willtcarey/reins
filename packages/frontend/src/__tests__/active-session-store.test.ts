@@ -5,17 +5,18 @@ import { ConversationsStore } from "../models/stores/conversations-store.js";
 import { SessionCache } from "../models/stores/session-cache.js";
 import { StubClient } from "./helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
+import { messagePage } from "./helpers/conversations.js";
 
 type IsAny<T> = 0 extends (1 & T) ? true : false;
 type AssertFalse<T extends false> = T;
 type AssertTrue<T extends true> = T;
-type _ConversationMessagesElementIsTyped = AssertFalse<IsAny<ActiveSessionStore["conversation"]["persistedMessages"][number]>>;
-type _ConversationMessagesMatchAgentMessages = AssertTrue<ActiveSessionStore["conversation"]["persistedMessages"] extends AgentMessage[] ? true : false>;
-
-// ---- Helpers ----------------------------------------------------------------
+type ConversationMessages = ActiveSessionStore["conversation"]["messages"];
+type _ConversationMessagesElementIsTyped = AssertFalse<IsAny<ConversationMessages[number]>>;
+type _ConversationMessagesMatchAgentMessages = AssertTrue<ConversationMessages extends AgentMessage[] ? true : false>;
 
 function jsonResponse(data: unknown) {
-  return new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } });
+  const body = Array.isArray(data) ? messagePage(data) : data;
+  return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
 function callPrivate(obj: object, key: string, ...args: unknown[]) {
@@ -152,7 +153,8 @@ describe("ActiveSessionStore conversation notifications", () => {
 
   test("message refresh updates notify through the conversation subscription only", async () => {
     const sessionCache = new SessionCache();
-    const store = new ActiveSessionStore("sess-1", null, sessionCache);
+    const conversationsStore = new ConversationsStore();
+    const store = new ActiveSessionStore("sess-1", null, sessionCache, conversationsStore);
     sessionCache.set("sess-1", makeSessionData());
     const responses: AgentMessage[][] = [[], twoMessages];
     mockFetch((url) => {
@@ -165,10 +167,10 @@ describe("ActiveSessionStore conversation notifications", () => {
     let notifyCount = 0;
     store.subscribe(() => { notifyCount += 1; });
 
-    await store.refreshMessages();
+    await conversationsStore.syncMessages("sess-1");
 
     expect(notifyCount).toBe(1);
-    expect(store.conversation.persistedMessages).toEqual(twoMessages);
+    expect(store.conversation.messages).toEqual(twoMessages);
   });
 });
 
@@ -188,6 +190,12 @@ describe("ActiveSessionStore command helpers", () => {
     expect(client.prompt).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "hello" }]);
     expect(client.steer).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "keep going" }]);
     expect(client.abort).toHaveBeenCalledWith("sess-1");
+    expect(store.conversation.messages).toEqual([
+      { role: "user", content: [{ type: "text", text: "hello" }], timestamp: expect.any(Number) },
+      { role: "user", content: [{ type: "text", text: "keep going" }], timestamp: expect.any(Number) },
+    ]);
+    expect(store.conversation.entries.every((entry) => entry.id === null)).toBe(true);
+    expect(new Set(store.conversation.entries.map((entry) => entry.id ?? entry.localId)).size).toBe(2);
   });
 
   test("prompt optimistically marks cached activityState running", () => {
@@ -230,7 +238,7 @@ describe("ActiveSessionStore session loading contract", () => {
     expect(calls).toEqual(["/api/sessions/sess-1", "/api/sessions/sess-1/messages"]);
     expect(store.projectId).toBe(42);
     expect(store.sessionData.messageCount).toBe(2);
-    expect(store.conversation.persistedMessages).toEqual(twoMessages);
+    expect(store.conversation.messages).toEqual(twoMessages);
   });
 
   test("initialize fetches metadata when SessionCache has no detail", async () => {
@@ -249,7 +257,7 @@ describe("ActiveSessionStore session loading contract", () => {
     expect(calls).toEqual(["/api/sessions/sess-1", "/api/sessions/sess-1/messages"]);
     expect(store.projectId).toBe(42);
     expect(store.sessionData.messageCount).toBe(2);
-    expect(store.conversation.persistedMessages).toEqual(twoMessages);
+    expect(store.conversation.messages).toEqual(twoMessages);
   });
 
   test("initialize leaves metadata blank when detail fetch fails", async () => {
@@ -273,7 +281,7 @@ describe("ActiveSessionStore session loading contract", () => {
       runtimeType: undefined,
       state: { model: null, thinkingLevel: "high" },
     });
-    expect(store.conversation.persistedMessages).toEqual(twoMessages);
+    expect(store.conversation.messages).toEqual(twoMessages);
   });
 
   test("subscribes to SessionCache updates for the active session", async () => {
@@ -331,10 +339,10 @@ describe("ActiveSessionStore session loading contract", () => {
     resolveMessages(jsonResponse(twoMessages));
     await routePromise;
 
-    expect(store.conversation.persistedMessages).toEqual(twoMessages);
+    expect(store.conversation.messages).toEqual(twoMessages);
   });
 
-  test("dispose prevents an in-flight initial messages load from committing", async () => {
+  test("shared conversation queries may complete after the active facade is disposed", async () => {
     const sessionCache = new SessionCache();
     const conversationsStore = new ConversationsStore();
     const store = new ActiveSessionStore("sess-1", null, sessionCache, conversationsStore);
@@ -353,7 +361,7 @@ describe("ActiveSessionStore session loading contract", () => {
     resolveMessages(jsonResponse(twoMessages));
     await initializePromise;
 
-    expect(conversationsStore.get("sess-1").persistedMessages).toEqual([]);
+    expect(conversationsStore.get("sess-1").messages).toEqual(twoMessages);
   });
 
   test("session cache update auto-refreshes messages when cached activityState transitions from running", async () => {
@@ -379,7 +387,7 @@ describe("ActiveSessionStore session loading contract", () => {
 
     expect(calls).toEqual(["/api/sessions/sess-1/messages"]);
     expect(store.sessionData.activityState).not.toBe("running");
-    expect(store.conversation.persistedMessages).toHaveLength(3);
+    expect(store.conversation.messages).toHaveLength(3);
   });
 
   test("session cache update does NOT auto-refresh messages when cached session is still running", async () => {

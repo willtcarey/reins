@@ -133,7 +133,7 @@ type PersistedCompactionSummaryMessage = PersistedMessageBase & {
   content?: never;
 };
 
-type PersistedMessage =
+export type PersistedMessage =
   | PersistedUserMessage
   | PersistedAssistantMessage
   | PersistedToolResultMessage
@@ -159,11 +159,28 @@ export type SessionEntry = SessionMessageEntry | SessionToolCallEntry;
 
 export interface SessionMessageRow {
   id: number;
+  parent_id: number | null;
   session_id: string;
   seq: number;
   role: string;
   message_json: string;
   created_at: string;
+}
+
+export interface SessionMessagePageItem {
+  id: string;
+  parentId: string | null;
+  message: PersistedMessage;
+}
+
+export interface SessionMessagePage {
+  items: SessionMessagePageItem[];
+  pageInfo: {
+    hasPreviousPage: boolean;
+    previousCursor: string | null;
+    hasNextPage: boolean;
+    endCursor: string | null;
+  };
 }
 
 const TOOL_RESULT_PREVIEW_CHARS = 500;
@@ -333,11 +350,7 @@ export function persistMessages(sessionId: string, messages: any[]): void {
   appendMessages(sessionId, messages.slice(appendStartIdx));
 }
 
-/**
- * Load all messages for a session, ordered by seq.
- * Returns parsed message objects including compaction_summary markers.
- * Used for display (full history).
- */
+/** Load all messages for replay/counting callers that need the complete transcript. */
 export function loadMessages(sessionId: string): any[] {
   const db = getDb();
   const rows = db
@@ -345,6 +358,172 @@ export function loadMessages(sessionId: string): any[] {
     .all(sessionId);
 
   return rows.map((row) => JSON.parse(row.message_json));
+}
+
+type DisplayCursorDirection = "before" | "after";
+
+function displayCursor(sessionId: string, seq: number, direction: DisplayCursorDirection): string {
+  return Buffer.from(JSON.stringify({ sessionId, seq, direction })).toString("base64url");
+}
+
+export function parseDisplayCursor(
+  sessionId: string,
+  cursor: string,
+  direction: DisplayCursorDirection,
+): number | null {
+  try {
+    const value: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString());
+    if (!value || typeof value !== "object") return null;
+    if (!("sessionId" in value) || !("seq" in value) || !("direction" in value)) return null;
+    const seq = value.seq;
+    if (
+      value.sessionId !== sessionId
+      || value.direction !== direction
+      || typeof seq !== "number"
+      || !Number.isSafeInteger(seq)
+      || seq < 0
+    ) return null;
+    return seq;
+  } catch {
+    return null;
+  }
+}
+
+interface MessagePagePosition {
+  beforeSeq?: number;
+  afterSeq?: number;
+}
+
+const DISPLAY_ROW_SELECT = `SELECT sm.id, sm.session_id, sm.seq, sm.role, sm.message_json, sm.created_at,
+  (SELECT parent.id FROM session_messages AS parent
+   WHERE parent.session_id = sm.session_id AND parent.seq < sm.seq
+   ORDER BY parent.seq DESC LIMIT 1) AS parent_id
+ FROM session_messages AS sm`;
+
+function queryDisplayRows(
+  sessionId: string,
+  condition: string,
+  values: number[],
+  order: "ASC" | "DESC" = "ASC",
+  limit?: number,
+): SessionMessageRow[] {
+  return getDb().query<SessionMessageRow, (string | number)[]>(
+    `${DISPLAY_ROW_SELECT}
+     WHERE sm.session_id = ? AND ${condition}
+     ORDER BY sm.seq ${order}${limit === undefined ? "" : " LIMIT ?"}`,
+  ).all(sessionId, ...values, ...(limit === undefined ? [] : [limit]));
+}
+
+const parseDisplayRows = (rows: SessionMessageRow[]) => rows.map((row) => ({
+  row,
+  message: parsePersistedMessage(row.message_json),
+}));
+
+/**
+ * Load one chronological display window. The limit is soft: a selected tool
+ * call row and every persisted result row it references are kept together.
+ */
+export function loadMessagePage(
+  sessionId: string,
+  limit: number,
+  position: MessagePagePosition = {},
+): SessionMessagePage {
+  const db = getDb();
+  const forward = position.afterSeq !== undefined;
+  const rows = queryDisplayRows(
+    sessionId,
+    `sm.seq ${forward ? ">" : "<"} ?`,
+    [forward ? position.afterSeq! : (position.beforeSeq ?? Number.MAX_SAFE_INTEGER)],
+    forward ? "ASC" : "DESC",
+    limit,
+  );
+
+  if (rows.length === 0) {
+    return {
+      items: [],
+      pageInfo: {
+        hasPreviousPage: false,
+        previousCursor: null,
+        hasNextPage: false,
+        endCursor: position.afterSeq === undefined
+          ? null
+          : displayCursor(sessionId, position.afterSeq, "after"),
+      },
+    };
+  }
+
+  const parsedPage = parseDisplayRows(forward ? rows : rows.toReversed());
+  const first = parsedPage[0];
+
+  // A backward page can begin on a tool result. Expand its lower boundary to
+  // include the assistant row that issued the call and the contiguous gap.
+  if (!forward && first.message.role === "toolResult") {
+    const assistant = db.query<{ seq: number }, [string, number, string]>(
+      `SELECT sm.seq
+       FROM session_messages AS sm
+       WHERE sm.session_id = ? AND sm.seq < ? AND sm.role = 'assistant'
+         AND json_valid(sm.message_json)
+         AND EXISTS (
+           SELECT 1 FROM json_each(sm.message_json, '$.content') AS block
+           WHERE CASE WHEN block.type = 'object' THEN json_extract(block.value, '$.type') END = 'toolCall'
+             AND CASE WHEN block.type = 'object' THEN json_extract(block.value, '$.id') END = ?
+         )
+       ORDER BY sm.seq DESC LIMIT 1`,
+    ).get(sessionId, first.row.seq, first.message.toolCallId);
+
+    if (assistant) {
+      parsedPage.unshift(...parseDisplayRows(queryDisplayRows(
+        sessionId,
+        "sm.seq >= ? AND sm.seq < ?",
+        [assistant.seq, first.row.seq],
+      )));
+    }
+  }
+
+  // A forward page can end on an assistant tool call. Include every result for
+  // those calls (and the gap up to the final result) in the same soft-limit page.
+  const last = parsedPage.at(-1)!;
+  if (forward && last.message.role === "assistant") {
+    const toolCallIds = last.message.content.flatMap((block) => (
+      block.type === "toolCall" ? [block.id] : []
+    ));
+    const result = toolCallIds.length === 0 ? null : db.query<{ seq: number | null }, [string, number, string]>(
+      `SELECT MAX(seq) AS seq FROM session_messages
+       WHERE session_id = ? AND seq > ? AND role = 'toolResult'
+         AND json_valid(message_json)
+         AND json_extract(message_json, '$.toolCallId') IN (SELECT value FROM json_each(?))`,
+    ).get(sessionId, last.row.seq, JSON.stringify(toolCallIds));
+    if (result?.seq != null) {
+      parsedPage.push(...parseDisplayRows(queryDisplayRows(
+        sessionId,
+        "sm.seq > ? AND sm.seq <= ?",
+        [last.row.seq, result.seq],
+      )));
+    }
+  }
+
+  const firstSeq = parsedPage[0].row.seq;
+  const lastSeq = parsedPage.at(-1)!.row.seq;
+  const hasPreviousPage = db.query<{ present: number }, [string, number]>(
+    `SELECT 1 AS present FROM session_messages WHERE session_id = ? AND seq < ? LIMIT 1`,
+  ).get(sessionId, firstSeq) !== null;
+  const hasNextPage = db.query<{ present: number }, [string, number]>(
+    `SELECT 1 AS present FROM session_messages WHERE session_id = ? AND seq > ? LIMIT 1`,
+  ).get(sessionId, lastSeq) !== null;
+
+  return {
+    items: parsedPage.map(({ row, message }) => ({
+      id: String(row.id),
+      parentId: row.parent_id === null ? null : String(row.parent_id),
+      message,
+    })),
+    pageInfo: {
+      hasPreviousPage,
+      previousCursor: hasPreviousPage ? displayCursor(sessionId, firstSeq, "before") : null,
+      hasNextPage,
+      endCursor: displayCursor(sessionId, lastSeq, "after"),
+    },
+  };
 }
 
 /**

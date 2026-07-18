@@ -12,7 +12,11 @@ import type { RouteContext } from "../router.js";
 import { badRequest, notFound } from "../errors.js";
 import { SessionNotFoundError, Sessions } from "../models/sessions.js";
 import { createBroadcast } from "../models/broadcast.js";
+import { parseDisplayCursor } from "../messages-store.js";
 import { parseBody } from "./validate.js";
+
+const DEFAULT_MESSAGE_PAGE_LIMIT = 50;
+const MAX_MESSAGE_PAGE_LIMIT = 200;
 
 const SessionModelBody = Type.Object({
   runtimeType: Type.Optional(Type.String()),
@@ -47,13 +51,30 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
 
   router.get("/:sessionId/messages", async (ctx) => {
     const sessionId = ctx.params.sessionId;
+    const limitParam = ctx.url.searchParams.get("limit");
+    const limit = limitParam === null ? DEFAULT_MESSAGE_PAGE_LIMIT : Number(limitParam);
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_MESSAGE_PAGE_LIMIT) {
+      badRequest(`limit must be an integer between 1 and ${MAX_MESSAGE_PAGE_LIMIT}`);
+    }
+
+    const beforeCursor = ctx.url.searchParams.get("before");
+    const afterCursor = ctx.url.searchParams.get("after");
+    if (beforeCursor !== null && afterCursor !== null) badRequest("before and after are mutually exclusive");
+    const beforeSeq = beforeCursor === null ? undefined : parseDisplayCursor(sessionId, beforeCursor, "before");
+    const afterSeq = afterCursor === null ? undefined : parseDisplayCursor(sessionId, afterCursor, "after");
+    if (beforeCursor !== null && beforeSeq === null) badRequest("Invalid before cursor");
+    if (afterCursor !== null && afterSeq === null) badRequest("Invalid after cursor");
+
     const sessions = new Sessions(ctx.state.sessions);
-    const messages = sessions.getMessages(sessionId);
-    if (!messages) {
+    const page = sessions.getMessagePage(sessionId, limit, {
+      beforeSeq: beforeSeq ?? undefined,
+      afterSeq: afterSeq ?? undefined,
+    });
+    if (!page) {
       return new Response("Session not found", { status: 404 });
     }
 
-    return Response.json(messages);
+    return Response.json(page);
   });
 
   // Get a session by its globally-unique ID

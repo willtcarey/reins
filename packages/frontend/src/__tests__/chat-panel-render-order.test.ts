@@ -3,7 +3,22 @@ import { ChatPanel } from "../components/chat-panel.js";
 import { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import { ConversationsStore } from "../models/stores/conversations-store.js";
 import type { AgentMessage } from "../models/chat-state.js";
+import { setPersistedMessages } from "./helpers/conversations.js";
 import { templateToString } from "./helpers/lit-template.js";
+
+function isDirectiveResult(value: unknown): value is { values: unknown[] } {
+  return typeof value === "object" && value !== null && Array.isArray(Reflect.get(value, "values"));
+}
+
+function renderFirstMessage(el: ChatPanel): string {
+  const messageDirective = el.render().values.find(isDirectiveResult);
+  const entries = messageDirective?.values[0];
+  const renderEntry = messageDirective?.values[2];
+  if (!Array.isArray(entries) || typeof renderEntry !== "function") {
+    throw new Error("Expected rendered conversation entries");
+  }
+  return templateToString(renderEntry(entries[0]));
+}
 
 function panelWithConversation(options: {
   messages?: AgentMessage[];
@@ -15,7 +30,7 @@ function panelWithConversation(options: {
   const store = new ActiveSessionStore("sess-1", null, undefined, cache);
   el.store = store;
 
-  if (options.messages) cache.setPersistedMessages("sess-1", options.messages);
+  if (options.messages) setPersistedMessages(cache, "sess-1", options.messages);
   if (options.streaming) cache.applyEvent("sess-1", { type: "agent_start" });
   if (options.compacting) cache.applyEvent("sess-1", { type: "compaction_start" });
 
@@ -35,7 +50,7 @@ describe("ChatPanel assistant render order", () => {
       }],
     });
 
-    const output = templateToString(el.render());
+    const output = renderFirstMessage(el);
 
     const toolIdx = output.indexOf("search-tool-block");
     const textIdx = output.indexOf(".text=Done.");
@@ -58,7 +73,7 @@ describe("ChatPanel assistant render order", () => {
       }],
     });
 
-    const output = templateToString(el.render());
+    const output = renderFirstMessage(el);
 
     const firstTextIdx = output.indexOf(".text=First.");
     const toolIdx = output.indexOf("search-tool-block");

@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { AppStore } from "../../../models/stores/app-store.js";
 import { StubClient } from "../../helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
+import { messagePage } from "../../helpers/conversations.js";
+
+const emptyMessagePage = messagePage();
 
 describe("AppStore activity event routing", () => {
   let client: StubClient;
@@ -67,7 +70,7 @@ describe("AppStore activity event routing", () => {
           state: { model: null, thinkingLevel: "off" },
         });
       }
-      if (url === "/api/sessions/active-session/messages") return Response.json([]);
+      if (url === "/api/sessions/active-session/messages") return Response.json(emptyMessagePage);
       return Response.json([], { status: 404 });
     });
     await store.setRoute("active-session");
@@ -104,7 +107,7 @@ describe("AppStore activity event routing", () => {
           state: { model: null, thinkingLevel: "off" },
         });
       }
-      if (url === "/api/sessions/active-session/messages") return Response.json([]);
+      if (url === "/api/sessions/active-session/messages") return Response.json(emptyMessagePage);
       return Response.json([], { status: 404 });
     });
     await store.setRoute("active-session");
@@ -119,8 +122,8 @@ describe("AppStore activity event routing", () => {
 
     expect(store.activeConversationsStore.get("active-session")).toMatchObject({
       messages: [],
+      hasEarlierMessages: false,
       streamingBlocks: [],
-      persistedMessages: [],
     });
   });
 
@@ -185,7 +188,7 @@ describe("AppStore activity event routing", () => {
       messageCount: 0,
       state: { model: null, thinkingLevel: "off" },
     }));
-    resolveMessages(Response.json([]));
+    resolveMessages(Response.json(emptyMessagePage));
     await routePromise;
   });
 
@@ -205,7 +208,7 @@ describe("AppStore activity event routing", () => {
           state: { model: null, thinkingLevel: "off" },
         });
       }
-      if (url === "/api/sessions/sess-1/messages") return Response.json([]);
+      if (url === "/api/sessions/sess-1/messages") return Response.json(emptyMessagePage);
       return Response.json([], { status: 404 });
     });
     const refresh = mock(async () => {});
@@ -246,8 +249,8 @@ describe("AppStore activity event routing", () => {
           state: { model: null, thinkingLevel: "off" },
         });
       }
-      if (url === "/api/sessions/sess-1/messages") return Response.json([]);
-      if (url === "/api/sessions/sess-2/messages") return Response.json([]);
+      if (url === "/api/sessions/sess-1/messages") return Response.json(emptyMessagePage);
+      if (url === "/api/sessions/sess-2/messages") return Response.json(emptyMessagePage);
       return Response.json([], { status: 404 });
     });
 
@@ -277,7 +280,7 @@ describe("AppStore activity event routing", () => {
           state: { model: null, thinkingLevel: "off" },
         });
       }
-      if (url === "/api/sessions/sess-1/messages") return Response.json([]);
+      if (url === "/api/sessions/sess-1/messages") return Response.json(emptyMessagePage);
       return Response.json([], { status: 404 });
     });
 

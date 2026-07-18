@@ -46,7 +46,7 @@ Once a task exists you can create sessions under it. Each session:
 2. **Injects the task context** into the agent's system prompt (title + description).
 3. Is recorded against the task so you can see the full history of sessions that contributed to a piece of work.
 
-You can create as many sessions as you like per task. This is useful for breaking work into steps, trying different approaches, or resuming after reviewing changes.
+You can create as many sessions as you like per task. This is useful for breaking work into steps, trying different approaches, or resuming after reviewing changes. Long sessions open at their latest messages; scrolling to the top loads previous history while keeping the current reading position stable.
 
 ## Deleting a task
 

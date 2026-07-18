@@ -10,11 +10,10 @@
  * Mutations go through action methods which call the backend API.
  */
 
-import type { AgentMessage } from "../chat-state.js";
 import type { AttachmentInfo, ClientPromptContent } from "../chat-content.js";
 import type { IAppClient, SessionData } from "../ws-client.js";
 import { SessionCache } from "./session-cache.js";
-import { ConversationsStore, type SessionConversationState } from "./conversations-store.js";
+import { ConversationsStore, type ConversationView } from "./conversations-store.js";
 
 export interface SessionModelUpdate {
   runtimeType?: string;
@@ -63,7 +62,7 @@ export class ActiveSessionStore {
     return this._sessionCache.getDetail(this.sessionId) ?? blankSessionData(this.sessionId);
   }
 
-  get conversation(): SessionConversationState {
+  get conversation(): ConversationView {
     return this._conversationsStore.get(this.sessionId);
   }
 
@@ -72,7 +71,6 @@ export class ActiveSessionStore {
   private _listeners = new Set<ActiveSessionStoreListener>();
   private _unsubscribeSession: (() => void) | null = null;
   private _unsubscribeConversation: (() => void) | null = null;
-  private _fetchId = 0; // guards against stale message fetches
   private _markViewedInFlight: string | null = null;
   private _lastKnownRunning = false;
   private _disposed = false;
@@ -104,7 +102,6 @@ export class ActiveSessionStore {
 
   dispose(): void {
     this._disposed = true;
-    this._fetchId++;
     this._unsubscribeSession?.();
     this._unsubscribeSession = null;
     this._unsubscribeConversation?.();
@@ -118,7 +115,6 @@ export class ActiveSessionStore {
   async initialize(): Promise<void> {
     if (this._disposed) return;
 
-    const fetchId = ++this._fetchId;
     const cachedSession = this._sessionCache.getDetail(this.sessionId);
     if (cachedSession) {
       this._lastKnownRunning = cachedSession.activityState === "running";
@@ -133,19 +129,15 @@ export class ActiveSessionStore {
       this.notify();
     }
 
-    await Promise.allSettled([
-      this._sessionCache.fetchDetail(this.sessionId),
-      this.fetchSessionMessages(this.sessionId, fetchId),
-    ]);
+    await this.refreshFromServer();
   }
 
   /** Refresh canonical metadata and persisted messages for the active session. */
   async refreshFromServer(): Promise<void> {
     if (this._disposed) return;
-    const fetchId = ++this._fetchId;
     await Promise.allSettled([
       this._sessionCache.fetchDetail(this.sessionId),
-      this.fetchSessionMessages(this.sessionId, fetchId),
+      this._conversationsStore.syncMessages(this.sessionId),
     ]);
   }
 
@@ -154,6 +146,7 @@ export class ActiveSessionStore {
   prompt(message: ClientPromptContent): boolean {
     if (this._disposed || !this._client) return false;
     this._client.prompt(this.sessionId, message);
+    this._conversationsStore.addOptimisticUserMessage(this.sessionId, message);
     this.setOptimisticRunning();
     return true;
   }
@@ -161,6 +154,7 @@ export class ActiveSessionStore {
   steer(message: ClientPromptContent): boolean {
     if (this._disposed || !this._client) return false;
     this._client.steer(this.sessionId, message);
+    this._conversationsStore.addOptimisticUserMessage(this.sessionId, message);
     return true;
   }
 
@@ -222,14 +216,7 @@ export class ActiveSessionStore {
     // If running activity just ended (missed agent_end during disconnect/navigation),
     // also refresh messages to pick up the completed turn's results.
     if (wasRunning && !isRunning) {
-      await this.fetchSessionMessages(this.sessionId);
-    }
-  }
-
-  /** Load persisted messages for the active session. */
-  async refreshMessages() {
-    if (!this._disposed) {
-      await this.fetchSessionMessages(this.sessionId);
+      await this._conversationsStore.syncMessages(this.sessionId);
     }
   }
 
@@ -289,25 +276,14 @@ export class ActiveSessionStore {
     }
   }
 
-  // ---- Internal fetching ----------------------------------------------------
-
   private setOptimisticRunning(): void {
     const sessionId = this.sessionId;
     if (!this._sessionCache.getDetail(sessionId)) return;
     this._sessionCache.set(sessionId, { activityState: "running" });
   }
 
-  private async fetchSessionMessages(sessionId: string, fetchId = this._fetchId): Promise<boolean> {
-    try {
-      const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
-      if (!resp.ok) return false;
-      if (fetchId !== this._fetchId) return false; // stale
-      const data: AgentMessage[] = await resp.json();
-      if (this._disposed || fetchId !== this._fetchId) return false;
-      this._conversationsStore.setPersistedMessages(sessionId, data);
-      return true;
-    } catch {
-      return false;
-    }
+  async loadEarlierMessages(): Promise<boolean> {
+    if (this._disposed) return false;
+    return this._conversationsStore.loadEarlierMessages(this.sessionId);
   }
 }

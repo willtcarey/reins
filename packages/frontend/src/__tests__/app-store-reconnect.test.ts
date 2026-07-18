@@ -10,6 +10,7 @@ import { describe, test, expect, beforeEach, mock, afterEach } from "bun:test";
 import { AppStore } from "../models/stores/app-store.js";
 import { StubClient } from "./helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
+import { messagePage } from "./helpers/conversations.js";
 
 function sessionDetail(isRunning: boolean) {
   return {
@@ -59,7 +60,7 @@ describe("AppStore reconnect catch-up", () => {
     // Set up an active session
     mockFetch((url) => {
       if (url === "/api/sessions/sess-1") return Response.json(sessionDetail(false));
-      if (url === "/api/sessions/sess-1/messages") return Response.json([]);
+      if (url === "/api/sessions/sess-1/messages") return Response.json(messagePage());
       if (url === "/api/sessions/activity") return Response.json([]);
       if (url === "/api/projects") return Response.json([]);
       return new Response("", { status: 404 });
@@ -158,8 +159,8 @@ describe("AppStore reconnect catch-up", () => {
 
     expect(store.activeConversationsStore.get("bg-session")).toMatchObject({
       messages: [],
+      hasEarlierMessages: false,
       streamingBlocks: [],
-      persistedMessages: [],
     });
   });
 
@@ -178,10 +179,10 @@ describe("AppStore reconnect catch-up", () => {
         return new Response(JSON.stringify(sessionDetail(isRunning)), { status: 200, headers: { "Content-Type": "application/json" } });
       }
       if (url === "/api/sessions/sess-1/messages") {
-        return new Response(JSON.stringify([
+        return Response.json(messagePage([
           { role: "user", content: "hello", timestamp: 1000 },
           { role: "assistant", content: [{ type: "text", text: "Done" }], timestamp: 2000 },
-        ]), { status: 200, headers: { "Content-Type": "application/json" } });
+        ]));
       }
       if (url === "/api/sessions/sess-1/activity" && init?.method === "PATCH") {
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -226,10 +227,10 @@ describe("AppStore reconnect catch-up", () => {
           return new Response(JSON.stringify(sessionDetail(isRunning)), { status: 200, headers: { "Content-Type": "application/json" } });
         }
         if (url === "/api/sessions/sess-1/messages") {
-          return new Response(JSON.stringify([
+          return Response.json(messagePage([
             { role: "user", content: "hello", timestamp: 1000 },
             { role: "assistant", content: [{ type: "text", text: "Done" }], timestamp: 2000 },
-          ]), { status: 200, headers: { "Content-Type": "application/json" } });
+          ]));
         }
         return new Response("", { status: 404 });
       });
@@ -242,7 +243,7 @@ describe("AppStore reconnect catch-up", () => {
       await new Promise((r) => setTimeout(r, 0));
 
       expect(store.activeSessionStore?.sessionData.activityState).toBe("finished");
-      expect(store.activeSessionStore?.conversation.persistedMessages).toHaveLength(2);
+      expect(store.activeSessionStore?.conversation.messages ?? []).toHaveLength(2);
     } finally {
       store.dispose();
       if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);

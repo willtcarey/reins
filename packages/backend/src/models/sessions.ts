@@ -14,7 +14,13 @@ import {
   updateSessionMeta,
   type SessionRow,
 } from "../session-store.js";
-import { loadMessages, type RuntimeMessage } from "../messages-store.js";
+import {
+  loadMessagePage,
+  loadMessages,
+  type PersistedMessage,
+  type RuntimeMessage,
+  type SessionMessagePage,
+} from "../messages-store.js";
 import {
   MAX_PROMPT_ATTACHMENT_BYTES,
   getSessionAttachment,
@@ -128,21 +134,32 @@ function toSessionListView(row: SessionRow): SessionListView {
  * historical messages don't render walls of hoisted skill content. The
  * expanded form stays in the DB for runtime replay / compaction.
  */
+function strippedTextBlock(content: readonly unknown[]): { index: number; block: TextBlock; text: string } | null {
+  const index = content.findIndex(isTextBlock);
+  if (index < 0) return null;
+  const block = content[index];
+  if (!isTextBlock(block)) return null;
+  const text = stripLeadingSkillBlocks(block.text);
+  if (text === block.text) return null;
+  return { index, block, text: text ?? block.text };
+}
+
 function stripUserSkillBlocks(msg: RuntimeMessage): RuntimeMessage {
+  if (msg.role !== "user" || !Array.isArray(msg.content)) return msg;
+  const stripped = strippedTextBlock(msg.content);
+  if (!stripped) return msg;
+  const content = msg.content.slice();
+  content[stripped.index] = { ...stripped.block, text: stripped.text };
+  return { ...msg, content };
+}
+
+function stripPersistedUserSkillBlocks(msg: PersistedMessage): PersistedMessage {
   if (msg.role !== "user") return msg;
-  const { content } = msg;
-  if (Array.isArray(content)) {
-    const idx = content.findIndex(isTextBlock);
-    if (idx < 0) return msg;
-    const block = content[idx];
-    if (!isTextBlock(block)) return msg;
-    const stripped = stripLeadingSkillBlocks(block.text);
-    if (stripped === block.text) return msg;
-    const nextContent = content.slice();
-    nextContent[idx] = { ...block, text: stripped ?? block.text };
-    return { ...msg, content: nextContent };
-  }
-  return msg;
+  const stripped = strippedTextBlock(msg.content);
+  if (!stripped) return msg;
+  const content = msg.content.slice();
+  content[stripped.index] = { ...stripped.block, text: stripped.text };
+  return { ...msg, content };
 }
 
 export class Sessions {
@@ -175,6 +192,20 @@ export class Sessions {
     if (!row) return null;
     const messages: RuntimeMessage[] = loadMessages(sessionId);
     return messages.map(stripUserSkillBlocks);
+  }
+
+  getMessagePage(
+    sessionId: string,
+    limit: number,
+    position: { beforeSeq?: number; afterSeq?: number } = {},
+  ): SessionMessagePage | null {
+    const row = getSession(sessionId);
+    if (!row) return null;
+    const page = loadMessagePage(sessionId, limit, position);
+    return {
+      ...page,
+      items: page.items.map((item) => ({ ...item, message: stripPersistedUserSkillBlocks(item.message) })),
+    };
   }
 
   async uploadAttachments(sessionId: string, files: File[]): Promise<SessionAttachmentInfo[]> {

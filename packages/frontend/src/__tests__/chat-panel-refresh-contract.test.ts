@@ -3,6 +3,7 @@ import { ChatPanel } from "../components/chat-panel.js";
 import { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import { ConversationsStore } from "../models/stores/conversations-store.js";
 import { SessionCache } from "../models/stores/session-cache.js";
+import { setPersistedMessages } from "./helpers/conversations.js";
 import { StubClient } from "./helpers/stub-client.js";
 import type { AgentMessage } from "../models/chat-state.js";
 
@@ -92,7 +93,7 @@ describe("ChatPanel refresh contract", () => {
 
     setSessionData(store, makeSessionData({ messageCount: 1 }));
     notify(store);
-    conversationsStore.setPersistedMessages("sess-1", [{ role: "user", content: "earlier prompt", timestamp: 100 }]);
+    setPersistedMessages(conversationsStore, "sess-1", [{ role: "user", content: "earlier prompt", timestamp: 100 }]);
 
     callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: [{ type: "text", text: "new prompt" }] } }));
     startStreamingWithTool(conversationsStore);
@@ -119,7 +120,7 @@ describe("ChatPanel refresh contract", () => {
     const persisted: AgentMessage[] = [{ role: "user", content: "earlier prompt", timestamp: 100 }];
 
     setSessionData(store, makeSessionData({ messageCount: 1 }));
-    conversationsStore.setPersistedMessages("sess-1", persisted);
+    setPersistedMessages(conversationsStore, "sess-1", persisted);
     notify(store);
 
     callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: [{ type: "text", text: "new prompt" }] } }));
@@ -128,7 +129,7 @@ describe("ChatPanel refresh contract", () => {
     // the just-sent prompt has been committed. The UI should layer the local
     // optimistic user message on top of that stale persisted snapshot.
     setSessionData(store, makeSessionData({ messageCount: 1 }));
-    conversationsStore.setPersistedMessages("sess-1", [...persisted]);
+    setPersistedMessages(conversationsStore, "sess-1", [...persisted]);
     notify(store);
 
     expect(get(el, "messages")).toEqual([
@@ -154,7 +155,7 @@ describe("ChatPanel refresh contract", () => {
     const persisted: AgentMessage[] = [
       { role: "user", content: [{ type: "text", text: "new prompt" }], timestamp: pendingTimestamp + 1 },
     ];
-    conversationsStore.setPersistedMessages("sess-1", persisted);
+    setPersistedMessages(conversationsStore, "sess-1", persisted);
     notify(store);
 
     expect(get(el, "messages")).toEqual(persisted);
@@ -191,22 +192,22 @@ describe("ChatPanel refresh contract", () => {
     setSessionData(store, makeSessionData({ activityState: "running", messageCount: 2 }));
     notify(store);
 
-    conversationsStore.setPersistedMessages("sess-1", [
+    setPersistedMessages(conversationsStore, "sess-1", [
       { role: "user", content: "hello", timestamp: 1000 },
       { role: "assistant", content: [{ type: "text", text: "hi" }], timestamp: 2000 },
     ]);
 
     expect(get(el, "isStreaming")).toBe(true);
-    expect(get(el, "messages")).toEqual(store.conversation.persistedMessages);
+    expect(get(el, "messages")).toEqual(store.conversation.messages);
   });
 
   test("disconnect unsubscribes from store render notifications", () => {
     const { el, store, conversationsStore } = setup();
 
     setSessionData(store, makeSessionData({ messageCount: 1 }));
-    conversationsStore.setPersistedMessages("sess-1", [{ role: "user", content: "before", timestamp: 100 }]);
+    setPersistedMessages(conversationsStore, "sess-1", [{ role: "user", content: "before", timestamp: 100 }]);
     notify(store);
-    expect(get(el, "messages")).toEqual(store.conversation.persistedMessages);
+    expect(get(el, "messages")).toEqual(store.conversation.messages);
 
     const requestUpdate = mock(() => undefined);
     Reflect.set(el, "requestUpdate", requestUpdate);
@@ -215,7 +216,7 @@ describe("ChatPanel refresh contract", () => {
     if (typeof unsub === "function") unsub();
     Reflect.set(el, "unsubscribeStore", undefined);
 
-    conversationsStore.setPersistedMessages("sess-1", [{ role: "user", content: "after", timestamp: 200 }]);
+    setPersistedMessages(conversationsStore, "sess-1", [{ role: "user", content: "after", timestamp: 200 }]);
     notify(store);
 
     expect(requestUpdate).not.toHaveBeenCalled();
@@ -250,7 +251,7 @@ describe("ChatPanel stale streaming reconciliation", () => {
     globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
     const { el, store, conversationsStore } = setup();
 
-    conversationsStore.setPersistedMessages("sess-1", [{ role: "user", content: "hello", timestamp: 1000 }]);
+    setPersistedMessages(conversationsStore, "sess-1", [{ role: "user", content: "hello", timestamp: 1000 }]);
     notify(store);
 
     setSessionData(store, makeSessionData({ activityState: "running", messageCount: 1 }));
@@ -262,7 +263,7 @@ describe("ChatPanel stale streaming reconciliation", () => {
       { role: "assistant", content: [{ type: "text", text: "Here are your files" }], timestamp: 2000 },
       { role: "toolResult", toolCallId: "tool-1", toolName: "bash", content: [{ type: "text", text: "file1.txt" }], isError: false, timestamp: 3000 },
     ];
-    conversationsStore.setPersistedMessages("sess-1", finalMessages);
+    setPersistedMessages(conversationsStore, "sess-1", finalMessages);
     setSessionData(store, makeSessionData({ messageCount: 3 }));
     notify(store);
 
@@ -277,7 +278,7 @@ describe("ChatPanel stale streaming reconciliation", () => {
     const { el, store, conversationsStore } = setup();
 
     setSessionData(store, makeSessionData({ activityState: "running", messageCount: 1 }));
-    conversationsStore.setPersistedMessages("sess-1", [{ role: "user", content: "hello", timestamp: 1000 }]);
+    setPersistedMessages(conversationsStore, "sess-1", [{ role: "user", content: "hello", timestamp: 1000 }]);
     notify(store);
     startStreamingWithTool(conversationsStore);
 
@@ -286,7 +287,7 @@ describe("ChatPanel stale streaming reconciliation", () => {
       { role: "user", content: "hello", timestamp: 1000 },
       { role: "assistant", content: [{ type: "text", text: "Done" }], timestamp: 2000 },
     ];
-    conversationsStore.setPersistedMessages("sess-1", finalMessages);
+    setPersistedMessages(conversationsStore, "sess-1", finalMessages);
     notify(store);
 
     expect(get(el, "isStreaming")).toBe(true);

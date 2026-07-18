@@ -249,8 +249,8 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
       // client received a user_message broadcast, state.messages may already
       // contain some/all of these. Deduplicate by timestamp and by pending
       // tail user content so agent_end can still provide a canonical user
-      // message for the initiating client where the optimistic copy lives only
-      // in ChatPanel local state.
+      // message for the initiating client while the optimistic store entry is
+      // waiting for persistence reconciliation.
 
       // Check for error: the last assistant message may have stopReason: "error"
       // with an empty content array, indicating the LLM call failed entirely.
