@@ -118,7 +118,7 @@ You can explicitly inject a skill by typing `/name` in your message, where `name
 /dip start the rails server
 ```
 
-This injects the full content of the `dip` skill into the conversation context so the model has the skill's instructions available immediately — no read tool call needed.
+This injects the full content of the `dip` skill into the runtime conversation context so the model has the instructions immediately — no read tool call needed. The chat continues to display the text you submitted rather than the injected skill instructions.
 
 Slash commands:
 

@@ -127,24 +127,6 @@ export function initialChatState(): ChatState {
 
 // ---- Reducer ----------------------------------------------------------------
 
-export function userMessageContentKey(content: UserMessage["content"]): string {
-  return typeof content === "string" ? content : JSON.stringify(content);
-}
-
-function pendingTailUserContentKeys(messages: AgentMessage[]): Set<string> {
-  let lastNonUserIndex = -1;
-  for (let index = 0; index < messages.length; index += 1) {
-    if (messages[index].role !== "user") lastNonUserIndex = index;
-  }
-
-  return new Set(
-    messages
-      .slice(lastNonUserIndex + 1)
-      .filter((message): message is UserMessage => message.role === "user")
-      .map((message) => userMessageContentKey(message.content)),
-  );
-}
-
 /**
  * Apply an agent event to the chat state, returning a new state.
  * Pure function — no side effects.
@@ -271,11 +253,11 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
         const existing = new Set(
           state.messages.map((m: AgentMessage) => `${m.role}:${m.timestamp}`)
         );
-        const pendingUserContentKeys = pendingTailUserContentKeys(state.messages);
-        // Filter out duplicate messages and empty error assistant messages — they shouldn't appear in the UI
+        // Runtime user messages are persistence inputs, not display events.
+        // Browser submissions already have optimistic/user_message entries.
         const fresh = eventMessages.filter((m) => {
+          if (m.role === "user") return false;
           if (existing.has(`${m.role}:${m.timestamp}`)) return false;
-          if (m.role === "user" && pendingUserContentKeys.has(userMessageContentKey(m.content))) return false;
           // Skip empty assistant messages with stopReason: "error"
           if (m.role === "assistant" && m.stopReason === "error" && m.content.length === 0) {
             return false;

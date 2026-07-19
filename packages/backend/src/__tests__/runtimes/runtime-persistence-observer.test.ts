@@ -193,14 +193,19 @@ describe("runtime persistence observer", () => {
     detach();
   });
 
-  test("broadcasts session_updated on agent_start and agent_end", async () => {
+  test("broadcasts running immediately but persists final messages before the finished session update", async () => {
     const project = createProject("Reins", "/tmp/reins-activity");
     createSession("sess-bcast", project.id, { agentRuntimeType: "test_runtime" });
-
-    const { runtime, emit } = createRuntimeStub();
+    const snapshot: RuntimeMessage[] = [
+      { role: "user", content: [{ type: "text", text: "hello" }] },
+      { role: "assistant", content: [{ type: "text", text: "done" }] },
+    ];
+    const { runtime, emit } = createRuntimeStub({ messages: snapshot });
     const broadcasts: unknown[] = [];
+    const persistedAtBroadcast: RuntimeMessage[][] = [];
     const broadcast: Broadcast = (msg) => {
       broadcasts.push(msg);
+      persistedAtBroadcast.push(loadMessages("sess-bcast"));
     };
 
     const detach = attachRuntimePersistenceObserver({
@@ -217,13 +222,17 @@ describe("runtime persistence observer", () => {
       projectId: project.id,
     });
 
+    expect(persistedAtBroadcast).toEqual([[]]);
+
     emit({ type: "agent_end", messages: [] });
     await Bun.sleep(50);
-    expect(broadcasts).toContainEqual({
+    expect(broadcasts).toHaveLength(2);
+    expect(broadcasts[1]).toEqual({
       type: "session_updated",
       sessionId: "sess-bcast",
       projectId: project.id,
     });
+    expect(persistedAtBroadcast[1]).toEqual(snapshot);
 
     detach();
   });

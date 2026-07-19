@@ -75,11 +75,12 @@ describe("applyChatEvent — agent_end deduplication", () => {
     expect(state.isStreaming).toBe(false);
   });
 
-  test("agent_end appends run user when it is not already in conversation state", () => {
+  test("agent_end ignores runtime user messages while appending assistant and tool results", () => {
     const oldUser = makeUserMsg("older question", 100);
     const oldAssistant = makeAssistantMsg("older answer", 200);
-    const newUser = makeUserMsg("hello", 900);
+    const expandedUser = makeUserMsg("<skill>instructions</skill>\n\n/dip start", 900);
     const newAssistant = makeAssistantMsg("hi there", 800);
+    const newTool = makeToolResultMsg("tc1", "output", 1_000);
 
     let state: ChatState = {
       ...initialChatState(),
@@ -88,10 +89,10 @@ describe("applyChatEvent — agent_end deduplication", () => {
     state = applyChatEvent(state, { type: "agent_start" });
     state = applyChatEvent(state, {
       type: "agent_end",
-      messages: [newUser, newAssistant],
+      messages: [expandedUser, newAssistant, newTool],
     });
 
-    expect(state.messages).toEqual([oldUser, oldAssistant, newUser, newAssistant]);
+    expect(state.messages).toEqual([oldUser, oldAssistant, newAssistant, newTool]);
   });
 
   test("agent_end deduplicates when sessionData refreshed mid-run", () => {

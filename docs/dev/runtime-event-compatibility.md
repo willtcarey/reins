@@ -59,7 +59,9 @@ Session activity indicators are also event-driven:
 
 Do not assume compaction is nested inside an already-started agent run, and do not assume compaction is followed by `agent_end`. Pi can emit `compaction_start` before `agent_start` when it compacts at the beginning of a turn, and can also compact after `agent_end` with no retry. See [Pi Runtime Event Ordering](pi-runtime-event-order.md).
 
-On `agent_end`, Reins may also update session metadata (`model_provider`, `model_id`, `thinking_level`) from `runtime.getSessionMetadata()` when available.
+On `agent_end`, Reins may also update session metadata (`model_provider`, `model_id`, `thinking_level`) from `runtime.getSessionMetadata()` when available. For terminal checkpoints, final message persistence and metadata updates complete before the `finished` activity transition broadcasts `session_updated`; this ensures clients refreshing on completion observe the durable transcript. Running activity transitions remain immediate.
+
+The raw `agent_end` event remains broadcast for runtime compatibility. Frontend conversation handling ignores every `role: "user"` entry in `agent_end.messages`; those entries remain inputs to persistence, while visible user text comes from optimistic local entries, peer `user_message` events, and persisted display projections.
 
 ## Tool event contract
 

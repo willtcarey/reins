@@ -93,18 +93,26 @@ async function persistRuntimeStateFromRuntime(params: {
   const { sessionId, runtime, event, sessions } = params;
 
   const nextActivityState = getActivityStateForEvent(event);
-  if (nextActivityState !== null) {
+
+  // Running state should remain immediate. Terminal state must wait until the
+  // checkpoint is durable so its session_updated broadcast cannot trigger a
+  // refresh that races ahead of final message persistence.
+  if (nextActivityState === "running") {
     sessions.updateActivityState(sessionId, nextActivityState);
   }
 
-  if (!shouldPersistForRuntimeEvent(event)) return;
+  if (shouldPersistForRuntimeEvent(event)) {
+    await persistRuntimeSnapshot({
+      sessionId,
+      runtime,
+      event,
+      updateMetadata: true,
+    });
+  }
 
-  await persistRuntimeSnapshot({
-    sessionId,
-    runtime,
-    event,
-    updateMetadata: true,
-  });
+  if (nextActivityState === "finished") {
+    sessions.updateActivityState(sessionId, nextActivityState);
+  }
 }
 
 export function attachRuntimePersistenceObserver(params: {

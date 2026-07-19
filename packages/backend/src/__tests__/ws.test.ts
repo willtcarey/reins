@@ -267,8 +267,31 @@ describe("WebSocket handlers", () => {
 
   });
 
-  describe("handleWsMessage — multimodal prompt path", () => {
+  describe("handleWsMessage — user message broadcasts", () => {
     useTestDb();
+
+    test("broadcasts raw steer submissions to peer clients", async () => {
+      const project = createProject("WS Steer", "/tmp/ws-steer");
+      createSession("sess-steer", project.id, { agentRuntimeType: "pi" });
+      const stub = createRuntimeStub();
+      state.sessions.set("sess-steer", { id: "sess-steer", runtime: stub.runtime, lastActivity: 0 });
+      const sender = createMockWs();
+      const observer = createMockWs();
+      handleWsOpen(state, sender.ws);
+      handleWsOpen(state, observer.ws);
+      const message = [{ type: "text" as const, text: "/dip keep going" }];
+
+      handleWsMessage(state, sender.ws, JSON.stringify({ type: "steer", sessionId: "sess-steer", message }));
+      await Bun.sleep(10);
+
+      expect(sender.lastMessage()).toEqual({ type: "ack", command: "steer" });
+      expect(observer.lastMessage()).toEqual({
+        type: "user_message",
+        sessionId: "sess-steer",
+        projectId: project.id,
+        message,
+      });
+    });
 
     test("validates and forwards attachment refs to the runtime while broadcasting refs to other clients", async () => {
       const project = createProject("WS Multimodal", "/tmp/ws-multimodal");

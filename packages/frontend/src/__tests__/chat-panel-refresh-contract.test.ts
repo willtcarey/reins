@@ -148,6 +148,7 @@ describe("ChatPanel refresh contract", () => {
     const { el, store, conversationsStore } = setup({ client });
 
     setSessionData(store, makeSessionData({ messageCount: 1 }));
+    setPersistedMessages(conversationsStore, "sess-1", []);
     notify(store);
     callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: [{ type: "text", text: "new prompt" }] } }));
     const pendingTimestamp = get(el, "messages")[0].timestamp;
@@ -162,7 +163,7 @@ describe("ChatPanel refresh contract", () => {
     cleanup(el);
   });
 
-  test("agent_end runtime user message replaces optimistic user before persisted refresh", () => {
+  test("agent_end ignores runtime user copies and preserves the optimistic display text", () => {
     globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
 
     const client = new StubClient();
@@ -181,7 +182,10 @@ describe("ChatPanel refresh contract", () => {
     ];
     conversationsStore.applyEvent("sess-1", { type: "agent_end", messages: runMessages });
 
-    expect(get(el, "messages")).toEqual(runMessages);
+    expect(get(el, "messages")).toEqual([
+      { role: "user", content: promptContent, timestamp: pendingTimestamp },
+      runMessages[1],
+    ]);
     cleanup(el);
   });
 

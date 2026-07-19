@@ -146,56 +146,58 @@ describe("ConversationsStore", () => {
     expect(state.streamingBlocks).toEqual([{ type: "text", text: "still working" }]);
   });
 
-  test("refresh reconciles an optimistic user message when its persisted record is already known", () => {
+  test("reconciles newly persisted differently shaped users with optimistic entries FIFO", () => {
     const conversations = new ConversationsStore();
-    const content = [{ type: "text" as const, text: "mid-turn prompt" }];
-    const persisted = {
-      id: "persisted-user",
-      parentId: null,
-      message: { role: "user" as const, content, timestamp: 5_500 },
-    };
-
-    conversations.mergeMessages("sess-1", conversationPage([persisted]));
-    conversations.addOptimisticUserMessage("sess-1", content, 5_000);
-
-    // Navigating back can refresh a page whose canonical record was merged by
-    // an earlier in-flight read. The refresh must still replace the local copy.
-    conversations.mergeMessages("sess-1", conversationPage([persisted]));
-
-    expect(conversations.get("sess-1").entries).toEqual([persisted]);
-  });
-
-  test("reconciles repeated identical optimistic prompts one-for-one with finalized and persisted copies", () => {
-    const conversations = new ConversationsStore();
-    const content = [{ type: "text" as const, text: "repeat this prompt" }];
-
-    const first = conversations.addOptimisticUserMessage("sess-1", content, 5_000);
-    const second = conversations.addOptimisticUserMessage("sess-1", content, 6_000);
-    if (first === null || second === null) {
-      throw new Error("Expected optimistic entries for a valid session");
-    }
-    conversations.applyEvent("sess-1", {
-      type: "agent_end",
-      messages: [
-        { role: "user", content, timestamp: 5_500 },
-        { role: "user", content, timestamp: 6_500 },
-      ],
-    });
-
-    expect(conversations.get("sess-1").entries).toEqual([
-      { id: null, parentId: null, localId: first.localId, message: { role: "user", content, timestamp: 5_500 } },
-      { id: null, parentId: null, localId: second.localId, message: { role: "user", content, timestamp: 6_500 } },
-    ]);
-
     conversations.mergeMessages("sess-1", conversationPage([
-      { id: "persisted-1", parentId: null, message: { role: "user", content, timestamp: 5_500 } },
-      { id: "persisted-2", parentId: "persisted-1", message: { role: "user", content, timestamp: 6_500 } },
+      { id: "old", parentId: null, message: textUser("old", 100) },
+    ]));
+    const original = [{ type: "text" as const, text: "/dip start" }];
+    conversations.addOptimisticUserMessage("sess-1", original, 5_000);
+
+    const strippedPersisted = [{ type: "text" as const, text: "/dip start\n" }];
+    conversations.mergeMessages("sess-1", conversationPage([
+      { id: "new", parentId: "old", message: { role: "user", content: strippedPersisted, timestamp: 5_500 } },
     ]));
 
     expect(conversations.get("sess-1").entries).toEqual([
-      { id: "persisted-1", parentId: null, message: { role: "user", content, timestamp: 5_500 } },
-      { id: "persisted-2", parentId: "persisted-1", message: { role: "user", content, timestamp: 6_500 } },
+      { id: "old", parentId: null, message: textUser("old", 100) },
+      { id: "new", parentId: "old", message: { role: "user", content: strippedPersisted, timestamp: 5_500 } },
     ]);
+  });
+
+  test("reconciles repeated identical local and remote prompts one-for-one", () => {
+    const conversations = new ConversationsStore();
+    conversations.mergeMessages("sess-1", conversationPage([
+      { id: "old", parentId: null, message: textUser("old", 100) },
+    ]));
+    const content = [{ type: "text" as const, text: "repeat this prompt" }];
+
+    conversations.addOptimisticUserMessage("sess-1", content, 5_000);
+    conversations.applyEvent("sess-1", { type: "user_message", message: content });
+    expect(conversations.get("sess-1").messages.filter(({ role }) => role === "user")).toHaveLength(3);
+
+    conversations.mergeMessages("sess-1", conversationPage([
+      { id: "persisted-1", parentId: "old", message: { role: "user", content, timestamp: 5_500 } },
+    ]));
+    expect(conversations.get("sess-1").entries.filter(({ id }) => id === null)).toHaveLength(1);
+
+    conversations.mergeMessages("sess-1", conversationPage([
+      { id: "persisted-2", parentId: "persisted-1", message: { role: "user", content, timestamp: 6_500 } },
+    ]));
+    expect(conversations.get("sess-1").entries.filter(({ id }) => id === null)).toHaveLength(0);
+    expect(conversations.get("sess-1").entries.map(({ id }) => id)).toEqual(["old", "persisted-1", "persisted-2"]);
+  });
+
+  test("stale overlapping pages never consume pending optimistic users", () => {
+    const conversations = new ConversationsStore();
+    const stale = { id: "stale", parentId: null, message: textUser("same", 100) };
+    conversations.mergeMessages("overlap", conversationPage([stale]));
+    conversations.addOptimisticUserMessage("overlap", [{ type: "text", text: "same" }], 5_000);
+
+    conversations.mergeMessages("overlap", conversationPage([stale]));
+    conversations.mergeMessages("overlap", conversationPage([stale]));
+
+    expect(conversations.get("overlap").entries.filter(({ id }) => id === null)).toHaveLength(1);
   });
 
   test("stale persisted snapshots do not clear active streaming blocks", () => {

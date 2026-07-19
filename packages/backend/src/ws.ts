@@ -107,10 +107,17 @@ async function handleWsCommand(
         return;
       }
       try {
-        if (!getSession(sessionId)) { sendError("Session not found"); return; }
+        const row = getSession(sessionId);
+        if (!row) { sendError("Session not found"); return; }
         const managed = await ensureSessionOpen(state, sessionId);
 
         sendToWs(client.ws, { type: "ack", command: "steer" });
+        createBroadcastExcluding(state.clients, client)({
+          type: "user_message",
+          sessionId,
+          projectId: row.project_id,
+          message,
+        });
         await managed.runtime.steer(message);
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);

@@ -11,7 +11,6 @@ import {
   initialChatState,
   type AgentMessage,
   type ChatState,
-  userMessageContentKey,
 } from "../chat-state.js";
 import type { ClientPromptContent } from "../chat-content.js";
 import type { FrontendEvent } from "../ws-client.js";
@@ -221,10 +220,9 @@ export class ConversationsStore {
       const added = page.items.filter(({ id }) => !known.has(id));
       return {
         records: page.items,
-        // Reconcile against the complete canonical page, not only newly seen
-        // records. Overlapping refreshes can make a persisted record known
-        // before its equivalent optimistic entry is merged locally.
-        liveTail: this.removePersistedLiveEntries(state.liveTail, page.items),
+        // Only records not already known by ID can acknowledge pending live
+        // users. Stale and overlapping pages therefore leave them untouched.
+        liveTail: this.removePersistedLiveEntries(state.liveTail, added),
         previousCursor: state.records.length === 0 ? page.pageInfo.previousCursor : state.previousCursor,
         latestCursor: page.pageInfo.endCursor,
         streamingBlocks: state.records.length > 0 && added.length > 0 ? [] : state.streamingBlocks,
@@ -249,22 +247,10 @@ export class ConversationsStore {
       case "auto_retry_end":
       case "user_message": {
         this.update(sessionId, (state) => {
+          const messages = this.displayMessages(state);
+          const next = applyChatEvent({ ...state, messages, isStreaming: false }, event);
           if (
-            event.type === "user_message"
-            && state.liveTail.some((entry) => (
-              entry.message.role === "user"
-              && userMessageContentKey(entry.message.content) === userMessageContentKey(event.message)
-            ))
-          ) return undefined;
-
-          const reconciledState = event.type === "agent_end" && event.messages
-            ? this.reconcileFinalizedUserMessages(state, event.messages)
-            : state;
-          const messages = this.displayMessages(reconciledState);
-          const next = applyChatEvent({ ...reconciledState, messages, isStreaming: false }, event);
-          if (
-            reconciledState === state
-            && next.messages === messages
+            next.messages === messages
             && next.streamingBlocks === state.streamingBlocks
             && next.isCompacting === state.isCompacting
             && next.errorMessage === state.errorMessage
@@ -272,8 +258,8 @@ export class ConversationsStore {
 
           return {
             liveTail: this.liveEntriesForMessages(
-              reconciledState.liveTail,
-              next.messages.slice(reconciledState.records.length),
+              state.liveTail,
+              next.messages.slice(state.records.length),
             ),
             streamingBlocks: next.streamingBlocks,
             isCompacting: next.isCompacting,
@@ -341,40 +327,18 @@ export class ConversationsStore {
     return this.displayEntries(state).map(({ message }) => message);
   }
 
-  private reconcileFinalizedUserMessages(
-    state: ConversationState,
-    messages: readonly AgentMessage[],
-  ): ConversationState {
-    const liveTail = [...state.liveTail];
-    const matched = new Set<number>();
-    let changed = false;
-    for (const message of messages) {
-      if (message.role !== "user") continue;
-      const match = liveTail.findIndex((entry, index) => (
-        !matched.has(index)
-        && entry.message.role === "user"
-        && userMessageContentKey(entry.message.content) === userMessageContentKey(message.content)
-      ));
-      if (match === -1) continue;
-      matched.add(match);
-      liveTail[match] = { ...liveTail[match], message };
-      changed = true;
-    }
-    return changed ? { ...state, liveTail } : state;
-  }
-
   private removePersistedLiveEntries(
     liveEntries: readonly LiveConversationEntry[],
     records: readonly PersistedConversationEntry[],
   ): LiveConversationEntry[] {
     const remaining = [...liveEntries];
     for (const record of records) {
-      const match = remaining.findIndex(({ message }) => (
-        message.role === record.message.role
-        && (message.role === "user" && record.message.role === "user"
-          ? userMessageContentKey(message.content) === userMessageContentKey(record.message.content)
-          : message.timestamp === record.message.timestamp)
-      ));
+      const match = record.message.role === "user"
+        ? remaining.findIndex(({ message }) => message.role === "user")
+        : remaining.findIndex(({ message }) => (
+            message.role === record.message.role
+            && message.timestamp === record.message.timestamp
+          ));
       if (match !== -1) remaining.splice(match, 1);
     }
     return remaining;
