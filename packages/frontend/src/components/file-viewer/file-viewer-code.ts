@@ -1,22 +1,43 @@
 /**
- * Code Viewer — syntax-highlighted, read-only code with line numbers.
- *
- * Renders text content with Shiki syntax highlighting via the shared
- * highlight worker. Handles large file truncation and per-file-type
- * line wrapping.
+ * Source Viewer — @pierre/diffs' standalone File renderer with worker-backed
+ * Shiki highlighting, line selection, and the file browser's size safeguards.
  */
 
+import { File as PierreFile, type FileContents, type FileOptions, type SelectedLineRange } from "@pierre/diffs";
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { shouldWrapLines } from "../../models/changes/diff-utils.js";
-import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
+import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
 
 /** Max lines to render before truncating. */
-const MAX_RENDER_LINES = 5000;
+export const MAX_SOURCE_RENDER_LINES = 5000;
 
-/** Max file size (in characters) before we skip highlighting. */
-const LARGE_FILE_THRESHOLD = 200_000;
+/** Max file size (in characters) before syntax highlighting is disabled. */
+export const LARGE_SOURCE_HIGHLIGHT_THRESHOLD = 200_000;
+
+export function preparePierreSourceFile(path: string, content: string) {
+  const lines = content.split("\n");
+  const totalLines = lines.length;
+  const truncated = totalLines > MAX_SOURCE_RENDER_LINES;
+  const renderedContents = truncated
+    ? lines.slice(0, MAX_SOURCE_RENDER_LINES).join("\n")
+    : content;
+
+  const file = {
+    name: path,
+    contents: renderedContents,
+    ...(content.length > LARGE_SOURCE_HIGHLIGHT_THRESHOLD ? { lang: "text" as const } : {}),
+  } satisfies FileContents;
+
+  return { file, totalLines, truncated };
+}
+
+const SOURCE_FILE_CSS = `
+[data-selected-line] {
+  background: rgb(234 179 8 / 0.15) !important;
+  box-shadow: inset 2px 0 0 rgb(234 179 8) !important;
+}
+`;
 
 @customElement("file-viewer-code")
 export class FileViewerCode extends LitElement {
@@ -24,192 +45,132 @@ export class FileViewerCode extends LitElement {
     return this;
   }
 
-  /** Raw text content to render. */
   @property({ attribute: false }) content: string | null = null;
-
-  /** File path — used for syntax detection and line wrapping. */
   @property() path = "";
-
-  /** Optional 1-based line range to highlight (inclusive). */
   @property({ attribute: false }) highlightRange: { startLine: number; endLine: number } | null = null;
 
-  /** Whether we need to scroll to the highlight range after next render. */
+  private _file: PierreFile | null = null;
+  private _fileRoot: HTMLElement | null = null;
+  private _renderedPath: string | null = null;
+  private _renderedContent: string | null = null;
   private _pendingScrollToHighlight = false;
+  private _selectionFromPierre = false;
 
-  /** Line number where a gutter drag started, or null if not dragging. */
-  private _gutterDragAnchor: number | null = null;
+  override willUpdate(changed: Map<string, unknown>) {
+    if (changed.has("highlightRange") && this.highlightRange && !this._selectionFromPierre) {
+      this._pendingScrollToHighlight = true;
+    }
+    this._selectionFromPierre = false;
+  }
 
-  /** Whether the current highlight was set by gutter interaction (skip scroll). */
-  private _highlightFromGutter = false;
-
-  private _highlight = new LazyHighlightController(this, () => {
-    if (!this.content || !this.path) return null;
-    // Skip highlighting for very large files
-    if (this.content.length > LARGE_FILE_THRESHOLD) return null;
-    const lines = this.content.split("\n");
-    return {
-      path: this.path,
-      hunk: {
-        header: "",
-        lines: lines.map((text, i) => ({
-          type: "context" as const,
-          text,
-          newLine: i + 1,
-        })),
-      },
-    };
-  });
-
-  override connectedCallback() {
-    super.connectedCallback();
-    this._highlight.connect();
+  override updated() {
+    this._syncPierreFile();
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    this._highlight.disconnect();
-    // Clean up any in-progress gutter drag
-    document.removeEventListener("mousemove", this._onGutterMouseMove);
-    document.removeEventListener("mouseup", this._onGutterMouseUp);
-    this._gutterDragAnchor = null;
+    this._destroyPierreFile();
   }
 
-  override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("content") || changed.has("path")) {
-      this._highlight.update();
-    }
-    if (changed.has("highlightRange") || changed.has("content")) {
-      if (this.highlightRange && this.content && !this._highlightFromGutter) {
-        this._pendingScrollToHighlight = true;
-      }
-      this._highlightFromGutter = false;
-    }
+  resetHighlight() {
+    this.highlightRange = null;
+    this._file?.setSelectedLines(null);
   }
 
-  override updated() {
-    if (this._pendingScrollToHighlight) {
-      this._pendingScrollToHighlight = false;
-      this._scrollToHighlightRange();
-    }
+  private _options(): FileOptions<undefined> {
+    return {
+      theme: PIERRE_SHIKI_THEME,
+      themeType: "dark",
+      disableFileHeader: true,
+      overflow: shouldWrapLines(this.path) ? "wrap" : "scroll",
+      enableLineSelection: true,
+      lineHoverHighlight: "both",
+      tokenizeMaxLength: LARGE_SOURCE_HIGHLIGHT_THRESHOLD,
+      unsafeCSS: SOURCE_FILE_CSS,
+      onLineSelected: (range) => this._onPierreSelection(range),
+      onLineClick: ({ lineNumber }) => {
+        const range = this.highlightRange;
+        if (range && (lineNumber < range.startLine || lineNumber > range.endLine)) {
+          this._file?.setSelectedLines(null);
+        }
+      },
+      onPostRender: () => this._applyHighlightRange(),
+    };
   }
 
-  /**
-   * Scroll the first highlighted line into view.
-   * The scrollable container is the nearest ancestor with overflow-auto.
-   */
-  private _scrollToHighlightRange() {
-    if (!this.highlightRange) return;
-    const lineEl = this.querySelector(`[data-line="${this.highlightRange.startLine}"]`);
-    if (!lineEl) return;
-    // Find the scrollable container (the element with class overflow-auto, which is this element itself
-    // or its parent depending on layout). scrollIntoView with nearest block avoids jarring jumps.
+  private _syncPierreFile() {
+    const root = this.querySelector<HTMLElement>("[data-pierre-file]");
+    if (!root || !this.content || !this.path) {
+      this._destroyPierreFile();
+      return;
+    }
+
+    if (
+      this._file &&
+      this._fileRoot === root &&
+      this._renderedPath === this.path &&
+      this._renderedContent === this.content
+    ) {
+      this._applyHighlightRange();
+      return;
+    }
+
+    const prepared = preparePierreSourceFile(this.path, this.content);
+    this._destroyPierreFile();
+    this._file = new PierreFile(this._options(), getPierreWorkerPool(), true);
+    this._fileRoot = root;
+    this._renderedPath = this.path;
+    this._renderedContent = this.content;
+    this._file.render({ file: prepared.file, fileContainer: root });
+    this._applyHighlightRange();
+  }
+
+  private _onPierreSelection(range: SelectedLineRange | null) {
+    const nextRange = range ? { startLine: range.start, endLine: range.end } : null;
+    if (
+      nextRange?.startLine === this.highlightRange?.startLine &&
+      nextRange?.endLine === this.highlightRange?.endLine
+    ) return;
+    this._selectionFromPierre = true;
+    this.highlightRange = nextRange;
+  }
+
+  private _applyHighlightRange() {
+    if (!this._file) return;
+    const range = this.highlightRange;
+    this._file.setSelectedLines(range ? { start: range.startLine, end: range.endLine } : null, {
+      notify: false,
+    });
+    if (!range || !this._pendingScrollToHighlight) return;
+
+    this._pendingScrollToHighlight = false;
+    const root = this._fileRoot;
+    const line = root?.shadowRoot?.querySelector<HTMLElement>(`[data-line="${range.startLine}"]`)
+      ?? root?.querySelector<HTMLElement>(`[data-line="${range.startLine}"]`);
+    if (!line) return;
     requestAnimationFrame(() => {
-      lineEl.scrollIntoView({ block: "center", behavior: "instant" });
+      line.scrollIntoView({ block: "center", behavior: "instant" });
     });
   }
 
-  /** Clear highlight when clicking outside the highlighted range (but not on gutter). */
-  private _onLineClick = (e: MouseEvent) => {
-    if (!(e.target instanceof HTMLElement)) return;
-    // Ignore clicks on the gutter — those are handled by the drag system
-    if (e.target.closest("[data-gutter]")) return;
-    if (!this.highlightRange) return;
-    const lineEl = e.target.closest<HTMLElement>("[data-line]");
-    if (!lineEl) return;
-    const lineNo = parseInt(lineEl.dataset.line!, 10);
-    if (lineNo >= this.highlightRange.startLine && lineNo <= this.highlightRange.endLine) return;
-    this.highlightRange = null;
-  };
-
-  // ---- Gutter drag-to-highlight --------------------------------------------
-
-  /** Start a gutter drag on mousedown. */
-  private _onGutterMouseDown = (e: MouseEvent) => {
-    if (!(e.target instanceof HTMLElement)) return;
-    const gutterEl = e.target.closest<HTMLElement>("[data-gutter]");
-    if (!gutterEl) return;
-    e.preventDefault(); // prevent text selection during drag
-    const lineNo = parseInt(gutterEl.dataset.gutter!, 10);
-    this._gutterDragAnchor = lineNo;
-    this._highlightFromGutter = true;
-    this.highlightRange = { startLine: lineNo, endLine: lineNo };
-    document.addEventListener("mousemove", this._onGutterMouseMove);
-    document.addEventListener("mouseup", this._onGutterMouseUp);
-  };
-
-  /** Extend the range as the mouse moves during a gutter drag. */
-  private _onGutterMouseMove = (e: MouseEvent) => {
-    if (this._gutterDragAnchor == null) return;
-    const lineNo = this._lineFromPoint(e.clientX, e.clientY);
-    if (lineNo == null) return;
-    const anchor = this._gutterDragAnchor;
-    this._highlightFromGutter = true;
-    this.highlightRange = {
-      startLine: Math.min(anchor, lineNo),
-      endLine: Math.max(anchor, lineNo),
-    };
-  };
-
-  /** Finalize the range on mouseup. */
-  private _onGutterMouseUp = () => {
-    this._gutterDragAnchor = null;
-    document.removeEventListener("mousemove", this._onGutterMouseMove);
-    document.removeEventListener("mouseup", this._onGutterMouseUp);
-  };
-
-  /** Resolve a screen point to a 1-based line number using the data-line divs. */
-  private _lineFromPoint(x: number, y: number): number | null {
-    const el = document.elementFromPoint(x, y);
-    if (!(el instanceof HTMLElement)) return null;
-    const lineEl = el.closest<HTMLElement>("[data-line]");
-    if (!lineEl) return null;
-    return parseInt(lineEl.dataset.line!, 10);
-  }
-
-  /** Clear highlight cache. Call when the viewer is hidden/reused. */
-  resetHighlight() {
-    // Trigger re-evaluation on next update by clearing the lazy controller's cache
-    this._highlight.update();
+  private _destroyPierreFile() {
+    this._file?.cleanUp();
+    this._file = null;
+    this._fileRoot = null;
+    this._renderedPath = null;
+    this._renderedContent = null;
   }
 
   override render() {
-    const content = this.content;
-    if (!content) return nothing;
+    if (!this.content) return nothing;
 
-    const lines = content.split("\n");
-    const totalLines = lines.length;
-    const truncated = totalLines > MAX_RENDER_LINES;
-    const displayLines = truncated ? lines.slice(0, MAX_RENDER_LINES) : lines;
-    const gutterWidth = String(truncated ? MAX_RENDER_LINES : totalLines).length;
-    const wrap = shouldWrapLines(this.path);
-
-    const baseLineCls = wrap
-      ? "flex px-2 leading-5 font-mono"
-      : "px-2 leading-5 font-mono whitespace-pre";
-    const gutterCls = `select-none text-zinc-600 inline-block text-right border-r border-zinc-700/50 pr-2 mr-2 cursor-pointer hover:text-zinc-400${wrap ? " shrink-0" : ""}`;
-    const contentCls = wrap
-      ? "pl-3 whitespace-pre-wrap break-words min-w-0"
-      : "pl-3";
-
-    const hlStart = this.highlightRange?.startLine ?? -1;
-    const hlEnd = this.highlightRange?.endLine ?? -1;
-
+    const prepared = preparePierreSourceFile(this.path, this.content);
     return html`
-      <div class="font-mono text-xs leading-5" @click=${this._onLineClick}>
-        ${displayLines.map((line, i) => {
-          const lineNo = i + 1;
-          const lineHtml = this._highlight.getLineHtml(i);
-          const inRange = lineNo >= hlStart && lineNo <= hlEnd;
-          const lineCls = inRange
-            ? `${baseLineCls} bg-yellow-500/15 shadow-[inset_2px_0_0_0_theme(colors.yellow.500)]`
-            : `${baseLineCls} hover:bg-zinc-700/30`;
-          return html`
-            <div class="${lineCls}" data-line=${lineNo}><span class="${gutterCls}" data-gutter=${lineNo} style="min-width:${gutterWidth + 2}ch" @mousedown=${this._onGutterMouseDown}>${lineNo}</span><span class="${contentCls}">${lineHtml ? unsafeHTML(lineHtml) : line}</span></div>
-          `;
-        })}
-        ${truncated
+      <div class="font-mono text-xs leading-5 bg-zinc-950">
+        <diffs-container data-pierre-file></diffs-container>
+        ${prepared.truncated
           ? html`<div class="px-4 py-3 text-center text-sm text-zinc-500 border-t border-zinc-700">
-              Showing first ${MAX_RENDER_LINES.toLocaleString()} of ${totalLines.toLocaleString()} lines
+              Showing first ${MAX_SOURCE_RENDER_LINES.toLocaleString()} of ${prepared.totalLines.toLocaleString()} lines
             </div>`
           : nothing}
       </div>
