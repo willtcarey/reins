@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { getCodeViewDiffWorkerPoolSetup } from "../../../models/changes/codeview-diff-worker-pool.js";
+import { getPierreWorkerPoolSetup } from "../../../models/changes/pierre-worker-pool.js";
 
 const workerFactory: () => Worker = () => new Worker("data:text/javascript,");
 
-describe("CodeView diff worker pool", () => {
+describe("Pierre worker pool", () => {
   test("sizes the desktop worker pool below full hardware concurrency", () => {
-    const setup = getCodeViewDiffWorkerPoolSetup({
+    const setup = getPierreWorkerPoolSetup({
       workerFactory,
       environment: { hardwareConcurrency: 8, coarsePointer: false },
     });
@@ -15,7 +15,7 @@ describe("CodeView diff worker pool", () => {
   });
 
   test("uses one small-cache worker on coarse pointer devices", () => {
-    const setup = getCodeViewDiffWorkerPoolSetup({
+    const setup = getPierreWorkerPoolSetup({
       workerFactory,
       environment: { hardwareConcurrency: 8, coarsePointer: true },
     });
@@ -24,8 +24,8 @@ describe("CodeView diff worker pool", () => {
     expect(setup.poolOptions.totalASTLRUCacheSize).toBe(10);
   });
 
-  test("preloads the DiffsHub language set with the classic Shiki theme and Pierre line diff defaults", () => {
-    const setup = getCodeViewDiffWorkerPoolSetup({
+  test("preloads the shared language set and Shiki theme", () => {
+    const setup = getPierreWorkerPoolSetup({
       workerFactory,
       environment: { hardwareConcurrency: 4, coarsePointer: false },
     });

@@ -45,6 +45,36 @@ html, body {
   will-change: transform;
 }
 
+/* Pierre renderer theme variables live on the custom-element hosts so they
+   inherit into Pierre's shadow roots. Internal shadow-DOM selectors remain in
+   each renderer's unsafeCSS option. */
+[data-pierre-code-view] diffs-container,
+file-viewer-code [data-pierre-file] {
+  --diffs-dark-bg: #09090b;
+  --diffs-dark: #e6edf3;
+  --diffs-bg-context-override: #09090b;
+  --diffs-bg-context-gutter-override: #0f1115;
+}
+
+[data-pierre-code-view] diffs-container {
+  --diffs-bg-buffer-override: #18181b;
+  --diffs-bg-separator-override: #30363d;
+  --diffs-addition-color-override: #3fb950;
+  --diffs-deletion-color-override: #ff7b72;
+  --diffs-modified-color-override: #79c0ff;
+  --diffs-fg-number-override: #8b949e;
+  --diffs-fg-number-addition-override: #3fb950;
+  --diffs-fg-number-deletion-override: #ff7b72;
+  --diffs-bg-addition-emphasis-override: rgb(46 160 67 / 0.35);
+  --diffs-bg-deletion-emphasis-override: rgb(248 81 73 / 0.35);
+  --diffs-bg-hover-override: #58a6ff;
+}
+
+file-viewer-code [data-pierre-file] {
+  --diffs-fg-number-override: #71717a;
+  --diffs-bg-hover-override: #3f3f46;
+}
+
 /* Diff line colors — background only so syntax highlighting shows through */
 .diff-add {
   @apply bg-green-900/30 text-zinc-200;

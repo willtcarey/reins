@@ -44,9 +44,9 @@ On mobile, the tree is hidden by default and slides out as a panel via the hambu
 Selecting a file opens a syntax-highlighted, read-only viewer with:
 
 - **Line numbers** in the left gutter
-- **Syntax highlighting** via Shiki (same highlight worker used for diffs)
+- **Syntax highlighting** via `@pierre/diffs`' standalone File renderer and the shared Pierre worker pool
 - **Per-file-type line wrapping** (e.g. markdown wraps, code doesn't)
-- **Large file truncation** — files over 5,000 lines show a "Showing first N of M lines" message
+- **Large file safeguards** — files over 5,000 lines are truncated with a "Showing first N of M lines" message, and syntax highlighting is skipped above 200,000 characters
 - **Binary detection** — binary files show a size message instead of content
 - **Image preview** — `.png`, `.jpg`, `.gif`, `.svg`, `.webp` files render inline
 - **PDF preview** — `.pdf` files render in an embedded viewer

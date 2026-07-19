@@ -114,7 +114,7 @@ export class FileViewer extends LitElement {
       renderers.push({
         tab: CODE_TAB,
         render: () => html`<file-viewer-code
-          class="flex-1 overflow-auto min-h-0"
+          class="flex-1 overflow-auto min-h-0 bg-zinc-950"
           .content=${store.fileContent}
           .path=${path}
         ></file-viewer-code>`,

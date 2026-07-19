@@ -3,28 +3,11 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
 import { compareFilePaths } from "../../models/changes/diff-sort.js";
+import { getPierreWorkerPool } from "../../models/changes/pierre-worker-pool.js";
 import type { DiffCopyPathButton, DiffDownloadFileButton, DiffViewFileButton } from "./diff-file-action-buttons.js";
 import "./diff-file-action-buttons.js";
 
 export const CODEVIEW_DIFF_CONTRAST_CSS = `
-:host {
-  --diffs-dark-bg: #09090b;
-  --diffs-dark: #e6edf3;
-  --diffs-bg-context-override: #09090b;
-  --diffs-bg-context-gutter-override: #0f1115;
-  --diffs-bg-buffer-override: #18181b;
-  --diffs-bg-separator-override: #30363d;
-  --diffs-addition-color-override: #3fb950;
-  --diffs-deletion-color-override: #ff7b72;
-  --diffs-modified-color-override: #79c0ff;
-  --diffs-fg-number-override: #8b949e;
-  --diffs-fg-number-addition-override: #3fb950;
-  --diffs-fg-number-deletion-override: #ff7b72;
-  --diffs-bg-addition-emphasis-override: rgb(46 160 67 / 0.35);
-  --diffs-bg-deletion-emphasis-override: rgb(248 81 73 / 0.35);
-  --diffs-bg-hover-override: #58a6ff;
-}
-
 :where([data-background]) [data-line-type="change-addition"] {
   --mix-dark: 85%;
 }
@@ -295,25 +278,22 @@ export class CodeViewDiffPanel extends LitElement {
     const root = this.querySelector<HTMLElement>("[data-pierre-code-view]");
     if (!root) return;
 
-    void this._ensureCodeView(root).then((ready) => {
-      if (!ready || !this._codeView || this._getParsedPatchData() !== data || this._syncedCodeViewData === data) return;
+    if (!this._ensureCodeView(root) || !this._codeView || this._getParsedPatchData() !== data || this._syncedCodeViewData === data) return;
 
-      const codeViewItems: CodeViewDiffItem[] = toCodeViewItems(data.items);
-      this._codeView.setItems(codeViewItems);
-      this._syncedCodeViewData = data;
-      this._syncActiveFileFromRenderedItems();
-      this._syncPendingScroll();
-    });
+    const codeViewItems: CodeViewDiffItem[] = toCodeViewItems(data.items);
+    this._codeView.setItems(codeViewItems);
+    this._syncedCodeViewData = data;
+    this._syncActiveFileFromRenderedItems();
+    this._syncPendingScroll();
   }
 
-  private async _ensureCodeView(root: HTMLElement): Promise<boolean> {
+  private _ensureCodeView(root: HTMLElement): boolean {
     if (this._codeView && this._codeViewRoot === root) return true;
 
     this._destroyCodeView();
-    const { getCodeViewDiffWorkerPool } = await import("../../models/changes/codeview-diff-worker-pool.js");
     if (!root.isConnected) return false;
 
-    this._codeView = new CodeView(this._codeViewOptions(), getCodeViewDiffWorkerPool());
+    this._codeView = new CodeView(this._codeViewOptions(), getPierreWorkerPool());
     this._codeView.setup(root);
     this._codeViewRoot = root;
     this._unsubscribeCodeViewScroll = this._codeView.subscribeToScroll((scrollTop) => {
