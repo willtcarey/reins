@@ -221,7 +221,10 @@ export class ConversationsStore {
       const added = page.items.filter(({ id }) => !known.has(id));
       return {
         records: page.items,
-        liveTail: this.removePersistedLiveEntries(state.liveTail, added),
+        // Reconcile against the complete canonical page, not only newly seen
+        // records. Overlapping refreshes can make a persisted record known
+        // before its equivalent optimistic entry is merged locally.
+        liveTail: this.removePersistedLiveEntries(state.liveTail, page.items),
         previousCursor: state.records.length === 0 ? page.pageInfo.previousCursor : state.previousCursor,
         latestCursor: page.pageInfo.endCursor,
         streamingBlocks: state.records.length > 0 && added.length > 0 ? [] : state.streamingBlocks,

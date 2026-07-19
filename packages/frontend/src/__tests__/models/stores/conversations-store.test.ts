@@ -146,6 +146,25 @@ describe("ConversationsStore", () => {
     expect(state.streamingBlocks).toEqual([{ type: "text", text: "still working" }]);
   });
 
+  test("refresh reconciles an optimistic user message when its persisted record is already known", () => {
+    const conversations = new ConversationsStore();
+    const content = [{ type: "text" as const, text: "mid-turn prompt" }];
+    const persisted = {
+      id: "persisted-user",
+      parentId: null,
+      message: { role: "user" as const, content, timestamp: 5_500 },
+    };
+
+    conversations.mergeMessages("sess-1", conversationPage([persisted]));
+    conversations.addOptimisticUserMessage("sess-1", content, 5_000);
+
+    // Navigating back can refresh a page whose canonical record was merged by
+    // an earlier in-flight read. The refresh must still replace the local copy.
+    conversations.mergeMessages("sess-1", conversationPage([persisted]));
+
+    expect(conversations.get("sess-1").entries).toEqual([persisted]);
+  });
+
   test("reconciles repeated identical optimistic prompts one-for-one with finalized and persisted copies", () => {
     const conversations = new ConversationsStore();
     const content = [{ type: "text" as const, text: "repeat this prompt" }];
