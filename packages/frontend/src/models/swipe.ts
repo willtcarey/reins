@@ -220,6 +220,14 @@ export class Swipe {
   cancel(event: PointerEvent) {
     if (this.disposed || event.pointerId !== this.pointer.pointerId) return;
 
+    // Browsers commonly cancel pending pointers once they claim a vertical
+    // scroll. Nothing has been rendered yet, so springing from that pointer's
+    // horizontal offset would create a page movement out of a non-swipe.
+    if (this.pointer.axis !== "horizontal") {
+      this.complete();
+      return;
+    }
+
     this.startSpringAnimation(
       this.options.getCancelTarget(),
       this.translateX ?? this.options.getDragTranslateX(event.clientX - this.pointer.startX),

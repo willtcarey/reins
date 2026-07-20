@@ -119,6 +119,29 @@ describe("Swipe", () => {
     expect(states).toEqual([]);
   });
 
+  test("keeps the page stationary when native scrolling cancels an undecided gesture", () => {
+    const states: SwipeState[] = [];
+    let done = false;
+    const swipe = Swipe.start({
+      event: pointerEvent({ isPrimary: true, target: null, pointerId: 1, clientX: 0, clientY: 0, timeStamp: 0 }),
+      getDragTranslateX: (dx) => dx,
+      getReleaseTarget: () => ({ translateX: 0 }),
+      getCancelTarget: () => ({ translateX: 0 }),
+      onStateChange: (state) => states.push({ ...state }),
+      onDone: () => { done = true; },
+    });
+
+    swipe?.cancel(pointerEvent({
+      pointerId: 1,
+      clientX: 8,
+      clientY: 20,
+      timeStamp: 16,
+    }));
+
+    expect(done).toBe(true);
+    expect(states).toEqual([]);
+  });
+
   test("lets a nested horizontal scroller own the drag even at scroll edges", () => {
     const originalElement = globalThis.Element;
     const originalHTMLElement = globalThis.HTMLElement;
