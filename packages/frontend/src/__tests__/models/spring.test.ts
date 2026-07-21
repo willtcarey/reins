@@ -47,6 +47,51 @@ describe("Spring", () => {
     }
   });
 
+  test("supports per-instance physics while defaulting to the shared spring behavior", () => {
+    const originalWindow = globalThis.window;
+    const frameCallbacks: FrameRequestCallback[] = [];
+    const defaultValues: number[] = [];
+    const softValues: number[] = [];
+
+    Reflect.set(globalThis, "window", {
+      requestAnimationFrame(callback: FrameRequestCallback) {
+        frameCallbacks.push(callback);
+        return frameCallbacks.length;
+      },
+      cancelAnimationFrame() {},
+    });
+
+    try {
+      new Spring({
+        value: 100,
+        target: 0,
+        velocity: 0,
+        onUpdate: (value) => defaultValues.push(value),
+        onSettle() {},
+      });
+      new Spring({
+        value: 100,
+        target: 0,
+        velocity: 0,
+        stiffness: 0.000218295,
+        damping: 0.019026,
+        onUpdate: (value) => softValues.push(value),
+        onSettle() {},
+      });
+
+      frameCallbacks[0](0);
+      frameCallbacks[1](0);
+      frameCallbacks[2](16);
+      frameCallbacks[3](16);
+
+      expect(defaultValues[1]).toBeCloseTo(85.92);
+      expect(softValues.at(-1)).toBeGreaterThan(defaultValues.at(-1) ?? 0);
+      expect(softValues.at(-1)).toBeLessThan(100);
+    } finally {
+      Reflect.set(globalThis, "window", originalWindow);
+    }
+  });
+
   test("cancels an in-flight animation", () => {
     const originalWindow = globalThis.window;
     const canceledFrame: { value: number | null } = { value: null };

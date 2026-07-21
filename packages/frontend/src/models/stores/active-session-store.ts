@@ -13,7 +13,11 @@
 import type { AttachmentInfo, ClientPromptContent } from "../chat-content.js";
 import type { IAppClient, SessionData } from "../ws-client.js";
 import { SessionCache } from "./session-cache.js";
-import { ConversationsStore, type ConversationView } from "./conversations-store.js";
+import {
+  ConversationsStore,
+  type ConversationView,
+  type LiveConversationEntry,
+} from "./conversations-store.js";
 
 export interface SessionModelUpdate {
   runtimeType?: string;
@@ -143,19 +147,18 @@ export class ActiveSessionStore {
 
   // ---- Actions --------------------------------------------------------------
 
-  prompt(message: ClientPromptContent): boolean {
-    if (this._disposed || !this._client) return false;
+  prompt(message: ClientPromptContent): LiveConversationEntry | null {
+    if (this._disposed || !this._client) return null;
     this._client.prompt(this.sessionId, message);
-    this._conversationsStore.addOptimisticUserMessage(this.sessionId, message);
+    const entry = this._conversationsStore.addOptimisticUserMessage(this.sessionId, message);
     this.setOptimisticRunning();
-    return true;
+    return entry;
   }
 
-  steer(message: ClientPromptContent): boolean {
-    if (this._disposed || !this._client) return false;
+  steer(message: ClientPromptContent): LiveConversationEntry | null {
+    if (this._disposed || !this._client) return null;
     this._client.steer(this.sessionId, message);
-    this._conversationsStore.addOptimisticUserMessage(this.sessionId, message);
-    return true;
+    return this._conversationsStore.addOptimisticUserMessage(this.sessionId, message);
   }
 
   clearConversationError(): void {

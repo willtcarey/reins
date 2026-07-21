@@ -35,11 +35,7 @@ import {
   type ChatImageBlock,
 } from "../models/chat-content.js";
 import type { ChatComposer, ChatComposerSubmitDetail } from "./chat-composer.js";
-import {
-  ChatSendAnimator,
-  type ConversationShiftSnapshotItem,
-  type SendAnimationOrigin,
-} from "../helpers/chat-send-animation.js";
+import { ChatSendAnimator } from "../helpers/chat-send-animation.js";
 import { openImageViewerEvent } from "./events.js";
 import { ChatHistoryController } from "../controllers/chat-history-controller.js";
 
@@ -83,6 +79,7 @@ export class ChatPanel extends LitElement {
   }
 
   override disconnectedCallback() {
+    this.sendAnimator.cancel();
     super.disconnectedCallback();
     this.unsubscribeStore?.();
   }
@@ -95,6 +92,7 @@ export class ChatPanel extends LitElement {
   }
 
   private resetSessionState() {
+    this.sendAnimator.cancel();
     this.expandedSections = new Set();
     this.animatingUserMessageKeys = new Set();
     this.shouldAutoScroll = true;
@@ -132,8 +130,10 @@ export class ChatPanel extends LitElement {
       this.focusInput();
     }
 
-    // Auto-scroll after render
+    // Auto-scroll after render. The send animator measures on the following
+    // frame, after this scroll has placed the optimistic message.
     this.autoScroll();
+    this.sendAnimator.cancelIfTargetMissing();
   }
 
   /** Focus the chat composer, skipping on touch devices to avoid keyboard popup. */
@@ -150,26 +150,20 @@ export class ChatPanel extends LitElement {
   }
 
   private handleSend(e: CustomEvent<ChatComposerSubmitDetail>) {
-    const content = e.detail.content;
+    const { content, source } = e.detail;
     const sessionId = this.store?.sessionId ?? "";
     if (!sessionId || !this.store) return;
 
-    const animationOrigin = this.composer?.getSendAnimationOrigin() ?? null;
-    const shouldAnimate = animationOrigin !== null && this.canAnimateOutgoingMessage();
-
     const wasStreaming = this.isStreaming;
-    const sent = wasStreaming
+    const submittedEntry = wasStreaming
       ? this.store.steer(content)
       : this.store.prompt(content);
-    if (!sent) return;
+    if (!submittedEntry) return;
 
-    const submittedEntry = this.store.conversation.entries.at(-1);
-    if (!submittedEntry || submittedEntry.message.role !== "user") return;
-    const messageKey = this.conversationEntryKey(submittedEntry);
-    const conversationShiftSnapshot = shouldAnimate
-      ? this.captureConversationShiftSnapshot()
-      : [];
-
+    // The returned local ID identifies this exact local optimistic insertion.
+    // Persisted refreshes and peer/reconciled history never pass this boundary.
+    const messageKey = submittedEntry.localId;
+    const shouldAnimate = source != null && this.sendAnimator.canAnimateOutgoingMessage();
     if (shouldAnimate) {
       this.animatingUserMessageKeys = new Set([...this.animatingUserMessageKeys, messageKey]);
     }
@@ -177,8 +171,11 @@ export class ChatPanel extends LitElement {
     this.shouldAutoScroll = true;
     this.composer?.closeSuggestions();
     if (shouldAnimate) {
-      void this.runConversationShiftAnimation(conversationShiftSnapshot);
-      void this.runOutgoingMessageAnimation(messageKey, animationOrigin);
+      void this.sendAnimator.animate(
+        messageKey,
+        source,
+        () => this.revealOutgoingMessage(messageKey),
+      );
     }
   }
 
@@ -209,7 +206,7 @@ export class ChatPanel extends LitElement {
   }
 
   private autoScroll() {
-    if (!this.shouldAutoScroll) return;
+    if (!this.shouldAutoScroll || this.sendAnimator.scrollLocked) return;
     requestAnimationFrame(() => {
       const container = this.querySelector("#chat-scroll");
       if (container) {
@@ -237,26 +234,6 @@ export class ChatPanel extends LitElement {
       case "toolResult":
         return `tool-result-${msg.toolCallId}-${msg.timestamp}`;
     }
-  }
-
-  private canAnimateOutgoingMessage(): boolean {
-    return this.sendAnimator.canAnimateOutgoingMessage();
-  }
-
-  private captureConversationShiftSnapshot(onlyVisible = true): ConversationShiftSnapshotItem[] {
-    return this.sendAnimator.captureConversationShiftSnapshot(onlyVisible);
-  }
-
-  private runConversationShiftAnimation(before: ConversationShiftSnapshotItem[]): Promise<void> {
-    return this.sendAnimator.runConversationShiftAnimation(before);
-  }
-
-  private runOutgoingMessageAnimation(messageKey: string, origin: SendAnimationOrigin): Promise<void> {
-    return this.sendAnimator.runOutgoingMessageAnimation(
-      messageKey,
-      origin,
-      () => this.revealOutgoingMessage(messageKey),
-    );
   }
 
   private revealOutgoingMessage(messageKey: string) {
@@ -336,7 +313,7 @@ export class ChatPanel extends LitElement {
         data-conversation-key=${conversationKey}
         class="flex justify-end mb-3 ${isAnimating ? 'sent-message-target-hidden' : ''}"
       >
-        <div class="flex max-w-[80%] flex-col items-end gap-2">
+        <div data-role="user-message-animation-target" class="flex max-w-[80%] flex-col items-end gap-2">
           ${images.length > 0 ? html`
             <div data-role="user-message-attachments" class="grid grid-cols-1 gap-2 justify-items-end max-w-full">
               ${images.map((image) => this.renderChatImage(image, sessionId))}
@@ -486,7 +463,11 @@ export class ChatPanel extends LitElement {
     if (!showThinking && !hasStreamingBlocks && !this.isCompacting) return nothing;
 
     return html`
-      <div data-conversation-key="streaming-content" class="mb-3 space-y-2">
+      <div
+        data-role="streaming-content"
+        data-conversation-key="streaming-content"
+        class="mb-3 space-y-2"
+      >
         ${this.streamingBlocks.map((block) => {
           if (block.type === "text") {
             return html`
@@ -571,11 +552,6 @@ export class ChatPanel extends LitElement {
           ></chat-composer>
         </div>
 
-        <div
-          data-role="send-animation-layer"
-          class="absolute inset-0 pointer-events-none overflow-visible z-[var(--layer-overlay)]"
-          aria-hidden="true"
-        ></div>
       </div>
     `;
   }

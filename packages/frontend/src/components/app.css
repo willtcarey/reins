@@ -273,31 +273,14 @@ file-viewer-code [data-pierre-file] {
   @apply bg-zinc-600;
 }
 
-/* Outgoing chat bubble send animation */
+/* Hide a just-inserted optimistic row until its FLIP transform is installed. */
 .sent-message-target-hidden {
   opacity: 0;
-}
-
-.sent-message-ghost {
-  position: absolute;
-  pointer-events: none;
-  z-index: 1;
-  transform-origin: top left;
-  will-change: transform, width, height, opacity;
-  contain: layout paint;
-}
-
-.conversation-shift-animating {
-  will-change: transform;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .sent-message-target-hidden {
     opacity: 1;
-  }
-
-  .sent-message-ghost {
-    display: none;
   }
 }
 

@@ -1,59 +1,106 @@
 import { describe, expect, test } from "bun:test";
-import { computeConversationShiftDeltas, computeSendAnimationGeometry, computeSendAnimationStages } from "../../helpers/chat-send-animation.js";
+import {
+  ChatSendAnimator,
+  type ChatSendAnimationHost,
+} from "../../helpers/chat-send-animation.js";
 
-describe("conversation shift animation", () => {
-  test("computes FLIP deltas so existing bubbles animate upward from their previous positions", () => {
-    const deltas = computeConversationShiftDeltas(
-      [
-        { key: "user-1", left: 24, top: 420 },
-        { key: "assistant-2", left: 16, top: 500 },
-      ],
-      [
-        { key: "user-1", left: 24, top: 340 },
-        { key: "assistant-2", left: 16, top: 420 },
-        { key: "user-3", left: 180, top: 520 },
-      ],
-    );
-
-    expect(deltas).toEqual([
-      { key: "user-1", dx: 0, dy: 80 },
-      { key: "assistant-2", dx: 0, dy: 80 },
-    ]);
-  });
-});
-
-describe("send animation geometry", () => {
-  test("uses one continuous travel stage without a midpoint handoff", () => {
-    const stages = computeSendAnimationStages({ dx: 220, dy: -200 });
-
-    expect(Object.keys(stages).toSorted()).toEqual(["durationMs", "finalDx", "finalDy", "scale"].toSorted());
-    expect(stages.finalDx).toBe(220);
-    expect(stages.finalDy).toBe(-200);
-    expect(stages.scale).toBe(1);
-    expect(stages.durationMs).toBe(220);
+describe("ChatSendAnimator", () => {
+  test("is the module's only runtime operation", async () => {
+    const animationModule = await import("../../helpers/chat-send-animation.js");
+    expect(animationModule.ChatSendAnimator).toBe(ChatSendAnimator);
+    expect(Object.keys(animationModule)).toEqual(["ChatSendAnimator"]);
   });
 
-  test("starts short prompts at bubble width while staying anchored to the prompt start", () => {
-    const geometry = computeSendAnimationGeometry(
-      { left: 100, top: 400, width: 300, height: 44 },
-      { left: 320, top: 200, width: 80, height: 32 },
-      { left: 0, top: 0, width: 400, height: 700 },
-    );
+  test("springs the conversation to the bottom with the outgoing message", async () => {
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+    const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
+    const elementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+    const frameDescriptor = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
+    const frames: FrameRequestCallback[] = [];
 
-    expect(geometry.startWidth).toBe(80);
-    expect(geometry.startLeft).toBe(100);
-    expect(geometry.dx).toBe(220);
-  });
+    const queryResults = new WeakMap<object, object>();
+    class HTMLElementStub {
+      style: Record<string, string> = {};
+      classList = { add() {}, remove() {} };
+      scrollTop = 100;
+      scrollHeight = 700;
+      clientHeight = 400;
+      setAttribute() {}
+      appendChild() {}
+      remove() {}
+      cloneNode() { return new HTMLElementStub(); }
+      querySelector() { return queryResults.get(this) ?? null; }
+      getBoundingClientRect() {
+        return { left: 200, top: 500, width: 120, height: 36 };
+      }
+    }
 
-  test("caps the starting width at the composer width for long prompts", () => {
-    const geometry = computeSendAnimationGeometry(
-      { left: 100, top: 400, width: 220, height: 44 },
-      { left: 40, top: 200, width: 280, height: 72 },
-      { left: 0, top: 0, width: 400, height: 700 },
-    );
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: HTMLElementStub });
+    const destination = new HTMLElement();
+    const row = new HTMLElement();
+    queryResults.set(row, destination);
+    const scroll = new HTMLElement();
+    const body = new HTMLElement();
+    const fakeWindow = Object.assign(new EventTarget(), {
+      matchMedia: () => ({ matches: false }),
+      visualViewport: null,
+      requestAnimationFrame: (callback: FrameRequestCallback) => {
+        frames.push(callback);
+        return frames.length;
+      },
+      cancelAnimationFrame: () => undefined,
+    });
 
-    expect(geometry.startWidth).toBe(220);
-    expect(geometry.startLeft).toBe(100);
-    expect(geometry.dx).toBe(-60);
+    Object.defineProperty(globalThis, "window", { configurable: true, value: fakeWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: { body } });
+    Object.defineProperty(globalThis, "requestAnimationFrame", {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => {
+        frames.push(callback);
+        return frames.length;
+      },
+    });
+
+    try {
+      const querySelector: ChatSendAnimationHost["querySelector"] = (selector: string) => (
+        selector === "#chat-scroll" ? scroll : row
+      );
+      const animator = new ChatSendAnimator({
+        updateComplete: Promise.resolve(),
+        querySelector,
+      });
+      const animation = animator.animate(
+        "local-1",
+        { rect: { left: 20, top: 600, width: 300, height: 44 } },
+        () => undefined,
+      );
+
+      await Promise.resolve();
+      expect(animator.scrollLocked).toBe(true);
+      expect(scroll.scrollTop).toBe(100);
+
+      frames.shift()?.(0);
+      await Promise.resolve();
+      frames.shift()?.(16);
+      expect(scroll.scrollTop).toBeGreaterThan(100);
+      expect(scroll.scrollTop).toBeLessThan(300);
+
+      let time = 32;
+      while (frames.length > 0 && time < 10_000) {
+        frames.shift()?.(time);
+        time += 16;
+      }
+      expect(await animation).toBe(true);
+      expect(scroll.scrollTop).toBe(300);
+    } finally {
+      if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
+      else Reflect.deleteProperty(globalThis, "window");
+      if (documentDescriptor) Object.defineProperty(globalThis, "document", documentDescriptor);
+      else Reflect.deleteProperty(globalThis, "document");
+      if (elementDescriptor) Object.defineProperty(globalThis, "HTMLElement", elementDescriptor);
+      else Reflect.deleteProperty(globalThis, "HTMLElement");
+      if (frameDescriptor) Object.defineProperty(globalThis, "requestAnimationFrame", frameDescriptor);
+      else Reflect.deleteProperty(globalThis, "requestAnimationFrame");
+    }
   });
 });

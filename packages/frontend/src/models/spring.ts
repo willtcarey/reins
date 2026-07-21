@@ -1,5 +1,5 @@
-const SPRING_STIFFNESS_PER_MS = 0.00055;
-const SPRING_DAMPING_PER_MS = 0.0302;
+export const DEFAULT_SPRING_STIFFNESS = 0.00055;
+export const DEFAULT_SPRING_DAMPING = 0.0302;
 const SPRING_MAX_FRAME_MS = 32;
 const SPRING_SETTLED_DISTANCE_PX = 0.75;
 const SPRING_SETTLED_VELOCITY_PX_PER_MS = 0.03;
@@ -13,6 +13,10 @@ export interface SpringOptions {
   value: number;
   target: number;
   velocity: number;
+  /** Restoring-force coefficient. Defaults to the shared spring behavior. */
+  stiffness?: number;
+  /** Velocity-resistance coefficient. Defaults to the shared spring behavior. */
+  damping?: number;
   onUpdate: (value: number) => void;
   onSettle: () => void;
 }
@@ -61,7 +65,13 @@ export class Spring {
     const deltaMs = this.lastTime === null ? 16 : time - this.lastTime;
     this.lastTime = time;
 
-    this.state = springStep(this.state, this.target, deltaMs);
+    this.state = springStep(
+      this.state,
+      this.target,
+      deltaMs,
+      this.options.stiffness ?? DEFAULT_SPRING_STIFFNESS,
+      this.options.damping ?? DEFAULT_SPRING_DAMPING,
+    );
     this.options.onUpdate(this.state.value);
 
     if (springSettled(this.state, this.target)) {
@@ -86,10 +96,12 @@ function springStep(
   state: SpringState,
   targetValue: number,
   deltaMs: number,
+  stiffness: number,
+  damping: number,
 ): SpringState {
   const dt = Math.max(0, Math.min(deltaMs, SPRING_MAX_FRAME_MS));
   const displacement = state.value - targetValue;
-  const acceleration = -SPRING_STIFFNESS_PER_MS * displacement - SPRING_DAMPING_PER_MS * state.velocity;
+  const acceleration = -stiffness * displacement - damping * state.velocity;
   const velocity = state.velocity + acceleration * dt;
   const value = state.value + velocity * dt;
 
