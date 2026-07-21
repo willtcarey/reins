@@ -183,8 +183,10 @@ describe("ActiveSessionStore command helpers", () => {
 
     const store = new ActiveSessionStore("sess-1", client);
 
-    expect(store.prompt([{ type: "text", text: "hello" }])).toBe(true);
-    expect(store.steer([{ type: "text", text: "keep going" }])).toBe(true);
+    const promptEntry = store.prompt([{ type: "text", text: "hello" }]);
+    const steerEntry = store.steer([{ type: "text", text: "keep going" }]);
+    expect(promptEntry?.localId).toBe("live-1");
+    expect(steerEntry?.localId).toBe("live-2");
     expect(store.abort()).toBe(true);
 
     expect(client.prompt).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "hello" }]);
@@ -205,7 +207,7 @@ describe("ActiveSessionStore command helpers", () => {
     sessionCache.set("sess-1", makeSessionData({ activityState: null }));
     const store = new ActiveSessionStore("sess-1", client, sessionCache);
 
-    expect(store.prompt([{ type: "text", text: "hello" }])).toBe(true);
+    expect(store.prompt([{ type: "text", text: "hello" }])).not.toBeNull();
 
     expect(sessionCache.get("sess-1")?.activityState).toBe("running");
   });

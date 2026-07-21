@@ -243,90 +243,71 @@ describe("ChatPanel mobile keyboard", () => {
 
 
 describe("ChatPanel send animation", () => {
-  test("captures existing conversation positions before sending and animates them upward", () => {
-    const el = new ChatPanel();
-    const prompt = mock((_sessionId: string, _message: ClientPromptContent) => undefined);
-    const snapshot = [{ key: "user-1", left: 24, top: 420 }];
-    const runConversationShiftAnimation = mock(() => undefined);
-    const origin = {
-      rect: { left: 10, top: 20, width: 300, height: 44 },
-      backgroundColor: "rgb(39, 39, 42)",
-      borderRadius: "12px",
-    };
-
-    const client = new StubClient();
-    client.prompt = prompt;
-    const sessionCache = new SessionCache();
-    cacheSessionData(sessionCache, "sess-1");
-    const store = new ActiveSessionStore("sess-1", client, sessionCache);
-    el.store = store;
-
-    Object.defineProperty(el, "composer", {
-      configurable: true,
-      value: {
-        getSendAnimationOrigin: () => origin,
-        closeSuggestions: mock(() => undefined),
-      },
+  test("a composer submit hides only its optimistic message while thinking remains visible", async () => {
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+    const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
+    const viewport = new EventTarget();
+    Object.assign(viewport, {
+      matchMedia: () => ({ matches: false }),
+      visualViewport: null,
     });
-    Object.defineProperty(el, "canAnimateOutgoingMessage", { configurable: true, value: () => true });
-    Object.defineProperty(el, "captureConversationShiftSnapshot", { configurable: true, value: mock(() => snapshot) });
-    Object.defineProperty(el, "runConversationShiftAnimation", { configurable: true, value: runConversationShiftAnimation });
-    Object.defineProperty(el, "runOutgoingMessageAnimation", { configurable: true, value: mock(() => undefined) });
+    Object.defineProperty(globalThis, "window", { configurable: true, value: viewport });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: { body: {} } });
 
-    callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: [{ type: "text", text: "hello" }] } }));
+    const el = new ChatPanel();
+    try {
+      const prompt = mock((_sessionId: string, _message: ClientPromptContent) => undefined);
+      const client = new StubClient();
+      client.prompt = prompt;
+      const sessionCache = new SessionCache();
+      cacheSessionData(sessionCache, "sess-1");
+      const store = new ActiveSessionStore("sess-1", client, sessionCache);
+      el.store = store;
 
-    expect(runConversationShiftAnimation).toHaveBeenCalledWith(snapshot);
+      const [submit] = collectTemplateEventListeners(el.render(), "composer-submit");
+      if (!submit) throw new Error("Expected composer submit listener");
+      submit.call(el, new CustomEvent("composer-submit", {
+        detail: {
+          content: [{ type: "text", text: "hello" }],
+          source: { rect: { left: 10, top: 600, width: 300, height: 44 } },
+        },
+      }));
+
+      const submittedEntry = store.conversation.entries[0];
+      if (!submittedEntry || submittedEntry.id !== null) throw new Error("Expected optimistic entry");
+      const duringAnimation = templateToString(el.render());
+      const animatingMessage = renderConversationEntry(el);
+      expect(animatingMessage).toContain(`data-message-key=${submittedEntry.localId}`);
+      expect(animatingMessage).toContain("sent-message-target-hidden");
+      expect(duringAnimation).toContain('class="mb-3 space-y-2"');
+      expect(duringAnimation).not.toContain('class="mb-3 space-y-2 opacity-0"');
+      expect(duringAnimation).toContain("Thinking...");
+      expect(prompt).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "hello" }]);
+
+      viewport.dispatchEvent(new Event("resize"));
+    } finally {
+      if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
+      else Object.defineProperty(globalThis, "window", { configurable: true, value: undefined });
+      if (documentDescriptor) Object.defineProperty(globalThis, "document", documentDescriptor);
+      else Object.defineProperty(globalThis, "document", { configurable: true, value: undefined });
+    }
+
+    await Promise.resolve();
+    const afterCancellation = templateToString(el.render());
+    expect(renderConversationEntry(el)).not.toContain("sent-message-target-hidden");
+    expect(afterCancellation).toContain('class="mb-3 space-y-2"');
+    expect(afterCancellation).not.toContain('class="mb-3 space-y-2 opacity-0"');
   });
 
-  test("captures the composer origin before sending and animates the optimistic bubble", () => {
+  test("history updates render normally without entering the local-submit animation", () => {
     const el = new ChatPanel();
-    const prompt = mock((_sessionId: string, _message: ClientPromptContent) => undefined);
-    const runAnimation = mock(() => undefined);
-    const origin = {
-      rect: { left: 10, top: 20, width: 300, height: 44 },
-      backgroundColor: "rgb(39, 39, 42)",
-      borderRadius: "12px",
-    };
+    const conversations = new ConversationsStore();
+    el.store = new ActiveSessionStore("sess-1", null, undefined, conversations);
 
-    const client = new StubClient();
-    client.prompt = prompt;
-    const sessionCache = new SessionCache();
-    cacheSessionData(sessionCache, "sess-1");
-    const store = new ActiveSessionStore("sess-1", client, sessionCache);
-    el.store = store;
+    conversations.addOptimisticUserMessage("sess-1", [{ type: "text", text: "from peer or refresh" }]);
 
-    Object.defineProperty(el, "composer", {
-      configurable: true,
-      value: {
-        getSendAnimationOrigin: () => origin,
-        closeSuggestions: mock(() => undefined),
-      },
-    });
-    Object.defineProperty(el, "canAnimateOutgoingMessage", { configurable: true, value: () => true });
-    Object.defineProperty(el, "runOutgoingMessageAnimation", { configurable: true, value: runAnimation });
-
-    callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: [{ type: "text", text: "hello" }] } }));
-
-    const messages = Reflect.get(el, "messages");
-    expect(messages).toHaveLength(1);
-    expect(messages[0]).toMatchObject({ role: "user", content: [{ type: "text", text: "hello" }] });
-    expect(store.conversation.messages).toEqual(messages);
-    const messageDirective = el.render().values.find(isDirectiveResult);
-    const entries = messageDirective?.values[0];
-    const renderEntry = messageDirective?.values[2];
-    if (!Array.isArray(entries) || typeof renderEntry !== "function") {
-      throw new Error("Expected rendered conversation entries");
-    }
-    expect(entries).toEqual(store.conversation.entries);
-    expect(entries).toHaveLength(1);
-    expect(templateToString(renderEntry(entries[0])).match(/hello/g)).toHaveLength(1);
-
-    const submittedEntry = store.conversation.entries[0];
-    const messageKey = submittedEntry.id ?? submittedEntry.localId;
-    expect(Reflect.get(el, "isStreaming")).toBe(true);
-    expect(templateToString(el.render())).toContain("Thinking...");
-    expect(Reflect.get(el, "animatingUserMessageKeys")).toEqual(new Set([messageKey]));
-    expect(runAnimation).toHaveBeenCalledWith(messageKey, origin);
-    expect(prompt).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "hello" }]);
+    const output = renderConversationEntry(el);
+    expect(output).toContain("from peer or refresh");
+    expect(output).not.toContain("sent-message-target-hidden");
   });
 });

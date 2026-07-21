@@ -8,7 +8,7 @@ import {
   type ImageAttachmentBlock,
 } from "../models/chat-content.js";
 import "./skill-suggest.js";
-import type { SendAnimationOrigin } from "../helpers/chat-send-animation.js";
+import type { SendAnimationSource } from "../helpers/chat-send-animation.js";
 import type { SkillInsertDetail, SkillSuggest } from "./skill-suggest.js";
 
 const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
@@ -48,6 +48,8 @@ interface SkillTokenRange {
 
 export interface ChatComposerSubmitDetail {
   content: ClientPromptContent;
+  /** Bounds captured immediately before dispatch, while the draft is intact. */
+  source: SendAnimationSource | null;
 }
 
 type TransferList<T> = Iterable<T> | ArrayLike<T>;
@@ -205,20 +207,12 @@ export class ChatComposer extends LitElement {
     this.skillSuggest?.close();
   }
 
-  getSendAnimationOrigin(): SendAnimationOrigin | null {
+  getSendAnimationSource(): SendAnimationSource | null {
     const source = this.promptBox;
     if (!source) return null;
 
     const rect = source.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
-
-    let backgroundColor = "rgb(39, 39, 42)";
-    let borderRadius = "12px";
-    if (typeof globalThis.getComputedStyle === "function") {
-      const style = globalThis.getComputedStyle(source);
-      backgroundColor = style.backgroundColor || backgroundColor;
-      borderRadius = style.borderRadius || borderRadius;
-    }
 
     return {
       rect: {
@@ -227,8 +221,6 @@ export class ChatComposer extends LitElement {
         width: rect.width,
         height: rect.height,
       },
-      backgroundColor,
-      borderRadius,
     };
   }
 
@@ -304,10 +296,11 @@ export class ChatComposer extends LitElement {
       }
 
       const content = buildClientPromptContent(this.inputText, uploaded);
+      const source = this.getSendAnimationSource();
       this.dispatchEvent(new CustomEvent<ChatComposerSubmitDetail>("composer-submit", {
         bubbles: true,
         composed: true,
-        detail: { content },
+        detail: { content, source },
       }));
       this.clearDraft();
       if (opts.preserveFocus && focusPreservationVersion === this.focusPreservationVersion) {

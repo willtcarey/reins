@@ -1,3 +1,9 @@
+import {
+  DEFAULT_SPRING_DAMPING,
+  DEFAULT_SPRING_STIFFNESS,
+  Spring,
+} from "../models/spring.js";
+
 export interface SendAnimationRect {
   left: number;
   top: number;
@@ -5,347 +11,296 @@ export interface SendAnimationRect {
   height: number;
 }
 
-export interface SendAnimationOrigin {
+export interface SendAnimationSource {
   rect: SendAnimationRect;
-  backgroundColor: string;
-  borderRadius: string;
 }
 
-export interface ConversationShiftSnapshotItem {
-  key: string;
+interface SendFlip {
+  dx: number;
+  dy: number;
+  springDistance: number;
+}
+
+interface VisualViewportOffset {
   left: number;
   top: number;
 }
 
-export interface ConversationShiftDelta {
-  key: string;
-  dx: number;
-  dy: number;
-}
-
-export interface SendAnimationGeometry {
-  startLeft: number;
-  startTop: number;
-  startWidth: number;
-  startHeight: number;
-  targetLeft: number;
-  targetTop: number;
-  dx: number;
-  dy: number;
-}
-
-export interface SendAnimationStages {
-  finalDx: number;
-  finalDy: number;
-  scale: number;
-  durationMs: number;
-}
-
 export interface ChatSendAnimationHost {
   updateComplete: Promise<unknown>;
-  querySelector<E extends Element = Element>(selectors: string): E | null;
-  querySelectorAll<E extends Element = Element>(selectors: string): NodeListOf<E>;
+  querySelector(selectors: string): HTMLElement | null;
 }
 
-export function computeConversationShiftDeltas(
-  before: ConversationShiftSnapshotItem[],
-  after: ConversationShiftSnapshotItem[],
-): ConversationShiftDelta[] {
-  const afterByKey = new Map(after.map((item) => [item.key, item]));
-  const deltas: ConversationShiftDelta[] = [];
-
-  for (const item of before) {
-    const next = afterByKey.get(item.key);
-    if (!next) continue;
-
-    const dx = item.left - next.left;
-    const dy = item.top - next.top;
-    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
-
-    deltas.push({ key: item.key, dx, dy });
-  }
-
-  return deltas;
+interface ActiveAnimation {
+  token: number;
+  messageKey: string;
+  element: HTMLElement | null;
+  flight: HTMLElement | null;
+  reveal: () => void;
+  revealed: boolean;
+  resolve: (completed: boolean) => void;
+  removeCancellationListeners: () => void;
+  scrollContainer: HTMLElement | null;
+  scrollStart: number;
 }
 
-export function computeSendAnimationStages(delta: { dx: number; dy: number }): SendAnimationStages {
-  return {
-    finalDx: delta.dx,
-    finalDy: delta.dy,
-    scale: 1,
-    durationMs: 220,
-  };
-}
+const MIN_SPRING_DISTANCE = 100;
+const SEND_SPRING_SPEED = 0.7;
+const SEND_SPRING_STIFFNESS = DEFAULT_SPRING_STIFFNESS * SEND_SPRING_SPEED ** 2;
+const SEND_SPRING_DAMPING = DEFAULT_SPRING_DAMPING * SEND_SPRING_SPEED;
 
-export function computeSendAnimationGeometry(
-  originRect: SendAnimationRect,
-  targetRect: SendAnimationRect,
-  layerRect: SendAnimationRect,
-): SendAnimationGeometry {
-  const startWidth = Math.min(originRect.width, targetRect.width);
-  const startHeight = Math.min(originRect.height, targetRect.height);
-  const startLeft = originRect.left - layerRect.left;
-  const startTop = originRect.top + ((originRect.height - startHeight) / 2) - layerRect.top;
-  const targetLeft = targetRect.left - layerRect.left;
-  const targetTop = targetRect.top - layerRect.top;
-
-  return {
-    startLeft,
-    startTop,
-    startWidth,
-    startHeight,
-    targetLeft,
-    targetTop,
-    dx: targetLeft - startLeft,
-    dy: targetTop - startTop,
-  };
-}
-
-export function canAnimateOutgoingMessage(): boolean {
+function canAnimateOutgoingMessage(): boolean {
   if (typeof document === "undefined" || !document.body) return false;
-  if (
+  return !(
     typeof window !== "undefined"
     && typeof window.matchMedia === "function"
     && window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  ) {
-    return false;
-  }
-  return true;
+  );
 }
 
-export function captureConversationShiftSnapshot(
-  host: ChatSendAnimationHost,
-  onlyVisible = true,
-): ConversationShiftSnapshotItem[] {
-  if (typeof host.querySelector !== "function" || typeof host.querySelectorAll !== "function") return [];
-
-  const container = host.querySelector<HTMLElement>("#chat-scroll");
-  if (!container) return [];
-
-  const containerRect = container.getBoundingClientRect();
-  const items: ConversationShiftSnapshotItem[] = [];
-  const elements = host.querySelectorAll<HTMLElement>("[data-conversation-key]");
-
-  for (const element of elements) {
-    const key = element.dataset.conversationKey;
-    if (!key) continue;
-
-    const rect = element.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) continue;
-    if (onlyVisible && (rect.bottom < containerRect.top || rect.top > containerRect.bottom)) continue;
-
-    items.push({ key, left: rect.left, top: rect.top });
-  }
-
-  return items;
-}
-
-export async function runConversationShiftAnimation(
-  host: ChatSendAnimationHost,
-  before: ConversationShiftSnapshotItem[],
-): Promise<void> {
-  if (before.length === 0) return;
-
-  const animated: Array<{
-    element: HTMLElement;
-    transition: string;
-    transform: string;
-    willChange: string;
-  }> = [];
-
-  try {
-    await host.updateComplete;
-    await waitForAnimationFrame();
-
-    if (!canAnimateOutgoingMessage()) return;
-
-    const after = captureConversationShiftSnapshot(host, false);
-    const deltas = computeConversationShiftDeltas(before, after);
-    if (deltas.length === 0) return;
-
-    const elementsByKey = new Map<string, HTMLElement>();
-    for (const element of host.querySelectorAll<HTMLElement>("[data-conversation-key]")) {
-      const key = element.dataset.conversationKey;
-      if (key) elementsByKey.set(key, element);
-    }
-
-    for (const delta of deltas) {
-      const element = elementsByKey.get(delta.key);
-      if (!element) continue;
-
-      const transform = element.style.transform;
-      const baseTransform = transform && transform !== "none" ? transform : "";
-      animated.push({
-        element,
-        transition: element.style.transition,
-        transform,
-        willChange: element.style.willChange,
-      });
-
-      element.classList.add("conversation-shift-animating");
-      element.style.transition = "none";
-      element.style.transform = `translate3d(${delta.dx}px, ${delta.dy}px, 0)${baseTransform ? ` ${baseTransform}` : ""}`;
-      element.style.willChange = "transform";
-    }
-
-    if (animated.length === 0) return;
-
-    await waitForAnimationFrame();
-
-    const durationMs = 220;
-    const easing = "cubic-bezier(0.16, 1, 0.3, 1)";
-    for (const item of animated) {
-      item.element.style.transition = `transform ${durationMs}ms ${easing}`;
-      item.element.style.transform = item.transform;
-    }
-
-    await Promise.all(animated.map((item) => waitForTransition(item.element, durationMs)));
-  } finally {
-    for (const item of animated) {
-      item.element.classList.remove("conversation-shift-animating");
-      item.element.style.transition = item.transition;
-      item.element.style.transform = item.transform;
-      item.element.style.willChange = item.willChange;
-    }
-  }
-}
-
-export async function runOutgoingMessageAnimation(
-  host: ChatSendAnimationHost,
-  messageKey: string,
-  origin: SendAnimationOrigin,
-  revealOutgoingMessage: () => void,
-): Promise<void> {
-  let ghost: HTMLElement | null = null;
-
-  try {
-    await host.updateComplete;
-    await waitForAnimationFrame();
-
-    if (!canAnimateOutgoingMessage()) return;
-
-    const target = host.querySelector<HTMLElement>(
-      `[data-message-key="${cssEscape(messageKey)}"] [data-role="user-message-bubble"]`,
-    );
-    if (!target) return;
-
-    const targetRect = target.getBoundingClientRect();
-    if (targetRect.width <= 0 || targetRect.height <= 0) return;
-
-    const layer = host.querySelector<HTMLElement>('[data-role="send-animation-layer"]');
-    if (!layer) return;
-    const layerRect = layer.getBoundingClientRect();
-    const geometry = computeSendAnimationGeometry(origin.rect, targetRect, layerRect);
-
-    const targetStyle = typeof globalThis.getComputedStyle === "function"
-      ? globalThis.getComputedStyle(target)
-      : null;
-    const targetBackground = targetStyle?.backgroundColor || "rgb(37, 99, 235)";
-    const targetBorderRadius = targetStyle?.borderRadius || "16px";
-
-    const clonedTarget = target.cloneNode(true);
-    if (!(clonedTarget instanceof HTMLElement)) return;
-    ghost = clonedTarget;
-    ghost.classList.add("sent-message-ghost");
-    ghost.style.position = "absolute";
-    ghost.style.left = `${geometry.startLeft}px`;
-    ghost.style.top = `${geometry.startTop}px`;
-    ghost.style.width = `${geometry.startWidth}px`;
-    ghost.style.height = `${geometry.startHeight}px`;
-    ghost.style.maxWidth = "none";
-    ghost.style.overflow = "hidden";
-    ghost.style.boxSizing = "border-box";
-    ghost.style.margin = "0";
-    ghost.style.pointerEvents = "none";
-    ghost.style.zIndex = "var(--layer-overlay)";
-    ghost.style.transformOrigin = "top left";
-    ghost.style.transform = "translate3d(0, 0, 0) scale(0.995)";
-    ghost.style.backgroundColor = origin.backgroundColor;
-    ghost.style.borderRadius = origin.borderRadius;
-    ghost.style.opacity = "0.96";
-    ghost.style.boxShadow = "0 0 0 rgba(0, 0, 0, 0)";
-    ghost.style.willChange = "transform, width, height, opacity";
-    ghost.style.contain = "layout paint";
-    layer.appendChild(ghost);
-
-    await waitForAnimationFrame();
-    ghost.getBoundingClientRect();
-
-    const stages = computeSendAnimationStages(geometry);
-    const travelEasing = "cubic-bezier(0.16, 1, 0.3, 1)";
-
-    ghost.style.transition = [
-      `transform ${stages.durationMs}ms ${travelEasing}`,
-      `width ${stages.durationMs}ms ${travelEasing}`,
-      `height ${stages.durationMs}ms ${travelEasing}`,
-      `background-color ${stages.durationMs}ms ease-out`,
-      `border-radius ${stages.durationMs}ms ${travelEasing}`,
-      `opacity ${stages.durationMs}ms ease-out`,
-    ].join(", ");
-    ghost.style.transform = `translate3d(${stages.finalDx}px, ${stages.finalDy}px, 0) scale(${stages.scale})`;
-    ghost.style.width = `${targetRect.width}px`;
-    ghost.style.height = `${targetRect.height}px`;
-    ghost.style.backgroundColor = targetBackground;
-    ghost.style.borderRadius = targetBorderRadius;
-    ghost.style.opacity = "1";
-
-    await waitForTransition(ghost, stages.durationMs);
-  } finally {
-    revealOutgoingMessage();
-    await host.updateComplete.catch(() => undefined);
-    ghost?.remove();
-  }
-}
-
+/**
+ * Owns the one local-submission animation for a chat panel. Starting another
+ * animation supersedes the first; cancel always removes the fixed flight copy
+ * and reveals the normal-flow destination.
+ */
 export class ChatSendAnimator {
-  constructor(private host: ChatSendAnimationHost) {}
+  private active: ActiveAnimation | null = null;
+  private spring: Spring | null = null;
+  private nextToken = 1;
+
+  constructor(private readonly host: ChatSendAnimationHost) {}
 
   canAnimateOutgoingMessage(): boolean {
     return canAnimateOutgoingMessage();
   }
 
-  captureConversationShiftSnapshot(onlyVisible = true): ConversationShiftSnapshotItem[] {
-    return captureConversationShiftSnapshot(this.host, onlyVisible);
+  get scrollLocked(): boolean {
+    return this.active !== null;
   }
 
-  runConversationShiftAnimation(before: ConversationShiftSnapshotItem[]): Promise<void> {
-    return runConversationShiftAnimation(this.host, before);
-  }
-
-  runOutgoingMessageAnimation(
+  animate(
     messageKey: string,
-    origin: SendAnimationOrigin,
-    revealOutgoingMessage: () => void,
-  ): Promise<void> {
-    return runOutgoingMessageAnimation(this.host, messageKey, origin, revealOutgoingMessage);
+    source: SendAnimationSource,
+    reveal: () => void,
+  ): Promise<boolean> {
+    this.cancel();
+
+    if (!canAnimateOutgoingMessage()) {
+      reveal();
+      return Promise.resolve(false);
+    }
+
+    return new Promise<boolean>((resolve) => {
+      const scrollContainer = this.findScrollContainer();
+      const active: ActiveAnimation = {
+        token: this.nextToken++,
+        messageKey,
+        element: null,
+        flight: null,
+        reveal,
+        revealed: false,
+        resolve,
+        removeCancellationListeners: () => {},
+        scrollContainer,
+        scrollStart: scrollContainer?.scrollTop ?? 0,
+      };
+      this.active = active;
+      active.removeCancellationListeners = this.listenForCancellation();
+      void this.start(active, source);
+    });
+  }
+
+  cancel(): void {
+    const active = this.active;
+    if (!active) return;
+    this.finish(active, false);
+  }
+
+  cancelIfTargetMissing(): void {
+    const active = this.active;
+    if (!active?.element) return;
+    const current = this.findMessageRow(active.messageKey);
+    if (current !== active.element) this.finish(active, false);
+  }
+
+  private async start(active: ActiveAnimation, source: SendAnimationSource): Promise<void> {
+    try {
+      await this.host.updateComplete;
+      await nextAnimationFrame();
+    } catch {
+      this.finish(active, false);
+      return;
+    }
+
+    if (this.active !== active || !canAnimateOutgoingMessage()) {
+      this.finish(active, false);
+      return;
+    }
+
+    const row = this.findMessageRow(active.messageKey);
+    const destination = row?.querySelector<HTMLElement>('[data-role="user-message-animation-target"]');
+    if (!row || !destination) {
+      this.finish(active, false);
+      return;
+    }
+
+    const currentDestinationRect = destination.getBoundingClientRect();
+    if (currentDestinationRect.width <= 0 || currentDestinationRect.height <= 0) {
+      this.finish(active, false);
+      return;
+    }
+
+    const scrollDistance = this.scrollTarget(active) - active.scrollStart;
+    const destinationRect: SendAnimationRect = {
+      left: currentDestinationRect.left,
+      top: currentDestinationRect.top - scrollDistance,
+      width: currentDestinationRect.width,
+      height: currentDestinationRect.height,
+    };
+    const clonedDestination = destination.cloneNode(true);
+    if (!(clonedDestination instanceof HTMLElement)) {
+      this.finish(active, false);
+      return;
+    }
+
+    const dx = source.rect.left - destinationRect.left;
+    const dy = source.rect.top - destinationRect.top;
+    const flip: SendFlip = {
+      dx,
+      dy,
+      springDistance: Math.max(Math.hypot(dx, dy), MIN_SPRING_DISTANCE),
+    };
+    active.element = row;
+    active.flight = clonedDestination;
+    // The real optimistic row keeps its normal-flow destination while a fixed
+    // visual copy travels above the composer and scroll container. Because the
+    // copy lives under body, it cannot alter Safari's scrollable overflow.
+    this.configureFlight(clonedDestination, destinationRect);
+    document.body.appendChild(clonedDestination);
+    this.applyFrame(clonedDestination, flip, flip.springDistance);
+
+    const spring = new Spring({
+      value: flip.springDistance,
+      target: 0,
+      velocity: 0,
+      stiffness: SEND_SPRING_STIFFNESS,
+      damping: SEND_SPRING_DAMPING,
+      onUpdate: (value) => {
+        if (this.active !== active) return;
+        this.applyFrame(clonedDestination, flip, value);
+        this.applyScrollFrame(active, value / flip.springDistance);
+      },
+      onSettle: () => this.finish(active, true),
+    });
+    if (this.active === active) this.spring = spring;
+    else spring.cancel();
+  }
+
+  private configureFlight(element: HTMLElement, destination: SendAnimationRect): void {
+    element.classList.add("sent-message-flight");
+    element.setAttribute("aria-hidden", "true");
+
+    // DOM rects use visual-viewport coordinates on iOS while fixed positioning
+    // uses the layout viewport. Account for the keyboard-shifted viewport here.
+    const viewportOffset = currentVisualViewportOffset();
+    element.style.position = "fixed";
+    element.style.left = `${destination.left + viewportOffset.left}px`;
+    element.style.top = `${destination.top + viewportOffset.top}px`;
+    element.style.width = `${destination.width}px`;
+    element.style.height = `${destination.height}px`;
+    element.style.maxWidth = "none";
+    element.style.margin = "0";
+    element.style.pointerEvents = "none";
+    element.style.zIndex = "2147483647";
+    element.style.willChange = "transform";
+  }
+
+  private applyFrame(element: HTMLElement, flip: SendFlip, springValue: number): void {
+    // Keep signed Spring overshoot so the message visibly settles around zero.
+    const progress = springValue / flip.springDistance;
+    element.style.transform = `translate3d(${flip.dx * progress}px, ${flip.dy * progress}px, 0)`;
+  }
+
+  private applyScrollFrame(active: ActiveAnimation, progress: number): void {
+    const container = active.scrollContainer;
+    if (!container) return;
+    const target = this.scrollTarget(active);
+    container.scrollTop = target + ((active.scrollStart - target) * progress);
+  }
+
+  private scrollTarget(active: ActiveAnimation): number {
+    const container = active.scrollContainer;
+    return container ? Math.max(0, container.scrollHeight - container.clientHeight) : 0;
+  }
+
+  private finish(active: ActiveAnimation, completed: boolean): void {
+    if (this.active !== active) return;
+    this.spring?.cancel();
+    this.spring = null;
+    active.removeCancellationListeners();
+    if (active.scrollContainer) active.scrollContainer.scrollTop = this.scrollTarget(active);
+    // Reveal synchronously so removing the flight copy cannot produce a blank
+    // frame before Lit removes the temporary hidden class.
+    active.element?.classList.remove("sent-message-target-hidden");
+    this.reveal(active);
+    active.flight?.remove();
+    this.active = null;
+    active.resolve(completed);
+  }
+
+  private reveal(active: ActiveAnimation): void {
+    if (active.revealed) return;
+    active.revealed = true;
+    active.reveal();
+  }
+
+  private findMessageRow(messageKey: string): HTMLElement | null {
+    if (typeof this.host.querySelector !== "function") return null;
+    return this.host.querySelector(
+      `[data-message-key="${cssEscape(messageKey)}"]`,
+    );
+  }
+
+  private findScrollContainer(): HTMLElement | null {
+    if (typeof this.host.querySelector !== "function") return null;
+    return this.host.querySelector("#chat-scroll");
+  }
+
+  private listenForCancellation(): () => void {
+    if (typeof window === "undefined") return () => {};
+    const cancel = () => this.cancel();
+    const events: Array<[EventTarget, string]> = [
+      [window, "resize"],
+      [window, "orientationchange"],
+      [window, "hashchange"],
+      [window, "popstate"],
+      [window, "pagehide"],
+    ];
+    if (window.visualViewport) {
+      events.push([window.visualViewport, "resize"], [window.visualViewport, "scroll"]);
+    }
+    for (const [target, type] of events) target.addEventListener(type, cancel);
+    return () => {
+      for (const [target, type] of events) target.removeEventListener(type, cancel);
+    };
   }
 }
 
-function waitForAnimationFrame(): Promise<void> {
+function currentVisualViewportOffset(): VisualViewportOffset {
+  if (typeof window === "undefined" || !window.visualViewport) return { left: 0, top: 0 };
+  return {
+    left: window.visualViewport.offsetLeft,
+    top: window.visualViewport.offsetTop,
+  };
+}
+
+function nextAnimationFrame(): Promise<void> {
   return new Promise((resolve) => {
     if (typeof globalThis.requestAnimationFrame === "function") {
       globalThis.requestAnimationFrame(() => resolve());
-      return;
+    } else {
+      setTimeout(resolve, 0);
     }
-    setTimeout(resolve, 0);
-  });
-}
-
-function waitForTransition(element: HTMLElement, durationMs: number): Promise<void> {
-  return new Promise((resolve) => {
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timeout);
-      element.removeEventListener("transitionend", onTransitionEnd);
-      resolve();
-    };
-    const onTransitionEnd = (event: TransitionEvent) => {
-      if (event.target === element && event.propertyName === "transform") finish();
-    };
-    const timeout = setTimeout(finish, durationMs + 120);
-    element.addEventListener("transitionend", onTransitionEnd);
   });
 }
 
