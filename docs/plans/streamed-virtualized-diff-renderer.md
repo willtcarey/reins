@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a future Changes renderer that keeps the performance benefits demonstrated by `@pierre/diffs` while preserving Reins review behavior: selected-session branch scoping, file tree navigation, hunk expansion, file actions, markdown/image/PDF previews, and future mixed review content.
+Build a future Changes renderer that keeps the performance benefits demonstrated by `@pierre/diffs` while preserving Reins review behavior: selected-session branch scoping, file tree navigation, fluid inline context expansion, file actions, markdown/image/PDF previews, and future mixed review content.
 
 ## Implementation plan
 
@@ -63,11 +63,14 @@ This is the working implementation list. It is ordered from smallest functional 
    - Avoid scheduling highlight work for items outside the visible/overscan window.
    - Preserve Reins-owned headers/actions around the Pierre-rendered diff body.
 
-8. [ ] **Implement lazy hunk expansion.**
-   - Add the per-file old/new content endpoint with diff semantics.
-   - Show Reins-owned expansion affordances before content is fetched.
-   - On first expansion click, fetch old/new contents, reprocess that file, update item state/height, apply expansion, and preserve scroll anchoring.
-   - Define fallback behavior for files that cannot be promoted.
+8. [ ] **Implement fluid inline context expansion.**
+   - Treat each diff as a view into the complete file, with collapsed unchanged regions appearing naturally between hunks.
+   - Let the user reveal more lines directly in place; repeated expansion should continue opening the region until adjacent hunks join or the complete file is visible.
+   - Keep the interaction continuous: the file must not visibly switch modes, disappear, or be replaced while content is acquired.
+   - Add the per-file old/new content endpoint with diff semantics and retrieve complete contents invisibly on the first expansion when they are not already available.
+   - Update rendered lines and measured item height while anchoring the touched region in the viewport so expansion does not disorient the user.
+   - Consider prefetching likely expansion data where it meaningfully reduces first-interaction latency without loading every complete file eagerly.
+   - If complete content cannot be retrieved, leave the existing partial diff stable and show a non-disruptive error at the expansion control.
 
 9. [ ] **Measure and compare.**
    - Compare `classic`, `codeview`, and the Reins-owned virtual path.
@@ -132,9 +135,9 @@ The non-virtual scaffold is **not** a performance prototype. It should be used o
 - `CodeView` worked because it did not render DOM placeholders/wrappers for every diff file. Rendering every top-level file container, even with virtualized bodies inside each file, loses the primary many-file win.
 - Full-patch fetch is acceptable for now. Streaming likely helps time-to-first-file on huge diffs but is not required for the next architectural decision.
 - Worker-backed syntax highlighting is required even in the non-virtual scaffold; main-thread highlighting can make the scaffold unusable before top-level virtualization is added.
-- Raw patch parsing produces `FileDiffMetadata.isPartial === true`; Pierre native hunk expansion is unavailable until old/new file contents are available.
-- Seamless lazy expansion requires Reins to show expansion affordances before contents are fetched, then fetch contents on first click and update the rendered item.
-- Direct `CodeView` does not expose a clean public async hunk-expansion interception hook. Lower-level/custom separator escape hatches exist but are deprecated or unsupported for core behavior.
+- Raw patch parsing produces `FileDiffMetadata.isPartial === true`; complete old/new file contents are still required to reveal unchanged lines that are absent from the patch.
+- Content retrieval is an internal detail, not a user-visible transition. The collapsed region should remain the stable interaction point while complete contents are acquired, then open inline without replacing the file surface.
+- Direct `CodeView` does not expose a clean public async context-expansion interception hook. Lower-level/custom separator escape hatches exist but are deprecated or unsupported for core behavior.
 
 ## Detailed design notes
 
@@ -155,9 +158,13 @@ onActiveItemChange(id: string): void;
 
 The point is to make the later virtualization change a mounting-strategy swap rather than a rewrite of parsing, file tree navigation, actions, or preview state.
 
-### Lazy hunk expansion content endpoint
+### Fluid inline context expansion
 
-The per-file content endpoint should understand:
+The interaction contract is that a diff behaves like a window into the complete file. Collapsed unchanged regions sit between visible hunks, and activating one reveals additional lines in that same position. Repeated activation can continue opening context until regions meet. Fetching complete file contents, rebuilding internal diff metadata, and updating virtual measurements must remain invisible implementation details; there is no separate “expanded mode” and no user-visible replacement of the file item.
+
+The line or collapsed region the user acts on should remain visually anchored while its surrounding content opens. The renderer should update item height and compensate scroll position as needed rather than allowing content above the interaction point to push it away.
+
+To support this behavior, the per-file content endpoint should understand:
 
 - branch mode for active checked-out branch: old side is merge-base, new side is working tree/index state as appropriate
 - branch mode for non-active selected branch: old side is merge-base, new side is selected branch commit
@@ -194,7 +201,7 @@ raw patch stream
 | Selected branch/session scoping | Preserved via `/diff/patch` params | Preserve |
 | Diff modes | Preserved | Preserve |
 | File tree navigation | Basic integration | First-class scroll-to-item and active-file state |
-| Hunk expansion | Unsupported for partial raw patches | Reins-owned first-click lazy promotion |
+| Context expansion | Unsupported for partial raw patches | Fluid in-place reveal backed by invisible lazy content retrieval |
 | Markdown preview | Deferred | First-class mixed item/tab support |
 | Image/PDF previews | Deferred | First-class mixed item/tab support |
 | Binary files | Limited/metadata only | Reins-owned placeholders/previews |
@@ -217,7 +224,9 @@ Suggested tests:
 - top-level virtual list mounts only visible/overscan items
 - scroll-to-item works without all item DOM mounted
 - item height updates preserve scroll anchor
-- lazy hunk expansion promotes one file and applies requested expansion
+- first context expansion retrieves missing content and reveals lines without replacing the file surface
+- repeated context expansion joins adjacent regions while preserving the interaction point's viewport position
+- failed content retrieval leaves the partial diff stable and reports the error at the expansion control
 - renderer setting selects `classic`, `codeview`, and `virtualized` while classic remains default
 
 Suggested manual/performance fixtures:
@@ -238,7 +247,7 @@ Metrics to capture:
 - mounted item/container count
 - total DOM nodes
 - scroll FPS/subjective responsiveness
-- expansion click latency before/after promotion
+- first and subsequent inline expansion latency
 - memory growth for large diffs
 - comparison against classic renderer and the `codeview` prototype
 
@@ -248,5 +257,5 @@ Metrics to capture:
 - It can render at least basic Pierre-backed diff items from raw patch metadata.
 - File tree navigation works without all item DOM mounted.
 - The design supports mixed Reins review content without relying on deprecated Pierre APIs.
-- Lazy expansion has a concrete endpoint/model plan, even if not fully implemented in the first slice.
+- Fluid inline context expansion has a concrete endpoint, item-state, and scroll-anchoring plan, even if not fully implemented in the first slice.
 - Classic remains stable and default.
