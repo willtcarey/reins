@@ -1,7 +1,8 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "./helpers/test-db.js";
+import { getDb } from "../db.js";
 import { createProject } from "../project-store.js";
-import { createTask } from "../task-store.js";
+import { createTask, setTaskStatus } from "../task-store.js";
 import {
   createSession,
   getSession,
@@ -228,6 +229,26 @@ describe("session-store", () => {
   });
 
   describe("listPaletteItems", () => {
+    test("excludes closed-task sessions while retaining open-task and scratch sessions", () => {
+      const openTask = createTask(projectId, "Open", null, "task/open");
+      const closedTask = createTask(projectId, "Closed", null, "task/closed");
+      setTaskStatus(closedTask.id, "closed");
+
+      for (const [id, taskId] of [
+        ["open", openTask.id],
+        ["closed", closedTask.id],
+        ["scratch", undefined],
+      ] as const) {
+        createSession(id, projectId, { agentRuntimeType: "pi", taskId });
+        persistMessages(id, [{ role: "user", content: [{ type: "text", text: id }] }]);
+      }
+
+      expect(listPaletteItems().map((item) => item.sessionId).toSorted()).toEqual([
+        "open",
+        "scratch",
+      ]);
+    });
+
     test("returns sessions across multiple projects", () => {
       const project2 = createProject("Project Two", "/tmp/project-two");
 
@@ -305,7 +326,6 @@ describe("session-store", () => {
       ]);
 
       // Manually set updated_at to ensure ordering
-      const { getDb } = require("../db.js");
       const db = getDb();
       db.query("UPDATE sessions SET updated_at = '2025-01-01T00:00:00.000Z' WHERE id = 'sess-new'").run();
       db.query("UPDATE sessions SET updated_at = '2025-01-02T00:00:00.000Z' WHERE id = 'sess-old'").run();
@@ -327,7 +347,6 @@ describe("session-store", () => {
       ]);
 
       // Ensure sess-newer is clearly more recent
-      const { getDb } = require("../db.js");
       const db = getDb();
       db.query("UPDATE sessions SET updated_at = '2025-01-01T00:00:00.000Z' WHERE id = 'sess-older'").run();
       db.query("UPDATE sessions SET updated_at = '2025-01-02T00:00:00.000Z' WHERE id = 'sess-newer'").run();

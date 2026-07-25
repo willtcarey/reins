@@ -183,34 +183,50 @@ export function listPaletteItems(): PaletteItem[] {
   const db = getDb();
   const rows = db
     .query<PaletteItem, []>(
-      `SELECT
+      `WITH eligible_sessions AS (
+         SELECT s.*
+         FROM sessions s
+         LEFT JOIN tasks t ON t.id = s.task_id
+         WHERE s.parent_session_id IS NULL
+           AND (s.task_id IS NULL OR t.status = 'open')
+           AND EXISTS (
+             SELECT 1 FROM session_messages sm
+             WHERE sm.session_id = s.id
+           )
+       ),
+       latest_project_assistants AS (
+         SELECT id
+         FROM (
+           SELECT
+             id,
+             ROW_NUMBER() OVER (
+               PARTITION BY project_id
+               ORDER BY updated_at DESC
+             ) AS recency_rank
+           FROM eligible_sessions
+           WHERE task_id IS NULL
+         )
+         WHERE recency_rank = 1
+       )
+       SELECT
          s.id AS sessionId,
          s.project_id AS projectId,
          p.name AS projectName,
          s.task_id AS taskId,
          t.title AS taskTitle,
-         fm.first_message AS firstMessage,
+         (
+           SELECT json_extract(sm.message_json, '$.content[0].text')
+           FROM session_messages sm
+           WHERE sm.session_id = s.id AND sm.role = 'user'
+           ORDER BY sm.seq
+           LIMIT 1
+         ) AS firstMessage,
          s.updated_at AS updatedAt
-       FROM sessions s
+       FROM eligible_sessions s
        JOIN projects p ON p.id = s.project_id
        LEFT JOIN tasks t ON t.id = s.task_id
-       JOIN (${MESSAGE_COUNT_BY_SESSION_SQL}) mc ON mc.session_id = s.id
-       LEFT JOIN (${FIRST_USER_MESSAGE_BY_SESSION_SQL}) fm ON fm.session_id = s.id
-       WHERE s.parent_session_id IS NULL
-         AND mc.cnt > 0
-         AND (
-           s.task_id IS NOT NULL
-           OR s.id = (
-             SELECT s2.id FROM sessions s2
-             JOIN (SELECT session_id FROM session_messages GROUP BY session_id) mc2
-               ON mc2.session_id = s2.id
-             WHERE s2.project_id = s.project_id
-               AND s2.task_id IS NULL
-               AND s2.parent_session_id IS NULL
-             ORDER BY s2.updated_at DESC
-             LIMIT 1
-           )
-         )
+       WHERE s.task_id IS NOT NULL
+          OR s.id IN (SELECT id FROM latest_project_assistants)
        ORDER BY s.updated_at DESC`,
     )
     .all();

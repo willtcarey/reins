@@ -1,7 +1,7 @@
 /**
  * Palette Routes
  *
- * Returns all sessions across projects for the quick-open palette.
+ * Returns open-task sessions and latest project-assistant sessions for quick open.
  */
 
 import type { RouterGroup } from "../router.js";
