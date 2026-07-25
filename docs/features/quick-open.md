@@ -1,6 +1,6 @@
 # Quick Open
 
-Quick-navigate across all projects, tasks, and sessions.
+Quick-navigate to sessions for open tasks and project assistants across all projects.
 
 ## Usage
 
@@ -11,14 +11,14 @@ Quick-navigate across all projects, tasks, and sessions.
 
 ## Default List
 
-When opened with no query, shows all sessions ordered by most recently updated. Sessions with no messages are excluded. Sub-sessions (from delegate) are excluded.
+When opened with no query, shows sessions from open tasks plus the latest project-assistant (scratch) session for each project, ordered by most recently updated. Sessions from closed tasks, sessions with no messages, older scratch sessions, and sub-sessions (from delegate) are excluded.
 
 ## Search
 
 Fuzzy matching — characters must appear in order but not necessarily consecutively. Tighter matches rank higher. Matches against:
 
 - Project name
-- Task title (or "Assistant" for scratch sessions)
+- Open task title (or "Assistant" for the latest scratch session)
 - First user message
 
 ## Activity Indicators
