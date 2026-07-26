@@ -195,6 +195,13 @@ describe("settings routes", () => {
       expect(putRes!.status).toBe(200);
       expect(getSetting("diff_renderer")).toBe("codeview");
 
+      const virtualizedRes = await router.handle(
+        makeRequest("PUT", "/api/settings/diff_renderer", "virtualized"),
+        state,
+      );
+      expect(virtualizedRes!.status).toBe(200);
+      expect(getSetting("diff_renderer")).toBe("virtualized");
+
       const invalidRes = await router.handle(
         makeRequest("PUT", "/api/settings/diff_renderer", "CodeView"),
         state,

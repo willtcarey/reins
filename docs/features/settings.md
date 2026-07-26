@@ -26,6 +26,10 @@ The **Utility Model** setting controls which model REINS uses for lightweight in
 
 You can configure it separately in the settings panel, alongside the default model.
 
+## Diff renderer
+
+The global **Diff renderer** preference controls the Changes surface. **Classic** remains the default and **CodeView** remains available as the performance comparison fallback. The experimental **Reins diff scaffold** selects the `virtualized` renderer path, but it currently mounts every changed file and is explicitly not a performance solution. It provides only text diffs, minimum Reins-owned file headers with color-coded change-type icons, and file-tree navigation; richer previews, context expansion, streaming, and actual top-level virtualization are deferred. If worker-backed syntax highlighting fails, the affected file keeps its readable plain-text diff and shows the worker error beneath its header.
+
 ## Auth credentials
 
 Provider auth credentials are stored separately from general settings.

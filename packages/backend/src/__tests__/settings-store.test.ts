@@ -97,6 +97,7 @@ describe("settings-store", () => {
       expect(() => validateSettingValue("diff_renderer", "CodeView")).toThrow(/Invalid value/);
       expect(() => validateSettingValue("diff_renderer", "classic")).not.toThrow();
       expect(() => validateSettingValue("diff_renderer", "codeview")).not.toThrow();
+      expect(() => validateSettingValue("diff_renderer", "virtualized")).not.toThrow();
     });
   });
 

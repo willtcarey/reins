@@ -127,12 +127,12 @@ describe("SettingsStore", () => {
       return jsonResponse({}, false);
     });
 
-    const result = await store.selectDiffRenderer("codeview");
+    const result = await store.selectDiffRenderer("virtualized");
 
     expect(result).toEqual({ ok: true });
-    expect(store.diffRenderer).toBe("codeview");
+    expect(store.diffRenderer).toBe("virtualized");
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.init?.body).toBe(JSON.stringify("codeview"));
+    expect(requests[0]?.init?.body).toBe(JSON.stringify("virtualized"));
     expect(changes).toEqual([{ key: "diff_renderer" }]);
   });
 

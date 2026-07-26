@@ -27,14 +27,17 @@ describe("DiffRendererShell", () => {
     shell.store.dispose();
   });
 
-  test("selects the CodeView diff panel when requested", () => {
+  test("selects each non-default renderer without changing the classic fallback", () => {
     const shell = new DiffRendererShell();
     shell.store = new DiffStore();
     shell.renderer = "codeview";
 
-    const output = templateToString(shell.render());
+    expect(templateToString(shell.render())).toContain("<codeview-diff-panel");
 
-    expect(output).toContain("<codeview-diff-panel");
+    shell.renderer = "virtualized";
+    const output = templateToString(shell.render());
+    expect(output).toContain("<virtualized-diff-panel");
+    expect(output).not.toContain("<codeview-diff-panel");
     expect(output).not.toContain("<diff-panel");
     shell.store.dispose();
   });

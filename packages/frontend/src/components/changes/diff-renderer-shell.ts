@@ -4,8 +4,10 @@ import type { DiffStore } from "../../models/stores/diff-store.js";
 import type { DiffRenderer } from "../../models/stores/settings-store.js";
 import type { DiffPanel } from "./diff-panel.js";
 import type { CodeViewDiffPanel } from "./codeview-diff-panel.js";
+import type { VirtualizedDiffPanel } from "./virtualized-diff-panel.js";
 import "./diff-panel.js";
 import "./codeview-diff-panel.js";
+import "./virtualized-diff-panel.js";
 
 @customElement("diff-renderer-shell")
 export class DiffRendererShell extends LitElement {
@@ -21,8 +23,10 @@ export class DiffRendererShell extends LitElement {
     this._panel?.scrollToFile(path);
   }
 
-  private get _panel(): DiffPanel | CodeViewDiffPanel | null {
-    return this.querySelector("diff-panel") ?? this.querySelector("codeview-diff-panel");
+  private get _panel(): DiffPanel | CodeViewDiffPanel | VirtualizedDiffPanel | null {
+    return this.querySelector("diff-panel")
+      ?? this.querySelector("codeview-diff-panel")
+      ?? this.querySelector("virtualized-diff-panel");
   }
 
   override render() {
@@ -36,6 +40,14 @@ export class DiffRendererShell extends LitElement {
             .store=${this.store}
             .visible=${this.visible}
           ></codeview-diff-panel>
+        `;
+      case "virtualized":
+        return html`
+          <virtualized-diff-panel
+            class="block h-full min-h-0 ${this.visible ? "" : "hidden"}"
+            .store=${this.store}
+            .visible=${this.visible}
+          ></virtualized-diff-panel>
         `;
       case "classic":
         return html`

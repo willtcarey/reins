@@ -49,6 +49,7 @@ html, body {
    inherit into Pierre's shadow roots. Internal shadow-DOM selectors remain in
    each renderer's unsafeCSS option. */
 [data-pierre-code-view] diffs-container,
+virtualized-diff-item [data-pierre-file-diff],
 file-viewer-code [data-pierre-file] {
   --diffs-dark-bg: #09090b;
   --diffs-dark: #e6edf3;
@@ -56,7 +57,8 @@ file-viewer-code [data-pierre-file] {
   --diffs-bg-context-gutter-override: #0f1115;
 }
 
-[data-pierre-code-view] diffs-container {
+[data-pierre-code-view] diffs-container,
+virtualized-diff-item [data-pierre-file-diff] {
   --diffs-bg-buffer-override: #18181b;
   --diffs-bg-separator-override: #30363d;
   --diffs-addition-color-override: #3fb950;
@@ -73,6 +75,20 @@ file-viewer-code [data-pierre-file] {
 file-viewer-code [data-pierre-file] {
   --diffs-fg-number-override: #71717a;
   --diffs-bg-hover-override: #3f3f46;
+}
+
+virtualized-diff-item {
+  display: block;
+}
+
+/* The item mirrors Pierre's resolved --diffs-bg out of its shadow root. The
+   fallback avoids a flash before Pierre's first render completes. */
+.reins-diff-header {
+  background-color: var(--reins-diff-background, #24292e);
+}
+
+virtualized-diff-item + virtualized-diff-item {
+  margin-block-start: 1em;
 }
 
 /* Diff line colors — background only so syntax highlighting shows through */
@@ -248,12 +264,19 @@ file-viewer-code [data-pierre-file] {
   @apply cursor-zoom-in rounded-lg;
 }
 
+/* Match Pierre's bidi-safe path truncation: the path itself is isolated in a
+   <bdi>, while RTL places the overflow ellipsis on the left. */
+.reins-diff-path {
+  direction: rtl;
+}
+
 /* Left-truncate file paths: RTL direction makes ellipsis appear on the left */
 .direction-rtl {
   direction: rtl;
   text-align: left;
   unicode-bidi: plaintext;
 }
+
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {

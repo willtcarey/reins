@@ -17,27 +17,27 @@ This is the working implementation list. It is ordered from smallest functional 
 
 ### Next incremental steps
 
-1. [ ] **Add the Reins-owned renderer shell.**
+1. [x] **Add the Reins-owned renderer shell.**
    - Add `diff_renderer = "virtualized"` for the future Reins-owned path.
    - Route the setting to a placeholder panel without changing `classic` or `codeview`.
    - Keep the `virtualized` shell behind the renderer setting; it does not need production parity yet.
 
-2. [ ] **Create renderer-specific review item records.**
+2. [x] **Create renderer-specific review item records.**
    - Parse the already-loaded raw patch into Reins-owned item records.
    - Use stable item IDs and cache keys from path/old path/status/occurrence.
    - Keep this state separate from `DiffStore.fullData`.
    - Define item-level state by ID: collapsed/expanded, active tab, parse errors, later height cache.
 
-3. [ ] **Build the non-virtual functional scaffold with worker-backed highlighting.**
+3. [x] **Build the non-virtual functional scaffold with worker-backed highlighting.**
    - Render `items.map(renderItem)` initially.
-   - Render Reins-owned file headers and basic file actions.
+   - Render the minimum Reins-owned file header; collapse and richer actions remain deferred with the other Reins-owned behavior below.
    - Render basic diff bodies using Pierre pieces where practical.
    - Use Pierre worker-pool/highlight-cache primitives from the start so syntax highlighting does not run on the main thread.
    - Keep stable cache keys wired through the scaffold so worker-highlight output can be reused after virtualization lands.
    - Add `scrollToItem(id)` and active-item callback abstractions even if implemented with mounted DOM queries at first.
    - Document in-code/plan that this scaffold may mount every file and is not a performance prototype.
 
-4. [ ] **Add file tree integration against item IDs.**
+4. [x] **Add file tree integration against item IDs.**
    - File tree clicks resolve to review item IDs.
    - `scrollToItem(id)` works in the scaffold.
    - Active file state is reported through the abstraction instead of depending on all files being permanently mounted.
@@ -85,9 +85,9 @@ The current CodeView renderer prototype proved an important point: **most of the
 
 ## Current status and decision
 
-The `diff_renderer` setting now uses `codeview` for the direct Pierre `CodeView` proof point that fetches `/diff/patch` as full text, parses it with `@pierre/diffs`, and mounts Pierre `CodeView`. Classic remains the default, so non-default renderer access is controlled by the stored preference rather than frontend dev-mode gating.
+The `diff_renderer` setting supports `codeview` for the direct Pierre `CodeView` proof point and `virtualized` for the first Reins-owned scaffold. Both fetch `/diff/patch` as full text. The Reins-owned path parses renderer-specific review records, owns the file headers and item-ID navigation contract, and delegates text rows and worker-backed highlighting to Pierre `FileDiff`. Classic remains the default, so non-default renderer access is controlled by the stored preference rather than frontend dev-mode gating.
 
-The direct CodeView diff implementation is complete enough as a proof point. The next renderer value will be `virtualized`: a separate Reins-owned virtualized renderer path compared against `codeview` while keeping `classic` as the default.
+The `virtualized` renderer currently maps every item into mounted DOM. It is intentionally a functional scaffold, not a performance solution. Context expansion, per-file content retrieval, rich previews, collapse/actions beyond the minimum header, streaming, and top-level virtualization remain follow-up work.
 
 In particular:
 
