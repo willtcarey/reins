@@ -1,18 +1,39 @@
 import { FileDiff, type ChangeTypes, type FileDiffOptions } from "@pierre/diffs";
 import { LitElement, html, nothing, svg } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
-import {
-  getPierreWorkerPool,
-  PIERRE_SHIKI_THEME,
-  subscribeToPierreDiffHighlightErrors,
-} from "../../models/changes/pierre-worker-pool.js";
+import { customElement, property } from "lit/decorators.js";
+import { repeat } from "lit/directives/repeat.js";
+import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
 import { ScrollSpy } from "../../models/changes/scroll-spy.js";
 import {
-  parseVirtualizedReviewItems,
-  type VirtualizedReviewItem,
-  type VirtualizedReviewItemsResult,
-} from "../../models/changes/virtualized-review-items.js";
+  parseReviewItems,
+  reconcileReviewItems,
+  type ReviewItem,
+  ReviewItemStateById,
+  type ReviewItemsResult,
+} from "../../models/changes/review-items.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
+import "./diff-file-action-buttons.js";
+
+type ScrollPositionContainer = Pick<HTMLElement, "scrollTop" | "clientHeight">;
+
+export class ReviewScrollPosition {
+  private value: number | null = null;
+
+  remember(container: ScrollPositionContainer, visible: boolean) {
+    if (!visible || container.clientHeight <= 0) return;
+    this.value = container.scrollTop;
+  }
+
+  restore(container: ScrollPositionContainer, visible: boolean): boolean {
+    if (!visible || container.clientHeight <= 0 || this.value === null) return false;
+    container.scrollTop = this.value;
+    return true;
+  }
+
+  reset() {
+    this.value = null;
+  }
+}
 
 const REINS_DIFF_OPTIONS: FileDiffOptions<undefined> = {
   theme: PIERRE_SHIKI_THEME,
@@ -58,16 +79,6 @@ const STATUS_ICON_DETAILS: Record<ChangeTypes, {
 
 const STATUS_ICON_FRAME = svg`<path d="M1.79 4.3c.2-.88.48-1.39.8-1.71s.83-.61 1.71-.8C5.19 1.59 6.39 1.5 8 1.5s2.81.09 3.7.29c.88.19 1.39.48 1.71.8s.61.83.8 1.71c.2.89.29 2.09.29 3.7s-.09 2.81-.29 3.7c-.19.88-.48 1.39-.8 1.71s-.83.61-1.71.8c-.89.2-2.09.29-3.7.29s-2.81-.09-3.7-.29c-.88-.19-1.39-.48-1.71-.8s-.6-.83-.8-1.71C1.59 10.81 1.5 9.61 1.5 8s.09-2.81.29-3.7M8 0C1.41 0 0 1.41 0 8s1.41 8 8 8 8-1.41 8-8S14.59 0 8 0"/>`;
 
-type PierreBackgroundSource = Pick<CSSStyleDeclaration, "backgroundColor" | "getPropertyValue">;
-type PierreBackgroundTarget = Pick<CSSStyleDeclaration, "setProperty">;
-
-export function applyPierreDiffBackground(source: PierreBackgroundSource, target: PierreBackgroundTarget): boolean {
-  const background = source.getPropertyValue("--diffs-bg").trim() || source.backgroundColor.trim();
-  if (!background || background === "transparent" || background === "rgba(0, 0, 0, 0)") return false;
-  target.setProperty("--reins-diff-background", background);
-  return true;
-}
-
 function renderStatusIcon(status: ChangeTypes) {
   const details = STATUS_ICON_DETAILS[status];
   return html`
@@ -84,21 +95,29 @@ function renderStatusIcon(status: ChangeTypes) {
   `;
 }
 
-@customElement("virtualized-diff-item")
-export class VirtualizedDiffItem extends LitElement {
+type PierreFileDiffRenderer = Pick<FileDiff<undefined>, "render" | "cleanUp">;
+type PierreFileDiffFactory = () => PierreFileDiffRenderer;
+
+@customElement("review-diff-item")
+export class ReviewDiffItem extends LitElement {
+  private _createFileDiff: PierreFileDiffFactory;
+
+  constructor(createFileDiff: PierreFileDiffFactory = () => new FileDiff(REINS_DIFF_OPTIONS, getPierreWorkerPool(), true)) {
+    super();
+    this._createFileDiff = createFileDiff;
+  }
+
   override createRenderRoot() {
     return this;
   }
 
-  @property({ attribute: false }) item: VirtualizedReviewItem | null = null;
-  @state() private highlightError: string | null = null;
+  @property({ attribute: false }) item: ReviewItem | null = null;
+  @property({ type: Number, attribute: false }) projectId: number | null = null;
+  @property({ attribute: false }) branch: string | null = null;
 
-  private _fileDiff: FileDiff | null = null;
-  private _renderedItem: VirtualizedReviewItem | null = null;
+  private _fileDiff: PierreFileDiffRenderer | null = null;
+  private _renderedItem: ReviewItem | null = null;
   private _root: HTMLElement | null = null;
-  private _backgroundSyncFrame: number | null = null;
-  private _backgroundObserver: MutationObserver | null = null;
-  private _unsubscribeHighlightErrors: (() => void) | null = null;
 
   override updated() {
     this._syncFileDiff();
@@ -109,68 +128,42 @@ export class VirtualizedDiffItem extends LitElement {
     this._destroyFileDiff();
   }
 
-  public reportHighlightError(error: unknown) {
-    this.highlightError = error instanceof Error ? error.message : String(error);
+  protected getDiffRoot(): HTMLElement | null {
+    return this.querySelector<HTMLElement>("[data-pierre-file-diff]");
   }
 
   private _syncFileDiff() {
-    const root = this.querySelector<HTMLElement>("[data-pierre-file-diff]");
+    const root = this.getDiffRoot();
     if (!root || !this.item) {
       this._destroyFileDiff();
       return;
     }
-    if (this._fileDiff && this._root === root && this._renderedItem === this.item) return;
+    if (this._fileDiff && this._root === root) {
+      if (this._renderedItem === this.item) return;
+      this._renderedItem = this.item;
+      this._fileDiff.render({ fileDiff: this.item.fileDiff, fileContainer: root });
+      return;
+    }
 
     this._destroyFileDiff();
-    this.highlightError = null;
-    this._unsubscribeHighlightErrors = subscribeToPierreDiffHighlightErrors(
-      this.item.cacheKey,
-      (error) => this.reportHighlightError(error),
-    );
-    this._fileDiff = new FileDiff(REINS_DIFF_OPTIONS, getPierreWorkerPool(), true);
+    this._fileDiff = this._createFileDiff();
     this._root = root;
     this._renderedItem = this.item;
     this._fileDiff.render({ fileDiff: this.item.fileDiff, fileContainer: root });
-    this._scheduleBackgroundSync(root);
-  }
-
-  private _scheduleBackgroundSync(root: HTMLElement, attemptsRemaining = 30) {
-    if (this._backgroundSyncFrame !== null) cancelAnimationFrame(this._backgroundSyncFrame);
-    this._backgroundSyncFrame = requestAnimationFrame(() => {
-      this._backgroundSyncFrame = null;
-      if (this._root !== root) return;
-
-      const shadowRoot = root.shadowRoot;
-      const surface = shadowRoot?.querySelector<HTMLElement>("[data-diff]");
-      if (!shadowRoot || !surface) {
-        if (attemptsRemaining > 1) this._scheduleBackgroundSync(root, attemptsRemaining - 1);
-        return;
-      }
-
-      applyPierreDiffBackground(getComputedStyle(surface), this.style);
-      if (!this._backgroundObserver && typeof MutationObserver !== "undefined") {
-        this._backgroundObserver = new MutationObserver(() => this._scheduleBackgroundSync(root));
-        this._backgroundObserver.observe(shadowRoot, {
-          attributes: true,
-          attributeFilter: ["style"],
-          childList: true,
-          subtree: true,
-        });
-      }
-    });
   }
 
   private _destroyFileDiff() {
-    this._unsubscribeHighlightErrors?.();
-    this._unsubscribeHighlightErrors = null;
-    if (this._backgroundSyncFrame !== null) cancelAnimationFrame(this._backgroundSyncFrame);
-    this._backgroundSyncFrame = null;
-    this._backgroundObserver?.disconnect();
-    this._backgroundObserver = null;
     this._fileDiff?.cleanUp();
     this._fileDiff = null;
     this._root = null;
     this._renderedItem = null;
+  }
+
+  private _fileUrl(path: string): string {
+    if (this.projectId == null) return "";
+    let url = `/api/projects/${this.projectId}/files/content?path=${encodeURIComponent(path)}`;
+    if (this.branch) url += `&ref=${encodeURIComponent(this.branch)}`;
+    return url;
   }
 
   override render() {
@@ -183,28 +176,40 @@ export class VirtualizedDiffItem extends LitElement {
           ${renderStatusIcon(item.status)}
           ${item.oldPath && item.oldPath !== item.path
             ? html`
-                <span class="reins-diff-path min-w-0 truncate font-mono text-xs text-zinc-500" title=${item.oldPath}>
+                <span class="reins-diff-path min-w-0 truncate font-mono text-sm text-zinc-500" title=${item.oldPath}>
                   <bdi>${item.oldPath}</bdi>
                 </span>
                 <span class="shrink-0 text-xs text-zinc-500" aria-hidden="true">→</span>
               `
             : nothing}
-          <span class="reins-diff-path min-w-0 truncate font-mono text-xs text-zinc-200" title=${item.path}>
+          <span class="reins-diff-path min-w-0 flex-1 truncate font-mono text-sm text-zinc-200" title=${item.path}>
             <bdi>${item.path}</bdi>
           </span>
+          ${item.additions > 0 || item.removals > 0
+            ? html`
+                <span class="flex shrink-0 items-center gap-2 font-mono text-xs">
+                  ${item.additions > 0 ? html`<span class="text-green-400">+${item.additions}</span>` : nothing}
+                  ${item.removals > 0 ? html`<span class="text-red-400">-${item.removals}</span>` : nothing}
+                </span>
+              `
+            : nothing}
+          <span class="flex shrink-0 items-center gap-1">
+            <diff-view-file-button .path=${item.path} variant="header"></diff-view-file-button>
+            <diff-copy-path-button .path=${item.path} variant="header"></diff-copy-path-button>
+            <diff-download-file-button
+              .path=${item.path}
+              .href=${this._fileUrl(item.path)}
+              variant="header"
+            ></diff-download-file-button>
+          </span>
         </header>
-        ${this.highlightError
-          ? html`<div role="alert" class="border-b border-amber-900/60 bg-amber-950/40 px-3 py-2 text-xs text-amber-300">
-              <span class="font-semibold">Syntax highlighting failed:</span> ${this.highlightError}
-            </div>`
-          : nothing}
         <diffs-container data-pierre-file-diff></diffs-container>
       </article>
     `;
   }
 }
 
-interface VirtualizedDiffData extends VirtualizedReviewItemsResult {
+interface ReviewDiffData extends ReviewItemsResult {
   branch: string | null;
   baseBranch: string | null;
 }
@@ -214,21 +219,39 @@ interface VirtualizedDiffData extends VirtualizedReviewItemsResult {
  * this is a functional boundary for a later top-level virtual list, not a
  * performance solution.
  */
-@customElement("virtualized-diff-panel")
-export class VirtualizedDiffPanel extends LitElement {
+@customElement("review-diff-panel")
+export class ReviewDiffPanel extends LitElement {
   override createRenderRoot() {
     return this;
   }
 
-  @property({ attribute: false }) store: DiffStore | null = null;
+  private _store: DiffStore | null = null;
+  private _itemStates = new ReviewItemStateById();
+
+  @property({ attribute: false })
+  get store(): DiffStore | null {
+    return this._store;
+  }
+
+  set store(value: DiffStore | null) {
+    const oldValue = this._store;
+    if (value === oldValue) return;
+
+    this._store = value;
+    this._scrollPosition.reset();
+    this._resetParsedData();
+    this._reconcilePatchData();
+    this.requestUpdate("store", oldValue);
+  }
+
   @property({ type: Boolean }) visible = false;
-  private activeItemId: string | null = null;
 
   private _unsubscribe: (() => void) | null = null;
   private _pendingPath: string | null = null;
   private _pendingItemId: string | null = null;
   private _parsedSource: DiffPatchData | null = null;
-  private _parsedData: VirtualizedDiffData | null = null;
+  private _parsedData: ReviewDiffData | null = null;
+  private _scrollPosition = new ReviewScrollPosition();
   private _scrollSpy = new ScrollSpy({
     containerSelector: "[data-review-scroll]",
     itemSelector: "[data-review-item-id]",
@@ -242,19 +265,21 @@ export class VirtualizedDiffPanel extends LitElement {
   }
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("store")) {
-      this._subscribe();
-      this._resetParsedData();
-      if (this.visible) this._fetchFresh();
-    }
-    if (changed.has("visible") && this.visible) this._fetchFresh();
+    const storeChanged = changed.has("store");
+    if (storeChanged) this._subscribe();
+    this._reconcilePatchData();
+    if (this.visible && (storeChanged || changed.has("visible"))) this._fetchFresh();
   }
 
-  override updated() {
+  override updated(changed: Map<string, unknown>) {
     this._scrollSpy.update(this);
-    const data = this._getParsedData();
-    if (!this.activeItemId && data?.items[0]) this.reportActiveItem(data.items[0].id);
+    const data = this._parsedData;
+    if (!this._itemStates.activeItemId && data?.items[0]) this.reportActiveItem(data.items[0].id);
     this._syncPendingScroll();
+    if (changed.has("visible") && this.visible) {
+      const container = this.querySelector<HTMLElement>("[data-review-scroll]");
+      if (container) this._scrollPosition.restore(container, true);
+    }
   }
 
   override disconnectedCallback() {
@@ -266,7 +291,7 @@ export class VirtualizedDiffPanel extends LitElement {
   }
 
   public itemIdForPath(path: string): string | null {
-    return this._getParsedData()?.pathToItemId.get(path) ?? null;
+    return this._parsedData?.pathToItemId.get(path) ?? null;
   }
 
   public scrollToFile(path: string) {
@@ -302,11 +327,9 @@ export class VirtualizedDiffPanel extends LitElement {
   }
 
   public reportActiveItem(id: string) {
-    if (id === this.activeItemId) return;
-    const item = this._getParsedData()?.items.find((candidate) => candidate.id === id);
-    if (!item) return;
+    const item = this._parsedData?.items.find((candidate) => candidate.id === id);
+    if (!item || !this._itemStates.activate(id)) return;
 
-    this.activeItemId = id;
     this.dispatchEvent(new CustomEvent<string>("active-item-change", {
       detail: id,
       bubbles: true,
@@ -327,6 +350,7 @@ export class VirtualizedDiffPanel extends LitElement {
       if (this.visible && !this.store?.patchData.data && !this.store?.patchData.loading && !this.store?.patchData.error) {
         void this.store?.fetchPatchDiff();
       }
+      this._reconcilePatchData();
       this.requestUpdate();
     });
   }
@@ -338,25 +362,35 @@ export class VirtualizedDiffPanel extends LitElement {
   private _resetParsedData() {
     this._parsedSource = null;
     this._parsedData = null;
-    this.activeItemId = null;
+    this._itemStates.clear();
   }
 
-  private _getParsedData(): VirtualizedDiffData | null {
+  private _reconcilePatchData() {
     const source = this.store?.patchData.data ?? null;
     if (!source) {
-      this._resetParsedData();
-      return null;
+      if (this._parsedSource || this._parsedData) this._resetParsedData();
+      return;
     }
-    if (source === this._parsedSource) return this._parsedData;
+    if (source === this._parsedSource) return;
 
     this._parsedSource = source;
-    this.activeItemId = null;
+    const previousData = this._parsedData;
+    const parsedItems = reconcileReviewItems(
+      previousData,
+      parseReviewItems(source.patch, source.cacheKeyPrefix, source.version),
+    );
+    this._itemStates.reconcile(parsedItems.items);
     this._parsedData = {
-      ...parseVirtualizedReviewItems(source.patch, source.cacheKeyPrefix, source.version),
+      ...parsedItems,
       branch: source.branch,
       baseBranch: source.baseBranch,
     };
-    return this._parsedData;
+  }
+
+  private _handleScroll(event: Event) {
+    if (event.currentTarget instanceof HTMLElement) {
+      this._scrollPosition.remember(event.currentTarget, this.visible);
+    }
   }
 
   private _syncPendingScroll() {
@@ -380,31 +414,55 @@ export class VirtualizedDiffPanel extends LitElement {
     }
 
     const loading = this.store.patchData.loading && !this.store.patchData.data;
-    const data = this._getParsedData();
+    const data = this._parsedData;
     const items = data?.items ?? [];
+    const branch = data?.branch ?? this.store.branch;
+    const baseBranch = data?.baseBranch ?? this.store.fileData.data?.baseBranch;
 
     return html`
-      <div class="flex h-full min-h-0 flex-col">
-        <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-700/50 px-4 py-2">
-          <span class="rounded border border-purple-500/25 bg-purple-500/15 px-2 py-1 text-xs font-semibold text-purple-300">Reins diff scaffold</span>
-          <span class="text-[10px] text-zinc-500">non-virtual; not a performance solution</span>
-          ${data?.baseBranch && data.branch && data.baseBranch !== data.branch
-            ? html`<span class="font-mono text-xs text-zinc-500">${data.baseBranch} ← ${data.branch}</span>`
-            : data?.branch ? html`<span class="font-mono text-xs text-zinc-400">${data.branch}</span>` : nothing}
-        </div>
-        <div class="min-h-0 flex-1 overflow-y-auto" data-review-scroll>
+      <div class="flex h-full min-h-0 flex-col" data-rendered-payload-version=${data ? this.store.patchData.data?.version ?? 0 : 0}>
+        ${branch ? html`
+          <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-700/50 px-4 py-2">
+            ${baseBranch && baseBranch !== branch ? html`
+              <span class="text-xs font-mono text-zinc-500">${baseBranch}</span>
+              <span class="text-xs text-zinc-600">←</span>
+            ` : nothing}
+            <span class="inline-flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                   class="shrink-0 text-zinc-500">
+                <line x1="6" y1="3" x2="6" y2="15"></line>
+                <circle cx="18" cy="6" r="3"></circle>
+                <circle cx="6" cy="18" r="3"></circle>
+                <path d="M18 9a9 9 0 0 1-9 9"></path>
+              </svg>
+              ${branch}
+            </span>
+          </div>
+        ` : nothing}
+        <div
+          class="min-h-0 flex-1 overflow-y-auto"
+          data-review-scroll
+          @scroll=${this._handleScroll}
+        >
           ${loading
             ? html`<div class="flex h-full items-center justify-center p-4 text-sm text-zinc-500">Loading Reins diff…</div>`
             : data?.parseError
               ? html`<div class="flex h-full items-center justify-center p-4 text-sm text-red-400">Unable to parse patch: ${data.parseError}</div>`
               : items.length > 0
-                ? items.map((item) => html`
-                    <virtualized-diff-item
-                      data-review-item-id=${item.id}
-                      data-file-path=${item.path}
-                      .item=${item}
-                    ></virtualized-diff-item>
-                  `)
+                ? repeat(
+                    items,
+                    (item) => item.id,
+                    (item) => html`
+                      <review-diff-item
+                        data-review-item-id=${item.id}
+                        data-file-path=${item.path}
+                        .item=${item}
+                        .projectId=${this.store?.projectId ?? null}
+                        .branch=${branch ?? null}
+                      ></review-diff-item>
+                    `,
+                  )
                 : html`<div class="flex h-full items-center justify-center p-4 text-sm text-zinc-500">No changes yet</div>`}
         </div>
       </div>
@@ -414,7 +472,7 @@ export class VirtualizedDiffPanel extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    "virtualized-diff-item": VirtualizedDiffItem;
-    "virtualized-diff-panel": VirtualizedDiffPanel;
+    "review-diff-item": ReviewDiffItem;
+    "review-diff-panel": ReviewDiffPanel;
   }
 }

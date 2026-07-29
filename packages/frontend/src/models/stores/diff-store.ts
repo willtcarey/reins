@@ -55,9 +55,22 @@ export interface DiffPatchData {
 
 export type DiffStoreListener = () => void;
 
+export type DiffRefreshTrigger =
+  | "manual"
+  | "poll"
+  | "poll-summary-changed"
+  | "websocket"
+  | "route"
+  | "upload"
+  | "mode-change"
+  | "branch-change"
+  | "rebase";
+
 export interface DiffRefreshOptions {
   /** Only refetch loaded renderer payloads when the lightweight file summary changed. */
   onlyFetchDiffIfNeeded?: boolean;
+  /** Caller responsible for this refresh, exposed through DOM diagnostics. */
+  trigger?: DiffRefreshTrigger;
 }
 
 export class DiffStore {
@@ -86,6 +99,13 @@ export class DiffStore {
 
   /** Result of the last sync action — transient, auto-clears. */
   syncResult: SyncResult = null;
+
+  /** Refresh diagnostics exposed by the renderer shell for mobile inspection. */
+  lastFilesRefreshAt: string | null = null;
+  lastPayloadRefreshAt: string | null = null;
+  lastRefreshTrigger: DiffRefreshTrigger | null = null;
+  lastSummaryChanged: boolean | null = null;
+  fullDiffVersion = 0;
 
   // ---- Private state --------------------------------------------------------
 
@@ -146,6 +166,11 @@ export class DiffStore {
     this.fullData = Loadable.idle();
     this.patchData = Loadable.idle();
     this._patchDiffVersion = 0;
+    this.fullDiffVersion = 0;
+    this.lastFilesRefreshAt = null;
+    this.lastPayloadRefreshAt = null;
+    this.lastRefreshTrigger = null;
+    this.lastSummaryChanged = null;
     this.spread = null;
     this.syncAction = "idle";
     this.syncResult = null;
@@ -168,9 +193,10 @@ export class DiffStore {
     this.fullData = Loadable.idle();
     this.patchData = Loadable.idle();
     this._patchDiffVersion = 0;
+    this.fullDiffVersion = 0;
     this.spread = null;
     this.notify();
-    void this.refresh();
+    void this.refresh({ trigger: "branch-change" });
     this._restartSpreadPolling();
   }
 
@@ -184,12 +210,13 @@ export class DiffStore {
     this.fullData = Loadable.idle();
     this.patchData = Loadable.idle();
     this._patchDiffVersion = 0;
+    this.fullDiffVersion = 0;
     this.notify();
     // Re-poll file list immediately with the new mode
-    await this.refresh();
+    await this.refresh({ trigger: "mode-change" });
     // Preserve existing behavior: mode switches load the classic full diff.
-    await this.fetchFullDiff();
-    if (hadPatchData) await this.fetchPatchDiff();
+    await this.fetchFullDiff("mode-change");
+    if (hadPatchData) await this.fetchPatchDiff("mode-change");
   }
 
   // ---- Per-hunk expansion ---------------------------------------------------
@@ -385,6 +412,7 @@ export class DiffStore {
 
   /** Refresh the file listing and, by default, any already-loaded rendered diff payloads. */
   async refresh(options: DiffRefreshOptions = {}) {
+    const trigger = options.trigger ?? "manual";
     if (this._projectId == null) {
       this.fileData = this.fileData.asLoaded({ files: [], branch: null, baseBranch: null });
       this.notify();
@@ -399,6 +427,9 @@ export class DiffStore {
         `/api/projects/${this._projectId}/diff/files?mode=${this.diffMode}${this._branchParam}`
       );
       if (!resp.ok) {
+        this.lastFilesRefreshAt = new Date().toISOString();
+        this.lastRefreshTrigger = trigger;
+        this.lastSummaryChanged = null;
         this.fileData = this.fileData.asError(`HTTP ${resp.status}`);
         this.notify();
         return;
@@ -406,6 +437,9 @@ export class DiffStore {
       const json = await resp.json();
       const newFiles = sortFileSummaries(json.files ?? []);
       const changed = JSON.stringify(newFiles) !== JSON.stringify(this.fileData.data?.files ?? []);
+      this.lastFilesRefreshAt = new Date().toISOString();
+      this.lastRefreshTrigger = trigger;
+      this.lastSummaryChanged = changed;
       this.fileData = this.fileData.asLoaded({
         files: newFiles,
         branch: json.branch ?? null,
@@ -418,13 +452,19 @@ export class DiffStore {
       // when an edit swaps text with the same net line counts. Polling opts into
       // summary-gated diff refreshes to keep the interval cheap.
       const shouldRefetchLoadedDiffs = changed || options.onlyFetchDiffIfNeeded !== true;
+      const payloadTrigger: DiffRefreshTrigger = trigger === "poll" && changed
+        ? "poll-summary-changed"
+        : trigger;
       if (shouldRefetchLoadedDiffs && this.fullData.data) {
-        await this.fetchFullDiff();
+        await this.fetchFullDiff(payloadTrigger);
       }
       if (shouldRefetchLoadedDiffs && this.patchData.data) {
-        await this.fetchPatchDiff();
+        await this.fetchPatchDiff(payloadTrigger);
       }
     } catch (err: any) {
+      this.lastFilesRefreshAt = new Date().toISOString();
+      this.lastRefreshTrigger = trigger;
+      this.lastSummaryChanged = null;
       this.fileData = this.fileData.asError(err.message ?? "Failed to fetch file list");
       this.notify();
     }
@@ -433,7 +473,7 @@ export class DiffStore {
   // ---- Full diff (on demand) -------------------------------------------------
 
   /** Fetch the full diff. Highlighting is done client-side via Shiki worker. */
-  async fetchFullDiff() {
+  async fetchFullDiff(trigger: DiffRefreshTrigger = "manual") {
     if (this._projectId == null) {
       this.fullData = Loadable.idle();
       this.notify();
@@ -448,6 +488,8 @@ export class DiffStore {
         `/api/projects/${this._projectId}/diff?context=${this.contextLines}&mode=${this.diffMode}${this._branchParam}`
       );
       if (!resp.ok) {
+        this.lastPayloadRefreshAt = new Date().toISOString();
+        this.lastRefreshTrigger = trigger;
         this.fullData = this.fullData.asError(`HTTP ${resp.status}`);
         this.notify();
         return;
@@ -459,17 +501,22 @@ export class DiffStore {
         branch: json.branch ?? null,
         baseBranch: json.baseBranch ?? null,
       });
+      this.fullDiffVersion += 1;
+      this.lastPayloadRefreshAt = new Date().toISOString();
+      this.lastRefreshTrigger = trigger;
       this._fileContentCache.clear();
       this.notify();
       return;
     } catch (err: any) {
+      this.lastPayloadRefreshAt = new Date().toISOString();
+      this.lastRefreshTrigger = trigger;
       this.fullData = this.fullData.asError(err.message ?? "Failed to fetch diff");
     }
     this.notify();
   }
 
   /** Fetch the raw patch diff for patch-backed renderers. */
-  async fetchPatchDiff() {
+  async fetchPatchDiff(trigger: DiffRefreshTrigger = "manual") {
     if (this._projectId == null) {
       this.patchData = Loadable.idle();
       this.notify();
@@ -484,6 +531,8 @@ export class DiffStore {
         `/api/projects/${this._projectId}/diff/patch?context=${this.contextLines}&mode=${this.diffMode}${this._branchParam}`
       );
       if (!resp.ok) {
+        this.lastPayloadRefreshAt = new Date().toISOString();
+        this.lastRefreshTrigger = trigger;
         this.patchData = this.patchData.asError(`HTTP ${resp.status}`);
         this.notify();
         return;
@@ -499,9 +548,13 @@ export class DiffStore {
         branch: this.branch,
         baseBranch: this.fileData.data?.baseBranch ?? null,
       });
+      this.lastPayloadRefreshAt = new Date().toISOString();
+      this.lastRefreshTrigger = trigger;
       this.notify();
       return;
     } catch (err: any) {
+      this.lastPayloadRefreshAt = new Date().toISOString();
+      this.lastRefreshTrigger = trigger;
       this.patchData = this.patchData.asError(err.message ?? "Failed to fetch patch diff");
     }
     this.notify();
@@ -510,6 +563,7 @@ export class DiffStore {
   /** Discard the full diff data (e.g. when navigating away from the changes view). */
   clearFullDiff() {
     this.fullData = Loadable.idle();
+    this.fullDiffVersion = 0;
     this.contextLines = DEFAULT_CONTEXT;
     this._fileContentCache.clear();
     this.notify();
@@ -597,7 +651,7 @@ export class DiffStore {
     this._scheduleSyncResultClear();
     // Refresh spread + diff after rebase
     await this.fetchSpread();
-    await this.fetchFullDiff();
+    await this.fetchFullDiff("rebase");
   }
 
   /** Clear sync result after a delay. */
@@ -637,8 +691,11 @@ export class DiffStore {
   private _restartPolling() {
     this._stopPolling();
     if (this._projectId != null) {
-      void this.refresh({ onlyFetchDiffIfNeeded: true });
-      this._pollTimer = setInterval(() => void this.refresh({ onlyFetchDiffIfNeeded: true }), POLL_INTERVAL);
+      void this.refresh({ onlyFetchDiffIfNeeded: true, trigger: "poll" });
+      this._pollTimer = setInterval(
+        () => void this.refresh({ onlyFetchDiffIfNeeded: true, trigger: "poll" }),
+        POLL_INTERVAL,
+      );
     }
   }
 

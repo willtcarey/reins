@@ -36,9 +36,46 @@ describe("DiffRendererShell", () => {
 
     shell.renderer = "virtualized";
     const output = templateToString(shell.render());
-    expect(output).toContain("<virtualized-diff-panel");
+    expect(output).toContain("<review-diff-panel");
     expect(output).not.toContain("<codeview-diff-panel");
     expect(output).not.toContain("<diff-panel");
     shell.store.dispose();
+  });
+
+  test("exposes diff refresh diagnostics as DOM attributes", () => {
+    const shell = new DiffRendererShell();
+    const store = new DiffStore();
+    store.fileData = store.fileData.asLoaded({
+      files: [{ path: "a.ts", additions: 2, removals: 1 }],
+      branch: "task/diagnostics",
+      baseBranch: "master",
+    });
+    store.lastFilesRefreshAt = "2026-07-26T10:00:00.000Z";
+    store.lastPayloadRefreshAt = "2026-07-26T10:00:01.000Z";
+    store.lastRefreshTrigger = "poll-summary-changed";
+    store.lastSummaryChanged = true;
+    store.patchData = store.patchData.asLoaded({
+      patch: "",
+      cacheKeyPrefix: "diagnostic-v4",
+      version: 4,
+      branch: "task/diagnostics",
+      baseBranch: "master",
+    });
+    shell.store = store;
+    shell.renderer = "virtualized";
+
+    const output = templateToString(shell.render());
+
+    expect(output).toContain("data-diff-renderer=virtualized");
+    expect(output).toContain("data-diff-file-count=1");
+    expect(output).toContain("data-diff-additions=2");
+    expect(output).toContain("data-diff-removals=1");
+    expect(output).toContain("data-diff-payload-status=loaded");
+    expect(output).toContain("data-diff-payload-version=4");
+    expect(output).toContain("data-diff-last-refresh-trigger=poll-summary-changed");
+    expect(output).toContain("data-diff-summary-changed=true");
+    expect(output).toContain("data-diff-last-files-refresh-at=2026-07-26T10:00:00.000Z");
+    expect(output).toContain("data-diff-last-payload-refresh-at=2026-07-26T10:00:01.000Z");
+    store.dispose();
   });
 });

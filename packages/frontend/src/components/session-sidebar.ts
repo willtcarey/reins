@@ -243,7 +243,7 @@ export class SessionSidebar extends LitElement {
           "success",
         );
         // Refresh the diff view so uploaded files appear in the changes tab
-        store.diffStore.refresh();
+        store.diffStore.refresh({ trigger: "upload" });
       } else {
         showToast(result.error, "error");
       }

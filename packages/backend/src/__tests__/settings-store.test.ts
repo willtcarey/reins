@@ -31,20 +31,6 @@ describe("settings-store", () => {
       expect(getSetting("default_model")).toBeNull();
     });
 
-    test("returns typed object for default_model", () => {
-      const model = { provider: "anthropic", modelId: "claude-4", runtimeType: "pi", thinkingLevel: "high" } as const;
-      setSetting("default_model", model);
-
-      expect(getSetting("default_model")).toEqual(model);
-    });
-
-    test("returns typed object for utility_model", () => {
-      const model = { provider: "anthropic", modelId: "claude-haiku-4-5", runtimeType: "pi", thinkingLevel: "minimal" } as const;
-      setSetting("utility_model", model);
-
-      expect(getSetting("utility_model")).toEqual(model);
-    });
-
     test("returns typed value for diff_renderer", () => {
       setSetting("diff_renderer", "codeview");
 
@@ -58,21 +44,10 @@ describe("settings-store", () => {
 
       expect(() => getSetting("default_model")).toThrow(/Stored value for setting "default_model" is invalid/);
     });
-
-    test("throws for unknown key", () => {
-      const getUnknownSetting = (key: string) => {
-        if (key === "default_model") {
-          return getSetting(key);
-        }
-        throw new Error(`Unknown setting key: ${key}`);
-      };
-
-      expect(() => getUnknownSetting("nonexistent")).toThrow(/Unknown setting key/);
-    });
   });
 
   describe("setSetting", () => {
-    test("round-trips with getSetting for default_model", () => {
+    test("round-trips a model setting with getSetting", () => {
       const model = { provider: "openai", modelId: "gpt-5", runtimeType: "pi", thinkingLevel: "minimal" } as const;
       setSetting("default_model", model);
       expect(getSetting("default_model")).toEqual(model);
