@@ -5,7 +5,7 @@ import { ConversationsStore } from "../models/stores/conversations-store.js";
 import { SessionCache } from "../models/stores/session-cache.js";
 import { StubClient } from "./helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
-import { messagePage } from "./helpers/conversations.js";
+import { messagePage, setPersistedMessages } from "./helpers/conversations.js";
 
 type IsAny<T> = 0 extends (1 & T) ? true : false;
 type AssertFalse<T extends false> = T;
@@ -364,6 +364,59 @@ describe("ActiveSessionStore session loading contract", () => {
     await initializePromise;
 
     expect(conversationsStore.get("sess-1").messages).toEqual(twoMessages);
+  });
+
+  test("finished metadata leaves only the canonical turn when the running transition was missed", async () => {
+    const sessionCache = new SessionCache();
+    const conversationsStore = new ConversationsStore();
+    const store = new ActiveSessionStore("sess-1", null, sessionCache, conversationsStore);
+
+    conversationsStore.applyEvent("sess-1", {
+      type: "tool_execution_start",
+      toolCallId: "tool-1",
+      toolName: "read",
+      args: { path: "README.md" },
+    });
+
+    const finalMessages: AgentMessage[] = [
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "tool-1", name: "read", arguments: { path: "README.md" } }],
+        timestamp: 1000,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "tool-1",
+        toolName: "read",
+        content: [{ type: "text", text: "contents" }],
+        isError: false,
+        timestamp: 2000,
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Done" }],
+        timestamp: 3000,
+      },
+    ];
+    setPersistedMessages(conversationsStore, "sess-1", finalMessages);
+
+    expect(store.conversation.messages.at(-1)).toEqual(finalMessages.at(-1));
+    expect(store.conversation.streamingBlocks).toHaveLength(1);
+
+    mockFetch((url, init) => {
+      if (url === "/api/sessions/sess-1/activity" && init?.method === "PATCH") {
+        return jsonResponse({ ok: true });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    // This client joined after the run began, so its first authoritative
+    // activity state is already terminal rather than a running → finished transition.
+    sessionCache.set("sess-1", makeSessionData({ activityState: "finished", messageCount: 3 }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(store.conversation.messages).toEqual(finalMessages);
+    expect(store.conversation.streamingBlocks).toEqual([]);
   });
 
   test("session cache update auto-refreshes messages when cached activityState transitions from running", async () => {

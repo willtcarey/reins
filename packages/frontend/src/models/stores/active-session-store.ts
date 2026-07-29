@@ -207,8 +207,13 @@ export class ActiveSessionStore {
 
     const wasRunning = this._lastKnownRunning;
     const isRunning = data.activityState === "running";
+    const conversation = this._conversationsStore.get(this.sessionId);
+    const hadStreamingState = conversation.streamingBlocks.length > 0 || conversation.isCompacting;
     this._lastKnownRunning = isRunning;
-    if (wasRunning && !isRunning) {
+    if (!isRunning) {
+      // A client can begin observing a session mid-run, receive streaming
+      // events, then first reconcile session state after the run has ended.
+      // Do not leave that stale live stream below the persisted conversation.
       this._conversationsStore.clearStreamingState(this.sessionId);
     }
     this.notify();
@@ -216,9 +221,10 @@ export class ActiveSessionStore {
       void this.markViewed();
     }
 
-    // If running activity just ended (missed agent_end during disconnect/navigation),
-    // also refresh messages to pick up the completed turn's results.
-    if (wasRunning && !isRunning) {
+    // If running activity just ended, or non-running session state reconciled
+    // a stale stream without a witnessed running transition, pick up the
+    // completed turn's canonical records.
+    if (!isRunning && (wasRunning || hadStreamingState)) {
       await this._conversationsStore.syncMessages(this.sessionId);
     }
   }
