@@ -143,6 +143,27 @@ describe("getDiffPatchStream", () => {
     expect(await git(repo.dir, ["status", "--short", "--", "untracked.txt"])).toBe("?? untracked.txt");
   });
 
+  test("does not execute repository diff drivers when generating patches", async () => {
+    await commitFile(repo.dir, ".gitattributes", "*.external diff=external\n*.secret diff=secret\n", "Configure diff drivers");
+    await commitFile(repo.dir, "a.external", "old external\n", "Add external-driver fixture");
+    await commitFile(repo.dir, "b.secret", "old secret\n", "Add textconv fixture");
+    await commitFile(repo.dir, "z-after.txt", "old after\n", "Add trailing fixture");
+    await git(repo.dir, ["config", "diff.external.command", "false"]);
+    await git(repo.dir, ["config", "diff.secret.textconv", "false"]);
+
+    writeFileSync(join(repo.dir, "a.external"), "new external\n");
+    writeFileSync(join(repo.dir, "b.secret"), "new secret\n");
+    writeFileSync(join(repo.dir, "z-after.txt"), "new after\n");
+
+    const patch = await asyncIterableToText(
+      new Workspace(repo.dir).getDiffPatchStream(3, "uncommitted"),
+    );
+
+    expect(patch).toContain("diff --git a/a.external b/a.external");
+    expect(patch).toContain("diff --git a/b.secret b/b.secret");
+    expect(patch).toContain("diff --git a/z-after.txt b/z-after.txt");
+  });
+
   test("streams untracked files in Git's normal path order with tracked changes", async () => {
     await commitFile(repo.dir, "z-file.txt", "old\n", "Add z file");
     writeFileSync(join(repo.dir, "z-file.txt"), "old\nnew\n");

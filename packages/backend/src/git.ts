@@ -257,13 +257,18 @@ export interface DiffStats {
   removals: number;
 }
 
+// Reins consumes Git output as machine-readable data. Repository-configured
+// drivers may require unavailable tools, expose transformed secrets, or emit
+// output that cannot be parsed as a native patch.
+const MACHINE_DIFF_FLAGS = ["--no-ext-diff", "--no-textconv"] as const;
+
 /** Return raw numstat output for a diff against a base or range expression. */
 export async function getDiffNumstat(
   projectDir: string,
   baseOrRange: string,
   env?: Record<string, string | undefined>,
 ): Promise<string> {
-  return await runGit(projectDir, ["diff", "--numstat", baseOrRange], env);
+  return await runGit(projectDir, ["diff", ...MACHINE_DIFF_FLAGS, "--numstat", baseOrRange], env);
 }
 
 /** Stream raw unified diff output for a diff against a base or range expression. */
@@ -273,7 +278,7 @@ export function streamDiffPatch(
   contextLines = 3,
   env?: Record<string, string | undefined>,
 ): AsyncGenerator<Uint8Array> {
-  return runGitStream(projectDir, ["diff", `-U${contextLines}`, baseOrRange], env);
+  return runGitStream(projectDir, ["diff", ...MACHINE_DIFF_FLAGS, `-U${contextLines}`, baseOrRange], env);
 }
 
 /**
