@@ -7,6 +7,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import { copyTextToClipboard } from "../helpers/clipboard.js";
 import type { SessionListItem } from "../models/ws-client.js";
 import type { TaskListItem } from "../models/tasks.js";
 import type { ActivityState } from "../models/stores/session-cache.js";
@@ -82,7 +83,7 @@ export class TaskListItemElement extends LitElement {
   }
 
   private handleCopyBranchName() {
-    navigator.clipboard.writeText(this.task.branch_name).catch(() => {});
+    copyTextToClipboard(this.task.branch_name).catch(() => {});
   }
 
   private renderActivityDot() {
