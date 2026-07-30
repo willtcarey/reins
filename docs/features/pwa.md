@@ -7,6 +7,7 @@ Reins can be installed as a standalone app on phones and desktops using the brow
 - **Standalone mode**: When installed, the app opens without browser chrome (address bar, tabs), feeling like a native app.
 - **Theme integration**: The status bar / title bar matches the app's dark background.
 - **Offline shell**: The app can launch even without a network connection. Data still requires the backend to be reachable.
+- **Reload action**: The far-right toolbar menu includes **Reload** in standalone mode, where browser refresh controls are unavailable.
 
 ## How to install
 

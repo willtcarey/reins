@@ -1,5 +1,6 @@
 import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { copyTextToClipboard } from "../../helpers/clipboard.js";
 import { isHtml } from "../../models/changes/diff-utils.js";
 import { openInBrowserEvent } from "../events.js";
 
@@ -119,29 +120,6 @@ export class DiffDownloadFileButton extends LitElement {
       </span>
     `;
   }
-}
-
-async function copyTextToClipboard(text: string) {
-  try {
-    if (navigator.clipboard) {
-      await navigator.clipboard.writeText(text);
-      return;
-    }
-    copyFallback(text);
-  } catch {
-    copyFallback(text);
-  }
-}
-
-function copyFallback(text: string) {
-  const ta = document.createElement("textarea");
-  ta.value = text;
-  ta.style.position = "fixed";
-  ta.style.opacity = "0";
-  document.body.appendChild(ta);
-  ta.select();
-  document.execCommand("copy");
-  document.body.removeChild(ta);
 }
 
 function downloadHref(href: string, path: string) {

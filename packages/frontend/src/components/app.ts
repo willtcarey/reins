@@ -243,6 +243,7 @@ export class AppShell extends LitElement {
       <app-main-toolbar
         .activePane=${activePane}
         .currentBranch=${store.diffStore.branch}
+        .sessionId=${store.sessionId}
         .isStandalone=${this.viewport.isStandalone}
         .connected=${store.connected}
         show-sidebar-button
