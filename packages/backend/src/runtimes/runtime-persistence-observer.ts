@@ -121,9 +121,15 @@ export function attachRuntimePersistenceObserver(params: {
   sessions: Sessions;
 }): () => void {
   const { sessionId, runtime, sessions } = params;
+  let checkpointQueue = Promise.resolve();
 
   return runtime.subscribe((event) => {
-    void persistRuntimeStateFromRuntime({ sessionId, runtime, event, sessions }).catch((err) => {
+    const persist = () => persistRuntimeStateFromRuntime({ sessionId, runtime, event, sessions });
+    const operation = shouldPersistForRuntimeEvent(event)
+      ? (checkpointQueue = checkpointQueue.then(persist, persist))
+      : persist();
+
+    void operation.catch((err) => {
       logger.error(`  Failed to persist runtime state for ${sessionId}:`, err);
     });
   });

@@ -1,0 +1,52 @@
+{
+  "sourceSessionId": "3db59041-867c-4f6e-97e7-641c4b8b5bc0",
+  "failedToolCallId": "call_8slw3fZoEFfcQmhqnVFXSqwK|fc_0e3fbe1b6de9c912016a6a7f3e69a8819abffc0acb792ecd10",
+  "retryToolCallId": "call_D04NTogs4NsTE73wDZksZ7i9|fc_0e3fbe1b6de9c912016a6a7f489b34819a84cf8647d4543555",
+  "failedSnapshot": [
+    {
+      "role": "user",
+      "content": [{ "type": "text", "text": "Update the file drop controller" }]
+    },
+    {
+      "role": "assistant",
+      "provider": "openai-codex",
+      "stopReason": "error",
+      "responseId": "resp_0e3fbe1b6de9c912016a6a7f3c3274819a854eaa8ce7b279d9",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_8slw3fZoEFfcQmhqnVFXSqwK|fc_0e3fbe1b6de9c912016a6a7f3e69a8819abffc0acb792ecd10",
+          "name": "edit",
+          "arguments": { "path": "app/frontend/controllers/file_drop_controller.js", "edits": [{ "oldText": "partial request", "newText": "partial replacement" }] }
+        }
+      ]
+    }
+  ],
+  "successfulSnapshot": [
+    {
+      "role": "user",
+      "content": [{ "type": "text", "text": "Update the file drop controller" }]
+    },
+    {
+      "role": "assistant",
+      "provider": "openai-codex",
+      "stopReason": "toolUse",
+      "responseId": "resp_retry_success",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_D04NTogs4NsTE73wDZksZ7i9|fc_0e3fbe1b6de9c912016a6a7f489b34819a84cf8647d4543555",
+          "name": "edit",
+          "arguments": { "path": "app/frontend/controllers/file_drop_controller.js", "edits": [{ "oldText": "complete request", "newText": "complete replacement" }] }
+        }
+      ]
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_D04NTogs4NsTE73wDZksZ7i9|fc_0e3fbe1b6de9c912016a6a7f489b34819a84cf8647d4543555",
+      "toolName": "edit",
+      "isError": false,
+      "content": [{ "type": "text", "text": "Successfully replaced 7 block(s) in app/frontend/controllers/file_drop_controller.js." }]
+    }
+  ]
+}

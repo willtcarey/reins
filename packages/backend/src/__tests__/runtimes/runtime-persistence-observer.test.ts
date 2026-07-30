@@ -5,6 +5,7 @@ import { loadMessages, type RuntimeMessage } from "../../messages-store.js";
 import { Sessions } from "../../models/sessions.js";
 import { attachRuntimePersistenceObserver } from "../../runtimes/runtime-persistence-observer.js";
 import type { Broadcast } from "../../models/broadcast.js";
+import type { AgentRuntime, AgentRuntimeEvent } from "../../runtimes/registry.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 
@@ -41,6 +42,55 @@ describe("runtime persistence observer", () => {
     await Bun.sleep(50);
 
     expect(loadMessages("sess-persist")).toEqual(snapshot);
+
+    detach();
+  });
+
+  test("serializes checkpoint snapshots in event order", async () => {
+    const project = createProject("Reins", "/tmp/reins-ordered-checkpoints");
+    createSession("sess-ordered", project.id, { agentRuntimeType: "test_runtime" });
+
+    const firstSnapshot: RuntimeMessage[] = [{ role: "user", content: [{ type: "text", text: "first" }] }];
+    const secondSnapshot: RuntimeMessage[] = [
+      ...firstSnapshot,
+      { role: "assistant", content: [{ type: "text", text: "second" }] },
+    ];
+    let resolveFirst!: (messages: RuntimeMessage[]) => void;
+    const first = new Promise<RuntimeMessage[]>((resolve) => { resolveFirst = resolve; });
+    let getMessagesCalls = 0;
+    const listeners = new Set<(event: AgentRuntimeEvent) => void>();
+    const runtime = {
+      subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      getMessages() {
+        getMessagesCalls += 1;
+        return getMessagesCalls === 1 ? first : Promise.resolve(secondSnapshot);
+      },
+      async prompt() {},
+      async steer() {},
+      async abort() {},
+      async setModel() {},
+      isStreaming: () => false,
+      async close() {},
+    } satisfies AgentRuntime;
+    const emit = (event: AgentRuntimeEvent) => {
+      for (const listener of listeners) listener(event);
+    };
+
+    const detach = attachRuntimePersistenceObserver({
+      sessionId: "sess-ordered",
+      runtime,
+      sessions: makeSessions(),
+    });
+
+    emit({ type: "turn_end", message: secondSnapshot[0], toolResults: [] });
+    emit({ type: "agent_end", messages: [] });
+    await Bun.sleep(10);
+    expect(getMessagesCalls).toBe(1);
+
+    resolveFirst(firstSnapshot);
+    await Bun.sleep(50);
+    expect(getMessagesCalls).toBe(2);
+    expect(loadMessages("sess-ordered")).toEqual(secondSnapshot);
 
     detach();
   });

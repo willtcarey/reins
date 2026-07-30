@@ -262,6 +262,32 @@ function compactionSummaryMatches(summaryJson: string, incoming: RuntimeMessage)
     && parsed.summary === incoming.summary;
 }
 
+interface PersistableRuntimeMessage {
+  role: string;
+  content?: PersistedContentBlock[];
+  stopReason?: string;
+  summary?: string;
+  [key: string]: unknown;
+}
+
+function toPersistableMessage(sessionId: string, message: RuntimeMessage): PersistableRuntimeMessage {
+  if (!message.content) return { ...message, content: undefined };
+  return {
+    ...message,
+    content: message.content.map((block) => externalizeRuntimeContentBlock(sessionId, block)),
+  };
+}
+
+function messagesMatch(persistedJson: string, incoming: PersistableRuntimeMessage): boolean {
+  return persistedJson === JSON.stringify(incoming);
+}
+
+interface ActiveTailRow {
+  id: number;
+  seq: number;
+  message_json: string;
+}
+
 /**
  * Prune tool result content from pre-compaction messages by replacing
  * their content with `[pruned]`. Called after a compactionSummary is stored.
@@ -293,61 +319,101 @@ function pruneToolResultsBeforeSeq(sessionId: string, compactionSeq: number): vo
 // ---- Message persistence ---------------------------------------------------
 
 /**
- * Persist messages to SQLite. Receives the full in-memory message array from
- * the runtime, determines which messages are new, and delegates to
- * `appendMessages` for the actual insert + pruning.
- *
- * Three cases:
- * 1. No compaction: skip already-stored messages, append the rest.
- * 2. New compaction (first or re-): append compactionSummary + post-compaction
- *    messages while preserving the existing stored transcript.
- * 3. Same compaction + growth: skip already-stored post-compaction messages,
- *    append only the new tail.
+ * Persist a complete runtime snapshot as the authoritative active transcript.
+ * Compacted history remains append-only; rows at and after the latest compaction
+ * boundary are a mutable projection of the runtime array. Synchronizing by
+ * position preserves row IDs and pagination cursors for unchanged positions.
  */
-export function persistMessages(sessionId: string, messages: any[]): void {
+export function persistMessages(sessionId: string, runtimeMessages: RuntimeMessage[]): void {
   const db = getDb();
+  const compactionIdx = runtimeMessages.findIndex((message) => message.role === "compactionSummary");
+  let changed = false;
 
-  const maxRow = db
-    .query<{ max_seq: number }, [string]>(
-      "SELECT COALESCE(MAX(seq), -1) AS max_seq FROM session_messages WHERE session_id = ?",
-    )
-    .get(sessionId)!;
-  const nextSeq = maxRow.max_seq + 1;
+  const tx = db.transaction(() => {
+    const lastSummaryRow = db
+      .query<{ last_seq: number; message_json: string }, [string]>(
+        `SELECT seq AS last_seq, message_json FROM session_messages
+         WHERE session_id = ? AND role = 'compactionSummary'
+         ORDER BY seq DESC LIMIT 1`,
+      )
+      .get(sessionId);
 
-  const compactionIdx = messages.findIndex((m) => m.role === "compactionSummary");
-
-  if (compactionIdx < 0) {
-    // No compaction: append messages not yet stored
-    appendMessages(sessionId, messages.slice(nextSeq));
-    return;
-  }
-
-  const lastSummaryRow = db
-    .query<{ last_seq: number; message_json: string }, [string]>(
-      `SELECT seq AS last_seq, message_json FROM session_messages
-       WHERE session_id = ? AND role = 'compactionSummary'
-       ORDER BY seq DESC
-       LIMIT 1`,
-    )
-    .get(sessionId);
-
-  let appendStartIdx = compactionIdx;
-  if (lastSummaryRow) {
-    const persistedTailCount = nextSeq - (lastSummaryRow.last_seq + 1);
-    const incomingTailCount = messages.length - (compactionIdx + 1);
-    const latestBoundaryAlreadyPersisted = compactionSummaryMatches(lastSummaryRow.message_json, messages[compactionIdx]);
-
-    // Stored history is append-only across compactions, so DB seq is not a
-    // prefix length for the runtime's current compacted snapshot. If the latest
-    // summary boundary is already stored and the incoming tail still covers the
-    // persisted tail, skip that prefix and append only new growth. Otherwise,
-    // append the whole compacted snapshot: summary + retained tail.
-    if (latestBoundaryAlreadyPersisted && incomingTailCount >= persistedTailCount) {
-      appendStartIdx = compactionIdx + 1 + persistedTailCount;
+    if (compactionIdx < 0 && lastSummaryRow) {
+      // A compacted runtime snapshot must retain its summary boundary.
+      return;
     }
-  }
 
-  appendMessages(sessionId, messages.slice(appendStartIdx));
+    const incomingWindow = runtimeMessages.slice(compactionIdx < 0 ? 0 : compactionIdx)
+      .map((message) => toPersistableMessage(sessionId, message));
+    const latestBoundaryMatches = compactionIdx >= 0
+      && lastSummaryRow !== null
+      && lastSummaryRow !== undefined
+      && compactionSummaryMatches(lastSummaryRow.message_json, runtimeMessages[compactionIdx]);
+
+    if (compactionIdx >= 0 && !latestBoundaryMatches) {
+      const maxRow = db.query<{ max_seq: number }, [string]>(
+        "SELECT COALESCE(MAX(seq), -1) AS max_seq FROM session_messages WHERE session_id = ?",
+      ).get(sessionId)!;
+      insertMessages(sessionId, incomingWindow, maxRow.max_seq + 1);
+      changed = incomingWindow.length > 0;
+      return;
+    }
+
+    const activeStartSeq = latestBoundaryMatches ? lastSummaryRow!.last_seq : 0;
+    const activeRows = db.query<ActiveTailRow, [string, number]>(
+      `SELECT id, seq, message_json FROM session_messages
+       WHERE session_id = ? AND seq >= ? ORDER BY seq`,
+    ).all(sessionId, activeStartSeq);
+
+    let mismatchIdx = 0;
+    while (
+      mismatchIdx < activeRows.length
+      && mismatchIdx < incomingWindow.length
+      && messagesMatch(activeRows[mismatchIdx].message_json, incomingWindow[mismatchIdx])
+    ) mismatchIdx++;
+
+    if (mismatchIdx === activeRows.length) {
+      if (incomingWindow.length > activeRows.length) {
+        insertMessages(
+          sessionId,
+          incomingWindow.slice(activeRows.length),
+          (activeRows.at(-1)?.seq ?? activeStartSeq - 1) + 1,
+        );
+        changed = true;
+      }
+      return;
+    }
+
+    const removedAttachmentIds = activeRows
+      .slice(mismatchIdx)
+      .flatMap((row) => collectAttachmentIds(parsePersistedMessage(row.message_json)));
+    const update = db.query("UPDATE session_messages SET role = ?, message_json = ? WHERE id = ?");
+    const overlap = Math.min(activeRows.length, incomingWindow.length);
+    for (let index = mismatchIdx; index < overlap; index++) {
+      const incoming = incomingWindow[index];
+      if (!messagesMatch(activeRows[index].message_json, incoming)) {
+        update.run(incoming.role, JSON.stringify(incoming), activeRows[index].id);
+      }
+    }
+
+    if (incomingWindow.length < activeRows.length) {
+      db.query("DELETE FROM session_messages WHERE session_id = ? AND seq >= ?")
+        .run(sessionId, activeRows[incomingWindow.length]!.seq);
+    } else if (incomingWindow.length > activeRows.length) {
+      insertMessages(
+        sessionId,
+        incomingWindow.slice(activeRows.length),
+        activeRows.at(-1)!.seq + 1,
+      );
+    }
+    pruneUnreferencedAttachmentData(sessionId, removedAttachmentIds);
+    changed = true;
+  });
+
+  tx();
+  if (changed) {
+    db.query("UPDATE sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(sessionId);
+  }
 }
 
 /** Load all messages for replay/counting callers that need the complete transcript. */
@@ -636,6 +702,25 @@ export function listSessionEntries(
   return orderAndLimit(filtered, options);
 }
 
+function insertMessages(
+  sessionId: string,
+  messages: PersistableRuntimeMessage[],
+  startSeq: number,
+): void {
+  const db = getDb();
+  const insert = db.query(
+    `INSERT INTO session_messages (session_id, seq, role, message_json, created_at)
+     VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+  );
+
+  let seq = startSeq;
+  for (const message of messages) {
+    insert.run(sessionId, seq, message.role, JSON.stringify(message));
+    if (message.role === "compactionSummary") pruneToolResultsBeforeSeq(sessionId, seq);
+    seq++;
+  }
+}
+
 /**
  * Append messages incrementally to a session. Unlike `persistMessages()` which
  * expects the full ordered message array, this inserts new messages starting
@@ -646,31 +731,12 @@ export function appendMessages(sessionId: string, messages: RuntimeMessage[]): v
   if (messages.length === 0) return;
 
   const db = getDb();
-
-  const maxRow = db
-    .query<{ max_seq: number }, [string]>(
-      "SELECT COALESCE(MAX(seq), -1) AS max_seq FROM session_messages WHERE session_id = ?",
-    )
-    .get(sessionId)!;
-  let nextSeq = maxRow.max_seq + 1;
-
-  const insert = db.query(
-    `INSERT INTO session_messages (session_id, seq, role, message_json, created_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
-  );
-
   const tx = db.transaction(() => {
-    for (const msg of messages) {
-      const persisted = msg.content
-        ? { ...msg, content: msg.content.map((block) => externalizeRuntimeContentBlock(sessionId, block)) }
-        : msg;
-      insert.run(sessionId, nextSeq, persisted.role, JSON.stringify(persisted));
-
-      if (persisted.role === "compactionSummary") {
-        pruneToolResultsBeforeSeq(sessionId, nextSeq);
-      }
-
-      nextSeq++;
-    }
+    const maxRow = db.query<{ max_seq: number }, [string]>(
+      "SELECT COALESCE(MAX(seq), -1) AS max_seq FROM session_messages WHERE session_id = ?",
+    ).get(sessionId)!;
+    const persisted = messages.map((message) => toPersistableMessage(sessionId, message));
+    insertMessages(sessionId, persisted, maxRow.max_seq + 1);
   });
   tx();
 
