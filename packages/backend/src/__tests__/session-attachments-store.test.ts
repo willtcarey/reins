@@ -9,7 +9,7 @@ import {
   hydrateImageAttachmentBlock,
   storeSessionAttachment,
 } from "../session-attachments-store.js";
-import { appendMessages, loadMessages, loadMessagesForLLM } from "../messages-store.js";
+import { appendMessages, loadMessages, loadMessagesForLLM, persistMessages } from "../messages-store.js";
 
 let projectId: number;
 
@@ -109,6 +109,40 @@ describe("session attachments", () => {
       data: imageData,
       mimeType: "image/png",
     });
+  });
+
+  test("retry replacement clears attachment bytes no longer referenced by the active tail", () => {
+    const discardedImageData = Buffer.from("discarded partial image").toString("base64");
+    const user = { role: "user", content: [{ type: "text" as const, text: "retry this" }] };
+    const failedSnapshot = [
+      user,
+      {
+        role: "assistant",
+        stopReason: "error",
+        content: [
+          { type: "image" as const, data: discardedImageData, mimeType: "image/png" },
+          { type: "toolCall" as const, id: "failed-call", name: "read", arguments: {} },
+        ],
+      },
+    ];
+    persistMessages("sess-attachments", failedSnapshot);
+    const failedImage = loadMessages("sess-attachments")[1].content[0];
+    if (!("attachmentId" in failedImage) || typeof failedImage.attachmentId !== "string") {
+      throw new Error("Expected failed assistant attachment ref");
+    }
+
+    persistMessages("sess-attachments", [
+      user,
+      {
+        role: "assistant",
+        stopReason: "toolUse",
+        content: [{ type: "toolCall", id: "retry-call", name: "read", arguments: {} }],
+      },
+      { role: "toolResult", toolCallId: "retry-call", isError: false, content: [{ type: "text", text: "done" }] },
+    ]);
+
+    expect(getSessionAttachment("sess-attachments", failedImage.attachmentId)?.data).toBeNull();
+    expect(loadMessages("sess-attachments")).toHaveLength(3);
   });
 
   test("compaction pruning clears unreferenced tool-result attachment bytes and preserves non-tool attachments", () => {

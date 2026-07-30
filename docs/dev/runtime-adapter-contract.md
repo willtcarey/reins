@@ -171,7 +171,7 @@ Reins SQLite is the canonical Reins transcript store. Runtime-private files may 
 
 On `resume: true`, the runtime should hydrate from `loadMessagesForLLM(sessionId)` or equivalent Reins persistence, including the last compaction summary boundary.
 
-On each checkpoint event, `getMessages()` should return the complete current transcript in stable order. The persistence observer will append/dedupe and handle compaction pruning.
+On each checkpoint event, `getMessages()` should return the complete current transcript in stable order. The persistence observer appends ordinary growth, reconciles failed assistant responses replaced by runtime retries, and handles compaction pruning. See [Session Message Persistence](session-message-persistence.md).
 
 ## Conversation forking expectations
 

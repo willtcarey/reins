@@ -1,18 +1,54 @@
 import { describe, test, expect, beforeEach } from "bun:test";
+import retryReplacementFixture from "./fixtures/pi-codex-retry-replacement.json";
 import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "../project-store.js";
 import { createSession } from "../session-store.js";
 import {
+  loadMessagePage,
   loadMessages,
   loadMessagesForLLM,
   listSessionEntries,
+  parseDisplayCursor,
   persistMessages,
+  type RuntimeMessage,
 } from "../messages-store.js";
+
+interface FixtureMessage {
+  role: string;
+  content: ({ text: string } | { id: string; name: string; arguments: Record<string, unknown> })[];
+  [key: string]: unknown;
+}
+
+function fixtureSnapshot(messages: FixtureMessage[]): RuntimeMessage[] {
+  return messages.map(({ content, ...message }) => ({
+    ...message,
+    content: content.map((block) => (
+      "text" in block
+        ? { type: "text", text: block.text }
+        : { type: "toolCall", id: block.id, name: block.name, arguments: block.arguments }
+    )),
+  }));
+}
+
+const failedRetrySnapshot = fixtureSnapshot(retryReplacementFixture.failedSnapshot);
+const successfulRetrySnapshot = fixtureSnapshot(retryReplacementFixture.successfulSnapshot);
 
 let projectId: number;
 
 function textContent(text: string) {
   return [{ type: "text" as const, text }];
+}
+
+function toolCallIdsMatch(messages: any[]): boolean {
+  const calls = messages.flatMap((message) => (
+    Array.isArray(message.content)
+      ? message.content.filter((block: any) => block.type === "toolCall").map((block: any) => block.id)
+      : []
+  ));
+  const results = messages
+    .filter((message) => message.role === "toolResult")
+    .map((message) => message.toolCallId);
+  return calls.length === results.length && calls.every((id, index) => id === results[index]);
 }
 
 function messageText(message: any): string | undefined {
@@ -36,9 +72,9 @@ describe("messages-store", () => {
   describe("persistMessages", () => {
     test("inserts messages with correct seq ordering", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
-      const msgs = [
-        { role: "user", content: [{ type: "text", text: "Hello" }] },
-        { role: "assistant", content: [{ type: "text", text: "Hi" }] },
+      const msgs: RuntimeMessage[] = [
+        { role: "user", content: textContent("Hello") },
+        { role: "assistant", content: textContent("Hi") },
       ];
       persistMessages("sess-1", msgs);
 
@@ -50,8 +86,8 @@ describe("messages-store", () => {
 
     test("is idempotent — re-calling with same messages inserts nothing new", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
-      const msgs = [
-        { role: "user", content: [{ type: "text", text: "Hello" }] },
+      const msgs: RuntimeMessage[] = [
+        { role: "user", content: textContent("Hello") },
       ];
       persistMessages("sess-1", msgs);
       persistMessages("sess-1", msgs);
@@ -62,20 +98,64 @@ describe("messages-store", () => {
 
     test("appends only new messages on subsequent calls", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
-      const batch1 = [
-        { role: "user", content: [{ type: "text", text: "Hello" }] },
+      const batch1: RuntimeMessage[] = [
+        { role: "user", content: textContent("Hello") },
       ];
       persistMessages("sess-1", batch1);
+      const firstPage = loadMessagePage("sess-1", 10);
 
-      const batch2 = [
+      const batch2: RuntimeMessage[] = [
         ...batch1,
-        { role: "assistant", content: [{ type: "text", text: "Hi" }] },
+        { role: "assistant", content: textContent("Hi") },
       ];
       persistMessages("sess-1", batch2);
 
       const loaded = loadMessages("sess-1");
+      const grownPage = loadMessagePage("sess-1", 10);
       expect(loaded).toHaveLength(2);
+      expect(grownPage.items[0].id).toBe(firstPage.items[0].id);
+      expect(grownPage.items[1].parentId).toBe(firstPage.items[0].id);
     });
+
+    test("reconciles the Codex retry replacement fixture without mismatched tool IDs", () => {
+      createSession("sess-retry", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-retry", failedRetrySnapshot);
+      const failedPage = loadMessagePage("sess-retry", 10);
+
+      persistMessages("sess-retry", successfulRetrySnapshot);
+
+      const persisted = loadMessages("sess-retry");
+      const reconciledPage = loadMessagePage("sess-retry", 10);
+      expect(toolCallIdsMatch(persisted)).toBe(true);
+      expect(JSON.stringify(persisted)).not.toContain(retryReplacementFixture.failedToolCallId);
+      expect(JSON.stringify(persisted)).toContain(retryReplacementFixture.retryToolCallId);
+      expect(reconciledPage.items[1].id).toBe(failedPage.items[1].id);
+      expect(reconciledPage.items[2].parentId).toBe(reconciledPage.items[1].id);
+      expect(parseDisplayCursor("sess-retry", failedPage.pageInfo.endCursor!, "after")).toBe(1);
+    });
+
+    test("treats the latest complete snapshot as authoritative", () => {
+      createSession("sess-authoritative", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-authoritative", [
+        { role: "user", content: textContent("first") },
+        { role: "assistant", content: textContent("old answer") },
+        { role: "user", content: textContent("discard me") },
+      ]);
+      const originalPage = loadMessagePage("sess-authoritative", 10);
+
+      const replacement: RuntimeMessage[] = [
+        { role: "user", content: textContent("rewritten") },
+        { role: "assistant", content: textContent("new answer") },
+      ];
+      persistMessages("sess-authoritative", replacement);
+
+      expect(loadMessages("sess-authoritative")).toEqual(replacement);
+      const replacedPage = loadMessagePage("sess-authoritative", 10);
+      expect(replacedPage.items.map(({ id }) => id)).toEqual(
+        originalPage.items.slice(0, 2).map(({ id }) => id),
+      );
+    });
+
   });
 
   describe("loadMessages", () => {
@@ -311,6 +391,30 @@ describe("messages-store", () => {
       expect(allContents).toContain("new answer");
     });
 
+    test("reconciles a failed retry inside the active compacted tail without rewriting archived history", () => {
+      createSession("sess-compact-retry", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-compact-retry", [
+        { role: "assistant", content: [{ type: "toolCall", id: "archived-call", name: "read", arguments: {} }] },
+        { role: "toolResult", toolCallId: "archived-call", isError: false, content: textContent("old output") },
+      ]);
+      const archivedPage = loadMessagePage("sess-compact-retry", 10);
+      const summary = { role: "compactionSummary", summary: "archived work" };
+      persistMessages("sess-compact-retry", [summary, ...failedRetrySnapshot]);
+      const failedActivePage = loadMessagePage("sess-compact-retry", 10);
+
+      persistMessages("sess-compact-retry", [summary, ...successfulRetrySnapshot]);
+
+      const all = loadMessages("sess-compact-retry");
+      const active = loadMessagesForLLM("sess-compact-retry");
+      const reconciledPage = loadMessagePage("sess-compact-retry", 10);
+      expect(all).toHaveLength(6);
+      expect(all[1].content).toEqual(textContent("[pruned]"));
+      expect(reconciledPage.items[0].id).toBe(archivedPage.items[0].id);
+      expect(reconciledPage.items[1].id).toBe(archivedPage.items[1].id);
+      expect(reconciledPage.items[4].id).toBe(failedActivePage.items[4].id);
+      expect(toolCallIdsMatch(active)).toBe(true);
+    });
+
     test("re-compaction appends new summary when retained tail length matches previous tail", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
 
@@ -353,9 +457,9 @@ describe("messages-store", () => {
       ]);
 
       // First compaction
-      const postCompact1 = [
+      const postCompact1: RuntimeMessage[] = [
         { role: "compactionSummary", summary: "summary v1" },
-        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "kept tool output" }] },
+        { role: "toolResult", toolCallId: "tc1", content: textContent("kept tool output") },
         { role: "assistant", content: textContent("reply") },
       ];
       persistMessages("sess-1", postCompact1);
