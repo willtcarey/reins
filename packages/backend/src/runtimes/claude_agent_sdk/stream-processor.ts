@@ -263,7 +263,17 @@ export class ClaudeStreamProcessor {
         currentBlocks.set(event.index, { kind: "thinking", block });
       }
       block.thinking += delta.thinking ?? "";
-      return startEvents;
+      return [
+        ...startEvents,
+        {
+          type: "message_update",
+          message: assistant,
+          assistantMessageEvent: {
+            type: "thinking_delta",
+            delta: delta.thinking ?? "",
+          },
+        },
+      ];
     }
 
     if (delta.type === "input_json_delta") {
@@ -307,12 +317,19 @@ export class ClaudeStreamProcessor {
       streamBlock.block.arguments = args;
     }
 
-    return [{
-      type: "tool_execution_start",
-      toolCallId,
-      toolName: tracked.toolName,
-      args,
-    }];
+    return [
+      {
+        type: "message_update",
+        message: this.ensureAssistant(),
+        assistantMessageEvent: { type: "tool_call", toolCallId },
+      },
+      {
+        type: "tool_execution_start",
+        toolCallId,
+        toolName: tracked.toolName,
+        args,
+      },
+    ];
   }
 
   private handleMessageDelta(event: MessageDeltaEvent): AgentRuntimeEvent[] {

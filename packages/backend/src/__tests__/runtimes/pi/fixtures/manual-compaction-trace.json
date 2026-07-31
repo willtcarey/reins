@@ -1,0 +1,3424 @@
+{
+  "version": 1,
+  "capturedAt": "2026-07-31T15:53:00.618Z",
+  "runtime": "pi",
+  "sdkPackage": "@earendil-works/pi-coding-agent@0.80.6",
+  "workspace": "<fixture-workspace>",
+  "model": {
+    "provider": "openrouter",
+    "id": "openai/gpt-oss-20b"
+  },
+  "invocation": {
+    "entrypoint": "AgentSession.compact(customInstructions?: string)",
+    "customInstructions": "Preserve the seed completion exactly.",
+    "seedPrompt": "Reply with exactly: MANUAL_COMPACTION_SEED_READY",
+    "compactionSettings": {
+      "enabled": false,
+      "reserveTokens": 16384,
+      "keepRecentTokens": 1
+    }
+  },
+  "compactionStates": [
+    {
+      "phase": "before_compact_call",
+      "elapsedMs": 663,
+      "eventCount": 44,
+      "isStreaming": false,
+      "isCompacting": false
+    },
+    {
+      "phase": "immediately_after_compact_call",
+      "elapsedMs": 663,
+      "eventCount": 44,
+      "isStreaming": false,
+      "isCompacting": false
+    },
+    {
+      "phase": "compaction_end_callback_before_promise_settlement",
+      "elapsedMs": 7485,
+      "eventCount": 46,
+      "isStreaming": false,
+      "isCompacting": true
+    },
+    {
+      "phase": "compaction_promise_fulfilled",
+      "elapsedMs": 7485,
+      "eventCount": 46,
+      "isStreaming": false,
+      "isCompacting": false
+    },
+    {
+      "phase": "after_compact_await",
+      "elapsedMs": 7485,
+      "eventCount": 46,
+      "isStreaming": false,
+      "isCompacting": false
+    }
+  ],
+  "events": [
+    {
+      "phase": "event_callback",
+      "elapsedMs": 12,
+      "eventCount": 0,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 0,
+      "event": {
+        "type": "agent_start"
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 12,
+      "eventCount": 1,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 1,
+      "event": {
+        "type": "turn_start"
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 12,
+      "eventCount": 2,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 2,
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Reply with exactly: MANUAL_COMPACTION_SEED_READY"
+            }
+          ],
+          "timestamp": 1785513173144
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 13,
+      "eventCount": 3,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 3,
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Reply with exactly: MANUAL_COMPACTION_SEED_READY"
+            }
+          ],
+          "timestamp": 1785513173144
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 448,
+      "eventCount": 4,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 4,
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "assistant",
+          "content": [],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 458,
+      "eventCount": 5,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 5,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_start",
+          "contentIndex": 0,
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 458,
+      "eventCount": 6,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 6,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "The",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 462,
+      "eventCount": 7,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 7,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " user",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 465,
+      "eventCount": 8,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 8,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " says",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 471,
+      "eventCount": 9,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 9,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": ":",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says:",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says:",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 476,
+      "eventCount": 10,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 10,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " \"",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 481,
+      "eventCount": 11,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 11,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "Reply",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 486,
+      "eventCount": 12,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 12,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " with",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 491,
+      "eventCount": 13,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 13,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " exactly",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 497,
+      "eventCount": 14,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 14,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": ":",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly:",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly:",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 502,
+      "eventCount": 15,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 15,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " MAN",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MAN",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MAN",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 508,
+      "eventCount": 16,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 16,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "UAL",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 514,
+      "eventCount": 17,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 17,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "_COM",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COM",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COM",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 519,
+      "eventCount": 18,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 18,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "PA",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPA",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPA",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 524,
+      "eventCount": 19,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 19,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "CTION",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 529,
+      "eventCount": 20,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 20,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "_SE",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SE",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SE",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 533,
+      "eventCount": 21,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 21,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "ED",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 541,
+      "eventCount": 22,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 22,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "_READY",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 556,
+      "eventCount": 23,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 23,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "\".",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\".",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\".",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 557,
+      "eventCount": 24,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 24,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " So",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 559,
+      "eventCount": 25,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 25,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " just",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 560,
+      "eventCount": 26,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 26,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " that",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 563,
+      "eventCount": 27,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 27,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " string",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 569,
+      "eventCount": 28,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 28,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": ".",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 609,
+      "eventCount": 29,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 29,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_start",
+          "contentIndex": 1,
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "MAN"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "MAN"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 609,
+      "eventCount": 30,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 30,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "MAN",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "MAN"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "MAN"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 612,
+      "eventCount": 31,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 31,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "UAL",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "MANUAL"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "MANUAL"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 617,
+      "eventCount": 32,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 32,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "_COM",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "MANUAL_COM"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "MANUAL_COM"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 623,
+      "eventCount": 33,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 33,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "PA",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "MANUAL_COMPA"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "MANUAL_COMPA"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 628,
+      "eventCount": 34,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 34,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "CTION",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "MANUAL_COMPACTION"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "MANUAL_COMPACTION"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 635,
+      "eventCount": 35,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 35,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "_SE",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "MANUAL_COMPACTION_SE"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "MANUAL_COMPACTION_SE"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 637,
+      "eventCount": 36,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 36,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "ED",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "MANUAL_COMPACTION_SEED"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "MANUAL_COMPACTION_SEED"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 644,
+      "eventCount": 37,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 37,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "_READY",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "MANUAL_COMPACTION_SEED_READY"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "MANUAL_COMPACTION_SEED_READY"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 662,
+      "eventCount": 38,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 38,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_end",
+          "contentIndex": 0,
+          "content": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "MANUAL_COMPACTION_SEED_READY"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 72,
+              "output": 41,
+              "cacheRead": 40,
+              "cacheWrite": 0,
+              "reasoning": 22,
+              "totalTokens": 153,
+              "cost": {
+                "input": 0.000002088,
+                "output": 0.00000574,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0.000007828
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "MANUAL_COMPACTION_SEED_READY"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 72,
+            "output": 41,
+            "cacheRead": 40,
+            "cacheWrite": 0,
+            "reasoning": 22,
+            "totalTokens": 153,
+            "cost": {
+              "input": 0.000002088,
+              "output": 0.00000574,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.000007828
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 662,
+      "eventCount": 39,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 39,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_end",
+          "contentIndex": 1,
+          "content": "MANUAL_COMPACTION_SEED_READY",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "MANUAL_COMPACTION_SEED_READY"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 72,
+              "output": 41,
+              "cacheRead": 40,
+              "cacheWrite": 0,
+              "reasoning": 22,
+              "totalTokens": 153,
+              "cost": {
+                "input": 0.000002088,
+                "output": 0.00000574,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0.000007828
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "MANUAL_COMPACTION_SEED_READY"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 72,
+            "output": 41,
+            "cacheRead": 40,
+            "cacheWrite": 0,
+            "reasoning": 22,
+            "totalTokens": 153,
+            "cost": {
+              "input": 0.000002088,
+              "output": 0.00000574,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.000007828
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 662,
+      "eventCount": 40,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 40,
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "MANUAL_COMPACTION_SEED_READY"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 72,
+            "output": 41,
+            "cacheRead": 40,
+            "cacheWrite": 0,
+            "reasoning": 22,
+            "totalTokens": 153,
+            "cost": {
+              "input": 0.000002088,
+              "output": 0.00000574,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.000007828
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 662,
+      "eventCount": 41,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 41,
+      "event": {
+        "type": "turn_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "MANUAL_COMPACTION_SEED_READY"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 72,
+            "output": 41,
+            "cacheRead": 40,
+            "cacheWrite": 0,
+            "reasoning": 22,
+            "totalTokens": 153,
+            "cost": {
+              "input": 0.000002088,
+              "output": 0.00000574,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.000007828
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785513173157,
+          "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+        },
+        "toolResults": []
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 662,
+      "eventCount": 42,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 42,
+      "event": {
+        "type": "agent_end",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Reply with exactly: MANUAL_COMPACTION_SEED_READY"
+              }
+            ],
+            "timestamp": 1785513173144
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "MANUAL_COMPACTION_SEED_READY"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 72,
+              "output": 41,
+              "cacheRead": 40,
+              "cacheWrite": 0,
+              "reasoning": 22,
+              "totalTokens": 153,
+              "cost": {
+                "input": 0.000002088,
+                "output": 0.00000574,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0.000007828
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785513173157,
+            "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+          }
+        ],
+        "willRetry": false
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 663,
+      "eventCount": 43,
+      "isStreaming": false,
+      "isCompacting": false,
+      "sequence": 43,
+      "event": {
+        "type": "agent_settled"
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 663,
+      "eventCount": 44,
+      "isStreaming": false,
+      "isCompacting": true,
+      "sequence": 44,
+      "event": {
+        "type": "compaction_start",
+        "reason": "manual"
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 7485,
+      "eventCount": 45,
+      "isStreaming": false,
+      "isCompacting": true,
+      "sequence": 45,
+      "event": {
+        "type": "compaction_end",
+        "reason": "manual",
+        "result": {
+          "summary": "No prior history.\n\n---\n\n**Turn Context (split turn):**\n\n## Original Request  \nThe user asked the assistant to reply with **exactly** the string:  \n```\nMANUAL_COMPACTION_SEED_READY\n```  \n\n## Early Progress  \n- The assistant identified the request and understood that the reply must be the literal string above.  \n- No additional analysis or content generation was needed beyond producing that single phrase.  \n\n## Context for Suffix  \nTo understand the retained part of the conversation, it is enough to know that the user wants the assistant to output the exact string `MANUAL_COMPACTION_SEED_READY` and nothing else. The suffix likely contains this output or related handling steps.",
+          "firstKeptEntryId": "b511b848",
+          "tokensBefore": 153,
+          "estimatedTokensAfter": 200,
+          "details": {
+            "readFiles": [],
+            "modifiedFiles": []
+          }
+        },
+        "aborted": false,
+        "willRetry": false
+      }
+    }
+  ],
+  "messagesBefore": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Reply with exactly: MANUAL_COMPACTION_SEED_READY"
+        }
+      ],
+      "timestamp": 1785513173144
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+          "thinkingSignature": "reasoning"
+        },
+        {
+          "type": "text",
+          "text": "MANUAL_COMPACTION_SEED_READY"
+        }
+      ],
+      "api": "openai-completions",
+      "provider": "openrouter",
+      "model": "openai/gpt-oss-20b",
+      "usage": {
+        "input": 72,
+        "output": 41,
+        "cacheRead": 40,
+        "cacheWrite": 0,
+        "reasoning": 22,
+        "totalTokens": 153,
+        "cost": {
+          "input": 0.000002088,
+          "output": 0.00000574,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0.000007828
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1785513173157,
+      "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+    }
+  ],
+  "entriesBefore": [
+    {
+      "type": "model_change",
+      "id": "ac8eafe7",
+      "parentId": null,
+      "timestamp": "2026-07-31T15:52:53.141Z",
+      "provider": "openrouter",
+      "modelId": "openai/gpt-oss-20b"
+    },
+    {
+      "type": "thinking_level_change",
+      "id": "a4c4aceb",
+      "parentId": "ac8eafe7",
+      "timestamp": "2026-07-31T15:52:53.141Z",
+      "thinkingLevel": "medium"
+    },
+    {
+      "type": "message",
+      "id": "fab9967c",
+      "parentId": "a4c4aceb",
+      "timestamp": "2026-07-31T15:52:53.145Z",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Reply with exactly: MANUAL_COMPACTION_SEED_READY"
+          }
+        ],
+        "timestamp": 1785513173144
+      }
+    },
+    {
+      "type": "message",
+      "id": "b511b848",
+      "parentId": "fab9967c",
+      "timestamp": "2026-07-31T15:52:53.795Z",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+            "thinkingSignature": "reasoning"
+          },
+          {
+            "type": "text",
+            "text": "MANUAL_COMPACTION_SEED_READY"
+          }
+        ],
+        "api": "openai-completions",
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-20b",
+        "usage": {
+          "input": 72,
+          "output": 41,
+          "cacheRead": 40,
+          "cacheWrite": 0,
+          "reasoning": 22,
+          "totalTokens": 153,
+          "cost": {
+            "input": 0.000002088,
+            "output": 0.00000574,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0.000007828
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785513173157,
+        "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+      }
+    }
+  ],
+  "compactionResult": {
+    "summary": "No prior history.\n\n---\n\n**Turn Context (split turn):**\n\n## Original Request  \nThe user asked the assistant to reply with **exactly** the string:  \n```\nMANUAL_COMPACTION_SEED_READY\n```  \n\n## Early Progress  \n- The assistant identified the request and understood that the reply must be the literal string above.  \n- No additional analysis or content generation was needed beyond producing that single phrase.  \n\n## Context for Suffix  \nTo understand the retained part of the conversation, it is enough to know that the user wants the assistant to output the exact string `MANUAL_COMPACTION_SEED_READY` and nothing else. The suffix likely contains this output or related handling steps.",
+    "firstKeptEntryId": "b511b848",
+    "tokensBefore": 153,
+    "estimatedTokensAfter": 200,
+    "details": {
+      "readFiles": [],
+      "modifiedFiles": []
+    }
+  },
+  "messagesAfter": [
+    {
+      "role": "compactionSummary",
+      "summary": "No prior history.\n\n---\n\n**Turn Context (split turn):**\n\n## Original Request  \nThe user asked the assistant to reply with **exactly** the string:  \n```\nMANUAL_COMPACTION_SEED_READY\n```  \n\n## Early Progress  \n- The assistant identified the request and understood that the reply must be the literal string above.  \n- No additional analysis or content generation was needed beyond producing that single phrase.  \n\n## Context for Suffix  \nTo understand the retained part of the conversation, it is enough to know that the user wants the assistant to output the exact string `MANUAL_COMPACTION_SEED_READY` and nothing else. The suffix likely contains this output or related handling steps.",
+      "tokensBefore": 153,
+      "timestamp": 1785513180617
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+          "thinkingSignature": "reasoning"
+        },
+        {
+          "type": "text",
+          "text": "MANUAL_COMPACTION_SEED_READY"
+        }
+      ],
+      "api": "openai-completions",
+      "provider": "openrouter",
+      "model": "openai/gpt-oss-20b",
+      "usage": {
+        "input": 72,
+        "output": 41,
+        "cacheRead": 40,
+        "cacheWrite": 0,
+        "reasoning": 22,
+        "totalTokens": 153,
+        "cost": {
+          "input": 0.000002088,
+          "output": 0.00000574,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0.000007828
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1785513173157,
+      "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+    }
+  ],
+  "entriesAfter": [
+    {
+      "type": "model_change",
+      "id": "ac8eafe7",
+      "parentId": null,
+      "timestamp": "2026-07-31T15:52:53.141Z",
+      "provider": "openrouter",
+      "modelId": "openai/gpt-oss-20b"
+    },
+    {
+      "type": "thinking_level_change",
+      "id": "a4c4aceb",
+      "parentId": "ac8eafe7",
+      "timestamp": "2026-07-31T15:52:53.141Z",
+      "thinkingLevel": "medium"
+    },
+    {
+      "type": "message",
+      "id": "fab9967c",
+      "parentId": "a4c4aceb",
+      "timestamp": "2026-07-31T15:52:53.145Z",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Reply with exactly: MANUAL_COMPACTION_SEED_READY"
+          }
+        ],
+        "timestamp": 1785513173144
+      }
+    },
+    {
+      "type": "message",
+      "id": "b511b848",
+      "parentId": "fab9967c",
+      "timestamp": "2026-07-31T15:52:53.795Z",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "The user says: \"Reply with exactly: MANUAL_COMPACTION_SEED_READY\". So just that string.",
+            "thinkingSignature": "reasoning"
+          },
+          {
+            "type": "text",
+            "text": "MANUAL_COMPACTION_SEED_READY"
+          }
+        ],
+        "api": "openai-completions",
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-20b",
+        "usage": {
+          "input": 72,
+          "output": 41,
+          "cacheRead": 40,
+          "cacheWrite": 0,
+          "reasoning": 22,
+          "totalTokens": 153,
+          "cost": {
+            "input": 0.000002088,
+            "output": 0.00000574,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0.000007828
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785513173157,
+        "responseId": "gen-1785513173-BhT1Wf7P5HuP1jyX1tP8"
+      }
+    },
+    {
+      "type": "compaction",
+      "id": "f507f4f4",
+      "parentId": "b511b848",
+      "timestamp": "2026-07-31T15:53:00.617Z",
+      "summary": "No prior history.\n\n---\n\n**Turn Context (split turn):**\n\n## Original Request  \nThe user asked the assistant to reply with **exactly** the string:  \n```\nMANUAL_COMPACTION_SEED_READY\n```  \n\n## Early Progress  \n- The assistant identified the request and understood that the reply must be the literal string above.  \n- No additional analysis or content generation was needed beyond producing that single phrase.  \n\n## Context for Suffix  \nTo understand the retained part of the conversation, it is enough to know that the user wants the assistant to output the exact string `MANUAL_COMPACTION_SEED_READY` and nothing else. The suffix likely contains this output or related handling steps.",
+      "firstKeptEntryId": "b511b848",
+      "tokensBefore": 153,
+      "details": {
+        "readFiles": [],
+        "modifiedFiles": []
+      },
+      "fromHook": false
+    }
+  ],
+  "error": null,
+  "summary": {
+    "eventTypes": [
+      "agent_start",
+      "turn_start",
+      "message_start",
+      "message_end",
+      "message_start",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_end",
+      "turn_end",
+      "agent_end",
+      "agent_settled",
+      "compaction_start",
+      "compaction_end"
+    ],
+    "manualEventTypes": [
+      "compaction_start",
+      "compaction_end"
+    ]
+  }
+}

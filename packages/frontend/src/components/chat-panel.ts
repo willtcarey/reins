@@ -23,8 +23,8 @@ import {
   type UserMessage,
   type ToolResultMessage,
   type ToolCall,
-  type ToolBlockData,
-  type StreamingBlock,
+  type ToolExecution,
+  type StreamingAssistant,
 } from "../models/chat-state.js";
 import {
   imageAspectRatioStyle,
@@ -107,12 +107,13 @@ export class ChatPanel extends LitElement {
     return this.messageEntries.map((entry) => entry.message);
   }
 
+  /** SessionCache metadata is the sole frontend owner of runtime activity. */
   private get isStreaming(): boolean {
     return this.store?.sessionData.activityState === "running";
   }
 
-  private get streamingBlocks(): StreamingBlock[] {
-    return this.store?.conversation.streamingBlocks ?? [];
+  private get streamingAssistants(): StreamingAssistant[] {
+    return this.store?.conversation.streamingAssistants ?? [];
   }
 
   private get isCompacting(): boolean {
@@ -329,7 +330,11 @@ export class ChatPanel extends LitElement {
     `;
   }
 
-  private renderAssistantMessage(msg: AssistantMessage, conversationKey = this.conversationMessageKey(msg)) {
+  private renderAssistantMessage(
+    msg: AssistantMessage,
+    conversationKey = this.conversationMessageKey(msg),
+    options: { streaming?: boolean; toolExecutions?: StreamingAssistant["toolExecutions"] } = {},
+  ) {
     const parts: unknown[] = [];
     const textBuffer: string[] = [];
 
@@ -339,7 +344,7 @@ export class ChatPanel extends LitElement {
       textBuffer.length = 0;
       parts.push(html`
         <div class="bg-zinc-800 border-l-2 border-blue-400/60 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm">
-          <markdown-content .text=${text}></markdown-content>
+          <markdown-content .text=${text} .streaming=${options.streaming ?? false}></markdown-content>
         </div>
       `);
     };
@@ -352,7 +357,7 @@ export class ChatPanel extends LitElement {
 
       if (block.type === "toolCall") {
         flushText();
-        parts.push(this.renderToolCall(block));
+        parts.push(this.renderToolCall(block, options));
       }
       // Skip thinking blocks in the UI
     }
@@ -366,7 +371,18 @@ export class ChatPanel extends LitElement {
     `;
   }
 
-  private renderToolCall(tc: ToolCall) {
+  private renderToolCall(
+    tc: ToolCall,
+    options: { streaming?: boolean; toolExecutions?: StreamingAssistant["toolExecutions"] } = {},
+  ) {
+    const execution = options.toolExecutions?.[tc.id];
+    if (options.streaming) {
+      // Tool-call snapshots contain arguments while they are still being
+      // parsed. Wait for execution_start so expensive renderers only receive
+      // the finalized arguments rather than re-highlighting every delta.
+      return execution ? this.renderToolBlock(execution) : nothing;
+    }
+
     const result = this.messages.find(
       (m): m is ToolResultMessage => m.role === "toolResult" && m.toolCallId === tc.id
     );
@@ -380,7 +396,7 @@ export class ChatPanel extends LitElement {
     });
   }
 
-  private renderToolBlock(block: ToolBlockData) {
+  private renderToolBlock(block: ToolExecution) {
     const renderer = getToolRenderer(block.name);
     return html`<div class="max-w-[90%]">${renderer.render({ ...block, sessionId: this.store?.sessionId ?? "" })}</div>`;
   }
@@ -458,9 +474,14 @@ export class ChatPanel extends LitElement {
   }
 
   private renderStreamingContent() {
-    const hasStreamingBlocks = this.streamingBlocks.length > 0;
-    const showThinking = this.isStreaming && !this.isCompacting && !hasStreamingBlocks;
-    if (!showThinking && !hasStreamingBlocks && !this.isCompacting) return nothing;
+    const hasVisibleAssistantContent = this.streamingAssistants.some(({ message, toolExecutions }) => (
+      message.content.some((block) => (
+        (block.type === "text" && block.text.length > 0)
+        || (block.type === "toolCall" && toolExecutions[block.id] !== undefined)
+      ))
+    ));
+    const showThinking = this.isStreaming && !this.isCompacting && !hasVisibleAssistantContent;
+    if (!showThinking && this.streamingAssistants.length === 0 && !this.isCompacting) return nothing;
 
     return html`
       <div
@@ -468,16 +489,12 @@ export class ChatPanel extends LitElement {
         data-conversation-key="streaming-content"
         class="mb-3 space-y-2"
       >
-        ${this.streamingBlocks.map((block) => {
-          if (block.type === "text") {
-            return html`
-              <div class="bg-zinc-800 border-l-2 border-blue-400/60 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm mb-1">
-                <markdown-content .text=${block.text} .streaming=${true}></markdown-content>
-              </div>
-            `;
-          }
-          return this.renderToolBlock(block);
-        })}
+        ${this.streamingAssistants.map(({ message, toolExecutions }) => (
+          this.renderAssistantMessage(message, `streaming-assistant-${message.timestamp}`, {
+            streaming: true,
+            toolExecutions,
+          })
+        ))}
         ${showThinking ? this.renderThinkingIndicator() : nothing}
         ${this.isCompacting ? this.renderCompactingIndicator() : nothing}
       </div>

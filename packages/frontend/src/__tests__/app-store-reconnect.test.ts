@@ -1,7 +1,8 @@
 /**
  * Tests for AppStore reconnect catch-up behavior.
  *
- * On WS reconnect (connection=true), the store should:
+ * Across WS disconnect/reconnect, the store should:
+ *  - Preserve received assistant snapshots and tool execution state
  *  - Re-fetch the project list
  *  - Delegate project-domain reconnect catch-up
  *  - Re-fetch the active session's messages if one is being viewed
@@ -78,6 +79,34 @@ describe("AppStore reconnect catch-up", () => {
     expect(refreshFromServerSpy).toHaveBeenCalled();
   });
 
+  test("disconnect preserves received assistant snapshots", () => {
+    const start = { role: "assistant" as const, content: [], timestamp: 100 };
+    const message = {
+      ...start,
+      content: [{ type: "text" as const, text: "received" }],
+    };
+    client.fireEvent("sess-1", 42, { type: "agent_start" });
+    client.fireEvent("sess-1", 42, { type: "message_start", message: start });
+    client.fireEvent("sess-1", 42, {
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "snapshot" },
+    });
+
+    client.fireConnection(false);
+    client.fireEvent("sess-1", 42, {
+      type: "tool_execution_start",
+      toolCallId: "missed-owner",
+      toolName: "read",
+      args: {},
+    });
+
+    expect(store.activeConversationsStore.get("sess-1").streamingAssistants).toEqual([{
+      message,
+      toolExecutions: {},
+    }]);
+  });
+
   test("reconnect does not refresh project state when disconnecting", () => {
     const refreshFromServerSpy = mock(async () => {});
     store.projectsStore.refreshFromServer = refreshFromServerSpy;
@@ -138,12 +167,19 @@ describe("AppStore reconnect catch-up", () => {
   });
 
   test("reconnect prunes unobserved conversation state when no running activity remains", async () => {
+    const start = { role: "assistant" as const, content: [], timestamp: 100 };
+    const message = { ...start, content: [{ type: "text" as const, text: "working" }] };
     client.fireEvent("bg-session", 42, { type: "agent_start" });
+    client.fireEvent("bg-session", 42, { type: "message_start", message: start });
     client.fireEvent("bg-session", 42, {
       type: "message_update",
-      assistantMessageEvent: { type: "text_delta", delta: "working" },
+      message,
+      assistantMessageEvent: { type: "snapshot" },
     });
-    expect(store.activeConversationsStore.get("bg-session").streamingBlocks).toEqual([{ type: "text", text: "working" }]);
+    expect(store.activeConversationsStore.get("bg-session").streamingAssistants).toEqual([{
+      message,
+      toolExecutions: {},
+    }]);
 
     mockFetch((url) => {
       if (url === "/api/sessions/activity") {
@@ -160,7 +196,7 @@ describe("AppStore reconnect catch-up", () => {
     expect(store.activeConversationsStore.get("bg-session")).toMatchObject({
       messages: [],
       hasEarlierMessages: false,
-      streamingBlocks: [],
+      streamingAssistants: [],
     });
   });
 

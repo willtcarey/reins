@@ -18,8 +18,16 @@ function shouldPersistForRuntimeEvent(event: AgentRuntimeEvent): boolean {
   return false;
 }
 
-function getActivityStateForEvent(event: AgentRuntimeEvent): "running" | "finished" | null {
+function getActivityStateForEvent(
+  event: AgentRuntimeEvent,
+  completionBoundary: AgentRuntime["activityCompletionBoundary"],
+): "running" | "finished" | null {
   if (event.type === "agent_start" || event.type === "compaction_start") return "running";
+
+  if (completionBoundary === "agent_settled") {
+    return event.type === "agent_settled" ? "finished" : null;
+  }
+
   if (event.type === "agent_end") return "finished";
 
   // A non-retrying compaction may be terminal after a prior agent_end, so do
@@ -92,7 +100,7 @@ async function persistRuntimeStateFromRuntime(params: {
 }): Promise<void> {
   const { sessionId, runtime, event, sessions } = params;
 
-  const nextActivityState = getActivityStateForEvent(event);
+  const nextActivityState = getActivityStateForEvent(event, runtime.activityCompletionBoundary);
 
   // Running state should remain immediate. Terminal state must wait until the
   // checkpoint is durable so its session_updated broadcast cannot trigger a
@@ -125,7 +133,8 @@ export function attachRuntimePersistenceObserver(params: {
 
   return runtime.subscribe((event) => {
     const persist = () => persistRuntimeStateFromRuntime({ sessionId, runtime, event, sessions });
-    const operation = shouldPersistForRuntimeEvent(event)
+    const finishesActivity = getActivityStateForEvent(event, runtime.activityCompletionBoundary) === "finished";
+    const operation = shouldPersistForRuntimeEvent(event) || finishesActivity
       ? (checkpointQueue = checkpointQueue.then(persist, persist))
       : persist();
 

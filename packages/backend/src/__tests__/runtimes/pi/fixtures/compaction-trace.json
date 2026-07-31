@@ -1,0 +1,3302 @@
+{
+  "version": 1,
+  "capturedAt": "2026-07-31T15:25:38.372Z",
+  "runtime": "pi",
+  "sdkPackage": "@earendil-works/pi-coding-agent@0.80.6",
+  "workspace": "<fixture-workspace>",
+  "model": {
+    "provider": "openrouter",
+    "id": "openai/gpt-oss-20b"
+  },
+  "trigger": {
+    "kind": "threshold-after-agent-end",
+    "prompt": "Reply with exactly: COMPACTION_TRACE_READY",
+    "compactionSettings": {
+      "enabled": true,
+      "reserveTokens": 131072,
+      "keepRecentTokens": 1
+    },
+    "thresholdExpression": "contextTokens > contextWindow - reserveTokens"
+  },
+  "promptStates": [
+    {
+      "phase": "before_prompt_call",
+      "elapsedMs": 12,
+      "isStreaming": false,
+      "isCompacting": false
+    },
+    {
+      "phase": "immediately_after_prompt_call",
+      "elapsedMs": 12,
+      "isStreaming": false,
+      "isCompacting": false
+    },
+    {
+      "phase": "after_prompt_settlement",
+      "elapsedMs": 6400,
+      "isStreaming": false,
+      "isCompacting": false
+    }
+  ],
+  "events": [
+    {
+      "phase": "event_callback",
+      "elapsedMs": 13,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 0,
+      "event": {
+        "type": "agent_start"
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 13,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 1,
+      "event": {
+        "type": "turn_start"
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 13,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 2,
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Reply with exactly: COMPACTION_TRACE_READY"
+            }
+          ],
+          "timestamp": 1785511531984
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 13,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 3,
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Reply with exactly: COMPACTION_TRACE_READY"
+            }
+          ],
+          "timestamp": 1785511531984
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 466,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 4,
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "assistant",
+          "content": [],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 477,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 5,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_start",
+          "contentIndex": 0,
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 477,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 6,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "The",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 482,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 7,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " user",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 490,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 8,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " wants",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 497,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 9,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " the",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 505,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 10,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " assistant",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 512,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 11,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " to",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 518,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 12,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " reply",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 524,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 13,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " with",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 609,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 14,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " exactly",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 618,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 15,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " the",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 633,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 16,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " string",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 634,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 17,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " \"",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 639,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 18,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "COM",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COM",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COM",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 646,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 19,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "PA",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPA",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPA",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 654,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 20,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "CTION",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 662,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 21,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "_TRACE",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 669,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 22,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "_READY",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 675,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 23,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "\".",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\".",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\".",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 683,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 24,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " No",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 690,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 25,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " other",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 697,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 26,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " text",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 705,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 27,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": ".",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text.",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text.",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 711,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 28,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " So",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 723,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 29,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " output",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 728,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 30,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " exactly",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 732,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 31,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": " that",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 740,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 32,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": ".",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+                "thinkingSignature": "reasoning"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+              "thinkingSignature": "reasoning"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 790,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 33,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_start",
+          "contentIndex": 1,
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "COM"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "COM"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 790,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 34,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "COM",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "COM"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "COM"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 795,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 35,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "PA",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "COMPA"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "COMPA"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 802,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 36,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "CTION",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "COMPACTION"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "COMPACTION"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 809,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 37,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "_TRACE",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "COMPACTION_TRACE"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "COMPACTION_TRACE"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 816,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 38,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "_READY",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "COMPACTION_TRACE_READY"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "COMPACTION_TRACE_READY"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 830,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 39,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "thinking_end",
+          "contentIndex": 0,
+          "content": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "COMPACTION_TRACE_READY"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 107,
+              "output": 42,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "reasoning": 32,
+              "totalTokens": 149,
+              "cost": {
+                "input": 0.000003103,
+                "output": 0.0000058800000000000005,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0.000008983
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "COMPACTION_TRACE_READY"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 107,
+            "output": 42,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 32,
+            "totalTokens": 149,
+            "cost": {
+              "input": 0.000003103,
+              "output": 0.0000058800000000000005,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.000008983
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 830,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 40,
+      "event": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_end",
+          "contentIndex": 1,
+          "content": "COMPACTION_TRACE_READY",
+          "partial": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "COMPACTION_TRACE_READY"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 107,
+              "output": 42,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "reasoning": 32,
+              "totalTokens": 149,
+              "cost": {
+                "input": 0.000003103,
+                "output": 0.0000058800000000000005,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0.000008983
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        },
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "COMPACTION_TRACE_READY"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 107,
+            "output": 42,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 32,
+            "totalTokens": 149,
+            "cost": {
+              "input": 0.000003103,
+              "output": 0.0000058800000000000005,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.000008983
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 830,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 41,
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "COMPACTION_TRACE_READY"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 107,
+            "output": 42,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 32,
+            "totalTokens": 149,
+            "cost": {
+              "input": 0.000003103,
+              "output": 0.0000058800000000000005,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.000008983
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        }
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 830,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 42,
+      "event": {
+        "type": "turn_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+              "thinkingSignature": "reasoning"
+            },
+            {
+              "type": "text",
+              "text": "COMPACTION_TRACE_READY"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "usage": {
+            "input": 107,
+            "output": 42,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 32,
+            "totalTokens": 149,
+            "cost": {
+              "input": 0.000003103,
+              "output": 0.0000058800000000000005,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.000008983
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785511531997,
+          "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+        },
+        "toolResults": []
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 830,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 43,
+      "event": {
+        "type": "agent_end",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Reply with exactly: COMPACTION_TRACE_READY"
+              }
+            ],
+            "timestamp": 1785511531984
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+                "thinkingSignature": "reasoning"
+              },
+              {
+                "type": "text",
+                "text": "COMPACTION_TRACE_READY"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-20b",
+            "usage": {
+              "input": 107,
+              "output": 42,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "reasoning": 32,
+              "totalTokens": 149,
+              "cost": {
+                "input": 0.000003103,
+                "output": 0.0000058800000000000005,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0.000008983
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1785511531997,
+            "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+          }
+        ],
+        "willRetry": false
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 831,
+      "isStreaming": true,
+      "isCompacting": false,
+      "sequence": 44,
+      "event": {
+        "type": "compaction_start",
+        "reason": "threshold"
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 6400,
+      "isStreaming": true,
+      "isCompacting": true,
+      "sequence": 45,
+      "event": {
+        "type": "compaction_end",
+        "reason": "threshold",
+        "result": {
+          "summary": "No prior history.\n\n---\n\n**Turn Context (split turn):**\n\n## Original Request\nUser asked the assistant to reply with exactly the phrase: **COMPACTION_TRACE_READY**.\n\n## Early Progress\nNo additional actions were taken in the prefix; the request was simply recorded.\n\n## Context for Suffix\nThe retained suffix is expected to contain the assistant’s response that matches the user’s exact request. Understanding the suffix requires knowing that the user wanted that specific string with no extra text.",
+          "firstKeptEntryId": "ffefc4e5",
+          "tokensBefore": 149,
+          "estimatedTokensAfter": 161,
+          "details": {
+            "readFiles": [],
+            "modifiedFiles": []
+          }
+        },
+        "aborted": false,
+        "willRetry": false
+      }
+    },
+    {
+      "phase": "event_callback",
+      "elapsedMs": 6400,
+      "isStreaming": false,
+      "isCompacting": false,
+      "sequence": 46,
+      "event": {
+        "type": "agent_settled"
+      }
+    }
+  ],
+  "finalMessages": [
+    {
+      "role": "compactionSummary",
+      "summary": "No prior history.\n\n---\n\n**Turn Context (split turn):**\n\n## Original Request\nUser asked the assistant to reply with exactly the phrase: **COMPACTION_TRACE_READY**.\n\n## Early Progress\nNo additional actions were taken in the prefix; the request was simply recorded.\n\n## Context for Suffix\nThe retained suffix is expected to contain the assistant’s response that matches the user’s exact request. Understanding the suffix requires knowing that the user wanted that specific string with no extra text.",
+      "tokensBefore": 149,
+      "timestamp": 1785511538371
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "The user wants the assistant to reply with exactly the string \"COMPACTION_TRACE_READY\". No other text. So output exactly that.",
+          "thinkingSignature": "reasoning"
+        },
+        {
+          "type": "text",
+          "text": "COMPACTION_TRACE_READY"
+        }
+      ],
+      "api": "openai-completions",
+      "provider": "openrouter",
+      "model": "openai/gpt-oss-20b",
+      "usage": {
+        "input": 107,
+        "output": 42,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 32,
+        "totalTokens": 149,
+        "cost": {
+          "input": 0.000003103,
+          "output": 0.0000058800000000000005,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0.000008983
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1785511531997,
+      "responseId": "gen-1785511532-G0rjqS4PiVjDnsJy295K"
+    }
+  ],
+  "error": null,
+  "summary": {
+    "eventTypes": [
+      "agent_start",
+      "turn_start",
+      "message_start",
+      "message_end",
+      "message_start",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_end",
+      "turn_end",
+      "agent_end",
+      "compaction_start",
+      "compaction_end",
+      "agent_settled"
+    ],
+    "lifecycle": [
+      {
+        "sequence": 0,
+        "elapsedMs": 13,
+        "type": "agent_start",
+        "role": null,
+        "reason": null,
+        "willRetry": null,
+        "isStreaming": true,
+        "isCompacting": false
+      },
+      {
+        "sequence": 1,
+        "elapsedMs": 13,
+        "type": "turn_start",
+        "role": null,
+        "reason": null,
+        "willRetry": null,
+        "isStreaming": true,
+        "isCompacting": false
+      },
+      {
+        "sequence": 2,
+        "elapsedMs": 13,
+        "type": "message_start",
+        "role": "user",
+        "reason": null,
+        "willRetry": null,
+        "isStreaming": true,
+        "isCompacting": false
+      },
+      {
+        "sequence": 3,
+        "elapsedMs": 13,
+        "type": "message_end",
+        "role": "user",
+        "reason": null,
+        "willRetry": null,
+        "isStreaming": true,
+        "isCompacting": false
+      },
+      {
+        "sequence": 4,
+        "elapsedMs": 466,
+        "type": "message_start",
+        "role": "assistant",
+        "reason": null,
+        "willRetry": null,
+        "isStreaming": true,
+        "isCompacting": false
+      },
+      {
+        "sequence": 41,
+        "elapsedMs": 830,
+        "type": "message_end",
+        "role": "assistant",
+        "reason": null,
+        "willRetry": null,
+        "isStreaming": true,
+        "isCompacting": false
+      },
+      {
+        "sequence": 42,
+        "elapsedMs": 830,
+        "type": "turn_end",
+        "role": "assistant",
+        "reason": null,
+        "willRetry": null,
+        "isStreaming": true,
+        "isCompacting": false
+      },
+      {
+        "sequence": 43,
+        "elapsedMs": 830,
+        "type": "agent_end",
+        "role": null,
+        "reason": null,
+        "willRetry": false,
+        "isStreaming": true,
+        "isCompacting": false
+      },
+      {
+        "sequence": 44,
+        "elapsedMs": 831,
+        "type": "compaction_start",
+        "role": null,
+        "reason": "threshold",
+        "willRetry": null,
+        "isStreaming": true,
+        "isCompacting": false
+      },
+      {
+        "sequence": 45,
+        "elapsedMs": 6400,
+        "type": "compaction_end",
+        "role": null,
+        "reason": "threshold",
+        "willRetry": false,
+        "isStreaming": true,
+        "isCompacting": true
+      },
+      {
+        "sequence": 46,
+        "elapsedMs": 6400,
+        "type": "agent_settled",
+        "role": null,
+        "reason": null,
+        "willRetry": null,
+        "isStreaming": false,
+        "isCompacting": false
+      }
+    ]
+  }
+}

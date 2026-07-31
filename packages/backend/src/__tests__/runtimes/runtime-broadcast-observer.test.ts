@@ -19,6 +19,9 @@ function createWsClient() {
     lastMessage(): any {
       return JSON.parse(sent[sent.length - 1] ?? "null");
     },
+    messages(): any[] {
+      return sent.map((message) => JSON.parse(message));
+    },
   };
 }
 
@@ -31,6 +34,29 @@ describe("runtime broadcast observer", () => {
     const project = createProject("Runtime Broadcast Project", "/tmp/runtime-broadcast-project");
     projectId = project.id;
     createSession("sess-runtime-broadcast", projectId, { agentRuntimeType: "pi" });
+  });
+
+  test("broadcasts agent_settled as a valid raw runtime event in order", () => {
+    const { runtime, emit } = createRuntimeStub();
+    const ws = createWsClient();
+    attachRuntimeBroadcastObserver({
+      sessionId: "sess-runtime-broadcast",
+      projectId,
+      runtime,
+      clients: new Set([ws.client]),
+    });
+
+    emit({ type: "agent_end", messages: [] });
+    emit({ type: "compaction_start", reason: "threshold" });
+    emit({ type: "compaction_end", aborted: false, willRetry: false });
+    emit({ type: "agent_settled" });
+
+    expect(ws.messages().map(({ event }) => event)).toEqual([
+      { type: "agent_end", messages: [] },
+      { type: "compaction_start", reason: "threshold" },
+      { type: "compaction_end", aborted: false, willRetry: false },
+      { type: "agent_settled" },
+    ]);
   });
 
   test("externalizes inline images in known runtime event content fields", () => {

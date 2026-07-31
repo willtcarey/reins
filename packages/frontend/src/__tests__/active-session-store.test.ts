@@ -5,7 +5,12 @@ import { ConversationsStore } from "../models/stores/conversations-store.js";
 import { SessionCache } from "../models/stores/session-cache.js";
 import { StubClient } from "./helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
-import { messagePage, setPersistedMessages } from "./helpers/conversations.js";
+import {
+  applyStreamingAssistant,
+  completedToolTurn,
+  messagePage,
+  setPersistedMessages,
+} from "./helpers/conversations.js";
 
 type IsAny<T> = 0 extends (1 & T) ? true : false;
 type AssertFalse<T extends false> = T;
@@ -366,42 +371,138 @@ describe("ActiveSessionStore session loading contract", () => {
     expect(conversationsStore.get("sess-1").messages).toEqual(twoMessages);
   });
 
+  test("initial cached terminal metadata clears only stale compacting state", async () => {
+    const sessionCache = new SessionCache();
+    const conversationsStore = new ConversationsStore();
+    sessionCache.set("sess-1", makeSessionData({ activityState: "finished" }));
+    applyStreamingAssistant(conversationsStore, "sess-1", [{ id: "tool-1", done: true }], 2000);
+    const optimistic = conversationsStore.addOptimisticUserMessage(
+      "sess-1",
+      [{ type: "text", text: "follow-up" }],
+      3000,
+    );
+    if (!optimistic) throw new Error("Expected optimistic entry");
+    conversationsStore.applyEvent("sess-1", { type: "compaction_start", reason: "threshold" });
+    const store = new ActiveSessionStore("sess-1", null, sessionCache, conversationsStore);
+
+    mockFetch((url, init) => {
+      if (url === "/api/sessions/sess-1") return jsonResponse(makeSessionData({ activityState: "finished" }));
+      if (url === "/api/sessions/sess-1/messages") return new Response("unavailable", { status: 503 });
+      if (url === "/api/sessions/sess-1/activity" && init?.method === "PATCH") return jsonResponse({ ok: true });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await store.initialize();
+
+    expect(store.conversation.isCompacting).toBe(false);
+    expect(store.conversation.streamingAssistants).toHaveLength(1);
+    expect(store.conversation.entries).toContainEqual(optimistic);
+  });
+
+  test("running to finished metadata clears stale compaction without discarding live work", async () => {
+    const sessionCache = new SessionCache();
+    const conversationsStore = new ConversationsStore();
+    sessionCache.set("sess-1", makeSessionData({ activityState: "running" }));
+    const store = new ActiveSessionStore("sess-1", null, sessionCache, conversationsStore);
+    await callPrivate(store, "handleSessionCacheUpdate");
+
+    applyStreamingAssistant(conversationsStore, "sess-1", ["still live", { id: "tool-1" }], 2000);
+    const optimistic = conversationsStore.addOptimisticUserMessage(
+      "sess-1",
+      [{ type: "text", text: "queued steer" }],
+      3000,
+    );
+    if (!optimistic) throw new Error("Expected optimistic entry");
+    conversationsStore.applyEvent("sess-1", { type: "compaction_start", reason: "threshold" });
+
+    mockFetch((url, init) => {
+      if (url === "/api/sessions/sess-1/messages") return new Response("not persisted yet", { status: 503 });
+      if (url === "/api/sessions/sess-1/activity" && init?.method === "PATCH") return jsonResponse({ ok: true });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    sessionCache.set("sess-1", makeSessionData({ activityState: "finished", messageCount: 2 }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(store.conversation.isCompacting).toBe(false);
+    expect(store.conversation.streamingAssistants).toHaveLength(1);
+    expect(store.conversation.entries).toContainEqual(optimistic);
+  });
+
+  test("running metadata does not clear active compaction", async () => {
+    const sessionCache = new SessionCache();
+    const conversationsStore = new ConversationsStore();
+    const store = new ActiveSessionStore("sess-1", null, sessionCache, conversationsStore);
+    conversationsStore.applyEvent("sess-1", { type: "compaction_start", reason: "threshold" });
+
+    sessionCache.set("sess-1", makeSessionData({ activityState: "running" }));
+    await callPrivate(store, "handleSessionCacheUpdate");
+
+    expect(store.conversation.isCompacting).toBe(true);
+  });
+
+  test("terminal reconciliation remains scoped to the active route", async () => {
+    const sessionCache = new SessionCache();
+    const conversationsStore = new ConversationsStore();
+    const store = new ActiveSessionStore("sess-1", null, sessionCache, conversationsStore);
+    conversationsStore.applyEvent("sess-2", { type: "compaction_start", reason: "threshold" });
+
+    sessionCache.set("sess-2", makeSessionData({ activityState: "finished" }));
+    await Promise.resolve();
+
+    expect(store.sessionId).toBe("sess-1");
+    expect(conversationsStore.get("sess-2").isCompacting).toBe(true);
+  });
+
+  test("finished metadata cannot discard agent_end output when persistence sync fails", async () => {
+    const sessionCache = new SessionCache();
+    const conversationsStore = new ConversationsStore();
+    sessionCache.set("sess-1", makeSessionData({ activityState: "running" }));
+    const store = new ActiveSessionStore("sess-1", null, sessionCache, conversationsStore);
+    const finalAssistant: AgentMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: "Final answer" }],
+      timestamp: 2000,
+    };
+
+    applyStreamingAssistant(conversationsStore, "sess-1", ["partial"], 2000);
+    conversationsStore.applyEvent("sess-1", {
+      type: "agent_end",
+      messages: [{ role: "user", content: "runtime copy", timestamp: 1000 }, finalAssistant],
+    });
+    expect(store.conversation.messages).toEqual([finalAssistant]);
+    expect(store.conversation.streamingAssistants).toEqual([]);
+
+    mockFetch((url, init) => {
+      if (url === "/api/sessions/sess-1/messages") return new Response("unavailable", { status: 503 });
+      if (url === "/api/sessions/sess-1/activity" && init?.method === "PATCH") return jsonResponse({ ok: true });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    sessionCache.set("sess-1", makeSessionData({ activityState: "finished", messageCount: 2 }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(store.conversation.messages).toEqual([finalAssistant]);
+    expect(store.conversation.entries[0]?.id).toBeNull();
+  });
+
   test("finished metadata leaves only the canonical turn when the running transition was missed", async () => {
     const sessionCache = new SessionCache();
     const conversationsStore = new ConversationsStore();
     const store = new ActiveSessionStore("sess-1", null, sessionCache, conversationsStore);
 
-    conversationsStore.applyEvent("sess-1", {
-      type: "tool_execution_start",
-      toolCallId: "tool-1",
-      toolName: "read",
-      args: { path: "README.md" },
-    });
-
-    const finalMessages: AgentMessage[] = [
-      {
-        role: "assistant",
-        content: [{ type: "toolCall", id: "tool-1", name: "read", arguments: { path: "README.md" } }],
-        timestamp: 1000,
-      },
-      {
-        role: "toolResult",
-        toolCallId: "tool-1",
-        toolName: "read",
-        content: [{ type: "text", text: "contents" }],
-        isError: false,
-        timestamp: 2000,
-      },
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "Done" }],
-        timestamp: 3000,
-      },
-    ];
+    const tool = {
+      id: "tool-1",
+      name: "read",
+      arguments: { path: "README.md" },
+      result: "contents",
+    };
+    applyStreamingAssistant(conversationsStore, "sess-1", [tool], 1000);
+    const finalMessages = completedToolTurn([tool], "Done", 1000);
     setPersistedMessages(conversationsStore, "sess-1", finalMessages);
 
     expect(store.conversation.messages.at(-1)).toEqual(finalMessages.at(-1));
-    expect(store.conversation.streamingBlocks).toHaveLength(1);
+    expect(store.conversation.streamingAssistants).toEqual([]);
 
     mockFetch((url, init) => {
       if (url === "/api/sessions/sess-1/activity" && init?.method === "PATCH") {
@@ -416,7 +517,7 @@ describe("ActiveSessionStore session loading contract", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(store.conversation.messages).toEqual(finalMessages);
-    expect(store.conversation.streamingBlocks).toEqual([]);
+    expect(store.conversation.streamingAssistants).toEqual([]);
   });
 
   test("session cache update auto-refreshes messages when cached activityState transitions from running", async () => {

@@ -19,8 +19,9 @@ Reins broadcasts events to clients with this envelope:
 
 - `{ type: "event", sessionId, projectId, event }`
 
-Compaction uses these broadcast event types:
+Lifecycle and compaction broadcasts include:
 
+- `agent_settled`
 - `compaction_start`
 - `compaction_end`
 
@@ -50,16 +51,16 @@ Reins persists messages when it observes:
 
 Reins does not persist on aborted compaction.
 
-Session activity indicators are also event-driven:
+Session activity indicators are event-driven and selected by the runtime's `activityCompletionBoundary` policy:
 
 - `agent_start` marks a non-delegate session `activity_state = 'running'`
 - `compaction_start` marks a non-delegate session `activity_state = 'running'`
-- `agent_end` marks a non-delegate session `activity_state = 'finished'`
-- `compaction_end` with `willRetry === false` marks a non-delegate session `activity_state = 'finished'`
+- the default `agent_end` policy finishes at `agent_end`, and retains terminal `compaction_end` (`willRetry === false`) behavior
+- the `agent_settled` policy keeps activity running through `agent_end` and `compaction_end`, and finishes only at `agent_settled`
 
-Do not assume compaction is nested inside an already-started agent run, and do not assume compaction is followed by `agent_end`. Pi can emit `compaction_start` before `agent_start` when it compacts at the beginning of a turn, and can also compact after `agent_end` with no retry. See [Pi Runtime Event Ordering](pi-runtime-event-order.md).
+Do not assume compaction is nested inside an already-started agent run, and do not assume compaction is followed by `agent_end`. Pi opts into settlement-aware completion because automatic threshold compaction can occur after `agent_end` while its outer prompt remains streaming. See [Pi Runtime Event Ordering](pi-runtime-event-order.md).
 
-On `agent_end`, Reins may also update session metadata (`model_provider`, `model_id`, `thinking_level`) from `runtime.getSessionMetadata()` when available. For terminal checkpoints, final message persistence and metadata updates complete before the `finished` activity transition broadcasts `session_updated`; this ensures clients refreshing on completion observe the durable transcript. Running activity transitions remain immediate.
+On `agent_end`, Reins may also update session metadata (`model_provider`, `model_id`, `thinking_level`) from `runtime.getSessionMetadata()` when available. Checkpoints remain `turn_end`, `agent_end`, and successful `compaction_end`; settlement does not move transcript persistence. A finished transition is queued behind all preceding checkpoints before its `session_updated` broadcast, ensuring clients refreshing on completion observe the durable compacted transcript. Running activity transitions remain immediate.
 
 The raw `agent_end` event remains broadcast for runtime compatibility. Frontend conversation handling ignores every `role: "user"` entry in `agent_end.messages`; those entries remain inputs to persistence, while visible user text comes from optimistic local entries, peer `user_message` events, and persisted display projections.
 
@@ -83,7 +84,7 @@ Tool names should be normalized to canonical Reins names where feasible.
 
 Runtime adapters should:
 
-1. Map runtime-native lifecycle events to required semantics.
+1. Explicitly map runtime-native lifecycle events to the typed normalized contract, including `agent_settled` when supported.
 2. Normalize compaction events to `compaction_start` / `compaction_end` for broadcast.
 3. Keep `toolCallId` stable across tool start/end.
 4. Normalize tool names to Reins canonical names when possible.

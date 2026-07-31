@@ -74,6 +74,7 @@ export function externalizeRuntimeEventImages(
       };
 
     case "agent_start":
+    case "agent_settled":
     case "turn_start":
     case "tool_execution_start":
     case "tool_execution_update":

@@ -12,7 +12,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
-import { escapeHtml, shouldWrapLines } from "../../models/changes/diff-utils.js";
+import { shouldWrapLines } from "../../models/changes/diff-utils.js";
 import { openInBrowserEvent } from "../events.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
@@ -90,7 +90,9 @@ export class WriteToolBlock extends LitElement {
 
   private _renderHighlightedLine(index: number, text: string) {
     const highlighted = this._hl.getLineHtml(index);
-    return highlighted ? unsafeHTML(highlighted) : escapeHtml(text);
+    // Lit escapes plain strings. Pre-escaping here would display entities such
+    // as `&lt;` until asynchronous highlighting replaces the fallback.
+    return highlighted ? unsafeHTML(highlighted) : text;
   }
 
   private _renderContentLine(index: number, text: string, colorCls: string, wrap: boolean) {

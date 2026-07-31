@@ -1,13 +1,12 @@
 /**
  * Chat State Reducer
  *
- * Pure state management for chat panel events, extracted from ChatPanel
- * so it can be tested without Lit/DOM dependencies.
+ * Pure conversation presentation state for chat panel events, extracted from
+ * ChatPanel so it can be tested without Lit/DOM dependencies. Runtime activity
+ * belongs exclusively to SessionCache and is not represented here.
  */
 
 import type { ChatImageBlock, ClientPromptContent } from "./chat-content.js";
-
-// ---- Types (matching pi-ai / pi-agent-core shapes) -------------------------
 
 interface TextContent {
   type: "text";
@@ -30,7 +29,7 @@ export interface AssistantMessage {
   role: "assistant";
   content: (TextContent | ThinkingContent | ToolCall)[];
   timestamp: number;
-  /** Present when the LLM call ended abnormally (e.g. "error", "aborted"). */
+  /** Present when the LLM call ended abnormally (for example, "error" or "aborted"). */
   stopReason?: string;
   /** Human-readable error detail when stopReason is "error". */
   errorMessage?: string;
@@ -63,13 +62,8 @@ export interface CompactionSummaryMessage {
 
 export type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | CompactionSummaryMessage;
 
-export interface StreamingTextBlock {
-  type: "text";
-  text: string;
-}
-
-export interface StreamingToolBlock {
-  type: "tool";
+/** Normalized rendering data shared by live and finalized tool calls. */
+export interface ToolBlockData {
   id: string;
   name: string;
   args: Record<string, any>;
@@ -79,38 +73,40 @@ export interface StreamingToolBlock {
   sessionId?: string;
 }
 
-export type StreamingBlock = StreamingTextBlock | StreamingToolBlock;
-
-/** Normalized shape for rendering a tool call in both streaming and finalized states. */
-export type ToolBlockData = Omit<StreamingToolBlock, "type">;
-
-// ---- Events (local mirrors of backend/SDK shapes) --------------------------
+export interface ToolExecution extends ToolBlockData {}
 
 /**
- * Discriminated union of every event type that `applyChatEvent` handles.
- * Covers AgentEvent variants we care about, CompactionEvent, and the
- * synthetic `user_message` forwarded by ws-client.
+ * One authoritative live assistant snapshot. Tool overlays stay with their
+ * owner and are keyed by stable call ID so concurrent assistants cannot mix.
  */
+export interface StreamingAssistant {
+  message: AssistantMessage;
+  toolExecutions: Record<string, ToolExecution>;
+}
+
+/** Runtime message lifecycle events include user and tool-result messages in Pi. */
+type RuntimeLifecycleMessage = AgentMessage;
+
+/** Runtime, compaction, retry, and synthetic user events handled by the reducer. */
 export type ChatEvent =
   | { type: "agent_start" }
-  | { type: "message_update"; assistantMessageEvent?: { type: string; delta?: string } }
+  | { type: "agent_settled" }
+  | { type: "message_start"; message: RuntimeLifecycleMessage }
+  | { type: "message_update"; message: RuntimeLifecycleMessage; assistantMessageEvent?: { type: string; delta?: string } }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
   | { type: "tool_execution_update"; toolCallId: string; toolName: string; args: Record<string, unknown>; partialResult?: Record<string, unknown> }
-  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: StreamingToolBlock["result"]; isError?: boolean }
+  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: ToolExecution["result"]; isError?: boolean }
   | { type: "agent_end"; messages?: AgentMessage[] }
-  | { type: "message_end" }
+  | { type: "message_end"; message: RuntimeLifecycleMessage }
   | { type: "compaction_start"; reason?: string }
   | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean }
   | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
   | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
   | { type: "user_message"; message: ClientPromptContent };
 
-// ---- State ------------------------------------------------------------------
-
 export interface ChatState {
   messages: AgentMessage[];
-  isStreaming: boolean;
-  streamingBlocks: StreamingBlock[];
+  streamingAssistants: StreamingAssistant[];
   isCompacting: boolean;
   errorMessage: string;
 }
@@ -118,131 +114,129 @@ export interface ChatState {
 export function initialChatState(): ChatState {
   return {
     messages: [],
-    isStreaming: false,
-    streamingBlocks: [],
+    streamingAssistants: [],
     isCompacting: false,
     errorMessage: "",
   };
 }
 
-// ---- Reducer ----------------------------------------------------------------
+/**
+ * Upsert a runtime's authoritative assistant snapshot by timestamp. Timestamps
+ * identify a lifecycle, not display order, so updates replace the observed slot
+ * rather than sorting on runtime clocks.
+ */
+function upsertAssistantSnapshot(state: ChatState, message: RuntimeLifecycleMessage): ChatState {
+  if (message.role !== "assistant") return state;
+  const index = state.streamingAssistants.findIndex(({ message: current }) => current.timestamp === message.timestamp);
+  if (index === -1) {
+    return { ...state, streamingAssistants: [...state.streamingAssistants, { message, toolExecutions: {} }] };
+  }
+  if (state.streamingAssistants[index]?.message === message) return state;
+  const streamingAssistants = [...state.streamingAssistants];
+  const current = streamingAssistants[index]!;
+  const toolCallIds = new Set(message.content.flatMap((block) => block.type === "toolCall" ? [block.id] : []));
+  // A replacement snapshot is authoritative: overlays for tool calls it no
+  // longer contains must not leak into this assistant's rendered content.
+  const toolExecutions = Object.fromEntries(
+    Object.entries(current.toolExecutions).filter(([toolCallId]) => toolCallIds.has(toolCallId)),
+  );
+  streamingAssistants[index] = { message, toolExecutions };
+  return { ...state, streamingAssistants };
+}
+
+/** Find the assistant that owns a tool call by the runtime's stable call ID. */
+function assistantIndexForToolCall(state: ChatState, toolCallId: string): number {
+  return state.streamingAssistants.findIndex(({ message }) => (
+    message.content.some((block) => block.type === "toolCall" && block.id === toolCallId)
+  ));
+}
+
+/** Update a tool overlay within its owning assistant snapshot. */
+function updateToolExecution(
+  state: ChatState,
+  toolCallId: string,
+  build: (existing: ToolExecution | undefined) => ToolExecution,
+): ChatState {
+  const index = assistantIndexForToolCall(state, toolCallId);
+  // Without an owning snapshot, placement is unknowable; a later complete
+  // assistant update can recover the tool call without inventing ordering.
+  if (index === -1) return state;
+  const streamingAssistants = [...state.streamingAssistants];
+  const assistant = streamingAssistants[index]!;
+  streamingAssistants[index] = {
+    ...assistant,
+    toolExecutions: { ...assistant.toolExecutions, [toolCallId]: build(assistant.toolExecutions[toolCallId]) },
+  };
+  return { ...state, streamingAssistants };
+}
 
 /**
- * Apply an agent event to the chat state, returning a new state.
- * Pure function — no side effects.
+ * Remove live assistants now represented by persisted snapshots. Unmatched
+ * assistants (including newer work) survive until their own persistence catch-up.
  */
+export function removePersistedStreamingAssistants(
+  state: Pick<ChatState, "streamingAssistants">,
+  timestamps: ReadonlySet<number>,
+): Pick<ChatState, "streamingAssistants"> {
+  const streamingAssistants = state.streamingAssistants.filter(({ message }) => !timestamps.has(message.timestamp));
+  return streamingAssistants.length === state.streamingAssistants.length ? state : { ...state, streamingAssistants };
+}
+
+/** Apply one chat event without side effects, preserving state identity for no-ops. */
 export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
   switch (event.type) {
+    // Runtime activity belongs to SessionCache. These lifecycle boundaries do
+    // not alter conversation presentation; agent_end below is the separate
+    // presentation-finalization boundary.
     case "agent_start":
-      return { ...state, isStreaming: true, streamingBlocks: [] };
-
-    case "message_update": {
-      const ame = event.assistantMessageEvent;
-      if (ame?.type === "text_delta" && ame.delta) {
-        const delta = ame.delta;
-        const blocks = [...state.streamingBlocks];
-        const last = blocks[blocks.length - 1];
-        if (last && last.type === "text") {
-          blocks[blocks.length - 1] = { ...last, text: last.text + delta };
-        } else {
-          blocks.push({ type: "text", text: delta });
-        }
-        return { ...state, streamingBlocks: blocks };
-      }
+    case "agent_settled":
       return state;
-    }
 
-    case "tool_execution_start": {
-      const existingIdx = state.streamingBlocks.findIndex(
-        (b) => b.type === "tool" && b.id === event.toolCallId,
-      );
+    case "message_start":
+    case "message_update":
+    case "message_end":
+      return upsertAssistantSnapshot(state, event.message);
 
-      if (existingIdx !== -1) {
-        // Tool block already exists (e.g. created by an earlier
-        // tool_execution_update) — update args and name in place.
-        const blocks = [...state.streamingBlocks];
-        const existing = blocks[existingIdx];
-        if (existing && existing.type === "tool") {
-          blocks[existingIdx] = { ...existing, args: event.args, name: event.toolName };
-        }
-        return { ...state, streamingBlocks: blocks };
-      }
-
-      return {
-        ...state,
-        streamingBlocks: [
-          ...state.streamingBlocks,
-          {
-            type: "tool",
-            id: event.toolCallId,
-            name: event.toolName,
-            args: event.args,
-            status: "running" as const,
-          },
-        ],
-      };
-    }
-
-    case "tool_execution_update": {
-      const idx = state.streamingBlocks.findIndex((b) => b.type === "tool" && b.id === event.toolCallId);
-
-      if (idx === -1) {
-        return {
-          ...state,
-          streamingBlocks: [
-            ...state.streamingBlocks,
-            {
-              type: "tool",
-              id: event.toolCallId,
-              name: event.toolName,
-              args: event.args,
-              status: "running" as const,
-            },
-          ],
-        };
-      }
-
-      const blocks = [...state.streamingBlocks];
-      const existing = blocks[idx];
-      if (!existing || existing.type !== "tool") return state;
-
-      blocks[idx] = {
+    case "tool_execution_start":
+      return updateToolExecution(state, event.toolCallId, (existing) => ({
         ...existing,
-        name: event.toolName || existing.name,
-        args: { ...existing.args, ...event.args },
-      };
+        id: event.toolCallId,
+        name: event.toolName,
+        args: event.args,
+        status: existing?.status ?? "running",
+      }));
 
-      return { ...state, streamingBlocks: blocks };
-    }
+    case "tool_execution_update":
+      return updateToolExecution(state, event.toolCallId, (existing) => ({
+        id: event.toolCallId,
+        name: event.toolName || existing?.name || "tool",
+        args: { ...existing?.args, ...event.args },
+        status: existing?.status ?? "running",
+        ...(existing?.result ? { result: existing.result } : {}),
+        ...(existing?.isError !== undefined ? { isError: existing.isError } : {}),
+      }));
 
-    case "tool_execution_end": {
-      const blocks = state.streamingBlocks.map((b) =>
-        b.type === "tool" && b.id === event.toolCallId
-          ? { ...b, status: "done" as const, result: event.result, isError: event.isError }
-          : b
-      );
-      return { ...state, streamingBlocks: blocks };
-    }
+    case "tool_execution_end":
+      return updateToolExecution(state, event.toolCallId, (existing) => ({
+        id: event.toolCallId,
+        name: event.toolName || existing?.name || "tool",
+        args: existing?.args ?? {},
+        status: "done",
+        ...(event.result ? { result: event.result } : {}),
+        ...(event.isError !== undefined ? { isError: event.isError } : {}),
+      }));
 
     case "agent_end": {
-      // event.messages contains only the messages produced during this
-      // agent run (user prompts + assistant replies + tool results).
-      // If sessionData refreshed mid-run (reconnect, navigation), or another
-      // client received a user_message broadcast, state.messages may already
-      // contain some/all of these. Deduplicate by timestamp and by pending
-      // tail user content so agent_end can still provide a canonical user
-      // message for the initiating client while the optimistic store entry is
-      // waiting for persistence reconciliation.
-
-      // Check for error: the last assistant message may have stopReason: "error"
-      // with an empty content array, indicating the LLM call failed entirely.
+      // agent_end promotes canonical final messages into presentation state,
+      // then clears all streaming assistants for the completed run.
       let errorMessage = state.errorMessage;
-      const eventMessages: AgentMessage[] | undefined = event.messages;
+      const eventMessages = event.messages;
       if (eventMessages) {
+        // The last failed assistant carries the user-facing runtime error.
         for (let i = eventMessages.length - 1; i >= 0; i--) {
-          const m = eventMessages[i];
-          if (m.role === "assistant" && m.stopReason === "error" && m.errorMessage) {
-            errorMessage = m.errorMessage;
+          const message = eventMessages[i];
+          if (message.role === "assistant" && message.stopReason === "error" && message.errorMessage) {
+            errorMessage = message.errorMessage;
             break;
           }
         }
@@ -250,82 +244,63 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
 
       let messages = state.messages;
       if (eventMessages) {
-        const existing = new Set(
-          state.messages.map((m: AgentMessage) => `${m.role}:${m.timestamp}`)
-        );
-        // Runtime user messages are persistence inputs, not display events.
-        // Browser submissions already have optimistic/user_message entries.
-        const fresh = eventMessages.filter((m) => {
-          if (m.role === "user") return false;
-          if (existing.has(`${m.role}:${m.timestamp}`)) return false;
-          // Skip empty assistant messages with stopReason: "error"
-          if (m.role === "assistant" && m.stopReason === "error" && m.content.length === 0) {
-            return false;
+        const existing = new Set(state.messages.map((message) => (
+          message.role === "toolResult"
+            ? `toolResult:${message.toolCallId}`
+            : `${message.role}:${message.timestamp}`
+        )));
+        const fresh: AgentMessage[] = [];
+        for (const message of eventMessages) {
+          // Runtime user messages may contain transformed prompt content; the
+          // browser's optimistic/user_message entry remains the display copy.
+          if (message.role === "user") continue;
+          if (message.role === "assistant" && message.stopReason === "error" && message.content.length === 0) {
+            continue;
           }
-          return true;
-        });
-        if (fresh.length > 0) {
-          messages = [...state.messages, ...fresh];
+          const key = message.role === "toolResult"
+            ? `toolResult:${message.toolCallId}`
+            : `${message.role}:${message.timestamp}`;
+          if (existing.has(key)) continue;
+          existing.add(key);
+          fresh.push(message);
         }
+        if (fresh.length > 0) messages = [...state.messages, ...fresh];
       }
       return {
         ...state,
-        isStreaming: false,
-        streamingBlocks: [],
         messages,
+        streamingAssistants: [],
         errorMessage,
       };
     }
-
-    case "message_end":
-      return state;
 
     case "compaction_start":
       return { ...state, isCompacting: true };
 
     case "compaction_end":
-      if (event.aborted) {
-        return { ...state, isCompacting: false };
-      }
+      if (event.aborted) return { ...state, isCompacting: false };
       return {
         ...state,
         isCompacting: false,
-        messages: [
-          ...state.messages,
-          {
-            role: "compactionSummary",
-            content: event.result?.summary || "Conversation summarized",
-            timestamp: Date.now(),
-          },
-        ],
+        messages: [...state.messages, {
+          role: "compactionSummary",
+          content: event.result?.summary || "Conversation summarized",
+          timestamp: Date.now(),
+        }],
       };
 
     case "auto_retry_start":
-      return {
-        ...state,
-        errorMessage: `Retrying (${event.attempt}/${event.maxAttempts})… ${event.errorMessage}`,
-      };
+      return { ...state, errorMessage: `Retrying (${event.attempt}/${event.maxAttempts})… ${event.errorMessage}` };
 
     case "auto_retry_end":
-      if (event.success) {
-        return { ...state, errorMessage: "" };
-      }
-      return {
-        ...state,
-        errorMessage: event.finalError || "All retry attempts failed",
-      };
+      return event.success
+        ? { ...state, errorMessage: "" }
+        : { ...state, errorMessage: event.finalError || "All retry attempts failed" };
 
     case "user_message":
       return {
         ...state,
-        messages: [
-          ...state.messages,
-          {
-            role: "user" as const,
-            content: event.message,
-            timestamp: Date.now(),
-          },
-        ],
+        messages: [...state.messages, { role: "user", content: event.message, timestamp: Date.now() }],
       };
 
     default:

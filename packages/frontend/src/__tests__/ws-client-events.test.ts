@@ -41,6 +41,27 @@ describe("WS client EventListener contract", () => {
     expect(received[0].event).toEqual({ type: "agent_start" });
   });
 
+  it("preserves the full assistant message on runtime events", () => {
+    const message = {
+      role: "assistant",
+      content: [{ type: "text", text: "partial" }],
+      timestamp: 1234,
+    };
+    const received = simulateMessage({
+      type: "event",
+      sessionId: "sess-1",
+      projectId: 42,
+      event: {
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "text_delta", delta: "partial" },
+      },
+    });
+
+    expect(received[0].event.message).toEqual(message);
+    expect(received[0].event.message.timestamp).toBe(1234);
+  });
+
   it("passes projectId for 'task_updated' messages", () => {
     const received = simulateMessage({
       type: "task_updated",

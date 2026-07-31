@@ -42,13 +42,20 @@ describe("AppStore activity event routing", () => {
   });
 
   test("raw agent events update conversation cache but do not mutate project activity", () => {
+    const start = { role: "assistant" as const, content: [], timestamp: 100 };
+    const message = { ...start, content: [{ type: "text" as const, text: "working" }] };
     client.fireEvent("s1", 42, { type: "agent_start" });
+    client.fireEvent("s1", 42, { type: "message_start", message: start });
     client.fireEvent("s1", 42, {
       type: "message_update",
-      assistantMessageEvent: { type: "text_delta", delta: "working" },
+      message,
+      assistantMessageEvent: { type: "snapshot" },
     });
 
-    expect(store.activeConversationsStore.get("s1").streamingBlocks).toEqual([{ type: "text", text: "working" }]);
+    expect(store.activeConversationsStore.get("s1").streamingAssistants).toEqual([{
+      message,
+      toolExecutions: {},
+    }]);
     expect(store.projectsStore.activityForSession(42, "s1")).toBeNull();
     expect(store.projectsStore.peekStore(42)).toBeUndefined();
     expect(store.activitySummary).toEqual({ running: 0, finished: 0 });
@@ -75,20 +82,21 @@ describe("AppStore activity event routing", () => {
     });
     await store.setRoute("active-session");
 
+    const start = { role: "assistant" as const, content: [], timestamp: 100 };
+    const working = { ...start, content: [{ type: "text" as const, text: "working" }] };
+    const done = { ...start, content: [{ type: "text" as const, text: "done" }] };
     client.fireEvent("active-session", 42, { type: "agent_start" });
+    client.fireEvent("active-session", 42, { type: "message_start", message: start });
     client.fireEvent("active-session", 42, {
       type: "message_update",
-      assistantMessageEvent: { type: "text_delta", delta: "working" },
+      message: working,
+      assistantMessageEvent: { type: "snapshot" },
     });
-    client.fireEvent("active-session", 42, {
-      type: "agent_end",
-      messages: [{ role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 1000 }],
-    });
+    client.fireEvent("active-session", 42, { type: "message_end", message: done });
+    client.fireEvent("active-session", 42, { type: "agent_end", messages: [done] });
 
-    expect(store.activeConversationsStore.get("active-session").messages).toEqual([
-      { role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 1000 },
-    ]);
-    expect(store.activeConversationsStore.get("active-session").streamingBlocks).toEqual([]);
+    expect(store.activeConversationsStore.get("active-session").messages).toEqual([done]);
+    expect(store.activeConversationsStore.get("active-session").streamingAssistants).toEqual([]);
   });
 
   test("prunes completed active conversation state after route unsubscribe", async () => {
@@ -123,7 +131,7 @@ describe("AppStore activity event routing", () => {
     expect(store.activeConversationsStore.get("active-session")).toMatchObject({
       messages: [],
       hasEarlierMessages: false,
-      streamingBlocks: [],
+      streamingAssistants: [],
     });
   });
 

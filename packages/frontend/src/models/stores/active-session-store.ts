@@ -123,7 +123,7 @@ export class ActiveSessionStore {
     if (cachedSession) {
       this._lastKnownRunning = cachedSession.activityState === "running";
       if (!this._lastKnownRunning) {
-        this._conversationsStore.clearStreamingState(this.sessionId);
+        this._conversationsStore.clearCompactingState(this.sessionId);
       }
       this.notify();
       if (cachedSession.activityState === "finished") {
@@ -208,22 +208,23 @@ export class ActiveSessionStore {
     const wasRunning = this._lastKnownRunning;
     const isRunning = data.activityState === "running";
     const conversation = this._conversationsStore.get(this.sessionId);
-    const hadStreamingState = conversation.streamingBlocks.length > 0 || conversation.isCompacting;
+    const hadStreamingState = conversation.streamingAssistants.length > 0 || conversation.isCompacting;
     this._lastKnownRunning = isRunning;
     if (!isRunning) {
-      // A client can begin observing a session mid-run, receive streaming
-      // events, then first reconcile session state after the run has ended.
-      // Do not leave that stale live stream below the persisted conversation.
-      this._conversationsStore.clearStreamingState(this.sessionId);
+      // Terminal metadata can recover a missed compaction_end, but cannot
+      // identify which received assistant or live entries persistence contains.
+      this._conversationsStore.clearCompactingState(this.sessionId);
     }
+    // Received assistant snapshots remain visible until agent_end promotes
+    // them or persisted assistant timestamps reconcile matching snapshots.
     this.notify();
     if (data.activityState === "finished") {
       void this.markViewed();
     }
 
-    // If running activity just ended, or non-running session state reconciled
-    // a stale stream without a witnessed running transition, pick up the
-    // completed turn's canonical records.
+    // If running activity just ended, or the first observed metadata is
+    // terminal while snapshots exist, pick up canonical records. The merge
+    // removes only matching assistant timestamps and preserves unmatched work.
     if (!isRunning && (wasRunning || hadStreamingState)) {
       await this._conversationsStore.syncMessages(this.sessionId);
     }

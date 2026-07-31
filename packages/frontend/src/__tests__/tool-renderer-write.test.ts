@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { WriteToolBlock } from "../components/tools/write.js";
 import { getWriteSummary, getWriteInfo } from "../models/tools/write.js";
 import type { ToolBlockData } from "../models/chat-state.js";
 
@@ -24,5 +25,13 @@ describe("Write tool model helpers", () => {
     expect(getWriteInfo(makeWriteBlock({ args: { path: "f.ts", content: "hello" } }))).toEqual({ lines: 1 });
     expect(getWriteInfo(makeWriteBlock({ args: { path: "f.ts", content: "" } }))).toEqual({ lines: 0 });
     expect(getWriteInfo(makeWriteBlock({ args: undefined }))).toEqual({ lines: 0 });
+  });
+
+  test("leaves unhighlighted source text for Lit to escape once", () => {
+    const renderLine = Reflect.get(WriteToolBlock.prototype, "_renderHighlightedLine");
+    const host = { _hl: { getLineHtml: () => undefined } };
+
+    const rendered = Reflect.apply(renderLine, host, [0, "const node = <div>;"]) as string;
+    expect(rendered).toBe("const node = <div>;");
   });
 });

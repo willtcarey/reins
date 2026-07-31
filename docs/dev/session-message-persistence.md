@@ -4,7 +4,7 @@ Runtime checkpoints are **complete snapshots**, not append-only message events. 
 
 ## Ordering
 
-The runtime persistence observer serializes checkpoint handling in event order. It does not start `getMessages()` for a later checkpoint until the preceding checkpoint has been stored. This is the concurrency boundary: the messages store does not infer whether one valid snapshot is newer than another from message contents.
+The runtime persistence observer serializes checkpoint handling in event order. It does not start `getMessages()` for a later checkpoint until the preceding checkpoint has been stored. Terminal non-checkpoint boundaries such as settlement-aware `agent_settled` also wait behind that queue before broadcasting finished activity. This is the concurrency boundary: the messages store does not infer whether one valid snapshot is newer than another from message contents.
 
 Non-checkpoint activity events remain immediate.
 
