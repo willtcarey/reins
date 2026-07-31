@@ -1,11 +1,15 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { ChatPanel } from "../../components/chat-panel.js";
 import type { ClientPromptContent } from "../../models/chat-content.js";
 import { ActiveSessionStore } from "../../models/stores/active-session-store.js";
 import { ConversationsStore } from "../../models/stores/conversations-store.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
 import type { AgentMessage } from "../../models/chat-state.js";
-import { setPersistedMessages } from "../helpers/conversations.js";
+import {
+  applyStreamingAssistant,
+  completedToolTurn,
+  setPersistedMessages,
+} from "../helpers/conversations.js";
 import { collectTemplateEventListeners, templateToString } from "../helpers/lit-template.js";
 import { StubClient } from "../helpers/stub-client.js";
 
@@ -29,7 +33,11 @@ function callPrivate(obj: object, key: string, ...args: unknown[]) {
   return Reflect.apply(fn, obj, args);
 }
 
-function cacheSessionData(sessionCache: SessionCache, sessionId: string) {
+function cacheSessionData(
+  sessionCache: SessionCache,
+  sessionId: string,
+  activityState: "running" | "finished" | null = null,
+) {
   sessionCache.set(sessionId, {
     projectId: 42,
     taskId: null,
@@ -37,7 +45,7 @@ function cacheSessionData(sessionCache: SessionCache, sessionId: string) {
     name: null,
     createdAt: "",
     updatedAt: "",
-    activityState: null,
+    activityState,
     messageCount: 0,
     state: {
       model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
@@ -53,6 +61,66 @@ function panelWithMessages(messages: AgentMessage[], sessionId = "sess-attachmen
   setPersistedMessages(cache, sessionId, messages);
   el.store = store;
   return el;
+}
+
+function get(obj: object, key: string) { return Reflect.get(obj, key); }
+
+function makeSessionData(overrides: { activityState?: "running" | "finished" | null; messageCount?: number } = {}) {
+  return {
+    id: "sess-1",
+    projectId: 42,
+    taskId: null,
+    parentSessionId: null,
+    name: null,
+    createdAt: "",
+    updatedAt: "",
+    messageCount: overrides.messageCount ?? 0,
+    activityState: overrides.activityState ?? null,
+    state: {
+      model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
+      thinkingLevel: "high",
+      messageCount: overrides.messageCount ?? 0,
+    },
+  };
+}
+
+const sessionCaches = new WeakMap<ActiveSessionStore, SessionCache>();
+
+function setupPanel(opts: { client?: StubClient } = {}) {
+  const client = opts.client ?? new StubClient();
+  const sessionCache = new SessionCache();
+  const conversationsStore = new ConversationsStore();
+  const store = new ActiveSessionStore("sess-1", client, sessionCache, conversationsStore);
+  sessionCaches.set(store, sessionCache);
+
+  const el = new ChatPanel();
+  Reflect.set(el, "querySelector", () => null);
+  el.store = store;
+  callPrivate(el, "subscribeToStore");
+  return { el, store, client, conversationsStore };
+}
+
+function setSessionData(store: ActiveSessionStore, data: ReturnType<typeof makeSessionData>) {
+  sessionCaches.get(store)?.set(data.id, data);
+}
+
+function notify(store: ActiveSessionStore) {
+  void callPrivate(store, "handleSessionCacheUpdate");
+  callPrivate(store, "notify");
+}
+
+function cleanupPanel(el: ChatPanel) {
+  const unsubscribe = get(el, "unsubscribeStore");
+  if (typeof unsubscribe === "function") unsubscribe();
+}
+
+function startStreamingWithTool(
+  conversationsStore: ConversationsStore,
+  messageTimestamp = 100,
+) {
+  applyStreamingAssistant(conversationsStore, "sess-1", [
+    { id: "tool-1", name: "bash", arguments: { command: "ls" } },
+  ], messageTimestamp);
 }
 
 describe("chat-panel attachment rendering", () => {
@@ -137,7 +205,7 @@ describe("ChatPanel session switching", () => {
         entries: [{ id: "old-message", parentId: null, message: oldMessage }],
         messages: [oldMessage],
         hasEarlierMessages: false,
-        streamingBlocks: [],
+        streamingAssistants: [],
         isCompacting: false,
         errorMessage: "",
       },
@@ -150,7 +218,7 @@ describe("ChatPanel session switching", () => {
         entries: [{ id: "new-message", parentId: null, message: newMessage }],
         messages: [newMessage],
         hasEarlierMessages: false,
-        streamingBlocks: [],
+        streamingAssistants: [],
         isCompacting: false,
         errorMessage: "",
       },
@@ -173,6 +241,142 @@ describe("ChatPanel session switching", () => {
 });
 
 
+describe("ChatPanel streaming reconciliation rendering", () => {
+  test("renders a canonical completed tool once with its final response while activity metadata is still running", () => {
+    const sessionCache = new SessionCache();
+    cacheSessionData(sessionCache, "sess-1", "running");
+    const conversations = new ConversationsStore();
+    const el = new ChatPanel();
+    el.store = new ActiveSessionStore("sess-1", null, sessionCache, conversations);
+    const prompt = [{ type: "text" as const, text: "Push that" }];
+
+    conversations.addOptimisticUserMessage("sess-1", prompt, 100);
+    const tool = { id: "tool-1", name: "search", arguments: { query: "git push" }, result: "pushed" };
+    applyStreamingAssistant(conversations, "sess-1", [{ ...tool, done: true }], 200);
+
+    const canonicalMessages: AgentMessage[] = [
+      { role: "user", content: prompt, timestamp: 100 },
+      ...completedToolTurn([tool], "Pushed successfully.", 200),
+    ];
+    setPersistedMessages(conversations, "sess-1", canonicalMessages);
+
+    const toolOutput = renderConversationEntry(el, 1);
+    expect(toolOutput.match(/search-tool-block/g)).toHaveLength(2);
+    expect(toolOutput).toContain("pushed");
+    expect(renderConversationEntry(el, 3)).toContain("Pushed successfully.");
+    expect(templateToString(el.render())).not.toContain("search-tool-block");
+  });
+
+  test("renders live text and tools in native assistant order with matching overlays", () => {
+    const sessionCache = new SessionCache();
+    cacheSessionData(sessionCache, "sess-1", "running");
+    const conversations = new ConversationsStore();
+    const el = new ChatPanel();
+    el.store = new ActiveSessionStore("sess-1", null, sessionCache, conversations);
+
+    applyStreamingAssistant(conversations, "sess-1", [
+      "before",
+      { id: "tool-1", name: "search", arguments: { query: "needle" }, result: "found", done: true },
+      "after",
+    ], 200);
+
+    const output = templateToString(callPrivate(el, "renderStreamingContent"));
+    const before = output.indexOf("before");
+    const tool = output.indexOf("search-tool-block");
+    const after = output.indexOf("after");
+    expect(before).toBeGreaterThan(-1);
+    expect(tool).toBeGreaterThan(before);
+    expect(after).toBeGreaterThan(tool);
+    expect(output).toContain("found");
+    expect(output).toContain("streaming=true");
+  });
+
+  test("waits for tool execution before rendering partial streamed tool arguments", () => {
+    const sessionCache = new SessionCache();
+    cacheSessionData(sessionCache, "sess-1", "running");
+    const conversations = new ConversationsStore();
+    const el = new ChatPanel();
+    el.store = new ActiveSessionStore("sess-1", null, sessionCache, conversations);
+
+    conversations.applyEvent("sess-1", {
+      type: "message_update",
+      message: {
+        role: "assistant",
+        timestamp: 200,
+        content: [{
+          type: "toolCall",
+          id: "write-1",
+          name: "write",
+          arguments: { path: "src/file.ts", content: "const html = <di" },
+        }],
+      },
+      assistantMessageEvent: { type: "toolcall_delta" },
+    });
+
+    expect(templateToString(callPrivate(el, "renderStreamingContent"))).not.toContain("write-tool-block");
+
+    conversations.applyEvent("sess-1", {
+      type: "message_update",
+      message: {
+        role: "assistant",
+        timestamp: 200,
+        content: [{
+          type: "toolCall",
+          id: "write-1",
+          name: "write",
+          arguments: { path: "src/file.ts", content: "const html = <div></div>;" },
+        }],
+      },
+      assistantMessageEvent: { type: "toolcall_end" },
+    });
+    conversations.applyEvent("sess-1", {
+      type: "tool_execution_start",
+      toolCallId: "write-1",
+      toolName: "write",
+      args: { path: "src/file.ts", content: "const html = <div></div>;" },
+    });
+
+    const rendered = templateToString(callPrivate(el, "renderStreamingContent"));
+    expect(rendered).toContain("write-tool-block");
+    expect(rendered).toContain("const html = <div></div>;");
+  });
+
+  test("uses the shared assistant renderer for persisted and live snapshots", () => {
+    const message = {
+      role: "assistant" as const,
+      timestamp: 200,
+      content: [{ type: "text" as const, text: "same markdown" }],
+    };
+    const el = panelWithMessages([message]);
+    const persisted = renderConversationEntry(el);
+    const live = templateToString(callPrivate(el, "renderAssistantMessage", message, "live", { streaming: true }));
+
+    expect(persisted).toContain("bg-zinc-800 border-l-2 border-blue-400/60");
+    expect(live).toContain("bg-zinc-800 border-l-2 border-blue-400/60");
+    expect(persisted).toContain(".streaming=");
+    expect(persisted).not.toContain("streaming=true");
+    expect(live).toContain("streaming=true");
+  });
+
+  test("shows thinking while received assistant snapshots contain only hidden thinking", () => {
+    const sessionCache = new SessionCache();
+    cacheSessionData(sessionCache, "sess-1", "running");
+    const conversations = new ConversationsStore();
+    conversations.applyEvent("sess-1", {
+      type: "message_update",
+      message: { role: "assistant", timestamp: 200, content: [{ type: "thinking", thinking: "secret" }] },
+      assistantMessageEvent: { type: "snapshot" },
+    });
+    const el = new ChatPanel();
+    el.store = new ActiveSessionStore("sess-1", null, sessionCache, conversations);
+
+    const output = templateToString(callPrivate(el, "renderStreamingContent"));
+    expect(output).toContain("Thinking...");
+    expect(output).not.toContain("secret");
+  });
+});
+
+
 describe("ChatPanel history pagination", () => {
   test("renders persisted record IDs as history anchors", () => {
     const el = panelWithMessages([{ role: "user", content: "visible", timestamp: 1 }]);
@@ -191,7 +395,7 @@ describe("ChatPanel history pagination", () => {
       querySelectorAll: () => [],
     };
     Reflect.set(el, "store", {
-      conversation: { entries: [], messages: [], hasEarlierMessages: true, streamingBlocks: [], isCompacting: false, errorMessage: "" },
+      conversation: { entries: [], messages: [], hasEarlierMessages: true, streamingAssistants: [], isCompacting: false, errorMessage: "" },
       sessionData: { activityState: null, state: {} },
       loadEarlierMessages,
     });
@@ -309,5 +513,269 @@ describe("ChatPanel send animation", () => {
     const output = renderConversationEntry(el);
     expect(output).toContain("from peer or refresh");
     expect(output).not.toContain("sent-message-target-hidden");
+  });
+});
+
+describe("ChatPanel refresh contract", () => {
+  const originalRaf = globalThis.requestAnimationFrame;
+  afterEach(() => { globalThis.requestAnimationFrame = originalRaf; });
+
+  test("sessionData refresh during a run preserves optimistic messages and streaming tool UI", () => {
+    globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
+
+    const client = new StubClient();
+    client.prompt = mock(() => {});
+    const { el, store, conversationsStore } = setupPanel({ client });
+
+    setSessionData(store, makeSessionData({ messageCount: 1 }));
+    notify(store);
+    setPersistedMessages(conversationsStore, "sess-1", [{ role: "user", content: "earlier prompt", timestamp: 100 }]);
+
+    callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: [{ type: "text", text: "new prompt" }] } }));
+    startStreamingWithTool(conversationsStore);
+
+    setSessionData(store, makeSessionData({ activityState: "running", messageCount: 1 }));
+    notify(store);
+
+    expect(get(el, "messages")).toEqual([
+      { role: "user", content: "earlier prompt", timestamp: 100 },
+      { role: "user", content: [{ type: "text", text: "new prompt" }], timestamp: expect.any(Number) },
+    ]);
+    expect(get(el, "isStreaming")).toBe(true);
+    expect(get(el, "streamingAssistants")).toHaveLength(1);
+
+    cleanupPanel(el);
+  });
+
+  test("stale persisted messages do not drop an optimistic user message", () => {
+    globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
+
+    const client = new StubClient();
+    client.prompt = mock(() => {});
+    const { el, store, conversationsStore } = setupPanel({ client });
+    const persisted: AgentMessage[] = [{ role: "user", content: "earlier prompt", timestamp: 100 }];
+
+    setSessionData(store, makeSessionData({ messageCount: 1 }));
+    setPersistedMessages(conversationsStore, "sess-1", persisted);
+    notify(store);
+
+    callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: [{ type: "text", text: "new prompt" }] } }));
+
+    // A quick metadata/messages refresh can still reflect the DB state before
+    // the just-sent prompt has been committed. The UI should layer the local
+    // optimistic user message on top of that stale persisted snapshot.
+    setSessionData(store, makeSessionData({ messageCount: 1 }));
+    setPersistedMessages(conversationsStore, "sess-1", [...persisted]);
+    notify(store);
+
+    expect(get(el, "messages")).toEqual([
+      { role: "user", content: "earlier prompt", timestamp: 100 },
+      { role: "user", content: [{ type: "text", text: "new prompt" }], timestamp: expect.any(Number) },
+    ]);
+
+    cleanupPanel(el);
+  });
+
+  test("pending local user messages drop once persisted messages catch up", () => {
+    globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
+
+    const client = new StubClient();
+    client.prompt = mock(() => {});
+    const { el, store, conversationsStore } = setupPanel({ client });
+
+    setSessionData(store, makeSessionData({ messageCount: 1 }));
+    setPersistedMessages(conversationsStore, "sess-1", []);
+    notify(store);
+    callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: [{ type: "text", text: "new prompt" }] } }));
+    const pendingTimestamp = get(el, "messages")[0].timestamp;
+
+    const persisted: AgentMessage[] = [
+      { role: "user", content: [{ type: "text", text: "new prompt" }], timestamp: pendingTimestamp + 1 },
+    ];
+    setPersistedMessages(conversationsStore, "sess-1", persisted);
+    notify(store);
+
+    expect(get(el, "messages")).toEqual(persisted);
+    cleanupPanel(el);
+  });
+
+  test("agent_end ignores runtime user copies while promoting the final assistant", () => {
+    globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
+
+    const client = new StubClient();
+    client.prompt = mock(() => {});
+    const { el, store, conversationsStore } = setupPanel({ client });
+    const promptContent = [{ type: "text" as const, text: "new prompt" }];
+
+    setSessionData(store, makeSessionData({ messageCount: 0 }));
+    notify(store);
+    callPrivate(el, "handleSend", new CustomEvent("composer-submit", { detail: { content: promptContent } }));
+    const pendingTimestamp = get(el, "messages")[0].timestamp;
+
+    const runMessages: AgentMessage[] = [
+      { role: "user", content: promptContent, timestamp: pendingTimestamp - 1000 },
+      { role: "assistant", content: [{ type: "text", text: "done" }], timestamp: pendingTimestamp - 500 },
+    ];
+    conversationsStore.applyEvent("sess-1", { type: "message_end", message: runMessages[1] });
+    conversationsStore.applyEvent("sess-1", { type: "agent_end", messages: runMessages });
+
+    expect(get(el, "messages")).toEqual([
+      { role: "user", content: promptContent, timestamp: pendingTimestamp },
+      runMessages[1],
+    ]);
+    expect(get(el, "streamingAssistants")).toEqual([]);
+    cleanupPanel(el);
+  });
+
+  test("persisted conversation messages hydrate an empty panel even when streaming", () => {
+    globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
+    const { el, store, conversationsStore } = setupPanel();
+
+    setSessionData(store, makeSessionData({ activityState: "running", messageCount: 2 }));
+    notify(store);
+
+    setPersistedMessages(conversationsStore, "sess-1", [
+      { role: "user", content: "hello", timestamp: 1000 },
+      { role: "assistant", content: [{ type: "text", text: "hi" }], timestamp: 2000 },
+    ]);
+
+    expect(get(el, "isStreaming")).toBe(true);
+    expect(get(el, "messages")).toEqual(store.conversation.messages);
+  });
+
+  test("disconnect unsubscribes from store render notifications", () => {
+    const { el, store, conversationsStore } = setupPanel();
+
+    setSessionData(store, makeSessionData({ messageCount: 1 }));
+    setPersistedMessages(conversationsStore, "sess-1", [{ role: "user", content: "before", timestamp: 100 }]);
+    notify(store);
+    expect(get(el, "messages")).toEqual(store.conversation.messages);
+
+    const requestUpdate = mock(() => undefined);
+    Reflect.set(el, "requestUpdate", requestUpdate);
+
+    const unsub = get(el, "unsubscribeStore");
+    if (typeof unsub === "function") unsub();
+    Reflect.set(el, "unsubscribeStore", undefined);
+
+    setPersistedMessages(conversationsStore, "sess-1", [{ role: "user", content: "after", timestamp: 200 }]);
+    notify(store);
+
+    expect(requestUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("ChatPanel stale streaming reconciliation", () => {
+  const originalRaf = globalThis.requestAnimationFrame;
+  afterEach(() => { globalThis.requestAnimationFrame = originalRaf; });
+
+  test("keeps streaming through agent_end and stops only after settlement metadata is terminal", () => {
+    globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
+    const { el, store, conversationsStore } = setupPanel();
+
+    setSessionData(store, makeSessionData({ activityState: "running", messageCount: 1 }));
+    notify(store);
+    const finalAssistant = { role: "assistant" as const, content: [{ type: "text" as const, text: "done" }], timestamp: 200 };
+    conversationsStore.applyEvent("sess-1", { type: "message_end", message: finalAssistant });
+    conversationsStore.applyEvent("sess-1", { type: "agent_end", messages: [finalAssistant] });
+
+    expect(get(el, "isStreaming")).toBe(true);
+    expect(get(el, "streamingAssistants")).toEqual([]);
+    expect(get(el, "messages")).toEqual([finalAssistant]);
+
+    conversationsStore.applyEvent("sess-1", { type: "agent_settled" });
+    expect(get(el, "isStreaming")).toBe(true);
+
+    setSessionData(store, makeSessionData({ activityState: "finished", messageCount: 2 }));
+    notify(store);
+
+    expect(get(el, "isStreaming")).toBe(false);
+    cleanupPanel(el);
+  });
+
+  test("preserves unmatched streaming assistants when metadata transitions from running", () => {
+    globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
+    const { el, store, conversationsStore } = setupPanel();
+
+    setSessionData(store, makeSessionData({ activityState: "running", messageCount: 1 }));
+    notify(store);
+    startStreamingWithTool(conversationsStore);
+    const start = { role: "assistant" as const, content: [], timestamp: 200 };
+    const message = { ...start, content: [{ type: "text" as const, text: "Running..." }] };
+    conversationsStore.applyEvent("sess-1", { type: "message_start", message: start });
+    conversationsStore.applyEvent("sess-1", {
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "snapshot" },
+    });
+
+    expect(get(el, "streamingAssistants")).toHaveLength(2);
+
+    // Metadata refresh after missed agent_end
+    setSessionData(store, makeSessionData({ messageCount: 3 }));
+    notify(store);
+
+    expect(get(el, "isStreaming")).toBe(false);
+    expect(get(el, "streamingAssistants")).toHaveLength(2);
+    cleanupPanel(el);
+  });
+
+  test("accepts persisted messages when metadata transitions activityState from running", () => {
+    globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
+    const { el, store, conversationsStore } = setupPanel();
+
+    setPersistedMessages(conversationsStore, "sess-1", [{ role: "user", content: "hello", timestamp: 1000 }]);
+    notify(store);
+
+    setSessionData(store, makeSessionData({ activityState: "running", messageCount: 1 }));
+    notify(store);
+    startStreamingWithTool(conversationsStore);
+
+    const finalMessages: AgentMessage[] = [
+      { role: "user", content: "hello", timestamp: 1000 },
+      { role: "assistant", content: [{ type: "text", text: "Here are your files" }], timestamp: 2000 },
+      { role: "toolResult", toolCallId: "tool-1", toolName: "bash", content: [{ type: "text", text: "file1.txt" }], isError: false, timestamp: 3000 },
+    ];
+    setPersistedMessages(conversationsStore, "sess-1", finalMessages);
+    setSessionData(store, makeSessionData({ messageCount: 3 }));
+    notify(store);
+
+    expect(get(el, "isStreaming")).toBe(false);
+    expect(get(el, "streamingAssistants")).toHaveLength(1);
+    expect(get(el, "messages")).toEqual(finalMessages);
+    cleanupPanel(el);
+  });
+
+  test("persisted output clears streaming assistants before metadata catches up", () => {
+    globalThis.requestAnimationFrame = mock((cb: FrameRequestCallback) => { cb(0); return 1; });
+    const { el, store, conversationsStore } = setupPanel();
+
+    setSessionData(store, makeSessionData({ activityState: "running", messageCount: 1 }));
+    setPersistedMessages(conversationsStore, "sess-1", [{ role: "user", content: "hello", timestamp: 1000 }]);
+    notify(store);
+    startStreamingWithTool(conversationsStore, 2000);
+
+    // Messages arrive first, metadata still says running.
+    const finalMessages: AgentMessage[] = [
+      { role: "user", content: "hello", timestamp: 1000 },
+      ...completedToolTurn([
+        { id: "tool-1", name: "bash", arguments: { command: "ls" }, result: "file1.txt" },
+      ], "Done", 2000),
+    ];
+    setPersistedMessages(conversationsStore, "sess-1", finalMessages);
+    notify(store);
+
+    expect(get(el, "isStreaming")).toBe(true);
+    expect(get(el, "streamingAssistants")).toEqual([]);
+    expect(get(el, "messages")).toEqual(finalMessages);
+
+    // Metadata catches up.
+    setSessionData(store, makeSessionData({ messageCount: 4 }));
+    notify(store);
+
+    expect(get(el, "isStreaming")).toBe(false);
+    expect(get(el, "streamingAssistants")).toEqual([]);
+    expect(get(el, "messages")).toEqual(finalMessages);
+    cleanupPanel(el);
   });
 });

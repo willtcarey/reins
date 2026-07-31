@@ -139,6 +139,17 @@ describe("claude stream processor", () => {
 
     expect(stop).toEqual([
       expect.objectContaining({
+        type: "message_update",
+        message: expect.objectContaining({
+          role: "assistant",
+          content: [expect.objectContaining({
+            type: "toolCall",
+            id: "tc1",
+            arguments: { path: "/foo.ts" },
+          })],
+        }),
+      }),
+      expect.objectContaining({
         type: "tool_execution_start",
         toolCallId: "tc1",
         toolName: "read",
@@ -473,6 +484,7 @@ describe("claude stream processor", () => {
       event: { type: "content_block_stop", index: 0 },
     }));
     expect(toolStart).toEqual([
+      expect.objectContaining({ type: "message_update" }),
       expect.objectContaining({
         type: "tool_execution_start",
         toolCallId: "toolu_read",
@@ -557,6 +569,7 @@ describe("claude stream processor", () => {
       "agent_start",
       "turn_start",
       "message_start",
+      "message_update",
       "tool_execution_start",
       "tool_execution_end",
       // Intermediate boundary at message_start (turn 2)

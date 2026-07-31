@@ -73,6 +73,7 @@ type RuntimeAssistantDelta = {
 export type AgentRuntimeEvent =
   | { type: "agent_start" }
   | { type: "agent_end"; messages: RuntimeMessage[] }
+  | { type: "agent_settled" }
   | { type: "turn_start" }
   | { type: "turn_end"; message: RuntimeMessage; toolResults: RuntimeMessage[] }
   | { type: "message_start"; message: RuntimeMessage }
@@ -120,7 +121,11 @@ export interface SetRuntimeModelParams {
   thinkingLevel?: string | null;
 }
 
+export type RuntimeActivityCompletionBoundary = "agent_end" | "agent_settled";
+
 export interface AgentRuntime {
+  /** Lifecycle event that marks outer runtime activity finished. Defaults to agent_end. */
+  readonly activityCompletionBoundary?: RuntimeActivityCompletionBoundary;
   prompt(content: ClientPromptContent): Promise<void>;
   steer(content: ClientPromptContent): Promise<void>;
   abort(): Promise<void>;

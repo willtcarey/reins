@@ -69,8 +69,12 @@ A runtime returned from `createRuntime()` must implement:
   - Applies live model changes for an already-open runtime.
   - If runtime-native live switching is unsupported, store for next turn or reject clearly.
 - `subscribe(listener): () => void`
-  - Registers a listener for `AgentRuntimeEvent` and returns an unsubscribe function.
+  - Registers a listener for normalized `AgentRuntimeEvent` values and returns an unsubscribe function.
+  - Adapters must explicitly map supported native events; unchecked vendor-event pass-through is not part of the contract.
   - Events drive both frontend streaming and persistence checkpoints.
+- Optional `activityCompletionBoundary: "agent_end" | "agent_settled"`
+  - Defaults to `agent_end`. Opt into `agent_settled` only when the runtime has an outer lifecycle that remains active after its inner agent run ends.
+  - Pi opts into `agent_settled`; Claude SDK and runtimes without this property retain existing `agent_end`/terminal-compaction completion behavior.
 - `getMessages(): Promise<AgentRuntimeMessage[]>`
   - Returns the full current Reins-normalized transcript for persistence/LLM resume.
   - This is the source of truth used by `runtime-persistence-observer.ts`.
@@ -89,11 +93,16 @@ Events are `AgentRuntimeEvent` values from `runtimes/registry.ts`.
 
 - `agent_start`
   - Emit as soon as a run is accepted/started so the UI shows streaming state.
-- `message_update`
-  - For text streaming, set `assistantMessageEvent.type = "text_delta"` and `delta` to the appended text.
+- `message_start`, `message_update`, and `message_end`
+  - Every event carries the complete current Reins-normalized message snapshot. For assistant messages, keep the same numeric `message.timestamp` throughout the lifecycle and in persistence.
+  - Emit `message_update` whenever assistant content changes. Provider delta metadata may remain in `assistantMessageEvent`, but consumers must not need it to reconstruct content.
+  - Pi provides full snapshots natively. Adapters for delta-only providers must accumulate provider deltas and synthesize the normalized snapshot before emitting each update.
 - `agent_end`
-  - Emit when the run is complete.
+  - Emit when the inner agent run is complete.
   - Include `messages` produced during this run (not necessarily the full transcript) so the frontend can append final assistant/tool messages.
+- `agent_settled`
+  - A normalized terminal event for runtimes whose outer prompt can continue automatically after `agent_end` (for example through threshold compaction or retry).
+  - Required when `activityCompletionBoundary` is `agent_settled`; it marks activity finished but is not a transcript persistence checkpoint.
 
 ### Required for persistence
 
@@ -117,12 +126,13 @@ Tool names should be normalized to Reins names where possible (`read`, `write`, 
 
 ### Recommended lifecycle events
 
-- `turn_start`, `message_start`, `message_end`, `turn_end`
+- `turn_start`, `turn_end`
   - Useful for pi compatibility and mid-loop persistence.
+  - Pi also emits message lifecycles for user and tool-result messages. Consumers must inspect `message.role`; only assistant lifecycles belong in assistant streaming state.
 - `compaction_start`, `compaction_end`
   - Required if the runtime performs context compaction/summarization.
   - `compaction_start` may occur before `agent_start` for runtimes that compact before entering the agent loop for a new turn. Reins treats it as active session work.
-  - Set `compaction_end.willRetry` when known. `willRetry: true` means active work will continue after compaction; `willRetry: false` means compaction is terminal and Reins should not wait for a later `agent_end` to clear activity.
+  - Set `compaction_end.willRetry` when known. For default runtimes, `willRetry: false` is terminal. For settlement-aware runtimes, successful automatic compaction remains active until `agent_settled`.
 - `auto_retry_start`, `auto_retry_end`
   - Optional UI diagnostics for retrying runtimes.
 
@@ -141,7 +151,7 @@ Tool names should be normalized to Reins names where possible (`read`, `write`, 
     - `{ type: "thinking", thinking, thinkingSignature? }`
     - `{ type: "toolCall", id, name, arguments }`
   - `stopReason` optional.
-  - `timestamp` recommended.
+  - `timestamp` required and stable across that assistant message's lifecycle events and persisted form.
 - Tool result:
   - `role: "toolResult"`
   - `toolCallId`, `toolName`, `content`, `isError`, `timestamp`.

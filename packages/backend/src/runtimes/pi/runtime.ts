@@ -1,4 +1,4 @@
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { hydratePromptContent } from "../../session-attachments-store.js";
 import { toPiThinkingLevel } from "./session.js";
 import type {
@@ -85,14 +85,6 @@ function runtimePromptToTextAndImages(content: HydratedPromptContent): {
 }
 
 /**
- * Assert that a value is an AgentRuntimeEvent.
- * PI AgentSessionEvent and AgentRuntimeEvent share structure by design.
- */
-function assertRuntimeEvent(_value: unknown): asserts _value is AgentRuntimeEvent {
-  // PI session events are structurally compatible with AgentRuntimeEvent
-}
-
-/**
  * Assert that a value is a PI runtime message array.
  * PI may use string text content; normalize it at this adapter boundary before
  * handing messages to Reins persistence.
@@ -101,8 +93,95 @@ function assertPiRuntimeMessages(_value: unknown): asserts _value is PiRuntimeMe
   // PI session messages match PiRuntimeMessage by design
 }
 
+function normalizePiEventMessage(message: unknown): RuntimeMessage {
+  const messages = [message];
+  assertPiRuntimeMessages(messages);
+  return normalizePiRuntimeMessage(messages[0]!);
+}
+
+/** Explicitly maps Pi's native event surface into Reins' normalized contract. */
+export function mapPiSessionEvent(event: AgentSessionEvent): AgentRuntimeEvent | null {
+  switch (event.type) {
+    case "agent_start":
+    case "agent_settled":
+    case "turn_start":
+      return { type: event.type };
+    case "agent_end":
+      return { type: "agent_end", messages: event.messages.map(normalizePiEventMessage) };
+    case "turn_end":
+      return {
+        type: "turn_end",
+        message: normalizePiEventMessage(event.message),
+        toolResults: event.toolResults.map(normalizePiEventMessage),
+      };
+    case "message_start":
+    case "message_end":
+      return { type: event.type, message: normalizePiEventMessage(event.message) };
+    case "message_update":
+      return {
+        type: "message_update",
+        message: normalizePiEventMessage(event.message),
+        assistantMessageEvent: event.assistantMessageEvent,
+      };
+    case "tool_execution_start":
+      return {
+        type: "tool_execution_start",
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        args: event.args,
+      };
+    case "tool_execution_update":
+      return {
+        type: "tool_execution_update",
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        args: event.args,
+        partialResult: event.partialResult,
+      };
+    case "tool_execution_end":
+      return {
+        type: "tool_execution_end",
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        result: event.result,
+        isError: event.isError,
+      };
+    case "compaction_start":
+      return { type: "compaction_start", reason: event.reason };
+    case "compaction_end":
+      return {
+        type: "compaction_end",
+        result: event.result,
+        aborted: event.aborted,
+        errorMessage: event.errorMessage,
+        willRetry: event.willRetry,
+      };
+    case "auto_retry_start":
+      return {
+        type: "auto_retry_start",
+        attempt: event.attempt,
+        maxAttempts: event.maxAttempts,
+        delayMs: event.delayMs,
+        errorMessage: event.errorMessage,
+      };
+    case "auto_retry_end":
+      return {
+        type: "auto_retry_end",
+        success: event.success,
+        attempt: event.attempt,
+        finalError: event.finalError,
+      };
+    case "queue_update":
+    case "entry_appended":
+    case "session_info_changed":
+    case "thinking_level_changed":
+      return null;
+  }
+}
+
 export class PiAgentRuntime implements AgentRuntime {
   readonly runtimeType = "pi" as const;
+  readonly activityCompletionBoundary = "agent_settled" as const;
 
   constructor(
     public readonly session: AgentSession,
@@ -158,8 +237,8 @@ export class PiAgentRuntime implements AgentRuntime {
 
   subscribe(listener: (event: AgentRuntimeEvent) => void): () => void {
     const unsubscribe = this.session.subscribe((event) => {
-      assertRuntimeEvent(event);
-      listener(event);
+      const normalized = mapPiSessionEvent(event);
+      if (normalized) listener(normalized);
     });
     return typeof unsubscribe === "function" ? unsubscribe : () => {};
   }

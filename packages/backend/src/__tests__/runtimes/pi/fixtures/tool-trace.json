@@ -1,0 +1,4001 @@
+{
+  "version": 1,
+  "capturedAt": "2026-07-31T04:24:24.841Z",
+  "runtime": "pi",
+  "sdkPackage": "@earendil-works/pi-coding-agent@0.80.6",
+  "workspace": "<fixture-workspace>",
+  "model": {
+    "provider": "openai-codex",
+    "id": "gpt-5.4-mini"
+  },
+  "prompt": "Use the read tool to read `trace-input.txt`.\nThen use the bash tool to run exactly `printf 'PI_BASH_TRACE_OK\\n'`.\nRun the tools in that order, not in parallel.\nAfter both tools finish, reply with exactly: Pi trace complete.",
+  "toolPlan": {
+    "readPath": "trace-input.txt",
+    "bashCommand": "printf 'PI_BASH_TRACE_OK\\n'"
+  },
+  "events": [
+    {
+      "type": "agent_start"
+    },
+    {
+      "type": "turn_start"
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Use the read tool to read `trace-input.txt`.\nThen use the bash tool to run exactly `printf 'PI_BASH_TRACE_OK\\n'`.\nRun the tools in that order, not in parallel.\nAfter both tools finish, reply with exactly: Pi trace complete."
+          }
+        ],
+        "timestamp": 1785471860954
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Use the read tool to read `trace-input.txt`.\nThen use the bash tool to run exactly `printf 'PI_BASH_TRACE_OK\\n'`.\nRun the tools in that order, not in parallel.\nAfter both tools finish, reply with exactly: Pi trace complete."
+          }
+        ],
+        "timestamp": 1785471860954
+      }
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471860964
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "thinking_start",
+        "contentIndex": 0,
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": ""
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471860964,
+          "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": ""
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471860964,
+        "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "thinking_delta",
+        "contentIndex": 0,
+        "delta": "**Planning sequential input reading**",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "**Planning sequential input reading**"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471860964,
+          "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "**Planning sequential input reading**"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471860964,
+        "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "thinking_delta",
+        "contentIndex": 0,
+        "delta": "\n\n",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "**Planning sequential input reading**\n\n"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471860964,
+          "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "**Planning sequential input reading**\n\n"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471860964,
+        "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "thinking_end",
+        "contentIndex": 0,
+        "content": "**Planning sequential input reading**",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "**Planning sequential input reading**",
+              "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471860964,
+          "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "**Planning sequential input reading**",
+            "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471860964,
+        "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_start",
+        "contentIndex": 1,
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "**Planning sequential input reading**",
+              "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+            },
+            {
+              "type": "toolCall",
+              "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+              "name": "read",
+              "arguments": {},
+              "partialJson": ""
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471860964,
+          "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "**Planning sequential input reading**",
+            "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+          },
+          {
+            "type": "toolCall",
+            "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+            "name": "read",
+            "arguments": {},
+            "partialJson": ""
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471860964,
+        "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 1,
+        "delta": "{\"",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "**Planning sequential input reading**",
+              "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+            },
+            {
+              "type": "toolCall",
+              "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+              "name": "read",
+              "arguments": {},
+              "partialJson": "{\""
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471860964,
+          "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "**Planning sequential input reading**",
+            "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+          },
+          {
+            "type": "toolCall",
+            "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+            "name": "read",
+            "arguments": {},
+            "partialJson": "{\""
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471860964,
+        "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 1,
+        "delta": "path",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "**Planning sequential input reading**",
+              "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+            },
+            {
+              "type": "toolCall",
+              "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+              "name": "read",
+              "arguments": {},
+              "partialJson": "{\"path"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471860964,
+          "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "**Planning sequential input reading**",
+            "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+          },
+          {
+            "type": "toolCall",
+            "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+            "name": "read",
+            "arguments": {},
+            "partialJson": "{\"path"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471860964,
+        "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 1,
+        "delta": "\":\"",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "**Planning sequential input reading**",
+              "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+            },
+            {
+              "type": "toolCall",
+              "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+              "name": "read",
+              "arguments": {
+                "path": ""
+              },
+              "partialJson": "{\"path\":\""
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471860964,
+          "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "**Planning sequential input reading**",
+            "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+          },
+          {
+            "type": "toolCall",
+            "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+            "name": "read",
+            "arguments": {
+              "path": ""
+            },
+            "partialJson": "{\"path\":\""
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471860964,
+        "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 1,
+        "delta": "trace",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "**Planning sequential input reading**",
+              "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+            },
+            {
+              "type": "toolCall",
+              "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+              "name": "read",
+              "arguments": {
+                "path": "trace"
+              },
+              "partialJson": "{\"path\":\"trace"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471860964,
+          "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "**Planning sequential input reading**",
+            "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+          },
+          {
+            "type": "toolCall",
+            "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+            "name": "read",
+            "arguments": {
+              "path": "trace"
+            },
+            "partialJson": "{\"path\":\"trace"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471860964,
+        "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 1,
+        "delta": "-input",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "**Planning sequential input reading**",
+              "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+            },
+            {
+              "type": "toolCall",
+              "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+              "name": "read",
+              "arguments": {
+                "path": "trace-input"
+              },
+              "partialJson": "{\"path\":\"trace-input"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471860964,
+          "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "**Planning sequential input reading**",
+            "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+          },
+          {
+            "type": "toolCall",
+            "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+            "name": "read",
+            "arguments": {
+              "path": "trace-input"
+            },
+            "partialJson": "{\"path\":\"trace-input"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471860964,
+        "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 1,
+        "delta": ".txt",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "**Planning sequential input reading**",
+              "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+            },
+            {
+              "type": "toolCall",
+              "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+              "name": "read",
+              "arguments": {
+                "path": "trace-input.txt"
+              },
+              "partialJson": "{\"path\":\"trace-input.txt"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471860964,
+          "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "**Planning sequential input reading**",
+            "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+          },
+          {
+            "type": "toolCall",
+            "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+            "name": "read",
+            "arguments": {
+              "path": "trace-input.txt"
+            },
+            "partialJson": "{\"path\":\"trace-input.txt"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471860964,
+        "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 1,
+        "delta": "\"}",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "**Planning sequential input reading**",
+              "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+            },
+            {
+              "type": "toolCall",
+              "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+              "name": "read",
+              "arguments": {
+                "path": "trace-input.txt"
+              },
+              "partialJson": "{\"path\":\"trace-input.txt\"}"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471860964,
+          "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "**Planning sequential input reading**",
+            "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+          },
+          {
+            "type": "toolCall",
+            "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+            "name": "read",
+            "arguments": {
+              "path": "trace-input.txt"
+            },
+            "partialJson": "{\"path\":\"trace-input.txt\"}"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471860964,
+        "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_end",
+        "contentIndex": 1,
+        "toolCall": {
+          "type": "toolCall",
+          "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+          "name": "read",
+          "arguments": {
+            "path": "trace-input.txt"
+          }
+        },
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "**Planning sequential input reading**",
+              "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+            },
+            {
+              "type": "toolCall",
+              "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+              "name": "read",
+              "arguments": {
+                "path": "trace-input.txt"
+              }
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471860964,
+          "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "**Planning sequential input reading**",
+            "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+          },
+          {
+            "type": "toolCall",
+            "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+            "name": "read",
+            "arguments": {
+              "path": "trace-input.txt"
+            }
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471860964,
+        "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "**Planning sequential input reading**",
+            "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+          },
+          {
+            "type": "toolCall",
+            "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+            "name": "read",
+            "arguments": {
+              "path": "trace-input.txt"
+            }
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 338,
+          "output": 57,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "reasoning": 36,
+          "totalTokens": 395,
+          "cost": {
+            "input": 0.0002535,
+            "output": 0.0002565,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0.00051
+          }
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1785471860964,
+        "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+      }
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+      "toolName": "read",
+      "args": {
+        "path": "trace-input.txt"
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+      "toolName": "read",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "PI_READ_TRACE_OK\n"
+          }
+        ]
+      },
+      "isError": false
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "toolResult",
+        "toolCallId": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+        "toolName": "read",
+        "content": [
+          {
+            "type": "text",
+            "text": "PI_READ_TRACE_OK\n"
+          }
+        ],
+        "isError": false,
+        "timestamp": 1785471862906
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "toolResult",
+        "toolCallId": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+        "toolName": "read",
+        "content": [
+          {
+            "type": "text",
+            "text": "PI_READ_TRACE_OK\n"
+          }
+        ],
+        "isError": false,
+        "timestamp": 1785471862906
+      }
+    },
+    {
+      "type": "turn_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "**Planning sequential input reading**",
+            "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+          },
+          {
+            "type": "toolCall",
+            "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+            "name": "read",
+            "arguments": {
+              "path": "trace-input.txt"
+            }
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 338,
+          "output": 57,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "reasoning": 36,
+          "totalTokens": 395,
+          "cost": {
+            "input": 0.0002535,
+            "output": 0.0002565,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0.00051
+          }
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1785471860964,
+        "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+      },
+      "toolResults": [
+        {
+          "role": "toolResult",
+          "toolCallId": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+          "toolName": "read",
+          "content": [
+            {
+              "type": "text",
+              "text": "PI_READ_TRACE_OK\n"
+            }
+          ],
+          "isError": false,
+          "timestamp": 1785471862906
+        }
+      ]
+    },
+    {
+      "type": "turn_start"
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_start",
+        "contentIndex": 0,
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {},
+              "partialJson": ""
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {},
+            "partialJson": ""
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 0,
+        "delta": "{\"",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {},
+              "partialJson": "{\""
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {},
+            "partialJson": "{\""
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 0,
+        "delta": "command",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {},
+              "partialJson": "{\"command"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {},
+            "partialJson": "{\"command"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 0,
+        "delta": "\":\"",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {
+                "command": ""
+              },
+              "partialJson": "{\"command\":\""
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {
+              "command": ""
+            },
+            "partialJson": "{\"command\":\""
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 0,
+        "delta": "printf",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {
+                "command": "printf"
+              },
+              "partialJson": "{\"command\":\"printf"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {
+              "command": "printf"
+            },
+            "partialJson": "{\"command\":\"printf"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 0,
+        "delta": " '",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {
+                "command": "printf '"
+              },
+              "partialJson": "{\"command\":\"printf '"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {
+              "command": "printf '"
+            },
+            "partialJson": "{\"command\":\"printf '"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 0,
+        "delta": "PI",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {
+                "command": "printf 'PI"
+              },
+              "partialJson": "{\"command\":\"printf 'PI"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {
+              "command": "printf 'PI"
+            },
+            "partialJson": "{\"command\":\"printf 'PI"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 0,
+        "delta": "_B",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {
+                "command": "printf 'PI_B"
+              },
+              "partialJson": "{\"command\":\"printf 'PI_B"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {
+              "command": "printf 'PI_B"
+            },
+            "partialJson": "{\"command\":\"printf 'PI_B"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 0,
+        "delta": "ASH",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {
+                "command": "printf 'PI_BASH"
+              },
+              "partialJson": "{\"command\":\"printf 'PI_BASH"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {
+              "command": "printf 'PI_BASH"
+            },
+            "partialJson": "{\"command\":\"printf 'PI_BASH"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 0,
+        "delta": "_TRACE",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {
+                "command": "printf 'PI_BASH_TRACE"
+              },
+              "partialJson": "{\"command\":\"printf 'PI_BASH_TRACE"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {
+              "command": "printf 'PI_BASH_TRACE"
+            },
+            "partialJson": "{\"command\":\"printf 'PI_BASH_TRACE"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 0,
+        "delta": "_OK",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {
+                "command": "printf 'PI_BASH_TRACE_OK"
+              },
+              "partialJson": "{\"command\":\"printf 'PI_BASH_TRACE_OK"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {
+              "command": "printf 'PI_BASH_TRACE_OK"
+            },
+            "partialJson": "{\"command\":\"printf 'PI_BASH_TRACE_OK"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 0,
+        "delta": "\\\\",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {
+                "command": "printf 'PI_BASH_TRACE_OK\\"
+              },
+              "partialJson": "{\"command\":\"printf 'PI_BASH_TRACE_OK\\\\"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {
+              "command": "printf 'PI_BASH_TRACE_OK\\"
+            },
+            "partialJson": "{\"command\":\"printf 'PI_BASH_TRACE_OK\\\\"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 0,
+        "delta": "n",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {
+                "command": "printf 'PI_BASH_TRACE_OK\\n"
+              },
+              "partialJson": "{\"command\":\"printf 'PI_BASH_TRACE_OK\\\\n"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {
+              "command": "printf 'PI_BASH_TRACE_OK\\n"
+            },
+            "partialJson": "{\"command\":\"printf 'PI_BASH_TRACE_OK\\\\n"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 0,
+        "delta": "'",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {
+                "command": "printf 'PI_BASH_TRACE_OK\\n'"
+              },
+              "partialJson": "{\"command\":\"printf 'PI_BASH_TRACE_OK\\\\n'"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {
+              "command": "printf 'PI_BASH_TRACE_OK\\n'"
+            },
+            "partialJson": "{\"command\":\"printf 'PI_BASH_TRACE_OK\\\\n'"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 0,
+        "delta": "\"}",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {
+                "command": "printf 'PI_BASH_TRACE_OK\\n'"
+              },
+              "partialJson": "{\"command\":\"printf 'PI_BASH_TRACE_OK\\\\n'\"}"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {
+              "command": "printf 'PI_BASH_TRACE_OK\\n'"
+            },
+            "partialJson": "{\"command\":\"printf 'PI_BASH_TRACE_OK\\\\n'\"}"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_end",
+        "contentIndex": 0,
+        "toolCall": {
+          "type": "toolCall",
+          "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "name": "bash",
+          "arguments": {
+            "command": "printf 'PI_BASH_TRACE_OK\\n'"
+          }
+        },
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {
+                "command": "printf 'PI_BASH_TRACE_OK\\n'"
+              }
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {
+              "command": "printf 'PI_BASH_TRACE_OK\\n'"
+            }
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {
+              "command": "printf 'PI_BASH_TRACE_OK\\n'"
+            }
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 410,
+          "output": 27,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "reasoning": 0,
+          "totalTokens": 437,
+          "cost": {
+            "input": 0.0003075,
+            "output": 0.0001215,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0.000429
+          }
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      }
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+      "toolName": "bash",
+      "args": {
+        "command": "printf 'PI_BASH_TRACE_OK\\n'"
+      }
+    },
+    {
+      "type": "tool_execution_update",
+      "toolCallId": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+      "toolName": "bash",
+      "args": {
+        "command": "printf 'PI_BASH_TRACE_OK\\n'"
+      },
+      "partialResult": {
+        "content": []
+      }
+    },
+    {
+      "type": "tool_execution_update",
+      "toolCallId": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+      "toolName": "bash",
+      "args": {
+        "command": "printf 'PI_BASH_TRACE_OK\\n'"
+      },
+      "partialResult": {
+        "content": [
+          {
+            "type": "text",
+            "text": "PI_BASH_TRACE_OK\n"
+          }
+        ],
+        "details": {}
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+      "toolName": "bash",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "PI_BASH_TRACE_OK\n"
+          }
+        ]
+      },
+      "isError": false
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "toolResult",
+        "toolCallId": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+        "toolName": "bash",
+        "content": [
+          {
+            "type": "text",
+            "text": "PI_BASH_TRACE_OK\n"
+          }
+        ],
+        "isError": false,
+        "timestamp": 1785471863945
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "toolResult",
+        "toolCallId": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+        "toolName": "bash",
+        "content": [
+          {
+            "type": "text",
+            "text": "PI_BASH_TRACE_OK\n"
+          }
+        ],
+        "isError": false,
+        "timestamp": 1785471863945
+      }
+    },
+    {
+      "type": "turn_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+            "name": "bash",
+            "arguments": {
+              "command": "printf 'PI_BASH_TRACE_OK\\n'"
+            }
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 410,
+          "output": 27,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "reasoning": 0,
+          "totalTokens": 437,
+          "cost": {
+            "input": 0.0003075,
+            "output": 0.0001215,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0.000429
+          }
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1785471862907,
+        "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+      },
+      "toolResults": [
+        {
+          "role": "toolResult",
+          "toolCallId": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "toolName": "bash",
+          "content": [
+            {
+              "type": "text",
+              "text": "PI_BASH_TRACE_OK\n"
+            }
+          ],
+          "isError": false,
+          "timestamp": 1785471863945
+        }
+      ]
+    },
+    {
+      "type": "turn_start"
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471863945
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "text_start",
+        "contentIndex": 0,
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": ""
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471863945,
+          "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": ""
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471863945,
+        "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "text_delta",
+        "contentIndex": 0,
+        "delta": "Pi",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Pi"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471863945,
+          "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Pi"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471863945,
+        "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "text_delta",
+        "contentIndex": 0,
+        "delta": " trace",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Pi trace"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471863945,
+          "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Pi trace"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471863945,
+        "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "text_delta",
+        "contentIndex": 0,
+        "delta": " complete",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Pi trace complete"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471863945,
+          "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Pi trace complete"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471863945,
+        "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "text_delta",
+        "contentIndex": 0,
+        "delta": ".",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Pi trace complete."
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471863945,
+          "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Pi trace complete."
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471863945,
+        "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "text_end",
+        "contentIndex": 0,
+        "content": "Pi trace complete.",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Pi trace complete.",
+              "textSignature": "{\"v\":1,\"id\":\"msg_0a51a78d348a6efe016a6c2378ac348194a883047072b8dab4\",\"phase\":\"final_answer\"}"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471863945,
+          "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Pi trace complete.",
+            "textSignature": "{\"v\":1,\"id\":\"msg_0a51a78d348a6efe016a6c2378ac348194a883047072b8dab4\",\"phase\":\"final_answer\"}"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471863945,
+        "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Pi trace complete.",
+            "textSignature": "{\"v\":1,\"id\":\"msg_0a51a78d348a6efe016a6c2378ac348194a883047072b8dab4\",\"phase\":\"final_answer\"}"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 454,
+          "output": 8,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "reasoning": 0,
+          "totalTokens": 462,
+          "cost": {
+            "input": 0.0003405,
+            "output": 0.000036,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0.0003765
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471863945,
+        "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+      }
+    },
+    {
+      "type": "turn_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Pi trace complete.",
+            "textSignature": "{\"v\":1,\"id\":\"msg_0a51a78d348a6efe016a6c2378ac348194a883047072b8dab4\",\"phase\":\"final_answer\"}"
+          }
+        ],
+        "api": "openai-codex-responses",
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "usage": {
+          "input": 454,
+          "output": 8,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "reasoning": 0,
+          "totalTokens": 462,
+          "cost": {
+            "input": 0.0003405,
+            "output": 0.000036,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0.0003765
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1785471863945,
+        "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+      },
+      "toolResults": []
+    },
+    {
+      "type": "agent_end",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Use the read tool to read `trace-input.txt`.\nThen use the bash tool to run exactly `printf 'PI_BASH_TRACE_OK\\n'`.\nRun the tools in that order, not in parallel.\nAfter both tools finish, reply with exactly: Pi trace complete."
+            }
+          ],
+          "timestamp": 1785471860954
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "**Planning sequential input reading**",
+              "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+            },
+            {
+              "type": "toolCall",
+              "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+              "name": "read",
+              "arguments": {
+                "path": "trace-input.txt"
+              }
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 338,
+            "output": 57,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 36,
+            "totalTokens": 395,
+            "cost": {
+              "input": 0.0002535,
+              "output": 0.0002565,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.00051
+            }
+          },
+          "stopReason": "toolUse",
+          "timestamp": 1785471860964,
+          "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        },
+        {
+          "role": "toolResult",
+          "toolCallId": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+          "toolName": "read",
+          "content": [
+            {
+              "type": "text",
+              "text": "PI_READ_TRACE_OK\n"
+            }
+          ],
+          "isError": false,
+          "timestamp": 1785471862906
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+              "name": "bash",
+              "arguments": {
+                "command": "printf 'PI_BASH_TRACE_OK\\n'"
+              }
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 410,
+            "output": 27,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 0,
+            "totalTokens": 437,
+            "cost": {
+              "input": 0.0003075,
+              "output": 0.0001215,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.000429
+            }
+          },
+          "stopReason": "toolUse",
+          "timestamp": 1785471862907,
+          "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        },
+        {
+          "role": "toolResult",
+          "toolCallId": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "toolName": "bash",
+          "content": [
+            {
+              "type": "text",
+              "text": "PI_BASH_TRACE_OK\n"
+            }
+          ],
+          "isError": false,
+          "timestamp": 1785471863945
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Pi trace complete.",
+              "textSignature": "{\"v\":1,\"id\":\"msg_0a51a78d348a6efe016a6c2378ac348194a883047072b8dab4\",\"phase\":\"final_answer\"}"
+            }
+          ],
+          "api": "openai-codex-responses",
+          "provider": "openai-codex",
+          "model": "gpt-5.4-mini",
+          "usage": {
+            "input": 454,
+            "output": 8,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 0,
+            "totalTokens": 462,
+            "cost": {
+              "input": 0.0003405,
+              "output": 0.000036,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.0003765
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1785471863945,
+          "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+        }
+      ],
+      "willRetry": false
+    },
+    {
+      "type": "agent_settled"
+    }
+  ],
+  "finalMessages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Use the read tool to read `trace-input.txt`.\nThen use the bash tool to run exactly `printf 'PI_BASH_TRACE_OK\\n'`.\nRun the tools in that order, not in parallel.\nAfter both tools finish, reply with exactly: Pi trace complete."
+        }
+      ],
+      "timestamp": 1785471860954
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "**Planning sequential input reading**",
+          "thinkingSignature": "{\"id\":\"rs_0a51a78d348a6efe016a6c2375f6a8819482a9953cc7aff357\",\"type\":\"reasoning\",\"content\":[],\"encrypted_content\":\"gAAAAABqbCN2gqCaJl243TiuDKCWLraBuoIlcuhfPOaL31R6Vc59MvmULvcfcbnhKEqnJwnsdVw7OjWmTDiPJ6PLZpYAni2rY3HxvLESurOMM0OJ17JaiBw238LqpA74fTOYsL_vWnGN5AlsYDJSY_bdSSLlLFuYBOByIj2LUXgxaqN04qadjtgAwUR-nt2xB36hGNDRnH4PmsB-nh5lkohOCyfP8BWEiTJsJuzYZ89v6DRYwGdCukji1nNU9YvySDmZDRUELHvr6Qy3oR321tLYQdfHr59M0z9CglZNpDKNt0qRiMe4M5wrx0HJlwx0l5b46pHz7yvFVOKrIpyc9RAkBgqJg2T12hsZdKKKMc-CqZtFhxy6D94serzBhF6OHf5GL-C08EMKp6TYEr0wr3xbayeoxwoud07VAg9PS0-vrmrZu448cyY5UXqdA9QCWSw7PucLWXm0JaZBxD6xsRo7XTgmCb0Y2OjOYmmNkv74IXKzZ9HqWqP0OINzEoEx8C_C2lY-SMQOV9tOC5WebFGbmcvB3xziLVxp9ZYfi_GVXiKi5IWnWZ_Je0HWYc9BeIDaQPD3CkYtUUFX0aJqcZRNb3O0tpqHQE5PYmmfxBwefzbPP_aUwhB-xXkppGsCjl5ZEFFO5qikNw7mFpaXIhkP0s_M38LRLWhZnAsRyU7k-yuUGl9Oiw7SxMQ_PUrNH0uVzBmTlqFohIAKdNPySjYmDHaDZYpH26JKZfYINXe4oZHhL6I015Q-7elbBXbR5b9Q82LGv3jvUFYkUaTYwGykQTO8ToiVPXcENF9luVYXYCIR9sK4bcl83agcVwcR0xcNgneI61Yb7_oFfU5fd_wN4lrhEjpzW5c-pBcs6s44kUG8m-i1k_tgE0EB3Eh107K21YnFwEZaSJoJdcTzX6z6fVz8WId11aEzBaPrCaSKsTXYhiIZNx6oUuOjOxZA5hN5RD0fAyQc14Jt0aVuau0dksXDZOhj9bW2D1_RMrwi3zw0QW9BO5fJHimq2TAOpVfwfH6P72zHaAsFglqpehJbuvBXM4D2jtPSroG5i3yFJui_tOkO0v7eaHrYr1WJ4G0k8jkrZHDUBaMMaWY7sj6w5vd9MvvXxqe2JpLILPRCIuRjURjMweTHTPAatlr1Ag_dmPTlOr4JSqgBS74-_uh-dpFKfhVHQQ==\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"**Planning sequential input reading**\"}]}"
+        },
+        {
+          "type": "toolCall",
+          "id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+          "name": "read",
+          "arguments": {
+            "path": "trace-input.txt"
+          }
+        }
+      ],
+      "api": "openai-codex-responses",
+      "provider": "openai-codex",
+      "model": "gpt-5.4-mini",
+      "usage": {
+        "input": 338,
+        "output": 57,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 36,
+        "totalTokens": 395,
+        "cost": {
+          "input": 0.0002535,
+          "output": 0.0002565,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0.00051
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1785471860964,
+      "responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+      "toolName": "read",
+      "content": [
+        {
+          "type": "text",
+          "text": "PI_READ_TRACE_OK\n"
+        }
+      ],
+      "isError": false,
+      "timestamp": 1785471862906
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "name": "bash",
+          "arguments": {
+            "command": "printf 'PI_BASH_TRACE_OK\\n'"
+          }
+        }
+      ],
+      "api": "openai-codex-responses",
+      "provider": "openai-codex",
+      "model": "gpt-5.4-mini",
+      "usage": {
+        "input": 410,
+        "output": 27,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 437,
+        "cost": {
+          "input": 0.0003075,
+          "output": 0.0001215,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0.000429
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1785471862907,
+      "responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+      "toolName": "bash",
+      "content": [
+        {
+          "type": "text",
+          "text": "PI_BASH_TRACE_OK\n"
+        }
+      ],
+      "isError": false,
+      "timestamp": 1785471863945
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Pi trace complete.",
+          "textSignature": "{\"v\":1,\"id\":\"msg_0a51a78d348a6efe016a6c2378ac348194a883047072b8dab4\",\"phase\":\"final_answer\"}"
+        }
+      ],
+      "api": "openai-codex-responses",
+      "provider": "openai-codex",
+      "model": "gpt-5.4-mini",
+      "usage": {
+        "input": 454,
+        "output": 8,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 462,
+        "cost": {
+          "input": 0.0003405,
+          "output": 0.000036,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0.0003765
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1785471863945,
+      "responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+    }
+  ],
+  "error": null,
+  "summary": {
+    "eventTypes": [
+      "agent_start",
+      "turn_start",
+      "message_start",
+      "message_end",
+      "message_start",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_end",
+      "tool_execution_start",
+      "tool_execution_end",
+      "message_start",
+      "message_end",
+      "turn_end",
+      "turn_start",
+      "message_start",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_end",
+      "tool_execution_start",
+      "tool_execution_update",
+      "tool_execution_update",
+      "tool_execution_end",
+      "message_start",
+      "message_end",
+      "turn_end",
+      "turn_start",
+      "message_start",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_end",
+      "turn_end",
+      "agent_end",
+      "agent_settled"
+    ],
+    "messageLifecycle": [
+      {
+        "eventIndex": 2,
+        "type": "message_start",
+        "role": "user",
+        "timestamp": 1785471860954,
+        "idFields": {}
+      },
+      {
+        "eventIndex": 3,
+        "type": "message_end",
+        "role": "user",
+        "timestamp": 1785471860954,
+        "idFields": {}
+      },
+      {
+        "eventIndex": 4,
+        "type": "message_start",
+        "role": "assistant",
+        "timestamp": 1785471860964,
+        "idFields": {}
+      },
+      {
+        "eventIndex": 5,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471860964,
+        "idFields": {
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      {
+        "eventIndex": 6,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471860964,
+        "idFields": {
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      {
+        "eventIndex": 7,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471860964,
+        "idFields": {
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      {
+        "eventIndex": 8,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471860964,
+        "idFields": {
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      {
+        "eventIndex": 9,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471860964,
+        "idFields": {
+          "message.content.1.id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      {
+        "eventIndex": 10,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471860964,
+        "idFields": {
+          "message.content.1.id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      {
+        "eventIndex": 11,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471860964,
+        "idFields": {
+          "message.content.1.id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      {
+        "eventIndex": 12,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471860964,
+        "idFields": {
+          "message.content.1.id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      {
+        "eventIndex": 13,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471860964,
+        "idFields": {
+          "message.content.1.id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      {
+        "eventIndex": 14,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471860964,
+        "idFields": {
+          "message.content.1.id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      {
+        "eventIndex": 15,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471860964,
+        "idFields": {
+          "message.content.1.id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      {
+        "eventIndex": 16,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471860964,
+        "idFields": {
+          "message.content.1.id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      {
+        "eventIndex": 17,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471860964,
+        "idFields": {
+          "message.content.1.id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      {
+        "eventIndex": 18,
+        "type": "message_end",
+        "role": "assistant",
+        "timestamp": 1785471860964,
+        "idFields": {
+          "message.content.1.id": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237572b88194824342a403ec257a"
+        }
+      },
+      {
+        "eventIndex": 21,
+        "type": "message_start",
+        "role": "toolResult",
+        "timestamp": 1785471862906,
+        "idFields": {
+          "message.toolCallId": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d"
+        }
+      },
+      {
+        "eventIndex": 22,
+        "type": "message_end",
+        "role": "toolResult",
+        "timestamp": 1785471862906,
+        "idFields": {
+          "message.toolCallId": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d"
+        }
+      },
+      {
+        "eventIndex": 25,
+        "type": "message_start",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {}
+      },
+      {
+        "eventIndex": 26,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 27,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 28,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 29,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 30,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 31,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 32,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 33,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 34,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 35,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 36,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 37,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 38,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 39,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 40,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 41,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 42,
+        "type": "message_end",
+        "role": "assistant",
+        "timestamp": 1785471862907,
+        "idFields": {
+          "message.content.0.id": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+          "message.responseId": "resp_0a51a78d348a6efe016a6c23772a9881949ea92505686dc2b6"
+        }
+      },
+      {
+        "eventIndex": 47,
+        "type": "message_start",
+        "role": "toolResult",
+        "timestamp": 1785471863945,
+        "idFields": {
+          "message.toolCallId": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9"
+        }
+      },
+      {
+        "eventIndex": 48,
+        "type": "message_end",
+        "role": "toolResult",
+        "timestamp": 1785471863945,
+        "idFields": {
+          "message.toolCallId": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9"
+        }
+      },
+      {
+        "eventIndex": 51,
+        "type": "message_start",
+        "role": "assistant",
+        "timestamp": 1785471863945,
+        "idFields": {}
+      },
+      {
+        "eventIndex": 52,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471863945,
+        "idFields": {
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+        }
+      },
+      {
+        "eventIndex": 53,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471863945,
+        "idFields": {
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+        }
+      },
+      {
+        "eventIndex": 54,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471863945,
+        "idFields": {
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+        }
+      },
+      {
+        "eventIndex": 55,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471863945,
+        "idFields": {
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+        }
+      },
+      {
+        "eventIndex": 56,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471863945,
+        "idFields": {
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+        }
+      },
+      {
+        "eventIndex": 57,
+        "type": "message_update",
+        "role": "assistant",
+        "timestamp": 1785471863945,
+        "idFields": {
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+        }
+      },
+      {
+        "eventIndex": 58,
+        "type": "message_end",
+        "role": "assistant",
+        "timestamp": 1785471863945,
+        "idFields": {
+          "message.responseId": "resp_0a51a78d348a6efe016a6c237843208194a0da5b906d2a0a80"
+        }
+      }
+    ],
+    "toolExecutions": [
+      {
+        "eventIndex": 19,
+        "type": "tool_execution_start",
+        "toolCallId": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+        "toolName": "read"
+      },
+      {
+        "eventIndex": 20,
+        "type": "tool_execution_end",
+        "toolCallId": "call_nFuvSIk35qb77hPXBjIN0yMP|fc_0a51a78d348a6efe016a6c2376d4fc8194b495ef738ed0674d",
+        "toolName": "read"
+      },
+      {
+        "eventIndex": 43,
+        "type": "tool_execution_start",
+        "toolCallId": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+        "toolName": "bash"
+      },
+      {
+        "eventIndex": 44,
+        "type": "tool_execution_update",
+        "toolCallId": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+        "toolName": "bash"
+      },
+      {
+        "eventIndex": 45,
+        "type": "tool_execution_update",
+        "toolCallId": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+        "toolName": "bash"
+      },
+      {
+        "eventIndex": 46,
+        "type": "tool_execution_end",
+        "toolCallId": "call_vii6QHS97vQjBwGGNpnlRPkj|fc_0a51a78d348a6efe016a6c2377aa1881948466b70c274a97f9",
+        "toolName": "bash"
+      }
+    ]
+  }
+}

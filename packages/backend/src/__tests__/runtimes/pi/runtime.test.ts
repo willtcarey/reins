@@ -139,10 +139,12 @@ describe("PiAgentRuntime", () => {
       aborted: false,
       willRetry: false,
     });
+    emit({ type: "agent_settled" });
 
     expect(listener.mock.calls).toEqual([
       [{ type: "compaction_start", reason: "threshold" }],
-      [{ type: "compaction_end", reason: "threshold", result: { summary: "done" }, aborted: false, willRetry: false }],
+      [{ type: "compaction_end", result: { summary: "done" }, aborted: false, errorMessage: undefined, willRetry: false }],
+      [{ type: "agent_settled" }],
     ]);
   });
 
@@ -150,6 +152,7 @@ describe("PiAgentRuntime", () => {
     const session = await createTestAgentSession();
     const runtime = new PiAgentRuntime(session, "sess-pi-runtime");
 
+    expect(runtime.activityCompletionBoundary).toBe("agent_settled");
     expect(getPiSession(runtime)).toBe(session);
   });
 });

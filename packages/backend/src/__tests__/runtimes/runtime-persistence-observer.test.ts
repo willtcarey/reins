@@ -8,6 +8,7 @@ import type { Broadcast } from "../../models/broadcast.js";
 import type { AgentRuntime, AgentRuntimeEvent } from "../../runtimes/registry.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
+import piCompactionTrace from "./pi/fixtures/compaction-trace.json";
 
 const noopBroadcast: Broadcast = () => {};
 
@@ -193,6 +194,118 @@ describe("runtime persistence observer", () => {
     emit({ type: "compaction_end", result: { summary: "done" }, aborted: false, willRetry: false });
     await Bun.sleep(50);
     expect(getSession("sess-terminal-compaction")!.activity_state).toBe("finished");
+
+    detach();
+  });
+
+  test("uses Pi's captured settlement boundary across post-agent threshold compaction", async () => {
+    const project = createProject("Reins", "/tmp/reins-pi-settlement-activity");
+    createSession("sess-pi-settlement", project.id, { agentRuntimeType: "pi" });
+    const { runtime, emit } = createRuntimeStub({ activityCompletionBoundary: "agent_settled" });
+    const detach = attachRuntimePersistenceObserver({
+      sessionId: "sess-pi-settlement",
+      runtime,
+      sessions: makeSessions(),
+    });
+
+    const capturedLifecycle = piCompactionTrace.events
+      .map(({ event }) => event)
+      .filter((event) => ["agent_start", "agent_end", "compaction_start", "compaction_end", "agent_settled"].includes(event.type));
+    expect(capturedLifecycle.map(({ type }) => type)).toEqual([
+      "agent_start",
+      "agent_end",
+      "compaction_start",
+      "compaction_end",
+      "agent_settled",
+    ]);
+
+    for (const event of capturedLifecycle) {
+      if (event.type === "agent_start" || event.type === "agent_settled") {
+        emit({ type: event.type });
+      } else if (event.type === "agent_end") {
+        emit({ type: "agent_end", messages: [] });
+      } else if (event.type === "compaction_start") {
+        emit({ type: "compaction_start", reason: event.reason! });
+      } else if (event.type === "compaction_end") {
+        emit({
+          type: "compaction_end",
+          result: event.result,
+          aborted: event.aborted,
+          willRetry: event.willRetry,
+        });
+      }
+      await Bun.sleep(10);
+      expect(getSession("sess-pi-settlement")!.activity_state).toBe(
+        event.type === "agent_settled" ? "finished" : "running",
+      );
+    }
+
+    detach();
+  });
+
+  test("a delayed settlement-aware agent_end checkpoint cannot finish activity during compaction", async () => {
+    const project = createProject("Reins", "/tmp/reins-pi-delayed-agent-end");
+    createSession("sess-pi-delayed", project.id, { agentRuntimeType: "pi" });
+    let resolveMessages!: (messages: RuntimeMessage[]) => void;
+    const messages = new Promise<RuntimeMessage[]>((resolve) => { resolveMessages = resolve; });
+    const { runtime, emit } = createRuntimeStub({ activityCompletionBoundary: "agent_settled" });
+    runtime.getMessages = () => messages;
+    const detach = attachRuntimePersistenceObserver({
+      sessionId: "sess-pi-delayed",
+      runtime,
+      sessions: makeSessions(),
+    });
+
+    emit({ type: "agent_start" });
+    emit({ type: "agent_end", messages: [] });
+    emit({ type: "compaction_start", reason: "threshold" });
+    await Bun.sleep(10);
+    expect(getSession("sess-pi-delayed")!.activity_state).toBe("running");
+
+    resolveMessages([]);
+    await Bun.sleep(20);
+    expect(getSession("sess-pi-delayed")!.activity_state).toBe("running");
+
+    detach();
+  });
+
+  test("settlement waits behind compacted persistence before broadcasting finished", async () => {
+    const project = createProject("Reins", "/tmp/reins-pi-settled-checkpoint-order");
+    createSession("sess-pi-ordered", project.id, { agentRuntimeType: "pi" });
+    const preCompaction: RuntimeMessage[] = [{ role: "assistant", content: [{ type: "text", text: "long transcript" }] }];
+    const compacted: RuntimeMessage[] = [{ role: "compactionSummary", summary: "compacted transcript" }];
+    let resolveCompaction!: (messages: RuntimeMessage[]) => void;
+    const compactionMessages = new Promise<RuntimeMessage[]>((resolve) => { resolveCompaction = resolve; });
+    let calls = 0;
+    const { runtime, emit } = createRuntimeStub({ activityCompletionBoundary: "agent_settled" });
+    runtime.getMessages = () => {
+      calls += 1;
+      return calls === 1 ? Promise.resolve(preCompaction) : compactionMessages;
+    };
+    const persistedWhenFinished: RuntimeMessage[][] = [];
+    const detach = attachRuntimePersistenceObserver({
+      sessionId: "sess-pi-ordered",
+      runtime,
+      sessions: makeSessions(() => {
+        if (getSession("sess-pi-ordered")!.activity_state === "finished") {
+          persistedWhenFinished.push(loadMessages("sess-pi-ordered"));
+        }
+      }),
+    });
+
+    emit({ type: "agent_start" });
+    emit({ type: "agent_end", messages: [] });
+    emit({ type: "compaction_start", reason: "threshold" });
+    emit({ type: "compaction_end", aborted: false, willRetry: false, result: { summary: "compacted transcript" } });
+    emit({ type: "agent_settled" });
+    await Bun.sleep(20);
+    expect(getSession("sess-pi-ordered")!.activity_state).toBe("running");
+    expect(persistedWhenFinished).toEqual([]);
+
+    resolveCompaction(compacted);
+    await Bun.sleep(30);
+    expect(getSession("sess-pi-ordered")!.activity_state).toBe("finished");
+    expect(persistedWhenFinished).toEqual([[...preCompaction, ...compacted]]);
 
     detach();
   });
