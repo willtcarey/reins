@@ -327,7 +327,7 @@ export class ChatPanel extends LitElement {
       <button
         data-role="desktop-copy-message"
         type="button"
-        class="absolute top-0 ${positionClass} z-[var(--layer-content)] hidden h-7 w-7 items-center justify-center rounded-md bg-zinc-900/80 text-zinc-500 shadow-sm transition-colors hover:bg-zinc-700 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 md:inline-flex"
+        class="absolute top-0 ${positionClass} z-[var(--layer-content)] hidden h-7 w-7 items-center justify-center rounded-md bg-transparent text-zinc-500 transition-colors hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 md:inline-flex"
         title=${copied ? "Copied" : "Copy as Markdown"}
         aria-label="Copy as Markdown"
         @click=${(event: Event) => this.copyMessageDirect(event, key, text)}
@@ -468,7 +468,7 @@ export class ChatPanel extends LitElement {
         data-message-actions=${action ? "true" : nothing}
         data-message-key=${messageKey}
         data-conversation-key=${conversationKey}
-        class="relative flex justify-end mb-3 rounded-2xl outline-none transition-[background,transform] md:select-text ${action ? 'select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-blue-400/70' : ''} ${action?.pressed ? 'scale-[0.99] bg-zinc-700/50' : ''} ${isAnimating ? 'sent-message-target-hidden' : ''}"
+        class="flex justify-end mb-3 rounded-2xl outline-none transition-[background,transform] md:select-text ${action ? 'select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-blue-400/70' : ''} ${action?.pressed ? 'scale-[0.99] bg-zinc-700/50' : ''} ${isAnimating ? 'sent-message-target-hidden' : ''}"
         tabindex=${action ? "0" : nothing}
         aria-label=${action ? "User message. Press Shift+F10 for actions" : nothing}
         @pointerdown=${action ? (event: PointerEvent) => this.handleMessagePointerDown(event, messageKey, action.text) : nothing}
@@ -490,7 +490,6 @@ export class ChatPanel extends LitElement {
             </div>
           ` : nothing}
         </div>
-        ${action ? this.renderDesktopCopyControl(messageKey, action.text, action.copied, "right-0") : nothing}
       </div>
     `;
   }

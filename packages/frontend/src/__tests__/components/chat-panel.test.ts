@@ -431,7 +431,7 @@ describe("ChatPanel history pagination", () => {
 
 
 describe("ChatPanel message actions", () => {
-  test("makes messages action targets with a desktop-only corner copy control", () => {
+  test("keeps user actions in menus and shows a transparent desktop copy control on assistants", () => {
     const el = panelWithMessages([
       { role: "user", content: "raw user text", timestamp: 1 },
       {
@@ -441,15 +441,19 @@ describe("ChatPanel message actions", () => {
       },
     ]);
 
-    for (const index of [0, 1]) {
-      const output = renderConversationEntry(el, index);
-      expect(output).toContain("data-message-actions=true");
-      expect(output).toContain("tabindex=0");
-      expect(output).toContain('data-role="desktop-copy-message"');
-      expect(output).toContain("hidden h-7 w-7");
-      expect(output).toContain("md:inline-flex");
-      expect(output).toContain('aria-label="Copy as Markdown"');
-    }
+    const userOutput = renderConversationEntry(el, 0);
+    expect(userOutput).toContain("data-message-actions=true");
+    expect(userOutput).toContain("tabindex=0");
+    expect(userOutput).not.toContain('data-role="desktop-copy-message"');
+
+    const assistantOutput = renderConversationEntry(el, 1);
+    expect(assistantOutput).toContain("data-message-actions=true");
+    expect(assistantOutput).toContain("tabindex=0");
+    expect(assistantOutput).toContain('data-role="desktop-copy-message"');
+    expect(assistantOutput).toContain("hidden h-7 w-7");
+    expect(assistantOutput).toContain("md:inline-flex");
+    expect(assistantOutput).toContain("bg-transparent");
+    expect(assistantOutput).toContain('aria-label="Copy as Markdown"');
   });
 
   test("opens Copy as Markdown from a message context menu", () => {
