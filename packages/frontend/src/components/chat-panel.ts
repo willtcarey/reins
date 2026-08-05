@@ -309,7 +309,36 @@ export class ChatPanel extends LitElement {
     return {
       text,
       pressed: this.messageActions.pressedKey === key,
+      copied: this.messageActions.copiedKey === key,
     };
+  }
+
+  private async copyMessageDirect(event: Event, key: string, text: string) {
+    event.stopPropagation();
+    try {
+      await this.messageActions.copyDirect(key, text);
+    } catch {
+      showToast("Could not copy message", "error");
+    }
+  }
+
+  private renderDesktopCopyControl(key: string, text: string, copied: boolean, positionClass: string) {
+    return html`
+      <button
+        data-role="desktop-copy-message"
+        type="button"
+        class="absolute top-0 ${positionClass} z-[var(--layer-content)] hidden h-7 w-7 items-center justify-center rounded-md bg-zinc-900/80 text-zinc-500 shadow-sm transition-colors hover:bg-zinc-700 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 md:inline-flex"
+        title=${copied ? "Copied" : "Copy as Markdown"}
+        aria-label="Copy as Markdown"
+        @click=${(event: Event) => this.copyMessageDirect(event, key, text)}
+      >
+        ${copied ? html`
+          <svg class="h-4 w-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+        ` : html`
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+        `}
+      </button>
+    `;
   }
 
   private async copyMessageMarkdown() {
@@ -439,7 +468,7 @@ export class ChatPanel extends LitElement {
         data-message-actions=${action ? "true" : nothing}
         data-message-key=${messageKey}
         data-conversation-key=${conversationKey}
-        class="flex justify-end mb-3 rounded-2xl outline-none transition-[background,transform] md:select-text ${action ? 'select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-blue-400/70' : ''} ${action?.pressed ? 'scale-[0.99] bg-zinc-700/50' : ''} ${isAnimating ? 'sent-message-target-hidden' : ''}"
+        class="relative flex justify-end mb-3 rounded-2xl outline-none transition-[background,transform] md:select-text ${action ? 'select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-blue-400/70' : ''} ${action?.pressed ? 'scale-[0.99] bg-zinc-700/50' : ''} ${isAnimating ? 'sent-message-target-hidden' : ''}"
         tabindex=${action ? "0" : nothing}
         aria-label=${action ? "User message. Press Shift+F10 for actions" : nothing}
         @pointerdown=${action ? (event: PointerEvent) => this.handleMessagePointerDown(event, messageKey, action.text) : nothing}
@@ -461,6 +490,7 @@ export class ChatPanel extends LitElement {
             </div>
           ` : nothing}
         </div>
+        ${action ? this.renderDesktopCopyControl(messageKey, action.text, action.copied, "right-0") : nothing}
       </div>
     `;
   }
@@ -504,7 +534,7 @@ export class ChatPanel extends LitElement {
       <div
         data-conversation-key=${conversationKey}
         data-message-actions=${action ? "true" : nothing}
-        class="mb-3 rounded-2xl outline-none transition-[background,transform] md:select-text ${action ? 'select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-blue-400/70' : ''} ${action?.pressed ? 'scale-[0.99] bg-zinc-700/50' : ''}"
+        class="relative mb-3 rounded-2xl outline-none transition-[background,transform] md:select-text ${action ? 'select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-blue-400/70' : ''} ${action?.pressed ? 'scale-[0.99] bg-zinc-700/50' : ''}"
         tabindex=${action ? "0" : nothing}
         aria-label=${action ? "Assistant message. Press Shift+F10 for actions" : nothing}
         @pointerdown=${action ? (event: PointerEvent) => this.handleMessagePointerDown(event, conversationKey, action.text) : nothing}
@@ -515,6 +545,7 @@ export class ChatPanel extends LitElement {
         @keydown=${action ? (event: KeyboardEvent) => this.handleMessageKeydown(event, action.text) : nothing}
       >
         ${parts}
+        ${action ? this.renderDesktopCopyControl(conversationKey, action.text, action.copied, "right-[10%]") : nothing}
       </div>
     `;
   }

@@ -431,7 +431,7 @@ describe("ChatPanel history pagination", () => {
 
 
 describe("ChatPanel message actions", () => {
-  test("makes user and assistant messages keyboard/context-menu targets without persistent controls", () => {
+  test("makes messages action targets with a desktop-only corner copy control", () => {
     const el = panelWithMessages([
       { role: "user", content: "raw user text", timestamp: 1 },
       {
@@ -445,7 +445,10 @@ describe("ChatPanel message actions", () => {
       const output = renderConversationEntry(el, index);
       expect(output).toContain("data-message-actions=true");
       expect(output).toContain("tabindex=0");
-      expect(output).not.toContain("Copy as Markdown");
+      expect(output).toContain('data-role="desktop-copy-message"');
+      expect(output).toContain("hidden h-7 w-7");
+      expect(output).toContain("md:inline-flex");
+      expect(output).toContain('aria-label="Copy as Markdown"');
     }
   });
 

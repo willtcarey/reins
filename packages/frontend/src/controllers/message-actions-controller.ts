@@ -34,6 +34,7 @@ export class MessageActionsController implements ReactiveController {
   pressedKey: string | null = null;
   menu: MessageActionMenu | null = null;
   copied = false;
+  copiedKey: string | null = null;
 
   private readonly copyText: (text: string) => Promise<void>;
   private readonly timers: TimerOperations;
@@ -109,6 +110,19 @@ export class MessageActionsController implements ReactiveController {
     this.clearFeedbackTimer();
     this.menu = null;
     this.copied = false;
+    this.copiedKey = null;
+    this.host.requestUpdate();
+  }
+
+  async copyDirect(key: string, text: string) {
+    await this.copyText(text);
+    this.copiedKey = key;
+    this.clearFeedbackTimer();
+    this.feedbackTimer = this.timers.setTimeout(() => {
+      this.feedbackTimer = null;
+      this.copiedKey = null;
+      this.host.requestUpdate();
+    }, COPY_FEEDBACK_MS);
     this.host.requestUpdate();
   }
 

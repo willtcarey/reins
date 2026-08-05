@@ -64,6 +64,19 @@ describe("MessageActionsController", () => {
     expect(controller.menu).toEqual({ mode: "menu", text: "other markdown", x: 12, y: 45 });
   });
 
+  test("copies directly from a desktop message control and shows confirmation on that message", async () => {
+    const timers = fakeTimers();
+    const copyText = mock(async (_text: string) => undefined);
+    const controller = new MessageActionsController(fakeHost(), { copyText, timers });
+
+    await controller.copyDirect("message-1", "desktop markdown");
+
+    expect(copyText).toHaveBeenCalledWith("desktop markdown");
+    expect(controller.copiedKey).toBe("message-1");
+    [...timers.callbacks.values()][0]?.();
+    expect(controller.copiedKey).toBeNull();
+  });
+
   test("copies through the shared operation and shows confirmation before closing", async () => {
     const timers = fakeTimers();
     const copyText = mock(async (_text: string) => undefined);
