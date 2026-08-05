@@ -430,6 +430,50 @@ describe("ChatPanel history pagination", () => {
 });
 
 
+describe("ChatPanel message actions", () => {
+  test("makes user and assistant messages keyboard/context-menu targets without persistent controls", () => {
+    const el = panelWithMessages([
+      { role: "user", content: "raw user text", timestamp: 1 },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "**raw assistant markdown**" }],
+        timestamp: 2,
+      },
+    ]);
+
+    for (const index of [0, 1]) {
+      const output = renderConversationEntry(el, index);
+      expect(output).toContain("data-message-actions=true");
+      expect(output).toContain("tabindex=0");
+      expect(output).not.toContain("Copy as Markdown");
+    }
+  });
+
+  test("opens Copy as Markdown from a message context menu", () => {
+    const el = panelWithMessages([{ role: "user", content: "raw user text", timestamp: 1 }]);
+    const entryTemplate = (() => {
+      const messageDirective = el.render().values.find(isDirectiveResult);
+      const entries = messageDirective?.values[0];
+      const renderEntry = messageDirective?.values[2];
+      if (!Array.isArray(entries) || typeof renderEntry !== "function") throw new Error("Expected entry");
+      return renderEntry(entries[0]);
+    })();
+    const [openContextMenu] = collectTemplateEventListeners(entryTemplate, "contextmenu");
+    const preventDefault = mock(() => undefined);
+    const contextMenuEvent = new Event("contextmenu");
+    Object.defineProperties(contextMenuEvent, {
+      clientX: { value: 80 },
+      clientY: { value: 120 },
+      preventDefault: { value: preventDefault },
+    });
+
+    openContextMenu?.call(el, contextMenuEvent);
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(templateToString(el.render())).toContain("Copy as Markdown");
+  });
+});
+
 describe("ChatPanel mobile keyboard", () => {
   test("collapses the composer keyboard on message touch scroll", () => {
     const el = new ChatPanel();

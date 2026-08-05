@@ -31,7 +31,7 @@ describe("Write tool model helpers", () => {
     const renderLine = Reflect.get(WriteToolBlock.prototype, "_renderHighlightedLine");
     const host = { _hl: { getLineHtml: () => undefined } };
 
-    const rendered = Reflect.apply(renderLine, host, [0, "const node = <div>;"]) as string;
+    const rendered: unknown = Reflect.apply(renderLine, host, [0, "const node = <div>;"]);
     expect(rendered).toBe("const node = <div>;");
   });
 });

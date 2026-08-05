@@ -9,6 +9,7 @@
 import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
+import { styleMap } from "lit/directives/style-map.js";
 import type { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import type { ConversationEntry } from "../models/stores/conversations-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
@@ -38,6 +39,9 @@ import type { ChatComposer, ChatComposerSubmitDetail } from "./chat-composer.js"
 import { ChatSendAnimator } from "../helpers/chat-send-animation.js";
 import { openImageViewerEvent } from "./events.js";
 import { ChatHistoryController } from "../controllers/chat-history-controller.js";
+import { MessageActionsController } from "../controllers/message-actions-controller.js";
+import { messageMarkdown } from "../models/message-markdown.js";
+import { showToast } from "./toast.js";
 
 // ---- Component --------------------------------------------------------------
 
@@ -66,6 +70,7 @@ export class ChatPanel extends LitElement {
   @query("chat-composer") private composer?: ChatComposer;
 
   private sendAnimator = new ChatSendAnimator(this);
+  private messageActions = new MessageActionsController(this);
   private history = new ChatHistoryController(this, {
     hasEarlierMessages: () => this.store?.conversation.hasEarlierMessages ?? false,
     loadPrevious: () => this.store?.loadEarlierMessages() ?? Promise.resolve(false),
@@ -125,6 +130,16 @@ export class ChatPanel extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>) {
+    const actionMenu = this.querySelector<HTMLElement>("[data-role=message-action-menu]");
+    if (
+      actionMenu
+      && typeof actionMenu.showPopover === "function"
+      && !actionMenu.matches(":popover-open")
+    ) {
+      actionMenu.showPopover();
+      actionMenu.querySelector<HTMLElement>("button")?.focus();
+    }
+
     // Autofocus the composer when returning to chat tab (desktop only).
     // Session switches remount the component via keyed(sessionId).
     if (changed.has("visible") && this.visible) {
@@ -186,6 +201,7 @@ export class ChatPanel extends LitElement {
 
   private handleScroll(e: Event) {
     if (!(e.target instanceof HTMLElement)) return;
+    if (this.messageActions.menu) this.messageActions.close();
     const atBottom = e.target.scrollHeight - e.target.scrollTop - e.target.clientHeight < 50;
     this.shouldAutoScroll = atBottom;
     this.history.handleScroll(e.target);
@@ -254,6 +270,115 @@ export class ChatPanel extends LitElement {
     this.expandedSections = next;
   }
 
+  private handleMessagePointerDown(event: PointerEvent, key: string, text: string) {
+    if (event.pointerType !== "touch" || !event.isPrimary) return;
+    this.messageActions.beginTouchPress(key, text, event.clientX, event.clientY);
+  }
+
+  private handleMessagePointerMove(event: PointerEvent) {
+    if (event.pointerType !== "touch") return;
+    this.messageActions.moveTouchPress(event.clientX, event.clientY);
+  }
+
+  private handleMessagePointerEnd(event: PointerEvent) {
+    if (event.pointerType !== "touch") return;
+    this.messageActions.endTouchPress();
+  }
+
+  private handleMessageContextMenu(event: MouseEvent, text: string) {
+    event.preventDefault();
+    if (typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches) {
+      this.messageActions.openActionSheet(text, event.clientX, event.clientY);
+    } else {
+      this.messageActions.openContextMenu(text, event.clientX, event.clientY);
+    }
+  }
+
+  private handleMessageKeydown(event: KeyboardEvent, text: string) {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    event.preventDefault();
+    const rect = event.currentTarget instanceof HTMLElement
+      ? event.currentTarget.getBoundingClientRect()
+      : { left: 0, bottom: 0 };
+    this.messageActions.openKeyboardMenu(text, rect);
+  }
+
+  private messageActionAttributes(message: UserMessage | AssistantMessage, key: string) {
+    const text = messageMarkdown(message);
+    if (!text) return null;
+    return {
+      text,
+      pressed: this.messageActions.pressedKey === key,
+    };
+  }
+
+  private async copyMessageMarkdown() {
+    try {
+      await this.messageActions.copyMarkdown();
+    } catch {
+      this.messageActions.close();
+      showToast("Could not copy message", "error");
+    }
+  }
+
+  private renderMessageActionMenu() {
+    const menu = this.messageActions.menu;
+    if (!menu) return nothing;
+    const copied = this.messageActions.copied;
+    const menuLeft = typeof window === "undefined"
+      ? menu.x
+      : Math.max(8, Math.min(menu.x, window.innerWidth - 216));
+    const menuTop = typeof window === "undefined"
+      ? menu.y
+      : Math.max(8, Math.min(menu.y, window.innerHeight - 64));
+    const action = html`
+      <button
+        type="button"
+        role=${menu.mode === "menu" ? "menuitem" : nothing}
+        class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium ${copied ? 'text-green-300' : 'text-zinc-100'} active:bg-zinc-700"
+        ?disabled=${copied}
+        @click=${() => this.copyMessageMarkdown()}
+      >
+        <span aria-hidden="true">${copied ? "✓" : "⧉"}</span>
+        <span aria-live="polite">${copied ? "Copied" : "Copy as Markdown"}</span>
+      </button>
+    `;
+
+    return html`
+      <div
+        data-role="message-action-menu"
+        popover="manual"
+        class="fixed inset-0 m-0 h-[100dvh] max-h-none w-screen max-w-none border-0 ${menu.mode === 'sheet' ? 'bg-black/40' : 'bg-transparent'} p-0 z-[var(--layer-overlay)]"
+        role=${menu.mode === "sheet" ? "dialog" : "menu"}
+        aria-label="Message actions"
+        @click=${() => this.messageActions.close()}
+        @keydown=${(event: KeyboardEvent) => {
+          if (event.key === "Escape") this.messageActions.close();
+        }}
+      >
+        ${menu.mode === "sheet" ? html`
+          <div class="absolute inset-x-0 bottom-0 p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]" @click=${(event: Event) => event.stopPropagation()}>
+            <div class="overflow-hidden rounded-xl border border-zinc-700 bg-zinc-800 shadow-2xl">
+              ${action}
+            </div>
+            <button
+              type="button"
+              class="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm font-semibold text-zinc-200 active:bg-zinc-700"
+              @click=${() => this.messageActions.close()}
+            >Cancel</button>
+          </div>
+        ` : html`
+          <div
+            class="absolute w-52 overflow-hidden rounded-md border border-zinc-600 bg-zinc-800 shadow-xl"
+            style=${styleMap({ left: `${menuLeft}px`, top: `${menuTop}px` })}
+            @click=${(event: Event) => event.stopPropagation()}
+          >
+            ${action}
+          </div>
+        `}
+      </div>
+    `;
+  }
 
   private renderChatImage(image: ChatImageBlock, sessionId: string) {
     const hint = imageSizeHint(image);
@@ -306,13 +431,23 @@ export class ChatPanel extends LitElement {
     const sessionId = this.store?.sessionId ?? "";
     const messageKey = conversationKey;
     const isAnimating = this.animatingUserMessageKeys.has(messageKey);
+    const action = this.messageActionAttributes(msg, messageKey);
 
     return html`
       <div
         data-role="user-message-row"
+        data-message-actions=${action ? "true" : nothing}
         data-message-key=${messageKey}
         data-conversation-key=${conversationKey}
-        class="flex justify-end mb-3 ${isAnimating ? 'sent-message-target-hidden' : ''}"
+        class="flex justify-end mb-3 rounded-2xl outline-none transition-[background,transform] md:select-text ${action ? 'select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-blue-400/70' : ''} ${action?.pressed ? 'scale-[0.99] bg-zinc-700/50' : ''} ${isAnimating ? 'sent-message-target-hidden' : ''}"
+        tabindex=${action ? "0" : nothing}
+        aria-label=${action ? "User message. Press Shift+F10 for actions" : nothing}
+        @pointerdown=${action ? (event: PointerEvent) => this.handleMessagePointerDown(event, messageKey, action.text) : nothing}
+        @pointermove=${action ? this.handleMessagePointerMove : nothing}
+        @pointerup=${action ? this.handleMessagePointerEnd : nothing}
+        @pointercancel=${action ? this.handleMessagePointerEnd : nothing}
+        @contextmenu=${action ? (event: MouseEvent) => this.handleMessageContextMenu(event, action.text) : nothing}
+        @keydown=${action ? (event: KeyboardEvent) => this.handleMessageKeydown(event, action.text) : nothing}
       >
         <div data-role="user-message-animation-target" class="flex max-w-[80%] flex-col items-end gap-2">
           ${images.length > 0 ? html`
@@ -337,6 +472,7 @@ export class ChatPanel extends LitElement {
   ) {
     const parts: unknown[] = [];
     const textBuffer: string[] = [];
+    const action = this.messageActionAttributes(msg, conversationKey);
 
     const flushText = () => {
       if (textBuffer.length === 0) return;
@@ -365,7 +501,19 @@ export class ChatPanel extends LitElement {
     flushText();
 
     return html`
-      <div data-conversation-key=${conversationKey} class="mb-3">
+      <div
+        data-conversation-key=${conversationKey}
+        data-message-actions=${action ? "true" : nothing}
+        class="mb-3 rounded-2xl outline-none transition-[background,transform] md:select-text ${action ? 'select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-blue-400/70' : ''} ${action?.pressed ? 'scale-[0.99] bg-zinc-700/50' : ''}"
+        tabindex=${action ? "0" : nothing}
+        aria-label=${action ? "Assistant message. Press Shift+F10 for actions" : nothing}
+        @pointerdown=${action ? (event: PointerEvent) => this.handleMessagePointerDown(event, conversationKey, action.text) : nothing}
+        @pointermove=${action ? this.handleMessagePointerMove : nothing}
+        @pointerup=${action ? this.handleMessagePointerEnd : nothing}
+        @pointercancel=${action ? this.handleMessagePointerEnd : nothing}
+        @contextmenu=${action ? (event: MouseEvent) => this.handleMessageContextMenu(event, action.text) : nothing}
+        @keydown=${action ? (event: KeyboardEvent) => this.handleMessageKeydown(event, action.text) : nothing}
+      >
         ${parts}
       </div>
     `;
@@ -541,6 +689,8 @@ export class ChatPanel extends LitElement {
           )}
           ${this.renderStreamingContent()}
         </div>
+
+        ${this.renderMessageActionMenu()}
 
         <!-- Input area -->
         <div class="border-t border-zinc-700 px-3 pt-2 pb-[var(--input-bottom)]">
