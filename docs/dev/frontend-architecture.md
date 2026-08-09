@@ -29,6 +29,8 @@ src/
 
 Pure TypeScript with no Lit dependency. Contains business/domain logic, state management, data extraction, and server communication. Components keep view-local state; anything that decides what data means, when to fetch, how to persist, or how cross-component state changes belongs here. Everything here is directly testable with bun:test — no DOM, no browser.
 
+**Organize model files around domain concepts, not individual derived values or operations.** Keep a concept's types, transformations, and behavior together. Extract a separate module only when that behavior forms a substantial, cohesive abstraction of its own.
+
 ```
 models/
 ├── stores/              Shared state management (pubsub)
@@ -50,6 +52,7 @@ models/
 │   ├── create-task.ts, delegate.ts, generic.ts
 │   └── bash-command-parser.ts
 ├── tasks.ts             Task list types
+├── message.ts           Message types and behavior
 ├── chat-state.ts        Chat event reducer
 ├── format.ts            Display formatting helpers
 ├── router.ts            Hash-based route parsing

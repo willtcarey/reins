@@ -1,4 +1,4 @@
-import type { AgentMessage } from "../../models/chat-state.js";
+import type { AgentMessage } from "../../models/message.js";
 import type {
   ConversationsStore, MessageRecordPage, PersistedConversationEntry,
 } from "../../models/stores/conversations-store.js";

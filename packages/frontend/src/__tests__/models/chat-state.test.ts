@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   applyChatEvent,
   initialChatState,
-  type AssistantMessage,
   type ChatEvent,
   type ChatState,
 } from "../../models/chat-state.js";
+import type { AssistantMessage } from "../../models/message.js";
 
 function assistant(timestamp: number, content: AssistantMessage["content"] = []): AssistantMessage {
   return { role: "assistant", content, timestamp };

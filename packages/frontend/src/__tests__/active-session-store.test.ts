@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { AgentMessage } from "../models/chat-state.js";
+import type { AgentMessage } from "../models/message.js";
 import { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import { ConversationsStore } from "../models/stores/conversations-store.js";
 import { SessionCache } from "../models/stores/session-cache.js";

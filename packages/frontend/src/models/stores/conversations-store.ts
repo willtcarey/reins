@@ -11,11 +11,11 @@ import {
   applyChatEvent,
   initialChatState,
   removePersistedStreamingAssistants,
-  type AgentMessage,
   type ChatState,
   type StreamingAssistant,
 } from "../chat-state.js";
 import type { ClientPromptContent } from "../chat-content.js";
+import type { AgentMessage } from "../message.js";
 import type { FrontendEvent } from "../ws-client.js";
 import type { SessionCache } from "./session-cache.js";
 

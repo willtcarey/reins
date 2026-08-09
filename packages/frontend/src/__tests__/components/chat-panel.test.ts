@@ -4,7 +4,7 @@ import type { ClientPromptContent } from "../../models/chat-content.js";
 import { ActiveSessionStore } from "../../models/stores/active-session-store.js";
 import { ConversationsStore } from "../../models/stores/conversations-store.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
-import type { AgentMessage } from "../../models/chat-state.js";
+import type { AgentMessage } from "../../models/message.js";
 import {
   applyStreamingAssistant,
   completedToolTurn,
@@ -454,6 +454,82 @@ describe("ChatPanel message actions", () => {
     expect(assistantOutput).toContain("md:inline-flex");
     expect(assistantOutput).toContain("bg-transparent");
     expect(assistantOutput).toContain('aria-label="Copy as Markdown"');
+  });
+
+  test("lets a horizontally scrollable message region handle touch instead of starting a long press", () => {
+    const originalHTMLElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+    const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+    class HTMLElementStub extends EventTarget {
+      parentElement: HTMLElementStub | null = null;
+      clientWidth = 100;
+      scrollWidth = 100;
+    }
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: HTMLElementStub });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        getComputedStyle: () => ({ overflowX: "auto" }),
+        matchMedia: () => ({ matches: true }),
+      },
+    });
+
+    try {
+      const el = panelWithMessages([{
+        role: "assistant",
+        content: [{ type: "text", text: "```ts\nconst value = 'a long line';\n```" }],
+        timestamp: 1,
+      }]);
+      const entryTemplate = (() => {
+        const messageDirective = el.render().values.find(isDirectiveResult);
+        const entries = messageDirective?.values[0];
+        const renderEntry = messageDirective?.values[2];
+        if (!Array.isArray(entries) || typeof renderEntry !== "function") throw new Error("Expected entry");
+        return renderEntry(entries[0]);
+      })();
+      const [pointerDown] = collectTemplateEventListeners(entryTemplate, "pointerdown");
+      const [contextMenu] = collectTemplateEventListeners(entryTemplate, "contextmenu");
+      const scroller = new HTMLElementStub();
+      scroller.scrollWidth = 300;
+      const code = new HTMLElementStub();
+      code.parentElement = scroller;
+
+      const pointerDownEvent = new Event("pointerdown");
+      Object.defineProperties(pointerDownEvent, {
+        pointerType: { value: "touch" },
+        isPrimary: { value: true },
+        clientX: { value: 20 },
+        clientY: { value: 30 },
+        target: { value: code },
+        composedPath: { value: () => [code, scroller] },
+      });
+      pointerDown?.call(el, pointerDownEvent);
+
+      const preventDefault = mock(() => undefined);
+      const contextMenuEvent = new Event("contextmenu");
+      Object.defineProperties(contextMenuEvent, {
+        clientX: { value: 20 },
+        clientY: { value: 30 },
+        target: { value: code },
+        composedPath: { value: () => [code, scroller] },
+        preventDefault: { value: preventDefault },
+      });
+      contextMenu?.call(el, contextMenuEvent);
+
+      expect(renderConversationEntry(el)).not.toContain("scale-[0.99]");
+      expect(templateToString(el.render())).not.toContain('aria-label="Message actions"');
+      expect(preventDefault).not.toHaveBeenCalled();
+    } finally {
+      if (originalHTMLElementDescriptor) {
+        Object.defineProperty(globalThis, "HTMLElement", originalHTMLElementDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, "HTMLElement");
+      }
+      if (originalWindowDescriptor) {
+        Object.defineProperty(globalThis, "window", originalWindowDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, "window");
+      }
+    }
   });
 
   test("opens Copy as Markdown from a message context menu", () => {

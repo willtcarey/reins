@@ -17,16 +17,15 @@ import "./markdown-content.js";
 import "./session-model-picker.js";
 import "./chat-composer.js";
 import { getToolRenderer } from "./tools/index.js";
-import {
-  type AgentMessage,
-  type AssistantMessage,
-  type CompactionSummaryMessage,
-  type UserMessage,
-  type ToolResultMessage,
-  type ToolCall,
-  type ToolExecution,
-  type StreamingAssistant,
-} from "../models/chat-state.js";
+import type {
+  AgentMessage,
+  AssistantMessage,
+  CompactionSummaryMessage,
+  UserMessage,
+  ToolResultMessage,
+  ToolCall,
+} from "../models/message.js";
+import type { ToolExecution, StreamingAssistant } from "../models/chat-state.js";
 import {
   imageAspectRatioStyle,
   imageBlockSrc,
@@ -40,8 +39,32 @@ import { ChatSendAnimator } from "../helpers/chat-send-animation.js";
 import { openImageViewerEvent } from "./events.js";
 import { ChatHistoryController } from "../controllers/chat-history-controller.js";
 import { MessageActionsController } from "../controllers/message-actions-controller.js";
-import { messageMarkdown } from "../models/message-markdown.js";
+import { messageMarkdown } from "../models/message.js";
 import { showToast } from "./toast.js";
+
+function eventStartsInHorizontalScroller(event: Event): boolean {
+  if (typeof HTMLElement === "undefined") return false;
+
+  const path = typeof event.composedPath === "function"
+    ? event.composedPath()
+    : event.target ? [event.target] : [];
+  const inspected = new Set<HTMLElement>();
+
+  for (const target of path) {
+    if (!(target instanceof HTMLElement)) continue;
+    for (let element: HTMLElement | null = target; element; element = element.parentElement) {
+      if (inspected.has(element)) continue;
+      inspected.add(element);
+      if (element.scrollWidth <= element.clientWidth + 1) continue;
+      if (typeof window === "undefined" || typeof window.getComputedStyle !== "function") return true;
+
+      const overflowX = window.getComputedStyle(element).overflowX;
+      if (overflowX === "auto" || overflowX === "scroll" || overflowX === "overlay") return true;
+    }
+  }
+
+  return false;
+}
 
 // ---- Component --------------------------------------------------------------
 
@@ -271,7 +294,11 @@ export class ChatPanel extends LitElement {
   }
 
   private handleMessagePointerDown(event: PointerEvent, key: string, text: string) {
-    if (event.pointerType !== "touch" || !event.isPrimary) return;
+    if (
+      event.pointerType !== "touch"
+      || !event.isPrimary
+      || eventStartsInHorizontalScroller(event)
+    ) return;
     this.messageActions.beginTouchPress(key, text, event.clientX, event.clientY);
   }
 
@@ -286,8 +313,12 @@ export class ChatPanel extends LitElement {
   }
 
   private handleMessageContextMenu(event: MouseEvent, text: string) {
+    const coarsePointer = typeof window !== "undefined"
+      && window.matchMedia?.("(pointer: coarse)").matches;
+    if (coarsePointer && eventStartsInHorizontalScroller(event)) return;
+
     event.preventDefault();
-    if (typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches) {
+    if (coarsePointer) {
       this.messageActions.openActionSheet(text, event.clientX, event.clientY);
     } else {
       this.messageActions.openContextMenu(text, event.clientX, event.clientY);

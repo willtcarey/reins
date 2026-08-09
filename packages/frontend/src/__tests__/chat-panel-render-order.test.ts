@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { ChatPanel } from "../components/chat-panel.js";
 import { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import { ConversationsStore } from "../models/stores/conversations-store.js";
-import type { AgentMessage } from "../models/chat-state.js";
+import type { AgentMessage } from "../models/message.js";
 import { setPersistedMessages } from "./helpers/conversations.js";
 import { templateToString } from "./helpers/lit-template.js";
 

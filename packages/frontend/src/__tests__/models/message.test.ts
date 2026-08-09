@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { messageMarkdown } from "../../models/message-markdown.js";
+import { messageMarkdown } from "../../models/message.js";
 
 describe("messageMarkdown", () => {
   test("returns raw user text without Markdown rendering or normalization", () => {

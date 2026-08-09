@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ConversationsStore } from "../../../models/stores/conversations-store.js";
 import { SessionCache } from "../../../models/stores/session-cache.js";
-import type { AgentMessage } from "../../../models/chat-state.js";
+import type { AgentMessage } from "../../../models/message.js";
 import {
   applyStreamingAssistant,
   applyStreamingMessage,
