@@ -17,14 +17,18 @@ function isDirectiveResult(value: unknown): value is { values: unknown[] } {
   return typeof value === "object" && value !== null && Array.isArray(Reflect.get(value, "values"));
 }
 
-function renderConversationEntry(el: ChatPanel, index = 0): string {
+function conversationEntryTemplate(el: ChatPanel, index = 0) {
   const messageDirective = el.render().values.find(isDirectiveResult);
   const entries = messageDirective?.values[0];
   const renderEntry = messageDirective?.values[2];
   if (!Array.isArray(entries) || typeof renderEntry !== "function") {
     throw new Error("Expected rendered conversation entries");
   }
-  return templateToString(renderEntry(entries[index]));
+  return renderEntry(entries[index]);
+}
+
+function renderConversationEntry(el: ChatPanel, index = 0): string {
+  return templateToString(conversationEntryTemplate(el, index));
 }
 
 function callPrivate(obj: object, key: string, ...args: unknown[]) {
@@ -431,7 +435,7 @@ describe("ChatPanel history pagination", () => {
 
 
 describe("ChatPanel message actions", () => {
-  test("keeps user actions in menus and shows a transparent desktop copy control on assistants", () => {
+  test("keeps the desktop copy control assistant-only", () => {
     const el = panelWithMessages([
       { role: "user", content: "raw user text", timestamp: 1 },
       {
@@ -442,118 +446,39 @@ describe("ChatPanel message actions", () => {
     ]);
 
     const userOutput = renderConversationEntry(el, 0);
-    expect(userOutput).toContain("data-message-actions=true");
-    expect(userOutput).toContain("tabindex=0");
     expect(userOutput).not.toContain('data-role="desktop-copy-message"');
 
     const assistantOutput = renderConversationEntry(el, 1);
-    expect(assistantOutput).toContain("data-message-actions=true");
-    expect(assistantOutput).toContain("tabindex=0");
     expect(assistantOutput).toContain('data-role="desktop-copy-message"');
-    expect(assistantOutput).toContain("hidden h-7 w-7");
     expect(assistantOutput).toContain("md:inline-flex");
-    expect(assistantOutput).toContain("bg-transparent");
     expect(assistantOutput).toContain('aria-label="Copy as Markdown"');
   });
 
-  test("lets a horizontally scrollable message region handle touch instead of starting a long press", () => {
-    const originalHTMLElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
-    const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
-    class HTMLElementStub extends EventTarget {
-      parentElement: HTMLElementStub | null = null;
-      clientWidth = 100;
-      scrollWidth = 100;
-    }
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: HTMLElementStub });
-    Object.defineProperty(globalThis, "window", {
-      configurable: true,
-      value: {
-        getComputedStyle: () => ({ overflowX: "auto" }),
-        matchMedia: () => ({ matches: true }),
-      },
-    });
-
-    try {
-      const el = panelWithMessages([{
-        role: "assistant",
-        content: [{ type: "text", text: "```ts\nconst value = 'a long line';\n```" }],
-        timestamp: 1,
-      }]);
-      const entryTemplate = (() => {
-        const messageDirective = el.render().values.find(isDirectiveResult);
-        const entries = messageDirective?.values[0];
-        const renderEntry = messageDirective?.values[2];
-        if (!Array.isArray(entries) || typeof renderEntry !== "function") throw new Error("Expected entry");
-        return renderEntry(entries[0]);
-      })();
-      const [pointerDown] = collectTemplateEventListeners(entryTemplate, "pointerdown");
-      const [contextMenu] = collectTemplateEventListeners(entryTemplate, "contextmenu");
-      const scroller = new HTMLElementStub();
-      scroller.scrollWidth = 300;
-      const code = new HTMLElementStub();
-      code.parentElement = scroller;
-
-      const pointerDownEvent = new Event("pointerdown");
-      Object.defineProperties(pointerDownEvent, {
-        pointerType: { value: "touch" },
-        isPrimary: { value: true },
-        clientX: { value: 20 },
-        clientY: { value: 30 },
-        target: { value: code },
-        composedPath: { value: () => [code, scroller] },
-      });
-      pointerDown?.call(el, pointerDownEvent);
-
-      const preventDefault = mock(() => undefined);
-      const contextMenuEvent = new Event("contextmenu");
-      Object.defineProperties(contextMenuEvent, {
-        clientX: { value: 20 },
-        clientY: { value: 30 },
-        target: { value: code },
-        composedPath: { value: () => [code, scroller] },
-        preventDefault: { value: preventDefault },
-      });
-      contextMenu?.call(el, contextMenuEvent);
-
-      expect(renderConversationEntry(el)).not.toContain("scale-[0.99]");
-      expect(templateToString(el.render())).not.toContain('aria-label="Message actions"');
-      expect(preventDefault).not.toHaveBeenCalled();
-    } finally {
-      if (originalHTMLElementDescriptor) {
-        Object.defineProperty(globalThis, "HTMLElement", originalHTMLElementDescriptor);
-      } else {
-        Reflect.deleteProperty(globalThis, "HTMLElement");
-      }
-      if (originalWindowDescriptor) {
-        Object.defineProperty(globalThis, "window", originalWindowDescriptor);
-      } else {
-        Reflect.deleteProperty(globalThis, "window");
-      }
-    }
-  });
-
-  test("opens Copy as Markdown from a message context menu", () => {
+  test("opens Copy as Markdown from desktop context-menu and keyboard paths", () => {
     const el = panelWithMessages([{ role: "user", content: "raw user text", timestamp: 1 }]);
-    const entryTemplate = (() => {
-      const messageDirective = el.render().values.find(isDirectiveResult);
-      const entries = messageDirective?.values[0];
-      const renderEntry = messageDirective?.values[2];
-      if (!Array.isArray(entries) || typeof renderEntry !== "function") throw new Error("Expected entry");
-      return renderEntry(entries[0]);
-    })();
-    const [openContextMenu] = collectTemplateEventListeners(entryTemplate, "contextmenu");
-    const preventDefault = mock(() => undefined);
-    const contextMenuEvent = new Event("contextmenu");
-    Object.defineProperties(contextMenuEvent, {
-      clientX: { value: 80 },
-      clientY: { value: 120 },
-      preventDefault: { value: preventDefault },
+    const openContext = mock((_text: string, _x: number, _y: number) => undefined);
+    Object.defineProperty(el, "actionMenu", {
+      configurable: true,
+      value: { openSheet: async () => undefined, openContext, close() {} },
     });
+    const entryTemplate = conversationEntryTemplate(el);
+    const [openContextMenu] = collectTemplateEventListeners(entryTemplate, "contextmenu");
+    const [openKeyboardMenu] = collectTemplateEventListeners(entryTemplate, "keydown");
+    const preventDefault = mock(() => undefined);
+    // @ts-expect-error Test supplies the MouseEvent fields the controller reads.
+    const contextMenuEvent: MouseEvent = {
+      clientX: 80,
+      clientY: 120,
+      preventDefault,
+    };
 
     openContextMenu?.call(el, contextMenuEvent);
+    // @ts-expect-error Test supplies the KeyboardEvent fields the controller reads.
+    openKeyboardMenu?.call(el, { key: "ContextMenu", shiftKey: false, preventDefault });
 
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(templateToString(el.render())).toContain("Copy as Markdown");
+    expect(preventDefault).toHaveBeenCalledTimes(2);
+    expect(openContext).toHaveBeenNthCalledWith(1, "raw user text", 80, 120);
+    expect(openContext).toHaveBeenNthCalledWith(2, "raw user text", 0, 0);
   });
 });
 

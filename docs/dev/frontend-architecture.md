@@ -13,6 +13,7 @@ src/
 ├── models/          Pure logic — no LitElement, no html``
 ├── components/      Lit components — rendering + interaction
 ├── controllers/     Lit reactive controllers (glue between models + components)
+├── directives/      Reusable element-local Lit behavior
 ├── __tests__/       Tests mirroring app structure
 └── index.ts         Entry point
 ```
@@ -74,6 +75,7 @@ components/
 │   ├── index.ts (registry), types.ts
 ├── app.ts               Root shell: store/routing/overlays + pane rendering/layout selection
 ├── chat-panel.ts        Message display + composer orchestration
+├── message-action-menu.ts Action sheet/context-menu presentation
 ├── chat-composer.ts     Prompt input, autosize, skill suggestions, image attachments
 ├── session-sidebar.ts   Sidebar layout
 ├── session-list.ts, project-sidebar.ts, project-form.ts
@@ -98,6 +100,10 @@ controllers/
 ├── page-swipe-controller.ts     Mobile page swipe event/state wiring
 └── chat-history-controller.ts   Prepend loading + scroll-anchor restoration
 ```
+
+### directives/
+
+Lit directives own reusable behavior attached to one rendered element when that behavior needs direct DOM access and should not force the host component to mirror its event or animation state. `long-press.ts` is the canonical example: the element declares a feedback target and completion callback, while the directive owns pointer listeners, gesture cancellation, timers, reduced-motion handling, and direct spring animation. Directive tests mirror this directory under `src/__tests__/directives/`.
 
 ## Data Flow
 
@@ -242,6 +248,8 @@ app-shell                    — root shell, creates store, applies routes, rend
 │   └── session-list         — scratch sessions
 ├── chat-panel               — message display + composer orchestration
 │   ├── ChatHistoryController — earlier-history triggering + viewport preservation
+│   ├── longPress directive  — element-local touch gesture + press animation
+│   ├── message-action-menu  — action sheet/context menu lifecycle, copy feedback, focus, and positioning
 │   └── chat-composer        — prompt input, autosize, skill suggestions, image attachments
 ├── diff-panel               — full diff view with file cards
 ├── diff-file-tree           — app-owned changed-file pane/sidebar
@@ -257,6 +265,12 @@ All components live under `components/`. Sub-directories (`changes/`, `tools/`) 
 ### Mobile workspace swipe
 
 `components/app.ts` owns workspace rendering and delegates mobile swipe event wiring/state to `PageSwipeController` in `controllers/page-swipe-controller.ts`. The workspace uses a single inner `.workspace-surface` grid as the layout authority: mobile translates the four full-width page columns (`sessions → chat → changes → files`), while the `md` breakpoint changes that same grid to the desktop columns. The outer workspace shell only clips overflow and hosts pointer listeners; keep it `overflow-clip` so it never becomes a restorable scroll container that can desync the visible mobile page from `activePane`. Do not add a second desktop grid wrapper around the surface. The controller owns page-specific behavior — page clamping, edge resistance, release thresholds, translate targets, and page commits — and creates one short-lived `Swipe` instance from `models/swipe.ts` per pointer-driven swipe. The swipe instance lasts from accepted `pointerdown` through drag classification, release/cancel spring animation, click suppression, and completion; keep per-swipe mutable state there rather than adding reset-heavy gesture fields to the Lit component. The shared scalar spring animation lifecycle lives in the one-shot `Spring` class in `models/spring.ts`; its stiffness and damping can be tuned per instance while omitted values retain the shared defaults. Swipe-specific pointer classification and DOM opt-out predicates stay private to `models/swipe.ts`.
+
+### Message actions
+
+Each actionable message in `chat-panel` attaches the generic `${longPress(...)}` element directive, identifies its message-content feedback target, and opens the mobile sheet from `onComplete`. The directive owns primary-touch and pointer-identity filtering, movement/cancellation, the 650ms slow press preview and 900ms completion threshold, reduced-motion behavior, listener cleanup, and the two-stage shared-spring animation. It never prevents native pointer behavior, so browser scrolling cancels a pending gesture through movement or `pointercancel` without scroll-container inspection. If `onComplete` returns a promise, the directive keeps the feedback target pressed until that promise settles; synchronous completions release immediately.
+
+`message-action-menu` owns its active message, overlay mode, viewport positioning, popover focus, dismissal lifecycle, and in-menu copy confirmation. Its imperative `openSheet(text)` returns the dismissal promise used by `longPress`; `openContext(text, x, y)` provides the positioned desktop path. `chat-panel` owns only message-specific wiring: it derives the Markdown, routes context-menu and keyboard openings, and supplies one shared clipboard operation to both the menu and desktop copy button. Each call site owns its own confirmation state. The panel does not forward long-press pointer events or render spring state.
 
 ### Sidebar layout
 

@@ -6,6 +6,7 @@ describe("Spring", () => {
     const originalWindow = globalThis.window;
     const frameCallbacks: FrameRequestCallback[] = [];
     const values: number[] = [];
+    const velocities: number[] = [];
     let settled = false;
 
     Reflect.set(globalThis, "window", {
@@ -21,11 +22,15 @@ describe("Spring", () => {
         value: -610,
         target: -780,
         velocity: -1.2,
-        onUpdate: (value) => values.push(value),
+        onUpdate: (value, velocity) => {
+          values.push(value);
+          velocities.push(velocity);
+        },
         onSettle: () => { settled = true; },
       });
 
       expect(values).toEqual([-610]);
+      expect(velocities).toEqual([-1.2]);
       expect(settled).toBe(false);
 
       frameCallbacks[0](0);
@@ -40,6 +45,7 @@ describe("Spring", () => {
       expect(values[7]).toBeGreaterThanOrEqual(-780);
       expect(settled).toBe(true);
       expect(Math.round(values.at(-1) ?? 0)).toBe(-780);
+      expect(velocities.at(-1)).toBe(0);
       expect(values.some((value) => value < -610 && value > -780)).toBe(true);
       expect(values.some((value) => value < -780)).toBe(true);
     } finally {

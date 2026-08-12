@@ -9,13 +9,14 @@
 import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
-import { styleMap } from "lit/directives/style-map.js";
 import type { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import type { ConversationEntry } from "../models/stores/conversations-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import "./markdown-content.js";
 import "./session-model-picker.js";
 import "./chat-composer.js";
+import "./message-action-menu.js";
+import type { MessageActionMenuElement } from "./message-action-menu.js";
 import { getToolRenderer } from "./tools/index.js";
 import type {
   AgentMessage,
@@ -38,33 +39,10 @@ import type { ChatComposer, ChatComposerSubmitDetail } from "./chat-composer.js"
 import { ChatSendAnimator } from "../helpers/chat-send-animation.js";
 import { openImageViewerEvent } from "./events.js";
 import { ChatHistoryController } from "../controllers/chat-history-controller.js";
-import { MessageActionsController } from "../controllers/message-actions-controller.js";
+import { longPress } from "../directives/long-press.js";
+import { copyTextToClipboard } from "../helpers/clipboard.js";
 import { messageMarkdown } from "../models/message.js";
 import { showToast } from "./toast.js";
-
-function eventStartsInHorizontalScroller(event: Event): boolean {
-  if (typeof HTMLElement === "undefined") return false;
-
-  const path = typeof event.composedPath === "function"
-    ? event.composedPath()
-    : event.target ? [event.target] : [];
-  const inspected = new Set<HTMLElement>();
-
-  for (const target of path) {
-    if (!(target instanceof HTMLElement)) continue;
-    for (let element: HTMLElement | null = target; element; element = element.parentElement) {
-      if (inspected.has(element)) continue;
-      inspected.add(element);
-      if (element.scrollWidth <= element.clientWidth + 1) continue;
-      if (typeof window === "undefined" || typeof window.getComputedStyle !== "function") return true;
-
-      const overflowX = window.getComputedStyle(element).overflowX;
-      if (overflowX === "auto" || overflowX === "scroll" || overflowX === "overlay") return true;
-    }
-  }
-
-  return false;
-}
 
 // ---- Component --------------------------------------------------------------
 
@@ -89,11 +67,13 @@ export class ChatPanel extends LitElement {
 
   @state() private expandedSections = new Set<string>();
   @state() private animatingUserMessageKeys = new Set<string>();
+  @state() private copiedMessageKey: string | null = null;
 
   @query("chat-composer") private composer?: ChatComposer;
+  @query("message-action-menu") private actionMenu?: MessageActionMenuElement;
 
   private sendAnimator = new ChatSendAnimator(this);
-  private messageActions = new MessageActionsController(this);
+  private copyFeedbackTimer: number | null = null;
   private history = new ChatHistoryController(this, {
     hasEarlierMessages: () => this.store?.conversation.hasEarlierMessages ?? false,
     loadPrevious: () => this.store?.loadEarlierMessages() ?? Promise.resolve(false),
@@ -108,6 +88,7 @@ export class ChatPanel extends LitElement {
 
   override disconnectedCallback() {
     this.sendAnimator.cancel();
+    this.resetMessageActions();
     super.disconnectedCallback();
     this.unsubscribeStore?.();
   }
@@ -121,6 +102,7 @@ export class ChatPanel extends LitElement {
 
   private resetSessionState() {
     this.sendAnimator.cancel();
+    this.resetMessageActions();
     this.expandedSections = new Set();
     this.animatingUserMessageKeys = new Set();
     this.shouldAutoScroll = true;
@@ -153,16 +135,6 @@ export class ChatPanel extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>) {
-    const actionMenu = this.querySelector<HTMLElement>("[data-role=message-action-menu]");
-    if (
-      actionMenu
-      && typeof actionMenu.showPopover === "function"
-      && !actionMenu.matches(":popover-open")
-    ) {
-      actionMenu.showPopover();
-      actionMenu.querySelector<HTMLElement>("button")?.focus();
-    }
-
     // Autofocus the composer when returning to chat tab (desktop only).
     // Session switches remount the component via keyed(sessionId).
     if (changed.has("visible") && this.visible) {
@@ -224,7 +196,7 @@ export class ChatPanel extends LitElement {
 
   private handleScroll(e: Event) {
     if (!(e.target instanceof HTMLElement)) return;
-    if (this.messageActions.menu) this.messageActions.close();
+    if (this.actionMenu?.isOpen) this.actionMenu.close();
     const atBottom = e.target.scrollHeight - e.target.scrollTop - e.target.clientHeight < 50;
     this.shouldAutoScroll = atBottom;
     this.history.handleScroll(e.target);
@@ -293,64 +265,70 @@ export class ChatPanel extends LitElement {
     this.expandedSections = next;
   }
 
-  private handleMessagePointerDown(event: PointerEvent, key: string, text: string) {
-    if (
-      event.pointerType !== "touch"
-      || !event.isPrimary
-      || eventStartsInHorizontalScroller(event)
-    ) return;
-    this.messageActions.beginTouchPress(key, text, event.clientX, event.clientY);
-  }
-
-  private handleMessagePointerMove(event: PointerEvent) {
-    if (event.pointerType !== "touch") return;
-    this.messageActions.moveTouchPress(event.clientX, event.clientY);
-  }
-
-  private handleMessagePointerEnd(event: PointerEvent) {
-    if (event.pointerType !== "touch") return;
-    this.messageActions.endTouchPress();
-  }
-
-  private handleMessageContextMenu(event: MouseEvent, text: string) {
-    const coarsePointer = typeof window !== "undefined"
-      && window.matchMedia?.("(pointer: coarse)").matches;
-    if (coarsePointer && eventStartsInHorizontalScroller(event)) return;
-
-    event.preventDefault();
-    if (coarsePointer) {
-      this.messageActions.openActionSheet(text, event.clientX, event.clientY);
-    } else {
-      this.messageActions.openContextMenu(text, event.clientX, event.clientY);
-    }
-  }
-
-  private handleMessageKeydown(event: KeyboardEvent, text: string) {
-    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
-    event.preventDefault();
-    const rect = event.currentTarget instanceof HTMLElement
-      ? event.currentTarget.getBoundingClientRect()
-      : { left: 0, bottom: 0 };
-    this.messageActions.openKeyboardMenu(text, rect);
-  }
-
   private messageActionAttributes(message: UserMessage | AssistantMessage, key: string) {
     const text = messageMarkdown(message);
     if (!text) return null;
-    return {
-      text,
-      pressed: this.messageActions.pressedKey === key,
-      copied: this.messageActions.copiedKey === key,
-    };
+    return { text, copied: this.copiedMessageKey === key };
+  }
+
+  private async copyMessage(text: string): Promise<boolean> {
+    try {
+      await copyTextToClipboard(text);
+      return true;
+    } catch {
+      showToast("Could not copy message", "error");
+      return false;
+    }
   }
 
   private async copyMessageDirect(event: Event, key: string, text: string) {
     event.stopPropagation();
-    try {
-      await this.messageActions.copyDirect(key, text);
-    } catch {
-      showToast("Could not copy message", "error");
+    if (!await this.copyMessage(text)) return;
+
+    this.clearCopyFeedbackTimer();
+    this.copiedMessageKey = key;
+    this.copyFeedbackTimer = window.setTimeout(() => {
+      this.copyFeedbackTimer = null;
+      this.copiedMessageKey = null;
+    }, 700);
+  }
+
+  private openMessageSheet(text: string): Promise<void> {
+    return this.actionMenu?.openSheet(text) ?? Promise.resolve();
+  }
+
+  private handleMessageContextMenu(event: MouseEvent, text: string) {
+    event.preventDefault();
+    if (typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches === true) {
+      void this.openMessageSheet(text);
+      return;
     }
+
+    this.actionMenu?.openContext(text, event.clientX, event.clientY);
+  }
+
+  private handleMessageKeyDown(event: KeyboardEvent, text: string) {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+
+    event.preventDefault();
+    const anchor = event.currentTarget;
+    const rect = typeof Element !== "undefined" && anchor instanceof Element
+      ? anchor.getBoundingClientRect()
+      : { left: 0, bottom: 0 };
+    this.actionMenu?.openContext(text, rect.left, rect.bottom);
+  }
+
+  private resetMessageActions() {
+    this.clearCopyFeedbackTimer();
+    this.copiedMessageKey = null;
+    this.actionMenu?.close();
+  }
+
+  private clearCopyFeedbackTimer() {
+    if (this.copyFeedbackTimer !== null && typeof window !== "undefined") {
+      window.clearTimeout(this.copyFeedbackTimer);
+    }
+    this.copyFeedbackTimer = null;
   }
 
   private renderDesktopCopyControl(key: string, text: string, copied: boolean, positionClass: string) {
@@ -369,74 +347,6 @@ export class ChatPanel extends LitElement {
           <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
         `}
       </button>
-    `;
-  }
-
-  private async copyMessageMarkdown() {
-    try {
-      await this.messageActions.copyMarkdown();
-    } catch {
-      this.messageActions.close();
-      showToast("Could not copy message", "error");
-    }
-  }
-
-  private renderMessageActionMenu() {
-    const menu = this.messageActions.menu;
-    if (!menu) return nothing;
-    const copied = this.messageActions.copied;
-    const menuLeft = typeof window === "undefined"
-      ? menu.x
-      : Math.max(8, Math.min(menu.x, window.innerWidth - 216));
-    const menuTop = typeof window === "undefined"
-      ? menu.y
-      : Math.max(8, Math.min(menu.y, window.innerHeight - 64));
-    const action = html`
-      <button
-        type="button"
-        role=${menu.mode === "menu" ? "menuitem" : nothing}
-        class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium ${copied ? 'text-green-300' : 'text-zinc-100'} active:bg-zinc-700"
-        ?disabled=${copied}
-        @click=${() => this.copyMessageMarkdown()}
-      >
-        <span aria-hidden="true">${copied ? "✓" : "⧉"}</span>
-        <span aria-live="polite">${copied ? "Copied" : "Copy as Markdown"}</span>
-      </button>
-    `;
-
-    return html`
-      <div
-        data-role="message-action-menu"
-        popover="manual"
-        class="fixed inset-0 m-0 h-[100dvh] max-h-none w-screen max-w-none border-0 ${menu.mode === 'sheet' ? 'bg-black/40' : 'bg-transparent'} p-0 z-[var(--layer-overlay)]"
-        role=${menu.mode === "sheet" ? "dialog" : "menu"}
-        aria-label="Message actions"
-        @click=${() => this.messageActions.close()}
-        @keydown=${(event: KeyboardEvent) => {
-          if (event.key === "Escape") this.messageActions.close();
-        }}
-      >
-        ${menu.mode === "sheet" ? html`
-          <div class="absolute inset-x-0 bottom-0 p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]" @click=${(event: Event) => event.stopPropagation()}>
-            <div class="overflow-hidden rounded-xl border border-zinc-700 bg-zinc-800 shadow-2xl">
-              ${action}
-            </div>
-            <button
-              type="button"
-              class="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm font-semibold text-zinc-200 active:bg-zinc-700"
-              @click=${() => this.messageActions.close()}
-            >Cancel</button>
-          </div>
-        ` : html`
-          <div
-            class="absolute w-52 overflow-hidden rounded-md border border-zinc-600 bg-zinc-800 shadow-xl"
-            style=${styleMap({ left: `${menuLeft}px`, top: `${menuTop}px` })}
-            @click=${(event: Event) => event.stopPropagation()}
-          >
-            ${action}
-          </div>
-        `}
-      </div>
     `;
   }
 
@@ -495,31 +405,36 @@ export class ChatPanel extends LitElement {
 
     return html`
       <div
+        ${action ? longPress({
+          feedback: "[data-role=message-press-target]",
+          onComplete: () => this.openMessageSheet(action.text),
+        }) : nothing}
         data-role="user-message-row"
         data-message-actions=${action ? "true" : nothing}
         data-message-key=${messageKey}
         data-conversation-key=${conversationKey}
-        class="flex justify-end mb-3 rounded-2xl outline-none transition-[background,transform] md:select-text ${action ? 'select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-blue-400/70' : ''} ${action?.pressed ? 'scale-[0.99] bg-zinc-700/50' : ''} ${isAnimating ? 'sent-message-target-hidden' : ''}"
+        class="flex justify-end mb-3 rounded-2xl outline-none md:select-text ${action ? 'select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-blue-400/70' : ''} ${isAnimating ? 'sent-message-target-hidden' : ''}"
         tabindex=${action ? "0" : nothing}
         aria-label=${action ? "User message. Press Shift+F10 for actions" : nothing}
-        @pointerdown=${action ? (event: PointerEvent) => this.handleMessagePointerDown(event, messageKey, action.text) : nothing}
-        @pointermove=${action ? this.handleMessagePointerMove : nothing}
-        @pointerup=${action ? this.handleMessagePointerEnd : nothing}
-        @pointercancel=${action ? this.handleMessagePointerEnd : nothing}
         @contextmenu=${action ? (event: MouseEvent) => this.handleMessageContextMenu(event, action.text) : nothing}
-        @keydown=${action ? (event: KeyboardEvent) => this.handleMessageKeydown(event, action.text) : nothing}
+        @keydown=${action ? (event: KeyboardEvent) => this.handleMessageKeyDown(event, action.text) : nothing}
       >
-        <div data-role="user-message-animation-target" class="flex max-w-[80%] flex-col items-end gap-2">
-          ${images.length > 0 ? html`
-            <div data-role="user-message-attachments" class="grid grid-cols-1 gap-2 justify-items-end max-w-full">
-              ${images.map((image) => this.renderChatImage(image, sessionId))}
-            </div>
-          ` : nothing}
-          ${text ? html`
-            <div data-role="user-message-bubble" class="bg-blue-600 text-white rounded-2xl rounded-br-md px-3 py-1.5 max-w-full text-sm">
-              <div class="whitespace-pre-wrap">${text}</div>
-            </div>
-          ` : nothing}
+        <div data-role="user-message-animation-target" class="flex max-w-[80%] flex-col items-end">
+          <div
+            data-role="message-press-target"
+            class="flex max-w-full origin-bottom-right flex-col items-end gap-2"
+          >
+            ${images.length > 0 ? html`
+              <div data-role="user-message-attachments" class="grid grid-cols-1 gap-2 justify-items-end max-w-full">
+                ${images.map((image) => this.renderChatImage(image, sessionId))}
+              </div>
+            ` : nothing}
+            ${text ? html`
+              <div data-role="user-message-bubble" class="bg-blue-600 text-white rounded-2xl rounded-br-md px-3 py-1.5 max-w-full text-sm">
+                <div class="whitespace-pre-wrap">${text}</div>
+              </div>
+            ` : nothing}
+          </div>
         </div>
       </div>
     `;
@@ -562,19 +477,24 @@ export class ChatPanel extends LitElement {
 
     return html`
       <div
+        ${action ? longPress({
+          feedback: "[data-role=message-press-target]",
+          onComplete: () => this.openMessageSheet(action.text),
+        }) : nothing}
         data-conversation-key=${conversationKey}
         data-message-actions=${action ? "true" : nothing}
-        class="relative mb-3 rounded-2xl outline-none transition-[background,transform] md:select-text ${action ? 'select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-blue-400/70' : ''} ${action?.pressed ? 'scale-[0.99] bg-zinc-700/50' : ''}"
+        class="relative mb-3 rounded-2xl outline-none md:select-text ${action ? 'select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-blue-400/70' : ''}"
         tabindex=${action ? "0" : nothing}
         aria-label=${action ? "Assistant message. Press Shift+F10 for actions" : nothing}
-        @pointerdown=${action ? (event: PointerEvent) => this.handleMessagePointerDown(event, conversationKey, action.text) : nothing}
-        @pointermove=${action ? this.handleMessagePointerMove : nothing}
-        @pointerup=${action ? this.handleMessagePointerEnd : nothing}
-        @pointercancel=${action ? this.handleMessagePointerEnd : nothing}
         @contextmenu=${action ? (event: MouseEvent) => this.handleMessageContextMenu(event, action.text) : nothing}
-        @keydown=${action ? (event: KeyboardEvent) => this.handleMessageKeydown(event, action.text) : nothing}
+        @keydown=${action ? (event: KeyboardEvent) => this.handleMessageKeyDown(event, action.text) : nothing}
       >
-        ${parts}
+        <div
+          data-role="message-press-target"
+          class="flex w-full max-w-full origin-left flex-col items-stretch"
+        >
+          ${parts}
+        </div>
         ${action ? this.renderDesktopCopyControl(conversationKey, action.text, action.copied, "right-[10%]") : nothing}
       </div>
     `;
@@ -751,7 +671,9 @@ export class ChatPanel extends LitElement {
           ${this.renderStreamingContent()}
         </div>
 
-        ${this.renderMessageActionMenu()}
+        <message-action-menu
+          .copyMessage=${(text: string) => this.copyMessage(text)}
+        ></message-action-menu>
 
         <!-- Input area -->
         <div class="border-t border-zinc-700 px-3 pt-2 pb-[var(--input-bottom)]">
