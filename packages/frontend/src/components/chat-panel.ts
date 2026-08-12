@@ -1,79 +1,36 @@
 /**
- * Chat Panel
- *
- * Lit web component that renders the conversation between the user and the
- * agent, handles streaming text updates, tool call display, and user input.
- * Uses light DOM so Tailwind classes work directly.
+ * Conversation-level chat orchestration. Individual display messages render and
+ * own their actions in <chat-message>.
  */
 
 import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import type { ActiveSessionStore } from "../models/stores/active-session-store.js";
-import type { ConversationEntry } from "../models/stores/conversations-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
-import "./markdown-content.js";
+import type { Message } from "../models/message.js";
+import type { ChatComposer, ChatComposerSubmitDetail } from "./chat-composer.js";
+import type { ChatMessage } from "./chat-message.js";
+import { ChatSendAnimator } from "../helpers/chat-send-animation.js";
+import { ChatHistoryController } from "../controllers/chat-history-controller.js";
+import "./chat-message.js";
 import "./session-model-picker.js";
 import "./chat-composer.js";
-import "./message-action-menu.js";
-import type { MessageActionMenuElement } from "./message-action-menu.js";
-import { getToolRenderer } from "./tools/index.js";
-import type {
-  AgentMessage,
-  AssistantMessage,
-  CompactionSummaryMessage,
-  UserMessage,
-  ToolResultMessage,
-  ToolCall,
-} from "../models/message.js";
-import type { ToolExecution, StreamingAssistant } from "../models/chat-state.js";
-import {
-  imageAspectRatioStyle,
-  imageBlockSrc,
-  imagesFromContent,
-  imageSizeHint,
-  textFromClientContent,
-  type ChatImageBlock,
-} from "../models/chat-content.js";
-import type { ChatComposer, ChatComposerSubmitDetail } from "./chat-composer.js";
-import { ChatSendAnimator } from "../helpers/chat-send-animation.js";
-import { openImageViewerEvent } from "./events.js";
-import { ChatHistoryController } from "../controllers/chat-history-controller.js";
-import { longPress } from "../directives/long-press.js";
-import { copyTextToClipboard } from "../helpers/clipboard.js";
-import { messageMarkdown } from "../models/message.js";
-import { showToast } from "./toast.js";
-
-// ---- Component --------------------------------------------------------------
 
 @customElement("chat-panel")
 export class ChatPanel extends LitElement {
-  // Use light DOM for Tailwind compatibility
   override createRenderRoot() {
     return this;
   }
 
-  @property({ attribute: false })
-  store: ActiveSessionStore | null = null;
+  @property({ attribute: false }) store: ActiveSessionStore | null = null;
+  @property({ attribute: false }) projectStore: ProjectStore | null = null;
+  @property({ type: Boolean }) visible = false;
 
-  /** Per-project store for the active session's project. Passed through to
-   *  `<skill-suggest>` so it can read the available skills. */
-  @property({ attribute: false })
-  projectStore: ProjectStore | null = null;
-
-  /** Whether this panel is currently visible (active tab). */
-  @property({ type: Boolean })
-  visible = false;
-
-  @state() private expandedSections = new Set<string>();
   @state() private animatingUserMessageKeys = new Set<string>();
-  @state() private copiedMessageKey: string | null = null;
-
   @query("chat-composer") private composer?: ChatComposer;
-  @query("message-action-menu") private actionMenu?: MessageActionMenuElement;
 
   private sendAnimator = new ChatSendAnimator(this);
-  private copyFeedbackTimer: number | null = null;
   private history = new ChatHistoryController(this, {
     hasEarlierMessages: () => this.store?.conversation.hasEarlierMessages ?? false,
     loadPrevious: () => this.store?.loadEarlierMessages() ?? Promise.resolve(false),
@@ -88,7 +45,7 @@ export class ChatPanel extends LitElement {
 
   override disconnectedCallback() {
     this.sendAnimator.cancel();
-    this.resetMessageActions();
+    this.closeMessageActions();
     super.disconnectedCallback();
     this.unsubscribeStore?.();
   }
@@ -102,28 +59,23 @@ export class ChatPanel extends LitElement {
 
   private resetSessionState() {
     this.sendAnimator.cancel();
-    this.resetMessageActions();
-    this.expandedSections = new Set();
+    this.closeMessageActions();
     this.animatingUserMessageKeys = new Set();
     this.shouldAutoScroll = true;
     this.history.reset();
   }
 
-  private get messageEntries(): ConversationEntry[] {
-    return this.store?.conversation.entries ?? [];
+  private get messages(): Message[] {
+    return this.store?.conversation.messages ?? [];
   }
 
-  private get messages(): AgentMessage[] {
-    return this.messageEntries.map((entry) => entry.message);
+  private get streamingMessages() {
+    return this.store?.conversation.streamingMessages ?? [];
   }
 
   /** SessionCache metadata is the sole frontend owner of runtime activity. */
   private get isStreaming(): boolean {
     return this.store?.sessionData.activityState === "running";
-  }
-
-  private get streamingAssistants(): StreamingAssistant[] {
-    return this.store?.conversation.streamingAssistants ?? [];
   }
 
   private get isCompacting(): boolean {
@@ -135,19 +87,11 @@ export class ChatPanel extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>) {
-    // Autofocus the composer when returning to chat tab (desktop only).
-    // Session switches remount the component via keyed(sessionId).
-    if (changed.has("visible") && this.visible) {
-      this.focusInput();
-    }
-
-    // Auto-scroll after render. The send animator measures on the following
-    // frame, after this scroll has placed the optimistic message.
+    if (changed.has("visible") && this.visible) this.focusInput();
     this.autoScroll();
     this.sendAnimator.cancelIfTargetMissing();
   }
 
-  /** Focus the chat composer, skipping on touch devices to avoid keyboard popup. */
   private focusInput() {
     if ("ontouchstart" in window || navigator.maxTouchPoints > 0) return;
     requestAnimationFrame(() => this.composer?.focusInput());
@@ -155,9 +99,7 @@ export class ChatPanel extends LitElement {
 
   private subscribeToStore() {
     this.unsubscribeStore?.();
-    this.unsubscribeStore = this.store?.subscribe(() => {
-      this.requestUpdate();
-    }) ?? undefined;
+    this.unsubscribeStore = this.store?.subscribe(() => this.requestUpdate()) ?? undefined;
   }
 
   private handleSend(e: CustomEvent<ChatComposerSubmitDetail>) {
@@ -165,14 +107,11 @@ export class ChatPanel extends LitElement {
     const sessionId = this.store?.sessionId ?? "";
     if (!sessionId || !this.store) return;
 
-    const wasStreaming = this.isStreaming;
-    const submittedEntry = wasStreaming
+    const submittedEntry = this.isStreaming
       ? this.store.steer(content)
       : this.store.prompt(content);
     if (!submittedEntry) return;
 
-    // The returned local ID identifies this exact local optimistic insertion.
-    // Persisted refreshes and peer/reconciled history never pass this boundary.
     const messageKey = submittedEntry.localId;
     const shouldAnimate = source != null && this.sendAnimator.canAnimateOutgoingMessage();
     if (shouldAnimate) {
@@ -182,11 +121,7 @@ export class ChatPanel extends LitElement {
     this.shouldAutoScroll = true;
     this.composer?.closeSuggestions();
     if (shouldAnimate) {
-      void this.sendAnimator.animate(
-        messageKey,
-        source,
-        () => this.revealOutgoingMessage(messageKey),
-      );
+      void this.sendAnimator.animate(messageKey, source, () => this.revealOutgoingMessage(messageKey));
     }
   }
 
@@ -196,10 +131,15 @@ export class ChatPanel extends LitElement {
 
   private handleScroll(e: Event) {
     if (!(e.target instanceof HTMLElement)) return;
-    if (this.actionMenu?.isOpen) this.actionMenu.close();
+    this.closeMessageActions();
     const atBottom = e.target.scrollHeight - e.target.scrollTop - e.target.clientHeight < 50;
     this.shouldAutoScroll = atBottom;
     this.history.handleScroll(e.target);
+  }
+
+  private closeMessageActions() {
+    if (typeof this.querySelectorAll !== "function") return;
+    for (const message of this.querySelectorAll<ChatMessage>("chat-message")) message.closeActions();
   }
 
   private handleHistoryTouchStart() {
@@ -221,31 +161,8 @@ export class ChatPanel extends LitElement {
     if (!this.shouldAutoScroll || this.sendAnimator.scrollLocked) return;
     requestAnimationFrame(() => {
       const container = this.querySelector("#chat-scroll");
-      if (container) {
-        container.scrollTop = container.scrollHeight;
-      }
+      if (container) container.scrollTop = container.scrollHeight;
     });
-  }
-
-  private userMessageKey(timestamp: number): string {
-    return `user-${timestamp}`;
-  }
-
-  private conversationEntryKey(entry: ConversationEntry): string {
-    return entry.id ?? entry.localId;
-  }
-
-  private conversationMessageKey(msg: AgentMessage): string {
-    switch (msg.role) {
-      case "user":
-        return this.userMessageKey(msg.timestamp);
-      case "assistant":
-        return `assistant-${msg.timestamp}`;
-      case "compactionSummary":
-        return `compaction-${msg.timestamp || 0}`;
-      case "toolResult":
-        return `tool-result-${msg.toolCallId}-${msg.timestamp}`;
-    }
   }
 
   private revealOutgoingMessage(messageKey: string) {
@@ -255,333 +172,16 @@ export class ChatPanel extends LitElement {
     this.animatingUserMessageKeys = next;
   }
 
-  private toggleSection(id: string) {
-    const next = new Set(this.expandedSections);
-    if (next.has(id)) {
-      next.delete(id);
-    } else {
-      next.add(id);
-    }
-    this.expandedSections = next;
-  }
-
-  private messageActionAttributes(message: UserMessage | AssistantMessage, key: string) {
-    const text = messageMarkdown(message);
-    if (!text) return null;
-    return { text, copied: this.copiedMessageKey === key };
-  }
-
-  private async copyMessage(text: string): Promise<boolean> {
-    try {
-      await copyTextToClipboard(text);
-      return true;
-    } catch {
-      showToast("Could not copy message", "error");
-      return false;
-    }
-  }
-
-  private async copyMessageDirect(event: Event, key: string, text: string) {
-    event.stopPropagation();
-    if (!await this.copyMessage(text)) return;
-
-    this.clearCopyFeedbackTimer();
-    this.copiedMessageKey = key;
-    this.copyFeedbackTimer = window.setTimeout(() => {
-      this.copyFeedbackTimer = null;
-      this.copiedMessageKey = null;
-    }, 700);
-  }
-
-  private openMessageSheet(text: string): Promise<void> {
-    return this.actionMenu?.openSheet(text) ?? Promise.resolve();
-  }
-
-  private handleMessageContextMenu(event: MouseEvent, text: string) {
-    event.preventDefault();
-    if (typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches === true) {
-      void this.openMessageSheet(text);
-      return;
-    }
-
-    this.actionMenu?.openContext(text, event.clientX, event.clientY);
-  }
-
-  private handleMessageKeyDown(event: KeyboardEvent, text: string) {
-    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
-
-    event.preventDefault();
-    const anchor = event.currentTarget;
-    const rect = typeof Element !== "undefined" && anchor instanceof Element
-      ? anchor.getBoundingClientRect()
-      : { left: 0, bottom: 0 };
-    this.actionMenu?.openContext(text, rect.left, rect.bottom);
-  }
-
-  private resetMessageActions() {
-    this.clearCopyFeedbackTimer();
-    this.copiedMessageKey = null;
-    this.actionMenu?.close();
-  }
-
-  private clearCopyFeedbackTimer() {
-    if (this.copyFeedbackTimer !== null && typeof window !== "undefined") {
-      window.clearTimeout(this.copyFeedbackTimer);
-    }
-    this.copyFeedbackTimer = null;
-  }
-
-  private renderDesktopCopyControl(key: string, text: string, copied: boolean, positionClass: string) {
+  private renderMessage(message: Message) {
     return html`
-      <button
-        data-role="desktop-copy-message"
-        type="button"
-        class="absolute top-0 ${positionClass} z-[var(--layer-content)] hidden h-7 w-7 items-center justify-center rounded-md bg-transparent text-zinc-500 transition-colors hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 md:inline-flex"
-        title=${copied ? "Copied" : "Copy as Markdown"}
-        aria-label="Copy as Markdown"
-        @click=${(event: Event) => this.copyMessageDirect(event, key, text)}
-      >
-        ${copied ? html`
-          <svg class="h-4 w-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-        ` : html`
-          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-        `}
-      </button>
+      <chat-message
+        class="block ${message.role === 'user' && this.animatingUserMessageKeys.has(message.renderKey) ? 'sent-message-target-hidden' : ''}"
+        data-conversation-key=${message.renderKey}
+        data-message-key=${message.renderKey}
+        .message=${message}
+        .sessionId=${this.store?.sessionId ?? ""}
+      ></chat-message>
     `;
-  }
-
-  private renderChatImage(image: ChatImageBlock, sessionId: string) {
-    const hint = imageSizeHint(image);
-    const src = imageBlockSrc(sessionId, image);
-    const alt = "filename" in image && image.filename ? image.filename : "Attached image";
-    const className = "block h-auto w-auto max-h-64 max-w-full rounded-lg border border-zinc-700 bg-zinc-900 transition-opacity group-hover:opacity-90";
-    const openImage = (event: Event) => {
-      event.stopPropagation();
-      this.dispatchEvent(openImageViewerEvent({ src, alt, title: alt }));
-    };
-    const imageTemplate = !hint
-      ? html`
-        <img
-          src=${src}
-          alt=${alt}
-          class=${className}
-          loading="lazy"
-        />
-      `
-      : html`
-        <img
-          src=${src}
-          alt=${alt}
-          width=${hint.width}
-          height=${hint.height}
-          style=${imageAspectRatioStyle(image)}
-          class=${className}
-          loading="lazy"
-        />
-      `;
-
-    return html`
-      <button
-        type="button"
-        class="group ml-auto inline-flex max-w-full cursor-zoom-in justify-end rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-zinc-900"
-        aria-label=${`Open image full screen: ${alt}`}
-        title="Open image full screen"
-        @click=${openImage}
-      >
-        ${imageTemplate}
-      </button>
-    `;
-  }
-
-  private renderUserMessage(msg: UserMessage, conversationKey = this.conversationMessageKey(msg)) {
-    const text = typeof msg.content === "string"
-      ? msg.content
-      : textFromClientContent(msg.content);
-    const images = imagesFromContent(msg.content);
-    const sessionId = this.store?.sessionId ?? "";
-    const messageKey = conversationKey;
-    const isAnimating = this.animatingUserMessageKeys.has(messageKey);
-    const action = this.messageActionAttributes(msg, messageKey);
-
-    return html`
-      <div
-        ${action ? longPress({
-          feedback: "[data-role=message-press-target]",
-          onComplete: () => this.openMessageSheet(action.text),
-        }) : nothing}
-        data-role="user-message-row"
-        data-message-actions=${action ? "true" : nothing}
-        data-message-key=${messageKey}
-        data-conversation-key=${conversationKey}
-        class="flex justify-end mb-3 rounded-2xl outline-none md:select-text ${action ? 'select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-blue-400/70' : ''} ${isAnimating ? 'sent-message-target-hidden' : ''}"
-        tabindex=${action ? "0" : nothing}
-        aria-label=${action ? "User message. Press Shift+F10 for actions" : nothing}
-        @contextmenu=${action ? (event: MouseEvent) => this.handleMessageContextMenu(event, action.text) : nothing}
-        @keydown=${action ? (event: KeyboardEvent) => this.handleMessageKeyDown(event, action.text) : nothing}
-      >
-        <div data-role="user-message-animation-target" class="flex max-w-[80%] flex-col items-end">
-          <div
-            data-role="message-press-target"
-            class="flex max-w-full origin-bottom-right flex-col items-end gap-2"
-          >
-            ${images.length > 0 ? html`
-              <div data-role="user-message-attachments" class="grid grid-cols-1 gap-2 justify-items-end max-w-full">
-                ${images.map((image) => this.renderChatImage(image, sessionId))}
-              </div>
-            ` : nothing}
-            ${text ? html`
-              <div data-role="user-message-bubble" class="bg-blue-600 text-white rounded-2xl rounded-br-md px-3 py-1.5 max-w-full text-sm">
-                <div class="whitespace-pre-wrap">${text}</div>
-              </div>
-            ` : nothing}
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  private renderAssistantMessage(
-    msg: AssistantMessage,
-    conversationKey = this.conversationMessageKey(msg),
-    options: { streaming?: boolean; toolExecutions?: StreamingAssistant["toolExecutions"] } = {},
-  ) {
-    const parts: unknown[] = [];
-    const textBuffer: string[] = [];
-    const action = this.messageActionAttributes(msg, conversationKey);
-
-    const flushText = () => {
-      if (textBuffer.length === 0) return;
-      const text = textBuffer.join("\n");
-      textBuffer.length = 0;
-      parts.push(html`
-        <div class="bg-zinc-800 border-l-2 border-blue-400/60 rounded-2xl rounded-bl-md px-4 py-2 max-w-[90%] text-sm">
-          <markdown-content .text=${text} .streaming=${options.streaming ?? false}></markdown-content>
-        </div>
-      `);
-    };
-
-    for (const block of msg.content) {
-      if (block.type === "text") {
-        textBuffer.push(block.text);
-        continue;
-      }
-
-      if (block.type === "toolCall") {
-        flushText();
-        parts.push(this.renderToolCall(block, options));
-      }
-      // Skip thinking blocks in the UI
-    }
-
-    flushText();
-
-    return html`
-      <div
-        ${action ? longPress({
-          feedback: "[data-role=message-press-target]",
-          onComplete: () => this.openMessageSheet(action.text),
-        }) : nothing}
-        data-conversation-key=${conversationKey}
-        data-message-actions=${action ? "true" : nothing}
-        class="relative mb-3 rounded-2xl outline-none md:select-text ${action ? 'select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-blue-400/70' : ''}"
-        tabindex=${action ? "0" : nothing}
-        aria-label=${action ? "Assistant message. Press Shift+F10 for actions" : nothing}
-        @contextmenu=${action ? (event: MouseEvent) => this.handleMessageContextMenu(event, action.text) : nothing}
-        @keydown=${action ? (event: KeyboardEvent) => this.handleMessageKeyDown(event, action.text) : nothing}
-      >
-        <div
-          data-role="message-press-target"
-          class="flex w-full max-w-full origin-left flex-col items-stretch"
-        >
-          ${parts}
-        </div>
-        ${action ? this.renderDesktopCopyControl(conversationKey, action.text, action.copied, "right-[10%]") : nothing}
-      </div>
-    `;
-  }
-
-  private renderToolCall(
-    tc: ToolCall,
-    options: { streaming?: boolean; toolExecutions?: StreamingAssistant["toolExecutions"] } = {},
-  ) {
-    const execution = options.toolExecutions?.[tc.id];
-    if (options.streaming) {
-      // Tool-call snapshots contain arguments while they are still being
-      // parsed. Wait for execution_start so expensive renderers only receive
-      // the finalized arguments rather than re-highlighting every delta.
-      return execution ? this.renderToolBlock(execution) : nothing;
-    }
-
-    const result = this.messages.find(
-      (m): m is ToolResultMessage => m.role === "toolResult" && m.toolCallId === tc.id
-    );
-    return this.renderToolBlock({
-      id: tc.id,
-      name: tc.name,
-      args: tc.arguments,
-      status: "done",
-      result: result ? { content: result.content, details: result.details } : undefined,
-      isError: result?.isError,
-    });
-  }
-
-  private renderToolBlock(block: ToolExecution) {
-    const renderer = getToolRenderer(block.name);
-    return html`<div class="max-w-[90%]">${renderer.render({ ...block, sessionId: this.store?.sessionId ?? "" })}</div>`;
-  }
-
-  private renderToolResultMessage(_msg: ToolResultMessage) {
-    // Tool results are rendered inline with their corresponding tool calls above.
-    // Skip standalone rendering.
-    return nothing;
-  }
-
-  private renderCompactionSummary(msg: CompactionSummaryMessage, conversationKey = this.conversationMessageKey(msg)) {
-    const rawSummary = msg.content || msg.summary;
-    const summary = rawSummary && rawSummary !== "Conversation summarized" ? rawSummary : null;
-    const id = `compaction-${msg.timestamp || 0}`;
-    const expanded = this.expandedSections.has(id);
-
-    return html`
-      <div data-conversation-key=${conversationKey} class="my-4">
-        <div class="flex items-center gap-3">
-          <div class="flex-1 border-t border-zinc-600"></div>
-          <button
-            class="flex items-center gap-1.5 text-[10px] text-zinc-500 uppercase tracking-wide shrink-0 ${summary ? 'hover:text-zinc-300 cursor-pointer' : ''} transition-colors"
-            @click=${() => summary && this.toggleSection(id)}
-            ?disabled=${!summary}
-          >
-            ${summary ? html`<span class="font-mono">${expanded ? '▼' : '▶'}</span>` : nothing}
-            Conversation summarized
-          </button>
-          <div class="flex-1 border-t border-zinc-600"></div>
-        </div>
-        ${expanded && summary ? html`
-          <div class="mt-2 mx-4 bg-zinc-800/50 rounded-lg px-4 py-3 text-sm border border-zinc-700">
-            <markdown-content .text=${summary}></markdown-content>
-          </div>
-        ` : nothing}
-      </div>
-    `;
-  }
-
-  private renderMessageEntry(entry: ConversationEntry) {
-    return this.renderMessage(entry.message, this.conversationEntryKey(entry));
-  }
-
-  private renderMessage(msg: AgentMessage, conversationKey = this.conversationMessageKey(msg)) {
-    switch (msg.role) {
-      case "user":
-        return this.renderUserMessage(msg, conversationKey);
-      case "assistant":
-        return this.renderAssistantMessage(msg, conversationKey);
-      case "toolResult":
-        return this.renderToolResultMessage(msg);
-      case "compactionSummary":
-        return this.renderCompactionSummary(msg, conversationKey);
-      default:
-        return nothing;
-    }
   }
 
   private renderCompactingIndicator() {
@@ -603,27 +203,17 @@ export class ChatPanel extends LitElement {
   }
 
   private renderStreamingContent() {
-    const hasVisibleAssistantContent = this.streamingAssistants.some(({ message, toolExecutions }) => (
-      message.content.some((block) => (
-        (block.type === "text" && block.text.length > 0)
-        || (block.type === "toolCall" && toolExecutions[block.id] !== undefined)
-      ))
-    ));
+    const hasVisibleAssistantContent = this.streamingMessages.some((message) => message.hasVisibleContent);
     const showThinking = this.isStreaming && !this.isCompacting && !hasVisibleAssistantContent;
-    if (!showThinking && this.streamingAssistants.length === 0 && !this.isCompacting) return nothing;
+    if (!showThinking && this.streamingMessages.length === 0 && !this.isCompacting) return nothing;
 
     return html`
-      <div
-        data-role="streaming-content"
-        data-conversation-key="streaming-content"
-        class="mb-3 space-y-2"
-      >
-        ${this.streamingAssistants.map(({ message, toolExecutions }) => (
-          this.renderAssistantMessage(message, `streaming-assistant-${message.timestamp}`, {
-            streaming: true,
-            toolExecutions,
-          })
-        ))}
+      <div data-role="streaming-content" data-conversation-key="streaming-content" class="mb-3 space-y-2">
+        ${repeat(
+          this.streamingMessages,
+          (message) => message.renderKey,
+          (message) => this.renderMessage(message),
+        )}
         ${showThinking ? this.renderThinkingIndicator() : nothing}
         ${this.isCompacting ? this.renderCompactingIndicator() : nothing}
       </div>
@@ -636,7 +226,6 @@ export class ChatPanel extends LitElement {
 
     return html`
       <div class="relative flex flex-col h-full">
-        <!-- Messages area -->
         <div
           id="chat-scroll"
           class="flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none] p-4 space-y-1"
@@ -664,18 +253,13 @@ export class ChatPanel extends LitElement {
             </div>
           ` : nothing}
           ${repeat(
-            this.messageEntries,
-            (entry) => this.conversationEntryKey(entry),
-            (entry) => this.renderMessageEntry(entry),
+            this.messages,
+            (message) => message.renderKey,
+            (message) => this.renderMessage(message),
           )}
           ${this.renderStreamingContent()}
         </div>
 
-        <message-action-menu
-          .copyMessage=${(text: string) => this.copyMessage(text)}
-        ></message-action-menu>
-
-        <!-- Input area -->
         <div class="border-t border-zinc-700 px-3 pt-2 pb-[var(--input-bottom)]">
           ${this.errorMessage ? html`
             <div class="flex items-center gap-2 mb-2 px-3 py-1.5 bg-red-900/30 border border-red-800/50 rounded-lg text-xs text-red-300">
@@ -701,7 +285,6 @@ export class ChatPanel extends LitElement {
             @composer-stop=${this.handleStop}
           ></chat-composer>
         </div>
-
       </div>
     `;
   }

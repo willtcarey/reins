@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ConversationsStore } from "../../../models/stores/conversations-store.js";
 import { SessionCache } from "../../../models/stores/session-cache.js";
-import type { AgentMessage } from "../../../models/message.js";
+import type { AgentMessage } from "../../../models/agent-message.js";
 import {
   applyStreamingAssistant,
   applyStreamingMessage,
@@ -15,6 +15,10 @@ import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 
 function textUser(content: string, timestamp: number): AgentMessage {
   return { role: "user", content, timestamp };
+}
+
+function rawMessages(view: ReturnType<ConversationsStore["get"]>): AgentMessage[] {
+  return view.messages.map(({ raw }) => raw);
 }
 
 function cachedSession(isRunning: boolean) {
@@ -71,7 +75,78 @@ describe("ConversationsStore", () => {
       "/api/sessions/sess-1/messages?after=cursor-2",
       "/api/sessions/sess-1/messages?before=cursor-2",
     ]);
-    expect(conversations.get("sess-1").messages).toEqual([earlier, latest, newer]);
+    expect(rawMessages(conversations.get("sess-1"))).toEqual([earlier, latest, newer]);
+  });
+
+  test("exposes display messages with stable identity and associated persisted tool results", () => {
+    const conversations = new ConversationsStore();
+    const assistant = {
+      role: "assistant" as const,
+      content: [
+        { type: "text" as const, text: "Checking" },
+        { type: "toolCall" as const, id: "tool-1", name: "read", arguments: { path: "README.md" } },
+      ],
+      timestamp: 200,
+    };
+    const result = {
+      role: "toolResult" as const,
+      toolCallId: "tool-1",
+      toolName: "read",
+      content: [{ type: "text" as const, text: "contents" }],
+      isError: false,
+      timestamp: 300,
+    };
+
+    conversations.mergeMessages("sess-1", conversationPage([
+      { id: "user-row", parentId: null, message: textUser("inspect it", 100) },
+      { id: "assistant-row", parentId: "user-row", message: assistant },
+      { id: "result-row", parentId: "assistant-row", message: result },
+    ]));
+
+    const messages = conversations.get("sess-1").messages;
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({
+      role: "user",
+      entryId: "user-row",
+      parentEntryId: null,
+      renderKey: "user-row",
+    });
+    expect(messages[0]?.copyMarkdown()).toBe("inspect it");
+    expect(messages[1]).toMatchObject({
+      role: "assistant",
+      entryId: "assistant-row",
+      parentEntryId: "user-row",
+      renderKey: "assistant-row",
+    });
+    expect(messages[1]?.copyMarkdown()).toBe("Checking");
+    if (messages[1]?.role !== "assistant") throw new Error("Expected assistant domain message");
+    const toolCall = messages[1].blocks.find((block) => block.type === "toolCall");
+    expect(toolCall).toMatchObject({ id: "tool-1", result });
+    expect(toolCall?.renderData).toMatchObject({ status: "done", result: { content: result.content } });
+  });
+
+  test("associates live tool execution with its owning streaming message", () => {
+    const conversations = new ConversationsStore();
+    applyStreamingAssistant(conversations, "sess-1", [{
+      id: "tool-1",
+      name: "read",
+      arguments: { path: "README.md" },
+      result: "live contents",
+      done: true,
+    }], 200);
+
+    const [message] = conversations.get("sess-1").streamingMessages;
+    expect(message).toMatchObject({
+      role: "assistant",
+      renderKey: "streaming-assistant-200",
+      streaming: true,
+    });
+    const toolCall = message?.blocks.find((block) => block.type === "toolCall");
+    expect(toolCall).toMatchObject({
+      id: "tool-1",
+      execution: { id: "tool-1", status: "done" },
+    });
+    expect(toolCall?.renderData).toMatchObject({ status: "done", result: { content: [{ text: "live contents" }] } });
   });
 
   test("stores session-scoped websocket errors", () => {
@@ -89,10 +164,9 @@ describe("ConversationsStore", () => {
     conversations.applyEvent("sess-1", { type: "task_updated", projectId: 42 });
 
     expect(conversations.get("sess-1")).toMatchObject({
-      entries: [],
       messages: [],
+      streamingMessages: [],
       hasEarlierMessages: false,
-      streamingAssistants: [],
     });
   });
 
@@ -101,7 +175,7 @@ describe("ConversationsStore", () => {
 
     applyStreamingAssistant(conversations, "inactive-session", ["hello"], 100);
 
-    expect(conversations.get("active-session").streamingAssistants).toEqual([]);
+    expect(conversations.get("active-session").streamingMessages).toEqual([]);
     expect(streamingContentKeys(conversations, "inactive-session")).toEqual(["text:hello"]);
   });
 
@@ -123,7 +197,7 @@ describe("ConversationsStore", () => {
       type: "user_message",
       message: [{ type: "text", text: "live prompt" }],
     });
-    const liveUser = conversations.get("sess-1").messages.at(-1)!;
+    const liveUser = conversations.get("sess-1").messages.at(-1)!.raw;
     conversations.applyEvent("sess-1", { type: "message_end", message: liveAssistant });
     applyStreamingAssistant(conversations, "sess-1", ["still working"], 400);
 
@@ -133,15 +207,13 @@ describe("ConversationsStore", () => {
     ), { earlier: true });
 
     const state = conversations.get("sess-1");
-    expect(state.messages).toEqual([earlier, latest, liveUser]);
-    expect(state.entries.slice(0, 2)).toEqual([
-      { id: "1", parentId: null, message: earlier },
-      { id: "2", parentId: "1", message: latest },
+    expect(rawMessages(state)).toEqual([earlier, latest, liveUser]);
+    expect(state.messages.slice(0, 2)).toMatchObject([
+      { entryId: "1", parentEntryId: null, raw: earlier },
+      { entryId: "2", parentEntryId: "1", raw: latest },
     ]);
-    expect(state.entries.slice(2).map((entry) => entry.id)).toEqual([null]);
-    expect(state.entries.slice(2).every((entry) => (
-      entry.id === null && entry.localId.length > 0
-    ))).toBe(true);
+    expect(state.messages.slice(2).map((message) => message.entryId)).toEqual([null]);
+    expect(state.messages.slice(2).every((message) => message.renderKey.length > 0)).toBe(true);
     expect(streamingContentKeys(conversations, "sess-1")).toEqual(["text:live reply", "text:still working"]);
   });
 
@@ -158,9 +230,9 @@ describe("ConversationsStore", () => {
       { id: "new", parentId: "old", message: { role: "user", content: strippedPersisted, timestamp: 5_500 } },
     ]));
 
-    expect(conversations.get("sess-1").entries).toEqual([
-      { id: "old", parentId: null, message: textUser("old", 100) },
-      { id: "new", parentId: "old", message: { role: "user", content: strippedPersisted, timestamp: 5_500 } },
+    expect(conversations.get("sess-1").messages).toMatchObject([
+      { entryId: "old", parentEntryId: null, raw: textUser("old", 100) },
+      { entryId: "new", parentEntryId: "old", raw: { role: "user", content: strippedPersisted, timestamp: 5_500 } },
     ]);
   });
 
@@ -178,13 +250,13 @@ describe("ConversationsStore", () => {
     conversations.mergeMessages("sess-1", conversationPage([
       { id: "persisted-1", parentId: "old", message: { role: "user", content, timestamp: 5_500 } },
     ]));
-    expect(conversations.get("sess-1").entries.filter(({ id }) => id === null)).toHaveLength(1);
+    expect(conversations.get("sess-1").messages.filter(({ entryId }) => entryId === null)).toHaveLength(1);
 
     conversations.mergeMessages("sess-1", conversationPage([
       { id: "persisted-2", parentId: "persisted-1", message: { role: "user", content, timestamp: 6_500 } },
     ]));
-    expect(conversations.get("sess-1").entries.filter(({ id }) => id === null)).toHaveLength(0);
-    expect(conversations.get("sess-1").entries.map(({ id }) => id)).toEqual(["old", "persisted-1", "persisted-2"]);
+    expect(conversations.get("sess-1").messages.filter(({ entryId }) => entryId === null)).toHaveLength(0);
+    expect(conversations.get("sess-1").messages.map(({ entryId }) => entryId)).toEqual(["old", "persisted-1", "persisted-2"]);
   });
 
   test("stale overlapping pages never consume pending optimistic users", () => {
@@ -196,7 +268,7 @@ describe("ConversationsStore", () => {
     conversations.mergeMessages("overlap", conversationPage([stale]));
     conversations.mergeMessages("overlap", conversationPage([stale]));
 
-    expect(conversations.get("overlap").entries.filter(({ id }) => id === null)).toHaveLength(1);
+    expect(conversations.get("overlap").messages.filter(({ entryId }) => entryId === null)).toHaveLength(1);
   });
 
   test("agent_end exposes final output immediately and persistence replaces it by stable identity", () => {
@@ -220,8 +292,8 @@ describe("ConversationsStore", () => {
       messages: [textUser("runtime copy", 100), liveAssistant, liveToolResult],
     });
 
-    expect(conversations.get("sess-1").messages).toEqual([liveAssistant, liveToolResult]);
-    expect(conversations.get("sess-1").entries.every(({ id }) => id === null)).toBe(true);
+    expect(rawMessages(conversations.get("sess-1"))).toEqual([liveAssistant]);
+    expect(conversations.get("sess-1").messages.every(({ entryId }) => entryId === null)).toBe(true);
 
     const persistedAssistant: AgentMessage = {
       ...liveAssistant,
@@ -238,10 +310,9 @@ describe("ConversationsStore", () => {
       persistedToolResult,
     ]);
 
-    expect(conversations.get("sess-1").messages).toEqual([
+    expect(rawMessages(conversations.get("sess-1"))).toEqual([
       textUser("canonical prompt", 150),
       persistedAssistant,
-      persistedToolResult,
     ]);
   });
 
@@ -275,7 +346,7 @@ describe("ConversationsStore", () => {
       { id: "result", parentId: "user", message: persistedResult },
     ]));
 
-    expect(conversations.get("sess-1").messages).toEqual([user, persistedResult]);
+    expect(rawMessages(conversations.get("sess-1"))).toEqual([user]);
   });
 
   test("first canonical page replaces the optimistic prompt and matching live tool", () => {
@@ -292,7 +363,9 @@ describe("ConversationsStore", () => {
     ];
     setPersistedMessages(conversations, "sess-1", canonicalMessages);
 
-    expect(conversations.get("sess-1").messages).toEqual(canonicalMessages);
+    expect(rawMessages(conversations.get("sess-1"))).toEqual(
+      canonicalMessages.filter(({ role }) => role !== "toolResult"),
+    );
     expect(streamingContentKeys(conversations, "sess-1")).toEqual([]);
   });
 
@@ -390,7 +463,10 @@ describe("ConversationsStore", () => {
       "tool:known-tool",
       "text:recovered without start",
     ]);
-    expect(conversations.get("sess-1").streamingAssistants[0]?.toolExecutions["known-tool"]).toMatchObject({
+    const knownTool = conversations.get("sess-1").streamingMessages[0]?.blocks.find((block) => (
+      block.type === "toolCall" && block.id === "known-tool"
+    ));
+    expect(knownTool?.type === "toolCall" ? knownTool.execution : undefined).toMatchObject({
       args: { id: "known-tool", resumed: true },
     });
   });
@@ -416,11 +492,12 @@ describe("ConversationsStore", () => {
     conversations.clearCompactingState("sess-1");
 
     expect(conversations.get("sess-1")).toEqual({ ...before, isCompacting: false });
-    expect(conversations.get("sess-1").entries).toEqual([
-      { id: "persisted-1", parentId: null, message: persisted },
-      optimistic,
+    expect(conversations.get("sess-1").messages).toMatchObject([
+      { entryId: "persisted-1", parentEntryId: null, raw: persisted },
+      { entryId: null, renderKey: optimistic.localId, raw: optimistic.message },
     ]);
-    expect(conversations.get("sess-1").streamingAssistants[0]?.toolExecutions["tool-1"]?.result).toBeDefined();
+    const tool = conversations.get("sess-1").streamingMessages[0]?.blocks.find((block) => block.type === "toolCall");
+    expect(tool?.type === "toolCall" ? tool.execution?.result : undefined).toBeDefined();
   });
 
   test("compaction_end still clears compacting state normally", () => {
@@ -441,7 +518,7 @@ describe("ConversationsStore", () => {
     setPersistedMessages(conversations, "sess-1", [...persisted]);
 
     expect(streamingContentKeys(conversations, "sess-1")).toEqual(["text:working"]);
-    expect(conversations.get("sess-1").messages).toEqual(persisted);
+    expect(rawMessages(conversations.get("sess-1"))).toEqual(persisted);
   });
 
   test("persisted snapshots that advance past rendered messages clear active streaming assistants", () => {
@@ -455,8 +532,8 @@ describe("ConversationsStore", () => {
     ];
     setPersistedMessages(conversations, "sess-1", finalMessages);
 
-    expect(conversations.get("sess-1").streamingAssistants).toEqual([]);
-    expect(conversations.get("sess-1").messages).toEqual(finalMessages);
+    expect(conversations.get("sess-1").streamingMessages).toEqual([]);
+    expect(rawMessages(conversations.get("sess-1"))).toEqual(finalMessages);
   });
 
   test("prunes unobserved conversation state when cached activity is not running", () => {
@@ -472,8 +549,8 @@ describe("ConversationsStore", () => {
 
     expect(conversations.get("background-session")).toMatchObject({
       messages: [],
+      streamingMessages: [],
       hasEarlierMessages: false,
-      streamingAssistants: [],
     });
   });
 
@@ -503,8 +580,8 @@ describe("ConversationsStore", () => {
 
     expect(conversations.get("sess-1")).toMatchObject({
       messages: [],
+      streamingMessages: [],
       hasEarlierMessages: false,
-      streamingAssistants: [],
     });
   });
 });

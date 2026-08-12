@@ -7,7 +7,7 @@
  */
 
 import type { ChatImageBlock, ClientPromptContent } from "./chat-content.js";
-import type { AgentMessage, AssistantMessage } from "./message.js";
+import type { AgentMessage, AssistantMessage } from "./agent-message.js";
 
 /** Normalized rendering data shared by live and finalized tool calls. */
 export interface ToolBlockData {

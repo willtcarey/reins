@@ -52,10 +52,7 @@ describe("AppStore activity event routing", () => {
       assistantMessageEvent: { type: "snapshot" },
     });
 
-    expect(store.activeConversationsStore.get("s1").streamingAssistants).toEqual([{
-      message,
-      toolExecutions: {},
-    }]);
+    expect(store.activeConversationsStore.get("s1").streamingMessages.map(({ raw }) => raw)).toEqual([message]);
     expect(store.projectsStore.activityForSession(42, "s1")).toBeNull();
     expect(store.projectsStore.peekStore(42)).toBeUndefined();
     expect(store.activitySummary).toEqual({ running: 0, finished: 0 });
@@ -95,8 +92,8 @@ describe("AppStore activity event routing", () => {
     client.fireEvent("active-session", 42, { type: "message_end", message: done });
     client.fireEvent("active-session", 42, { type: "agent_end", messages: [done] });
 
-    expect(store.activeConversationsStore.get("active-session").messages).toEqual([done]);
-    expect(store.activeConversationsStore.get("active-session").streamingAssistants).toEqual([]);
+    expect(store.activeConversationsStore.get("active-session").messages.map(({ raw }) => raw)).toEqual([done]);
+    expect(store.activeConversationsStore.get("active-session").streamingMessages).toEqual([]);
   });
 
   test("prunes completed active conversation state after route unsubscribe", async () => {
@@ -130,8 +127,8 @@ describe("AppStore activity event routing", () => {
 
     expect(store.activeConversationsStore.get("active-session")).toMatchObject({
       messages: [],
+      streamingMessages: [],
       hasEarlierMessages: false,
-      streamingAssistants: [],
     });
   });
 

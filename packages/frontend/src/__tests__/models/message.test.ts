@@ -1,15 +1,42 @@
 import { describe, expect, test } from "bun:test";
-import { messageMarkdown } from "../../models/message.js";
+import { buildMessages } from "../../models/message.js";
+import type { AgentMessage } from "../../models/agent-message.js";
 
-describe("messageMarkdown", () => {
-  test("returns raw user text without Markdown rendering or normalization", () => {
-    expect(messageMarkdown({
+function domainMessage(message: AgentMessage) {
+  const result = buildMessages([{
+    entryId: "row-1",
+    parentEntryId: null,
+    renderKey: "row-1",
+    message,
+  }])[0];
+  if (!result) throw new Error("Expected displayable message");
+  return result;
+}
+
+describe("Message copy Markdown", () => {
+  test("reports whether copyable Markdown exists without producing it", () => {
+    expect(domainMessage({ role: "user", content: "", timestamp: 1 }).copyable).toBe(false);
+    expect(domainMessage({ role: "user", content: "hello", timestamp: 2 }).copyable).toBe(true);
+    expect(domainMessage({
+      role: "assistant",
+      content: [{ type: "thinking", thinking: "private reasoning" }],
+      timestamp: 3,
+    }).copyable).toBe(false);
+    expect(domainMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "result" }],
+      timestamp: 4,
+    }).copyable).toBe(true);
+  });
+
+  test("returns raw user text without rendering or normalization", () => {
+    expect(domainMessage({
       role: "user",
       content: "  **raw**\ntext  ",
       timestamp: 1,
-    })).toBe("  **raw**\ntext  ");
+    }).copyMarkdown()).toBe("  **raw**\ntext  ");
 
-    expect(messageMarkdown({
+    expect(domainMessage({
       role: "user",
       content: [
         { type: "text", text: "first" },
@@ -17,11 +44,11 @@ describe("messageMarkdown", () => {
         { type: "text", text: "second" },
       ],
       timestamp: 2,
-    })).toBe("first\nsecond");
+    }).copyMarkdown()).toBe("first\nsecond");
   });
 
-  test("joins assistant Markdown text blocks with blank lines and omits thinking and tools", () => {
-    expect(messageMarkdown({
+  test("joins assistant Markdown blocks and omits thinking and tools", () => {
+    expect(domainMessage({
       role: "assistant",
       content: [
         { type: "thinking", thinking: "private reasoning" },
@@ -30,22 +57,14 @@ describe("messageMarkdown", () => {
         { type: "text", text: "- one\n- two" },
       ],
       timestamp: 3,
-    })).toBe("## Result\n\n- one\n- two");
+    }).copyMarkdown()).toBe("## Result\n\n- one\n- two");
   });
 
-  test("does not offer Markdown for transcript-only message types or textless assistants", () => {
-    expect(messageMarkdown({
-      role: "toolResult",
-      toolCallId: "tool-1",
-      toolName: "bash",
-      content: [{ type: "text", text: "secret tool output" }],
-      isError: false,
-      timestamp: 4,
-    })).toBeNull();
-    expect(messageMarkdown({
+  test("does not offer Markdown for textless assistants", () => {
+    expect(domainMessage({
       role: "assistant",
       content: [{ type: "thinking", thinking: "private reasoning" }],
       timestamp: 5,
-    })).toBeNull();
+    }).copyMarkdown()).toBeNull();
   });
 });

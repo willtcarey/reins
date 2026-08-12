@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { AgentMessage } from "../models/message.js";
+import type { Message } from "../models/message.js";
+import type { AgentMessage } from "../models/agent-message.js";
 import { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import { ConversationsStore } from "../models/stores/conversations-store.js";
 import { SessionCache } from "../models/stores/session-cache.js";
@@ -15,9 +16,13 @@ import {
 type IsAny<T> = 0 extends (1 & T) ? true : false;
 type AssertFalse<T extends false> = T;
 type AssertTrue<T extends true> = T;
-type ConversationMessages = ActiveSessionStore["conversation"]["messages"];
-type _ConversationMessagesElementIsTyped = AssertFalse<IsAny<ConversationMessages[number]>>;
-type _ConversationMessagesMatchAgentMessages = AssertTrue<ConversationMessages extends AgentMessage[] ? true : false>;
+type Messages = ActiveSessionStore["conversation"]["messages"];
+type _MessagesElementIsTyped = AssertFalse<IsAny<Messages[number]>>;
+type _MessagesUseDomainModel = AssertTrue<Messages extends Message[] ? true : false>;
+
+function rawMessages(store: ActiveSessionStore): AgentMessage[] {
+  return store.conversation.messages.map(({ raw }) => raw);
+}
 
 function jsonResponse(data: unknown) {
   const body = Array.isArray(data) ? messagePage(data) : data;
@@ -175,7 +180,7 @@ describe("ActiveSessionStore conversation notifications", () => {
     await conversationsStore.syncMessages("sess-1");
 
     expect(notifyCount).toBe(1);
-    expect(store.conversation.messages).toEqual(twoMessages);
+    expect(rawMessages(store)).toEqual(twoMessages);
   });
 });
 
@@ -197,12 +202,12 @@ describe("ActiveSessionStore command helpers", () => {
     expect(client.prompt).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "hello" }]);
     expect(client.steer).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "keep going" }]);
     expect(client.abort).toHaveBeenCalledWith("sess-1");
-    expect(store.conversation.messages).toEqual([
+    expect(rawMessages(store)).toEqual([
       { role: "user", content: [{ type: "text", text: "hello" }], timestamp: expect.any(Number) },
       { role: "user", content: [{ type: "text", text: "keep going" }], timestamp: expect.any(Number) },
     ]);
-    expect(store.conversation.entries.every((entry) => entry.id === null)).toBe(true);
-    expect(new Set(store.conversation.entries.map((entry) => entry.id ?? entry.localId)).size).toBe(2);
+    expect(store.conversation.messages.every(({ entryId }) => entryId === null)).toBe(true);
+    expect(new Set(store.conversation.messages.map(({ renderKey }) => renderKey)).size).toBe(2);
   });
 
   test("prompt optimistically marks cached activityState running", () => {
@@ -245,7 +250,7 @@ describe("ActiveSessionStore session loading contract", () => {
     expect(calls).toEqual(["/api/sessions/sess-1", "/api/sessions/sess-1/messages"]);
     expect(store.projectId).toBe(42);
     expect(store.sessionData.messageCount).toBe(2);
-    expect(store.conversation.messages).toEqual(twoMessages);
+    expect(rawMessages(store)).toEqual(twoMessages);
   });
 
   test("initialize fetches metadata when SessionCache has no detail", async () => {
@@ -264,7 +269,7 @@ describe("ActiveSessionStore session loading contract", () => {
     expect(calls).toEqual(["/api/sessions/sess-1", "/api/sessions/sess-1/messages"]);
     expect(store.projectId).toBe(42);
     expect(store.sessionData.messageCount).toBe(2);
-    expect(store.conversation.messages).toEqual(twoMessages);
+    expect(rawMessages(store)).toEqual(twoMessages);
   });
 
   test("initialize leaves metadata blank when detail fetch fails", async () => {
@@ -288,7 +293,7 @@ describe("ActiveSessionStore session loading contract", () => {
       runtimeType: undefined,
       state: { model: null, thinkingLevel: "high" },
     });
-    expect(store.conversation.messages).toEqual(twoMessages);
+    expect(rawMessages(store)).toEqual(twoMessages);
   });
 
   test("subscribes to SessionCache updates for the active session", async () => {
@@ -346,7 +351,7 @@ describe("ActiveSessionStore session loading contract", () => {
     resolveMessages(jsonResponse(twoMessages));
     await routePromise;
 
-    expect(store.conversation.messages).toEqual(twoMessages);
+    expect(rawMessages(store)).toEqual(twoMessages);
   });
 
   test("shared conversation queries may complete after the active facade is disposed", async () => {
@@ -368,7 +373,8 @@ describe("ActiveSessionStore session loading contract", () => {
     resolveMessages(jsonResponse(twoMessages));
     await initializePromise;
 
-    expect(conversationsStore.get("sess-1").messages).toEqual(twoMessages);
+    const restoredMessages: AgentMessage[] = conversationsStore.get("sess-1").messages.map(({ raw }) => raw);
+    expect(restoredMessages).toEqual(twoMessages);
   });
 
   test("initial cached terminal metadata clears only stale compacting state", async () => {
@@ -395,8 +401,11 @@ describe("ActiveSessionStore session loading contract", () => {
     await store.initialize();
 
     expect(store.conversation.isCompacting).toBe(false);
-    expect(store.conversation.streamingAssistants).toHaveLength(1);
-    expect(store.conversation.entries).toContainEqual(optimistic);
+    expect(store.conversation.streamingMessages).toHaveLength(1);
+    expect(store.conversation.messages).toContainEqual(expect.objectContaining({
+      renderKey: optimistic.localId,
+      raw: optimistic.message,
+    }));
   });
 
   test("running to finished metadata clears stale compaction without discarding live work", async () => {
@@ -425,8 +434,11 @@ describe("ActiveSessionStore session loading contract", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(store.conversation.isCompacting).toBe(false);
-    expect(store.conversation.streamingAssistants).toHaveLength(1);
-    expect(store.conversation.entries).toContainEqual(optimistic);
+    expect(store.conversation.streamingMessages).toHaveLength(1);
+    expect(store.conversation.messages).toContainEqual(expect.objectContaining({
+      renderKey: optimistic.localId,
+      raw: optimistic.message,
+    }));
   });
 
   test("running metadata does not clear active compaction", async () => {
@@ -470,8 +482,8 @@ describe("ActiveSessionStore session loading contract", () => {
       type: "agent_end",
       messages: [{ role: "user", content: "runtime copy", timestamp: 1000 }, finalAssistant],
     });
-    expect(store.conversation.messages).toEqual([finalAssistant]);
-    expect(store.conversation.streamingAssistants).toEqual([]);
+    expect(rawMessages(store)).toEqual([finalAssistant]);
+    expect(store.conversation.streamingMessages).toEqual([]);
 
     mockFetch((url, init) => {
       if (url === "/api/sessions/sess-1/messages") return new Response("unavailable", { status: 503 });
@@ -482,8 +494,8 @@ describe("ActiveSessionStore session loading contract", () => {
     sessionCache.set("sess-1", makeSessionData({ activityState: "finished", messageCount: 2 }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(store.conversation.messages).toEqual([finalAssistant]);
-    expect(store.conversation.entries[0]?.id).toBeNull();
+    expect(rawMessages(store)).toEqual([finalAssistant]);
+    expect(store.conversation.messages[0]?.entryId).toBeNull();
   });
 
   test("finished metadata leaves only the canonical turn when the running transition was missed", async () => {
@@ -501,8 +513,8 @@ describe("ActiveSessionStore session loading contract", () => {
     const finalMessages = completedToolTurn([tool], "Done", 1000);
     setPersistedMessages(conversationsStore, "sess-1", finalMessages);
 
-    expect(store.conversation.messages.at(-1)).toEqual(finalMessages.at(-1));
-    expect(store.conversation.streamingAssistants).toEqual([]);
+    expect(rawMessages(store).at(-1)).toEqual(finalMessages.at(-1));
+    expect(store.conversation.streamingMessages).toEqual([]);
 
     mockFetch((url, init) => {
       if (url === "/api/sessions/sess-1/activity" && init?.method === "PATCH") {
@@ -516,8 +528,8 @@ describe("ActiveSessionStore session loading contract", () => {
     sessionCache.set("sess-1", makeSessionData({ activityState: "finished", messageCount: 3 }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(store.conversation.messages).toEqual(finalMessages);
-    expect(store.conversation.streamingAssistants).toEqual([]);
+    expect(rawMessages(store)).toEqual(finalMessages.filter(({ role }) => role !== "toolResult"));
+    expect(store.conversation.streamingMessages).toEqual([]);
   });
 
   test("session cache update auto-refreshes messages when cached activityState transitions from running", async () => {
@@ -543,7 +555,7 @@ describe("ActiveSessionStore session loading contract", () => {
 
     expect(calls).toEqual(["/api/sessions/sess-1/messages"]);
     expect(store.sessionData.activityState).not.toBe("running");
-    expect(store.conversation.messages).toHaveLength(3);
+    expect(store.conversation.messages).toHaveLength(2);
   });
 
   test("session cache update does NOT auto-refresh messages when cached session is still running", async () => {

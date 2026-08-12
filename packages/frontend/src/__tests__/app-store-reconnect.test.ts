@@ -101,10 +101,7 @@ describe("AppStore reconnect catch-up", () => {
       args: {},
     });
 
-    expect(store.activeConversationsStore.get("sess-1").streamingAssistants).toEqual([{
-      message,
-      toolExecutions: {},
-    }]);
+    expect(store.activeConversationsStore.get("sess-1").streamingMessages.map(({ raw }) => raw)).toEqual([message]);
   });
 
   test("reconnect does not refresh project state when disconnecting", () => {
@@ -176,10 +173,7 @@ describe("AppStore reconnect catch-up", () => {
       message,
       assistantMessageEvent: { type: "snapshot" },
     });
-    expect(store.activeConversationsStore.get("bg-session").streamingAssistants).toEqual([{
-      message,
-      toolExecutions: {},
-    }]);
+    expect(store.activeConversationsStore.get("bg-session").streamingMessages.map(({ raw }) => raw)).toEqual([message]);
 
     mockFetch((url) => {
       if (url === "/api/sessions/activity") {
@@ -195,8 +189,8 @@ describe("AppStore reconnect catch-up", () => {
 
     expect(store.activeConversationsStore.get("bg-session")).toMatchObject({
       messages: [],
+      streamingMessages: [],
       hasEarlierMessages: false,
-      streamingAssistants: [],
     });
   });
 
