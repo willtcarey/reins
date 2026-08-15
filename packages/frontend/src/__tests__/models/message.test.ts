@@ -14,27 +14,12 @@ function domainMessage(message: AgentMessage) {
 }
 
 describe("Message copy Markdown", () => {
-  test("reports whether copyable Markdown exists without producing it", () => {
-    expect(domainMessage({ role: "user", content: "", timestamp: 1 }).copyable).toBe(false);
-    expect(domainMessage({ role: "user", content: "hello", timestamp: 2 }).copyable).toBe(true);
-    expect(domainMessage({
-      role: "assistant",
-      content: [{ type: "thinking", thinking: "private reasoning" }],
-      timestamp: 3,
-    }).copyable).toBe(false);
-    expect(domainMessage({
-      role: "assistant",
-      content: [{ type: "text", text: "result" }],
-      timestamp: 4,
-    }).copyable).toBe(true);
-  });
-
   test("returns raw user text without rendering or normalization", () => {
     expect(domainMessage({
       role: "user",
       content: "  **raw**\ntext  ",
       timestamp: 1,
-    }).copyMarkdown()).toBe("  **raw**\ntext  ");
+    }).toMarkdown()).toBe("  **raw**\ntext  ");
 
     expect(domainMessage({
       role: "user",
@@ -44,7 +29,7 @@ describe("Message copy Markdown", () => {
         { type: "text", text: "second" },
       ],
       timestamp: 2,
-    }).copyMarkdown()).toBe("first\nsecond");
+    }).toMarkdown()).toBe("first\nsecond");
   });
 
   test("joins assistant Markdown blocks and omits thinking and tools", () => {
@@ -57,7 +42,7 @@ describe("Message copy Markdown", () => {
         { type: "text", text: "- one\n- two" },
       ],
       timestamp: 3,
-    }).copyMarkdown()).toBe("## Result\n\n- one\n- two");
+    }).toMarkdown()).toBe("## Result\n\n- one\n- two");
   });
 
   test("does not offer Markdown for textless assistants", () => {
@@ -65,6 +50,6 @@ describe("Message copy Markdown", () => {
       role: "assistant",
       content: [{ type: "thinking", thinking: "private reasoning" }],
       timestamp: 5,
-    }).copyMarkdown()).toBeNull();
+    }).toMarkdown()).toBeNull();
   });
 });

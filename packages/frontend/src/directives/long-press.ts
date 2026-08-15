@@ -16,7 +16,6 @@ const LONG_PRESS_MS = 900;
 const PRESS_FEEDBACK_DELAY_MS = 650;
 const MOVE_TOLERANCE_PX = 10;
 const PRESSED_SCALE = 0.97;
-const PRESS_PREVIEW_SPRING_SPEED = 0.06;
 
 type FeedbackElement = HTMLElement;
 type FeedbackTarget = string | ((element: Element) => FeedbackElement | null);
@@ -33,6 +32,7 @@ interface ActivePress {
   startX: number;
   startY: number;
   completed: boolean;
+  feedbackActive: boolean;
   feedback: FeedbackElement;
   transform: string;
   willChange: string;
@@ -143,19 +143,19 @@ export class LongPressDirective extends AsyncDirective {
       startX: event.clientX,
       startY: event.clientY,
       completed: false,
+      feedbackActive: false,
       feedback,
       transform: feedback.style.transform,
       willChange: feedback.style.willChange,
       token,
     };
-    feedback.style.willChange = feedback.style.willChange
-      ? `${feedback.style.willChange}, transform`
-      : "transform";
-    this.animateTo(PRESSED_SCALE, PRESS_PREVIEW_SPRING_SPEED);
-
     this.feedbackTimer = setTimeout(() => {
       this.feedbackTimer = null;
       if (this.press?.token !== token) return;
+      this.press.feedbackActive = true;
+      feedback.style.willChange = feedback.style.willChange
+        ? `${feedback.style.willChange}, transform`
+        : "transform";
       this.animateTo(PRESSED_SCALE);
     }, PRESS_FEEDBACK_DELAY_MS);
     this.completionTimer = setTimeout(() => this.complete(token), LONG_PRESS_MS);
@@ -218,7 +218,7 @@ export class LongPressDirective extends AsyncDirective {
   private cancelPress(immediate = false) {
     this.clearTimers();
     if (!this.press) return;
-    if (immediate) {
+    if (immediate || !this.press.feedbackActive) {
       this.restoreFeedback();
     } else {
       this.animateTo(1);
@@ -232,7 +232,7 @@ export class LongPressDirective extends AsyncDirective {
     this.feedbackTimer = null;
   }
 
-  private animateTo(targetScale: number, speed = 1) {
+  private animateTo(targetScale: number) {
     const press = this.press;
     if (!press) return;
 
@@ -255,8 +255,8 @@ export class LongPressDirective extends AsyncDirective {
       value: progress,
       target: targetProgress,
       velocity: this.springVelocity,
-      stiffness: DEFAULT_SPRING_STIFFNESS * speed ** 2,
-      damping: DEFAULT_SPRING_DAMPING * speed,
+      stiffness: DEFAULT_SPRING_STIFFNESS,
+      damping: DEFAULT_SPRING_DAMPING,
       onUpdate: (value, velocity) => {
         if (animationToken !== this.token || this.press !== press) return;
         const scale = 1 - value / 100 * scaleRange;

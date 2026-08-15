@@ -121,6 +121,9 @@ describe("longPress", () => {
       root.dispatchEvent(down);
 
       expect(preventDefault).not.toHaveBeenCalled();
+      expect(feedback.style.transform).toBe("");
+
+      timers.run(650);
       expect(feedback.style.transform).toBe("scale(0.97)");
 
       root.dispatchEvent(pointerEvent("pointerup", {
@@ -186,6 +189,8 @@ describe("longPress", () => {
         clientY: 0,
       }));
       expect(timers.callbacks.size).toBe(0);
+      expect(root.feedback.style.transform).toBe("");
+      expect(root.feedback.style.willChange).toBe("");
 
       root.dispatchEvent(pointerEvent("pointerdown", {
         pointerId: 2,

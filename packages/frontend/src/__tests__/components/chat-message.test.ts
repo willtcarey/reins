@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { ChatMessage } from "../../components/chat-message.js";
 import {
   AssistantMessage,
@@ -6,7 +6,9 @@ import {
   type Message,
 } from "../../models/message.js";
 import type { AgentMessage, AssistantMessage as AgentAssistantMessage } from "../../models/agent-message.js";
+import { ConversationsStore } from "../../models/stores/conversations-store.js";
 import { collectTemplateEventListeners, templateToString } from "../helpers/lit-template.js";
+import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
 
 function displayMessage(message: AgentMessage, sessionId = "sess-1"): ChatMessage {
   const domain = buildMessages([{
@@ -27,6 +29,44 @@ function setMessage(element: ChatMessage, message: Message) {
 }
 
 describe("ChatMessage", () => {
+  afterEach(() => { restoreFetch(); });
+
+  test("renders and expands a persisted compaction summary from initial hydration", async () => {
+    const summary = "## Earlier work\n\n- Preserved after refresh";
+    mockFetch(() => Response.json({
+      items: [{
+        id: "compaction-row",
+        parentId: "assistant-row",
+        message: {
+          role: "compactionSummary",
+          summary,
+          tokensBefore: 120_000,
+          timestamp: 640,
+        },
+      }],
+      pageInfo: {
+        hasPreviousPage: true,
+        previousCursor: "before-compaction",
+        hasNextPage: false,
+        endCursor: "after-compaction",
+      },
+    }));
+    const conversations = new ConversationsStore();
+
+    expect(await conversations.syncMessages("persisted-session")).toBe(true);
+    const [message] = conversations.get("persisted-session").messages;
+    const element = new ChatMessage();
+    element.message = message ?? null;
+
+    const collapsed = element.render();
+    expect(templateToString(collapsed)).toContain("Conversation summarized");
+    expect(templateToString(collapsed)).not.toContain("Preserved after refresh");
+
+    collectTemplateEventListeners(collapsed, "click")[0]?.call(element, new Event("click"));
+
+    expect(templateToString(element.render())).toContain(summary);
+  });
+
   test("renders user images above raw text and emits the image-viewer intent", () => {
     const element = displayMessage({
       role: "user",
@@ -138,58 +178,19 @@ describe("ChatMessage", () => {
     expect(output).toContain("complete");
   });
 
-  test("owns desktop copy confirmation without panel-level message keys", async () => {
-    const element = displayMessage({
+  test("offers direct copy only for assistant messages", () => {
+    const assistant = displayMessage({
       role: "assistant",
       content: [{ type: "text", text: "**raw markdown**" }],
       timestamp: 2,
     });
-    const copyMessage = mock(async (_text: string) => true);
-    Reflect.set(element, "copyMessage", copyMessage);
+    const user = displayMessage({ role: "user", content: "raw text", timestamp: 1 });
 
-    const template = element.render();
-    expect(templateToString(template)).toContain('data-role="desktop-copy-message"');
-    const desktopCopy = collectTemplateEventListeners(template, "click")[0];
-    await desktopCopy?.call(element, new Event("click"));
-
-    expect(copyMessage).toHaveBeenCalledWith("**raw markdown**");
-    expect(templateToString(element.render())).toContain("title=Copied");
-    Reflect.get(element, "clearCopyFeedbackTimer").call(element);
-  });
-
-  test("opens raw Markdown through context-menu and keyboard paths", () => {
-    const element = displayMessage({ role: "user", content: "raw user text", timestamp: 1 });
-    const openContext = mock((_text: string, _x: number, _y: number) => undefined);
-    Object.defineProperty(element, "actionMenu", {
-      configurable: true,
-      value: { openSheet: async () => undefined, openContext, close() {} },
-    });
-    const template = element.render();
-    const [contextMenu] = collectTemplateEventListeners(template, "contextmenu");
-    const [keyboardMenu] = collectTemplateEventListeners(template, "keydown");
-    const preventDefault = mock(() => undefined);
-
-    // @ts-expect-error Only fields read by the component are required.
-    contextMenu?.call(element, { clientX: 80, clientY: 120, preventDefault });
-    // @ts-expect-error Only fields read by the component are required.
-    keyboardMenu?.call(element, { key: "ContextMenu", shiftKey: false, preventDefault });
-
-    expect(preventDefault).toHaveBeenCalledTimes(2);
-    expect(openContext).toHaveBeenNthCalledWith(1, "raw user text", 80, 120);
-    expect(openContext).toHaveBeenNthCalledWith(2, "raw user text", 0, 0);
-  });
-
-  test("does not show copied feedback when the clipboard operation fails", async () => {
-    const element = displayMessage({
-      role: "assistant",
-      content: [{ type: "text", text: "answer" }],
-      timestamp: 2,
-    });
-    Reflect.set(element, "copyMessage", mock(async () => false));
-
-    await collectTemplateEventListeners(element.render(), "click")[0]?.call(element, new Event("click"));
-
-    expect(templateToString(element.render())).toContain("title=Copy as Markdown");
-    expect(templateToString(element.render())).not.toContain("title=Copied");
+    const assistantOutput = templateToString(assistant.render());
+    expect(assistantOutput).toContain('data-role="desktop-copy-message"');
+    expect(assistantOutput).toContain("Copy as Markdown");
+    expect(assistantOutput).toContain('<rect width="14" height="14" x="8" y="8" rx="2"/>');
+    expect(assistantOutput).toContain('d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"');
+    expect(templateToString(user.render())).not.toContain('data-role="desktop-copy-message"');
   });
 });

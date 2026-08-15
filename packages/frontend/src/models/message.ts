@@ -33,20 +33,13 @@ abstract class MessageBase<T extends AgentMessage> {
     readonly renderKey: string,
   ) {}
 
-  abstract readonly copyable: boolean;
-  abstract copyMarkdown(): string | null;
+  abstract toMarkdown(): string | null;
 }
 
 export class UserMessage extends MessageBase<AgentUserMessage> {
   readonly role = "user" as const;
 
-  get copyable(): boolean {
-    return typeof this.raw.content === "string"
-      ? this.raw.content.length > 0
-      : this.raw.content.some((block) => block.type === "text" && block.text.length > 0);
-  }
-
-  copyMarkdown(): string | null {
+  toMarkdown(): string | null {
     const text = typeof this.raw.content === "string"
       ? this.raw.content
       : textFromClientContent(this.raw.content);
@@ -92,10 +85,6 @@ export class AssistantMessage extends MessageBase<AgentAssistantMessage> {
   readonly role = "assistant" as const;
   readonly blocks: AssistantConversationBlock[];
 
-  get copyable(): boolean {
-    return this.raw.content.some((block) => block.type === "text" && block.text.length > 0);
-  }
-
   constructor(
     raw: AgentAssistantMessage,
     entryId: string | null,
@@ -116,7 +105,7 @@ export class AssistantMessage extends MessageBase<AgentAssistantMessage> {
       : block);
   }
 
-  copyMarkdown(): string | null {
+  toMarkdown(): string | null {
     const text = this.raw.content
       .flatMap((block) => block.type === "text" && block.text.length > 0 ? [block.text] : [])
       .join("\n\n");
@@ -133,9 +122,7 @@ export class AssistantMessage extends MessageBase<AgentAssistantMessage> {
 
 export class CompactionMessage extends MessageBase<CompactionSummaryMessage> {
   readonly role = "compactionSummary" as const;
-  readonly copyable = false;
-
-  copyMarkdown(): null {
+  toMarkdown(): null {
     return null;
   }
 }

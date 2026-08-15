@@ -111,14 +111,14 @@ describe("ConversationsStore", () => {
       parentEntryId: null,
       renderKey: "user-row",
     });
-    expect(messages[0]?.copyMarkdown()).toBe("inspect it");
+    expect(messages[0]?.toMarkdown()).toBe("inspect it");
     expect(messages[1]).toMatchObject({
       role: "assistant",
       entryId: "assistant-row",
       parentEntryId: "user-row",
       renderKey: "assistant-row",
     });
-    expect(messages[1]?.copyMarkdown()).toBe("Checking");
+    expect(messages[1]?.toMarkdown()).toBe("Checking");
     if (messages[1]?.role !== "assistant") throw new Error("Expected assistant domain message");
     const toolCall = messages[1].blocks.find((block) => block.type === "toolCall");
     expect(toolCall).toMatchObject({ id: "tool-1", result });
