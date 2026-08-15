@@ -19,6 +19,7 @@ import type { DiffLine } from "../../models/changes/types.js";
 import { openInBrowserEvent } from "../events.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
+import { ringSpinnerIcon } from "../icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import {
   getEditSummary, getEditStats, getEditDiffLines, shouldAutoExpand,
@@ -178,7 +179,7 @@ export class EditToolBlock extends LitElement {
         <!-- Header -->
         <div class="px-3 py-2 flex items-center gap-2 ${!showSpinner ? "cursor-pointer" : ""}" @click=${!showSpinner ? this._handleToggle : nothing}>
           ${showSpinner
-            ? html`<span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>`
+            ? ringSpinnerIcon("inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0")
             : html`<span class="flex-shrink-0 text-xs">✏️</span>`}
           <span class="text-[10px] font-semibold text-zinc-500 uppercase tracking-wide flex-shrink-0">Edit</span>
           <span

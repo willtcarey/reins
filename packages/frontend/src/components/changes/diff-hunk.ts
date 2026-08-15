@@ -18,6 +18,7 @@ import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import type { DiffFile, DiffHunk as DiffHunkType, DiffLine } from "../../models/changes/types.js";
 import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
 import { EXPAND_STEP, escapeHtml, getHunkEndLine } from "../../models/changes/diff-utils.js";
+import { spinnerIcon } from "../icons.js";
 
 export interface ExpandDetail {
   filePath: string;
@@ -135,7 +136,7 @@ export class DiffHunk extends LitElement {
 
   private renderExpandIndicator(loading: boolean, directionLabel: string) {
     return loading
-      ? html`<svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>`
+      ? spinnerIcon("w-3 h-3 animate-spin")
       : html`<span class="font-mono text-zinc-400">${directionLabel}</span>`;
   }
 

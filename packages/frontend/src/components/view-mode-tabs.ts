@@ -7,7 +7,7 @@
  *
  * Usage:
  *   <view-mode-tabs
- *     .tabs=${[{ label: "Code", icon: svg`...` }, { label: "Preview", icon: svg`...` }]}
+ *     .tabs=${[{ label: "Code", icon: codeIcon() }, { label: "Preview", icon: previewIcon() }]}
  *     .activeIndex=${0}
  *     @tab-change=${(e) => this._activeTab = e.detail}
  *   ></view-mode-tabs>

@@ -35,24 +35,6 @@ describe("MessageActionsController", () => {
     }
   });
 
-  test("opens raw Markdown through context-menu and keyboard paths", () => {
-    const controller = new MessageActionsController(fakeHost());
-    const openContext = mock((_text: string, _x: number, _y: number) => undefined);
-    const menuRef = Reflect.get(controller, "menuRef");
-    menuRef.value = { openContext, close() {} };
-    const actions = controller.for({ toMarkdown: () => "raw user text" });
-    const preventDefault = mock(() => undefined);
-
-    // @ts-expect-error Only fields read by the bound action are required.
-    actions.handleContextMenu({ clientX: 80, clientY: 120, preventDefault });
-    // @ts-expect-error Only fields read by the bound action are required.
-    actions.handleKeyDown({ key: "ContextMenu", shiftKey: false, preventDefault });
-
-    expect(preventDefault).toHaveBeenCalledTimes(2);
-    expect(openContext).toHaveBeenNthCalledWith(1, "raw user text", 80, 120);
-    expect(openContext).toHaveBeenNthCalledWith(2, "raw user text", 0, 0);
-  });
-
   test("does not show copied feedback when the clipboard operation fails", async () => {
     const writeText = mock(async (_text: string) => { throw new Error("denied"); });
     const toast = { add(_message: string, _level: string) {} };

@@ -13,6 +13,7 @@ import type { ChatComposer, ChatComposerSubmitDetail } from "./chat-composer.js"
 import type { ChatMessage } from "./chat-message.js";
 import { ChatSendAnimator } from "../helpers/chat-send-animation.js";
 import { ChatHistoryController } from "../controllers/chat-history-controller.js";
+import { ringSpinnerIcon } from "./icons.js";
 import "./chat-message.js";
 import "./session-model-picker.js";
 import "./chat-composer.js";
@@ -138,7 +139,6 @@ export class ChatPanel extends LitElement {
   }
 
   private closeMessageActions() {
-    if (typeof this.querySelectorAll !== "function") return;
     for (const message of this.querySelectorAll<ChatMessage>("chat-message")) message.closeActions();
   }
 
@@ -187,7 +187,7 @@ export class ChatPanel extends LitElement {
   private renderCompactingIndicator() {
     return html`
       <div class="flex items-center gap-2 text-sm text-amber-500/80">
-        <span class="inline-block w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>
+        ${ringSpinnerIcon("inline-block w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin flex-shrink-0")}
         Summarizing conversation…
       </div>
     `;
@@ -196,7 +196,7 @@ export class ChatPanel extends LitElement {
   private renderThinkingIndicator() {
     return html`
       <div class="flex items-center gap-2 text-sm text-zinc-500">
-        <span class="inline-block w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin"></span>
+        ${ringSpinnerIcon("inline-block w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin")}
         Thinking...
       </div>
     `;

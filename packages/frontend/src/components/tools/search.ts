@@ -14,6 +14,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { getSearchSummary, getSearchQuery, getSearchResultText, getSearchResultCount } from "../../models/tools/search.js";
+import { ringSpinnerIcon, toolLogoIcon } from "../icons.js";
 
 @customElement("search-tool-block")
 export class SearchToolBlock extends LitElement {
@@ -73,11 +74,8 @@ export class SearchToolBlock extends LitElement {
         <!-- Header -->
         <div class="px-3 py-2 flex items-center gap-2">
           ${this.showSpinner
-            ? html`<span class="inline-block w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>`
-            : html`<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="none">
-                <path d="M4 4 Q12 3 16 8 Q22 15 18 22" stroke="#f59e0b" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-                <path d="M4 9 Q11 8 14 12 Q20 19 18 24" stroke="#f59e0b" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-              </svg><span class="text-xs flex-shrink-0">🔍</span>`}
+            ? ringSpinnerIcon("inline-block w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin flex-shrink-0")
+            : html`${toolLogoIcon()}<span class="text-xs flex-shrink-0">🔍</span>`}
           <span class="text-xs font-mono text-zinc-300 truncate">${displaySummary}</span>
           ${this.isError
             ? html`<span class="text-[10px] font-semibold text-red-400 bg-red-400/10 px-1.5 py-0.5 rounded flex-shrink-0">error</span>`

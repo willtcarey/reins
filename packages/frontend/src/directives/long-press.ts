@@ -39,28 +39,17 @@ interface ActivePress {
   token: number;
 }
 
-function isFeedbackElement(element: Element): element is FeedbackElement {
-  return "style" in element;
-}
-
-function isPointerEvent(event: Event): event is PointerEvent {
-  return "pointerId" in event && "pointerType" in event && "isPrimary" in event;
-}
-
 function reducedMotionPreferred(): boolean {
-  return typeof window !== "undefined"
-    && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 function canAnimate(): boolean {
-  return typeof window !== "undefined"
-    && typeof window.requestAnimationFrame === "function"
-    && !reducedMotionPreferred();
+  return !reducedMotionPreferred();
 }
 
 /** Adds a cancellable primary-touch long press to an element part. */
 export class LongPressDirective extends AsyncDirective {
-  private element: Element | null = null;
+  private element: HTMLElement | null = null;
   private options: LongPressOptions | null = null;
   private press: ActivePress | null = null;
   private completionTimer: ReturnType<typeof setTimeout> | null = null;
@@ -85,6 +74,9 @@ export class LongPressDirective extends AsyncDirective {
   override update(part: Part, [options]: [LongPressOptions]) {
     if (part.type !== PartType.ELEMENT) return nothing;
     const nextElement = part.element;
+    if (!(nextElement instanceof HTMLElement)) {
+      throw new Error("longPress must be attached to an HTML element");
+    }
     if (this.element !== nextElement) {
       this.removeListeners();
       this.cancelPress(true);
@@ -124,11 +116,10 @@ export class LongPressDirective extends AsyncDirective {
     this.listening = false;
   }
 
-  private readonly onPointerDown = (event: Event) => {
+  private readonly onPointerDown = (pointer: PointerEvent) => {
     if (
-      !isPointerEvent(event)
-      || event.pointerType !== "touch"
-      || !event.isPrimary
+      pointer.pointerType !== "touch"
+      || !pointer.isPrimary
       || !this.element
       || !this.options
     ) return;
@@ -139,9 +130,9 @@ export class LongPressDirective extends AsyncDirective {
 
     const token = ++this.token;
     this.press = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
+      pointerId: pointer.pointerId,
+      startX: pointer.clientX,
+      startY: pointer.clientY,
       completed: false,
       feedbackActive: false,
       feedback,
@@ -161,21 +152,19 @@ export class LongPressDirective extends AsyncDirective {
     this.completionTimer = setTimeout(() => this.complete(token), LONG_PRESS_MS);
   };
 
-  private readonly onPointerMove = (event: Event) => {
-    if (!isPointerEvent(event)) return;
+  private readonly onPointerMove = (pointer: PointerEvent) => {
     const press = this.press;
-    if (!press || press.completed || event.pointerId !== press.pointerId) return;
+    if (!press || press.completed || pointer.pointerId !== press.pointerId) return;
     if (
-      Math.abs(event.clientX - press.startX) > MOVE_TOLERANCE_PX
-      || Math.abs(event.clientY - press.startY) > MOVE_TOLERANCE_PX
+      Math.abs(pointer.clientX - press.startX) > MOVE_TOLERANCE_PX
+      || Math.abs(pointer.clientY - press.startY) > MOVE_TOLERANCE_PX
     ) {
       this.cancelPress();
     }
   };
 
-  private readonly onPointerEnd = (event: Event) => {
-    if (!isPointerEvent(event)) return;
-    if (!this.press || this.press.completed || event.pointerId !== this.press.pointerId) return;
+  private readonly onPointerEnd = (pointer: PointerEvent) => {
+    if (!this.press || this.press.completed || pointer.pointerId !== this.press.pointerId) return;
     this.cancelPress();
   };
 
@@ -183,7 +172,7 @@ export class LongPressDirective extends AsyncDirective {
     if (!this.element) return null;
     if (typeof target === "function") return target(this.element);
     const candidate = typeof target === "string" ? this.element.querySelector(target) : this.element;
-    return candidate && isFeedbackElement(candidate) ? candidate : null;
+    return candidate instanceof HTMLElement ? candidate : null;
   }
 
   private complete(token: number) {

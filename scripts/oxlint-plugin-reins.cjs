@@ -38,6 +38,31 @@ module.exports = {
       },
     },
 
+    "no-inline-svg": {
+      meta: {
+        type: "problem",
+        docs: {
+          description: "Require frontend SVG icons to be defined in the shared icons module.",
+        },
+        messages: {
+          noInlineSvg: "Define SVG icons in components/icons.ts and import the icon function instead.",
+        },
+      },
+      create(context) {
+        return {
+          TaggedTemplateExpression(node) {
+            const isSvgTemplate = node.tag?.type === "Identifier" && node.tag.name === "svg";
+            const templateSource = node.quasi?.quasis
+              ?.map((quasi) => quasi.value?.raw ?? "")
+              .join("") ?? "";
+            if (isSvgTemplate || /<svg(?:\s|>)/i.test(templateSource)) {
+              context.report({ node, messageId: "noInlineSvg" });
+            }
+          },
+        };
+      },
+    },
+
     "no-exported-type-realiases": {
       meta: {
         type: "problem",

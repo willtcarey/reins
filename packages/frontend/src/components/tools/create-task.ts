@@ -11,6 +11,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ToolRenderer } from "./types.js";
+import { ringSpinnerIcon } from "../icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { getTaskSummary, getTaskDetail, getResultText } from "../../models/tools/create-task.js";
 
@@ -62,7 +63,7 @@ export class CreateTaskToolBlock extends LitElement {
         <!-- Header -->
         <div class="px-3 py-2 flex items-center gap-2 bg-emerald-500/5">
           ${this.showSpinner
-            ? html`<span class="inline-block w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>`
+            ? ringSpinnerIcon("inline-block w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin flex-shrink-0")
             : html`<span class="text-xs flex-shrink-0">${this.expanded ? "▼" : "▶"}</span>`}
           <span class="flex-shrink-0">📋</span>
           <span class="text-xs font-semibold text-emerald-300 flex-shrink-0">create_task</span>

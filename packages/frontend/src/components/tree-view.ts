@@ -17,9 +17,10 @@
  * - `tree-dir-toggle` (detail: string path) — directory row clicked
  */
 
-import { LitElement, html, nothing, svg, type TemplateResult } from "lit";
+import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { styleMap } from "lit/directives/style-map.js";
+import { treeFileIcon, treeFolderIcon } from "./icons.js";
 
 // ---- Public types -----------------------------------------------------------
 
@@ -38,22 +39,6 @@ export interface TreeNode {
 }
 
 export type RenderNodeTrailer = (node: TreeNode) => TemplateResult | typeof nothing;
-
-// ---- SVG icons (14×14, stroke-based) ----------------------------------------
-
-const folderIcon = svg`<svg class="shrink-0 text-amber-500/70" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2 3.5h3.5l1 1H12a1 1 0 0 1 1 1V11a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z"/>
-</svg>`;
-
-const folderOpenIcon = svg`<svg class="shrink-0 text-amber-500/70" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M1 11V4.5a1 1 0 0 1 1-1h3.5l1 1H12a1 1 0 0 1 1 1V7"/>
-  <path d="M1 11l1.5-4h10l-1.5 4H1Z"/>
-</svg>`;
-
-const fileIcon = svg`<svg class="shrink-0 text-blue-400/70" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M8 1H3.5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V4.5L8 1Z"/>
-  <path d="M8 1v3.5h3.5"/>
-</svg>`;
 
 /** Indentation per nesting level (px) */
 const INDENT_PX = 12;
@@ -147,7 +132,7 @@ export class TreeView extends LitElement {
         ?data-tree-active=${isActive}
       >
         ${this._renderIndentGuides(depth)}
-        ${fileIcon}
+        ${treeFileIcon()}
         <span class="truncate">${node.name}</span>
         ${this.renderNodeTrailer ? this.renderNodeTrailer(node) : nothing}
       </button>
@@ -198,7 +183,7 @@ export class TreeView extends LitElement {
           title=${deep.path}
         >
           ${this._renderIndentGuides(depth)}
-          ${expanded ? folderOpenIcon : folderIcon}
+          ${treeFolderIcon(expanded)}
           <span class="truncate">${label}</span>
           ${loading ? html`<span class="text-zinc-500 text-[10px] ml-1">…</span>` : nothing}
           ${this.renderNodeTrailer ? this.renderNodeTrailer(deep) : nothing}

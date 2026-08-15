@@ -22,6 +22,7 @@ import { PageSwipeController } from "../controllers/page-swipe-controller.js";
 import { ViewportController } from "../controllers/viewport-controller.js";
 import { AppStore } from "../models/stores/app-store.js";
 import type { DiffRenderer } from "../models/stores/settings-store.js";
+import { folderIcon } from "./icons.js";
 // Ensure sub-components are registered
 import type {
   MainPaneSelectDetail,
@@ -360,11 +361,7 @@ export class AppShell extends LitElement {
       <div class="flex-1 flex flex-col">
         <div class="flex-1 flex items-center justify-center">
         <div class="text-center max-w-md px-6">
-          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none"
-               stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-               class="mx-auto mb-4 text-zinc-600">
-            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>
-          </svg>
+          ${folderIcon("mx-auto mb-4 text-zinc-600", 48, 1.5)}
           <h2 class="text-lg font-medium text-zinc-400 mb-2">No project selected</h2>
           <p class="text-sm text-zinc-500">
             Select a project from the sidebar or add a new one to get started.

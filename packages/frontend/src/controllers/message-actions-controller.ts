@@ -2,6 +2,7 @@ import { html, nothing, type ReactiveController, type ReactiveControllerHost } f
 import { createRef, ref, type Ref } from "lit/directives/ref.js";
 import { copyTextToClipboard } from "../helpers/clipboard.js";
 import type { MessageActionMenuElement } from "../components/message-action-menu.js";
+import { checkIcon, copyIcon } from "../components/icons.js";
 import { showToast } from "../components/toast.js";
 import "../components/message-action-menu.js";
 
@@ -79,7 +80,7 @@ export class MessageActionsController implements ReactiveController {
     if (!text) return;
 
     event.preventDefault();
-    if (typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches === true) {
+    if (window.matchMedia("(pointer: coarse)").matches) {
       void this.menuRef.value?.openSheet(text);
       return;
     }
@@ -93,9 +94,8 @@ export class MessageActionsController implements ReactiveController {
 
     event.preventDefault();
     const anchor = event.currentTarget;
-    const rect = typeof Element !== "undefined" && anchor instanceof Element
-      ? anchor.getBoundingClientRect()
-      : { left: 0, bottom: 0 };
+    if (!(anchor instanceof HTMLElement)) return;
+    const rect = anchor.getBoundingClientRect();
     this.menuRef.value?.openContext(text, rect.left, rect.bottom);
   }
 
@@ -119,14 +119,7 @@ export class MessageActionsController implements ReactiveController {
         aria-label="Copy as Markdown"
         @click=${(event: Event) => this.copyDirect(event, message)}
       >
-        ${this.copied ? html`
-          <svg class="h-4 w-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-        ` : html`
-          <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">
-            <rect width="14" height="14" x="8" y="8" rx="2"/>
-            <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
-          </svg>
-        `}
+        ${this.copied ? checkIcon() : copyIcon()}
       </button>
     `;
   }

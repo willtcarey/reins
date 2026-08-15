@@ -11,6 +11,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import { SettingsStore, type SettingsChange, type SettingsKey } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
+import { closeIcon } from "../icons.js";
 import "./api-keys-section.js";
 import "./diff-renderer-section.js";
 import "./model-setting-section.js";
@@ -179,10 +180,7 @@ export class SettingsPanel extends LitElement {
               @click=${() => this.close()}
               title="Close settings"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
-              </svg>
+              ${closeIcon()}
             </button>
           </div>
 

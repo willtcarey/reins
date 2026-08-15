@@ -13,6 +13,7 @@ import type { TaskListItem } from "../models/tasks.js";
 import type { ActivityState } from "../models/stores/session-cache.js";
 import { formatRelativeDate } from "../models/format.js";
 import { buildChildMap } from "./delegate-popover.js";
+import { branchIcon, plusIcon } from "./icons.js";
 import "./activity-dot.js";
 import "./popover-menu.js";
 import "./session-list-item.js";
@@ -97,7 +98,7 @@ export class TaskListItemElement extends LitElement {
     const stats = task.diffStats;
     return html`
       <div class="flex items-center gap-1.5 mt-0.5">
-        <svg class="shrink-0 text-zinc-500" xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+        ${branchIcon("shrink-0 text-zinc-500", 10)}
         <span class="text-[10px] font-mono text-zinc-500 truncate">${task.branch_name}</span>
         ${stats && (stats.additions > 0 || stats.removals > 0) ? html`
           <span class="text-[10px] shrink-0">
@@ -140,7 +141,7 @@ export class TaskListItemElement extends LitElement {
             title="New session"
             @click=${(e: Event) => this.handleNewTaskSession(e)}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            ${plusIcon()}
           </button>
           <popover-menu
             close-on-panel-click

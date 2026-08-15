@@ -10,6 +10,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { TaskListItem } from "../models/tasks.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
+import { plusIcon } from "./icons.js";
 import "./delete-task-dialog.js";
 import "./task-list-item.js";
 
@@ -129,7 +130,7 @@ export class TaskList extends LitElement {
           @click=${this.handleNewTask}
           title="New task"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+          ${plusIcon("", 10)}
         </button>
       </div>
       ${openTasks.map(t => this.renderTask(t))}

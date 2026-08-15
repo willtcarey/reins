@@ -11,13 +11,14 @@
  * outer container are owned by `<file-browser>`.
  */
 
-import { LitElement, html, nothing, svg } from "lit";
+import { LitElement, html, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { TemplateResult } from "lit";
 import type { FileBrowserStore } from "../../models/stores/file-browser-store.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import { isMarkdown, isImage, isPdf, isHtml } from "../../models/changes/diff-utils.js";
 import type { FileViewMode } from "../events.js";
+import { codeIcon, previewIcon } from "../icons.js";
 import "./file-viewer-image.js";
 import "./file-viewer-pdf.js";
 import "./file-viewer-binary.js";
@@ -33,17 +34,14 @@ interface RendererDef {
   render: () => TemplateResult;
 }
 
-const CODE_ICON = svg`<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>`;
-const PREVIEW_ICON = svg`<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>`;
-
 const CODE_TAB: TabDef = {
   label: "Code",
-  icon: html`<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">${CODE_ICON}</svg>`,
+  icon: codeIcon(),
 };
 
 const PREVIEW_TAB: TabDef = {
   label: "Preview",
-  icon: html`<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">${PREVIEW_ICON}</svg>`,
+  icon: previewIcon(),
 };
 
 @customElement("file-viewer")

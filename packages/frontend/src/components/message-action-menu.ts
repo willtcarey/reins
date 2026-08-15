@@ -1,6 +1,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { styleMap } from "lit/directives/style-map.js";
+import { checkIcon, copyIcon } from "./icons.js";
 
 const COPY_FEEDBACK_MS = 700;
 
@@ -54,7 +55,7 @@ export class MessageActionMenuElement extends LitElement {
 
   override updated() {
     const overlay = this.querySelector<HTMLElement>("[data-role=message-action-menu]");
-    if (!overlay || typeof overlay.showPopover !== "function" || overlay.matches(":popover-open")) return;
+    if (!overlay || overlay.matches(":popover-open")) return;
 
     overlay.showPopover();
     overlay.querySelector<HTMLElement>("button")?.focus();
@@ -87,7 +88,7 @@ export class MessageActionMenuElement extends LitElement {
         ?disabled=${this.copied}
         @click=${() => this.copy()}
       >
-        <span aria-hidden="true">${this.copied ? "✓" : "⧉"}</span>
+        ${this.copied ? checkIcon() : copyIcon()}
         <span aria-live="polite">${this.copied ? "Copied" : "Copy as Markdown"}</span>
       </button>
     `;
@@ -129,8 +130,8 @@ export class MessageActionMenuElement extends LitElement {
   }
 
   private contextPosition(x: number, y: number) {
-    const left = typeof window === "undefined" ? x : Math.max(8, Math.min(x, window.innerWidth - 216));
-    const top = typeof window === "undefined" ? y : Math.max(8, Math.min(y, window.innerHeight - 64));
+    const left = Math.max(8, Math.min(x, window.innerWidth - 216));
+    const top = Math.max(8, Math.min(y, window.innerHeight - 64));
     return { left: `${left}px`, top: `${top}px` };
   }
 }

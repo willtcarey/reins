@@ -104,7 +104,7 @@ controllers/
 
 ### directives/
 
-Lit directives own reusable behavior attached to one rendered element when that behavior needs direct DOM access and should not force the host component to mirror its event or animation state. `long-press.ts` is the canonical example: the element declares a feedback target and completion callback, while the directive owns pointer listeners, gesture cancellation, timers, reduced-motion handling, and direct spring animation. Directive tests mirror this directory under `src/__tests__/directives/`.
+Lit directives own reusable behavior attached to one rendered element when that behavior needs direct DOM access and should not force the host component to mirror its event or animation state. `long-press.ts` is the canonical example: the element declares a feedback target and completion callback, while the directive owns pointer listeners, gesture cancellation, timers, reduced-motion handling, and direct spring animation.
 
 ## Data Flow
 

@@ -20,6 +20,7 @@ import type { AppStore } from "../models/stores/app-store.js";
 import type { TaskListItem } from "../models/tasks.js";
 
 import type { ProjectInfo } from "../models/ws-client.js";
+import { chevronLeftIcon, chevronRightIcon, folderIcon } from "./icons.js";
 import type { TaskForm } from "./task-form.js";
 import type { TaskDetail } from "./task-detail.js";
 import type { ProjectSidebar } from "./project-sidebar.js";
@@ -304,11 +305,7 @@ export class SessionSidebar extends LitElement {
             @click=${() => this.toggleProject(project.id)}
           >
             <span class="text-zinc-500 text-[10px] shrink-0">${isExpanded ? "▼" : "▶"}</span>
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                 class="text-zinc-500 shrink-0">
-              <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>
-            </svg>
+            ${folderIcon("text-zinc-500 shrink-0", 14)}
             <span class="text-sm font-medium ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${project.name}</span>
             ${this.renderProjectActivityDot(project.id)}
           </button>
@@ -404,7 +401,7 @@ export class SessionSidebar extends LitElement {
                 @click=${this.toggleCollapse}
                 title="Show sidebar"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                ${chevronRightIcon()}
                 ${this.renderRailBadge()}
               </button>
               <nav-icon icon="search" label="Search sessions (Cmd+K)" compact @click=${this._openQuickOpen}></nav-icon>
@@ -420,7 +417,7 @@ export class SessionSidebar extends LitElement {
               @click=${this.toggleCollapse}
               title="Hide sidebar"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+              ${chevronLeftIcon()}
             </button>
           `}
         </div>
