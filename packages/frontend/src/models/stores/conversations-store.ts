@@ -11,11 +11,16 @@ import {
   applyChatEvent,
   initialChatState,
   removePersistedStreamingAssistants,
-  type AgentMessage,
   type ChatState,
-  type StreamingAssistant,
 } from "../chat-state.js";
 import type { ClientPromptContent } from "../chat-content.js";
+import {
+  buildMessages,
+  buildStreamingMessages,
+  type Message,
+  type AssistantMessage,
+} from "../message.js";
+import type { AgentMessage } from "../agent-message.js";
 import type { FrontendEvent } from "../ws-client.js";
 import type { SessionCache } from "./session-cache.js";
 
@@ -57,10 +62,11 @@ interface ConversationUpdate extends Partial<Omit<ConversationState, "records">>
 }
 
 export interface ConversationView {
-  entries: ConversationEntry[];
-  messages: AgentMessage[];
+  /** Displayable persisted and live messages in conversation order. */
+  messages: Message[];
+  /** Live assistant snapshots projected through the same display interface. */
+  streamingMessages: AssistantMessage[];
   hasEarlierMessages: boolean;
-  streamingAssistants: StreamingAssistant[];
   isCompacting: boolean;
   errorMessage: string;
 }
@@ -130,10 +136,14 @@ export class ConversationsStore {
     const state = sessionId ? this.stateFor(sessionId) : blankConversationState();
     const entries = this.displayEntries(state);
     return {
-      entries,
-      messages: entries.map((entry) => entry.message),
+      messages: buildMessages(entries.map((entry) => ({
+        entryId: entry.id,
+        parentEntryId: entry.parentId,
+        renderKey: entry.id ?? entry.localId,
+        message: entry.message,
+      }))),
+      streamingMessages: buildStreamingMessages(state.streamingAssistants),
       hasEarlierMessages: state.previousCursor !== null,
-      streamingAssistants: state.streamingAssistants,
       isCompacting: state.isCompacting,
       errorMessage: state.errorMessage,
     };

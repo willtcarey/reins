@@ -208,7 +208,7 @@ export class ActiveSessionStore {
     const wasRunning = this._lastKnownRunning;
     const isRunning = data.activityState === "running";
     const conversation = this._conversationsStore.get(this.sessionId);
-    const hadStreamingState = conversation.streamingAssistants.length > 0 || conversation.isCompacting;
+    const hadStreamingState = conversation.streamingMessages.length > 0 || conversation.isCompacting;
     this._lastKnownRunning = isRunning;
     if (!isRunning) {
       // Terminal metadata can recover a missed compaction_end, but cannot

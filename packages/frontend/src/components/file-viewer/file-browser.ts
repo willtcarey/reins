@@ -18,6 +18,7 @@ import "./file-tree.js";
 import type { FileViewer } from "./file-viewer.js";
 import { openFileSearchEvent } from "../events.js";
 import type { FileViewMode } from "../events.js";
+import { closeIcon, downloadIcon, fileSearchIcon, menuIcon } from "../icons.js";
 
 @customElement("file-browser")
 export class FileBrowser extends LitElement {
@@ -147,10 +148,7 @@ export class FileBrowser extends LitElement {
               @click=${() => { this._mobileTreeOpen = !this._mobileTreeOpen; }}
               title="Toggle file tree"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 6h18"/><path d="M3 12h18"/><path d="M3 18h18"/>
-              </svg>
+              ${menuIcon("", 16)}
             </button>
             <!-- Mobile file search button -->
             <button
@@ -158,10 +156,7 @@ export class FileBrowser extends LitElement {
               @click=${this._openFileSearch}
               title="Search files"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><circle cx="11.5" cy="14.5" r="2.5"/><path d="M13.3 16.3 15 18"/>
-              </svg>
+              ${fileSearchIcon()}
             </button>
             <span class="text-sm text-zinc-300 font-mono truncate flex-1">${path}</span>
             ${path && downloadUrl ? html`
@@ -173,10 +168,7 @@ export class FileBrowser extends LitElement {
                 aria-label=${`Download ${path}`}
                 @click=${(e: Event) => e.stopPropagation()}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>
-                </svg>
+                ${downloadIcon()}
               </a>
             ` : nothing}
             <kbd class="hidden sm:inline text-[10px] text-zinc-500 bg-zinc-700 px-1.5 py-0.5 rounded">Esc</kbd>
@@ -185,10 +177,7 @@ export class FileBrowser extends LitElement {
               @click=${() => this.close()}
               title="Close"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
-              </svg>
+              ${closeIcon()}
             </button>
           </div>
 

@@ -10,6 +10,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ToolRenderer } from "./types.js";
+import { ringSpinnerIcon } from "../icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { getDelegateSummary, getDelegateDetail } from "../../models/tools/delegate.js";
 
@@ -67,7 +68,7 @@ export class DelegateToolBlock extends LitElement {
         <!-- Header -->
         <div class="px-3 py-2 flex items-center gap-2 bg-purple-500/5">
           ${this.showSpinner
-            ? html`<span class="inline-block w-3 h-3 border-2 border-purple-400 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>`
+            ? ringSpinnerIcon("inline-block w-3 h-3 border-2 border-purple-400 border-t-transparent rounded-full animate-spin flex-shrink-0")
             : html`<span class="text-xs flex-shrink-0">${this.expanded ? "▼" : "▶"}</span>`}
           <span class="text-purple-400 flex-shrink-0">⑂</span>
           <span class="text-xs font-semibold text-purple-300 flex-shrink-0">delegate</span>

@@ -17,7 +17,7 @@ export interface SpringOptions {
   stiffness?: number;
   /** Velocity-resistance coefficient. Defaults to the shared spring behavior. */
   damping?: number;
-  onUpdate: (value: number) => void;
+  onUpdate: (value: number, velocity: number) => void;
   onSettle: () => void;
 }
 
@@ -36,10 +36,10 @@ export class Spring {
     this.target = this.options.target;
     this.state = { value: this.options.value, velocity: this.options.velocity };
     this.lastTime = null;
-    this.options.onUpdate(this.options.value);
+    this.options.onUpdate(this.options.value, this.options.velocity);
 
     if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
-      this.options.onUpdate(this.target);
+      this.options.onUpdate(this.target, 0);
       this.finish();
       return;
     }
@@ -72,10 +72,10 @@ export class Spring {
       this.options.stiffness ?? DEFAULT_SPRING_STIFFNESS,
       this.options.damping ?? DEFAULT_SPRING_DAMPING,
     );
-    this.options.onUpdate(this.state.value);
+    this.options.onUpdate(this.state.value, this.state.velocity);
 
     if (springSettled(this.state, this.target)) {
-      this.options.onUpdate(this.target);
+      this.options.onUpdate(this.target, 0);
       this.finish();
       return;
     }

@@ -13,6 +13,7 @@ src/
 ├── models/          Pure logic — no LitElement, no html``
 ├── components/      Lit components — rendering + interaction
 ├── controllers/     Lit reactive controllers (glue between models + components)
+├── directives/      Reusable element-local Lit behavior
 ├── __tests__/       Tests mirroring app structure
 └── index.ts         Entry point
 ```
@@ -28,6 +29,8 @@ src/
 ### models/
 
 Pure TypeScript with no Lit dependency. Contains business/domain logic, state management, data extraction, and server communication. Components keep view-local state; anything that decides what data means, when to fetch, how to persist, or how cross-component state changes belongs here. Everything here is directly testable with bun:test — no DOM, no browser.
+
+**Organize model files around domain concepts, not individual derived values or operations.** Keep a concept's types, transformations, and behavior together. Extract a separate module only when that behavior forms a substantial, cohesive abstraction of its own.
 
 ```
 models/
@@ -50,6 +53,8 @@ models/
 │   ├── create-task.ts, delegate.ts, generic.ts
 │   └── bash-command-parser.ts
 ├── tasks.ts             Task list types
+├── agent-message.ts     Raw runtime/transport message protocol types
+├── message.ts           Displayable message domain model
 ├── chat-state.ts        Chat event reducer
 ├── format.ts            Display formatting helpers
 ├── router.ts            Hash-based route parsing
@@ -71,6 +76,7 @@ components/
 │   ├── index.ts (registry), types.ts
 ├── app.ts               Root shell: store/routing/overlays + pane rendering/layout selection
 ├── chat-panel.ts        Message display + composer orchestration
+├── message-action-menu.ts Action sheet/context-menu presentation
 ├── chat-composer.ts     Prompt input, autosize, skill suggestions, image attachments
 ├── session-sidebar.ts   Sidebar layout
 ├── session-list.ts, project-sidebar.ts, project-form.ts
@@ -95,6 +101,10 @@ controllers/
 ├── page-swipe-controller.ts     Mobile page swipe event/state wiring
 └── chat-history-controller.ts   Prepend loading + scroll-anchor restoration
 ```
+
+### directives/
+
+Lit directives own reusable behavior attached to one rendered element when that behavior needs direct DOM access and should not force the host component to mirror its event or animation state. `long-press.ts` is the canonical example: the element declares a feedback target and completion callback, while the directive owns pointer listeners, gesture cancellation, timers, reduced-motion handling, and direct spring animation.
 
 ## Data Flow
 
@@ -166,7 +176,7 @@ Keep store descriptions at the ownership-boundary level. Avoid listing every end
 - **AppStore** (`models/stores/app-store.ts`) — Top-level orchestration for route-derived app state, WebSocket/reconnect side effects, shared app-wide settings, and sub-store coordination. Components should prefer semantic AppStore/sub-store methods over reaching into lower-level internals.
 - **DiffStore** (`models/stores/diff-store.ts`) — Git diff domain state and mutations, including polling and expansion. Rendering concerns such as syntax highlighting stay in controllers/components.
 - **SessionCache** (`models/stores/session-cache.ts`) — Canonical client cache for server-provided session metadata and the sole frontend owner of runtime activity. Stores and components derive running/activity views from it rather than duplicating activity in conversation or component state.
-- **ConversationsStore** (`models/stores/conversations-store.ts`) — Keyed per-session conversation presentation state that must survive route changes or missed streaming events. Its read view exposes stable display entries: persisted entries retain backend record IDs and parent links, while live entries use store-local IDs until persistence catches up. Successful prompt and steer actions add their optimistic user entries here immediately; peer `user_message` events add equivalent live entries. Components own only outgoing animation metadata and must not maintain parallel pending-message or persistence-reconciliation state. `ActiveSessionStore.prompt()` and `steer()` return the exact `LiveConversationEntry` they insert so local-only interactions can use its store-local render key; the send animation depends on this existing local identity, not on a client/server message-ID protocol or task #255. Runtime `agent_end` user messages are ignored because they may contain runtime-only skill expansion. During a run, assistant display comes from normalized message snapshots; `agent_start` and `agent_settled` are presentation no-ops, while `agent_end` is a presentation-finalization boundary that promotes its fresh final assistants and tool results into live conversation entries before clearing streaming assistants without completing runtime activity. Genuinely new persisted forward user rows consume pending live users FIFO, independent of content, and replace them with canonical persisted entries. The store assumes chat submission does not occur until the initial snapshot loads; stale/overlapping pages and earlier-history loads never consume pending users. Persisted IDs flow through render keys and history anchors; do not reconstruct persisted identity from message content, roles, or timestamps. `ConversationsStore` owns persisted-message queries and cursor traversal; route-scoped stores request forward synchronization or earlier history rather than constructing those queries themselves. Every API result merges into the record graph by ID and is ordered through parent links; initial navigation supplies the latest messages, earlier-history reads supply older messages, and refresh/reconnect/activity-end synchronization follows the persisted tail cursor through every available forward result. Each path preserves already loaded history and reconciles live/streaming state separately. The store exposes ordered streaming assistants keyed by assistant timestamp. Each item keeps the authoritative complete `AssistantMessage` snapshot with only its matching tool-execution overlays, keyed by stable tool-call ID. Each normalized `message_start`, `message_update`, or `message_end` replaces the matching snapshot in its observed insertion position; a full update can therefore recover even when its start or earlier deltas were missed. Components render persisted and streaming assistants through the same assistant-message renderer, preserving native text/tool content order while selecting canonical tool-result messages or live overlays as appropriate. Multiple completed assistants survive tool-loop turns until `agent_end`; if that boundary is missed, matching persisted assistant timestamps still remove whole assistants while unmatched newer live work remains. Persisted assistants replace promoted live assistants by role and timestamp, and persisted tool results replace live tool results by tool-call ID. WebSocket disconnect does not mutate received snapshots or tool execution state. Pi's user/tool-result message lifecycles are excluded from streaming assistants, and unknown tool IDs do not alter them. Route changes and metadata/disconnect updates do not clear received streaming assistants. When authoritative metadata for the active session is non-running, `ActiveSessionStore` narrowly clears only `isCompacting` to recover a missed `compaction_end`; it captures whether streaming or compaction state existed first so canonical message synchronization still runs when needed. This terminal reconciliation must preserve assistant snapshots, tool overlays, live/optimistic entries, persisted records and cursors, and errors. `ChatState` owns conversation presentation only, including independently driven compaction presentation; session running/activity state is owned solely by `SessionCache`.
+- **ConversationsStore** (`models/stores/conversations-store.ts`) — Keyed per-session conversation presentation state that must survive route changes or missed streaming events. Internally it retains raw persistence/runtime records so reconciliation remains faithful to those protocols; its public `ConversationView` projects them into `Message` domain objects as the primary display interface. Each display message carries its persisted entry/parent IDs or store-local render identity, owns raw Markdown copy semantics, and assistants expose ordered blocks whose tool calls already reference their matching persisted `ToolResultMessage` or live `ToolExecution`. Standalone tool-result records are therefore not display messages. Successful prompt and steer actions add optimistic user entries immediately; peer `user_message` events add equivalent live entries. Components own only outgoing animation metadata and must not maintain parallel pending-message or persistence-reconciliation state. `ActiveSessionStore.prompt()` and `steer()` return the exact `LiveConversationEntry` inserted so local-only interactions can use its store-local render key. Runtime `agent_end` user messages are ignored because they may contain runtime-only skill expansion. During a run, assistant display comes from normalized message snapshots; `agent_start` and `agent_settled` are presentation no-ops, while `agent_end` promotes fresh final assistants and tool results before clearing streaming assistants without completing runtime activity. Genuinely new persisted forward user rows consume pending live users FIFO, independent of content, and replace them with canonical persisted entries. Stale/overlapping pages and earlier-history loads never consume pending users. Persisted IDs flow through render keys and history anchors; do not reconstruct persisted identity from message content, roles, or timestamps. `ConversationsStore` owns persisted-message queries and cursor traversal, merges API records by ID and parent links, and reconciles live/streaming state separately. Ordered streaming snapshots keep only matching tool-execution overlays, keyed by stable tool-call ID; complete snapshot updates can recover missed starts/deltas. Persisted assistant timestamps remove matching streaming snapshots while unmatched newer work remains. Persisted tool results replace live results by tool-call ID. Disconnect and route/metadata updates do not discard received snapshots. When authoritative metadata is non-running, `ActiveSessionStore` narrowly clears only stale compaction presentation and synchronizes canonical messages when needed. Runtime activity remains solely owned by `SessionCache`.
 - **ProjectsStore / ProjectStore** (`models/stores/projects-store.ts`, `models/stores/project-store.ts`) — Project/task/session list ownership and project-scoped mutations. Activity and session metadata are derived from `SessionCache` instead of stored redundantly.
 - **QuickOpenStore** (`models/stores/quick-open-store.ts`) — Shared quick-open data, filtering, and recency state. Overlay open/closed state remains component-local.
 - **FileBrowserStore** (`models/stores/file-browser-store.ts`) — Shared file browser data and file-content loading. Viewer overlay state remains component-local.
@@ -237,7 +247,10 @@ app-shell                    — root shell, creates store, applies routes, rend
 │   ├── task-form            — task creation (generate from prompt)
 │   ├── task-detail          — task edit/delete
 │   └── session-list         — scratch sessions
-├── chat-panel               — message display + composer orchestration
+├── chat-panel               — conversation ordering/history/streaming aggregates + composer orchestration
+│   ├── chat-message         — one domain message's text/images/tools/summary/actions and local feedback
+│   │   ├── longPress directive — element-local touch gesture + press animation
+│   │   └── message-action-menu — action sheet/context menu lifecycle, focus, positioning, and menu feedback
 │   ├── ChatHistoryController — earlier-history triggering + viewport preservation
 │   └── chat-composer        — prompt input, autosize, skill suggestions, image attachments
 ├── diff-panel               — full diff view with file cards
@@ -254,6 +267,12 @@ All components live under `components/`. Sub-directories (`changes/`, `tools/`) 
 ### Mobile workspace swipe
 
 `components/app.ts` owns workspace rendering and delegates mobile swipe event wiring/state to `PageSwipeController` in `controllers/page-swipe-controller.ts`. The workspace uses a single inner `.workspace-surface` grid as the layout authority: mobile translates the four full-width page columns (`sessions → chat → changes → files`), while the `md` breakpoint changes that same grid to the desktop columns. The outer workspace shell only clips overflow and hosts pointer listeners; keep it `overflow-clip` so it never becomes a restorable scroll container that can desync the visible mobile page from `activePane`. Do not add a second desktop grid wrapper around the surface. The controller owns page-specific behavior — page clamping, edge resistance, release thresholds, translate targets, and page commits — and creates one short-lived `Swipe` instance from `models/swipe.ts` per pointer-driven swipe. The swipe instance lasts from accepted `pointerdown` through drag classification, release/cancel spring animation, click suppression, and completion; keep per-swipe mutable state there rather than adding reset-heavy gesture fields to the Lit component. The shared scalar spring animation lifecycle lives in the one-shot `Spring` class in `models/spring.ts`; its stiffness and damping can be tuned per instance while omitted values retain the shared defaults. Swipe-specific pointer classification and DOM opt-out predicates stay private to `models/swipe.ts`.
+
+### Message actions
+
+Each actionable `chat-message` declaratively renders its accessible attributes and context-menu/keyboard event bindings. It attaches the generic `${longPress(...)}` element directive with the message-content feedback target and the bound action's sheet callback. The directive owns only reusable DOM gesture behavior: primary-touch and pointer-identity filtering, movement/cancellation, the 650ms press-feedback delay and 900ms completion threshold, reduced-motion behavior, listener cleanup, and shared-spring animation. It does not transform the feedback target until the touch has remained stationary for the feedback delay, and it never prevents native pointer behavior, so horizontal code-block scrolling and conversation scrolling can claim a moving touch before any pressed styling is applied. The feedback target remains pressed while the mobile sheet is open.
+
+`MessageActionsController` is the per-`chat-message` interface for feature behavior. The component binds a domain message with `actions.for(message)`, wires the returned handlers, and chooses whether to render the assistant-only direct-copy control. The controller owns Markdown conversion calls, clipboard work, errors, desktop feedback, menu routing, and cleanup. `message-action-menu` remains responsible for sheet/context-menu presentation, positioning, focus, dismissal, and in-menu confirmation. `chat-panel` only dismisses open child actions on conversation scroll.
 
 ### Sidebar layout
 

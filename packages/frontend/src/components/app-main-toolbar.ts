@@ -4,6 +4,7 @@ import { copyTextToClipboard } from "../helpers/clipboard.js";
 import { openFileBrowserEvent, paneSelectEvent, reloadRequestEvent } from "./events.js";
 import type { MainPaneSelectDetail, MainWorkspacePane } from "./events.js";
 import { showToast, type ToastLevel } from "./toast.js";
+import { menuIcon } from "./icons.js";
 import "./branch-indicator.js";
 import "./nav-icon.js";
 import "./popover-menu.js";
@@ -29,7 +30,7 @@ export class AppMainToolbar extends LitElement {
   }
 
   private renderMenuIcon() {
-    return html`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>`;
+    return menuIcon();
   }
 
   private async copySessionId() {

@@ -16,6 +16,7 @@ import { shouldWrapLines } from "../../models/changes/diff-utils.js";
 import { openInBrowserEvent } from "../events.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
+import { ringSpinnerIcon } from "../icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { getWriteSummary, getWriteInfo, getWriteContent } from "../../models/tools/write.js";
 
@@ -134,7 +135,7 @@ export class WriteToolBlock extends LitElement {
           @click=${headerClickable ? (e: Event) => { e.stopPropagation(); this._toggle(); } : nothing}
         >
           ${this.showSpinner
-            ? html`<span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>`
+            ? ringSpinnerIcon("inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0")
             : html`<span class="flex-shrink-0 text-xs">📝</span>`}
           <span class="text-[10px] font-semibold text-zinc-500 uppercase tracking-wide flex-shrink-0">Write</span>
           <span

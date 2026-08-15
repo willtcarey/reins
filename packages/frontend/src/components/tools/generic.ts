@@ -12,6 +12,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { imageBlockSrc, isImageAttachmentBlock, isInlineImageBlock, type ChatImageBlock } from "../../models/chat-content.js";
 import type { ToolRenderer } from "./types.js";
+import { ringSpinnerIcon } from "../icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { getToolSummary } from "../../models/tools/generic.js";
 
@@ -69,7 +70,7 @@ export class GenericToolBlock extends LitElement {
       return html`
         <div class="mt-1 mb-1 ml-2 border-l-2 ${border} pl-3">
           <div class="flex items-center gap-2 text-xs text-zinc-400 truncate" title="${this.summary || this.name}">
-            <span class="inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></span>
+            ${ringSpinnerIcon("inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0")}
             <span class="font-mono font-semibold flex-shrink-0">${this.name}</span>
             ${this.summary ? html`<span class="font-mono text-zinc-500 truncate">${this.summary}</span>` : nothing}
           </div>

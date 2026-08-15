@@ -4,6 +4,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
 import { compareFilePaths } from "../../models/changes/diff-sort.js";
 import { getPierreWorkerPool } from "../../models/changes/pierre-worker-pool.js";
+import { spinnerIcon } from "../icons.js";
 import type { DiffCopyPathButton, DiffDownloadFileButton, DiffViewFileButton } from "./diff-file-action-buttons.js";
 import "./diff-file-action-buttons.js";
 
@@ -434,10 +435,7 @@ export class CodeViewDiffPanel extends LitElement {
 
           ${isInitialLoading ? html`
             <div class="flex-1 flex items-center justify-center text-zinc-500 text-sm gap-2 p-4">
-              <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-              </svg>
+              ${spinnerIcon()}
               Loading CodeView diff…
             </div>
           ` : items.length > 0

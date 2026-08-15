@@ -20,6 +20,7 @@ import {
   type ExpansionScrollSnapshot,
 } from "../../models/changes/diff-utils.js";
 import { ScrollSpy } from "../../models/changes/scroll-spy.js";
+import { branchIcon, spinnerIcon } from "../icons.js";
 import "./diff-file-card.js";
 
 type ExpansionViewportSnapshot = ExpansionScrollSnapshot;
@@ -228,7 +229,7 @@ export class DiffPanel extends LitElement {
   // ---- Render helpers -------------------------------------------------------
 
   private renderSpinner() {
-    return html`<svg class="w-3 h-3 animate-spin inline-block" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>`;
+    return spinnerIcon("w-3 h-3 animate-spin inline-block");
   }
 
   private renderBaseSyncStatus() {
@@ -330,14 +331,7 @@ export class DiffPanel extends LitElement {
                 <span class="text-xs text-zinc-600">←</span>
               ` : nothing}
               <span class="inline-flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
-                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                     class="shrink-0 text-zinc-500">
-                  <line x1="6" y1="3" x2="6" y2="15"></line>
-                  <circle cx="18" cy="6" r="3"></circle>
-                  <circle cx="6" cy="18" r="3"></circle>
-                  <path d="M18 9a9 9 0 0 1-9 9"></path>
-                </svg>
+                ${branchIcon("shrink-0 text-zinc-500", 12)}
                 ${branch}
               </span>
               ${this.renderBranchSyncStatus()}
@@ -351,10 +345,7 @@ export class DiffPanel extends LitElement {
           >
             ${isInitialLoading ? html`
               <div class="flex items-center justify-center h-full text-zinc-500 text-sm gap-2 p-4">
-                <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                </svg>
+                ${spinnerIcon()}
                 Loading diff…
               </div>
             ` : files.length > 0

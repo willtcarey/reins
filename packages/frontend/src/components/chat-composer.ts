@@ -10,6 +10,7 @@ import {
 import "./skill-suggest.js";
 import type { SendAnimationSource } from "../helpers/chat-send-animation.js";
 import type { SkillInsertDetail, SkillSuggest } from "./skill-suggest.js";
+import { ringSpinnerIcon, sendIcon } from "./icons.js";
 
 const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const IMAGE_ATTACHMENT_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
@@ -553,25 +554,9 @@ export class ChatComposer extends LitElement {
               @mousedown=${this.preserveTextareaFocus}
               @click=${this.handleSendClick}
             >${this.isUploading ? html`
-              <span
-                data-role="send-icon"
-                class="inline-block h-4 w-4 rounded-full border-2 border-white/80 border-t-transparent animate-spin"
-                aria-hidden="true"
-              ></span>
+              ${ringSpinnerIcon("inline-block h-4 w-4 rounded-full border-2 border-white/80 border-t-transparent animate-spin", "send-icon")}
             ` : html`
-              <svg
-                data-role="send-icon"
-                class="h-4 w-4"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-                aria-hidden="true"
-              >
-                <path
-                  fill-rule="evenodd"
-                  d="M10 17a.75.75 0 0 1-.75-.75V5.56L5.53 9.28a.75.75 0 0 1-1.06-1.06l5-5a.75.75 0 0 1 1.06 0l5 5a.75.75 0 0 1-1.06 1.06l-3.72-3.72v10.69A.75.75 0 0 1 10 17Z"
-                  clip-rule="evenodd"
-                />
-              </svg>
+              ${sendIcon()}
             `}</button>
           </div>
         </div>

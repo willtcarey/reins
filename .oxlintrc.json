@@ -15,6 +15,18 @@
   },
   "overrides": [
     {
+      "files": ["packages/frontend/src/**/*.ts"],
+      "rules": {
+        "reins/no-inline-svg": "error"
+      }
+    },
+    {
+      "files": ["packages/frontend/src/components/icons.ts"],
+      "rules": {
+        "reins/no-inline-svg": "off"
+      }
+    },
+    {
       "files": ["packages/backend/src/**/*.ts"],
       "rules": {
         "no-console": "error"

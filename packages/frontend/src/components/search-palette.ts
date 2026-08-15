@@ -19,6 +19,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type { TemplateResult } from "lit";
+import { searchIcon } from "./icons.js";
 
 export type PaletteRenderItem = (index: number, selected: boolean) => TemplateResult | typeof nothing;
 
@@ -157,12 +158,7 @@ export class SearchPalette extends LitElement {
       <div class="w-[42rem] max-w-[calc(100vw-2rem)] bg-zinc-800 ring-1 ring-zinc-600 rounded-lg shadow-2xl flex flex-col ${this.containerClass}">
         <!-- Search input -->
         <div class="flex items-center gap-2 px-3 py-2.5 border-b border-zinc-700">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-               class="text-zinc-400 shrink-0">
-            <circle cx="11" cy="11" r="8"/>
-            <path d="m21 21-4.3-4.3"/>
-          </svg>
+          ${searchIcon("text-zinc-400 shrink-0")}
           <input
             id="palette-input"
             type="text"

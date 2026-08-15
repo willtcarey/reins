@@ -1,4 +1,4 @@
-import type { AgentMessage } from "../../models/chat-state.js";
+import type { AgentMessage } from "../../models/agent-message.js";
 import type {
   ConversationsStore, MessageRecordPage, PersistedConversationEntry,
 } from "../../models/stores/conversations-store.js";
@@ -142,8 +142,8 @@ export function applyStreamingMessage(
 }
 
 export function streamingContentKeys(store: ConversationsStore, sessionId: string): string[] {
-  return store.get(sessionId).streamingAssistants.flatMap(({ message }) => (
-    message.content.flatMap((block) => {
+  return store.get(sessionId).streamingMessages.flatMap((message) => (
+    message.blocks.flatMap((block) => {
       if (block.type === "text") return [`text:${block.text}`];
       if (block.type === "toolCall") return [`tool:${block.id}`];
       return [];

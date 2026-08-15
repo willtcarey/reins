@@ -15,6 +15,7 @@
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { styleMap } from "lit/directives/style-map.js";
+import { moreVerticalIcon } from "./icons.js";
 
 @customElement("popover-menu")
 export class PopoverMenu extends LitElement {
@@ -151,7 +152,7 @@ export class PopoverMenu extends LitElement {
           @click=${this.toggle}
         >
           ${this.triggerTemplate ?? html`
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+            ${moreVerticalIcon()}
           `}
         </button>
         ${this.open && this.content ? html`

@@ -12,6 +12,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { SessionListItem } from "../models/ws-client.js";
 import { formatRelativeDate } from "../models/format.js";
+import { conversationIcon } from "./icons.js";
 import "./popover-menu.js";
 
 @customElement("assistant-session")
@@ -103,7 +104,7 @@ export class AssistantSession extends LitElement {
               class="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 cursor-pointer text-left"
               @click=${() => this.handleSelectSession(assistant.id)}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-zinc-500"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              ${conversationIcon("shrink-0 text-zinc-500")}
               ${this.renderActivityDot(assistant)}
               <span class="text-xs ${isActive ? "text-blue-300 font-medium" : "text-zinc-300"} truncate">Assistant</span>
             </button>
@@ -125,7 +126,7 @@ export class AssistantSession extends LitElement {
             class="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 text-xs text-zinc-400 hover:text-zinc-300 cursor-pointer transition-colors text-left"
             @click=${this.handleNewSession}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            ${conversationIcon("shrink-0")}
             <span class="truncate">Start a conversation</span>
           </button>
         </div>
