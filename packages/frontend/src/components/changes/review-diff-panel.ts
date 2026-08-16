@@ -8,7 +8,6 @@ import {
   parseReviewItems,
   reconcileReviewItems,
   type ReviewItem,
-  ReviewItemStateById,
   type ReviewItemsResult,
 } from "../../models/changes/review-items.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
@@ -160,11 +159,6 @@ export class ReviewDiffItem extends LitElement {
   }
 }
 
-interface ReviewDiffData extends ReviewItemsResult {
-  branch: string | null;
-  baseBranch: string | null;
-}
-
 /**
  * Reins-owned renderer scaffold. It intentionally mounts every review item;
  * this is a functional boundary for a later top-level virtual list, not a
@@ -177,7 +171,7 @@ export class ReviewDiffPanel extends LitElement {
   }
 
   private _store: DiffStore | null = null;
-  private _itemStates = new ReviewItemStateById();
+  private _activeItemId: string | null = null;
 
   @property({ attribute: false })
   get store(): DiffStore | null {
@@ -201,7 +195,7 @@ export class ReviewDiffPanel extends LitElement {
   private _pendingPath: string | null = null;
   private _pendingItemId: string | null = null;
   private _parsedSource: DiffPatchData | null = null;
-  private _parsedData: ReviewDiffData | null = null;
+  private _parsedData: ReviewItemsResult | null = null;
   private _scrollPosition = new ReviewScrollPosition();
   private _scrollSpy = new ScrollSpy({
     containerSelector: "[data-review-scroll]",
@@ -225,7 +219,7 @@ export class ReviewDiffPanel extends LitElement {
   override updated(changed: Map<string, unknown>) {
     this._scrollSpy.update(this);
     const data = this._parsedData;
-    if (!this._itemStates.activeItemId && data?.items[0]) this.reportActiveItem(data.items[0].id);
+    if (!this._activeItemId && data?.items[0]) this.reportActiveItem(data.items[0].id);
     this._syncPendingScroll();
     if (changed.has("visible") && this.visible) {
       const container = this.querySelector<HTMLElement>("[data-review-scroll]");
@@ -279,7 +273,8 @@ export class ReviewDiffPanel extends LitElement {
 
   public reportActiveItem(id: string) {
     const item = this._parsedData?.items.find((candidate) => candidate.id === id);
-    if (!item || !this._itemStates.activate(id)) return;
+    if (!item || this._activeItemId === id) return;
+    this._activeItemId = id;
 
     this.dispatchEvent(new CustomEvent<string>("active-item-change", {
       detail: id,
@@ -313,7 +308,7 @@ export class ReviewDiffPanel extends LitElement {
   private _resetParsedData() {
     this._parsedSource = null;
     this._parsedData = null;
-    this._itemStates.clear();
+    this._activeItemId = null;
   }
 
   private _reconcilePatchData() {
@@ -326,16 +321,13 @@ export class ReviewDiffPanel extends LitElement {
 
     this._parsedSource = source;
     const previousData = this._parsedData;
-    const parsedItems = reconcileReviewItems(
+    this._parsedData = reconcileReviewItems(
       previousData,
-      parseReviewItems(source.patch, source.cacheKeyPrefix, source.version),
+      parseReviewItems(source.patch, source.cacheKeyPrefix),
     );
-    this._itemStates.reconcile(parsedItems.items);
-    this._parsedData = {
-      ...parsedItems,
-      branch: source.branch,
-      baseBranch: source.baseBranch,
-    };
+    if (this._activeItemId && !this._parsedData.items.some((item) => item.id === this._activeItemId)) {
+      this._activeItemId = null;
+    }
   }
 
   private _handleScroll(event: Event) {
@@ -367,8 +359,8 @@ export class ReviewDiffPanel extends LitElement {
     const loading = this.store.patchData.loading && !this.store.patchData.data;
     const data = this._parsedData;
     const items = data?.items ?? [];
-    const branch = data?.branch ?? this.store.branch;
-    const baseBranch = data?.baseBranch ?? this.store.fileData.data?.baseBranch;
+    const branch = this._parsedSource?.branch ?? this.store.branch;
+    const baseBranch = this._parsedSource?.baseBranch ?? this.store.fileData.data?.baseBranch;
 
     return html`
       <div class="flex h-full min-h-0 flex-col" data-rendered-payload-version=${data ? this.store.patchData.data?.version ?? 0 : 0}>

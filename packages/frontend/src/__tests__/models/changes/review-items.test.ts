@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   parseReviewItems,
   reconcileReviewItems,
-  ReviewItemStateById,
 } from "../../../models/changes/review-items.js";
 
 const PATCH = `diff --git a/src/old.ts b/src/new.ts
@@ -26,7 +25,7 @@ index 0000000..3333333
 
 describe("parseReviewItems", () => {
   test("creates sorted Reins review records with identity and Pierre cache keys", () => {
-    const result = parseReviewItems(PATCH, "project-7-v3", 3);
+    const result = parseReviewItems(PATCH, "project-7-v3");
 
     expect(result.items.map((item) => item.path)).toEqual(["src/new.ts", "README.md"]);
     expect(result.items[0]).toMatchObject({
@@ -38,7 +37,6 @@ describe("parseReviewItems", () => {
       additions: 1,
       removals: 1,
       occurrence: 0,
-      version: 3,
     });
     expect(result.items[0]?.cacheKey).toBe("project-7-v3:rename-changed:src%2Fold.ts:src%2Fnew.ts:0");
     expect(result.items[0]?.fileDiff.cacheKey).toBe(result.items[0]?.cacheKey);
@@ -47,8 +45,8 @@ describe("parseReviewItems", () => {
   });
 
   test("reuses unchanged records while replacing only files whose diff changed", () => {
-    const initial = parseReviewItems(PATCH, "project-7-v1", 1);
-    const refreshed = parseReviewItems(PATCH.replace("+# Hello", "+# Hello world"), "project-7-v2", 2);
+    const initial = parseReviewItems(PATCH, "project-7-v1");
+    const refreshed = parseReviewItems(PATCH.replace("+# Hello", "+# Hello world"), "project-7-v2");
 
     const reconciled = reconcileReviewItems(initial, refreshed);
     const initialRenamed = initial.items.find((item) => item.path === "src/new.ts")!;
@@ -62,8 +60,8 @@ describe("parseReviewItems", () => {
   });
 
   test("reuses every record when a refresh returns the same patch", () => {
-    const initial = parseReviewItems(PATCH, "project-7-v1", 1);
-    const refreshed = parseReviewItems(PATCH, "project-7-v2", 2);
+    const initial = parseReviewItems(PATCH, "project-7-v1");
+    const refreshed = parseReviewItems(PATCH, "project-7-v2");
 
     const reconciled = reconcileReviewItems(initial, refreshed);
 
@@ -72,33 +70,14 @@ describe("parseReviewItems", () => {
     expect(reconciled.items[1]).toBe(initial.items[1]);
   });
 
-  test("reconciles panel-owned item state by stable review ID", () => {
-    const initial = parseReviewItems(PATCH, "project-7-v1", 1);
-    const states = new ReviewItemStateById();
-
-    states.reconcile(initial.items);
-    const renamedId = initial.items[0]!.id;
-    states.activate(renamedId);
-
-    const refreshed = parseReviewItems(PATCH.replace("+new", "+newer"), "project-7-v2", 2);
-    states.reconcile(refreshed.items);
-
-    expect(states.get(renamedId)).toEqual({ active: true });
-    expect(states.activeItemId).toBe(renamedId);
-
-    states.reconcile(refreshed.items.filter((item) => item.id !== renamedId));
-    expect(states.get(renamedId)).toBeUndefined();
-    expect(states.activeItemId).toBeNull();
-  });
-
   test("uses occurrence to keep duplicate records unique and reports malformed patches", () => {
     const duplicatePatch = `${PATCH}${PATCH}`;
-    const duplicate = parseReviewItems(duplicatePatch, "snapshot", 1);
+    const duplicate = parseReviewItems(duplicatePatch, "snapshot");
 
     expect(new Set(duplicate.items.map((item) => item.id)).size).toBe(duplicate.items.length);
     expect(duplicate.items.filter((item) => item.path === "src/new.ts").map((item) => item.occurrence)).toEqual([0, 1]);
 
-    const malformed = parseReviewItems("diff --git a/a.ts b/a.ts\n@@ invalid\n+x", "snapshot", 1);
+    const malformed = parseReviewItems("diff --git a/a.ts b/a.ts\n@@ invalid\n+x", "snapshot");
     expect(malformed.items).toEqual([]);
     expect(malformed.parseError).toBeTruthy();
   });

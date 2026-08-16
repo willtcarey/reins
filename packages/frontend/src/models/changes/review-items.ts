@@ -1,10 +1,6 @@
 import { parsePatchFiles, type ChangeTypes, type FileDiffMetadata } from "@pierre/diffs";
 import { compareFilePaths } from "./diff-sort.js";
 
-export interface ReviewItemState {
-  readonly active: boolean;
-}
-
 export interface ReviewItem {
   readonly id: string;
   readonly kind: "diff";
@@ -16,7 +12,6 @@ export interface ReviewItem {
   readonly occurrence: number;
   readonly contentKey: string;
   readonly cacheKey: string;
-  readonly version: number;
   readonly fileDiff: FileDiffMetadata;
 }
 
@@ -42,54 +37,6 @@ export function reconcileReviewItems(
 }
 
 /**
- * Panel-owned UI state, keyed separately from parsed patch records. Reconcile
- * it after every parse so state follows stable IDs and stale IDs are removed.
- */
-export class ReviewItemStateById {
-  private states = new Map<string, ReviewItemState>();
-  private activeId: string | null = null;
-
-  get byId(): ReadonlyMap<string, ReviewItemState> {
-    return this.states;
-  }
-
-  get activeItemId(): string | null {
-    return this.activeId;
-  }
-
-  get(id: string): ReviewItemState | undefined {
-    return this.states.get(id);
-  }
-
-  reconcile(items: readonly Pick<ReviewItem, "id">[]) {
-    const reconciled = new Map<string, ReviewItemState>();
-    for (const item of items) {
-      reconciled.set(item.id, this.states.get(item.id) ?? { active: false });
-    }
-    this.states = reconciled;
-    if (this.activeId && !this.states.has(this.activeId)) this.activeId = null;
-  }
-
-  activate(id: string): boolean {
-    const next = this.states.get(id);
-    if (!next || this.activeId === id) return false;
-
-    if (this.activeId) {
-      const previous = this.states.get(this.activeId);
-      if (previous) this.states.set(this.activeId, { ...previous, active: false });
-    }
-    this.states.set(id, { ...next, active: true });
-    this.activeId = id;
-    return true;
-  }
-
-  clear() {
-    this.states = new Map();
-    this.activeId = null;
-  }
-}
-
-/**
  * Converts a complete raw patch into renderer-owned records. The records are
  * independent from DiffStore.fullData so a later virtual list can change only
  * the mounting strategy.
@@ -97,7 +44,6 @@ export class ReviewItemStateById {
 export function parseReviewItems(
   patch: string,
   cacheKeyPrefix: string,
-  version: number,
 ): ReviewItemsResult {
   try {
     const parsedPatches = parsePatchFiles(patch, undefined, true);
@@ -130,7 +76,6 @@ export function parseReviewItems(
           occurrence,
           contentKey,
           cacheKey,
-          version,
           fileDiff,
         });
       }

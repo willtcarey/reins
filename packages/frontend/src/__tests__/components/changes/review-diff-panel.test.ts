@@ -45,8 +45,8 @@ describe("ReviewDiffPanel", () => {
   });
 
   test("reuses its Pierre renderer when a mounted review item receives fresh metadata", () => {
-    const first = parseReviewItems(PATCH, "project-7-v1", 1).items[0]!;
-    const second = parseReviewItems(PATCH, "project-7-v2", 2).items[0]!;
+    const first = parseReviewItems(PATCH, "project-7-v1").items[0]!;
+    const second = parseReviewItems(PATCH, "project-7-v2").items[0]!;
     const renders: unknown[] = [];
     let factoryCalls = 0;
     let cleanups = 0;
@@ -77,7 +77,7 @@ describe("ReviewDiffPanel", () => {
   });
 
   test("renders a Reins-owned file header, shared file actions, and Pierre text-diff surface", () => {
-    const parsed = parseReviewItems(PATCH, "project-7-v1", 1);
+    const parsed = parseReviewItems(PATCH, "project-7-v1");
     const item = new ReviewDiffItem();
     item.item = parsed.items[0] ?? null;
     item.projectId = 7;
@@ -99,7 +99,7 @@ describe("ReviewDiffPanel", () => {
   });
 
   test("exposes accessible status labels for each changed-file status", () => {
-    const parsed = parseReviewItems(PATCH, "project-7-v1", 1);
+    const parsed = parseReviewItems(PATCH, "project-7-v1");
     const item = new ReviewDiffItem();
     const reviewItem = parsed.items[0]!;
 
@@ -182,6 +182,7 @@ describe("ReviewDiffPanel", () => {
     });
     const itemId = panel.itemIdForPath("src/example.ts")!;
 
+    panel.reportActiveItem(itemId);
     panel.reportActiveItem(itemId);
 
     expect(activeItems).toEqual([itemId]);
