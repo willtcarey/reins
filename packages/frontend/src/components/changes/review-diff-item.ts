@@ -1,10 +1,52 @@
-import { FileDiff, type FileDiffOptions } from "@pierre/diffs";
+import { FileDiff, type ChangeTypes, type FileDiffOptions } from "@pierre/diffs";
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
 import type { ReviewItem } from "../../models/changes/review-items.js";
-import { changedFileStatusIcon } from "../icons.js";
+import {
+  addedFileIcon,
+  deletedFileIcon,
+  modifiedFileIcon,
+  renamedFileIcon,
+} from "../icons.js";
 import "./diff-file-action-buttons.js";
+
+const STATUS_ICON_DETAILS: Record<ChangeTypes, {
+  label: string;
+  colorClass: string;
+  icon: typeof modifiedFileIcon;
+}> = {
+  change: {
+    label: "Modified file",
+    colorClass: "text-sky-400",
+    icon: modifiedFileIcon,
+  },
+  new: {
+    label: "Added file",
+    colorClass: "text-green-500",
+    icon: addedFileIcon,
+  },
+  deleted: {
+    label: "Deleted file",
+    colorClass: "text-red-400",
+    icon: deletedFileIcon,
+  },
+  "rename-pure": {
+    label: "Renamed file",
+    colorClass: "text-violet-400",
+    icon: renamedFileIcon,
+  },
+  "rename-changed": {
+    label: "Renamed file",
+    colorClass: "text-violet-400",
+    icon: renamedFileIcon,
+  },
+};
+
+function renderStatusIcon(status: ChangeTypes) {
+  const details = STATUS_ICON_DETAILS[status];
+  return details.icon(`h-3 w-3 shrink-0 ${details.colorClass}`, details.label);
+}
 
 const REINS_DIFF_OPTIONS: FileDiffOptions<undefined> = {
   theme: PIERRE_SHIKI_THEME,
@@ -94,7 +136,7 @@ export class ReviewDiffItem extends LitElement {
     return html`
       <article class="border-b border-zinc-700/70 bg-zinc-950">
         <header class="reins-diff-header sticky top-0 z-10 flex min-w-0 items-center gap-2 px-3 py-2">
-          ${changedFileStatusIcon(item.status)}
+          ${renderStatusIcon(item.status)}
           ${item.oldPath && item.oldPath !== item.path
             ? html`
                 <span class="reins-diff-path min-w-0 truncate font-mono text-sm text-zinc-500" title=${item.oldPath}>
