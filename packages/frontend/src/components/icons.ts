@@ -1,4 +1,4 @@
-import { html, nothing, type TemplateResult } from "lit";
+import { html, nothing, svg, type TemplateResult } from "lit";
 
 export type IconSize = number | string;
 
@@ -91,19 +91,19 @@ function changedFileIcon(glyph: TemplateResult, className: string, label: string
 }
 
 export function modifiedFileIcon(className: string, label: string) {
-  return changedFileIcon(html`<path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6"/>`, className, label);
+  return changedFileIcon(svg`<path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6"/>`, className, label);
 }
 
 export function addedFileIcon(className: string, label: string) {
-  return changedFileIcon(html`<path d="M8 4a.75.75 0 0 1 .75.75v2.5h2.5a.75.75 0 0 1 0 1.5h-2.5v2.5a.75.75 0 0 1-1.5 0v-2.5h-2.5a.75.75 0 0 1 0-1.5h2.5v-2.5A.75.75 0 0 1 8 4"/>`, className, label);
+  return changedFileIcon(svg`<path d="M8 4a.75.75 0 0 1 .75.75v2.5h2.5a.75.75 0 0 1 0 1.5h-2.5v2.5a.75.75 0 0 1-1.5 0v-2.5h-2.5a.75.75 0 0 1 0-1.5h2.5v-2.5A.75.75 0 0 1 8 4"/>`, className, label);
 }
 
 export function deletedFileIcon(className: string, label: string) {
-  return changedFileIcon(html`<path d="M4 8a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 4 8"/>`, className, label);
+  return changedFileIcon(svg`<path d="M4 8a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 4 8"/>`, className, label);
 }
 
 export function renamedFileIcon(className: string, label: string) {
-  return changedFileIcon(html`<path d="M8.5 4.7a.75.75 0 0 0-.05 1.06L10.5 8l-2.05 2.25a.75.75 0 0 0 1.11 1l2.5-2.75a.75.75 0 0 0 0-1l-2.5-2.75a.75.75 0 0 0-1.06-.05m-4 0a.75.75 0 0 0-.05 1.06L6.5 8 4.7 10a.75.75 0 0 0 1.11 1l2.25-2.5a.75.75 0 0 0 0-1l-2.5-2.75a.75.75 0 0 0-1.06-.05"/>`, className, label);
+  return changedFileIcon(svg`<path d="M8.5 4.7a.75.75 0 0 0-.05 1.06L10.5 8l-2.05 2.25a.75.75 0 0 0 1.11 1l2.5-2.75a.75.75 0 0 0 0-1l-2.5-2.75a.75.75 0 0 0-1.06-.05m-4 0a.75.75 0 0 0-.05 1.06L6.5 8 4.7 10a.75.75 0 0 0 1.11 1l2.25-2.5a.75.75 0 0 0 0-1l-2.5-2.75a.75.75 0 0 0-1.06-.05"/>`, className, label);
 }
 
 export function chevronRightIcon(className = "", size: IconSize = 16) {
