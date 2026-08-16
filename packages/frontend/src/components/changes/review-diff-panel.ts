@@ -1,5 +1,5 @@
-import { FileDiff, type ChangeTypes, type FileDiffOptions } from "@pierre/diffs";
-import { LitElement, html, nothing, svg } from "lit";
+import { FileDiff, type FileDiffOptions } from "@pierre/diffs";
+import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
@@ -12,6 +12,7 @@ import {
   type ReviewItemsResult,
 } from "../../models/changes/review-items.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
+import { branchIcon, changedFileStatusIcon } from "../icons.js";
 import "./diff-file-action-buttons.js";
 
 type ScrollPositionContainer = Pick<HTMLElement, "scrollTop" | "clientHeight">;
@@ -44,56 +45,6 @@ const REINS_DIFF_OPTIONS: FileDiffOptions<undefined> = {
   hunkSeparators: "line-info",
   disableFileHeader: true,
 };
-
-const STATUS_ICON_DETAILS: Record<ChangeTypes, {
-  label: string;
-  colorClass: string;
-  glyph: ReturnType<typeof svg>;
-}> = {
-  change: {
-    label: "Modified file",
-    colorClass: "text-sky-400",
-    glyph: svg`<path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6"/>`,
-  },
-  new: {
-    label: "Added file",
-    colorClass: "text-green-500",
-    glyph: svg`<path d="M8 4a.75.75 0 0 1 .75.75v2.5h2.5a.75.75 0 0 1 0 1.5h-2.5v2.5a.75.75 0 0 1-1.5 0v-2.5h-2.5a.75.75 0 0 1 0-1.5h2.5v-2.5A.75.75 0 0 1 8 4"/>`,
-  },
-  deleted: {
-    label: "Deleted file",
-    colorClass: "text-red-400",
-    glyph: svg`<path d="M4 8a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 4 8"/>`,
-  },
-  "rename-pure": {
-    label: "Renamed file",
-    colorClass: "text-violet-400",
-    glyph: svg`<path d="M8.5 4.7a.75.75 0 0 0-.05 1.06L10.5 8l-2.05 2.25a.75.75 0 0 0 1.11 1l2.5-2.75a.75.75 0 0 0 0-1l-2.5-2.75a.75.75 0 0 0-1.06-.05m-4 0a.75.75 0 0 0-.05 1.06L6.5 8 4.7 10a.75.75 0 0 0 1.11 1l2.25-2.5a.75.75 0 0 0 0-1l-2.5-2.75a.75.75 0 0 0-1.06-.05"/>`,
-  },
-  "rename-changed": {
-    label: "Renamed file",
-    colorClass: "text-violet-400",
-    glyph: svg`<path d="M8.5 4.7a.75.75 0 0 0-.05 1.06L10.5 8l-2.05 2.25a.75.75 0 0 0 1.11 1l2.5-2.75a.75.75 0 0 0 0-1l-2.5-2.75a.75.75 0 0 0-1.06-.05m-4 0a.75.75 0 0 0-.05 1.06L6.5 8 4.7 10a.75.75 0 0 0 1.11 1l2.25-2.5a.75.75 0 0 0 0-1l-2.5-2.75a.75.75 0 0 0-1.06-.05"/>`,
-  },
-};
-
-const STATUS_ICON_FRAME = svg`<path d="M1.79 4.3c.2-.88.48-1.39.8-1.71s.83-.61 1.71-.8C5.19 1.59 6.39 1.5 8 1.5s2.81.09 3.7.29c.88.19 1.39.48 1.71.8s.61.83.8 1.71c.2.89.29 2.09.29 3.7s-.09 2.81-.29 3.7c-.19.88-.48 1.39-.8 1.71s-.83.61-1.71.8c-.89.2-2.09.29-3.7.29s-2.81-.09-3.7-.29c-.88-.19-1.39-.48-1.71-.8s-.6-.83-.8-1.71C1.59 10.81 1.5 9.61 1.5 8s.09-2.81.29-3.7M8 0C1.41 0 0 1.41 0 8s1.41 8 8 8 8-1.41 8-8S14.59 0 8 0"/>`;
-
-function renderStatusIcon(status: ChangeTypes) {
-  const details = STATUS_ICON_DETAILS[status];
-  return html`
-    <svg
-      class="h-3 w-3 shrink-0 ${details.colorClass}"
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      role="img"
-      aria-label="${details.label}"
-    >
-      <title>${details.label}</title>
-      ${STATUS_ICON_FRAME}${details.glyph}
-    </svg>
-  `;
-}
 
 type PierreFileDiffRenderer = Pick<FileDiff<undefined>, "render" | "cleanUp">;
 type PierreFileDiffFactory = () => PierreFileDiffRenderer;
@@ -173,7 +124,7 @@ export class ReviewDiffItem extends LitElement {
     return html`
       <article class="border-b border-zinc-700/70 bg-zinc-950">
         <header class="reins-diff-header sticky top-0 z-10 flex min-w-0 items-center gap-2 px-3 py-2">
-          ${renderStatusIcon(item.status)}
+          ${changedFileStatusIcon(item.status)}
           ${item.oldPath && item.oldPath !== item.path
             ? html`
                 <span class="reins-diff-path min-w-0 truncate font-mono text-sm text-zinc-500" title=${item.oldPath}>
@@ -428,14 +379,7 @@ export class ReviewDiffPanel extends LitElement {
               <span class="text-xs text-zinc-600">←</span>
             ` : nothing}
             <span class="inline-flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
-                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                   class="shrink-0 text-zinc-500">
-                <line x1="6" y1="3" x2="6" y2="15"></line>
-                <circle cx="18" cy="6" r="3"></circle>
-                <circle cx="6" cy="18" r="3"></circle>
-                <path d="M18 9a9 9 0 0 1-9 9"></path>
-              </svg>
+              ${branchIcon("shrink-0 text-zinc-500", 12)}
               ${branch}
             </span>
           </div>
