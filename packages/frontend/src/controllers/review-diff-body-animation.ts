@@ -5,8 +5,23 @@ interface MeasurableDiffBody {
   readonly scrollHeight: number;
 }
 
-// Avoid visible overshoot when animating the height of a large diff body.
-const REVIEW_DIFF_SPRING_DAMPING = 0.05;
+// Strengthen taller bodies while keeping the same damping ratio and bounding
+// the result so very large diffs still feel like the same interaction.
+const REVIEW_DIFF_BASE_STIFFNESS = 0.00065;
+const REVIEW_DIFF_BASE_DAMPING = 0.05;
+const REVIEW_DIFF_REFERENCE_HEIGHT_PX = 240;
+const REVIEW_DIFF_MAX_STRENGTH_SCALE = 1.6;
+
+function springTuning(height: number): { stiffness: number; damping: number } {
+  const scale = Math.min(
+    REVIEW_DIFF_MAX_STRENGTH_SCALE,
+    Math.max(1, Math.log2(1 + height / REVIEW_DIFF_REFERENCE_HEIGHT_PX)),
+  );
+  return {
+    stiffness: REVIEW_DIFF_BASE_STIFFNESS * scale,
+    damping: REVIEW_DIFF_BASE_DAMPING * Math.sqrt(scale),
+  };
+}
 
 /**
  * Presentational mount/height state for an animated review diff body.
@@ -74,12 +89,14 @@ export class ReviewDiffBodyAnimation implements ReactiveController {
     }
 
     const generation = ++this.generation;
+    const tuning = springTuning(naturalHeight);
     let settledSynchronously = false;
     const spring = new Spring({
       value: start,
       target,
       velocity: this.velocity,
-      damping: REVIEW_DIFF_SPRING_DAMPING,
+      stiffness: tuning.stiffness,
+      damping: tuning.damping,
       onUpdate: (value, velocity) => {
         if (generation !== this.generation) return;
         this.height = Math.max(0, Math.min(value, naturalHeight));

@@ -30,13 +30,15 @@ function installAnimationWindow(reducedMotion = false) {
     },
     cancelAnimationFrame(id: number) { canceled.add(id); },
   });
+  const runFrames = (limit: number) => {
+    for (let index = 0; index < frames.length && index < limit; index += 1) {
+      if (!canceled.has(index + 1)) frames[index]?.(index * 16);
+    }
+  };
   return {
     frames,
-    runUntilSettled(limit = 500) {
-      for (let index = 0; index < frames.length && index < limit; index += 1) {
-        if (!canceled.has(index + 1)) frames[index]?.(index * 16);
-      }
-    },
+    runFrames,
+    runUntilSettled() { runFrames(500); },
   };
 }
 
@@ -59,6 +61,22 @@ describe("ReviewDiffBodyAnimation", () => {
 
     expect(animation.renderBody).toBe(false);
     expect(animation.height).toBeNull();
+  });
+
+  test("strengthens the spring so short and tall bodies collapse within 400 milliseconds", () => {
+    for (const height of [240, 960]) {
+      const animationWindow = installAnimationWindow();
+      const { host } = fakeHost();
+      const animation = new ReviewDiffBodyAnimation(host);
+
+      animation.sync(false);
+      animation.sync(true);
+      animation.bodyReady(body(height));
+      animationWindow.runFrames(25);
+
+      expect(animation.renderBody).toBe(false);
+      expect(animation.height).toBeNull();
+    }
   });
 
   test("mounts an expanding body at zero and clears its height after settling", () => {
