@@ -58,18 +58,8 @@ const REINS_DIFF_OPTIONS: FileDiffOptions<undefined> = {
   disableFileHeader: true,
 };
 
-type PierreFileDiffRenderer = Pick<FileDiff<undefined>, "render" | "cleanUp">;
-type PierreFileDiffFactory = () => PierreFileDiffRenderer;
-
 @customElement("review-diff-item")
 export class ReviewDiffItem extends LitElement {
-  private _createFileDiff: PierreFileDiffFactory;
-
-  constructor(createFileDiff: PierreFileDiffFactory = () => new FileDiff(REINS_DIFF_OPTIONS, getPierreWorkerPool(), true)) {
-    super();
-    this._createFileDiff = createFileDiff;
-  }
-
   override createRenderRoot() {
     return this;
   }
@@ -78,7 +68,7 @@ export class ReviewDiffItem extends LitElement {
   @property({ type: Number, attribute: false }) projectId: number | null = null;
   @property({ attribute: false }) branch: string | null = null;
 
-  private _fileDiff: PierreFileDiffRenderer | null = null;
+  private _fileDiff: FileDiff<undefined> | null = null;
   private _renderedItem: ReviewItem | null = null;
   private _root: HTMLElement | null = null;
 
@@ -109,7 +99,7 @@ export class ReviewDiffItem extends LitElement {
     }
 
     this._destroyFileDiff();
-    this._fileDiff = this._createFileDiff();
+    this._fileDiff = new FileDiff(REINS_DIFF_OPTIONS, getPierreWorkerPool(), true);
     this._root = root;
     this._renderedItem = this.item;
     this._fileDiff.render({ fileDiff: this.item.fileDiff, fileContainer: root });

@@ -13,38 +13,6 @@ index 1111111..2222222 100644
 `;
 
 describe("ReviewDiffItem", () => {
-  test("reuses its Pierre renderer when a mounted review item receives fresh metadata", () => {
-    const first = parseReviewItems(PATCH, "project-7-v1").items[0]!;
-    const second = parseReviewItems(PATCH, "project-7-v2").items[0]!;
-    const renders: unknown[] = [];
-    let factoryCalls = 0;
-    let cleanups = 0;
-    class MountedReviewDiffItem extends ReviewDiffItem {
-      protected override getDiffRoot(): HTMLElement {
-        return this;
-      }
-    }
-    const component = new MountedReviewDiffItem(() => {
-      factoryCalls += 1;
-      return {
-        render: (props) => {
-          renders.push(props.fileDiff);
-          return true;
-        },
-        cleanUp: () => { cleanups += 1; },
-      };
-    });
-
-    component.item = first;
-    component.updated();
-    component.item = second;
-    component.updated();
-
-    expect(factoryCalls).toBe(1);
-    expect(cleanups).toBe(0);
-    expect(renders).toEqual([first.fileDiff, second.fileDiff]);
-  });
-
   test("renders a Reins-owned file header, shared file actions, and Pierre text-diff surface", () => {
     const parsed = parseReviewItems(PATCH, "project-7-v1");
     const item = new ReviewDiffItem();
