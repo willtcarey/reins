@@ -104,7 +104,7 @@ controllers/
 
 ### directives/
 
-Lit directives own reusable behavior attached to one rendered element when that behavior needs direct DOM access and should not force the host component to mirror its event or animation state. `long-press.ts` is the canonical example: the element declares a feedback target and completion callback, while the directive owns pointer listeners, gesture cancellation, timers, reduced-motion handling, and direct spring animation.
+Lit directives own reusable behavior attached to rendered DOM when that behavior needs direct DOM access and should not force the host component to mirror its event or animation state. `long-press.ts` attaches behavior to an existing element. The structural `spring-collapse.ts` directive accepts a lazy body renderer and owns its wrapper, content measurement, temporary mount state, reduced-motion handling, and direct spring animation so collapsed content can be removed after settling. It observes the inner body's natural height and retargets expansion when asynchronous content arrives or changes size. Without `ResizeObserver`, it skips animation and applies the requested mounted state immediately.
 
 ## Data Flow
 
@@ -241,12 +241,13 @@ The router module provides `getLastHash()` and `saveHash()` helpers backed by `l
 
 ```
 app-shell                    — root shell, creates store, applies routes, renders workspace panes
-├── session-sidebar          — project list, task list, session list
+├── session-sidebar          — project-list orchestration and shared dialogs
+│   ├── sidebar-project      — keyed project section; survives body collapse and retains task disclosure state
+│   │   ├── assistant-session — project assistant row and previous conversations
+│   │   └── task-list        — tasks with spring-collapsed completed tasks and session sublists
 │   ├── project-sidebar      — project selector + CRUD
-│   ├── task-list            — tasks with expandable session sublists
 │   ├── task-form            — task creation (generate from prompt)
-│   ├── task-detail          — task edit/delete
-│   └── session-list         — scratch sessions
+│   └── task-detail          — task edit/delete
 ├── chat-panel               — conversation ordering/history/streaming aggregates + composer orchestration
 │   ├── chat-message         — one domain message's text/images/tools/summary/actions and local feedback
 │   │   ├── longPress directive — element-local touch gesture + press animation
@@ -340,8 +341,8 @@ The diff/changes feature spans both `models/changes/` (pure logic) and `componen
 - `review-items.ts` — Parses raw patches into stable Reins-owned review item identities, Pierre cache keys, and path-to-item navigation records.
 - `types.ts` — Shared types for diff data structures
 
-**Controller (`controllers/`):**
-- `review-diff-body-animation.ts` — Per-item spring height animation that retains the Pierre body through collapse, honors reduced motion, and unmounts it after settling.
+**Directive (`directives/`):**
+- `spring-collapse.ts` — Shared structural spring-collapse behavior. It lazily renders a supplied body, tracks asynchronous body resizing, retains it through collapse, honors reduced motion, supports in-flight reversal, and unmounts it after settling.
 
 **Components (`components/changes/`):**
 - `diff-panel.ts` — Layout shell: branch header, scroll container, file tree sidebar. Owns state coordination and wires child events to the DiffStore.

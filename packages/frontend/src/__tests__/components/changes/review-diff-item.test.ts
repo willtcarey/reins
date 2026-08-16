@@ -1,10 +1,33 @@
 import { describe, expect, test } from "bun:test";
+import { PartType, type PartInfo } from "lit/directive.js";
 import { ReviewDiffItem } from "../../../components/changes/review-diff-item.js";
+import { SpringCollapseDirective } from "../../../directives/spring-collapse.js";
 import { parseReviewItems } from "../../../models/changes/review-items.js";
 import {
   collectTemplateEventListeners,
+  collectTemplateValues,
   templateToString,
 } from "../../helpers/lit-template.js";
+
+interface DirectiveResult {
+  _$litDirective$: typeof SpringCollapseDirective;
+  values: Parameters<SpringCollapseDirective["render"]>;
+}
+
+function renderOutput(item: ReviewDiffItem): string {
+  const template = item.render();
+  const collapse = collectTemplateValues(template).find((value): value is DirectiveResult => (
+    typeof value === "object"
+      && value !== null
+      && "_$litDirective$" in value
+      && value._$litDirective$ === SpringCollapseDirective
+  ));
+  if (!collapse) return templateToString(template);
+
+  const childPart: PartInfo = { type: PartType.CHILD };
+  const directive = new SpringCollapseDirective(childPart);
+  return templateToString(template) + templateToString(directive.render(...collapse.values));
+}
 
 const PATCH = `diff --git a/src/example.ts b/src/example.ts
 index 1111111..2222222 100644
@@ -23,7 +46,7 @@ describe("ReviewDiffItem", () => {
     item.projectId = 7;
     item.branch = "task/example";
 
-    const output = templateToString(item.render());
+    const output = renderOutput(item);
 
     expect(output).toContain("src/example.ts");
     expect(output).toContain("<header");
@@ -38,6 +61,21 @@ describe("ReviewDiffItem", () => {
     expect(output).toContain("<diffs-container data-pierre-file-diff>");
   });
 
+  test("does not animate asynchronous diff rendering as a user expansion", () => {
+    const parsed = parseReviewItems(PATCH, "project-7-v1");
+    const item = new ReviewDiffItem();
+    item.item = parsed.items[0] ?? null;
+
+    const collapse = collectTemplateValues(item.render()).find((value): value is DirectiveResult => (
+      typeof value === "object"
+        && value !== null
+        && "_$litDirective$" in value
+        && value._$litDirective$ === SpringCollapseDirective
+    ));
+
+    expect(collapse?.values[2]).toMatchObject({ animateContentResize: false });
+  });
+
   test("renders an accessible collapse control and hides only the diff body when collapsed", () => {
     const parsed = parseReviewItems(PATCH, "project-7-v1");
     const reviewItem = parsed.items[0]!;
@@ -49,7 +87,7 @@ describe("ReviewDiffItem", () => {
     });
 
     const rendered = item.render();
-    const output = templateToString(rendered);
+    const output = renderOutput(item);
     collectTemplateEventListeners(rendered, "click")[0]?.call(item, new Event("click"));
 
     expect(output).toContain(`<button`);

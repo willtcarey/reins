@@ -38,6 +38,27 @@ module.exports = {
       },
     },
 
+    "no-custom-event-constructor": {
+      meta: {
+        type: "problem",
+        docs: {
+          description: "Require frontend CustomEvents to be created by shared event factories.",
+        },
+        messages: {
+          useEventFactory: "Create CustomEvents in components/events.ts and dispatch a typed event factory result instead.",
+        },
+      },
+      create(context) {
+        return {
+          NewExpression(node) {
+            if (node.callee?.type === "Identifier" && node.callee.name === "CustomEvent") {
+              context.report({ node, messageId: "useEventFactory" });
+            }
+          },
+        };
+      },
+    },
+
     "no-inline-svg": {
       meta: {
         type: "problem",

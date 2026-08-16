@@ -25,6 +25,10 @@ declare global {
     "open-file-browser": CustomEvent<void>;
     "pane-select": CustomEvent<MainPaneSelectDetail>;
     "reload-request": CustomEvent<void>;
+    "active-file-change": CustomEvent<string | null>;
+    "active-item-change": CustomEvent<string>;
+    "diff-rendered": CustomEvent<string>;
+    "toggle-collapse": CustomEvent<string>;
   }
 }
 
@@ -116,6 +120,38 @@ export function paneSelectEvent(pane: WorkspacePane) {
 /** Request to reload the application. */
 export function reloadRequestEvent() {
   return new CustomEvent("reload-request", {
+    bubbles: true,
+    composed: true,
+  });
+}
+
+export function activeFileChangeEvent(path: string | null) {
+  return new CustomEvent<string | null>("active-file-change", {
+    detail: path,
+    bubbles: true,
+    composed: true,
+  });
+}
+
+export function activeItemChangeEvent(id: string) {
+  return new CustomEvent<string>("active-item-change", {
+    detail: id,
+    bubbles: true,
+    composed: true,
+  });
+}
+
+export function diffRenderedEvent(id: string) {
+  return new CustomEvent<string>("diff-rendered", {
+    detail: id,
+    bubbles: true,
+    composed: true,
+  });
+}
+
+export function toggleCollapseEvent(id: string) {
+  return new CustomEvent<string>("toggle-collapse", {
+    detail: id,
     bubbles: true,
     composed: true,
   });

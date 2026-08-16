@@ -16,6 +16,20 @@ index 1111111..2222222 100644
 +new
 `;
 
+function rectAt(top: number): DOMRect {
+  return {
+    bottom: top,
+    height: 0,
+    left: 0,
+    right: 0,
+    top,
+    width: 0,
+    x: 0,
+    y: top,
+    toJSON: () => ({}),
+  };
+}
+
 function loadedPatch(patch = PATCH): DiffPatchData {
   return {
     patch,
@@ -25,6 +39,7 @@ function loadedPatch(patch = PATCH): DiffPatchData {
     baseBranch: "master",
   };
 }
+
 
 describe("ReviewDiffPanel", () => {
   test("restores the last measurable scroll position after the hidden pane reports zero", () => {
@@ -92,6 +107,133 @@ describe("ReviewDiffPanel", () => {
     store.patchData = store.patchData.asError("network failed");
     expect(templateToString(panel.render())).toContain("Error: network failed");
     store.dispose();
+  });
+
+  test("animates file-tree navigation after the target layout is ready", () => {
+    const cssDescriptor = Object.getOwnPropertyDescriptor(globalThis, "CSS");
+    Object.defineProperty(globalThis, "CSS", {
+      configurable: true,
+      value: { escape: (value: string) => value },
+    });
+    const store = new DiffStore();
+    try {
+      store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
+      const panel = new ReviewDiffPanel();
+      panel.store = store;
+      let behavior: ScrollBehavior | undefined;
+      panel.getBoundingClientRect = () => rectAt(0);
+      panel.scrollTo = (options?: ScrollToOptions | number) => {
+        if (typeof options !== "number") behavior = options?.behavior;
+      };
+      const querySelector: typeof panel.querySelector = () => panel;
+      panel.querySelector = querySelector;
+
+      panel.scrollToFile("src/example.ts");
+
+      expect(behavior).toBe("smooth");
+    } finally {
+      store.dispose();
+      if (cssDescriptor) Object.defineProperty(globalThis, "CSS", cssDescriptor);
+      else Reflect.deleteProperty(globalThis, "CSS");
+    }
+  });
+
+  test("waits for an in-flight patch refresh before file-tree navigation scrolls", () => {
+    const frameDescriptor = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
+    const cssDescriptor = Object.getOwnPropertyDescriptor(globalThis, "CSS");
+    const frames: FrameRequestCallback[] = [];
+    Object.defineProperty(globalThis, "requestAnimationFrame", {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => {
+        frames.push(callback);
+        return frames.length;
+      },
+    });
+    Object.defineProperty(globalThis, "CSS", {
+      configurable: true,
+      value: { escape: (value: string) => value },
+    });
+
+    const store = new DiffStore();
+    try {
+      store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch()).asLoading();
+      const panel = new ReviewDiffPanel();
+      panel.store = store;
+      let scrollCount = 0;
+      panel.scrollIntoView = () => { scrollCount += 1; };
+      const querySelector: typeof panel.querySelector = (selector: string) => (
+        selector.startsWith("[data-review-item-id=") ? panel : null
+      );
+      panel.querySelector = querySelector;
+
+      panel.scrollToFile("src/example.ts");
+      expect(scrollCount).toBe(0);
+
+      store.patchData = store.patchData.asLoaded(loadedPatch());
+      panel.willUpdate(new Map());
+      panel.updated(new Map());
+      frames.shift()?.(0);
+
+      expect(scrollCount).toBe(1);
+    } finally {
+      store.dispose();
+      if (frameDescriptor) Object.defineProperty(globalThis, "requestAnimationFrame", frameDescriptor);
+      else Reflect.deleteProperty(globalThis, "requestAnimationFrame");
+      if (cssDescriptor) Object.defineProperty(globalThis, "CSS", cssDescriptor);
+      else Reflect.deleteProperty(globalThis, "CSS");
+    }
+  });
+
+  test("waits for preceding diff bodies to render before scrolling to a file", () => {
+    const frameDescriptor = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
+    const cssDescriptor = Object.getOwnPropertyDescriptor(globalThis, "CSS");
+    const frames: FrameRequestCallback[] = [];
+    Object.defineProperty(globalThis, "requestAnimationFrame", {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => {
+        frames.push(callback);
+        return frames.length;
+      },
+    });
+    Object.defineProperty(globalThis, "CSS", {
+      configurable: true,
+      value: { escape: (value: string) => value },
+    });
+    const patch = `${PATCH}diff --git a/src/target.ts b/src/target.ts
+index 3333333..4444444 100644
+--- a/src/target.ts
++++ b/src/target.ts
+@@ -1 +1 @@
+-before
++after
+`;
+    const store = new DiffStore();
+    try {
+      store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(patch));
+      const panel = new ReviewDiffPanel();
+      panel.store = store;
+      let itemQueries = 0;
+      const querySelector: typeof panel.querySelector = () => {
+        itemQueries += 1;
+        return null;
+      };
+      panel.querySelector = querySelector;
+
+      panel.scrollToFile("src/target.ts");
+      expect(itemQueries).toBe(0);
+
+      const precedingId = panel.itemIdForPath("src/example.ts")!;
+      panel.reportItemRendered(precedingId);
+      frames.shift()?.(0);
+
+      expect(itemQueries).toBeGreaterThan(0);
+    } finally {
+      store.dispose();
+      if (frameDescriptor) Object.defineProperty(globalThis, "requestAnimationFrame", frameDescriptor);
+      else Reflect.deleteProperty(globalThis, "requestAnimationFrame");
+      if (cssDescriptor) Object.defineProperty(globalThis, "CSS", cssDescriptor);
+      else Reflect.deleteProperty(globalThis, "CSS");
+    }
   });
 
   test("expands a collapsed target before file-tree navigation scrolls to it", () => {

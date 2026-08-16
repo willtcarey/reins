@@ -9,27 +9,25 @@
  *  - project-sidebar  — "Add Project" button + project-form modal
  *  - task-form        — new task creation (shared, opened with projectId)
  *  - task-detail      — task editing (shared)
- *  - task-list        — per-project task listing with expandable sessions
- *  - assistant-session — per-project scratch session row + history popover
+ *  - sidebar-project  — keyed project section with persistent disclosure state
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
+import { repeat } from "lit/directives/repeat.js";
 import { navigateToSession } from "../models/router.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import type { TaskListItem } from "../models/tasks.js";
 
 import type { ProjectInfo } from "../models/ws-client.js";
-import { chevronLeftIcon, chevronRightIcon, folderIcon } from "./icons.js";
+import { chevronLeftIcon, chevronRightIcon } from "./icons.js";
 import type { TaskForm } from "./task-form.js";
 import type { TaskDetail } from "./task-detail.js";
 import type { ProjectSidebar } from "./project-sidebar.js";
 import "./project-sidebar.js";
 import "./task-form.js";
 import "./task-detail.js";
-import "./task-list.js";
-import "./assistant-session.js";
-import "./popover-menu.js";
+import "./sidebar-project.js";
 import { showToast } from "./toast.js";
 import { openQuickOpenEvent, openSettingsEvent } from "./events.js";
 import { ScrollToController } from "../controllers/scroll-to-controller.js";
@@ -139,6 +137,10 @@ export class SessionSidebar extends LitElement {
     }
   }
 
+  private handleNewTask(e: CustomEvent<{ projectId: number }>) {
+    this.taskForm?.open(e.detail.projectId);
+  }
+
   private async handleNewTaskSession(e: CustomEvent<{ projectId: number; taskId: number }>) {
     const { projectId, taskId } = e.detail;
     if (!projectId) return;
@@ -203,11 +205,16 @@ export class SessionSidebar extends LitElement {
     this.dispatchEvent(openSettingsEvent());
   }
 
-  private handleEditProject(project: ProjectInfo) {
-    this.projectSidebar?.openEdit(project);
+  private handleToggleProject(e: CustomEvent<ProjectInfo>) {
+    this.toggleProject(e.detail.id);
   }
 
-  private handleUploadFiles(project: ProjectInfo) {
+  private handleEditProject(e: CustomEvent<ProjectInfo>) {
+    this.projectSidebar?.openEdit(e.detail);
+  }
+
+  private handleUploadFiles(e: CustomEvent<ProjectInfo>) {
+    const project = e.detail;
     const store = this.store;
     if (!store) return;
 
@@ -251,7 +258,8 @@ export class SessionSidebar extends LitElement {
     input.click();
   }
 
-  private async handleDeleteProject(project: ProjectInfo) {
+  private async handleDeleteProject(e: CustomEvent<ProjectInfo>) {
+    const project = e.detail;
     if (!confirm(`Remove "${project.name}" from REINS?\n\nThis won't delete any files on disk.`)) return;
 
     if (project.id === this.store?.projectId) {
@@ -275,100 +283,10 @@ export class SessionSidebar extends LitElement {
     return html`<span class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${colorClass}"></span>`;
   }
 
-  private renderProjectActivityDot(projectId: number) {
-    const activity = this.store?.projectsStore.activityForProject(projectId);
-    if (!activity) return nothing;
-    const classes = activity === "running"
-      ? "w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"
-      : "w-2 h-2 rounded-full bg-amber-500 shrink-0";
-    return html`<span class="${classes}"></span>`;
-  }
-
   private get sortedProjects(): ProjectInfo[] {
     return (this.store?.projects ?? []).toSorted((a, b) =>
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
     );
-  }
-
-  private renderProjectSection(project: ProjectInfo) {
-    const store = this.store!;
-    const isExpanded = this.expandedProjects.has(project.id);
-    const isActive = project.id === store.projectId;
-    const projectData = store.projectsStore.peekStore(project.id);
-
-    return html`
-      <div class="px-1.5 py-0.5">
-        <!-- Project header -->
-        <div class="flex items-center rounded-md overflow-hidden transition-colors group/project relative z-10 ${isActive ? "bg-zinc-800/70" : "hover:bg-zinc-800/70"} ${isExpanded ? "shadow-[0_4px_6px_-2px_rgba(0,0,0,0.5)]" : ""}">
-          <button
-            class="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 cursor-pointer text-left"
-            @click=${() => this.toggleProject(project.id)}
-          >
-            <span class="text-zinc-500 text-[10px] shrink-0">${isExpanded ? "▼" : "▶"}</span>
-            ${folderIcon("text-zinc-500 shrink-0", 14)}
-            <span class="text-sm font-medium ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${project.name}</span>
-            ${this.renderProjectActivityDot(project.id)}
-          </button>
-          <popover-menu
-            triggerClass="md:opacity-0 md:group-hover/project:opacity-100"
-            close-on-panel-click
-            .content=${() => html`
-              <button
-                class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
-                @click=${() => this.handleEditProject(project)}
-              >Edit</button>
-              <button
-                class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
-                @click=${() => this.handleUploadFiles(project)}
-              >Upload files</button>
-              <button
-                class="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-zinc-700 cursor-pointer transition-colors"
-                @click=${() => this.handleDeleteProject(project)}
-              >Remove</button>
-            `}
-          ></popover-menu>
-        </div>
-
-        <!-- Upload progress bar -->
-        ${this.uploadProgress.has(project.id) ? html`
-          <div class="px-3 py-1.5 bg-zinc-800/80 border-b border-zinc-700/50">
-            <div class="flex items-center gap-2 text-xs text-zinc-300">
-              <span>Uploading… ${this.uploadProgress.get(project.id)}%</span>
-            </div>
-            <div class="mt-1 h-1.5 rounded-full bg-zinc-700 overflow-hidden">
-              <div
-                class="h-full rounded-full bg-blue-500 transition-[width] duration-200 ease-out"
-                style="width: ${this.uploadProgress.get(project.id)}%"
-              ></div>
-            </div>
-          </div>
-        ` : nothing}
-
-        <!-- Expanded content (animated accordion) -->
-        <div class="grid transition-[grid-template-rows] duration-200 ease-out ${isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}">
-          <div class="overflow-hidden">
-            <div class="mt-1 rounded-lg bg-black/25 border border-zinc-800/80 overflow-hidden shadow-[inset_0_6px_8px_-4px_rgba(0,0,0,0.6),inset_0_-6px_8px_-4px_rgba(0,0,0,0.6)]">
-              ${projectData?.loading && !projectData?.loaded ? html`
-                <div class="px-3 py-2 text-[10px] text-zinc-500">Loading...</div>
-              ` : html`
-                <assistant-session
-                  .projectId=${project.id}
-                  .sessions=${projectData?.sessions ?? []}
-                  .activeSessionId=${store.sessionId ?? ""}
-                ></assistant-session>
-
-                <task-list
-                  @new-task=${() => { this.taskForm?.open(project.id); }}
-                  .projectId=${project.id}
-                  .projectStore=${projectData ?? null}
-                  .activeSessionId=${store.sessionId ?? ""}
-                ></task-list>
-              `}
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
   }
 
   // ---- Render ---------------------------------------------------------------
@@ -385,7 +303,12 @@ export class SessionSidebar extends LitElement {
         class=${shellClass}
         @select-session=${this.handleSelectSession}
         @new-session=${this.handleNewSession}
+        @new-task=${this.handleNewTask}
         @new-task-session=${this.handleNewTaskSession}
+        @toggle-project=${this.handleToggleProject}
+        @edit-project=${this.handleEditProject}
+        @upload-project-files=${this.handleUploadFiles}
+        @delete-project=${this.handleDeleteProject}
         @save-task=${this.handleSaveTask}
         @edit-task=${this.handleEditTask}
         @delete-task=${this.handleDeleteTask}
@@ -434,7 +357,21 @@ export class SessionSidebar extends LitElement {
             data-sidebar-scroll-container
             data-swipe-surface
           >
-            ${this.sortedProjects.map(p => this.renderProjectSection(p))}
+            ${repeat(
+              this.sortedProjects,
+              (project) => project.id,
+              (project) => html`
+                <sidebar-project
+                  .project=${project}
+                  .projectStore=${store?.projectsStore.peekStore(project.id) ?? null}
+                  .expanded=${this.expandedProjects.has(project.id)}
+                  .active=${project.id === store?.projectId}
+                  .activeSessionId=${store?.sessionId ?? ""}
+                  .activityState=${store?.projectsStore.activityForProject(project.id)}
+                  .uploadProgress=${this.uploadProgress.get(project.id) ?? null}
+                ></sidebar-project>
+              `,
+            )}
 
             <!-- Add Project at the bottom of the list -->
             <project-sidebar .store=${store}></project-sidebar>

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { DiffRendererShell } from "../../../components/changes/diff-renderer-shell.js";
+import { ReviewDiffPanel } from "../../../components/changes/review-diff-panel.js";
 import { DiffStore } from "../../../models/stores/diff-store.js";
 import { templateToString } from "../../helpers/lit-template.js";
 
@@ -25,6 +26,24 @@ describe("DiffRendererShell", () => {
     expect(output).toContain("<diff-panel");
     expect(output).toContain(".visible=true");
     shell.store.dispose();
+  });
+
+  test("forwards file navigation after the selected renderer panel mounts", () => {
+    const shell = new DiffRendererShell();
+    const scrolledPaths: string[] = [];
+    let panelMounted = false;
+    const panel = new ReviewDiffPanel();
+    panel.scrollToFile = (path: string) => {
+      scrolledPaths.push(path);
+    };
+    const querySelector: typeof shell.querySelector = () => panelMounted ? panel : null;
+    shell.querySelector = querySelector;
+
+    shell.scrollToFile("src/example.ts");
+    panelMounted = true;
+    shell.updated();
+
+    expect(scrolledPaths).toEqual(["src/example.ts"]);
   });
 
   test("selects each non-default renderer without changing the classic fallback", () => {

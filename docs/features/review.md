@@ -4,7 +4,7 @@ The Changes tab lets you review the work an agent has done. It shows a syntax-hi
 
 When viewing a task session, the diff shows changes on the task's branch compared to the base branch. When viewing a scratch session (no task), the diff shows the live working copy.
 
-Each file header can collapse or expand the file's diff body with a spring animation while leaving the header available, and provides actions to open the file in Reins, copy its path, or download its current version. The animation is skipped when reduced motion is preferred. Choosing a collapsed file in the file tree expands it before navigating to the diff.
+Each file header can collapse or expand the file's diff body with a spring animation while leaving the header available, and provides actions to open the file in Reins, copy its path, or download its current version. The animation is skipped when reduced motion is preferred. Choosing a file in the tree while viewing Chat switches to Changes and waits for the selected renderer to mount before navigating; a collapsed target expands first.
 
 ## Diff modes
 

@@ -25,7 +25,7 @@ We have two patterns for state management. Use the right one:
 | **Lifetime** | App or feature lifetime | Tied to host component lifecycle |
 | **Notification** | `subscribe()` / `notify()` | `host.requestUpdate()` |
 | **Testing** | Instantiate directly | Instantiate with a fake host |
-| **Examples** | `DiffStore`, `FileTreeState`, `AppStore` | (new) `MarkdownPreviewController`, `CollapseController` |
+| **Examples** | `DiffStore`, `FileTreeState`, `AppStore` | `MarkdownPreviewController`, `ClipboardController` |
 
 **Rule of thumb:** If multiple components need the same state, use a store. If the state is private to one component, use a controller.
 
@@ -73,7 +73,7 @@ The host provides a `getData()` callback returning the path and hunk to highligh
 ### State controllers
 Extract a cluster of `@state()` properties and the methods that mutate them. No DOM interaction. These are the simplest to write and test.
 
-**Examples:** `CollapseController`, `MarkdownPreviewController`, `ClipboardController`
+**Examples:** `MarkdownPreviewController`, `ClipboardController`
 
 ### Behavior controllers
 Encapsulate a pattern of state + DOM interaction + lifecycle management. They use `hostConnected`, `hostDisconnected`, and `hostUpdated` to wire up event listeners, observers, and timers - the same boilerplate that currently litters component lifecycle methods.
@@ -200,13 +200,11 @@ export class DiffPanel extends LitElement {
 
   // Controllers replace @state() + private methods
   private markdown = new MarkdownPreviewController(this);
-  private collapse = new CollapseController(this);
   private clipboard = new ClipboardController(this);
 
   override render() {
     // Read state from controllers
     const isRendered = this.markdown.isRendered(file.path);
-    const isCollapsed = this.collapse.isCollapsed(file.path);
     // ...
   }
 }

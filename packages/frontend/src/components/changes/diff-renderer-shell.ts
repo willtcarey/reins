@@ -17,8 +17,26 @@ export class DiffRendererShell extends LitElement {
   @property({ type: Boolean }) visible = false;
   @property() renderer: DiffRenderer = "classic";
 
+  private _pendingScrollPath: string | null = null;
+
   public scrollToFile(path: string) {
-    this._panel?.scrollToFile(path);
+    const panel = this._panel;
+    if (panel) {
+      panel.scrollToFile(path);
+      this._pendingScrollPath = null;
+    } else {
+      this._pendingScrollPath = path;
+    }
+  }
+
+  override updated() {
+    if (!this._pendingScrollPath) return;
+    const panel = this._panel;
+    if (!panel) return;
+
+    const path = this._pendingScrollPath;
+    this._pendingScrollPath = null;
+    panel.scrollToFile(path);
   }
 
   private get _panel(): DiffRendererPanel | null {

@@ -7,6 +7,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import { springCollapse } from "../directives/spring-collapse.js";
 import { copyTextToClipboard } from "../helpers/clipboard.js";
 import type { SessionListItem } from "../models/ws-client.js";
 import type { TaskListItem } from "../models/tasks.js";
@@ -162,32 +163,28 @@ export class TaskListItemElement extends LitElement {
           ></popover-menu>
         </div>
 
-        <div class="grid transition-[grid-template-rows] duration-200 ease-out ${isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}">
-          <div class="overflow-hidden">
-            ${sessions.length > 0 ? html`
-              <div class="mx-2 mt-1 mb-1 rounded-md border border-zinc-800/80 bg-zinc-950/30 overflow-hidden">
-                ${(() => {
-                  const childMap = buildChildMap(sessions);
-                  const topLevel = sessions.filter(s => !s.parentSessionId);
-                  return topLevel.map(s => html`
-                    <session-list-item
-                      .session=${s}
-                      .active=${s.id === this.activeSessionId}
-                      .activityState=${s.activityState}
-                      .childSessions=${childMap.get(s.id) ?? []}
-                      .activeSessionId=${this.activeSessionId}
-                      .projectId=${this.projectId}
-                    ></session-list-item>
-                  `);
-                })()}
-              </div>
-            ` : isExpanded && task.session_count > 0 ? html`
-              <div class="mx-2 mt-1 mb-1 rounded-md border border-zinc-800/80 bg-zinc-950/30 overflow-hidden">
-                <div class="px-3 py-2 text-[10px] text-zinc-500">Loading…</div>
-              </div>
-            ` : nothing}
+        ${springCollapse(!isExpanded, () => sessions.length > 0 ? html`
+          <div class="mx-2 mt-1 mb-1 rounded-md border border-zinc-800/80 bg-zinc-950/30 overflow-hidden">
+            ${(() => {
+              const childMap = buildChildMap(sessions);
+              const topLevel = sessions.filter(s => !s.parentSessionId);
+              return topLevel.map(s => html`
+                <session-list-item
+                  .session=${s}
+                  .active=${s.id === this.activeSessionId}
+                  .activityState=${s.activityState}
+                  .childSessions=${childMap.get(s.id) ?? []}
+                  .activeSessionId=${this.activeSessionId}
+                  .projectId=${this.projectId}
+                ></session-list-item>
+              `);
+            })()}
           </div>
-        </div>
+        ` : task.session_count > 0 ? html`
+          <div class="mx-2 mt-1 mb-1 rounded-md border border-zinc-800/80 bg-zinc-950/30 overflow-hidden">
+            <div class="px-3 py-2 text-[10px] text-zinc-500">Loading…</div>
+          </div>
+        ` : nothing)}
       </div>
     `;
   }

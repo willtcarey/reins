@@ -9,6 +9,7 @@ import {
   type ReviewItemsResult,
 } from "../../models/changes/review-items.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
+import { activeFileChangeEvent, activeItemChangeEvent } from "../events.js";
 import { branchIcon } from "../icons.js";
 import "./review-diff-item.js";
 
@@ -71,6 +72,7 @@ export class ReviewDiffPanel extends LitElement {
   private _parsedSource: DiffPatchData | null = null;
   private _parsedData: ReviewItemsResult | null = null;
   private _scrollPosition = new ReviewScrollPosition();
+  private _renderedItemIds = new Set<string>();
   private _scrollSpy = new ScrollSpy({
     containerSelector: "[data-review-scroll]",
     itemSelector: "[data-review-item-id]",
@@ -114,6 +116,11 @@ export class ReviewDiffPanel extends LitElement {
   }
 
   public scrollToFile(path: string) {
+    if (this.store?.patchData.loading) {
+      this._pendingPath = path;
+      return;
+    }
+
     const itemId = this.itemIdForPath(path);
     if (!itemId) {
       this._pendingPath = path;
@@ -131,6 +138,7 @@ export class ReviewDiffPanel extends LitElement {
     if (!this._parsedData) return;
     const next = setReviewItemCollapsed(this._parsedData, id, collapsed);
     if (next === this._parsedData) return;
+    this._renderedItemIds.delete(id);
     this._parsedData = next;
     this.requestUpdate();
   }
@@ -138,6 +146,10 @@ export class ReviewDiffPanel extends LitElement {
   public scrollToItem(id: string) {
     if (this.isItemCollapsed(id)) {
       this.setItemCollapsed(id, false);
+      this._pendingItemId = id;
+      return;
+    }
+    if (!this._itemsBeforeRendered(id)) {
       this._pendingItemId = id;
       return;
     }
@@ -163,21 +175,19 @@ export class ReviewDiffPanel extends LitElement {
     this.reportActiveItem(id);
   }
 
+  public reportItemRendered(id: string) {
+    if (!this._parsedData?.items.some((item) => item.id === id)) return;
+    this._renderedItemIds.add(id);
+    this._syncPendingScroll();
+  }
+
   public reportActiveItem(id: string) {
     const item = this._parsedData?.items.find((candidate) => candidate.id === id);
     if (!item || this._activeItemId === id) return;
     this._activeItemId = id;
 
-    this.dispatchEvent(new CustomEvent<string>("active-item-change", {
-      detail: id,
-      bubbles: true,
-      composed: true,
-    }));
-    this.dispatchEvent(new CustomEvent<string>("active-file-change", {
-      detail: item.path,
-      bubbles: true,
-      composed: true,
-    }));
+    this.dispatchEvent(activeItemChangeEvent(id));
+    this.dispatchEvent(activeFileChangeEvent(item.path));
   }
 
   private _subscribe() {
@@ -198,6 +208,7 @@ export class ReviewDiffPanel extends LitElement {
   }
 
   private _resetParsedData() {
+    this._renderedItemIds.clear();
     this._parsedSource = null;
     this._parsedData = null;
     this._activeItemId = null;
@@ -217,9 +228,26 @@ export class ReviewDiffPanel extends LitElement {
       previousData,
       parseReviewItems(source.patch, source.cacheKeyPrefix),
     );
+    const previousItems = new Map(previousData?.items.map((item) => [item.id, item]) ?? []);
+    this._renderedItemIds = new Set(
+      this._parsedData.items
+        .filter((item) => (
+          this._renderedItemIds.has(item.id)
+          && previousItems.get(item.id)?.fileDiff === item.fileDiff
+        ))
+        .map((item) => item.id),
+    );
     if (this._activeItemId && !this._parsedData.items.some((item) => item.id === this._activeItemId)) {
       this._activeItemId = null;
     }
+  }
+
+  private _itemsBeforeRendered(id: string): boolean {
+    for (const item of this._parsedData?.items ?? []) {
+      if (item.id === id) return true;
+      if (!item.collapsed && !this._renderedItemIds.has(item.id)) return false;
+    }
+    return false;
   }
 
   private _handleScroll(event: Event) {
@@ -234,6 +262,8 @@ export class ReviewDiffPanel extends LitElement {
   }
 
   private _syncPendingScroll() {
+    if (this.store?.patchData.loading) return;
+
     if (this._pendingPath) {
       const path = this._pendingPath;
       const itemId = this.itemIdForPath(path);
@@ -242,7 +272,7 @@ export class ReviewDiffPanel extends LitElement {
         this._pendingItemId = itemId;
       }
     }
-    if (!this._pendingItemId) return;
+    if (!this._pendingItemId || !this._itemsBeforeRendered(this._pendingItemId)) return;
     const id = this._pendingItemId;
     requestAnimationFrame(() => this.scrollToItem(id));
   }
@@ -294,6 +324,7 @@ export class ReviewDiffPanel extends LitElement {
                         .projectId=${this.store?.projectId ?? null}
                         .branch=${branch ?? null}
                         @toggle-collapse=${this._handleToggleCollapse}
+                        @diff-rendered=${(event: CustomEvent<string>) => this.reportItemRendered(event.detail)}
                       ></review-diff-item>
                     `,
                   )

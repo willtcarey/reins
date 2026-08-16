@@ -1,9 +1,10 @@
 import { FileDiff, type ChangeTypes, type FileDiffOptions } from "@pierre/diffs";
-import { LitElement, html, nothing, type PropertyValues } from "lit";
+import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { ReviewDiffBodyAnimation } from "../../controllers/review-diff-body-animation.js";
+import { springCollapse } from "../../directives/spring-collapse.js";
 import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
 import type { ReviewItem } from "../../models/changes/review-items.js";
+import { diffRenderedEvent, toggleCollapseEvent } from "../events.js";
 import {
   addedFileIcon,
   deletedFileIcon,
@@ -72,15 +73,9 @@ export class ReviewDiffItem extends LitElement {
   private _fileDiff: FileDiff<undefined> | null = null;
   private _renderedItem: ReviewItem | null = null;
   private _root: HTMLElement | null = null;
-  private readonly _bodyAnimation = new ReviewDiffBodyAnimation(this);
-
-  override willUpdate(_changedProperties: PropertyValues<this>) {
-    this._bodyAnimation.sync(this.item?.collapsed ?? true);
-  }
 
   override updated() {
     this._syncFileDiff();
-    this._bodyAnimation.bodyReady(this.getDiffBody());
   }
 
   override disconnectedCallback() {
@@ -90,10 +85,6 @@ export class ReviewDiffItem extends LitElement {
 
   protected getDiffRoot(): HTMLElement | null {
     return this.querySelector<HTMLElement>("[data-pierre-file-diff]");
-  }
-
-  protected getDiffBody(): HTMLElement | null {
-    return this.querySelector<HTMLElement>("[data-review-diff-body]");
   }
 
   private _syncFileDiff() {
@@ -113,7 +104,13 @@ export class ReviewDiffItem extends LitElement {
     }
 
     this._destroyFileDiff();
-    this._fileDiff = new FileDiff(REINS_DIFF_OPTIONS, getPierreWorkerPool(), true);
+    this._fileDiff = new FileDiff({
+      ...REINS_DIFF_OPTIONS,
+      onPostRender: (node, _instance, phase) => {
+        if (phase === "unmount" || node.shadowRoot?.querySelector("[data-placeholder]")) return;
+        this._reportRendered();
+      },
+    }, getPierreWorkerPool(), true);
     this._root = root;
     this._renderedItem = this.item;
     this._fileDiff.render({ fileDiff: this.item.fileDiff, fileContainer: root });
@@ -133,13 +130,14 @@ export class ReviewDiffItem extends LitElement {
     return url;
   }
 
+  private _reportRendered() {
+    if (!this.item) return;
+    this.dispatchEvent(diffRenderedEvent(this.item.id));
+  }
+
   private _toggleCollapsed() {
     if (!this.item) return;
-    this.dispatchEvent(new CustomEvent<string>("toggle-collapse", {
-      detail: this.item.id,
-      bubbles: true,
-      composed: true,
-    }));
+    this.dispatchEvent(toggleCollapseEvent(this.item.id));
   }
 
   override render() {
@@ -188,19 +186,14 @@ export class ReviewDiffItem extends LitElement {
             ></diff-download-file-button>
           </span>
         </header>
-        ${this._bodyAnimation.shouldRender(item.collapsed)
-          ? html`
-              <div
-                data-review-diff-body
-                aria-hidden=${String(item.collapsed)}
-                style=${this._bodyAnimation.height === null
-                  ? nothing
-                  : `height: ${this._bodyAnimation.height}px; overflow: hidden;`}
-              >
-                <diffs-container data-pierre-file-diff></diffs-container>
-              </div>
-            `
-          : nothing}
+        ${springCollapse(
+          item.collapsed,
+          () => html`<diffs-container data-pierre-file-diff></diffs-container>`,
+          {
+            onUnmount: () => this._destroyFileDiff(),
+            animateContentResize: false,
+          },
+        )}
       </article>
     `;
   }

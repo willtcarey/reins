@@ -8,11 +8,26 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { springCollapse } from "../directives/spring-collapse.js";
 import type { TaskListItem } from "../models/tasks.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import { plusIcon } from "./icons.js";
 import "./delete-task-dialog.js";
 import "./task-list-item.js";
+
+export interface TaskListDisclosureState {
+  expandedTaskId: number | null;
+  closedExpanded: boolean;
+  activeSessionId: string;
+}
+
+export function createTaskListDisclosureState(): TaskListDisclosureState {
+  return {
+    expandedTaskId: null,
+    closedExpanded: false,
+    activeSessionId: "",
+  };
+}
 
 @customElement("task-list")
 export class TaskList extends LitElement {
@@ -29,9 +44,10 @@ export class TaskList extends LitElement {
   @property({ type: String })
   activeSessionId = "";
 
-  @state() private expandedTaskId: number | null = null;
+  @property({ attribute: false })
+  disclosureState: TaskListDisclosureState = createTaskListDisclosureState();
+
   @state() private deleteConfirmTask: TaskListItem | null = null;
-  @state() private closedExpanded = false;
 
   private _projectStoreUnsubscribe: (() => void) | null = null;
 
@@ -45,10 +61,14 @@ export class TaskList extends LitElement {
     if (changed.has("projectStore")) {
       this._subscribeToProjectStore();
     }
-    if (changed.has("projectId")) {
-      this.expandedTaskId = null;
+    if (changed.has("projectId") && changed.get("projectId") != null) {
+      this.disclosureState.expandedTaskId = null;
     }
-    if (changed.has("activeSessionId")) {
+    if (
+      changed.has("activeSessionId")
+      && this.disclosureState.activeSessionId !== this.activeSessionId
+    ) {
+      this.disclosureState.activeSessionId = this.activeSessionId;
       this.autoExpandForActiveSession();
     }
   }
@@ -66,27 +86,28 @@ export class TaskList extends LitElement {
   private autoExpandForActiveSession() {
     if (!this.activeSessionId) return;
     const taskId = this.projectStore?.getSession(this.activeSessionId)?.taskId;
-    if (taskId != null && taskId !== this.expandedTaskId) {
-      this.expandedTaskId = taskId;
+    if (taskId != null && taskId !== this.disclosureState.expandedTaskId) {
+      this.disclosureState.expandedTaskId = taskId;
       this.projectStore?.fetchTaskSessions(taskId);
     }
   }
 
   /** Re-fetch sessions for the currently expanded task. */
   refreshExpanded() {
-    if (this.expandedTaskId != null) {
-      this.projectStore?.fetchTaskSessions(this.expandedTaskId);
+    if (this.disclosureState.expandedTaskId != null) {
+      this.projectStore?.fetchTaskSessions(this.disclosureState.expandedTaskId);
     }
   }
 
   private handleToggleExpand(e: CustomEvent<{ taskId: number }>) {
     const { taskId } = e.detail;
-    if (this.expandedTaskId === taskId) {
-      this.expandedTaskId = null;
-      return;
+    if (this.disclosureState.expandedTaskId === taskId) {
+      this.disclosureState.expandedTaskId = null;
+    } else {
+      this.disclosureState.expandedTaskId = taskId;
+      this.projectStore?.fetchTaskSessions(taskId);
     }
-    this.expandedTaskId = taskId;
-    this.projectStore?.fetchTaskSessions(taskId);
+    this.requestUpdate();
   }
 
   private handleDeleteTask(e: CustomEvent<{ task: TaskListItem }>) {
@@ -107,7 +128,7 @@ export class TaskList extends LitElement {
     return html`
       <task-list-item
         .task=${task}
-        .expanded=${this.expandedTaskId === task.id}
+        .expanded=${this.disclosureState.expandedTaskId === task.id}
         .sessions=${this.projectStore?.taskSessionsFor(task.id) ?? []}
         .activeSessionId=${this.activeSessionId}
         .activityState=${this.projectStore?.activityForTask(task.id)}
@@ -138,22 +159,33 @@ export class TaskList extends LitElement {
         <div class="px-1 pb-1">
           <button
             class="w-full px-3 py-1.5 rounded-md flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-400 hover:bg-zinc-800/70 cursor-pointer transition-colors"
-            @click=${() => { this.closedExpanded = !this.closedExpanded; }}
+            @click=${() => {
+              this.disclosureState.closedExpanded = !this.disclosureState.closedExpanded;
+              this.requestUpdate();
+            }}
           >
-            <span class="font-mono">${this.closedExpanded ? "▼" : "▶"}</span>
+            <span class="font-mono">${this.disclosureState.closedExpanded ? "▼" : "▶"}</span>
             <span class="uppercase tracking-wide font-semibold">Completed tasks</span>
             <span class="text-zinc-600">(${closedTasks.length})</span>
           </button>
-          ${this.closedExpanded ? closedTasks.map(t => this.renderTask(t)) : nothing}
+          ${springCollapse(
+            !this.disclosureState.closedExpanded,
+            () => closedTasks.map(task => this.renderTask(task)),
+          )}
         </div>
       ` : nothing}
       <delete-task-dialog
         .task=${this.deleteConfirmTask}
-        @cancel-delete=${() => { this.deleteConfirmTask = null; }}
+        @cancel-delete=${() => {
+          this.deleteConfirmTask = null;
+        }}
         @confirm-delete=${(e: CustomEvent) => {
           const taskId = e.detail.taskId;
           this.deleteConfirmTask = null;
-          if (this.expandedTaskId === taskId) this.expandedTaskId = null;
+          if (this.disclosureState.expandedTaskId === taskId) {
+            this.disclosureState.expandedTaskId = null;
+          }
+          this.requestUpdate();
           this.dispatchEvent(new CustomEvent("delete-task", { bubbles: true, composed: true, detail: { projectId: this.projectId, taskId } }));
         }}
       ></delete-task-dialog>

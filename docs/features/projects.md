@@ -8,7 +8,7 @@ The **base branch** (e.g. `main` or `develop`) is the branch that new task branc
 
 ## Sidebar
 
-All projects appear in the sidebar simultaneously as collapsible sections. Clicking a project expands it to show its assistant and tasks. Projects with active (running) sessions auto-expand.
+All projects appear in the sidebar simultaneously as collapsible sections. Clicking a project springs it open to show its assistant and tasks. Collapsing and reopening a project preserves its nested task disclosure state. Projects with active (running) sessions auto-expand.
 
 ```
 ▶ 📁 Acme API
@@ -32,8 +32,8 @@ All projects appear in the sidebar simultaneously as collapsible sections. Click
 Each expanded project contains:
 
 - **Assistant** — the project's long-lived conversation. The ⋮ menu provides access to previous conversations and creating a new one.
-- **Tasks** — active tasks with their branch names and diff stats. The + button creates a new task. Expanding a task shows its sessions, and loaded session rows refresh automatically as turns complete so first-message labels and message counts stay current.
-- **Completed tasks** — closed tasks, collapsed by default.
+- **Tasks** — active tasks with their branch names and diff stats. The + button creates a new task. Expanding a task springs open its sessions, and loaded session rows refresh automatically as turns complete so first-message labels and message counts stay current.
+- **Completed tasks** — closed tasks, collapsed by default and revealed with the shared spring expansion.
 
 Clicking a session navigates to it and sets that project as the active diff context.
 
