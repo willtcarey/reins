@@ -119,6 +119,15 @@ export class ReviewDiffItem extends LitElement {
     return url;
   }
 
+  private _toggleCollapsed() {
+    if (!this.item) return;
+    this.dispatchEvent(new CustomEvent<string>("toggle-collapse", {
+      detail: this.item.id,
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
   override render() {
     const item = this.item;
     if (!item) return nothing;
@@ -126,6 +135,15 @@ export class ReviewDiffItem extends LitElement {
     return html`
       <article class="border-b border-zinc-700/70 bg-zinc-950">
         <header class="reins-diff-header sticky top-0 z-10 flex min-w-0 items-center gap-2 px-3 py-2">
+          <button
+            type="button"
+            class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded font-mono text-[10px] text-zinc-500 hover:bg-zinc-700/60 hover:text-zinc-200"
+            aria-label=${`${item.collapsed ? "Expand" : "Collapse"} ${item.path}`}
+            aria-expanded=${String(!item.collapsed)}
+            @click=${this._toggleCollapsed}
+          >
+            <span aria-hidden="true">${item.collapsed ? "▶" : "▼"}</span>
+          </button>
           ${renderStatusIcon(item.status)}
           ${item.oldPath && item.oldPath !== item.path
             ? html`
@@ -156,7 +174,7 @@ export class ReviewDiffItem extends LitElement {
             ></diff-download-file-button>
           </span>
         </header>
-        <diffs-container data-pierre-file-diff></diffs-container>
+        ${item.collapsed ? nothing : html`<diffs-container data-pierre-file-diff></diffs-container>`}
       </article>
     `;
   }

@@ -94,6 +94,27 @@ describe("ReviewDiffPanel", () => {
     store.dispose();
   });
 
+  test("expands a collapsed target before file-tree navigation scrolls to it", () => {
+    const store = new DiffStore();
+    store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
+    const panel = new ReviewDiffPanel();
+    panel.store = store;
+    const itemId = panel.itemIdForPath("src/example.ts")!;
+    panel.setItemCollapsed(itemId, true);
+    let queryCount = 0;
+    const querySelector: typeof panel.querySelector = () => {
+      queryCount += 1;
+      return null;
+    };
+    panel.querySelector = querySelector;
+
+    panel.scrollToFile("src/example.ts");
+
+    expect(panel.isItemCollapsed(itemId)).toBe(false);
+    expect(queryCount).toBe(0);
+    store.dispose();
+  });
+
   test("reports active review identity and file path through public events", () => {
     const store = new DiffStore();
     store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());

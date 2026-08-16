@@ -5,6 +5,7 @@ import { ScrollSpy } from "../../models/changes/scroll-spy.js";
 import {
   parseReviewItems,
   reconcileReviewItems,
+  setReviewItemCollapsed,
   type ReviewItemsResult,
 } from "../../models/changes/review-items.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
@@ -122,7 +123,25 @@ export class ReviewDiffPanel extends LitElement {
     this.scrollToItem(itemId);
   }
 
+  public isItemCollapsed(id: string): boolean {
+    return this._parsedData?.items.find((item) => item.id === id)?.collapsed ?? false;
+  }
+
+  public setItemCollapsed(id: string, collapsed: boolean) {
+    if (!this._parsedData) return;
+    const next = setReviewItemCollapsed(this._parsedData, id, collapsed);
+    if (next === this._parsedData) return;
+    this._parsedData = next;
+    this.requestUpdate();
+  }
+
   public scrollToItem(id: string) {
+    if (this.isItemCollapsed(id)) {
+      this.setItemCollapsed(id, false);
+      this._pendingItemId = id;
+      return;
+    }
+
     const item = this.querySelector<HTMLElement>(`[data-review-item-id="${CSS.escape(id)}"]`);
     if (!item) {
       this._pendingItemId = id;
@@ -209,6 +228,11 @@ export class ReviewDiffPanel extends LitElement {
     }
   }
 
+  private _handleToggleCollapse(event: CustomEvent<string>) {
+    const id = event.detail;
+    this.setItemCollapsed(id, !this.isItemCollapsed(id));
+  }
+
   private _syncPendingScroll() {
     if (this._pendingPath) {
       const path = this._pendingPath;
@@ -269,6 +293,7 @@ export class ReviewDiffPanel extends LitElement {
                         .item=${item}
                         .projectId=${this.store?.projectId ?? null}
                         .branch=${branch ?? null}
+                        @toggle-collapse=${this._handleToggleCollapse}
                       ></review-diff-item>
                     `,
                   )

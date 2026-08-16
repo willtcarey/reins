@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   parseReviewItems,
   reconcileReviewItems,
+  setReviewItemCollapsed,
 } from "../../../models/changes/review-items.js";
 
 const PATCH = `diff --git a/src/old.ts b/src/new.ts
@@ -44,19 +45,33 @@ describe("parseReviewItems", () => {
     expect(result.pathToItemId.get("src/old.ts")).toBe(result.items[0]?.id);
   });
 
-  test("reuses unchanged records while replacing only files whose diff changed", () => {
-    const initial = parseReviewItems(PATCH, "project-7-v1");
+  test("reuses unchanged records and preserves collapsed state for changed surviving records", () => {
+    const parsed = parseReviewItems(PATCH, "project-7-v1");
+    const readmeId = parsed.pathToItemId.get("README.md")!;
+    const initial = setReviewItemCollapsed(parsed, readmeId, true);
     const refreshed = parseReviewItems(PATCH.replace("+# Hello", "+# Hello world"), "project-7-v2");
 
     const reconciled = reconcileReviewItems(initial, refreshed);
     const initialRenamed = initial.items.find((item) => item.path === "src/new.ts")!;
     const initialReadme = initial.items.find((item) => item.path === "README.md")!;
-    const refreshedReadme = refreshed.items.find((item) => item.path === "README.md")!;
+    const reconciledReadme = reconciled.items.find((item) => item.path === "README.md")!;
 
     expect(reconciled.items.find((item) => item.path === "src/new.ts")).toBe(initialRenamed);
-    expect(reconciled.items.find((item) => item.path === "README.md")).toBe(refreshedReadme);
-    expect(reconciled.items.find((item) => item.path === "README.md")).not.toBe(initialReadme);
+    expect(reconciledReadme).not.toBe(initialReadme);
+    expect(reconciledReadme.collapsed).toBe(true);
     expect(reconciled.pathToItemId).toBe(refreshed.pathToItemId);
+  });
+
+  test("updates collapsed state by stable item ID without changing other records", () => {
+    const initial = parseReviewItems(PATCH, "project-7-v1");
+    const readmeId = initial.pathToItemId.get("README.md")!;
+    const renamed = initial.items.find((item) => item.path === "src/new.ts")!;
+
+    const collapsed = setReviewItemCollapsed(initial, readmeId, true);
+
+    expect(collapsed.items.find((item) => item.id === readmeId)?.collapsed).toBe(true);
+    expect(collapsed.items.find((item) => item.path === "src/new.ts")).toBe(renamed);
+    expect(setReviewItemCollapsed(collapsed, readmeId, true)).toBe(collapsed);
   });
 
   test("reuses every record when a refresh returns the same patch", () => {

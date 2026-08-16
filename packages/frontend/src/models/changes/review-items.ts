@@ -12,6 +12,7 @@ export interface ReviewItem {
   readonly occurrence: number;
   readonly contentKey: string;
   readonly cacheKey: string;
+  readonly collapsed: boolean;
   readonly fileDiff: FileDiffMetadata;
 }
 
@@ -21,7 +22,7 @@ export interface ReviewItemsResult {
   readonly parseError: string | null;
 }
 
-/** Preserve object identity for files whose parsed diff content did not change. */
+/** Preserve item state by stable ID and object identity when content is unchanged. */
 export function reconcileReviewItems(
   previous: ReviewItemsResult | null,
   next: ReviewItemsResult,
@@ -31,9 +32,25 @@ export function reconcileReviewItems(
   const previousById = new Map(previous.items.map((item) => [item.id, item]));
   const items = next.items.map((item) => {
     const candidate = previousById.get(item.id);
-    return candidate?.contentKey === item.contentKey ? candidate : item;
+    if (!candidate) return item;
+    if (candidate.contentKey === item.contentKey) return candidate;
+    return { ...item, collapsed: candidate.collapsed };
   });
   return { ...next, items };
+}
+
+export function setReviewItemCollapsed(
+  data: ReviewItemsResult,
+  itemId: string,
+  collapsed: boolean,
+): ReviewItemsResult {
+  const itemIndex = data.items.findIndex((item) => item.id === itemId);
+  const item = data.items[itemIndex];
+  if (!item || item.collapsed === collapsed) return data;
+
+  const items = [...data.items];
+  items[itemIndex] = { ...item, collapsed };
+  return { ...data, items };
 }
 
 /**
@@ -76,6 +93,7 @@ export function parseReviewItems(
           occurrence,
           contentKey,
           cacheKey,
+          collapsed: false,
           fileDiff,
         });
       }

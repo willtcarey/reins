@@ -4,7 +4,7 @@ The Changes tab lets you review the work an agent has done. It shows a syntax-hi
 
 When viewing a task session, the diff shows changes on the task's branch compared to the base branch. When viewing a scratch session (no task), the diff shows the live working copy.
 
-Each file header provides actions to open the file in Reins, copy its path, or download its current version.
+Each file header can collapse or expand the file's diff body and provides actions to open the file in Reins, copy its path, or download its current version. Choosing a collapsed file in the file tree expands it before navigating to the diff.
 
 ## Diff modes
 
