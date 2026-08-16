@@ -340,6 +340,9 @@ The diff/changes feature spans both `models/changes/` (pure logic) and `componen
 - `review-items.ts` — Parses raw patches into stable Reins-owned review item identities, Pierre cache keys, and path-to-item navigation records.
 - `types.ts` — Shared types for diff data structures
 
+**Controller (`controllers/`):**
+- `review-diff-body-animation.ts` — Per-item spring height animation that retains the Pierre body through collapse, honors reduced motion, and unmounts it after settling.
+
 **Components (`components/changes/`):**
 - `diff-panel.ts` — Layout shell: branch header, scroll container, file tree sidebar. Owns state coordination and wires child events to the DiffStore.
 - `diff-renderer-shell.ts` — Chooses the active Changes renderer from the `diff_renderer` setting while keeping classic as the default path.

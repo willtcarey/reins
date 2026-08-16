@@ -1,6 +1,7 @@
 import { FileDiff, type ChangeTypes, type FileDiffOptions } from "@pierre/diffs";
-import { LitElement, html, nothing } from "lit";
+import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import { ReviewDiffBodyAnimation } from "../../controllers/review-diff-body-animation.js";
 import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
 import type { ReviewItem } from "../../models/changes/review-items.js";
 import {
@@ -71,9 +72,15 @@ export class ReviewDiffItem extends LitElement {
   private _fileDiff: FileDiff<undefined> | null = null;
   private _renderedItem: ReviewItem | null = null;
   private _root: HTMLElement | null = null;
+  private readonly _bodyAnimation = new ReviewDiffBodyAnimation(this);
+
+  override willUpdate(_changedProperties: PropertyValues<this>) {
+    this._bodyAnimation.sync(this.item?.collapsed ?? true);
+  }
 
   override updated() {
     this._syncFileDiff();
+    this._bodyAnimation.bodyReady(this.getDiffBody());
   }
 
   override disconnectedCallback() {
@@ -85,6 +92,10 @@ export class ReviewDiffItem extends LitElement {
     return this.querySelector<HTMLElement>("[data-pierre-file-diff]");
   }
 
+  protected getDiffBody(): HTMLElement | null {
+    return this.querySelector<HTMLElement>("[data-review-diff-body]");
+  }
+
   private _syncFileDiff() {
     const root = this.getDiffRoot();
     if (!root || !this.item) {
@@ -92,7 +103,10 @@ export class ReviewDiffItem extends LitElement {
       return;
     }
     if (this._fileDiff && this._root === root) {
-      if (this._renderedItem === this.item) return;
+      if (this._renderedItem?.fileDiff === this.item.fileDiff) {
+        this._renderedItem = this.item;
+        return;
+      }
       this._renderedItem = this.item;
       this._fileDiff.render({ fileDiff: this.item.fileDiff, fileContainer: root });
       return;
@@ -174,7 +188,19 @@ export class ReviewDiffItem extends LitElement {
             ></diff-download-file-button>
           </span>
         </header>
-        ${item.collapsed ? nothing : html`<diffs-container data-pierre-file-diff></diffs-container>`}
+        ${this._bodyAnimation.shouldRender(item.collapsed)
+          ? html`
+              <div
+                data-review-diff-body
+                aria-hidden=${String(item.collapsed)}
+                style=${this._bodyAnimation.height === null
+                  ? nothing
+                  : `height: ${this._bodyAnimation.height}px; overflow: hidden;`}
+              >
+                <diffs-container data-pierre-file-diff></diffs-container>
+              </div>
+            `
+          : nothing}
       </article>
     `;
   }
