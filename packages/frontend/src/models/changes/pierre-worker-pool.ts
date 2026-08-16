@@ -1,5 +1,9 @@
 import type { SupportedLanguages } from "@pierre/diffs";
-import { getOrCreateWorkerPoolSingleton, type SetupWorkerPoolProps, type WorkerPoolManager } from "@pierre/diffs/worker";
+import {
+  getOrCreateWorkerPoolSingleton,
+  type SetupWorkerPoolProps,
+  type WorkerPoolManager,
+} from "@pierre/diffs/worker";
 
 export interface PierreWorkerPoolEnvironment {
   hardwareConcurrency?: number;

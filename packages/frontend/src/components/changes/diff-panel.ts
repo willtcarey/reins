@@ -319,7 +319,7 @@ export class DiffPanel extends LitElement {
     const baseBranch = fullData?.baseBranch ?? this.store.fileData.data?.baseBranch;
 
     return html`
-      <div class="h-full flex min-h-0">
+      <div class="h-full flex min-h-0" data-rendered-payload-version=${this.store.fullDiffVersion}>
         <!-- Main content column -->
         <div class="flex-1 flex flex-col min-h-0 min-w-0">
           ${branch ? html`

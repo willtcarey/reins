@@ -123,7 +123,7 @@ export class AppStore {
         event.type === "agent_end";
 
       if (refreshDiff) {
-        setTimeout(() => this.diffStore.refresh(), 500);
+        setTimeout(() => this.diffStore.refresh({ trigger: "websocket" }), 500);
       }
     });
   }
@@ -201,7 +201,7 @@ export class AppStore {
 
     // After route is applied, resolve the branch and refresh the diff store.
     this._updateDiffBranch();
-    void this.diffStore.refresh();
+    void this.diffStore.refresh({ trigger: "route" });
   }
 
   async updateTask(

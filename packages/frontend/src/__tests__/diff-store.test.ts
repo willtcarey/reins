@@ -413,6 +413,38 @@ index 1111111..3333333 100644
       expect(second).toBe(first);
       expect(patches.length).toBe(1);
     });
+
+    test("polling refetches loaded patch data when file summaries change", async () => {
+      let filesRequest = 0;
+      let patchRequests = 0;
+      mockFetch((url) => {
+        if (url.includes("/diff/patch")) {
+          patchRequests += 1;
+          return textResponse(patch);
+        }
+        if (url.includes("/diff/files")) {
+          filesRequest += 1;
+          return jsonResponse({
+            files: filesRequest === 1
+              ? []
+              : [{ path: "demo.txt", additions: 1, removals: 1 }],
+            branch: "feature/raw",
+            baseBranch: "main",
+          });
+        }
+        if (url.includes("/git/spread")) return jsonResponse({});
+        return jsonResponse({});
+      });
+      store.setProject(1);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await store.fetchPatchDiff();
+      const first = store.patchData.data;
+
+      await store.refresh({ onlyFetchDiffIfNeeded: true, trigger: "poll" });
+
+      expect(patchRequests).toBe(2);
+      expect(store.patchData.data).not.toBe(first);
+    });
   });
 
   // ---- expandHunk -----------------------------------------------------------
