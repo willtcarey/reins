@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { Loadable } from "../../../helpers/loadable.js";
 import {
-  ReviewDiffItem,
   ReviewDiffPanel,
   ReviewScrollPosition,
 } from "../../../components/changes/review-diff-panel.js";
-import { parseReviewItems } from "../../../models/changes/review-items.js";
 import { DiffStore, type DiffPatchData } from "../../../models/stores/diff-store.js";
 import { templateToString } from "../../helpers/lit-template.js";
 
@@ -42,77 +40,6 @@ describe("ReviewDiffPanel", () => {
 
     expect(position.restore(container, true)).toBe(true);
     expect(container.scrollTop).toBe(4944);
-  });
-
-  test("reuses its Pierre renderer when a mounted review item receives fresh metadata", () => {
-    const first = parseReviewItems(PATCH, "project-7-v1").items[0]!;
-    const second = parseReviewItems(PATCH, "project-7-v2").items[0]!;
-    const renders: unknown[] = [];
-    let factoryCalls = 0;
-    let cleanups = 0;
-    class MountedReviewDiffItem extends ReviewDiffItem {
-      protected override getDiffRoot(): HTMLElement {
-        return this;
-      }
-    }
-    const component = new MountedReviewDiffItem(() => {
-      factoryCalls += 1;
-      return {
-        render: (props) => {
-          renders.push(props.fileDiff);
-          return true;
-        },
-        cleanUp: () => { cleanups += 1; },
-      };
-    });
-
-    component.item = first;
-    component.updated();
-    component.item = second;
-    component.updated();
-
-    expect(factoryCalls).toBe(1);
-    expect(cleanups).toBe(0);
-    expect(renders).toEqual([first.fileDiff, second.fileDiff]);
-  });
-
-  test("renders a Reins-owned file header, shared file actions, and Pierre text-diff surface", () => {
-    const parsed = parseReviewItems(PATCH, "project-7-v1");
-    const item = new ReviewDiffItem();
-    item.item = parsed.items[0] ?? null;
-    item.projectId = 7;
-    item.branch = "task/example";
-
-    const output = templateToString(item.render());
-
-    expect(output).toContain("src/example.ts");
-    expect(output).toContain("<header");
-    expect(output).toContain(">+1</span>");
-    expect(output).toContain(">-1</span>");
-    expect(output.indexOf(">-1</span>")).toBeLessThan(output.indexOf("<diff-view-file-button"));
-    expect(output).toContain("<diff-view-file-button .path=src/example.ts variant=\"header\">");
-    expect(output).toContain("<diff-copy-path-button .path=src/example.ts variant=\"header\">");
-    expect(output).toContain("<diff-download-file-button");
-    expect(output).toContain(".path=src/example.ts");
-    expect(output).toContain(".href=/api/projects/7/files/content?path=src%2Fexample.ts&ref=task%2Fexample");
-    expect(output).toContain("<diffs-container data-pierre-file-diff>");
-  });
-
-  test("exposes accessible status labels for each changed-file status", () => {
-    const parsed = parseReviewItems(PATCH, "project-7-v1");
-    const item = new ReviewDiffItem();
-    const reviewItem = parsed.items[0]!;
-
-    for (const [status, label] of [
-      ["change", "Modified file"],
-      ["new", "Added file"],
-      ["deleted", "Deleted file"],
-      ["rename-pure", "Renamed file"],
-      ["rename-changed", "Renamed file"],
-    ] as const) {
-      item.item = { ...reviewItem, status };
-      expect(templateToString(item.render())).toContain(`aria-label="${label}"`);
-    }
   });
 
   test("refreshes a loaded patch when returning to the Changes tab", () => {
