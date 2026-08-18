@@ -16,7 +16,7 @@ describe("SettingsDiffRendererSection", () => {
     expect(output).toContain("Diff renderer");
     expect(output).toContain("Classic");
     expect(output).toContain("CodeView diff panel");
-    expect(output).toContain("Reins diff scaffold");
+    expect(output).toContain("Reins virtualized diff");
     expect(output).toContain("experimental");
     expect(output).toContain("may not match every classic feature yet");
     expect(output).not.toContain("?disabled=");
