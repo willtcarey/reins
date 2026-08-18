@@ -126,6 +126,8 @@ export class DiffStore {
   private _fileContentCache = new Map<string, string[]>();
   /** Monotonic version for patch-backed renderer items. */
   private _patchDiffVersion = 0;
+  /** Only the latest started patch request may update renderer data. */
+  private _patchRequestGeneration = 0;
 
   /** Build the `&branch=...` query fragment if a branch is set. */
   private get _branchParam(): string {
@@ -166,6 +168,7 @@ export class DiffStore {
     this.fullData = Loadable.idle();
     this.patchData = Loadable.idle();
     this._patchDiffVersion = 0;
+    this._patchRequestGeneration += 1;
     this.fullDiffVersion = 0;
     this.lastFilesRefreshAt = null;
     this.lastPayloadRefreshAt = null;
@@ -193,6 +196,7 @@ export class DiffStore {
     this.fullData = Loadable.idle();
     this.patchData = Loadable.idle();
     this._patchDiffVersion = 0;
+    this._patchRequestGeneration += 1;
     this.fullDiffVersion = 0;
     this.spread = null;
     this.notify();
@@ -210,6 +214,7 @@ export class DiffStore {
     this.fullData = Loadable.idle();
     this.patchData = Loadable.idle();
     this._patchDiffVersion = 0;
+    this._patchRequestGeneration += 1;
     this.fullDiffVersion = 0;
     this.notify();
     // Re-poll file list immediately with the new mode
@@ -517,6 +522,7 @@ export class DiffStore {
 
   /** Fetch the raw patch diff for patch-backed renderers. */
   async fetchPatchDiff(trigger: DiffRefreshTrigger = "manual") {
+    const requestGeneration = ++this._patchRequestGeneration;
     if (this._projectId == null) {
       this.patchData = Loadable.idle();
       this.notify();
@@ -530,6 +536,7 @@ export class DiffStore {
       const resp = await fetch(
         `/api/projects/${this._projectId}/diff/patch?context=${this.contextLines}&mode=${this.diffMode}${this._branchParam}`
       );
+      if (requestGeneration !== this._patchRequestGeneration) return;
       if (!resp.ok) {
         this.lastPayloadRefreshAt = new Date().toISOString();
         this.lastRefreshTrigger = trigger;
@@ -539,6 +546,7 @@ export class DiffStore {
       }
 
       const patch = await resp.text();
+      if (requestGeneration !== this._patchRequestGeneration) return;
       const version = this._patchDiffVersion + 1;
       this._patchDiffVersion = version;
       this.patchData = this.patchData.asLoaded({
@@ -553,6 +561,7 @@ export class DiffStore {
       this.notify();
       return;
     } catch (err: any) {
+      if (requestGeneration !== this._patchRequestGeneration) return;
       this.lastPayloadRefreshAt = new Date().toISOString();
       this.lastRefreshTrigger = trigger;
       this.patchData = this.patchData.asError(err.message ?? "Failed to fetch patch diff");
@@ -573,6 +582,7 @@ export class DiffStore {
   clearPatchDiff() {
     this.patchData = Loadable.idle();
     this._patchDiffVersion = 0;
+    this._patchRequestGeneration += 1;
     this.notify();
   }
 

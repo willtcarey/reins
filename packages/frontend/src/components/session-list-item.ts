@@ -11,6 +11,7 @@ import { customElement, property } from "lit/decorators.js";
 import type { SessionListItem as SessionListItemData } from "../models/ws-client.js";
 import type { ActivityState } from "../models/stores/session-cache.js";
 import { formatRelativeDate } from "../models/format.js";
+import { selectSessionEvent } from "./events.js";
 import "./activity-dot.js";
 import "./delegate-popover.js";
 
@@ -39,13 +40,7 @@ export class SessionListItem extends LitElement {
   projectId: number | null = null;
 
   private handleClick() {
-    this.dispatchEvent(
-      new CustomEvent("select-session", {
-        bubbles: true,
-        composed: true,
-        detail: { projectId: this.projectId, sessionId: this.session.id },
-      }),
-    );
+    this.dispatchEvent(selectSessionEvent(this.session.id, this.projectId));
   }
 
   override render() {

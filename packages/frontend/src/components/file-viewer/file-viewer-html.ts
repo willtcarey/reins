@@ -12,6 +12,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import { htmlPreviewEscapeEvent } from "../events.js";
 
 export const HTML_PREVIEW_ESCAPE_MESSAGE = "reins:file-preview:escape";
 export const HTML_PREVIEW_ESCAPE_EVENT = "html-preview-escape";
@@ -104,12 +105,7 @@ export class FileViewerHtml extends LitElement {
       null;
     if (!iframeSource || event.source !== iframeSource) return;
 
-    this.dispatchEvent(
-      new CustomEvent(HTML_PREVIEW_ESCAPE_EVENT, {
-        bubbles: true,
-        composed: true,
-      }),
-    );
+    this.dispatchEvent(htmlPreviewEscapeEvent());
   };
 
   override render() {

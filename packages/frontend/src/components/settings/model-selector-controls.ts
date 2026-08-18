@@ -10,6 +10,11 @@ import {
 } from "../../models/settings.js";
 import type { ProviderInfo } from "../../models/model-catalog.js";
 import type { ModelSetting } from "../../models/stores/settings-store.js";
+import {
+  clearModelSelectionEvent,
+  modelSelectionChangeEvent,
+  thinkingChangeEvent,
+} from "../events.js";
 
 @customElement("model-selector-controls")
 export class ModelSelectorControls extends LitElement {
@@ -66,24 +71,16 @@ export class ModelSelectorControls extends LitElement {
     if (!(e.target instanceof HTMLSelectElement)) return;
     const selection = decodeModelSelection(e.target.value);
     if (!selection) return;
-    this.dispatchEvent(new CustomEvent("selection-change", {
-      bubbles: true,
-      composed: true,
-      detail: selection,
-    }));
+    this.dispatchEvent(modelSelectionChangeEvent(selection));
   }
 
   private _handleThinkingChange(e: Event) {
     if (!(e.target instanceof HTMLSelectElement)) return;
-    this.dispatchEvent(new CustomEvent("thinking-change", {
-      bubbles: true,
-      composed: true,
-      detail: { thinkingLevel: e.target.value },
-    }));
+    this.dispatchEvent(thinkingChangeEvent(e.target.value));
   }
 
   private _handleClear() {
-    this.dispatchEvent(new CustomEvent("clear", { bubbles: true, composed: true }));
+    this.dispatchEvent(clearModelSelectionEvent());
   }
 
   private _isSelectedModelReasoning(): boolean {

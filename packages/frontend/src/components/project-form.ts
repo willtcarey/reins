@@ -11,6 +11,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type { ProjectInfo } from "../models/ws-client.js";
 import type { AppStore } from "../models/stores/app-store.js";
+import { projectCreatedEvent, projectUpdatedEvent } from "./events.js";
 
 interface OpenCreateOptions {
   mode: "create";
@@ -103,10 +104,7 @@ export class ProjectForm extends LitElement {
       return;
     }
     this.close();
-    this.dispatchEvent(new CustomEvent("project-created", {
-      bubbles: true, composed: true,
-      detail: { project: result },
-    }));
+    this.dispatchEvent(projectCreatedEvent(result));
   }
 
   private async updateProject() {
@@ -121,9 +119,7 @@ export class ProjectForm extends LitElement {
       return;
     }
     this.close();
-    this.dispatchEvent(new CustomEvent("project-updated", {
-      bubbles: true, composed: true,
-    }));
+    this.dispatchEvent(projectUpdatedEvent());
   }
 
   private handleBackdropClick(e: MouseEvent) {

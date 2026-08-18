@@ -12,7 +12,6 @@ export interface ReviewItem {
   readonly occurrence: number;
   readonly contentKey: string;
   readonly cacheKey: string;
-  readonly collapsed: boolean;
   readonly fileDiff: FileDiffMetadata;
 }
 
@@ -22,7 +21,7 @@ export interface ReviewItemsResult {
   readonly parseError: string | null;
 }
 
-/** Preserve item state by stable ID and object identity when content is unchanged. */
+/** Preserve record identity by stable ID when content is unchanged. */
 export function reconcileReviewItems(
   previous: ReviewItemsResult | null,
   next: ReviewItemsResult,
@@ -34,23 +33,9 @@ export function reconcileReviewItems(
     const candidate = previousById.get(item.id);
     if (!candidate) return item;
     if (candidate.contentKey === item.contentKey) return candidate;
-    return { ...item, collapsed: candidate.collapsed };
+    return item;
   });
   return { ...next, items };
-}
-
-export function setReviewItemCollapsed(
-  data: ReviewItemsResult,
-  itemId: string,
-  collapsed: boolean,
-): ReviewItemsResult {
-  const itemIndex = data.items.findIndex((item) => item.id === itemId);
-  const item = data.items[itemIndex];
-  if (!item || item.collapsed === collapsed) return data;
-
-  const items = [...data.items];
-  items[itemIndex] = { ...item, collapsed };
-  return { ...data, items };
 }
 
 /**
@@ -93,7 +78,6 @@ export function parseReviewItems(
           occurrence,
           contentKey,
           cacheKey,
-          collapsed: false,
           fileDiff,
         });
       }

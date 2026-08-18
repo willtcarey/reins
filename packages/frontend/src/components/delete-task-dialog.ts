@@ -8,6 +8,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { TaskListItem } from "../models/tasks.js";
+import { cancelDeleteEvent, confirmDeleteEvent } from "./events.js";
 
 @customElement("delete-task-dialog")
 export class DeleteTaskDialog extends LitElement {
@@ -19,18 +20,12 @@ export class DeleteTaskDialog extends LitElement {
   task: TaskListItem | null = null;
 
   private handleCancel() {
-    this.dispatchEvent(new CustomEvent("cancel-delete", { bubbles: true, composed: true }));
+    this.dispatchEvent(cancelDeleteEvent());
   }
 
   private handleConfirm() {
     if (!this.task) return;
-    this.dispatchEvent(
-      new CustomEvent("confirm-delete", {
-        bubbles: true,
-        composed: true,
-        detail: { taskId: this.task.id },
-      }),
-    );
+    this.dispatchEvent(confirmDeleteEvent(this.task.id));
   }
 
   override render() {

@@ -28,20 +28,17 @@ describe("DiffRendererShell", () => {
     shell.store.dispose();
   });
 
-  test("forwards file navigation after the selected renderer panel mounts", () => {
+  test("forwards file navigation to the selected renderer panel", () => {
     const shell = new DiffRendererShell();
     const scrolledPaths: string[] = [];
-    let panelMounted = false;
     const panel = new ReviewDiffPanel();
     panel.scrollToFile = (path: string) => {
       scrolledPaths.push(path);
     };
-    const querySelector: typeof shell.querySelector = () => panelMounted ? panel : null;
+    const querySelector: typeof shell.querySelector = () => panel;
     shell.querySelector = querySelector;
 
     shell.scrollToFile("src/example.ts");
-    panelMounted = true;
-    shell.updated();
 
     expect(scrolledPaths).toEqual(["src/example.ts"]);
   });

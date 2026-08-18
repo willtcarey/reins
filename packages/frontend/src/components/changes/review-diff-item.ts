@@ -67,12 +67,18 @@ export class ReviewDiffItem extends LitElement {
   }
 
   @property({ attribute: false }) item: ReviewItem | null = null;
+  @property({ type: Boolean }) collapsed = false;
   @property({ type: Number, attribute: false }) projectId: number | null = null;
   @property({ attribute: false }) branch: string | null = null;
 
   private _fileDiff: FileDiff<undefined> | null = null;
   private _renderedItem: ReviewItem | null = null;
+  private _diffRendered = false;
   private _root: HTMLElement | null = null;
+
+  public get diffRendered(): boolean {
+    return this._diffRendered && this._renderedItem?.fileDiff === this.item?.fileDiff;
+  }
 
   override updated() {
     this._syncFileDiff();
@@ -98,6 +104,7 @@ export class ReviewDiffItem extends LitElement {
         this._renderedItem = this.item;
         return;
       }
+      this._diffRendered = false;
       this._renderedItem = this.item;
       this._fileDiff.render({ fileDiff: this.item.fileDiff, fileContainer: root });
       return;
@@ -108,7 +115,7 @@ export class ReviewDiffItem extends LitElement {
       ...REINS_DIFF_OPTIONS,
       onPostRender: (node, _instance, phase) => {
         if (phase === "unmount" || node.shadowRoot?.querySelector("[data-placeholder]")) return;
-        this._reportRendered();
+        this._markDiffRendered();
       },
     }, getPierreWorkerPool(), true);
     this._root = root;
@@ -121,6 +128,7 @@ export class ReviewDiffItem extends LitElement {
     this._fileDiff = null;
     this._root = null;
     this._renderedItem = null;
+    this._diffRendered = false;
   }
 
   private _fileUrl(path: string): string {
@@ -130,9 +138,9 @@ export class ReviewDiffItem extends LitElement {
     return url;
   }
 
-  private _reportRendered() {
-    if (!this.item) return;
-    this.dispatchEvent(diffRenderedEvent(this.item.id));
+  private _markDiffRendered() {
+    this._diffRendered = true;
+    this.dispatchEvent(diffRenderedEvent());
   }
 
   private _toggleCollapsed() {
@@ -150,11 +158,11 @@ export class ReviewDiffItem extends LitElement {
           <button
             type="button"
             class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded font-mono text-[10px] text-zinc-500 hover:bg-zinc-700/60 hover:text-zinc-200"
-            aria-label=${`${item.collapsed ? "Expand" : "Collapse"} ${item.path}`}
-            aria-expanded=${String(!item.collapsed)}
+            aria-label=${`${this.collapsed ? "Expand" : "Collapse"} ${item.path}`}
+            aria-expanded=${String(!this.collapsed)}
             @click=${this._toggleCollapsed}
           >
-            <span aria-hidden="true">${item.collapsed ? "▶" : "▼"}</span>
+            <span aria-hidden="true">${this.collapsed ? "▶" : "▼"}</span>
           </button>
           ${renderStatusIcon(item.status)}
           ${item.oldPath && item.oldPath !== item.path
@@ -187,7 +195,7 @@ export class ReviewDiffItem extends LitElement {
           </span>
         </header>
         ${springCollapse(
-          item.collapsed,
+          this.collapsed,
           () => html`<diffs-container data-pierre-file-diff></diffs-container>`,
           {
             onUnmount: () => this._destroyFileDiff(),

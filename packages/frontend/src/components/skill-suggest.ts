@@ -27,11 +27,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import type { InjectedSkillInfo } from "../models/ws-client.js";
 import { fuzzyMatch } from "../models/stores/quick-open-store.js";
-
-export interface SkillInsertDetail {
-  /** The name of the accepted skill (without the leading `/`). */
-  name: string;
-}
+import { skillInsertEvent } from "./events.js";
 
 @customElement("skill-suggest")
 export class SkillSuggest extends LitElement {
@@ -126,13 +122,7 @@ export class SkillSuggest extends LitElement {
 
     this.close();
 
-    this.dispatchEvent(
-      new CustomEvent<SkillInsertDetail>("skill-insert", {
-        bubbles: true,
-        composed: true,
-        detail: { name: picked.name },
-      }),
-    );
+    this.dispatchEvent(skillInsertEvent(picked.name));
   }
 
   override updated(changed: PropertyValues) {

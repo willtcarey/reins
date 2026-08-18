@@ -7,9 +7,9 @@ import {
   findSkillTokenAt,
   imageMimeTypeForFile,
   isAllowedImageFile,
-  type ChatComposerSubmitDetail,
   type DraftAttachment,
 } from "../../components/chat-composer.js";
+import type { ChatComposerSubmitDetail } from "../../components/events.js";
 function callPrivate<T = unknown>(obj: object, key: string, ...args: unknown[]): T {
   const fn = Reflect.get(obj, key);
   if (typeof fn !== "function") throw new Error(`${key} is not callable`);

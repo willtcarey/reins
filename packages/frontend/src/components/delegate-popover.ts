@@ -9,6 +9,7 @@ import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { SessionListItem } from "../models/ws-client.js";
 import { formatRelativeDate } from "../models/format.js";
+import { selectSessionEvent } from "./events.js";
 import "./activity-dot.js";
 import "./popover-menu.js";
 
@@ -44,13 +45,7 @@ export class DelegatePopover extends LitElement {
   }
 
   private handleSelectSession(sessionId: string) {
-    this.dispatchEvent(
-      new CustomEvent("select-session", {
-        bubbles: true,
-        composed: true,
-        detail: { sessionId },
-      }),
-    );
+    this.dispatchEvent(selectSessionEvent(sessionId));
   }
 
   private renderPopoverContent() {

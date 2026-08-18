@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import "../../helpers/local-storage.js";
 import { Loadable } from "../../../helpers/loadable.js";
 import {
   ReviewDiffPanel,
@@ -42,6 +43,12 @@ function loadedPatch(patch = PATCH): DiffPatchData {
 
 
 describe("ReviewDiffPanel", () => {
+  test("registers its review item dependency", () => {
+    const ReviewDiffItemElement = customElements.get("review-diff-item");
+
+    expect(typeof Reflect.get(ReviewDiffItemElement?.prototype ?? {}, "render")).toBe("function");
+  });
+
   test("restores the last measurable scroll position after the hidden pane reports zero", () => {
     const position = new ReviewScrollPosition();
     const container = { scrollTop: 4944, clientHeight: 823 };
@@ -70,6 +77,36 @@ describe("ReviewDiffPanel", () => {
 
     expect(fetchCount).toBe(1);
     store.dispose();
+  });
+
+  test("restores reviewed collapse state after switching projects", () => {
+    localStorage.clear();
+    const store = new DiffStore();
+    store.refresh = async () => {};
+    try {
+      store.setProject(7);
+      store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
+      const panel = new ReviewDiffPanel();
+      panel.store = store;
+      const itemId = panel.itemIdForPath("src/example.ts")!;
+      panel.setItemCollapsed(itemId, true);
+
+      store.setProject(8);
+      store.patchData = Loadable.idle<DiffPatchData>().asLoaded({
+        ...loadedPatch(),
+        cacheKeyPrefix: "project-8-v1",
+      });
+      panel.willUpdate(new Map());
+      expect(panel.isItemCollapsed(itemId)).toBe(false);
+
+      store.setProject(7);
+      store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
+      panel.willUpdate(new Map());
+      expect(panel.isItemCollapsed(itemId)).toBe(true);
+    } finally {
+      localStorage.clear();
+      store.dispose();
+    }
   });
 
   test("turns a loaded patch into stable path-based navigation", () => {
@@ -212,21 +249,30 @@ index 3333333..4444444 100644
       store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(patch));
       const panel = new ReviewDiffPanel();
       panel.store = store;
-      let itemQueries = 0;
-      const querySelector: typeof panel.querySelector = () => {
-        itemQueries += 1;
+      const precedingId = panel.itemIdForPath("src/example.ts")!;
+      let precedingRendered = false;
+      const ReviewDiffItemElement = customElements.get("review-diff-item");
+      if (!ReviewDiffItemElement) throw new Error("Expected review-diff-item to be registered");
+      const precedingItem = new ReviewDiffItemElement();
+      Object.defineProperty(precedingItem, "diffRendered", {
+        get: () => precedingRendered,
+      });
+      let targetQueries = 0;
+      const querySelector: typeof panel.querySelector = (selector: string) => {
+        if (selector.includes(precedingId)) return precedingItem;
+        targetQueries += 1;
         return null;
       };
       panel.querySelector = querySelector;
 
       panel.scrollToFile("src/target.ts");
-      expect(itemQueries).toBe(0);
+      expect(targetQueries).toBe(0);
 
-      const precedingId = panel.itemIdForPath("src/example.ts")!;
-      panel.reportItemRendered(precedingId);
+      precedingRendered = true;
+      panel.updated(new Map());
       frames.shift()?.(0);
 
-      expect(itemQueries).toBeGreaterThan(0);
+      expect(targetQueries).toBeGreaterThan(0);
     } finally {
       store.dispose();
       if (frameDescriptor) Object.defineProperty(globalThis, "requestAnimationFrame", frameDescriptor);
@@ -237,7 +283,9 @@ index 3333333..4444444 100644
   });
 
   test("expands a collapsed target before file-tree navigation scrolls to it", () => {
+    localStorage.clear();
     const store = new DiffStore();
+    store.setProject(7);
     store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
     const panel = new ReviewDiffPanel();
     panel.store = store;
@@ -254,6 +302,7 @@ index 3333333..4444444 100644
 
     expect(panel.isItemCollapsed(itemId)).toBe(false);
     expect(queryCount).toBe(0);
+    localStorage.clear();
     store.dispose();
   });
 

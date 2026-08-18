@@ -44,12 +44,16 @@ function installAppShellGlobals(options: {
   });
 }
 
-function installRenderableStore(el: AppShell) {
+function installRenderableStore(el: AppShell, options: {
+  projectId?: number | null;
+  sessionId?: string;
+  activeSessionStore?: object | null;
+} = {}) {
   Reflect.set(el, "appStore", {
     connected: true,
-    projectId: 42,
-    sessionId: "s1",
-    activeSessionStore: {},
+    projectId: options.projectId === undefined ? 42 : options.projectId,
+    sessionId: options.sessionId ?? "s1",
+    activeSessionStore: options.activeSessionStore === undefined ? {} : options.activeSessionStore,
     activeProjectStore: {},
     settingsStore: { diffRenderer: "classic" },
     diffStore: { branch: "main" },
@@ -140,6 +144,19 @@ describe("AppShell visibility change", () => {
 });
 
 describe("AppShell layout selection", () => {
+  test("keeps the workspace mounted while selected session project metadata loads", () => {
+    installAppShellGlobals({ mobile: false });
+
+    const el = new AppShell();
+    installRenderableStore(el, { projectId: null, sessionId: "s2" });
+    const output = fullTemplateOutput(el.render());
+
+    expect(output).toContain("data-workspace-shell");
+    expect(output).toContain("<session-sidebar");
+    expect(output).toContain(".sessionId=s2");
+    expect(output).not.toContain("No project selected");
+  });
+
   test("renders the desktop layout on wider viewports", () => {
     installAppShellGlobals({ mobile: false });
 

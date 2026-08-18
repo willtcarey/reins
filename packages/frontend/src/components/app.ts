@@ -298,25 +298,35 @@ export class AppShell extends LitElement {
     diffRenderer: DiffRenderer,
   ): WorkspacePanes {
     const activeMainPane = mainWorkspacePaneFor(this.activePane);
-
     const swipeActive = this.pageSwipe.dragging || this.pageSwipe.settling;
+    const hasSession = store.activeSessionStore != null;
+    const hasProject = store.projectId != null;
 
     return {
       sessions: this.renderSessionSidebar(store),
-      chat: this.renderChatPane(store, this.viewport.isMobileLayout || activeMainPane === "chat" || swipeActive),
-      changes: this.renderChangesPane(store, diffRenderer, this.viewport.isMobileLayout || activeMainPane === "changes" || swipeActive),
-      files: this.renderFileTree(store),
+      chat: hasSession
+        ? this.renderChatPane(store, this.viewport.isMobileLayout || activeMainPane === "chat" || swipeActive)
+        : this.renderEmptyState(),
+      changes: hasProject
+        ? this.renderChangesPane(store, diffRenderer, this.viewport.isMobileLayout || activeMainPane === "changes" || swipeActive)
+        : nothing,
+      files: hasProject ? this.renderFileTree(store) : nothing,
     };
   }
 
   private renderWorkspace(store: AppStore, panes: WorkspacePanes) {
     const activeMainPane = mainWorkspacePaneFor(this.activePane);
+    const hasSession = store.activeSessionStore != null;
+    const hasProject = store.projectId != null;
     this.pageSwipe.syncPage();
     const page = this.pageForPane(this.activePane);
     const swipeTranslateX = this.pageSwipe.translateX == null
       ? `${-page * 100}%`
       : `${this.pageSwipe.translateX}px`;
     const gridStyle = `grid-template-columns: repeat(${MOBILE_WORKSPACE_PANE_ORDER.length}, 100%); transform: translate3d(${swipeTranslateX}, 0, 0);`;
+    const desktopColumns = hasProject
+      ? "md:![grid-template-columns:auto_minmax(0,1fr)_15rem]"
+      : "md:![grid-template-columns:auto_minmax(0,1fr)_0]";
 
     return html`
       <div
@@ -329,15 +339,15 @@ export class AppShell extends LitElement {
         @pointercancel=${this.pageSwipe.handlePointerCancel}
       >
         <div
-          class="workspace-surface grid h-full min-h-0 min-w-0 grid-rows-[50px_minmax(0,1fr)] md:!transform-none md:![grid-template-columns:auto_minmax(0,1fr)_15rem] md:grid-rows-[50px_minmax(0,1fr)]"
+          class="workspace-surface grid h-full min-h-0 min-w-0 grid-rows-[50px_minmax(0,1fr)] md:!transform-none ${desktopColumns} md:grid-rows-[50px_minmax(0,1fr)]"
           data-dragging=${this.pageSwipe.dragging || this.pageSwipe.settling ? "true" : "false"}
           style=${gridStyle}
         >
           <div class="z-20 col-start-2 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "chat" ? "md:block" : "md:hidden"}">
-            ${this.renderMainToolbar(store, "chat")}
+            ${hasSession ? this.renderMainToolbar(store, "chat") : nothing}
           </div>
           <div class="z-20 col-start-3 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "changes" ? "md:block" : "md:hidden"}">
-            ${this.renderMainToolbar(store, "changes")}
+            ${hasProject ? this.renderMainToolbar(store, "changes") : nothing}
           </div>
           <section class="col-start-1 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-1 md:row-start-1 md:row-span-2">
             ${panes.sessions}
@@ -348,7 +358,7 @@ export class AppShell extends LitElement {
           <section class="col-start-3 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 md:row-start-2 ${activeMainPane === "changes" ? "" : "md:hidden"}">
             ${panes.changes}
           </section>
-          <section class="col-start-4 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-3 md:row-start-1 md:row-span-2 md:border-l md:border-zinc-700">
+          <section class="col-start-4 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-3 md:row-start-1 md:row-span-2 ${hasProject ? "md:border-l md:border-zinc-700" : ""}">
             ${panes.files}
           </section>
         </div>
@@ -376,10 +386,8 @@ export class AppShell extends LitElement {
     // Read from store (the _storeVersion state ensures re-renders on changes)
     void this._storeVersion;
     const store = this.appStore;
-    const activeSessionStore = store.activeSessionStore;
-    const hasProject = store.projectId != null && activeSessionStore != null;
     const diffRenderer: DiffRenderer = store.settingsStore.diffRenderer;
-    const panes = hasProject ? this.renderWorkspacePanes(store, diffRenderer) : null;
+    const panes = this.renderWorkspacePanes(store, diffRenderer);
 
     return html`
       <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"
@@ -396,14 +404,7 @@ export class AppShell extends LitElement {
 
         <!-- Main layout: one responsive grid with swipe navigation -->
         <div class="flex-1 min-h-0 min-w-0 overflow-hidden">
-          ${hasProject && panes ? html`
-            ${this.renderWorkspace(store, panes)}
-          ` : html`
-            <div class="h-full flex min-h-0 min-w-0 overflow-hidden">
-              <session-sidebar .store=${store}></session-sidebar>
-              ${this.renderEmptyState()}
-            </div>
-          `}
+          ${this.renderWorkspace(store, panes)}
         </div>
 
         <!-- Quick-open overlay -->

@@ -5,6 +5,7 @@ import { springCollapse } from "../directives/spring-collapse.js";
 import type { ActivityState } from "../models/stores/session-cache.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import type { ProjectInfo } from "../models/ws-client.js";
+import { projectEvent, type ProjectEventName } from "./events.js";
 import { folderIcon } from "./icons.js";
 import {
   createTaskListDisclosureState,
@@ -53,12 +54,8 @@ export class SidebarProject extends LitElement {
     }
   }
 
-  private dispatchProjectEvent(name: string) {
-    this.dispatchEvent(new CustomEvent(name, {
-      detail: this.project,
-      bubbles: true,
-      composed: true,
-    }));
+  private dispatchProjectEvent(name: ProjectEventName) {
+    this.dispatchEvent(projectEvent(name, this.project));
   }
 
   private renderActivityDot() {

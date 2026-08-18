@@ -25,6 +25,23 @@ function textResponse(text: string): Response {
   return new Response(text, { status: 200, headers: { "Content-Type": "text/plain" } });
 }
 
+function uninitializedDeferredResponse(_response: Response): never {
+  throw new Error("Deferred response was not initialized");
+}
+
+function deferredResponse() {
+  let settle: (response: Response) => void = uninitializedDeferredResponse;
+  const promise = new Promise<Response>((resolve) => {
+    settle = resolve;
+  });
+  return {
+    promise,
+    resolve(response: Response) {
+      settle(response);
+    },
+  };
+}
+
 /** Swallow all fetches with empty-OK responses (for setProject polling). */
 function mockFetchNoop() {
   mockFetch((url) => {
@@ -306,6 +323,30 @@ index 1111111..2222222 100644
 
       expect(store.patchData.data).toBeNull();
       expect(store.fullData.data?.branch).toBe("classic");
+    });
+
+    test("keeps the latest patch when concurrent requests finish out of order", async () => {
+      const olderResponse = deferredResponse();
+      let patchRequests = 0;
+      mockFetch((url) => {
+        if (url.includes("/diff/patch")) {
+          patchRequests += 1;
+          return patchRequests === 1 ? olderResponse.promise : textResponse("newer patch");
+        }
+        if (url.includes("/diff/files")) return jsonResponse({ files: [] });
+        if (url.includes("/git/spread")) return jsonResponse({});
+        return jsonResponse({});
+      });
+      store.setProject(1);
+
+      const olderFetch = store.fetchPatchDiff();
+      const newerFetch = store.fetchPatchDiff();
+      await newerFetch;
+      olderResponse.resolve(textResponse("older patch"));
+      await olderFetch;
+
+      expect(store.patchData.data?.patch).toBe("newer patch");
+      expect(store.patchData.data?.version).toBe(1);
     });
 
     test("increments patch versions and cache key prefixes on each successful fetch", async () => {

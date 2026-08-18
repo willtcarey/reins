@@ -16,6 +16,7 @@
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { TemplateResult } from "lit";
+import { tabChangeEvent } from "./events.js";
 
 export interface TabDef {
   label: string;
@@ -33,9 +34,7 @@ export class ViewModeTabs extends LitElement {
 
   private _onTabClick(index: number) {
     if (index === this.activeIndex) return;
-    this.dispatchEvent(
-      new CustomEvent("tab-change", { detail: index, bubbles: true, composed: true }),
-    );
+    this.dispatchEvent(tabChangeEvent(index));
   }
 
   override render() {

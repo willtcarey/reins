@@ -22,29 +22,7 @@
       }
     },
     {
-      "files": [
-        "packages/frontend/src/components/events.ts",
-        "packages/frontend/src/components/assistant-session.ts",
-        "packages/frontend/src/components/changes/codeview-diff-panel.ts",
-        "packages/frontend/src/components/changes/diff-file-tree.ts",
-        "packages/frontend/src/components/changes/diff-hunk.ts",
-        "packages/frontend/src/components/changes/diff-panel.ts",
-        "packages/frontend/src/components/chat-composer.ts",
-        "packages/frontend/src/components/delegate-popover.ts",
-        "packages/frontend/src/components/delete-task-dialog.ts",
-        "packages/frontend/src/components/file-viewer/file-viewer-html.ts",
-        "packages/frontend/src/components/project-form.ts",
-        "packages/frontend/src/components/search-palette.ts",
-        "packages/frontend/src/components/session-list-item.ts",
-        "packages/frontend/src/components/settings/model-selector-controls.ts",
-        "packages/frontend/src/components/sidebar-project.ts",
-        "packages/frontend/src/components/skill-suggest.ts",
-        "packages/frontend/src/components/task-detail.ts",
-        "packages/frontend/src/components/task-list-item.ts",
-        "packages/frontend/src/components/task-list.ts",
-        "packages/frontend/src/components/tree-view.ts",
-        "packages/frontend/src/components/view-mode-tabs.ts"
-      ],
+      "files": ["packages/frontend/src/components/events.ts"],
       "rules": {
         "reins/no-custom-event-constructor": "off"
       }

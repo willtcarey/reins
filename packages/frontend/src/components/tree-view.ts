@@ -20,6 +20,7 @@
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { styleMap } from "lit/directives/style-map.js";
+import { treeDirToggleEvent, treeFileClickEvent } from "./events.js";
 import { treeFileIcon, treeFolderIcon } from "./icons.js";
 
 // ---- Public types -----------------------------------------------------------
@@ -76,15 +77,11 @@ export class TreeView extends LitElement {
   }
 
   private _onFileClick(path: string) {
-    this.dispatchEvent(new CustomEvent("tree-file-click", {
-      detail: path, bubbles: true, composed: true,
-    }));
+    this.dispatchEvent(treeFileClickEvent(path));
   }
 
   private _onDirToggle(path: string) {
-    this.dispatchEvent(new CustomEvent("tree-dir-toggle", {
-      detail: path, bubbles: true, composed: true,
-    }));
+    this.dispatchEvent(treeDirToggleEvent(path));
   }
 
   // ---- Indent guides --------------------------------------------------------

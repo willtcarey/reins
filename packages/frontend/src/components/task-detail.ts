@@ -8,6 +8,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, state, query } from "lit/decorators.js";
 import type { TaskListItem } from "../models/tasks.js";
+import { saveTaskEvent } from "./events.js";
 
 @customElement("task-detail")
 export class TaskDetail extends LitElement {
@@ -53,17 +54,11 @@ export class TaskDetail extends LitElement {
     if (!this.taskTitle.trim()) return;
 
     this.saving = true;
-    this.dispatchEvent(
-      new CustomEvent("save-task", {
-        bubbles: true,
-        composed: true,
-        detail: {
-          taskId: this.task.id,
-          title: this.taskTitle.trim(),
-          description: this.description.trim() || null,
-        },
-      }),
-    );
+    this.dispatchEvent(saveTaskEvent({
+      taskId: this.task.id,
+      title: this.taskTitle.trim(),
+      description: this.description.trim() || null,
+    }));
   }
 
   /** Called by the parent after the store completes (or fails) the save. */

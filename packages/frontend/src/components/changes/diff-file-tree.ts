@@ -14,6 +14,7 @@ import { customElement, property } from "lit/decorators.js";
 import type { DiffFileSummary } from "../../models/changes/types.js";
 import type { DiffStore } from "../../models/stores/diff-store.js";
 import type { FileTreeState } from "../../models/changes/file-tree-state.js";
+import { fileSelectEvent } from "../events.js";
 import "../tree-view.js";
 import type { TreeNode, RenderNodeTrailer } from "../tree-view.js";
 
@@ -150,11 +151,7 @@ export class DiffFileTree extends LitElement {
   // ---- Event handlers -------------------------------------------------------
 
   private _handleFileClick(e: CustomEvent<string>) {
-    this.dispatchEvent(
-      new CustomEvent("file-select", {
-        detail: e.detail, bubbles: true, composed: true,
-      }),
-    );
+    this.dispatchEvent(fileSelectEvent(e.detail));
   }
 
   private _handleDirToggle(e: CustomEvent<string>) {

@@ -13,13 +13,13 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { DiffFile } from "../../models/changes/types.js";
 import type { DiffStore } from "../../models/stores/diff-store.js";
-import type { ExpandDetail } from "./diff-hunk.js";
 import {
   fileCardId,
   scrollTopAfterExpansion,
   type ExpansionScrollSnapshot,
 } from "../../models/changes/diff-utils.js";
 import { ScrollSpy } from "../../models/changes/scroll-spy.js";
+import { activeFileChangeEvent, type ExpandDetail } from "../events.js";
 import { branchIcon, spinnerIcon } from "../icons.js";
 import "./diff-file-card.js";
 
@@ -154,11 +154,7 @@ export class DiffPanel extends LitElement {
   private setActiveFile(path: string | null) {
     if (path === this.activeFile) return;
     this.activeFile = path;
-    this.dispatchEvent(new CustomEvent<string | null>("active-file-change", {
-      detail: path,
-      bubbles: true,
-      composed: true,
-    }));
+    this.dispatchEvent(activeFileChangeEvent(path));
   }
 
   // ---- Child event handlers -------------------------------------------------

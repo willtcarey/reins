@@ -1,17 +1,20 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
+import {
+  ReviewCollapseState,
+  type ReviewCollapseScope,
+} from "../../models/changes/review-collapse-state.js";
 import { ScrollSpy } from "../../models/changes/scroll-spy.js";
 import {
   parseReviewItems,
   reconcileReviewItems,
-  setReviewItemCollapsed,
   type ReviewItemsResult,
 } from "../../models/changes/review-items.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
 import { activeFileChangeEvent, activeItemChangeEvent } from "../events.js";
 import { branchIcon } from "../icons.js";
-import "./review-diff-item.js";
+import { ReviewDiffItem } from "./review-diff-item.js";
 
 type ScrollPositionContainer = Pick<HTMLElement, "scrollTop" | "clientHeight">;
 
@@ -68,11 +71,10 @@ export class ReviewDiffPanel extends LitElement {
 
   private _unsubscribe: (() => void) | null = null;
   private _pendingPath: string | null = null;
-  private _pendingItemId: string | null = null;
   private _parsedSource: DiffPatchData | null = null;
   private _parsedData: ReviewItemsResult | null = null;
   private _scrollPosition = new ReviewScrollPosition();
-  private _renderedItemIds = new Set<string>();
+  private _collapseState = new ReviewCollapseState();
   private _scrollSpy = new ScrollSpy({
     containerSelector: "[data-review-scroll]",
     itemSelector: "[data-review-item-id]",
@@ -116,49 +118,19 @@ export class ReviewDiffPanel extends LitElement {
   }
 
   public scrollToFile(path: string) {
-    if (this.store?.patchData.loading) {
-      this._pendingPath = path;
-      return;
-    }
+    this._pendingPath = path;
+    if (this.store?.patchData.loading) return;
 
     const itemId = this.itemIdForPath(path);
-    if (!itemId) {
-      this._pendingPath = path;
+    if (!itemId) return;
+    if (this.isItemCollapsed(itemId)) {
+      this.setItemCollapsed(itemId, false);
       return;
     }
-    this._pendingPath = null;
-    this.scrollToItem(itemId);
-  }
+    if (!this._itemsBeforeRendered(itemId)) return;
 
-  public isItemCollapsed(id: string): boolean {
-    return this._parsedData?.items.find((item) => item.id === id)?.collapsed ?? false;
-  }
-
-  public setItemCollapsed(id: string, collapsed: boolean) {
-    if (!this._parsedData) return;
-    const next = setReviewItemCollapsed(this._parsedData, id, collapsed);
-    if (next === this._parsedData) return;
-    this._renderedItemIds.delete(id);
-    this._parsedData = next;
-    this.requestUpdate();
-  }
-
-  public scrollToItem(id: string) {
-    if (this.isItemCollapsed(id)) {
-      this.setItemCollapsed(id, false);
-      this._pendingItemId = id;
-      return;
-    }
-    if (!this._itemsBeforeRendered(id)) {
-      this._pendingItemId = id;
-      return;
-    }
-
-    const item = this.querySelector<HTMLElement>(`[data-review-item-id="${CSS.escape(id)}"]`);
-    if (!item) {
-      this._pendingItemId = id;
-      return;
-    }
+    const item = this.querySelector<HTMLElement>(`[data-review-item-id="${CSS.escape(itemId)}"]`);
+    if (!item) return;
 
     const container = this.querySelector<HTMLElement>("[data-review-scroll]");
     if (container && typeof container.scrollTo === "function") {
@@ -171,13 +143,25 @@ export class ReviewDiffPanel extends LitElement {
     } else {
       item.scrollIntoView({ behavior: "smooth", block: "start" });
     }
-    this._pendingItemId = null;
-    this.reportActiveItem(id);
+    this._pendingPath = null;
+    this.reportActiveItem(itemId);
   }
 
-  public reportItemRendered(id: string) {
-    if (!this._parsedData?.items.some((item) => item.id === id)) return;
-    this._renderedItemIds.add(id);
+  public isItemCollapsed(id: string): boolean {
+    const item = this._parsedData?.items.find((candidate) => candidate.id === id);
+    const scope = this._collapseScope();
+    return item && scope ? this._collapseState.isCollapsed(scope, item) : false;
+  }
+
+  public setItemCollapsed(id: string, collapsed: boolean) {
+    const item = this._parsedData?.items.find((candidate) => candidate.id === id);
+    const scope = this._collapseScope();
+    if (!item || !scope || this.isItemCollapsed(id) === collapsed) return;
+    this._collapseState.setCollapsed(scope, item, collapsed);
+    this.requestUpdate();
+  }
+
+  private _handleDiffRendered() {
     this._syncPendingScroll();
   }
 
@@ -208,7 +192,6 @@ export class ReviewDiffPanel extends LitElement {
   }
 
   private _resetParsedData() {
-    this._renderedItemIds.clear();
     this._parsedSource = null;
     this._parsedData = null;
     this._activeItemId = null;
@@ -228,24 +211,28 @@ export class ReviewDiffPanel extends LitElement {
       previousData,
       parseReviewItems(source.patch, source.cacheKeyPrefix),
     );
-    const previousItems = new Map(previousData?.items.map((item) => [item.id, item]) ?? []);
-    this._renderedItemIds = new Set(
-      this._parsedData.items
-        .filter((item) => (
-          this._renderedItemIds.has(item.id)
-          && previousItems.get(item.id)?.fileDiff === item.fileDiff
-        ))
-        .map((item) => item.id),
-    );
     if (this._activeItemId && !this._parsedData.items.some((item) => item.id === this._activeItemId)) {
       this._activeItemId = null;
     }
   }
 
+  private _collapseScope(): ReviewCollapseScope | null {
+    const store = this.store;
+    if (store?.projectId == null) return null;
+    return {
+      projectId: store.projectId,
+      branch: this._parsedSource?.branch ?? store.branch,
+    };
+  }
+
   private _itemsBeforeRendered(id: string): boolean {
     for (const item of this._parsedData?.items ?? []) {
       if (item.id === id) return true;
-      if (!item.collapsed && !this._renderedItemIds.has(item.id)) return false;
+      if (this.isItemCollapsed(item.id)) continue;
+      const element = this.querySelector(
+        `[data-review-item-id="${CSS.escape(item.id)}"]`,
+      );
+      if (!(element instanceof ReviewDiffItem) || !element.diffRendered) return false;
     }
     return false;
   }
@@ -262,19 +249,12 @@ export class ReviewDiffPanel extends LitElement {
   }
 
   private _syncPendingScroll() {
-    if (this.store?.patchData.loading) return;
+    if (this.store?.patchData.loading || !this._pendingPath) return;
 
-    if (this._pendingPath) {
-      const path = this._pendingPath;
-      const itemId = this.itemIdForPath(path);
-      if (itemId) {
-        this._pendingPath = null;
-        this._pendingItemId = itemId;
-      }
-    }
-    if (!this._pendingItemId || !this._itemsBeforeRendered(this._pendingItemId)) return;
-    const id = this._pendingItemId;
-    requestAnimationFrame(() => this.scrollToItem(id));
+    const path = this._pendingPath;
+    const itemId = this.itemIdForPath(path);
+    if (!itemId || !this._itemsBeforeRendered(itemId)) return;
+    requestAnimationFrame(() => this.scrollToFile(path));
   }
 
   override render() {
@@ -321,10 +301,11 @@ export class ReviewDiffPanel extends LitElement {
                         data-review-item-id=${item.id}
                         data-file-path=${item.path}
                         .item=${item}
+                        .collapsed=${this.isItemCollapsed(item.id)}
                         .projectId=${this.store?.projectId ?? null}
                         .branch=${branch ?? null}
                         @toggle-collapse=${this._handleToggleCollapse}
-                        @diff-rendered=${(event: CustomEvent<string>) => this.reportItemRendered(event.detail)}
+                        @diff-rendered=${this._handleDiffRendered}
                       ></review-diff-item>
                     `,
                   )

@@ -19,6 +19,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type { TemplateResult } from "lit";
+import { paletteCloseEvent, paletteConfirmEvent, paletteQueryChangeEvent } from "./events.js";
 import { searchIcon } from "./icons.js";
 
 export type PaletteRenderItem = (index: number, selected: boolean) => TemplateResult | typeof nothing;
@@ -98,13 +99,7 @@ export class SearchPalette extends LitElement {
     if (!(e.target instanceof HTMLInputElement)) return;
     this._query = e.target.value;
     this._selectedIndex = 0;
-    this.dispatchEvent(
-      new CustomEvent("query-change", {
-        detail: this._query,
-        bubbles: true,
-        composed: true,
-      }),
-    );
+    this.dispatchEvent(paletteQueryChangeEvent(this._query));
   }
 
   private handleKeydown(e: KeyboardEvent) {
@@ -123,21 +118,13 @@ export class SearchPalette extends LitElement {
       case "Enter":
         e.preventDefault();
         if (count > 0) {
-          this.dispatchEvent(
-            new CustomEvent("confirm", {
-              detail: this._selectedIndex,
-              bubbles: true,
-              composed: true,
-            }),
-          );
+          this.dispatchEvent(paletteConfirmEvent(this._selectedIndex));
         }
         break;
       case "Escape":
         e.preventDefault();
         e.stopPropagation();
-        this.dispatchEvent(
-          new CustomEvent("close", { bubbles: true, composed: true }),
-        );
+        this.dispatchEvent(paletteCloseEvent());
         break;
     }
   }
@@ -212,13 +199,7 @@ export class SearchPalette extends LitElement {
 
   private dispatchConfirm(index: number) {
     this._selectedIndex = index;
-    this.dispatchEvent(
-      new CustomEvent("confirm", {
-        detail: index,
-        bubbles: true,
-        composed: true,
-      }),
-    );
+    this.dispatchEvent(paletteConfirmEvent(index));
   }
 }
 

@@ -9,7 +9,8 @@ import {
 } from "../models/chat-content.js";
 import "./skill-suggest.js";
 import type { SendAnimationSource } from "../helpers/chat-send-animation.js";
-import type { SkillInsertDetail, SkillSuggest } from "./skill-suggest.js";
+import type { SkillSuggest } from "./skill-suggest.js";
+import { composerStopEvent, composerSubmitEvent, type SkillInsertDetail } from "./events.js";
 import { ringSpinnerIcon, sendIcon } from "./icons.js";
 
 const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
@@ -45,12 +46,6 @@ export type ChatAttachmentUploader = (attachments: readonly DraftAttachment[]) =
 interface SkillTokenRange {
   start: number;
   end: number;
-}
-
-export interface ChatComposerSubmitDetail {
-  content: ClientPromptContent;
-  /** Bounds captured immediately before dispatch, while the draft is intact. */
-  source: SendAnimationSource | null;
 }
 
 type TransferList<T> = Iterable<T> | ArrayLike<T>;
@@ -298,11 +293,7 @@ export class ChatComposer extends LitElement {
 
       const content = buildClientPromptContent(this.inputText, uploaded);
       const source = this.getSendAnimationSource();
-      this.dispatchEvent(new CustomEvent<ChatComposerSubmitDetail>("composer-submit", {
-        bubbles: true,
-        composed: true,
-        detail: { content, source },
-      }));
+      this.dispatchEvent(composerSubmitEvent({ content, source }));
       this.clearDraft();
       if (opts.preserveFocus && focusPreservationVersion === this.focusPreservationVersion) {
         queueMicrotask(() => this.textarea?.focus({ preventScroll: true }));
@@ -357,7 +348,7 @@ export class ChatComposer extends LitElement {
   }
 
   private handleStop() {
-    this.dispatchEvent(new CustomEvent("composer-stop", { bubbles: true, composed: true }));
+    this.dispatchEvent(composerStopEvent());
   }
 
   private handleInput(e: Event) {

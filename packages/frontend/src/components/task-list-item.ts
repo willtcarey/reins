@@ -14,6 +14,12 @@ import type { TaskListItem } from "../models/tasks.js";
 import type { ActivityState } from "../models/stores/session-cache.js";
 import { formatRelativeDate } from "../models/format.js";
 import { buildChildMap } from "./delegate-popover.js";
+import {
+  editTaskEvent,
+  newTaskSessionEvent,
+  requestDeleteTaskEvent,
+  toggleTaskExpandEvent,
+} from "./events.js";
 import { branchIcon, plusIcon } from "./icons.js";
 import "./activity-dot.js";
 import "./popover-menu.js";
@@ -44,44 +50,20 @@ export class TaskListItemElement extends LitElement {
   projectId: number | null = null;
 
   private handleExpand() {
-    this.dispatchEvent(
-      new CustomEvent("toggle-expand", {
-        bubbles: true,
-        composed: true,
-        detail: { taskId: this.task.id },
-      }),
-    );
+    this.dispatchEvent(toggleTaskExpandEvent(this.task.id));
   }
 
   private handleNewTaskSession(e: Event) {
     e.stopPropagation();
-    this.dispatchEvent(
-      new CustomEvent("new-task-session", {
-        bubbles: true,
-        composed: true,
-        detail: { projectId: this.projectId, taskId: this.task.id },
-      }),
-    );
+    this.dispatchEvent(newTaskSessionEvent(this.projectId, this.task.id));
   }
 
   private handleEditTask() {
-    this.dispatchEvent(
-      new CustomEvent("edit-task", {
-        bubbles: true,
-        composed: true,
-        detail: { projectId: this.projectId, task: this.task },
-      }),
-    );
+    this.dispatchEvent(editTaskEvent(this.projectId, this.task));
   }
 
   private handleDeleteTask() {
-    this.dispatchEvent(
-      new CustomEvent("delete-task", {
-        bubbles: true,
-        composed: true,
-        detail: { task: this.task },
-      }),
-    );
+    this.dispatchEvent(requestDeleteTaskEvent(this.task));
   }
 
   private handleCopyBranchName() {

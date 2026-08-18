@@ -12,6 +12,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { SessionListItem } from "../models/ws-client.js";
 import { formatRelativeDate } from "../models/format.js";
+import { newSessionEvent, selectSessionEvent } from "./events.js";
 import { conversationIcon } from "./icons.js";
 import "./popover-menu.js";
 
@@ -31,23 +32,11 @@ export class AssistantSession extends LitElement {
   activeSessionId = "";
 
   private handleSelectSession(sessionId: string) {
-    this.dispatchEvent(
-      new CustomEvent("select-session", {
-        bubbles: true,
-        composed: true,
-        detail: { projectId: this.projectId, sessionId },
-      })
-    );
+    this.dispatchEvent(selectSessionEvent(sessionId, this.projectId));
   }
 
   private handleNewSession() {
-    this.dispatchEvent(
-      new CustomEvent("new-session", {
-        bubbles: true,
-        composed: true,
-        detail: { projectId: this.projectId },
-      })
-    );
+    this.dispatchEvent(newSessionEvent(this.projectId));
   }
 
   private renderActivityDot(session: SessionListItem) {

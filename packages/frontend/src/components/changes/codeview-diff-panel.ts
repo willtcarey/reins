@@ -4,6 +4,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
 import { compareFilePaths } from "../../models/changes/diff-sort.js";
 import { getPierreWorkerPool } from "../../models/changes/pierre-worker-pool.js";
+import { activeFileChangeEvent } from "../events.js";
 import { spinnerIcon } from "../icons.js";
 import type { DiffCopyPathButton, DiffDownloadFileButton, DiffViewFileButton } from "./diff-file-action-buttons.js";
 import "./diff-file-action-buttons.js";
@@ -390,11 +391,7 @@ export class CodeViewDiffPanel extends LitElement {
   private setActiveFile(path: string | null) {
     if (path === this.activeFile) return;
     this.activeFile = path;
-    this.dispatchEvent(new CustomEvent<string | null>("active-file-change", {
-      detail: path,
-      bubbles: true,
-      composed: true,
-    }));
+    this.dispatchEvent(activeFileChangeEvent(path));
   }
 
   override render() {

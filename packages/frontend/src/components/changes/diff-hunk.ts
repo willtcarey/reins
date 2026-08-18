@@ -18,12 +18,8 @@ import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import type { DiffFile, DiffHunk as DiffHunkType, DiffLine } from "../../models/changes/types.js";
 import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
 import { EXPAND_STEP, escapeHtml, getHunkEndLine } from "../../models/changes/diff-utils.js";
+import { diffExpandEvent } from "../events.js";
 import { spinnerIcon } from "../icons.js";
-
-export interface ExpandDetail {
-  filePath: string;
-  hunkIndex: number;
-}
 
 @customElement("diff-hunk")
 export class DiffHunk extends LitElement {
@@ -141,11 +137,9 @@ export class DiffHunk extends LitElement {
   }
 
   private _fireExpand(direction: "up" | "down", hunkIdx: number) {
-    const eventName = direction === "up" ? "expand-up" : "expand-down";
-    this.dispatchEvent(new CustomEvent<ExpandDetail>(eventName, {
-      bubbles: true,
-      composed: true,
-      detail: { filePath: this.file.path, hunkIndex: hunkIdx },
+    this.dispatchEvent(diffExpandEvent(direction, {
+      filePath: this.file.path,
+      hunkIndex: hunkIdx,
     }));
   }
 

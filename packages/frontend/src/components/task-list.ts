@@ -11,6 +11,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { springCollapse } from "../directives/spring-collapse.js";
 import type { TaskListItem } from "../models/tasks.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
+import { deleteTaskEvent, newTaskEvent } from "./events.js";
 import { plusIcon } from "./icons.js";
 import "./delete-task-dialog.js";
 import "./task-list-item.js";
@@ -115,13 +116,7 @@ export class TaskList extends LitElement {
   }
 
   private handleNewTask() {
-    this.dispatchEvent(
-      new CustomEvent("new-task", {
-        bubbles: true,
-        composed: true,
-        detail: { projectId: this.projectId },
-      })
-    );
+    this.dispatchEvent(newTaskEvent(this.projectId));
   }
 
   private renderTask(task: TaskListItem) {
@@ -186,7 +181,7 @@ export class TaskList extends LitElement {
             this.disclosureState.expandedTaskId = null;
           }
           this.requestUpdate();
-          this.dispatchEvent(new CustomEvent("delete-task", { bubbles: true, composed: true, detail: { projectId: this.projectId, taskId } }));
+          this.dispatchEvent(deleteTaskEvent(this.projectId, taskId));
         }}
       ></delete-task-dialog>
     `;

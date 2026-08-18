@@ -80,7 +80,8 @@ describe("ReviewDiffItem", () => {
     const parsed = parseReviewItems(PATCH, "project-7-v1");
     const reviewItem = parsed.items[0]!;
     const item = new ReviewDiffItem();
-    item.item = { ...reviewItem, collapsed: true };
+    item.item = reviewItem;
+    item.collapsed = true;
     const toggledIds: string[] = [];
     item.addEventListener("toggle-collapse", (event) => {
       if (event instanceof CustomEvent) toggledIds.push(event.detail);
