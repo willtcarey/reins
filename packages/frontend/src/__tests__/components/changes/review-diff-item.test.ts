@@ -61,6 +61,18 @@ describe("ReviewDiffItem", () => {
     expect(output).toContain("<diffs-container data-pierre-file-diff>");
   });
 
+  test("reserves estimated geometry until the asynchronous diff is rendered", () => {
+    const parsed = parseReviewItems(PATCH, "project-7-v1");
+    const item = new ReviewDiffItem();
+    item.item = parsed.items[0] ?? null;
+    item.reservedHeight = 240;
+
+    expect(renderOutput(item)).toContain("min-height:240px");
+
+    Object.defineProperty(item, "diffRendered", { configurable: true, value: true });
+    expect(renderOutput(item)).not.toContain("min-height:240px");
+  });
+
   test("does not animate asynchronous diff rendering as a user expansion", () => {
     const parsed = parseReviewItems(PATCH, "project-7-v1");
     const item = new ReviewDiffItem();

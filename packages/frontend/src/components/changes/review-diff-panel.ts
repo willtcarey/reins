@@ -1,5 +1,6 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import { repeat } from "lit/directives/repeat.js";
 import {
   ReviewCollapseState,
   reviewContentFingerprint,
@@ -13,6 +14,7 @@ import {
 } from "../../models/changes/review-items.js";
 import {
   estimateReviewItemHeight,
+  reviewItemGap,
   ReviewVirtualCoordinator,
   type ReviewVirtualGeometryUpdate,
   type ReviewVirtualMeasurement,
@@ -380,7 +382,7 @@ export class ReviewDiffPanel extends LitElement {
     const branch = this._parsedSource?.branch ?? this.store.branch;
     const baseBranch = this._parsedSource?.baseBranch ?? this.store.fileData.data?.baseBranch;
     const virtualWindow = this._coordinator.window();
-    const itemById = new Map(items.map((item) => [item.id, item]));
+    const itemById = new Map(items.map((item, index) => [item.id, { item, index }]));
 
     return html`
       <div class="flex h-full min-h-0 flex-col" data-rendered-payload-version=${data ? this.store.patchData.data?.version ?? 0 : 0}>
@@ -409,23 +411,30 @@ export class ReviewDiffPanel extends LitElement {
               ? html`<div class="flex h-full items-center justify-center p-4 text-sm text-red-400">Unable to parse patch: ${data.parseError}</div>`
               : items.length > 0
                 ? html`<div data-review-virtual-window style=${`position:relative;height:${virtualWindow.totalHeight}px`}>
-                    ${virtualWindow.items.map((entry) => {
-                      const item = itemById.get(entry.id);
-                      return item ? html`
-                        <review-diff-item
-                          style=${`position:absolute;top:${entry.top}px;left:0;right:0`}
-                          data-review-item-id=${item.id}
-                          data-file-path=${item.path}
-                          ?data-review-first=${item === items[0]}
-                          .item=${item}
-                          .collapsed=${this.isItemCollapsed(item.id)}
-                          .projectId=${this.store?.projectId ?? null}
-                          .branch=${branch ?? null}
-                          @toggle-collapse=${this._handleToggleCollapse}
-                          @diff-rendered=${this._handleDiffRendered}
-                        ></review-diff-item>
-                      ` : nothing;
-                    })}
+                    ${repeat(
+                      virtualWindow.items,
+                      (entry) => entry.id,
+                      (entry) => {
+                        const record = itemById.get(entry.id);
+                        if (!record) return nothing;
+                        const { item, index } = record;
+                        return html`
+                          <review-diff-item
+                            style=${`position:absolute;top:${entry.top}px;left:0;right:0`}
+                            data-review-item-id=${item.id}
+                            data-file-path=${item.path}
+                            ?data-review-first=${item === items[0]}
+                            .item=${item}
+                            .collapsed=${this.isItemCollapsed(item.id)}
+                            .projectId=${this.store?.projectId ?? null}
+                            .branch=${branch ?? null}
+                            .reservedHeight=${Math.max(1, entry.height - reviewItemGap(index))}
+                            @toggle-collapse=${this._handleToggleCollapse}
+                            @diff-rendered=${this._handleDiffRendered}
+                          ></review-diff-item>
+                        `;
+                      },
+                    )}
                   </div>`
                 : html`<div class="flex h-full items-center justify-center p-4 text-sm text-zinc-500">No changes yet</div>`}
         </div>

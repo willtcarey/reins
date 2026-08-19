@@ -7,7 +7,7 @@ import {
 } from "../../../components/changes/review-diff-panel.js";
 import { DiffStore, type DiffPatchData } from "../../../models/stores/diff-store.js";
 import { ReviewDiffItem } from "../../../components/changes/review-diff-item.js";
-import { templateToString } from "../../helpers/lit-template.js";
+import { collectTemplateValues, templateToString } from "../../helpers/lit-template.js";
 
 const PATCH = `diff --git a/src/example.ts b/src/example.ts
 index 1111111..2222222 100644
@@ -26,6 +26,24 @@ function loadedPatch(patch = PATCH): DiffPatchData {
     branch: "task/example",
     baseBranch: "master",
   };
+}
+
+interface RepeatDirectiveResult {
+  _$litDirective$: unknown;
+  values: [
+    Array<{ id: string }>,
+    (item: { id: string }, index: number) => unknown,
+    (item: { id: string }, index: number) => unknown,
+  ];
+}
+
+function isRepeatDirectiveResult(value: unknown): value is RepeatDirectiveResult {
+  return typeof value === "object"
+    && value !== null
+    && "_$litDirective$" in value
+    && "values" in value
+    && Array.isArray(value.values)
+    && value.values.length === 3;
 }
 
 function manyFilePatch(count: number): string {
@@ -120,18 +138,38 @@ describe("ReviewDiffPanel", () => {
     store.dispose();
   });
 
+  test("keys mounted wrappers by stable review identity while the window moves", () => {
+    const store = new DiffStore();
+    store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(manyFilePatch(100)));
+    const panel = new ReviewDiffPanel();
+    panel.store = store;
+
+    const directive = collectTemplateValues(panel.render()).find(isRepeatDirectiveResult);
+    const repeatedItems = directive?.values[0];
+    const key = directive?.values[1];
+
+    expect(Array.isArray(repeatedItems)).toBe(true);
+    expect(typeof key).toBe("function");
+    if (!Array.isArray(repeatedItems) || typeof key !== "function") throw new Error("Expected keyed review items");
+    expect(key(repeatedItems[0], 0)).toBe(repeatedItems[0]?.id);
+    store.dispose();
+  });
+
   test("mounts only the initial viewport and overscan file wrappers for a many-file review", () => {
     const store = new DiffStore();
     store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(manyFilePatch(100)));
     const panel = new ReviewDiffPanel();
     panel.store = store;
 
-    const output = templateToString(panel.render());
-    const mountedWrappers = output.match(/data-review-item-id=/g) ?? [];
+    const renderedPanel = panel.render();
+    const directive = collectTemplateValues(renderedPanel).find(isRepeatDirectiveResult);
+    if (!directive) throw new Error("Expected virtual review items");
+    const [mountedItems, , renderItem] = directive.values;
+    const output = templateToString(mountedItems.map(renderItem));
 
-    expect(mountedWrappers.length).toBeGreaterThan(0);
-    expect(mountedWrappers.length).toBeLessThan(20);
-    expect(output).toContain("position:relative;height:");
+    expect(mountedItems.length).toBeGreaterThan(0);
+    expect(mountedItems.length).toBeLessThan(20);
+    expect(templateToString(renderedPanel)).toContain("position:relative;height:");
     expect(output).toContain("position:absolute;top:");
     expect(output).toContain("src/file-0.ts");
     expect(output).not.toContain("data-file-path=src/file-99.ts");

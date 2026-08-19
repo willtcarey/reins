@@ -70,6 +70,7 @@ export class ReviewDiffItem extends LitElement {
   @property({ type: Boolean }) collapsed = false;
   @property({ type: Number, attribute: false }) projectId: number | null = null;
   @property({ attribute: false }) branch: string | null = null;
+  @property({ type: Number, attribute: false }) reservedHeight = 0;
 
   private _fileDiff: FileDiff<undefined> | null = null;
   private _renderedItem: ReviewItem | null = null;
@@ -149,6 +150,7 @@ export class ReviewDiffItem extends LitElement {
 
   private _markDiffRendered() {
     this._diffRendered = true;
+    this.requestUpdate();
     this.dispatchEvent(diffRenderedEvent());
   }
 
@@ -161,8 +163,12 @@ export class ReviewDiffItem extends LitElement {
     const item = this.item;
     if (!item) return nothing;
 
+    const pendingHeight = !this.collapsed && !this.diffRendered && this.reservedHeight > 0
+      ? `min-height:${this.reservedHeight}px`
+      : nothing;
+
     return html`
-      <article class="border-b border-zinc-700/70 bg-zinc-950">
+      <article class="border-b border-zinc-700/70 bg-zinc-950" style=${pendingHeight}>
         <header class="reins-diff-header sticky top-0 z-10 flex min-w-0 items-center gap-2 px-3 py-2">
           <button
             type="button"
