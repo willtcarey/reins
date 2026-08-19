@@ -168,7 +168,8 @@ export class ReviewDiffPanel extends LitElement {
     const anchorId = reviewVirtualWindow(before, {
       scrollTop: container?.scrollTop ?? this._viewportScrollTop,
       viewportHeight: this._viewportHeight,
-      overscan: 0,
+      overscanBefore: 0,
+      overscanAfter: 0,
     }).activeId;
 
     this._collapseState.setCollapsed(scope, item, collapsed);
@@ -279,7 +280,8 @@ export class ReviewDiffPanel extends LitElement {
     const activeId = reviewVirtualWindow(this._reviewLayout(), {
       scrollTop: container.scrollTop + 24,
       viewportHeight: container.clientHeight,
-      overscan: 0,
+      overscanBefore: 0,
+      overscanAfter: 0,
     }).activeId;
     if (activeId) this.reportActiveItem(activeId);
     this._scheduleRender();
@@ -350,7 +352,6 @@ export class ReviewDiffPanel extends LitElement {
     const layout = this._reviewLayout();
     const container = this._scrollContainer();
     const anchor = container?.scrollTop ?? this._viewportScrollTop;
-    let scrollAdjustment = 0;
     let changed = false;
 
     for (const element of elements) {
@@ -364,23 +365,17 @@ export class ReviewDiffPanel extends LitElement {
       const height = element.getBoundingClientRect().height || element.offsetHeight;
       if (height <= 0) continue;
       const result = measureReviewVirtualLayout(layout, item.id, height, anchor);
-      if (!result.changed) continue;
+      if (!result.changed || result.scrollAdjustment !== 0) continue;
 
       const contentHeight = height - reviewItemGap(index);
       const measurement = this._measurements.get(item) ?? {};
       if (collapsed) measurement.collapsed = contentHeight;
       else measurement.expanded = contentHeight;
       this._measurements.set(item, measurement);
-      scrollAdjustment += result.scrollAdjustment;
       changed = true;
     }
 
-    if (!changed) return;
-    if (container && scrollAdjustment !== 0) {
-      container.scrollTop += scrollAdjustment;
-      this._viewportScrollTop = container.scrollTop;
-    }
-    this.requestUpdate();
+    if (changed) this.requestUpdate();
   }
 
   override render() {
@@ -398,7 +393,8 @@ export class ReviewDiffPanel extends LitElement {
     const virtualWindow = reviewVirtualWindow(layout, {
       scrollTop: this._viewportScrollTop,
       viewportHeight: this._viewportHeight,
-      overscan: REVIEW_ITEM_OVERSCAN,
+      overscanBefore: 0,
+      overscanAfter: REVIEW_ITEM_OVERSCAN,
     });
     const itemById = new Map(items.map((item) => [item.id, item]));
     const mountedItems = virtualWindow.items.flatMap((entry) => {

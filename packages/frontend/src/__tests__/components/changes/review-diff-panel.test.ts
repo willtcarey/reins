@@ -236,7 +236,7 @@ describe("ReviewDiffPanel", () => {
     store.dispose();
   });
 
-  test("does not correct geometry from an expanded item before its diff finishes rendering", () => {
+  test("does not let asynchronous measurements above the viewport reset user scrolling", () => {
     const resizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
     const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
     let notifyResize: ((entries: ResizeObserverEntry[]) => void) | undefined;
@@ -299,7 +299,7 @@ describe("ReviewDiffPanel", () => {
 
       Object.defineProperty(mounted, "diffRendered", { configurable: true, value: true });
       notifyResize?.([resizeEntry]);
-      expect(panel.scrollTop).toBe(244);
+      expect(panel.scrollTop).toBe(300);
     } finally {
       store.dispose();
       if (resizeObserverDescriptor) Object.defineProperty(globalThis, "ResizeObserver", resizeObserverDescriptor);

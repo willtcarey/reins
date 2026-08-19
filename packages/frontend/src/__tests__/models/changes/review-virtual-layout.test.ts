@@ -30,7 +30,7 @@ describe("review virtual layout", () => {
     expect(estimateReviewItemHeight(item, true, 1)).toBe(53);
   });
 
-  test("selects only viewport and overscan records while retaining total geometry", () => {
+  test("overscans after the viewport without mounting resizing work above it", () => {
     const layout = createReviewVirtualLayout(
       Array.from({ length: 100 }, (_, index) => ({ id: `file-${index}`, height: 100 })),
     );
@@ -38,17 +38,17 @@ describe("review virtual layout", () => {
     const window = reviewVirtualWindow(layout, {
       scrollTop: 2_000,
       viewportHeight: 300,
-      overscan: 100,
+      overscanBefore: 0,
+      overscanAfter: 100,
     });
 
     expect(window.items.map((item) => item.id)).toEqual([
-      "file-19",
       "file-20",
       "file-21",
       "file-22",
       "file-23",
     ]);
-    expect(window.paddingTop).toBe(1_900);
+    expect(window.paddingTop).toBe(2_000);
     expect(window.paddingBottom).toBe(7_600);
     expect(layout.totalHeight).toBe(10_000);
   });
@@ -64,7 +64,8 @@ describe("review virtual layout", () => {
     expect(reviewVirtualWindow(layout, {
       scrollTop: 300,
       viewportHeight: 100,
-      overscan: 0,
+      overscanBefore: 0,
+      overscanAfter: 0,
     }).activeId).toBe("target");
   });
 

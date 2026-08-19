@@ -63,7 +63,8 @@ export interface ReviewVirtualLayout {
 export interface ReviewVirtualViewport {
   readonly scrollTop: number;
   readonly viewportHeight: number;
-  readonly overscan: number;
+  readonly overscanBefore: number;
+  readonly overscanAfter: number;
 }
 
 export interface ReviewVirtualWindow {
@@ -99,8 +100,8 @@ export function reviewVirtualWindow(
   }
 
   const scrollTop = Math.max(0, viewport.scrollTop);
-  const start = Math.max(0, scrollTop - viewport.overscan);
-  const end = scrollTop + Math.max(1, viewport.viewportHeight) + viewport.overscan;
+  const start = Math.max(0, scrollTop - viewport.overscanBefore);
+  const end = scrollTop + Math.max(1, viewport.viewportHeight) + viewport.overscanAfter;
   const firstIndex = firstItemEndingAfter(layout.items, start);
   const lastIndex = firstItemStartingAtOrAfter(layout.items, end);
   const items = layout.items.slice(firstIndex, Math.max(firstIndex + 1, lastIndex));
