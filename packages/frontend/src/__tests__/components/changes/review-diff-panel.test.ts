@@ -6,6 +6,7 @@ import {
   ReviewScrollPosition,
 } from "../../../components/changes/review-diff-panel.js";
 import { DiffStore, type DiffPatchData } from "../../../models/stores/diff-store.js";
+import { ReviewDiffItem } from "../../../components/changes/review-diff-item.js";
 import { templateToString } from "../../helpers/lit-template.js";
 
 const PATCH = `diff --git a/src/example.ts b/src/example.ts
@@ -233,6 +234,79 @@ describe("ReviewDiffPanel", () => {
 
     expect(targetTop).toBeGreaterThan(0);
     store.dispose();
+  });
+
+  test("does not correct geometry from an expanded item before its diff finishes rendering", () => {
+    const resizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+    const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+    let notifyResize: ((entries: ResizeObserverEntry[]) => void) | undefined;
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        notifyResize = (entries) => callback(entries, this);
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      value: TestResizeObserver,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      configurable: true,
+      value: ReviewDiffItem,
+    });
+
+    const store = new DiffStore();
+    try {
+      store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
+      const panel = new ReviewDiffPanel();
+      panel.store = store;
+      panel.scrollTop = 300;
+      const itemId = panel.itemIdForPath("src/example.ts")!;
+      const mounted = new ReviewDiffItem();
+      Object.defineProperty(mounted, "dataset", { value: { reviewItemId: itemId } });
+      Object.defineProperty(mounted, "diffRendered", { configurable: true, value: false });
+      mounted.hasAttribute = (name: string) => name === "data-review-item-id";
+      const itemRect: DOMRect = {
+        bottom: 37,
+        height: 37,
+        left: 0,
+        right: 0,
+        top: 0,
+        width: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      };
+      mounted.getBoundingClientRect = () => itemRect;
+      const querySelector: typeof panel.querySelector = (selector: string) => (
+        selector === "[data-review-scroll]" ? panel : null
+      );
+      panel.querySelector = querySelector;
+      Reflect.set(panel, "querySelectorAll", undefined);
+      panel.updated(new Map());
+      const resizeEntry: ResizeObserverEntry = {
+        borderBoxSize: [],
+        contentBoxSize: [],
+        contentRect: itemRect,
+        devicePixelContentBoxSize: [],
+        target: mounted,
+      };
+
+      notifyResize?.([resizeEntry]);
+      expect(panel.scrollTop).toBe(300);
+
+      Object.defineProperty(mounted, "diffRendered", { configurable: true, value: true });
+      notifyResize?.([resizeEntry]);
+      expect(panel.scrollTop).toBe(244);
+    } finally {
+      store.dispose();
+      if (resizeObserverDescriptor) Object.defineProperty(globalThis, "ResizeObserver", resizeObserverDescriptor);
+      else Reflect.deleteProperty(globalThis, "ResizeObserver");
+      if (htmlElementDescriptor) Object.defineProperty(globalThis, "HTMLElement", htmlElementDescriptor);
+      else Reflect.deleteProperty(globalThis, "HTMLElement");
+    }
   });
 
   test("anchors the viewport when a file above it changes collapsed height", () => {

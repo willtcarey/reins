@@ -21,7 +21,7 @@ import {
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
 import { activeFileChangeEvent, activeItemChangeEvent } from "../events.js";
 import { branchIcon } from "../icons.js";
-import "./review-diff-item.js";
+import { ReviewDiffItem } from "./review-diff-item.js";
 
 const DEFAULT_VIEWPORT_HEIGHT = 800;
 const REVIEW_ITEM_OVERSCAN = 600;
@@ -357,14 +357,18 @@ export class ReviewDiffPanel extends LitElement {
       const id = element.dataset.reviewItemId;
       const index = this._parsedData?.items.findIndex((candidate) => candidate.id === id) ?? -1;
       const item = index >= 0 ? this._parsedData?.items[index] : undefined;
+      if (!item) continue;
+      const collapsed = this.isItemCollapsed(item.id);
+      if (!collapsed && element instanceof ReviewDiffItem && !element.diffRendered) continue;
+
       const height = element.getBoundingClientRect().height || element.offsetHeight;
-      if (!item || height <= 0) continue;
+      if (height <= 0) continue;
       const result = measureReviewVirtualLayout(layout, item.id, height, anchor);
       if (!result.changed) continue;
 
       const contentHeight = height - reviewItemGap(index);
       const measurement = this._measurements.get(item) ?? {};
-      if (this.isItemCollapsed(item.id)) measurement.collapsed = contentHeight;
+      if (collapsed) measurement.collapsed = contentHeight;
       else measurement.expanded = contentHeight;
       this._measurements.set(item, measurement);
       scrollAdjustment += result.scrollAdjustment;
