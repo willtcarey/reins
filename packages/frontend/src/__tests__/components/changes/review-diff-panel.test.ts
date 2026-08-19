@@ -250,7 +250,7 @@ describe("ReviewDiffPanel", () => {
 
     panel.setItemCollapsed(panel.itemIdForPath("src/file-0.ts")!, true);
 
-    expect(panel.scrollTop).toBe(140);
+    expect(panel.scrollTop).toBe(244);
     localStorage.clear();
     store.dispose();
   });

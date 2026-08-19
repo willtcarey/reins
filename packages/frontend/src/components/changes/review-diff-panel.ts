@@ -12,7 +12,9 @@ import {
 } from "../../models/changes/review-items.js";
 import {
   createReviewVirtualLayout,
+  estimateReviewItemHeight,
   measureReviewVirtualLayout,
+  reviewItemGap,
   reviewVirtualWindow,
   type ReviewVirtualLayout,
 } from "../../models/changes/review-virtual-layout.js";
@@ -23,8 +25,6 @@ import "./review-diff-item.js";
 
 const DEFAULT_VIEWPORT_HEIGHT = 800;
 const REVIEW_ITEM_OVERSCAN = 600;
-const REVIEW_HEADER_HEIGHT = 41;
-const REVIEW_LINE_HEIGHT = 20;
 
 type ScrollPositionContainer = Pick<HTMLElement, "scrollTop" | "clientHeight">;
 type MeasuredReviewItem = { expanded?: number; collapsed?: number };
@@ -246,22 +246,21 @@ export class ReviewDiffPanel extends LitElement {
     };
   }
 
-  private _estimatedHeight(item: ReviewItem): number {
-    if (this.isItemCollapsed(item.id)) return REVIEW_HEADER_HEIGHT;
-    const changedLines = item.additions + item.removals;
-    const structuralLines = Math.max(1, item.fileDiff.hunks.length * 6);
-    return REVIEW_HEADER_HEIGHT + (changedLines + structuralLines) * REVIEW_LINE_HEIGHT;
-  }
-
-  private _itemHeight(item: ReviewItem): number {
+  private _itemHeight(item: ReviewItem, index: number): number {
     const measurement = this._measurements.get(item);
-    const measured = this.isItemCollapsed(item.id) ? measurement?.collapsed : measurement?.expanded;
-    return measured ?? this._estimatedHeight(item);
+    const collapsed = this.isItemCollapsed(item.id);
+    const measured = collapsed ? measurement?.collapsed : measurement?.expanded;
+    return measured !== undefined
+      ? measured + reviewItemGap(index)
+      : estimateReviewItemHeight(item, collapsed, index);
   }
 
   private _reviewLayout(): ReviewVirtualLayout {
     return createReviewVirtualLayout(
-      (this._parsedData?.items ?? []).map((item) => ({ id: item.id, height: this._itemHeight(item) })),
+      (this._parsedData?.items ?? []).map((item, index) => ({
+        id: item.id,
+        height: this._itemHeight(item, index),
+      })),
     );
   }
 
@@ -356,15 +355,17 @@ export class ReviewDiffPanel extends LitElement {
 
     for (const element of elements) {
       const id = element.dataset.reviewItemId;
-      const item = this._parsedData?.items.find((candidate) => candidate.id === id);
+      const index = this._parsedData?.items.findIndex((candidate) => candidate.id === id) ?? -1;
+      const item = index >= 0 ? this._parsedData?.items[index] : undefined;
       const height = element.getBoundingClientRect().height || element.offsetHeight;
       if (!item || height <= 0) continue;
       const result = measureReviewVirtualLayout(layout, item.id, height, anchor);
       if (!result.changed) continue;
 
+      const contentHeight = height - reviewItemGap(index);
       const measurement = this._measurements.get(item) ?? {};
-      if (this.isItemCollapsed(item.id)) measurement.collapsed = height;
-      else measurement.expanded = height;
+      if (this.isItemCollapsed(item.id)) measurement.collapsed = contentHeight;
+      else measurement.expanded = contentHeight;
       this._measurements.set(item, measurement);
       scrollAdjustment += result.scrollAdjustment;
       changed = true;
@@ -432,6 +433,7 @@ export class ReviewDiffPanel extends LitElement {
                     <review-diff-item
                       data-review-item-id=${item.id}
                       data-file-path=${item.path}
+                      ?data-review-first=${item === items[0]}
                       .item=${item}
                       .collapsed=${this.isItemCollapsed(item.id)}
                       .projectId=${this.store?.projectId ?? null}
