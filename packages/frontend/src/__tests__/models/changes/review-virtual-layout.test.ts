@@ -1,9 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-  createReviewVirtualLayout,
   estimateReviewItemHeight,
-  measureReviewVirtualLayout,
-  reviewVirtualWindow,
+  ReviewVirtualCoordinator,
 } from "../../../models/changes/review-virtual-layout.js";
 import { parseReviewItems } from "../../../models/changes/review-items.js";
 
@@ -30,59 +28,82 @@ describe("review virtual layout", () => {
     expect(estimateReviewItemHeight(item, true, 1)).toBe(53);
   });
 
-  test("overscans after the viewport without mounting resizing work above it", () => {
-    const layout = createReviewVirtualLayout(
-      Array.from({ length: 100 }, (_, index) => ({ id: `file-${index}`, height: 100 })),
-    );
+  test("uses balanced bounded overscan while scrolling in either direction", () => {
+    const coordinator = new ReviewVirtualCoordinator(100);
+    coordinator.setItems(Array.from({ length: 100 }, (_, index) => ({
+      id: `file-${index}`,
+      measurementKey: `file-${index}:expanded`,
+      estimatedHeight: 100,
+    })));
 
-    const window = reviewVirtualWindow(layout, {
-      scrollTop: 2_000,
-      viewportHeight: 300,
-      overscanBefore: 0,
-      overscanAfter: 100,
-    });
-
-    expect(window.items.map((item) => item.id)).toEqual([
+    coordinator.setViewport(2_000, 300);
+    expect(coordinator.window().items.map((item) => item.id)).toEqual([
+      "file-19",
       "file-20",
       "file-21",
       "file-22",
       "file-23",
     ]);
-    expect(window.paddingTop).toBe(2_000);
-    expect(window.paddingBottom).toBe(7_600);
-    expect(layout.totalHeight).toBe(10_000);
+
+    coordinator.setViewport(1_800, 300);
+    expect(coordinator.window().items.map((item) => item.id)).toEqual([
+      "file-17",
+      "file-18",
+      "file-19",
+      "file-20",
+      "file-21",
+    ]);
+    expect(coordinator.window().items.length).toBeLessThanOrEqual(5);
   });
 
-  test("locates initially unmounted records and derives the active record from scroll geometry", () => {
-    const layout = createReviewVirtualLayout([
-      { id: "first", height: 80 },
-      { id: "target", height: 240 },
-      { id: "last", height: 120 },
+  test("preserves an item and viewport-offset anchor when geometry above changes", () => {
+    const coordinator = new ReviewVirtualCoordinator(0);
+    coordinator.setItems([
+      { id: "above", measurementKey: "above:expanded", estimatedHeight: 100 },
+      { id: "visible", measurementKey: "visible:expanded", estimatedHeight: 100 },
+      { id: "below", measurementKey: "below:expanded", estimatedHeight: 100 },
+    ]);
+    coordinator.setViewport(150, 100);
+
+    const update = coordinator.measure([
+      { id: "above", measurementKey: "above:expanded", height: 160, stable: true },
     ]);
 
-    expect(layout.byId.get("target")?.top).toBe(80);
-    expect(reviewVirtualWindow(layout, {
-      scrollTop: 300,
-      viewportHeight: 100,
-      overscanBefore: 0,
-      overscanAfter: 0,
-    }).activeId).toBe("target");
+    expect(update).toEqual({ accepted: 1, scrollTop: 210, scrollAdjustment: 60 });
+    expect(coordinator.anchor()).toEqual({ id: "visible", viewportOffset: -50 });
+    expect(coordinator.window().activeId).toBe("visible");
   });
 
-  test("compensates scroll only when measured height changes above the viewport anchor", () => {
-    const layout = createReviewVirtualLayout([
-      { id: "above", height: 100 },
-      { id: "visible", height: 100 },
-      { id: "below", height: 100 },
+  test("commits a batch of stable measurements with one semantic correction", () => {
+    const coordinator = new ReviewVirtualCoordinator(0);
+    coordinator.setItems([
+      { id: "one", measurementKey: "one:expanded", estimatedHeight: 100 },
+      { id: "two", measurementKey: "two:expanded", estimatedHeight: 100 },
+      { id: "anchor", measurementKey: "anchor:expanded", estimatedHeight: 100 },
+    ]);
+    coordinator.setViewport(220, 80);
+
+    const update = coordinator.measure([
+      { id: "one", measurementKey: "one:expanded", height: 120, stable: true },
+      { id: "two", measurementKey: "two:expanded", height: 130, stable: true },
+      { id: "anchor", measurementKey: "anchor:expanded", height: 20, stable: false },
     ]);
 
-    expect(measureReviewVirtualLayout(layout, "above", 160, 150)).toEqual({
-      changed: true,
-      scrollAdjustment: 60,
-    });
-    expect(measureReviewVirtualLayout(layout, "visible", 160, 150)).toEqual({
-      changed: true,
-      scrollAdjustment: 0,
-    });
+    expect(update).toEqual({ accepted: 2, scrollTop: 270, scrollAdjustment: 50 });
+    expect(coordinator.layoutVersion).toBe(2);
+    expect(coordinator.item("anchor")?.height).toBe(100);
+  });
+
+  test("resolves navigation for an initially unmounted item", () => {
+    const coordinator = new ReviewVirtualCoordinator(100);
+    coordinator.setItems(Array.from({ length: 100 }, (_, index) => ({
+      id: `file-${index}`,
+      measurementKey: `file-${index}:expanded`,
+      estimatedHeight: 100,
+    })));
+    coordinator.setViewport(0, 300);
+
+    expect(coordinator.navigationTop("file-99")).toBe(9_700);
+    expect(coordinator.window().items.some((item) => item.id === "file-99")).toBe(false);
   });
 });

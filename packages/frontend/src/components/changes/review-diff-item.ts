@@ -80,6 +80,15 @@ export class ReviewDiffItem extends LitElement {
     return this._diffRendered && this._renderedItem?.fileDiff === this.item?.fileDiff;
   }
 
+  /** Only settled states may replace the coordinator's persistent estimate. */
+  public get measurementStable(): boolean {
+    const transition = typeof this.querySelector === "function"
+      ? this.querySelector<HTMLElement>("[data-spring-collapse]")
+      : null;
+    if (this.collapsed) return transition === null;
+    return this.diffRendered && !transition?.style.height;
+  }
+
   override updated() {
     this._syncFileDiff();
   }

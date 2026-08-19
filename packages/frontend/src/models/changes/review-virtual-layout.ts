@@ -45,96 +45,179 @@ function unifiedMetadataRows(hunk: ReviewHunk): number {
     + (content.additions > 0 && hunk.noEOFCRAdditions ? 1 : 0);
 }
 
-export interface ReviewVirtualLayoutInput {
+export interface ReviewVirtualItemInput {
   readonly id: string;
+  /** Changes whenever a previous measurement is no longer valid. */
+  readonly measurementKey: string;
+  readonly estimatedHeight: number;
+}
+
+export interface ReviewVirtualItem extends ReviewVirtualItemInput {
+  readonly top: number;
   readonly height: number;
 }
 
-export interface ReviewVirtualLayoutItem extends ReviewVirtualLayoutInput {
-  readonly top: number;
-}
-
-export interface ReviewVirtualLayout {
-  readonly items: readonly ReviewVirtualLayoutItem[];
-  readonly byId: ReadonlyMap<string, ReviewVirtualLayoutItem>;
-  readonly totalHeight: number;
-}
-
-export interface ReviewVirtualViewport {
-  readonly scrollTop: number;
-  readonly viewportHeight: number;
-  readonly overscanBefore: number;
-  readonly overscanAfter: number;
+export interface ReviewVirtualAnchor {
+  readonly id: string;
+  readonly viewportOffset: number;
 }
 
 export interface ReviewVirtualWindow {
-  readonly items: readonly ReviewVirtualLayoutItem[];
+  readonly items: readonly ReviewVirtualItem[];
   readonly activeId: string | null;
-  readonly paddingTop: number;
-  readonly paddingBottom: number;
+  readonly totalHeight: number;
 }
 
-export function createReviewVirtualLayout(
-  inputs: readonly ReviewVirtualLayoutInput[],
-): ReviewVirtualLayout {
-  let top = 0;
-  const items = inputs.map((input) => {
-    const item = { ...input, height: Math.max(1, input.height), top };
-    top += item.height;
-    return item;
-  });
-
-  return {
-    items,
-    byId: new Map(items.map((item) => [item.id, item])),
-    totalHeight: top,
-  };
+export interface ReviewVirtualMeasurement {
+  readonly id: string;
+  readonly measurementKey: string;
+  readonly height: number;
+  readonly stable: boolean;
 }
 
-export function reviewVirtualWindow(
-  layout: ReviewVirtualLayout,
-  viewport: ReviewVirtualViewport,
-): ReviewVirtualWindow {
-  if (layout.items.length === 0) {
-    return { items: [], activeId: null, paddingTop: 0, paddingBottom: 0 };
+export interface ReviewVirtualGeometryUpdate {
+  readonly accepted: number;
+  readonly scrollTop: number;
+  readonly scrollAdjustment: number;
+}
+
+/**
+ * Persistent top-level review geometry and anchoring state.
+ *
+ * Lit owns mounted nodes, while this coordinator retains every item's last
+ * stable measurement. Geometry changes are committed as batches against one
+ * semantic item + viewport-offset anchor, so callers apply at most one scroll
+ * correction before rendering the new absolute positions.
+ */
+export class ReviewVirtualCoordinator {
+  private readonly measurements = new Map<string, number>();
+  private inputs: readonly ReviewVirtualItemInput[] = [];
+  private items: readonly ReviewVirtualItem[] = [];
+  private byId = new Map<string, ReviewVirtualItem>();
+  private scrollTop = 0;
+  private viewportHeight = 1;
+  private totalHeight = 0;
+  public layoutVersion = 0;
+
+  constructor(private readonly overscan: number) {}
+
+  public setItems(inputs: readonly ReviewVirtualItemInput[]): ReviewVirtualGeometryUpdate {
+    const anchor = this.anchor();
+    this.inputs = inputs.map((input) => ({
+      ...input,
+      estimatedHeight: Math.max(1, input.estimatedHeight),
+    }));
+    const validMeasurementKeys = new Set(this.inputs.flatMap((input) => [
+      input.measurementKey,
+      alternateRenderStateKey(input.measurementKey),
+    ]));
+    for (const key of this.measurements.keys()) {
+      if (!validMeasurementKeys.has(key)) this.measurements.delete(key);
+    }
+    this.rebuild();
+    return this.resolveGeometryUpdate(anchor, 0);
   }
 
-  const scrollTop = Math.max(0, viewport.scrollTop);
-  const start = Math.max(0, scrollTop - viewport.overscanBefore);
-  const end = scrollTop + Math.max(1, viewport.viewportHeight) + viewport.overscanAfter;
-  const firstIndex = firstItemEndingAfter(layout.items, start);
-  const lastIndex = firstItemStartingAtOrAfter(layout.items, end);
-  const items = layout.items.slice(firstIndex, Math.max(firstIndex + 1, lastIndex));
-  const first = items[0];
-  const last = items.at(-1);
-  const active = layout.items[firstItemEndingAfter(layout.items, scrollTop)];
+  public setViewport(scrollTop: number, viewportHeight: number) {
+    this.viewportHeight = Math.max(1, viewportHeight);
+    this.scrollTop = this.clampScrollTop(scrollTop);
+  }
 
-  return {
-    items,
-    activeId: active?.id ?? layout.items.at(-1)?.id ?? null,
-    paddingTop: first?.top ?? 0,
-    paddingBottom: last ? Math.max(0, layout.totalHeight - last.top - last.height) : 0,
-  };
+  public measure(measurements: readonly ReviewVirtualMeasurement[]): ReviewVirtualGeometryUpdate {
+    const anchor = this.anchor();
+    let accepted = 0;
+
+    for (const measurement of measurements) {
+      const item = this.byId.get(measurement.id);
+      if (
+        !measurement.stable
+        || !item
+        || item.measurementKey !== measurement.measurementKey
+        || measurement.height <= 0
+      ) continue;
+      const height = Math.max(1, measurement.height);
+      if (this.measurements.get(measurement.measurementKey) === height) continue;
+      this.measurements.set(measurement.measurementKey, height);
+      accepted += 1;
+    }
+
+    if (accepted === 0) return { accepted: 0, scrollTop: this.scrollTop, scrollAdjustment: 0 };
+    this.rebuild();
+    return this.resolveGeometryUpdate(anchor, accepted);
+  }
+
+  public window(): ReviewVirtualWindow {
+    if (this.items.length === 0) return { items: [], activeId: null, totalHeight: 0 };
+
+    const start = Math.max(0, this.scrollTop - this.overscan);
+    const end = this.scrollTop + this.viewportHeight + this.overscan;
+    const first = firstItemEndingAfter(this.items, start);
+    const last = firstItemStartingAtOrAfter(this.items, end);
+    const active = this.items[firstItemEndingAfter(this.items, this.scrollTop)];
+
+    return {
+      items: this.items.slice(first, Math.max(first + 1, last)),
+      activeId: active?.id ?? this.items.at(-1)?.id ?? null,
+      totalHeight: this.totalHeight,
+    };
+  }
+
+  public anchor(): ReviewVirtualAnchor | null {
+    if (this.items.length === 0) return null;
+    const item = this.items[firstItemEndingAfter(this.items, this.scrollTop)];
+    return item ? { id: item.id, viewportOffset: item.top - this.scrollTop } : null;
+  }
+
+  public item(id: string): ReviewVirtualItem | undefined {
+    return this.byId.get(id);
+  }
+
+  public navigationTop(id: string): number | null {
+    const item = this.byId.get(id);
+    return item ? this.clampScrollTop(item.top) : null;
+  }
+
+  private rebuild() {
+    let top = 0;
+    this.items = this.inputs.map((input) => {
+      const height = this.measurements.get(input.measurementKey) ?? input.estimatedHeight;
+      const item = { ...input, top, height };
+      top += height;
+      return item;
+    });
+    this.byId = new Map(this.items.map((item) => [item.id, item]));
+    this.totalHeight = top;
+    this.layoutVersion += 1;
+  }
+
+  private resolveGeometryUpdate(
+    anchor: ReviewVirtualAnchor | null,
+    accepted: number,
+  ): ReviewVirtualGeometryUpdate {
+    const previous = this.scrollTop;
+    const anchoredItem = anchor ? this.byId.get(anchor.id) : undefined;
+    this.scrollTop = anchoredItem
+      ? this.clampScrollTop(anchoredItem.top - anchor!.viewportOffset)
+      : this.clampScrollTop(this.scrollTop);
+    return {
+      accepted,
+      scrollTop: this.scrollTop,
+      scrollAdjustment: this.scrollTop - previous,
+    };
+  }
+
+  private clampScrollTop(value: number): number {
+    return Math.max(0, Math.min(value, Math.max(0, this.totalHeight - this.viewportHeight)));
+  }
 }
 
-export function measureReviewVirtualLayout(
-  layout: ReviewVirtualLayout,
-  id: string,
-  measuredHeight: number,
-  anchorScrollTop: number,
-): { changed: boolean; scrollAdjustment: number } {
-  const item = layout.byId.get(id);
-  if (!item) return { changed: false, scrollAdjustment: 0 };
-
-  const height = Math.max(1, measuredHeight);
-  const delta = height - item.height;
-  return {
-    changed: delta !== 0,
-    scrollAdjustment: item.top + item.height <= anchorScrollTop ? delta : 0,
-  };
+function alternateRenderStateKey(key: string): string {
+  if (key.endsWith(":expanded")) return `${key.slice(0, -":expanded".length)}:collapsed`;
+  if (key.endsWith(":collapsed")) return `${key.slice(0, -":collapsed".length)}:expanded`;
+  return key;
 }
 
-function firstItemEndingAfter(items: readonly ReviewVirtualLayoutItem[], offset: number): number {
+function firstItemEndingAfter(items: readonly ReviewVirtualItem[], offset: number): number {
   let low = 0;
   let high = items.length;
   while (low < high) {
@@ -146,7 +229,7 @@ function firstItemEndingAfter(items: readonly ReviewVirtualLayoutItem[], offset:
   return Math.min(low, items.length - 1);
 }
 
-function firstItemStartingAtOrAfter(items: readonly ReviewVirtualLayoutItem[], offset: number): number {
+function firstItemStartingAtOrAfter(items: readonly ReviewVirtualItem[], offset: number): number {
   let low = 0;
   let high = items.length;
   while (low < high) {

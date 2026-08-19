@@ -131,6 +131,8 @@ describe("ReviewDiffPanel", () => {
 
     expect(mountedWrappers.length).toBeGreaterThan(0);
     expect(mountedWrappers.length).toBeLessThan(20);
+    expect(output).toContain("position:relative;height:");
+    expect(output).toContain("position:absolute;top:");
     expect(output).toContain("src/file-0.ts");
     expect(output).not.toContain("data-file-path=src/file-99.ts");
     store.dispose();
@@ -236,7 +238,7 @@ describe("ReviewDiffPanel", () => {
     store.dispose();
   });
 
-  test("does not let asynchronous measurements above the viewport reset user scrolling", () => {
+  test("ignores a transient worker render, then reconciles its stable measurement", () => {
     const resizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
     const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
     let notifyResize: ((entries: ResizeObserverEntry[]) => void) | undefined;
@@ -259,14 +261,15 @@ describe("ReviewDiffPanel", () => {
 
     const store = new DiffStore();
     try {
-      store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
+      store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(manyFilePatch(10)));
       const panel = new ReviewDiffPanel();
       panel.store = store;
       panel.scrollTop = 300;
-      const itemId = panel.itemIdForPath("src/example.ts")!;
+      Object.defineProperty(panel, "clientHeight", { configurable: true, value: 100 });
+      const itemId = panel.itemIdForPath("src/file-0.ts")!;
       const mounted = new ReviewDiffItem();
       Object.defineProperty(mounted, "dataset", { value: { reviewItemId: itemId } });
-      Object.defineProperty(mounted, "diffRendered", { configurable: true, value: false });
+      Object.defineProperty(mounted, "measurementStable", { configurable: true, value: false });
       mounted.hasAttribute = (name: string) => name === "data-review-item-id";
       const itemRect: DOMRect = {
         bottom: 37,
@@ -295,11 +298,14 @@ describe("ReviewDiffPanel", () => {
       };
 
       notifyResize?.([resizeEntry]);
+      panel.updated(new Map());
       expect(panel.scrollTop).toBe(300);
 
-      Object.defineProperty(mounted, "diffRendered", { configurable: true, value: true });
+      Object.defineProperty(mounted, "measurementStable", { configurable: true, value: true });
       notifyResize?.([resizeEntry]);
       expect(panel.scrollTop).toBe(300);
+      panel.updated(new Map());
+      expect(panel.scrollTop).toBe(244);
     } finally {
       store.dispose();
       if (resizeObserverDescriptor) Object.defineProperty(globalThis, "ResizeObserver", resizeObserverDescriptor);
@@ -316,15 +322,18 @@ describe("ReviewDiffPanel", () => {
     store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(manyFilePatch(3)));
     const panel = new ReviewDiffPanel();
     panel.store = store;
-    panel.scrollTop = 300;
+    panel.scrollTop = 150;
     const querySelector: typeof panel.querySelector = (selector: string) => (
       selector === "[data-review-scroll]" ? panel : null
     );
     panel.querySelector = querySelector;
 
+    Object.defineProperty(panel, "clientHeight", { configurable: true, value: 100 });
     panel.setItemCollapsed(panel.itemIdForPath("src/file-0.ts")!, true);
+    expect(panel.scrollTop).toBe(150);
+    panel.updated(new Map());
 
-    expect(panel.scrollTop).toBe(244);
+    expect(panel.scrollTop).toBe(94);
     localStorage.clear();
     store.dispose();
   });

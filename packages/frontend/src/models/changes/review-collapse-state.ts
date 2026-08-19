@@ -21,7 +21,7 @@ export class ReviewCollapseState {
     const key = storageKey(scope, item.id);
     try {
       const reviewedHash = this.storage.getItem(key);
-      const matches = reviewedHash === hashReviewContent(item.contentKey);
+      const matches = reviewedHash === reviewContentFingerprint(item.contentKey);
       if (reviewedHash && !matches) this.storage.removeItem(key);
       return matches;
     } catch {
@@ -33,7 +33,7 @@ export class ReviewCollapseState {
   setCollapsed(scope: ReviewCollapseScope, item: ReviewItem, collapsed: boolean): void {
     const key = storageKey(scope, item.id);
     try {
-      if (collapsed) this.storage.setItem(key, hashReviewContent(item.contentKey));
+      if (collapsed) this.storage.setItem(key, reviewContentFingerprint(item.contentKey));
       else this.storage.removeItem(key);
     } catch { /* localStorage may be disabled or full */ }
   }
@@ -49,7 +49,7 @@ function storageKey(scope: ReviewCollapseScope, itemId: string): string {
 }
 
 /** Fast deterministic fingerprint; the diff content is not security-sensitive input. */
-function hashReviewContent(content: string): string {
+export function reviewContentFingerprint(content: string): string {
   let first = 0x811c9dc5;
   let second = 0x9e3779b9;
   for (let index = 0; index < content.length; index += 1) {

@@ -2,6 +2,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import {
   ReviewCollapseState,
+  reviewContentFingerprint,
   type ReviewCollapseScope,
 } from "../../models/changes/review-collapse-state.js";
 import {
@@ -11,12 +12,10 @@ import {
   type ReviewItemsResult,
 } from "../../models/changes/review-items.js";
 import {
-  createReviewVirtualLayout,
   estimateReviewItemHeight,
-  measureReviewVirtualLayout,
-  reviewItemGap,
-  reviewVirtualWindow,
-  type ReviewVirtualLayout,
+  ReviewVirtualCoordinator,
+  type ReviewVirtualGeometryUpdate,
+  type ReviewVirtualMeasurement,
 } from "../../models/changes/review-virtual-layout.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
 import { activeFileChangeEvent, activeItemChangeEvent } from "../events.js";
@@ -27,7 +26,6 @@ const DEFAULT_VIEWPORT_HEIGHT = 800;
 const REVIEW_ITEM_OVERSCAN = 600;
 
 type ScrollPositionContainer = Pick<HTMLElement, "scrollTop" | "clientHeight">;
-type MeasuredReviewItem = { expanded?: number; collapsed?: number };
 
 export class ReviewScrollPosition {
   private value: number | null = null;
@@ -48,10 +46,7 @@ export class ReviewScrollPosition {
   }
 }
 
-/**
- * Reins-owned review renderer. Review records and interaction state stay in
- * this panel while render() derives a bounded DOM window from their geometry.
- */
+/** Reins-owned review renderer backed by one persistent top-level coordinator. */
 @customElement("review-diff-panel")
 export class ReviewDiffPanel extends LitElement {
   override createRenderRoot() {
@@ -72,7 +67,8 @@ export class ReviewDiffPanel extends LitElement {
 
     this._store = value;
     this._scrollPosition.reset();
-    this._viewportScrollTop = 0;
+    this._coordinator = new ReviewVirtualCoordinator(REVIEW_ITEM_OVERSCAN);
+    this._coordinator.setViewport(0, this._viewportHeight);
     this._resetParsedData();
     this._reconcilePatchData();
     this.requestUpdate("store", oldValue);
@@ -86,11 +82,12 @@ export class ReviewDiffPanel extends LitElement {
   private _parsedData: ReviewItemsResult | null = null;
   private _scrollPosition = new ReviewScrollPosition();
   private _collapseState = new ReviewCollapseState();
-  private _measurements = new WeakMap<ReviewItem, MeasuredReviewItem>();
+  private _coordinator = new ReviewVirtualCoordinator(REVIEW_ITEM_OVERSCAN);
   private _resizeObserver: ResizeObserver | null = null;
-  private _viewportScrollTop = 0;
   private _viewportHeight = DEFAULT_VIEWPORT_HEIGHT;
   private _renderFrame: number | null = null;
+  private _pendingGeometryScrollTop: number | null = null;
+  private _navigationItemId: string | null = null;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -105,6 +102,7 @@ export class ReviewDiffPanel extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>) {
+    this._applyPendingGeometryScroll();
     this._observeGeometry();
     const data = this._parsedData;
     if (!this._activeItemId && data?.items[0]) this.reportActiveItem(data.items[0].id);
@@ -112,7 +110,7 @@ export class ReviewDiffPanel extends LitElement {
     if (changed.has("visible") && this.visible) {
       const container = this._scrollContainer();
       if (container && this._scrollPosition.restore(container, true)) {
-        this._viewportScrollTop = container.scrollTop;
+        this._coordinator.setViewport(container.scrollTop, container.clientHeight || this._viewportHeight);
         this.requestUpdate();
       }
     }
@@ -143,11 +141,12 @@ export class ReviewDiffPanel extends LitElement {
     if (!itemId) return;
     if (this.isItemCollapsed(itemId)) this.setItemCollapsed(itemId, false);
 
-    const target = this._reviewLayout().byId.get(itemId);
+    const top = this._coordinator.navigationTop(itemId);
     const container = this._scrollContainer();
-    if (!target || !container) return;
+    if (top === null || !container) return;
 
-    container.scrollTo({ top: target.top, behavior: "smooth" });
+    this._navigationItemId = itemId;
+    container.scrollTo({ top, behavior: "smooth" });
     this._pendingPath = null;
     this.reportActiveItem(itemId);
   }
@@ -163,26 +162,9 @@ export class ReviewDiffPanel extends LitElement {
     const scope = this._collapseScope();
     if (!item || !scope || this.isItemCollapsed(id) === collapsed) return;
 
-    const container = this._scrollContainer();
-    const before = this._reviewLayout();
-    const anchorId = reviewVirtualWindow(before, {
-      scrollTop: container?.scrollTop ?? this._viewportScrollTop,
-      viewportHeight: this._viewportHeight,
-      overscanBefore: 0,
-      overscanAfter: 0,
-    }).activeId;
-
+    this._syncViewportFromContainer();
     this._collapseState.setCollapsed(scope, item, collapsed);
-
-    if (container && anchorId) {
-      const after = this._reviewLayout();
-      const beforeTop = before.byId.get(anchorId)?.top;
-      const afterTop = after.byId.get(anchorId)?.top;
-      if (beforeTop !== undefined && afterTop !== undefined) {
-        container.scrollTop += afterTop - beforeTop;
-        this._viewportScrollTop = container.scrollTop;
-      }
-    }
+    this._queueGeometryUpdate(this._syncCoordinatorItems(), true);
     this.requestUpdate();
   }
 
@@ -190,7 +172,6 @@ export class ReviewDiffPanel extends LitElement {
     const item = this._parsedData?.items.find((candidate) => candidate.id === id);
     if (!item || this._activeItemId === id) return;
     this._activeItemId = id;
-
     this.dispatchEvent(activeItemChangeEvent(id));
     this.dispatchEvent(activeFileChangeEvent(item.path));
   }
@@ -216,53 +197,49 @@ export class ReviewDiffPanel extends LitElement {
     this._parsedSource = null;
     this._parsedData = null;
     this._activeItemId = null;
-    this._measurements = new WeakMap();
+    this._navigationItemId = null;
   }
 
   private _reconcilePatchData() {
     const source = this.store?.patchData.data ?? null;
     if (!source) {
-      if (this._parsedSource || this._parsedData) this._resetParsedData();
+      if (this._parsedSource || this._parsedData) {
+        this._resetParsedData();
+        this._queueGeometryUpdate(this._syncCoordinatorItems(), true);
+      }
       return;
     }
     if (source === this._parsedSource) return;
 
     this._parsedSource = source;
-    const previousData = this._parsedData;
     this._parsedData = reconcileReviewItems(
-      previousData,
+      this._parsedData,
       parseReviewItems(source.patch, source.cacheKeyPrefix),
     );
     if (this._activeItemId && !this._parsedData.items.some((item) => item.id === this._activeItemId)) {
       this._activeItemId = null;
     }
+    this._queueGeometryUpdate(this._syncCoordinatorItems(), true);
   }
 
   private _collapseScope(): ReviewCollapseScope | null {
     const store = this.store;
     if (store?.projectId == null) return null;
-    return {
-      projectId: store.projectId,
-      branch: this._parsedSource?.branch ?? store.branch,
-    };
+    return { projectId: store.projectId, branch: this._parsedSource?.branch ?? store.branch };
   }
 
-  private _itemHeight(item: ReviewItem, index: number): number {
-    const measurement = this._measurements.get(item);
-    const collapsed = this.isItemCollapsed(item.id);
-    const measured = collapsed ? measurement?.collapsed : measurement?.expanded;
-    return measured !== undefined
-      ? measured + reviewItemGap(index)
-      : estimateReviewItemHeight(item, collapsed, index);
+  private _measurementKey(item: ReviewItem): string {
+    const scope = this._collapseScope();
+    const state = this.isItemCollapsed(item.id) ? "collapsed" : "expanded";
+    return `${scope?.projectId ?? "none"}:${scope?.branch ?? "none"}:${item.id}:${reviewContentFingerprint(item.contentKey)}:${state}`;
   }
 
-  private _reviewLayout(): ReviewVirtualLayout {
-    return createReviewVirtualLayout(
-      (this._parsedData?.items ?? []).map((item, index) => ({
-        id: item.id,
-        height: this._itemHeight(item, index),
-      })),
-    );
+  private _syncCoordinatorItems(): ReviewVirtualGeometryUpdate {
+    return this._coordinator.setItems((this._parsedData?.items ?? []).map((item, index) => ({
+      id: item.id,
+      measurementKey: this._measurementKey(item),
+      estimatedHeight: estimateReviewItemHeight(item, this.isItemCollapsed(item.id), index),
+    })));
   }
 
   private _scrollContainer(): HTMLElement | null {
@@ -270,21 +247,35 @@ export class ReviewDiffPanel extends LitElement {
     return this.querySelector<HTMLElement>("[data-review-scroll]");
   }
 
+  private _syncViewportFromContainer() {
+    const container = this._scrollContainer();
+    if (!container) return;
+    this._coordinator.setViewport(container.scrollTop, container.clientHeight || this._viewportHeight);
+  }
+
   private _handleScroll(event: Event) {
     if (!(event.currentTarget instanceof HTMLElement)) return;
     const container = event.currentTarget;
-    this._viewportScrollTop = container.scrollTop;
     if (container.clientHeight > 0) this._viewportHeight = container.clientHeight;
+    this._coordinator.setViewport(container.scrollTop, this._viewportHeight);
     this._scrollPosition.remember(container, this.visible);
-
-    const activeId = reviewVirtualWindow(this._reviewLayout(), {
-      scrollTop: container.scrollTop + 24,
-      viewportHeight: container.clientHeight,
-      overscanBefore: 0,
-      overscanAfter: 0,
-    }).activeId;
+    const activeId = this._coordinator.window().activeId;
     if (activeId) this.reportActiveItem(activeId);
+    if (this._navigationItemId === activeId) this._navigationItemId = null;
     this._scheduleRender();
+  }
+
+  private _cancelProgrammaticScroll(event: Event) {
+    if (!this._navigationItemId || !this._isScrollIntent(event)) return;
+    this._navigationItemId = null;
+    const container = this._scrollContainer();
+    if (container) container.scrollTo({ top: container.scrollTop, behavior: "auto" });
+  }
+
+  private _isScrollIntent(event: Event): boolean {
+    if (event.type !== "keydown") return true;
+    return event instanceof KeyboardEvent
+      && ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key);
   }
 
   private _scheduleRender() {
@@ -300,8 +291,7 @@ export class ReviewDiffPanel extends LitElement {
   }
 
   private _handleToggleCollapse(event: CustomEvent<string>) {
-    const id = event.detail;
-    this.setItemCollapsed(id, !this.isItemCollapsed(id));
+    this.setItemCollapsed(event.detail, !this.isItemCollapsed(event.detail));
   }
 
   private _handleDiffRendered(event: Event) {
@@ -312,11 +302,8 @@ export class ReviewDiffPanel extends LitElement {
   private _syncPendingScroll() {
     if (this.store?.patchData.loading || !this._pendingPath || !this._scrollContainer()) return;
     const path = this._pendingPath;
-    if (typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(() => this.scrollToFile(path));
-    } else {
-      setTimeout(() => this.scrollToFile(path), 0);
-    }
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => this.scrollToFile(path));
+    else setTimeout(() => this.scrollToFile(path), 0);
   }
 
   private _observeGeometry() {
@@ -326,14 +313,13 @@ export class ReviewDiffPanel extends LitElement {
       for (const entry of entries) {
         if (!(entry.target instanceof HTMLElement)) continue;
         if (entry.target.hasAttribute("data-review-scroll")) {
-          const height = entry.contentRect.height;
-          if (height > 0 && height !== this._viewportHeight) {
-            this._viewportHeight = height;
+          if (entry.contentRect.height > 0 && entry.contentRect.height !== this._viewportHeight) {
+            this._viewportHeight = entry.contentRect.height;
+            const container = this._scrollContainer();
+            this._coordinator.setViewport(container?.scrollTop ?? 0, this._viewportHeight);
             this.requestUpdate();
           }
-        } else if (entry.target.hasAttribute("data-review-item-id")) {
-          measuredItems.push(entry.target);
-        }
+        } else if (entry.target.hasAttribute("data-review-item-id")) measuredItems.push(entry.target);
       }
       this._recordMeasurements(measuredItems);
     });
@@ -342,40 +328,44 @@ export class ReviewDiffPanel extends LitElement {
     const container = this._scrollContainer();
     if (container) this._resizeObserver.observe(container);
     if (typeof this.querySelectorAll !== "function") return;
-    for (const item of this.querySelectorAll<HTMLElement>("[data-review-item-id]")) {
-      this._resizeObserver.observe(item);
-    }
+    for (const item of this.querySelectorAll<HTMLElement>("[data-review-item-id]")) this._resizeObserver.observe(item);
   }
 
   private _recordMeasurements(elements: readonly HTMLElement[]) {
-    if (elements.length === 0) return;
-    const layout = this._reviewLayout();
-    const container = this._scrollContainer();
-    const anchor = container?.scrollTop ?? this._viewportScrollTop;
-    let changed = false;
-
+    this._syncViewportFromContainer();
+    const measurements: ReviewVirtualMeasurement[] = [];
     for (const element of elements) {
       const id = element.dataset.reviewItemId;
-      const index = this._parsedData?.items.findIndex((candidate) => candidate.id === id) ?? -1;
-      const item = index >= 0 ? this._parsedData?.items[index] : undefined;
+      const item = this._parsedData?.items.find((candidate) => candidate.id === id);
       if (!item) continue;
-      const collapsed = this.isItemCollapsed(item.id);
-      if (!collapsed && element instanceof ReviewDiffItem && !element.diffRendered) continue;
-
       const height = element.getBoundingClientRect().height || element.offsetHeight;
-      if (height <= 0) continue;
-      const result = measureReviewVirtualLayout(layout, item.id, height, anchor);
-      if (!result.changed || result.scrollAdjustment !== 0) continue;
-
-      const contentHeight = height - reviewItemGap(index);
-      const measurement = this._measurements.get(item) ?? {};
-      if (collapsed) measurement.collapsed = contentHeight;
-      else measurement.expanded = contentHeight;
-      this._measurements.set(item, measurement);
-      changed = true;
+      const stable = element instanceof ReviewDiffItem ? element.measurementStable : false;
+      measurements.push({ id: item.id, measurementKey: this._measurementKey(item), height, stable });
     }
+    const update = this._coordinator.measure(measurements);
+    this._queueGeometryUpdate(update, update.accepted > 0);
+  }
 
-    if (changed) this.requestUpdate();
+  private _queueGeometryUpdate(update: ReviewVirtualGeometryUpdate, geometryChanged = false) {
+    if (this._navigationItemId && geometryChanged) {
+      this._pendingGeometryScrollTop = this._coordinator.navigationTop(this._navigationItemId);
+    } else if (update.scrollAdjustment !== 0) {
+      this._pendingGeometryScrollTop = update.scrollTop;
+    } else {
+      return;
+    }
+    this.requestUpdate();
+  }
+
+  private _applyPendingGeometryScroll() {
+    if (this._pendingGeometryScrollTop === null) return;
+    const top = this._pendingGeometryScrollTop;
+    this._pendingGeometryScrollTop = null;
+    const container = this._scrollContainer();
+    if (!container) return;
+    if (this._navigationItemId) container.scrollTo({ top, behavior: "smooth" });
+    else container.scrollTop = top;
+    this._coordinator.setViewport(top, container.clientHeight || this._viewportHeight);
   }
 
   override render() {
@@ -389,30 +379,18 @@ export class ReviewDiffPanel extends LitElement {
     const items = data?.items ?? [];
     const branch = this._parsedSource?.branch ?? this.store.branch;
     const baseBranch = this._parsedSource?.baseBranch ?? this.store.fileData.data?.baseBranch;
-    const layout = this._reviewLayout();
-    const virtualWindow = reviewVirtualWindow(layout, {
-      scrollTop: this._viewportScrollTop,
-      viewportHeight: this._viewportHeight,
-      overscanBefore: 0,
-      overscanAfter: REVIEW_ITEM_OVERSCAN,
-    });
+    const virtualWindow = this._coordinator.window();
     const itemById = new Map(items.map((item) => [item.id, item]));
-    const mountedItems = virtualWindow.items.flatMap((entry) => {
-      const item = itemById.get(entry.id);
-      return item ? [item] : [];
-    });
 
     return html`
       <div class="flex h-full min-h-0 flex-col" data-rendered-payload-version=${data ? this.store.patchData.data?.version ?? 0 : 0}>
         ${branch ? html`
           <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-700/50 px-4 py-2">
             ${baseBranch && baseBranch !== branch ? html`
-              <span class="text-xs font-mono text-zinc-500">${baseBranch}</span>
-              <span class="text-xs text-zinc-600">←</span>
+              <span class="text-xs font-mono text-zinc-500">${baseBranch}</span><span class="text-xs text-zinc-600">←</span>
             ` : nothing}
             <span class="inline-flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
-              ${branchIcon("shrink-0 text-zinc-500", 12)}
-              ${branch}
+              ${branchIcon("shrink-0 text-zinc-500", 12)}${branch}
             </span>
           </div>
         ` : nothing}
@@ -420,28 +398,35 @@ export class ReviewDiffPanel extends LitElement {
           class="min-h-0 flex-1 overflow-y-auto"
           data-review-scroll
           @scroll=${this._handleScroll}
+          @wheel=${this._cancelProgrammaticScroll}
+          @touchstart=${this._cancelProgrammaticScroll}
+          @pointerdown=${this._cancelProgrammaticScroll}
+          @keydown=${this._cancelProgrammaticScroll}
         >
           ${loading
             ? html`<div class="flex h-full items-center justify-center p-4 text-sm text-zinc-500">Loading Reins diff…</div>`
             : data?.parseError
               ? html`<div class="flex h-full items-center justify-center p-4 text-sm text-red-400">Unable to parse patch: ${data.parseError}</div>`
               : items.length > 0
-                ? html`<div
-                    data-review-virtual-window
-                    style=${`padding-top:${virtualWindow.paddingTop}px;padding-bottom:${virtualWindow.paddingBottom}px`}
-                  >${mountedItems.map((item) => html`
-                    <review-diff-item
-                      data-review-item-id=${item.id}
-                      data-file-path=${item.path}
-                      ?data-review-first=${item === items[0]}
-                      .item=${item}
-                      .collapsed=${this.isItemCollapsed(item.id)}
-                      .projectId=${this.store?.projectId ?? null}
-                      .branch=${branch ?? null}
-                      @toggle-collapse=${this._handleToggleCollapse}
-                      @diff-rendered=${this._handleDiffRendered}
-                    ></review-diff-item>
-                  `)}</div>`
+                ? html`<div data-review-virtual-window style=${`position:relative;height:${virtualWindow.totalHeight}px`}>
+                    ${virtualWindow.items.map((entry) => {
+                      const item = itemById.get(entry.id);
+                      return item ? html`
+                        <review-diff-item
+                          style=${`position:absolute;top:${entry.top}px;left:0;right:0`}
+                          data-review-item-id=${item.id}
+                          data-file-path=${item.path}
+                          ?data-review-first=${item === items[0]}
+                          .item=${item}
+                          .collapsed=${this.isItemCollapsed(item.id)}
+                          .projectId=${this.store?.projectId ?? null}
+                          .branch=${branch ?? null}
+                          @toggle-collapse=${this._handleToggleCollapse}
+                          @diff-rendered=${this._handleDiffRendered}
+                        ></review-diff-item>
+                      ` : nothing;
+                    })}
+                  </div>`
                 : html`<div class="flex h-full items-center justify-center p-4 text-sm text-zinc-500">No changes yet</div>`}
         </div>
       </div>
