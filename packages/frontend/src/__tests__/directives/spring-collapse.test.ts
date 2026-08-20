@@ -51,14 +51,17 @@ describe("springCollapse", () => {
     expect(bodyRenders).toBe(2);
   });
 
-  test("skips animation when ResizeObserver is unavailable", () => {
+  test("reports settled DOM states when animation is unavailable", () => {
     Reflect.set(globalThis, "ResizeObserver", undefined);
     const collapse = new SpringCollapseDirective(childPart);
     const renderBody = () => html`<p>Body</p>`;
+    let settled = 0;
 
-    collapse.render(true, renderBody);
-    expect(templateToString(collapse.render(false, renderBody))).toContain("<p>Body</p>");
-    expect(collapse.render(true, renderBody)).toBe(nothing);
+    collapse.render(true, renderBody, { onSettled: () => { settled += 1; } });
+    expect(templateToString(collapse.render(false, renderBody, { onSettled: () => { settled += 1; } })))
+      .toContain("<p>Body</p>");
+    expect(collapse.render(true, renderBody, { onSettled: () => { settled += 1; } })).toBe(nothing);
+    expect(settled).toBe(2);
   });
 
   test("only accepts child expressions", () => {

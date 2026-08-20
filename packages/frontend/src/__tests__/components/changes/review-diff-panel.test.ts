@@ -6,8 +6,12 @@ import {
   ReviewScrollPosition,
 } from "../../../components/changes/review-diff-panel.js";
 import { DiffStore, type DiffPatchData } from "../../../models/stores/diff-store.js";
-import { ReviewDiffItem } from "../../../components/changes/review-diff-item.js";
-import { collectTemplateValues, templateToString } from "../../helpers/lit-template.js";
+import "../../../components/changes/review-diff-item.js";
+import {
+  collectTemplateEventListeners,
+  collectTemplateValues,
+  templateToString,
+} from "../../helpers/lit-template.js";
 
 const PATCH = `diff --git a/src/example.ts b/src/example.ts
 index 1111111..2222222 100644
@@ -345,25 +349,16 @@ describe("ReviewDiffPanel", () => {
     store.dispose();
   });
 
-  test("ignores a transient worker render, then reconciles its stable measurement", () => {
+  test("batches item-owned measurements without observing or inspecting child DOM", async () => {
     const resizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
-    const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
-    let notifyResize: ((entries: ResizeObserverEntry[]) => void) | undefined;
+    const observed: Element[] = [];
     class TestResizeObserver {
-      constructor(callback: ResizeObserverCallback) {
-        notifyResize = (entries) => callback(entries, this);
-      }
-      observe() {}
-      unobserve() {}
+      observe(target: Element) { observed.push(target); }
       disconnect() {}
     }
     Object.defineProperty(globalThis, "ResizeObserver", {
       configurable: true,
       value: TestResizeObserver,
-    });
-    Object.defineProperty(globalThis, "HTMLElement", {
-      configurable: true,
-      value: ReviewDiffItem,
     });
 
     const store = new DiffStore();
@@ -374,42 +369,27 @@ describe("ReviewDiffPanel", () => {
       panel.scrollTop = 300;
       Object.defineProperty(panel, "clientHeight", { configurable: true, value: 100 });
       const itemId = panel.itemIdForPath("src/file-0.ts")!;
-      const mounted = new ReviewDiffItem();
-      Object.defineProperty(mounted, "dataset", { value: { reviewItemId: itemId } });
-      Object.defineProperty(mounted, "measurementStable", { configurable: true, value: false });
-      mounted.hasAttribute = (name: string) => name === "data-review-item-id";
-      const itemRect: DOMRect = {
-        bottom: 37,
-        height: 37,
-        left: 0,
-        right: 0,
-        top: 0,
-        width: 0,
-        x: 0,
-        y: 0,
-        toJSON: () => ({}),
-      };
-      mounted.getBoundingClientRect = () => itemRect;
       const querySelector: typeof panel.querySelector = (selector: string) => (
         selector === "[data-review-scroll]" ? panel : null
       );
-      panel.querySelector = querySelector;
-      Reflect.set(panel, "querySelectorAll", undefined);
-      panel.updated(new Map());
-      const resizeEntry: ResizeObserverEntry = {
-        borderBoxSize: [],
-        contentBoxSize: [],
-        contentRect: itemRect,
-        devicePixelContentBoxSize: [],
-        target: mounted,
+      const querySelectorAll: typeof panel.querySelectorAll = () => {
+        throw new Error(`${panel.localName || "Panel"} must not inspect review item DOM`);
       };
+      panel.querySelector = querySelector;
+      panel.querySelectorAll = querySelectorAll;
 
-      notifyResize?.([resizeEntry]);
       panel.updated(new Map());
-      expect(panel.scrollTop).toBe(300);
+      const directive = collectTemplateValues(panel.render()).find(isRepeatDirectiveResult);
+      if (!directive) throw new Error("Expected virtual review items");
+      const itemTemplate = directive.values[2](directive.values[0][0]!, 0);
+      const measurementListener = collectTemplateEventListeners(itemTemplate, "review-item-measurement")[0];
+      measurementListener?.call(panel, new CustomEvent("review-item-measurement", {
+        detail: { id: itemId, height: 37 },
+      }));
 
-      Object.defineProperty(mounted, "measurementStable", { configurable: true, value: true });
-      notifyResize?.([resizeEntry]);
+      expect(observed).toEqual([panel]);
+      expect(panel.scrollTop).toBe(300);
+      await Promise.resolve();
       expect(panel.scrollTop).toBe(300);
       panel.updated(new Map());
       expect(panel.scrollTop).toBe(244);
@@ -417,8 +397,6 @@ describe("ReviewDiffPanel", () => {
       store.dispose();
       if (resizeObserverDescriptor) Object.defineProperty(globalThis, "ResizeObserver", resizeObserverDescriptor);
       else Reflect.deleteProperty(globalThis, "ResizeObserver");
-      if (htmlElementDescriptor) Object.defineProperty(globalThis, "HTMLElement", htmlElementDescriptor);
-      else Reflect.deleteProperty(globalThis, "HTMLElement");
     }
   });
 

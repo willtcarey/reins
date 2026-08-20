@@ -24,9 +24,13 @@ import {
   type ClientTelemetryOperation,
 } from "../../models/client-telemetry.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
-import { activeFileChangeEvent, activeItemChangeEvent } from "../events.js";
+import {
+  activeFileChangeEvent,
+  activeItemChangeEvent,
+  type ReviewItemMeasurementDetail,
+} from "../events.js";
 import { branchIcon } from "../icons.js";
-import { ReviewDiffItem } from "./review-diff-item.js";
+import "./review-diff-item.js";
 
 const DEFAULT_VIEWPORT_HEIGHT = 800;
 const REVIEW_ITEM_OVERSCAN = 600;
@@ -73,6 +77,9 @@ export class ReviewDiffPanel extends LitElement {
 
     this._store = value;
     this._scrollPosition.reset();
+    this._measurementGeneration += 1;
+    this._pendingMeasurements.clear();
+    this._measurementFlushQueued = false;
     this._coordinator = new ReviewVirtualCoordinator(REVIEW_ITEM_OVERSCAN);
     this._coordinator.setViewport(0, this._viewportHeight);
     this._resetParsedData();
@@ -90,6 +97,9 @@ export class ReviewDiffPanel extends LitElement {
   private _collapseState = new ReviewCollapseState();
   private _coordinator = new ReviewVirtualCoordinator(REVIEW_ITEM_OVERSCAN);
   private _resizeObserver: ResizeObserver | null = null;
+  private _pendingMeasurements = new Map<string, ReviewVirtualMeasurement>();
+  private _measurementFlushQueued = false;
+  private _measurementGeneration = 0;
   private _viewportHeight = DEFAULT_VIEWPORT_HEIGHT;
   private _renderFrame: number | null = null;
   private _pendingGeometryScrollTop: number | null = null;
@@ -135,6 +145,9 @@ export class ReviewDiffPanel extends LitElement {
       cancelAnimationFrame(this._renderFrame);
     }
     this._renderFrame = null;
+    this._measurementGeneration += 1;
+    this._pendingMeasurements.clear();
+    this._measurementFlushQueued = false;
     this.store?.clearPatchDiff();
   }
 
@@ -330,9 +343,23 @@ export class ReviewDiffPanel extends LitElement {
     this.setItemCollapsed(event.detail, !this.isItemCollapsed(event.detail));
   }
 
-  private _handleDiffRendered(event: Event) {
-    if (event.target instanceof HTMLElement) this._recordMeasurements([event.target]);
-    this._syncPendingScroll();
+  private _handleItemMeasurement(event: CustomEvent<ReviewItemMeasurementDetail>) {
+    const item = this._parsedData?.items.find((candidate) => candidate.id === event.detail.id);
+    if (!item) return;
+    this._pendingMeasurements.set(item.id, {
+      id: item.id,
+      measurementKey: this._measurementKey(item),
+      height: event.detail.height,
+      stable: true,
+    });
+    if (this._measurementFlushQueued) return;
+    this._measurementFlushQueued = true;
+    const generation = this._measurementGeneration;
+    queueMicrotask(() => {
+      if (generation !== this._measurementGeneration) return;
+      this._measurementFlushQueued = false;
+      this._commitMeasurements();
+    });
   }
 
   private _syncPendingScroll() {
@@ -345,41 +372,30 @@ export class ReviewDiffPanel extends LitElement {
   private _observeGeometry() {
     if (typeof ResizeObserver === "undefined") return;
     this._resizeObserver ??= new ResizeObserver((entries) => {
-      const measuredItems: HTMLElement[] = [];
       for (const entry of entries) {
-        if (!(entry.target instanceof HTMLElement)) continue;
-        if (entry.target.hasAttribute("data-review-scroll")) {
-          if (entry.contentRect.height > 0 && entry.contentRect.height !== this._viewportHeight) {
-            this._viewportHeight = entry.contentRect.height;
-            const container = this._scrollContainer();
-            this._coordinator.setViewport(container?.scrollTop ?? 0, this._viewportHeight);
-            this.requestUpdate();
-          }
-        } else if (entry.target.hasAttribute("data-review-item-id")) measuredItems.push(entry.target);
+        if (entry.contentRect.height <= 0 || entry.contentRect.height === this._viewportHeight) continue;
+        this._viewportHeight = entry.contentRect.height;
+        const container = this._scrollContainer();
+        this._coordinator.setViewport(container?.scrollTop ?? 0, this._viewportHeight);
+        this.requestUpdate();
       }
-      this._recordMeasurements(measuredItems);
     });
 
     this._resizeObserver.disconnect();
     const container = this._scrollContainer();
     if (container) this._resizeObserver.observe(container);
-    if (typeof this.querySelectorAll !== "function") return;
-    for (const item of this.querySelectorAll<HTMLElement>("[data-review-item-id]")) this._resizeObserver.observe(item);
   }
 
-  private _recordMeasurements(elements: readonly HTMLElement[]) {
+  private _commitMeasurements() {
     this._syncViewportFromContainer();
-    const measurements: ReviewVirtualMeasurement[] = [];
-    const diagnostics: Array<Record<string, unknown>> = [];
-    for (const element of elements) {
-      const id = element.dataset.reviewItemId;
-      const item = this._parsedData?.items.find((candidate) => candidate.id === id);
-      if (!item) continue;
-      const height = element.getBoundingClientRect().height || element.offsetHeight;
-      const stable = element instanceof ReviewDiffItem ? element.measurementStable : false;
-      measurements.push({ id: item.id, measurementKey: this._measurementKey(item), height, stable });
-      if (clientTelemetry.enabled) diagnostics.push(this._measurementDiagnostics(element, item.id, height, stable));
-    }
+    const measurements = [...this._pendingMeasurements.values()];
+    this._pendingMeasurements.clear();
+    const candidates = measurements.map((measurement) => ({
+      index: this._itemIndex(measurement.id),
+      measuredHeight: Math.round(measurement.height),
+      previousHeight: Math.round(this._coordinator.item(measurement.id)?.height ?? 0),
+      stable: true,
+    }));
     const update = this._coordinator.measure(measurements);
     this._recordTelemetry("measurement-batch", () => ({
       submitted: measurements.length,
@@ -388,9 +404,10 @@ export class ReviewDiffPanel extends LitElement {
       scrollAdjustment: update.scrollAdjustment,
       actualTop: this._scrollContainer()?.scrollTop ?? null,
       layoutVersion: this._coordinator.layoutVersion,
-      candidates: diagnostics,
+      candidates,
     }));
     this._queueGeometryUpdate(update, update.accepted > 0);
+    this._syncPendingScroll();
   }
 
   private _queueGeometryUpdate(update: ReviewVirtualGeometryUpdate, geometryChanged = false) {
@@ -435,33 +452,6 @@ export class ReviewDiffPanel extends LitElement {
       navigationIndex: this._itemIndex(this._navigationItemId),
       layoutVersion: this._coordinator.layoutVersion,
     }));
-  }
-
-  private _measurementDiagnostics(
-    element: HTMLElement,
-    id: string,
-    height: number,
-    stable: boolean,
-  ): Record<string, unknown> {
-    const reviewItem = element instanceof ReviewDiffItem ? element : null;
-    const article = element.querySelector<HTMLElement>("article");
-    const container = element.querySelector<HTMLElement>("[data-pierre-file-diff]");
-    const pre = container?.shadowRoot?.querySelector<HTMLElement>("pre");
-    return {
-      index: this._itemIndex(id),
-      measuredHeight: Math.round(height),
-      previousHeight: Math.round(this._coordinator.item(id)?.height ?? 0),
-      reservedHeight: Math.round(reviewItem?.reservedHeight ?? 0),
-      stable,
-      diffRendered: reviewItem?.diffRendered ?? false,
-      connected: element.isConnected,
-      articleHeight: measuredHeight(article),
-      articleMinHeight: article?.style.minHeight || null,
-      containerHeight: measuredHeight(container),
-      shadowChildCount: container?.shadowRoot?.children.length ?? 0,
-      preHeight: measuredHeight(pre),
-      placeholder: container?.shadowRoot?.querySelector("[data-placeholder]") !== null,
-    };
   }
 
   private _recordTelemetry(
@@ -556,7 +546,7 @@ export class ReviewDiffPanel extends LitElement {
                             .branch=${branch ?? null}
                             .reservedHeight=${Math.max(1, entry.height - reviewItemGap(index))}
                             @toggle-collapse=${this._handleToggleCollapse}
-                            @diff-rendered=${this._handleDiffRendered}
+                            @review-item-measurement=${this._handleItemMeasurement}
                           ></review-diff-item>
                         `;
                       },
@@ -567,10 +557,6 @@ export class ReviewDiffPanel extends LitElement {
       </div>
     `;
   }
-}
-
-function measuredHeight(element: HTMLElement | null | undefined): number | null {
-  return element ? Math.round(element.getBoundingClientRect().height) : null;
 }
 
 declare global {

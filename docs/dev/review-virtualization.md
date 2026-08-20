@@ -10,9 +10,9 @@ Each layer has one owner:
 
 - Patch parsing and reconciliation own stable review records and IDs.
 - `ReviewVirtualCoordinator` owns top-level estimated/measured geometry, virtual windows, semantic anchors, and offsets for unmounted items.
-- `ReviewDiffPanel` owns the actual scroll container, navigation, collapse coordination, measurement submission, and active-file events.
+- `ReviewDiffPanel` owns the actual scroll container, navigation, collapse coordination, batched coordinator commits, and active-file events. It observes only viewport size, not item DOM.
 - Lit owns keyed mounting and removal of review item elements.
-- `ReviewDiffItem` owns the render-readiness and measurement contract for one mounted file.
+- `ReviewDiffItem` owns stable height observation and the render-readiness contract for one mounted file. It emits a narrow item-ID-and-height event only after the measurement is stable.
 - `PierreRenderer` owns one Pierre instance and container generation for the mounted lifetime.
 - Pierre owns diff rows and worker-backed highlighting inside the current container.
 
@@ -31,7 +31,7 @@ Do not introduce another owner for top-level file positions or scroll correction
 - Key mounted wrappers by stable review item ID.
 - Files that remain in overlapping windows retain their component and renderer.
 - A file that leaves the window may be destroyed; returning later creates a new mount generation.
-- Completion callbacks and resize observations from an old generation must not affect the current generation.
+- Completion callbacks and item-owned resize observations from an old generation must not affect the current generation.
 
 ### Geometry
 
@@ -41,7 +41,7 @@ Do not introduce another owner for top-level file positions or scroll correction
 - Collapsed measurements are valid only after the body has unmounted and collapse animation has settled.
 - Provisional worker renders, empty Lit teardown shells, stale observer deliveries, and duplicate renderer DOM are never stable measurements.
 - Stable measurements are retained by project, branch, item, content fingerprint, and collapsed/expanded state.
-- Geometry updates are committed in batches, not one scroll correction per observed element.
+- The panel enriches accepted item measurement events with the current measurement key and commits them to the coordinator in a microtask batch, not one scroll correction per observed element.
 
 ### Reserved geometry
 
@@ -107,5 +107,7 @@ When diagnosing a failure, correlate one navigation by `operationId` and compare
 - layout version and total height
 - previous, reserved, measured, container, and `<pre>` heights
 - renderer readiness, placeholder state, and shadow child count
+
+Item-level readiness telemetry is recorded by `ReviewDiffItem`, which is the only layer allowed to inspect Pierre's child structure. Batch geometry, navigation, anchoring, and virtual-window telemetry remain panel-owned.
 
 Telemetry is evidence, not an alternative contract. Fix the violated invariant rather than adding compensating scroll behavior around unstable geometry.

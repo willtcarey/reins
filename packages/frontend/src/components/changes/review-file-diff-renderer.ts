@@ -15,7 +15,7 @@ const REINS_DIFF_OPTIONS: FileDiffOptions<undefined> = {
 
 export function createReviewFileDiffRenderer(
   host: ReactiveControllerHost,
-  onRendered: () => void,
+  onRendered?: () => void,
 ) {
   return new PierreRenderer<FileDiffMetadata, FileDiff<undefined>>(host, {
     create: (_fileDiff, rendered) => new FileDiff({
@@ -26,6 +26,6 @@ export function createReviewFileDiffRenderer(
       },
     }, getPierreWorkerPool(), true),
     render: (renderer, fileDiff, container) => renderer.render({ fileDiff, fileContainer: container }),
-    onRendered: () => onRendered(),
+    onRendered,
   });
 }
