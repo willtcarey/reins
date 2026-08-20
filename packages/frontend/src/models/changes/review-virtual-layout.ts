@@ -47,8 +47,10 @@ function unifiedMetadataRows(hunk: ReviewHunk): number {
 
 export interface ReviewVirtualItemInput {
   readonly id: string;
-  /** Changes whenever a previous measurement is no longer valid. */
+  /** Changes whenever a previous expanded measurement is no longer valid. */
   readonly measurementKey: string;
+  /** Collapsed geometry always uses the deterministic estimate. */
+  readonly collapsed: boolean;
   readonly estimatedHeight: number;
 }
 
@@ -72,7 +74,6 @@ export interface ReviewVirtualMeasurement {
   readonly id: string;
   readonly measurementKey: string;
   readonly height: number;
-  readonly stable: boolean;
 }
 
 export interface ReviewVirtualGeometryUpdate {
@@ -107,10 +108,7 @@ export class ReviewVirtualCoordinator {
       ...input,
       estimatedHeight: Math.max(1, input.estimatedHeight),
     }));
-    const validMeasurementKeys = new Set(this.inputs.flatMap((input) => [
-      input.measurementKey,
-      alternateRenderStateKey(input.measurementKey),
-    ]));
+    const validMeasurementKeys = new Set(this.inputs.map((input) => input.measurementKey));
     for (const key of this.measurements.keys()) {
       if (!validMeasurementKeys.has(key)) this.measurements.delete(key);
     }
@@ -130,8 +128,8 @@ export class ReviewVirtualCoordinator {
     for (const measurement of measurements) {
       const item = this.byId.get(measurement.id);
       if (
-        !measurement.stable
-        || !item
+        !item
+        || item.collapsed
         || item.measurementKey !== measurement.measurementKey
         || measurement.height <= 0
       ) continue;
@@ -180,7 +178,9 @@ export class ReviewVirtualCoordinator {
   private rebuild() {
     let top = 0;
     this.items = this.inputs.map((input) => {
-      const height = this.measurements.get(input.measurementKey) ?? input.estimatedHeight;
+      const height = input.collapsed
+        ? input.estimatedHeight
+        : this.measurements.get(input.measurementKey) ?? input.estimatedHeight;
       const item = { ...input, top, height };
       top += height;
       return item;
@@ -209,12 +209,6 @@ export class ReviewVirtualCoordinator {
   private clampScrollTop(value: number): number {
     return Math.max(0, Math.min(value, Math.max(0, this.totalHeight - this.viewportHeight)));
   }
-}
-
-function alternateRenderStateKey(key: string): string {
-  if (key.endsWith(":expanded")) return `${key.slice(0, -":expanded".length)}:collapsed`;
-  if (key.endsWith(":collapsed")) return `${key.slice(0, -":collapsed".length)}:expanded`;
-  return key;
 }
 
 function firstItemEndingAfter(items: readonly ReviewVirtualItem[], offset: number): number {

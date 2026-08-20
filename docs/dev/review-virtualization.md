@@ -36,11 +36,11 @@ Do not introduce another owner for top-level file positions or scroll correction
 ### Geometry
 
 - Every record always has usable estimated geometry, including before its DOM exists.
-- A measured height may replace an estimate only when it belongs to the current item, content, render state, and mount generation.
+- Collapsed geometry is deterministic: the inter-file gap plus the fixed header estimate. Collapsed items are never measured, and collapsed measurement events are never accepted or stored.
+- An expanded measured height may replace an estimate only when it belongs to the current item, content, and mount generation.
 - Expanded measurements require a connected current article, the current Pierre container, a rendered `<pre>`, no placeholder, and no active collapse transition.
-- Collapsed measurements are valid only after the body has unmounted and collapse animation has settled.
 - Provisional worker renders, empty Lit teardown shells, stale observer deliveries, and duplicate renderer DOM are never stable measurements.
-- Stable measurements are retained by project, branch, item, content fingerprint, and collapsed/expanded state.
+- Expanded measurements are retained by project, branch, item, and content fingerprint across a collapse/expand cycle; collapsed geometry temporarily overrides them without replacing them.
 - The panel enriches accepted item measurement events with the current measurement key and commits them to the coordinator in a microtask batch, not one scroll correction per observed element.
 
 ### Reserved geometry

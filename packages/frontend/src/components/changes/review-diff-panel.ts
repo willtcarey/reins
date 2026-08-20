@@ -262,16 +262,19 @@ export class ReviewDiffPanel extends LitElement {
 
   private _measurementKey(item: ReviewItem): string {
     const scope = this._collapseScope();
-    const state = this.isItemCollapsed(item.id) ? "collapsed" : "expanded";
-    return `${scope?.projectId ?? "none"}:${scope?.branch ?? "none"}:${item.id}:${reviewContentFingerprint(item.contentKey)}:${state}`;
+    return `${scope?.projectId ?? "none"}:${scope?.branch ?? "none"}:${item.id}:${reviewContentFingerprint(item.contentKey)}`;
   }
 
   private _syncCoordinatorItems(): ReviewVirtualGeometryUpdate {
-    return this._coordinator.setItems((this._parsedData?.items ?? []).map((item, index) => ({
-      id: item.id,
-      measurementKey: this._measurementKey(item),
-      estimatedHeight: estimateReviewItemHeight(item, this.isItemCollapsed(item.id), index),
-    })));
+    return this._coordinator.setItems((this._parsedData?.items ?? []).map((item, index) => {
+      const collapsed = this.isItemCollapsed(item.id);
+      return {
+        id: item.id,
+        measurementKey: this._measurementKey(item),
+        collapsed,
+        estimatedHeight: estimateReviewItemHeight(item, collapsed, index),
+      };
+    }));
   }
 
   private _scrollContainer(): HTMLElement | null {
@@ -345,12 +348,11 @@ export class ReviewDiffPanel extends LitElement {
 
   private _handleItemMeasurement(event: CustomEvent<ReviewItemMeasurementDetail>) {
     const item = this._parsedData?.items.find((candidate) => candidate.id === event.detail.id);
-    if (!item) return;
+    if (!item || this.isItemCollapsed(item.id)) return;
     this._pendingMeasurements.set(item.id, {
       id: item.id,
       measurementKey: this._measurementKey(item),
       height: event.detail.height,
-      stable: true,
     });
     if (this._measurementFlushQueued) return;
     this._measurementFlushQueued = true;

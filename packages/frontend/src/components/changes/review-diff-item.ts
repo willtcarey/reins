@@ -92,6 +92,11 @@ export class ReviewDiffItem extends LitElement {
   }
 
   private _observeHeight() {
+    if (this.collapsed) {
+      this._heightObserver?.disconnect();
+      this._heightObserver = null;
+      return;
+    }
     if (typeof ResizeObserver === "undefined" || this._heightObserver) return;
     const generation = this._mountGeneration;
     this._heightObserver = new ResizeObserver(() => this._emitStableMeasurement(generation));
@@ -100,7 +105,7 @@ export class ReviewDiffItem extends LitElement {
 
   private _emitStableMeasurement(generation: number) {
     const item = this.item;
-    if (!item || generation !== this._mountGeneration) return;
+    if (!item || this.collapsed || generation !== this._mountGeneration) return;
     const readiness = this._measurementReadiness();
     const height = this.getBoundingClientRect().height || this.offsetHeight;
     this._recordMeasurementTelemetry(generation, height, readiness);
@@ -126,10 +131,7 @@ export class ReviewDiffItem extends LitElement {
       && pre !== null
       && !placeholder
       && this._diff.rendered;
-    const stable = article?.isConnected === true
-      && (this.collapsed
-        ? transition === null && container === null
-        : diffRendered && !transition?.style.height);
+    const stable = article?.isConnected === true && diffRendered && !transition?.style.height;
     return { article, connected, container, diffRendered, placeholder, pre, stable, transition };
   }
 
@@ -157,11 +159,6 @@ export class ReviewDiffItem extends LitElement {
       preHeight: measuredHeight(readiness.pre),
       placeholder: readiness.placeholder,
     });
-  }
-
-  private _measureAfterCollapseSettles() {
-    const generation = this._mountGeneration;
-    queueMicrotask(() => this._emitStableMeasurement(generation));
   }
 
   private _fileUrl(path: string): string {
@@ -232,7 +229,6 @@ export class ReviewDiffItem extends LitElement {
           () => html`<diffs-container data-pierre-file-diff ${diffBinding}></diffs-container>`,
           {
             onUnmount: () => this._diff.unmount(),
-            onSettled: () => this._measureAfterCollapseSettles(),
             animateContentResize: false,
           },
         )}

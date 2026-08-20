@@ -173,6 +173,28 @@ describe("ReviewDiffItem", () => {
     expect(renderOutput(item)).toContain("min-height:240px");
   });
 
+  test("does not measure or emit geometry while collapsed", () => {
+    class UnexpectedResizeObserver {
+      observe() { throw new Error("Collapsed geometry must not be observed"); }
+      disconnect() {}
+    }
+    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: UnexpectedResizeObserver });
+
+    const parsed = parseReviewItems(PATCH, "project-7-v1");
+    const item = new ReviewDiffItem();
+    item.item = parsed.items[0] ?? null;
+    item.collapsed = true;
+    item.getBoundingClientRect = () => {
+      throw new Error("Collapsed geometry must not be measured");
+    };
+    const measurements: unknown[] = [];
+    item.addEventListener("review-item-measurement", (event) => measurements.push(event.detail));
+
+    item.updated();
+
+    expect(measurements).toEqual([]);
+  });
+
   test("does not animate asynchronous diff rendering as a user expansion", () => {
     const parsed = parseReviewItems(PATCH, "project-7-v1");
     const item = new ReviewDiffItem();

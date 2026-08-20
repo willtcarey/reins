@@ -301,7 +301,6 @@ describe("ReviewDiffPanel", () => {
       id: firstId,
       measurementKey: firstItem.measurementKey,
       height: firstItem.height + 20,
-      stable: true,
     }]);
     Reflect.get(panel, "_queueGeometryUpdate").call(panel, update, true);
     panel.updated(new Map());
@@ -336,7 +335,6 @@ describe("ReviewDiffPanel", () => {
       id: firstId,
       measurementKey: firstItem.measurementKey,
       height: firstItem.height + 20,
-      stable: true,
     }]);
     Reflect.get(panel, "_queueGeometryUpdate").call(panel, update, true);
 

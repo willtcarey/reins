@@ -16,8 +16,6 @@ const MAX_STRENGTH_SCALE = 1.6;
 export interface SpringCollapseOptions {
   /** Called after collapsed content has been removed from the DOM. */
   onUnmount?: () => void;
-  /** Called after either collapse direction reaches its settled DOM state. */
-  onSettled?: () => void;
   /** Animate ambient body resizes after expansion has settled. */
   animateContentResize?: boolean;
 }
@@ -82,7 +80,6 @@ export class SpringCollapseDirective extends AsyncDirective {
         this.velocity = 0;
         this.mounted = !collapsed;
         if (collapsed) this.options.onUnmount?.();
-        this.options.onSettled?.();
       } else {
         this.mounted = true;
         this.pending = true;
@@ -251,12 +248,10 @@ export class SpringCollapseDirective extends AsyncDirective {
       this.disconnectResizeObserver();
       this.setValue(nothing);
       this.options.onUnmount?.();
-      this.options.onSettled?.();
       return;
     }
     element.style.removeProperty("height");
     element.style.removeProperty("overflow");
-    this.options.onSettled?.();
   }
 
   private measureContent(content: HTMLElement): number {
