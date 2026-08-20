@@ -276,6 +276,75 @@ describe("ReviewDiffPanel", () => {
     store.dispose();
   });
 
+  test("keeps the virtual viewport at the actual scroll position while retargeting smooth navigation", () => {
+    const store = new DiffStore();
+    store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(manyFilePatch(100)));
+    const panel = new ReviewDiffPanel();
+    panel.store = store;
+    Object.defineProperty(panel, "clientHeight", { configurable: true, value: 300 });
+    panel.scrollTop = 0;
+    panel.scrollTo = () => {};
+    const querySelector: typeof panel.querySelector = (selector: string) => (
+      selector === "[data-review-scroll]" ? panel : null
+    );
+    panel.querySelector = querySelector;
+
+    panel.scrollToFile("src/file-99.ts");
+    const firstId = panel.itemIdForPath("src/file-0.ts")!;
+    const coordinator = Reflect.get(panel, "_coordinator");
+    const firstItem = coordinator.item(firstId);
+    const update = coordinator.measure([{
+      id: firstId,
+      measurementKey: firstItem.measurementKey,
+      height: firstItem.height + 20,
+      stable: true,
+    }]);
+    Reflect.get(panel, "_queueGeometryUpdate").call(panel, update, true);
+    panel.updated(new Map());
+
+    const directive = collectTemplateValues(panel.render()).find(isRepeatDirectiveResult);
+    expect(panel.scrollTop).toBe(0);
+    expect(directive?.values[0][0]?.id).toBe(firstId);
+    store.dispose();
+  });
+
+  test("supersedes a queued anchor correction when file navigation starts", () => {
+    const store = new DiffStore();
+    store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(manyFilePatch(100)));
+    const panel = new ReviewDiffPanel();
+    panel.store = store;
+    Object.defineProperty(panel, "clientHeight", { configurable: true, value: 300 });
+    panel.scrollTop = 500;
+    const scrollTargets: number[] = [];
+    panel.scrollTo = (options?: ScrollToOptions | number) => {
+      if (typeof options !== "number" && options?.top !== undefined) scrollTargets.push(options.top);
+    };
+    const querySelector: typeof panel.querySelector = (selector: string) => (
+      selector === "[data-review-scroll]" ? panel : null
+    );
+    panel.querySelector = querySelector;
+
+    const firstId = panel.itemIdForPath("src/file-0.ts")!;
+    const coordinator = Reflect.get(panel, "_coordinator");
+    coordinator.setViewport(panel.scrollTop, panel.clientHeight);
+    const firstItem = coordinator.item(firstId);
+    const update = coordinator.measure([{
+      id: firstId,
+      measurementKey: firstItem.measurementKey,
+      height: firstItem.height + 20,
+      stable: true,
+    }]);
+    Reflect.get(panel, "_queueGeometryUpdate").call(panel, update, true);
+
+    panel.scrollToFile("src/file-99.ts");
+    const navigationTop = scrollTargets.at(-1);
+    panel.updated(new Map());
+
+    expect(navigationTop).toBeGreaterThan(500);
+    expect(scrollTargets.at(-1)).toBe(navigationTop);
+    store.dispose();
+  });
+
   test("ignores a transient worker render, then reconciles its stable measurement", () => {
     const resizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
     const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");

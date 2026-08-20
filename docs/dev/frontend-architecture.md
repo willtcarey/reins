@@ -95,11 +95,12 @@ Lit reactive controllers — lifecycle-managed glue reused across components. Se
 
 ```
 controllers/
-├── store-controller.ts          Generic store subscription
-├── highlight-controller.ts      Shiki web worker bridge
-├── lazy-highlight-controller.ts IntersectionObserver + highlighting
-├── page-swipe-controller.ts     Mobile page swipe event/state wiring
-└── chat-history-controller.ts   Prepend loading + scroll-anchor restoration
+├── store-controller.ts               Generic store subscription
+├── pierre-renderer.ts                Ref mounting, input identity, completion, and cleanup for Pierre renderers
+├── highlight-controller.ts           Shiki web worker bridge
+├── lazy-highlight-controller.ts      IntersectionObserver + highlighting
+├── page-swipe-controller.ts          Mobile page swipe event/state wiring
+└── chat-history-controller.ts        Prepend loading + scroll-anchor restoration
 ```
 
 ### directives/
@@ -339,7 +340,7 @@ The diff/changes feature spans both `models/changes/` (pure logic) and `componen
 - `highlight-worker.ts` — Web Worker for off-main-thread Shiki highlighting
 - `pierre-diffs-worker.ts` / `pierre-worker-pool.ts` — Shared `@pierre/diffs` worker entry plus sizing/highlighter setup for Pierre-backed source and diff renderers.
 - `review-items.ts` — Parses raw patches into stable Reins-owned review item identities, Pierre cache keys, and path-to-item navigation records.
-- `review-virtual-layout.ts` — Persistent top-level review virtualization coordinator. It owns estimated/measured item geometry, balanced bounded overscan, semantic item-and-viewport-offset anchors, batched measurement commits, active-item lookup, and offsets for navigation to unmounted records.
+- `review-virtual-layout.ts` — Persistent top-level review virtualization coordinator. It owns estimated/measured item geometry, balanced bounded overscan, semantic item-and-viewport-offset anchors, batched measurement commits, active-item lookup, and offsets for navigation to unmounted records. Follow the ownership boundaries and invariants in [review-virtualization.md](review-virtualization.md).
 - `review-collapse-state.ts` — Encapsulates reviewed-content persistence behind `ReviewCollapseState`; production uses local storage, while tests inject the narrow storage interface. It restores matching collapse state and invalidates changed content.
 - `types.ts` — Shared types for diff data structures
 
@@ -353,11 +354,14 @@ The diff/changes feature spans both `models/changes/` (pure logic) and `componen
 - `diff-hunk.ts` — Single hunk: separator/expand-up button, hunk header, diff lines, trailer/expand-down button.
 - `codeview-diff-panel.ts` — Prototype renderer that consumes `DiffStore`'s raw `/diff/patch` text, parses renderer-specific CodeView diff data with `@pierre/diffs`, converts it into `CodeView` items, adds Reins header actions/collapse toggles, and lets Pierre own diff row rendering/highlighting/virtualization.
 - `review-diff-panel.ts` — Reins-owned virtual review surface. It coordinates item-ID navigation, active reporting, collapse state, measured heights, and a bounded visible/overscan mount window.
-- `review-diff-item.ts` — One review diff item's collapsible Reins-owned file header and Pierre worker-backed text rows.
+- `review-diff-item.ts` — One review diff item's collapsible Reins-owned file header and measurement contract.
+- `review-file-diff-renderer.ts` — Configures the shared `PierreRenderer` for `FileDiff`, including worker-render completion semantics and shared highlighting options.
 - `diff-file-action-buttons.ts` — Shared Lit action buttons for opening, copying, and downloading changed files across diff renderers.
 - `diff-markdown-preview.ts` — Markdown Diff/Preview tab bar and rendered content area.
 - `diff-file-tree.ts` — Collapsible file tree with scroll spy integration
 
-`DiffStore` owns the diff lifecycle and exposes both the classic JSON representation (`fullData`) and the raw `/diff/patch` text representation (`patchData`). Both are `Loadable<T>` values from `helpers/loadable.ts`, so each representation carries its data/loading/error state as one value. The CodeView prototype calls `fetchPatchDiff()`, then `<codeview-diff-panel>` owns CodeView-specific parsing plus renderer item collapse/version state. The `virtualized` renderer uses the Reins-owned review surface and also calls `fetchPatchDiff()`, but keeps its review records separate from `DiffStore.fullData`. Collapsing stores the current content hash under a project/branch/item key shared by both diff modes. Parsed review records contain patch data only; the renderer reads collapse state from storage, accepts only a matching content hash, and deletes a mismatch immediately so a later content revert remains expanded. A persistent coordinator retains geometry for every stable item ID and render state while Lit mounts only a balanced, bounded viewport/overscan window. Mounted wrappers are keyed by stable review item ID and absolutely positioned in one fixed-total-height container, so overlapping windows retain their Pierre renderer and asynchronous sizing cannot push siblings before reconciliation. A new wrapper reserves its estimated block height until Pierre's first complete render, keeping its sticky file surface present while highlighting starts. Expanded measurements become valid only after Pierre's non-placeholder post-render and settled expansion; collapsed measurements become valid after the collapse body has unmounted. Resize batches update geometry once, preserve the first visible item's viewport offset, and apply one correction after Lit renders the new positions. File-tree navigation resolves unmounted IDs from the same geometry and is retargeted when geometry changes during smooth scrolling. Wheel, touch, pointer, and scrolling-key input cancels that programmatic target before anchor correction can fight the user. Active-file state also comes from coordinator geometry, and native scroll anchoring remains disabled. Pierre-backed renderers use one shared `WorkerPoolManager` from `pierre-worker-pool.ts` rather than creating per-component workers. The patch-backed renderers and the file browser's standalone `File` source renderer use this pool with the `github-dark` Shiki theme. Shared and renderer-specific Pierre theme variables live in `app.css` on the `<diffs-container>` hosts so they inherit through Pierre's shadow roots; only selectors that must target shadow-DOM internals stay in each renderer's `unsafeCSS`. The file viewer keeps its existing rich Markdown, HTML, image, PDF, and binary renderers outside Pierre.
+`DiffStore` owns the diff lifecycle and exposes the classic JSON representation (`fullData`) and raw `/diff/patch` text (`patchData`) as `Loadable<T>` values. The CodeView prototype and Reins-owned `virtualized` renderer both consume `patchData`, but each owns its renderer-specific parsed records. Collapse markers are shared across patch-backed modes and keyed by project, branch, item, and reviewed content.
+
+The Reins-owned renderer's geometry, mounting, navigation, anchoring, measurement, and cleanup contracts are defined in [review-virtualization.md](review-virtualization.md). Pierre-backed renderers share one `WorkerPoolManager` from `pierre-worker-pool.ts`, while the review `FileDiff` and standalone file source renderer also share `PierreRenderer` for ref mounting, input reconciliation, completion, and cleanup. Their theme variables live on `<diffs-container>` hosts in `app.css`; only selectors that target shadow-DOM internals remain renderer-local. Rich Markdown, HTML, image, PDF, and binary file-viewer renderers remain outside Pierre.
 
 `diff-file-card` and `diff-hunk` use `StoreController<DiffStore>` to re-render on store notifications. Each `<diff-hunk>` owns a `HighlightController` that sends the hunk's text lines to the Shiki web worker for syntax highlighting. The controller stores the resulting HTML strings — the highlighter never mutates `DiffLine` objects. During render, `diff-hunk` reads `controller.getLineHtml(index)` and falls back to escaped plain text if highlighting hasn't completed yet (see [reactive-controllers.md](reactive-controllers.md)).

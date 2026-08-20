@@ -24,6 +24,7 @@ import { registerModelsRoutes } from "./models.js";
 import { registerOAuthRoutes } from "./oauth.js";
 import { registerAuthRoutes } from "./auth.js";
 import { registerAttachmentRoutes } from "./attachments.js";
+import { registerClientTelemetryRoutes } from "./client-telemetry.js";
 
 export type ProjectRouteContext = RouteContext & { project: ProjectModel };
 
@@ -45,6 +46,7 @@ export function buildRouter() {
   const router = createRouter();
 
   registerHealthRoutes(router);
+  if (process.env.REINS_DEV === "1") registerClientTelemetryRoutes(router);
   registerProjectRoutes(router);
   registerPaletteRoutes(router);
   registerSettingsRoutes(router);

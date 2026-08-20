@@ -19,6 +19,10 @@ import {
   type ReviewVirtualGeometryUpdate,
   type ReviewVirtualMeasurement,
 } from "../../models/changes/review-virtual-layout.js";
+import {
+  clientTelemetry,
+  type ClientTelemetryOperation,
+} from "../../models/client-telemetry.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
 import { activeFileChangeEvent, activeItemChangeEvent } from "../events.js";
 import { branchIcon } from "../icons.js";
@@ -90,6 +94,8 @@ export class ReviewDiffPanel extends LitElement {
   private _renderFrame: number | null = null;
   private _pendingGeometryScrollTop: number | null = null;
   private _navigationItemId: string | null = null;
+  private _navigationTelemetry: ClientTelemetryOperation | null = null;
+  private _telemetryWindow = "";
 
   override connectedCallback() {
     super.connectedCallback();
@@ -106,6 +112,7 @@ export class ReviewDiffPanel extends LitElement {
   override updated(changed: Map<string, unknown>) {
     this._applyPendingGeometryScroll();
     this._observeGeometry();
+    this._recordTelemetryWindow();
     const data = this._parsedData;
     if (!this._activeItemId && data?.items[0]) this.reportActiveItem(data.items[0].id);
     this._syncPendingScroll();
@@ -147,6 +154,15 @@ export class ReviewDiffPanel extends LitElement {
     const container = this._scrollContainer();
     if (top === null || !container) return;
 
+    this._navigationTelemetry = clientTelemetry.startOperation("review-virtualizer");
+    this._recordTelemetry("navigation-start", () => ({
+      targetIndex: this._itemIndex(itemId),
+      requestedTop: top,
+      actualTop: container.scrollTop,
+      replacedCorrection: this._pendingGeometryScrollTop,
+      layoutVersion: this._coordinator.layoutVersion,
+    }));
+    this._pendingGeometryScrollTop = null;
     this._navigationItemId = itemId;
     container.scrollTo({ top, behavior: "smooth" });
     this._pendingPath = null;
@@ -200,6 +216,7 @@ export class ReviewDiffPanel extends LitElement {
     this._parsedData = null;
     this._activeItemId = null;
     this._navigationItemId = null;
+    this._navigationTelemetry = null;
   }
 
   private _reconcilePatchData() {
@@ -262,15 +279,32 @@ export class ReviewDiffPanel extends LitElement {
     this._coordinator.setViewport(container.scrollTop, this._viewportHeight);
     this._scrollPosition.remember(container, this.visible);
     const activeId = this._coordinator.window().activeId;
+    this._recordTelemetry("scroll", () => ({
+      actualTop: container.scrollTop,
+      activeIndex: this._itemIndex(activeId),
+      navigationIndex: this._itemIndex(this._navigationItemId),
+      layoutVersion: this._coordinator.layoutVersion,
+    }));
     if (activeId) this.reportActiveItem(activeId);
     if (this._navigationItemId === activeId) this._navigationItemId = null;
     this._scheduleRender();
   }
 
   private _cancelProgrammaticScroll(event: Event) {
-    if (!this._navigationItemId || !this._isScrollIntent(event)) return;
-    this._navigationItemId = null;
+    if (!this._isScrollIntent(event)) return;
+    if (!this._navigationItemId) {
+      this._navigationTelemetry = null;
+      return;
+    }
     const container = this._scrollContainer();
+    this._recordTelemetry("navigation-cancelled", () => ({
+      inputType: event.type,
+      actualTop: container?.scrollTop ?? null,
+      navigationIndex: this._itemIndex(this._navigationItemId),
+      layoutVersion: this._coordinator.layoutVersion,
+    }));
+    this._navigationItemId = null;
+    this._navigationTelemetry = null;
     if (container) container.scrollTo({ top: container.scrollTop, behavior: "auto" });
   }
 
@@ -336,6 +370,7 @@ export class ReviewDiffPanel extends LitElement {
   private _recordMeasurements(elements: readonly HTMLElement[]) {
     this._syncViewportFromContainer();
     const measurements: ReviewVirtualMeasurement[] = [];
+    const diagnostics: Array<Record<string, unknown>> = [];
     for (const element of elements) {
       const id = element.dataset.reviewItemId;
       const item = this._parsedData?.items.find((candidate) => candidate.id === id);
@@ -343,19 +378,39 @@ export class ReviewDiffPanel extends LitElement {
       const height = element.getBoundingClientRect().height || element.offsetHeight;
       const stable = element instanceof ReviewDiffItem ? element.measurementStable : false;
       measurements.push({ id: item.id, measurementKey: this._measurementKey(item), height, stable });
+      if (clientTelemetry.enabled) diagnostics.push(this._measurementDiagnostics(element, item.id, height, stable));
     }
     const update = this._coordinator.measure(measurements);
+    this._recordTelemetry("measurement-batch", () => ({
+      submitted: measurements.length,
+      accepted: update.accepted,
+      correctedTop: update.scrollTop,
+      scrollAdjustment: update.scrollAdjustment,
+      actualTop: this._scrollContainer()?.scrollTop ?? null,
+      layoutVersion: this._coordinator.layoutVersion,
+      candidates: diagnostics,
+    }));
     this._queueGeometryUpdate(update, update.accepted > 0);
   }
 
   private _queueGeometryUpdate(update: ReviewVirtualGeometryUpdate, geometryChanged = false) {
+    let reason: "navigation-retarget" | "anchor-correction";
     if (this._navigationItemId && geometryChanged) {
       this._pendingGeometryScrollTop = this._coordinator.navigationTop(this._navigationItemId);
+      reason = "navigation-retarget";
     } else if (update.scrollAdjustment !== 0) {
       this._pendingGeometryScrollTop = update.scrollTop;
+      reason = "anchor-correction";
     } else {
       return;
     }
+    this._recordTelemetry("geometry-queued", () => ({
+      reason,
+      requestedTop: this._pendingGeometryScrollTop,
+      actualTop: this._scrollContainer()?.scrollTop ?? null,
+      navigationIndex: this._itemIndex(this._navigationItemId),
+      layoutVersion: this._coordinator.layoutVersion,
+    }));
     this.requestUpdate();
   }
 
@@ -365,9 +420,80 @@ export class ReviewDiffPanel extends LitElement {
     this._pendingGeometryScrollTop = null;
     const container = this._scrollContainer();
     if (!container) return;
-    if (this._navigationItemId) container.scrollTo({ top, behavior: "smooth" });
-    else container.scrollTop = top;
-    this._coordinator.setViewport(top, container.clientHeight || this._viewportHeight);
+    const actualBefore = container.scrollTop;
+    if (this._navigationItemId) {
+      container.scrollTo({ top, behavior: "smooth" });
+    } else {
+      container.scrollTop = top;
+    }
+    this._coordinator.setViewport(container.scrollTop, container.clientHeight || this._viewportHeight);
+    this._recordTelemetry("geometry-applied", () => ({
+      requestedTop: top,
+      actualBefore,
+      actualAfter: container.scrollTop,
+      smooth: this._navigationItemId !== null,
+      navigationIndex: this._itemIndex(this._navigationItemId),
+      layoutVersion: this._coordinator.layoutVersion,
+    }));
+  }
+
+  private _measurementDiagnostics(
+    element: HTMLElement,
+    id: string,
+    height: number,
+    stable: boolean,
+  ): Record<string, unknown> {
+    const reviewItem = element instanceof ReviewDiffItem ? element : null;
+    const article = element.querySelector<HTMLElement>("article");
+    const container = element.querySelector<HTMLElement>("[data-pierre-file-diff]");
+    const pre = container?.shadowRoot?.querySelector<HTMLElement>("pre");
+    return {
+      index: this._itemIndex(id),
+      measuredHeight: Math.round(height),
+      previousHeight: Math.round(this._coordinator.item(id)?.height ?? 0),
+      reservedHeight: Math.round(reviewItem?.reservedHeight ?? 0),
+      stable,
+      diffRendered: reviewItem?.diffRendered ?? false,
+      connected: element.isConnected,
+      articleHeight: measuredHeight(article),
+      articleMinHeight: article?.style.minHeight || null,
+      containerHeight: measuredHeight(container),
+      shadowChildCount: container?.shadowRoot?.children.length ?? 0,
+      preHeight: measuredHeight(pre),
+      placeholder: container?.shadowRoot?.querySelector("[data-placeholder]") !== null,
+    };
+  }
+
+  private _recordTelemetry(
+    event: string,
+    attributes: Record<string, unknown> | (() => Record<string, unknown>),
+  ) {
+    if (this._navigationTelemetry) this._navigationTelemetry.record(event, attributes);
+    else clientTelemetry.record("review-virtualizer", event, attributes);
+  }
+
+  private _itemIndex(id: string | null): number | null {
+    if (!id) return null;
+    const index = this._parsedData?.items.findIndex((item) => item.id === id) ?? -1;
+    return index >= 0 ? index : null;
+  }
+
+  private _recordTelemetryWindow() {
+    if (!clientTelemetry.enabled) return;
+    const window = this._coordinator.window();
+    const firstIndex = this._itemIndex(window.items[0]?.id ?? null);
+    const lastIndex = this._itemIndex(window.items.at(-1)?.id ?? null);
+    const signature = `${this._coordinator.layoutVersion}:${firstIndex}:${lastIndex}:${window.totalHeight}`;
+    if (signature === this._telemetryWindow) return;
+    this._telemetryWindow = signature;
+    this._recordTelemetry("window-change", () => ({
+      firstIndex,
+      lastIndex,
+      mountedCount: window.items.length,
+      totalHeight: window.totalHeight,
+      actualTop: this._scrollContainer()?.scrollTop ?? null,
+      layoutVersion: this._coordinator.layoutVersion,
+    }));
   }
 
   override render() {
@@ -441,6 +567,10 @@ export class ReviewDiffPanel extends LitElement {
       </div>
     `;
   }
+}
+
+function measuredHeight(element: HTMLElement | null | undefined): number | null {
+  return element ? Math.round(element.getBoundingClientRect().height) : null;
 }
 
 declare global {

@@ -1,8 +1,7 @@
-import { FileDiff, type ChangeTypes, type FileDiffOptions } from "@pierre/diffs";
+import type { ChangeTypes } from "@pierre/diffs";
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { springCollapse } from "../../directives/spring-collapse.js";
-import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
 import type { ReviewItem } from "../../models/changes/review-items.js";
 import { diffRenderedEvent, toggleCollapseEvent } from "../events.js";
 import {
@@ -12,6 +11,7 @@ import {
   renamedFileIcon,
 } from "../icons.js";
 import "./diff-file-action-buttons.js";
+import { createReviewFileDiffRenderer } from "./review-file-diff-renderer.js";
 
 const STATUS_ICON_DETAILS: Record<ChangeTypes, {
   label: string;
@@ -50,16 +50,6 @@ function renderStatusIcon(status: ChangeTypes) {
   return details.icon(`h-3 w-3 shrink-0 ${details.colorClass}`, details.label);
 }
 
-const REINS_DIFF_OPTIONS: FileDiffOptions<undefined> = {
-  theme: PIERRE_SHIKI_THEME,
-  themeType: "dark",
-  diffStyle: "unified",
-  diffIndicators: "classic",
-  overflow: "scroll",
-  hunkSeparators: "line-info",
-  disableFileHeader: true,
-};
-
 @customElement("review-diff-item")
 export class ReviewDiffItem extends LitElement {
   override createRenderRoot() {
@@ -72,73 +62,29 @@ export class ReviewDiffItem extends LitElement {
   @property({ attribute: false }) branch: string | null = null;
   @property({ type: Number, attribute: false }) reservedHeight = 0;
 
-  private _fileDiff: FileDiff<undefined> | null = null;
-  private _renderedItem: ReviewItem | null = null;
-  private _diffRendered = false;
-  private _root: HTMLElement | null = null;
+  private readonly _diff = createReviewFileDiffRenderer(this, () => {
+    this.dispatchEvent(diffRenderedEvent());
+  });
 
   public get diffRendered(): boolean {
-    return this._diffRendered && this._renderedItem?.fileDiff === this.item?.fileDiff;
+    if (!this.isConnected || typeof this.querySelector !== "function") return false;
+    const article = this.querySelector("article");
+    const container = this.querySelector<HTMLElement>("[data-pierre-file-diff]");
+    const pre = container?.shadowRoot?.querySelector("pre");
+    return article !== null
+      && container !== null
+      && container === this._diff.container
+      && pre !== null
+      && pre !== undefined
+      && this._diff.rendered;
   }
 
   /** Only settled states may replace the coordinator's persistent estimate. */
   public get measurementStable(): boolean {
-    const transition = typeof this.querySelector === "function"
-      ? this.querySelector<HTMLElement>("[data-spring-collapse]")
-      : null;
+    if (!this.isConnected || typeof this.querySelector !== "function" || !this.querySelector("article")) return false;
+    const transition = this.querySelector<HTMLElement>("[data-spring-collapse]");
     if (this.collapsed) return transition === null;
     return this.diffRendered && !transition?.style.height;
-  }
-
-  override updated() {
-    this._syncFileDiff();
-  }
-
-  override disconnectedCallback() {
-    super.disconnectedCallback();
-    this._destroyFileDiff();
-  }
-
-  protected getDiffRoot(): HTMLElement | null {
-    return this.querySelector<HTMLElement>("[data-pierre-file-diff]");
-  }
-
-  private _syncFileDiff() {
-    const root = this.getDiffRoot();
-    if (!root || !this.item) {
-      this._destroyFileDiff();
-      return;
-    }
-    if (this._fileDiff && this._root === root) {
-      if (this._renderedItem?.fileDiff === this.item.fileDiff) {
-        this._renderedItem = this.item;
-        return;
-      }
-      this._diffRendered = false;
-      this._renderedItem = this.item;
-      this._fileDiff.render({ fileDiff: this.item.fileDiff, fileContainer: root });
-      return;
-    }
-
-    this._destroyFileDiff();
-    this._fileDiff = new FileDiff({
-      ...REINS_DIFF_OPTIONS,
-      onPostRender: (node, _instance, phase) => {
-        if (phase === "unmount" || node.shadowRoot?.querySelector("[data-placeholder]")) return;
-        this._markDiffRendered();
-      },
-    }, getPierreWorkerPool(), true);
-    this._root = root;
-    this._renderedItem = this.item;
-    this._fileDiff.render({ fileDiff: this.item.fileDiff, fileContainer: root });
-  }
-
-  private _destroyFileDiff() {
-    this._fileDiff?.cleanUp();
-    this._fileDiff = null;
-    this._root = null;
-    this._renderedItem = null;
-    this._diffRendered = false;
   }
 
   private _fileUrl(path: string): string {
@@ -146,12 +92,6 @@ export class ReviewDiffItem extends LitElement {
     let url = `/api/projects/${this.projectId}/files/content?path=${encodeURIComponent(path)}`;
     if (this.branch) url += `&ref=${encodeURIComponent(this.branch)}`;
     return url;
-  }
-
-  private _markDiffRendered() {
-    this._diffRendered = true;
-    this.requestUpdate();
-    this.dispatchEvent(diffRenderedEvent());
   }
 
   private _toggleCollapsed() {
@@ -163,6 +103,7 @@ export class ReviewDiffItem extends LitElement {
     const item = this.item;
     if (!item) return nothing;
 
+    const diffBinding = this._diff.bind(item.fileDiff);
     const pendingHeight = !this.collapsed && !this.diffRendered && this.reservedHeight > 0
       ? `min-height:${this.reservedHeight}px`
       : nothing;
@@ -211,9 +152,9 @@ export class ReviewDiffItem extends LitElement {
         </header>
         ${springCollapse(
           this.collapsed,
-          () => html`<diffs-container data-pierre-file-diff></diffs-container>`,
+          () => html`<diffs-container data-pierre-file-diff ${diffBinding}></diffs-container>`,
           {
-            onUnmount: () => this._destroyFileDiff(),
+            onUnmount: () => this._diff.unmount(),
             animateContentResize: false,
           },
         )}
