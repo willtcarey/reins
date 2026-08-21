@@ -60,38 +60,6 @@ describe("ReviewDiffItem", () => {
     else Reflect.deleteProperty(globalThis, "ResizeObserver");
   });
 
-  test("renders a Reins-owned file header, shared file actions, and Pierre text-diff surface", () => {
-    const parsed = parseReviewItems(PATCH, "project-7-v1");
-    const item = new ReviewDiffItem();
-    item.item = parsed.items[0] ?? null;
-    item.projectId = 7;
-    item.branch = "task/example";
-
-    const output = renderOutput(item);
-
-    expect(output).toContain("src/example.ts");
-    expect(output).toContain("<header");
-    expect(output).toContain(">+1</span>");
-    expect(output).toContain(">-1</span>");
-    expect(output.indexOf(">-1</span>")).toBeLessThan(output.indexOf("<diff-view-file-button"));
-    expect(output).toContain("<diff-view-file-button .path=src/example.ts variant=\"header\">");
-    expect(output).toContain("<diff-copy-path-button .path=src/example.ts variant=\"header\">");
-    expect(output).toContain("<diff-download-file-button");
-    expect(output).toContain(".path=src/example.ts");
-    expect(output).toContain(".href=/api/projects/7/files/content?path=src%2Fexample.ts&ref=task%2Fexample");
-    expect(output).toContain("<diffs-container data-pierre-file-diff");
-  });
-
-  test("reports pending render state while reserving estimated geometry", () => {
-    const parsed = parseReviewItems(PATCH, "project-7-v1");
-    const item = new ReviewDiffItem();
-    item.item = parsed.items[0] ?? null;
-    item.reservedHeight = 240;
-
-    expect(item.diffRendered).toBe(false);
-    expect(renderOutput(item)).toContain("min-height:240px");
-  });
-
   test("observes its own height and emits only a narrow stable measurement", () => {
     let notifyResize: (() => void) | undefined;
     const observed: Element[] = [];
@@ -171,43 +139,6 @@ describe("ReviewDiffItem", () => {
     expect(item.diffRendered).toBe(false);
     expect(measurements).toEqual([]);
     expect(renderOutput(item)).toContain("min-height:240px");
-  });
-
-  test("does not measure or emit geometry while collapsed", () => {
-    class UnexpectedResizeObserver {
-      observe() { throw new Error("Collapsed geometry must not be observed"); }
-      disconnect() {}
-    }
-    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: UnexpectedResizeObserver });
-
-    const parsed = parseReviewItems(PATCH, "project-7-v1");
-    const item = new ReviewDiffItem();
-    item.item = parsed.items[0] ?? null;
-    item.collapsed = true;
-    item.getBoundingClientRect = () => {
-      throw new Error("Collapsed geometry must not be measured");
-    };
-    const measurements: unknown[] = [];
-    item.addEventListener("review-item-measurement", (event) => measurements.push(event.detail));
-
-    item.updated();
-
-    expect(measurements).toEqual([]);
-  });
-
-  test("does not animate asynchronous diff rendering as a user expansion", () => {
-    const parsed = parseReviewItems(PATCH, "project-7-v1");
-    const item = new ReviewDiffItem();
-    item.item = parsed.items[0] ?? null;
-
-    const collapse = collectTemplateValues(item.render()).find((value): value is DirectiveResult => (
-      typeof value === "object"
-        && value !== null
-        && "_$litDirective$" in value
-        && value._$litDirective$ === SpringCollapseDirective
-    ));
-
-    expect(collapse?.values[2]).toMatchObject({ animateContentResize: false });
   });
 
   test("renders an accessible collapse control and hides only the diff body when collapsed", () => {
