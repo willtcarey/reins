@@ -100,6 +100,7 @@ export class VirtualListController implements ReactiveController {
   private generation = 0;
   private renderFrame: number | null = null;
   private pendingGeometryScrollTop: number | null = null;
+  private pendingPointScrollAdjustment = 0;
   private navigationId: string | null = null;
   private visible = false;
   private rememberedScrollTop: number | null = null;
@@ -169,13 +170,13 @@ export class VirtualListController implements ReactiveController {
     });
   }
 
-  /** Compensate for content inserted above a user-interacted point inside an item. */
+  /**
+   * Retain a post-render point delta until the item's new virtual height is
+   * committed. Applying it earlier can clamp against the stale total height.
+   */
   public adjustScrollBy(delta: number) {
     if (!this.container || !Number.isFinite(delta) || delta === 0) return;
-    this.container.scrollTop += delta;
-    this.syncViewport();
-    this.rememberScrollPosition();
-    this.host.requestUpdate();
+    this.pendingPointScrollAdjustment += delta;
   }
 
   public navigateTo(id: string): boolean {
@@ -212,6 +213,7 @@ export class VirtualListController implements ReactiveController {
     this.pendingMeasurements.clear();
     this.measurementFlushQueued = false;
     this.pendingGeometryScrollTop = null;
+    this.pendingPointScrollAdjustment = 0;
     this.navigationId = null;
     this.rememberedScrollTop = null;
     this.restoreScrollAfterRender = false;
@@ -236,6 +238,7 @@ export class VirtualListController implements ReactiveController {
     this.generation += 1;
     this.pendingMeasurements.clear();
     this.measurementFlushQueued = false;
+    this.pendingPointScrollAdjustment = 0;
   }
 
   private handleScroll = () => {
@@ -267,7 +270,9 @@ export class VirtualListController implements ReactiveController {
   };
 
   private handleScrollIntent = (event: Event) => {
-    if (!this.isScrollIntent(event) || !this.navigationId) return;
+    if (!this.isScrollIntent(event)) return;
+    this.pendingPointScrollAdjustment = 0;
+    if (!this.navigationId) return;
     const targetId = this.navigationId;
     this.navigationId = null;
     this.emit({
@@ -302,7 +307,16 @@ export class VirtualListController implements ReactiveController {
     this.syncViewport();
     const measurements = [...this.pendingMeasurements.values()];
     this.pendingMeasurements.clear();
-    const update = this.coordinator.measure(measurements);
+    const measuredUpdate = this.coordinator.measure(measurements);
+    const pointAdjustment = measuredUpdate.accepted > 0 ? this.pendingPointScrollAdjustment : 0;
+    if (pointAdjustment !== 0) this.pendingPointScrollAdjustment = 0;
+    const update = pointAdjustment === 0
+      ? measuredUpdate
+      : {
+          ...measuredUpdate,
+          scrollTop: measuredUpdate.scrollTop + pointAdjustment,
+          scrollAdjustment: measuredUpdate.scrollAdjustment + pointAdjustment,
+        };
     this.emit({
       type: "measurement-batch",
       submitted: measurements.length,

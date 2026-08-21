@@ -97,7 +97,7 @@ describe("VirtualListController", () => {
     expect(controller.window().activeId).toBe("visible");
   });
 
-  test("keeps an interacted point anchored while content inside an item grows", () => {
+  test("keeps an interacted point anchored after expanded item geometry is rendered", async () => {
     const host = fakeHost();
     const controller = new VirtualListController(host, 0, 100);
     controller.setItems(items);
@@ -105,9 +105,48 @@ describe("VirtualListController", () => {
     controller.attach(container);
 
     controller.adjustScrollBy(60);
+    expect(container.scrollTop).toBe(120);
+
+    controller.measure({ id: "visible", measurementKey: "visible-v1", height: 160 });
+    await Promise.resolve();
+    expect(container.scrollTop).toBe(120);
+
+    host.updated();
 
     expect(container.scrollTop).toBe(180);
     expect(controller.window().activeId).toBe("visible");
+  });
+
+  test("applies an upward point correction after expanded geometry is available", async () => {
+    const host = fakeHost();
+    const controller = new VirtualListController(host, 0, 100);
+    controller.setItems(items);
+    const container = fakeContainer(120, 100);
+    controller.attach(container);
+
+    controller.adjustScrollBy(-40);
+    controller.measure({ id: "visible", measurementKey: "visible-v1", height: 160 });
+    await Promise.resolve();
+    host.updated();
+
+    expect(container.scrollTop).toBe(80);
+    expect(controller.window().activeId).toBe("above");
+  });
+
+  test("does not apply a stale point correction after user scroll intent", async () => {
+    const host = fakeHost();
+    const controller = new VirtualListController(host, 0, 100);
+    controller.setItems(items);
+    const container = fakeContainer(120, 100);
+    controller.attach(container);
+
+    controller.adjustScrollBy(60);
+    container.fire("wheel");
+    controller.measure({ id: "visible", measurementKey: "visible-v1", height: 160 });
+    await Promise.resolve();
+    host.updated();
+
+    expect(container.scrollTop).toBe(120);
   });
 
   test("uses fixed geometry without discarding a prior fluid measurement", async () => {
