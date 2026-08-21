@@ -15,7 +15,7 @@ Each layer has one owner:
 - Lit owns keyed mounting and removal of review item elements.
 - `ReviewDiffItem` owns stable height observation and the render-readiness contract for one mounted file. It emits a narrow item-ID-and-height event only after the measurement is stable.
 - `PierreRenderer` owns one Pierre instance and container generation for the mounted lifetime.
-- Pierre owns diff rows, native context-expansion regions, and worker-backed highlighting inside the current container. `ReviewExpansionState` only acquires complete contents and retains Pierre's opaque region snapshot across virtual remounts. Partial metadata must remain marked partial when passed to Pierre; its existing line-info row may serve only as the intercepted first-acquisition seam until truthful complete metadata exists.
+- Pierre owns diff rows, native context-expansion regions, and worker-backed highlighting inside the current container. `ReviewExpansionState` only acquires complete contents and retains Pierre's opaque region snapshot across virtual remounts. Partial metadata must remain marked partial when passed to Pierre; its existing full-width separator-content row may serve only as the intercepted first-acquisition seam until the retained per-file patch is hydrated with truthful complete metadata.
 
 Do not introduce another owner for top-level item positions or scroll correction. In particular, the controller must not advance coordinator viewport state ahead of the scroll container, the review adapter must not duplicate generic scroll state, and Pierre must not control the outer review scroll.
 

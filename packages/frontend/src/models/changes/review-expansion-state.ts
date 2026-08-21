@@ -1,5 +1,5 @@
 import {
-  parseDiffFromFile,
+  processFile,
   type FileContents,
   type FileDiffMetadata,
   type HunkExpansionRegion,
@@ -149,7 +149,13 @@ export class ReviewExpansionState {
       const newFile = result.newFile
         ? this.fileContents(result.newFile)
         : syntheticEmptyFile(item.path, "new");
-      const reconstructed = parseDiffFromFile(oldFile, newFile, undefined, true);
+      const reconstructed = processFile(item.filePatch, {
+        oldFile,
+        newFile,
+        cacheKey: `${oldFile.cacheKey}:${newFile.cacheKey}`,
+        throwOnError: true,
+      });
+      if (!reconstructed) throw new Error("Complete diff reconstruction failed");
       if (!sameChangedLines(item.fileDiff, reconstructed)) {
         throw new Error("Complete contents no longer match the reviewed diff");
       }

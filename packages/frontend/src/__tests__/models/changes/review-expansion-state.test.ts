@@ -73,6 +73,8 @@ describe("ReviewExpansionState", () => {
       },
     });
     expect(acquired.fileDiff).not.toBe(item.fileDiff);
+    expect(acquired.fileDiff.hunks[0]?.additionStart).toBe(item.fileDiff.hunks[0]?.additionStart);
+    expect(acquired.fileDiff.hunks[0]?.deletionStart).toBe(item.fileDiff.hunks[0]?.deletionStart);
     expect(acquired.nativeExpandedHunks.size).toBe(0);
 
     await state.acquire(reviewItem());
@@ -99,8 +101,8 @@ describe("ReviewExpansionState", () => {
         requestCount += 1;
         return response({
           status: "available",
-          oldFile: { name: "src/old.ts", contents: "old changed\n", contentId: "sha256:old", blobId: "blob-old" },
-          newFile: { name: "src/new.ts", contents: "new changed\n", contentId: "sha256:new" },
+          oldFile: { name: "src/old.ts", contents: "before\nold changed\n", contentId: "sha256:old", blobId: "blob-old" },
+          newFile: { name: "src/new.ts", contents: "before\nnew changed\n", contentId: "sha256:new" },
         });
       },
     );

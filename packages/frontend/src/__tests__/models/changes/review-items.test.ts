@@ -40,6 +40,8 @@ describe("parseReviewItems", () => {
     });
     expect(result.items[0]?.cacheKey).toBe("project-7-v3:rename-changed:src%2Fold.ts:src%2Fnew.ts:0");
     expect(result.items[0]?.fileDiff.cacheKey).toBe(result.items[0]?.cacheKey);
+    expect(result.items[0]?.filePatch).toStartWith("diff --git a/src/old.ts b/src/new.ts");
+    expect(result.items[0]?.filePatch).not.toContain("diff --git a/README.md");
     expect(result.pathToItemId.get("src/new.ts")).toBe(result.items[0]?.id);
     expect(result.pathToItemId.get("src/old.ts")).toBe(result.items[0]?.id);
   });

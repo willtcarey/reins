@@ -12,6 +12,8 @@ export interface ReviewItem {
   readonly occurrence: number;
   readonly contentKey: string;
   readonly cacheKey: string;
+  /** Exact Git patch segment used to hydrate complete Pierre metadata lazily. */
+  readonly filePatch: string;
   readonly fileDiff: FileDiffMetadata;
 }
 
@@ -51,9 +53,13 @@ export function parseReviewItems(
     const parsedPatches = parsePatchFiles(patch, undefined, true);
     const occurrences = new Map<string, number>();
     const items: ReviewItem[] = [];
+    const filePatches = splitFilePatches(patch);
+    let filePatchIndex = 0;
 
     for (const parsedPatch of parsedPatches) {
       for (const parsedFileDiff of parsedPatch.files) {
+        const filePatch = filePatches[filePatchIndex++];
+        if (!filePatch) throw new Error("Unable to retain the per-file patch");
         const path = parsedFileDiff.name;
         const oldPath = parsedFileDiff.prevName ?? null;
         const status = parsedFileDiff.type;
@@ -61,7 +67,10 @@ export function parseReviewItems(
         const occurrence = occurrences.get(occurrenceKey) ?? 0;
         occurrences.set(occurrenceKey, occurrence + 1);
         const identity = `${occurrenceKey}:${occurrence}`;
-        const contentKey = JSON.stringify(parsedFileDiff, (key, value) => key === "cacheKey" ? undefined : value);
+        const contentKey = JSON.stringify(
+          { fileDiff: parsedFileDiff, filePatch },
+          (key, value) => key === "cacheKey" ? undefined : value,
+        );
         const cacheKey = `${cacheKeyPrefix}:${identity}`;
         const fileDiff = { ...parsedFileDiff, cacheKey };
         const additions = fileDiff.hunks.reduce((total, hunk) => total + hunk.additionLines, 0);
@@ -78,6 +87,7 @@ export function parseReviewItems(
           occurrence,
           contentKey,
           cacheKey,
+          filePatch,
           fileDiff,
         });
       }
@@ -98,6 +108,11 @@ export function parseReviewItems(
       parseError: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+function splitFilePatches(patch: string): string[] {
+  const starts = [...patch.matchAll(/^diff --git /gm)].map((match) => match.index);
+  return starts.map((start, index) => patch.slice(start, starts[index + 1] ?? patch.length));
 }
 
 function reviewItemIdentity(status: ChangeTypes, oldPath: string | null, path: string): string {

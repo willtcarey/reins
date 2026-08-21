@@ -165,22 +165,22 @@ function prepareNativeControls(root: ShadowRoot | null, fileDiff: FileDiffMetada
   }
 
   if (!fileDiff.isPartial) return;
-  for (const lineInfo of root.querySelectorAll<HTMLElement>("[data-unmodified-lines]")) {
-    const separator = lineInfo.closest<HTMLElement>("[data-separator]");
+  for (const content of root.querySelectorAll<HTMLElement>("[data-separator-content]")) {
+    const separator = content.closest<HTMLElement>("[data-separator]");
     if (!separator || separator.dataset.expandIndex) continue;
     const nextLineIndex = nextRenderedLineIndex(separator);
     const hunkIndex = fileDiff.hunks.findIndex((hunk) => hunk.unifiedLineStart === nextLineIndex);
     if (hunkIndex < 0) continue;
 
-    // Pierre intentionally omits buttons for partial metadata. Its existing
-    // line-info row is the acquisition control until complete contents arrive.
-    // These are the same attributes consumed by Pierre's interaction model;
-    // the capture listener prevents expansion against the partial arrays.
-    separator.dataset.expandIndex = `${hunkIndex}`;
-    lineInfo.setAttribute("role", "button");
-    lineInfo.tabIndex = 0;
-    lineInfo.setAttribute("aria-label", "Load complete file context");
-    if (hunkIndex === 0) lineInfo.setAttribute("data-expand-down", "");
+    // Pierre intentionally omits buttons for partial metadata. Keep its
+    // structural expansion attributes untouched so the existing line-info
+    // content retains Pierre's full-width layout. Reins owns only this first
+    // acquisition marker; complete metadata uses Pierre's native controls.
+    content.dataset.reinsAcquireHunkIndex = `${hunkIndex}`;
+    content.dataset.reinsAcquireDirection = hunkIndex === 0 ? "down" : "both";
+    content.setAttribute("role", "button");
+    content.tabIndex = 0;
+    content.setAttribute("aria-label", "Load complete file context");
   }
 }
 
@@ -198,15 +198,22 @@ function expansionInteraction(event: Event): ReviewFileExpansionInteraction | nu
   const path = event.composedPath();
   const nativeControl = path.find((entry): entry is HTMLElement => (
     entry instanceof HTMLElement
-      && (entry.hasAttribute("data-expand-button") || entry.hasAttribute("data-unmodified-lines"))
+      && (entry.hasAttribute("data-expand-button") || entry.dataset.reinsAcquireHunkIndex !== undefined)
+  )) ?? path.find((entry): entry is HTMLElement => (
+    entry instanceof HTMLElement && entry.hasAttribute("data-unmodified-lines")
   ));
   if (!nativeControl) return null;
   const separator = nativeControl.closest<HTMLElement>("[data-separator]");
   if (!separator) return null;
 
-  const hunkIndex = Number.parseInt(separator.dataset.expandIndex ?? "", 10);
+  const hunkIndex = Number.parseInt(
+    separator.dataset.expandIndex ?? nativeControl.dataset.reinsAcquireHunkIndex ?? "",
+    10,
+  );
   if (Number.isNaN(hunkIndex)) return null;
-  let direction: ExpansionDirections = "both";
+  let direction: ExpansionDirections = nativeControl.dataset.reinsAcquireDirection === "down"
+    ? "down"
+    : "both";
   if (nativeControl.hasAttribute("data-expand-up")) direction = "up";
   else if (nativeControl.hasAttribute("data-expand-down")) direction = "down";
   const expandAll = nativeControl.hasAttribute("data-expand-all-button")

@@ -60,7 +60,7 @@ ${additions}
     expect(partial.isPartial).toBe(true);
   });
 
-  test("uses Pierre's partial line-info row for acquisition and native controls after completion", () => {
+  test("uses the full-width partial separator content for acquisition without mutating Pierre's structure", () => {
     const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
     const originalRender = ReviewFileDiff.prototype.render;
     const listeners = new Map<string, EventListener>();
@@ -104,9 +104,11 @@ ${additions}
     const nextLine = new TestHTMLElement();
     nextLine.dataset.lineIndex = `${partial.hunks[0]?.unifiedLineStart},${partial.hunks[0]?.splitLineStart}`;
     separator.nextElementSibling = nextLine;
-    const control = new TestHTMLElement(["data-unmodified-lines"]);
+    const control = new TestHTMLElement(["data-separator-content"]);
     control.closest = () => separator;
-    queryResults.set("[data-unmodified-lines]", [control]);
+    const controlText = new TestHTMLElement(["data-unmodified-lines"]);
+    controlText.closest = () => separator;
+    queryResults.set("[data-separator-content]", [control]);
     const unchanged = Array.from({ length: 32 }, (_, index) => `line ${index + 1}`).join("\n");
     const complete = parseDiffFromFile(
       { name: "file.txt", contents: `${unchanged}\nold\n` },
@@ -145,12 +147,13 @@ ${additions}
       if (typeof attach !== "function") throw new Error("Expected renderer ref binding");
       attach(new TestHTMLElement());
 
-      const partialEvent = interactionEvent("click", [control, separator]);
+      const partialEvent = interactionEvent("click", [controlText, control, separator]);
       listeners.get("click")?.(partialEvent);
 
       expect(renderedMetadata[0]).toBe(partial);
       expect(renderedMetadata[0]?.isPartial).toBe(true);
-      expect(separator.dataset.expandIndex).toBe("0");
+      expect(separator.dataset.expandIndex).toBeUndefined();
+      expect(control.dataset.reinsAcquireHunkIndex).toBe("0");
       expect(control.getAttribute("role")).toBe("button");
       expect(control.getAttribute("aria-label")).toBe("Load complete file context");
       expect(control.tabIndex).toBe(0);
@@ -164,7 +167,10 @@ ${additions}
       controller.instance.expandHunk = (hunkIndex, direction, lineCount) => {
         expanded.push([hunkIndex, direction, lineCount]);
       };
-      const completeEvent = interactionEvent("keydown", [control, separator], { key: "Enter" });
+      const nativeControl = new TestHTMLElement(["data-expand-button", "data-expand-down"]);
+      nativeControl.closest = () => separator;
+      separator.dataset.expandIndex = "0";
+      const completeEvent = interactionEvent("keydown", [nativeControl, separator], { key: "Enter" });
       listeners.get("keydown")?.(completeEvent);
 
       expect(nativeInteractions).toEqual([0]);
