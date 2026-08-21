@@ -15,7 +15,7 @@ Each layer has one owner:
 - Lit owns keyed mounting and removal of review item elements.
 - `ReviewDiffItem` owns stable height observation and the render-readiness contract for one mounted file. It emits a narrow item-ID-and-height event only after the measurement is stable.
 - `PierreRenderer` owns one Pierre instance and container generation for the mounted lifetime.
-- Pierre owns diff rows, native context-expansion regions, and worker-backed highlighting inside the current container. `ReviewExpansionState` only acquires complete contents and retains Pierre's opaque region snapshot across virtual remounts.
+- Pierre owns diff rows, native context-expansion regions, and worker-backed highlighting inside the current container. `ReviewExpansionState` only acquires complete contents and retains Pierre's opaque region snapshot across virtual remounts. Partial metadata must remain marked partial when passed to Pierre; its existing line-info row may serve only as the intercepted first-acquisition seam until truthful complete metadata exists.
 
 Do not introduce another owner for top-level item positions or scroll correction. In particular, the controller must not advance coordinator viewport state ahead of the scroll container, the review adapter must not duplicate generic scroll state, and Pierre must not control the outer review scroll.
 
@@ -58,6 +58,7 @@ Do not introduce another owner for top-level item positions or scroll correction
 - Native CSS scroll anchoring remains disabled for this surface; Reins owns correction.
 - User wheel, touch, pointer, or scrolling-key input cancels programmatic navigation before anchor correction can fight it.
 - Inline context expansion records the interacted Pierre separator/adjacent line before rendering and applies its point delta through the existing controller correction path; it must not create a second geometry owner.
+- Never expose Pierre controls by changing `FileDiffMetadata.isPartial` without reconstructing complete old/new line arrays. Shiki highlighting treats non-partial hunk positions as indexes into complete contents.
 
 ### File navigation
 

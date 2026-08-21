@@ -35,22 +35,6 @@ export interface ReviewFileDiffTarget {
 }
 
 /**
- * Pierre only emits its native line-info controls for non-partial metadata.
- * This shallow presentation copy exposes those controls while all semantic
- * decisions continue to use the original partial object. The copied metadata
- * must never be passed to expandHunk; its line arrays remain incomplete.
- */
-export function metadataWithNativeExpansionControls(fileDiff: FileDiffMetadata): FileDiffMetadata {
-  return fileDiff.isPartial
-    ? {
-        ...fileDiff,
-        isPartial: false,
-        cacheKey: fileDiff.cacheKey ? `${fileDiff.cacheKey}:native-expansion-controls` : undefined,
-      }
-    : fileDiff;
-}
-
-/**
  * The only state adapter around FileDiff expansion. Pierre remains responsible
  * for changing, clamping, and joining expanded hunk regions.
  */
@@ -95,9 +79,9 @@ export function createReviewFileDiffRenderer(
         const interaction = expansionInteraction(event);
         if (!interaction) return;
         if (target.fileDiff.isPartial) {
-          // Capture before Pierre's bubbling InteractionManager. The renderer
-          // sees a guarded presentation copy, but can never expand its partial
-          // arrays while acquisition is idle, loading, or failed.
+          // Capture before Pierre's bubbling InteractionManager so it can
+          // never expand partial arrays while acquisition is idle, loading,
+          // unsupported, or failed.
           event.preventDefault();
           event.stopImmediatePropagation();
           onAcquire?.(interaction);
@@ -132,7 +116,7 @@ export function createReviewFileDiffRenderer(
             root.addEventListener("click", handleClick, true);
             root.addEventListener("keydown", handleKeydown, true);
           }
-          prepareNativeControls(root);
+          prepareNativeControls(root, target.fileDiff);
           if (instance instanceof ReviewFileDiff) {
             onNativeState?.(instance.nativeExpansionState());
           }
@@ -155,7 +139,9 @@ export function createReviewFileDiffRenderer(
       return renderer;
     },
     render: (renderer, target, container) => renderer.render({
-      fileDiff: metadataWithNativeExpansionControls(target.fileDiff),
+      // Never mark patch-only arrays complete: Pierre and Shiki use complete
+      // hunk positions to index lines whenever isPartial is false.
+      fileDiff: target.fileDiff,
       fileContainer: container,
     }),
     sameInput: (left, right) => left === right,
@@ -163,7 +149,7 @@ export function createReviewFileDiffRenderer(
   });
 }
 
-function prepareNativeControls(root: ShadowRoot | null): void {
+function prepareNativeControls(root: ShadowRoot | null, fileDiff: FileDiffMetadata): void {
   if (!root) return;
   for (const control of root.querySelectorAll<HTMLElement>("[data-expand-button][role='button']")) {
     control.tabIndex = 0;
@@ -177,6 +163,35 @@ function prepareNativeControls(root: ShadowRoot | null): void {
           : "Expand unchanged lines";
     control.setAttribute("aria-label", action);
   }
+
+  if (!fileDiff.isPartial) return;
+  for (const lineInfo of root.querySelectorAll<HTMLElement>("[data-unmodified-lines]")) {
+    const separator = lineInfo.closest<HTMLElement>("[data-separator]");
+    if (!separator || separator.dataset.expandIndex) continue;
+    const nextLineIndex = nextRenderedLineIndex(separator);
+    const hunkIndex = fileDiff.hunks.findIndex((hunk) => hunk.unifiedLineStart === nextLineIndex);
+    if (hunkIndex < 0) continue;
+
+    // Pierre intentionally omits buttons for partial metadata. Its existing
+    // line-info row is the acquisition control until complete contents arrive.
+    // These are the same attributes consumed by Pierre's interaction model;
+    // the capture listener prevents expansion against the partial arrays.
+    separator.dataset.expandIndex = `${hunkIndex}`;
+    lineInfo.setAttribute("role", "button");
+    lineInfo.tabIndex = 0;
+    lineInfo.setAttribute("aria-label", "Load complete file context");
+    if (hunkIndex === 0) lineInfo.setAttribute("data-expand-down", "");
+  }
+}
+
+function nextRenderedLineIndex(separator: HTMLElement): number {
+  let nextLine = separator.nextElementSibling;
+  while (nextLine instanceof HTMLElement) {
+    const lineIndex = Number.parseInt(nextLine.dataset.lineIndex?.split(",")[0] ?? "", 10);
+    if (!Number.isNaN(lineIndex)) return lineIndex;
+    nextLine = nextLine.nextElementSibling;
+  }
+  return Number.NaN;
 }
 
 function expansionInteraction(event: Event): ReviewFileExpansionInteraction | null {
