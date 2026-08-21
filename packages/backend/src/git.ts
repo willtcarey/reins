@@ -473,13 +473,20 @@ export interface GitBlobInfo {
   size: number;
 }
 
+export class GitFileNotFoundError extends Error {}
+
 /** Resolve a file at a git ref to a blob object and size without reading it. */
 export async function getGitBlobInfo(
   projectDir: string,
   ref: string,
   filePath: string,
 ): Promise<GitBlobInfo> {
-  const objectId = (await runGit(projectDir, ["rev-parse", "--verify", `${ref}:${filePath}`])).trim();
+  let objectId: string;
+  try {
+    objectId = (await runGit(projectDir, ["rev-parse", "--verify", `${ref}:${filePath}`])).trim();
+  } catch {
+    throw new GitFileNotFoundError(`File not found in ref: ${ref}:${filePath}`);
+  }
   const type = (await runGit(projectDir, ["cat-file", "-t", objectId])).trim();
   if (type !== "blob") {
     throw new Error(`Not a file blob: ${ref}:${filePath}`);

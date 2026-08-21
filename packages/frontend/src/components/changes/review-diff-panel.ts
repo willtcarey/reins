@@ -11,6 +11,10 @@ import {
   type ReviewCollapseScope,
 } from "../../models/changes/review-collapse-state.js";
 import {
+  ReviewExpansionState,
+  type ReviewExpansionScope,
+} from "../../models/changes/review-expansion-state.js";
+import {
   parseReviewItems,
   reconcileReviewItems,
   type ReviewItem,
@@ -28,6 +32,9 @@ import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js
 import {
   activeFileChangeEvent,
   activeItemChangeEvent,
+  type ReviewContextAcquireDetail,
+  type ReviewContextStateDetail,
+  type ReviewExpansionAnchorDetail,
   type ReviewItemMeasurementDetail,
 } from "../events.js";
 import { branchIcon } from "../icons.js";
@@ -75,6 +82,9 @@ export class ReviewDiffPanel extends LitElement {
     DEFAULT_VIEWPORT_HEIGHT,
   );
   private _navigationTelemetry: ClientTelemetryOperation | null = null;
+  private _expansionState: ReviewExpansionState | null = null;
+  private _expansionScopeKey = "";
+  private _unsubscribeExpansion: (() => void) | null = null;
 
   constructor() {
     super();
@@ -105,6 +115,8 @@ export class ReviewDiffPanel extends LitElement {
     super.disconnectedCallback();
     this._unsubscribe?.();
     this._unsubscribe = null;
+    this._unsubscribeExpansion?.();
+    this._unsubscribeExpansion = null;
     this._navigationTelemetry = null;
     this.store?.clearPatchDiff();
   }
@@ -174,6 +186,10 @@ export class ReviewDiffPanel extends LitElement {
     this._parsedData = null;
     this._activeItemId = null;
     this._navigationTelemetry = null;
+    this._unsubscribeExpansion?.();
+    this._unsubscribeExpansion = null;
+    this._expansionState = null;
+    this._expansionScopeKey = "";
   }
 
   private _reconcilePatchData() {
@@ -195,7 +211,26 @@ export class ReviewDiffPanel extends LitElement {
     if (this._activeItemId && !this._parsedData.items.some((item) => item.id === this._activeItemId)) {
       this._activeItemId = null;
     }
+    this._ensureExpansionState();
     this._syncVirtualItems();
+  }
+
+  private _ensureExpansionState(): ReviewExpansionState | null {
+    const store = this.store;
+    if (store?.projectId == null) return null;
+    const scope: ReviewExpansionScope = {
+      projectId: store.projectId,
+      mode: store.diffMode,
+      branch: this._parsedSource?.branch ?? store.branch,
+    };
+    const key = `${scope.projectId}:${scope.mode}:${scope.branch ?? ""}`;
+    if (key === this._expansionScopeKey && this._expansionState) return this._expansionState;
+
+    this._unsubscribeExpansion?.();
+    this._expansionScopeKey = key;
+    this._expansionState = new ReviewExpansionState(scope);
+    this._unsubscribeExpansion = this._expansionState.subscribe(() => this.requestUpdate());
+    return this._expansionState;
   }
 
   private _collapseScope(): ReviewCollapseScope | null {
@@ -228,6 +263,24 @@ export class ReviewDiffPanel extends LitElement {
 
   private _handleToggleCollapse(event: CustomEvent<string>) {
     this.setItemCollapsed(event.detail, !this.isItemCollapsed(event.detail));
+  }
+
+  private _handleContextAcquire(event: CustomEvent<ReviewContextAcquireDetail>) {
+    const item = this._parsedData?.items.find((candidate) => candidate.id === event.detail.id);
+    const expansion = this._ensureExpansionState();
+    if (!item || !expansion) return;
+    void expansion.acquire(item);
+  }
+
+  private _handleContextState(event: CustomEvent<ReviewContextStateDetail>) {
+    const item = this._parsedData?.items.find((candidate) => candidate.id === event.detail.id);
+    const expansion = this._ensureExpansionState();
+    if (!item || !expansion) return;
+    expansion.retainNativeExpansion(item, event.detail.regions);
+  }
+
+  private _handleExpansionAnchor(event: CustomEvent<ReviewExpansionAnchorDetail>) {
+    this._virtualList.adjustScrollBy(event.detail.delta);
   }
 
   private _handleItemMeasurement(event: CustomEvent<ReviewItemMeasurementDetail>) {
@@ -394,7 +447,11 @@ export class ReviewDiffPanel extends LitElement {
                             .projectId=${this.store?.projectId ?? null}
                             .branch=${branch ?? null}
                             .reservedHeight=${Math.max(1, entry.height - reviewItemGap(index))}
+                            .expansion=${this._ensureExpansionState()?.forItem(item) ?? null}
                             @toggle-collapse=${this._handleToggleCollapse}
+                            @review-context-acquire=${this._handleContextAcquire}
+                            @review-context-state=${this._handleContextState}
+                            @review-expansion-anchor=${this._handleExpansionAnchor}
                             @review-item-measurement=${this._handleItemMeasurement}
                           ></review-diff-item>
                         `;

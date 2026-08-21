@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { chmodSync, mkdirSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, renameSync, writeFileSync } from "fs";
 import { readdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -18,6 +18,119 @@ async function expectNoNewTempDiffIndexes(before: Set<string>) {
   const after = await listTempDiffIndexes();
   expect([...after].filter((entry) => !before.has(entry))).toEqual([]);
 }
+
+// ---------------------------------------------------------------------------
+// getDiffFileContents
+// ---------------------------------------------------------------------------
+
+describe("getDiffFileContents", () => {
+  const repo = useTestRepo();
+
+  test("returns merge-base and working-tree text for the active branch with stable identities", async () => {
+    await commitFile(repo.dir, "story.txt", "base\n", "Add story");
+    await createBranch(repo.dir, "feature/story", "main");
+    await checkoutBranch(repo.dir, "feature/story");
+    await commitFile(repo.dir, "story.txt", "committed\n", "Edit story");
+    writeFileSync(join(repo.dir, "story.txt"), "working tree\n");
+
+    const workspace = new Workspace(repo.dir);
+    const first = await workspace.getDiffFileContents("story.txt", "story.txt", "branch", "feature/story");
+    const second = await workspace.getDiffFileContents("story.txt", "story.txt", "branch", "feature/story");
+
+    expect(first).toEqual(second);
+    expect(first.status).toBe("available");
+    if (first.status !== "available") throw new Error("Expected available contents");
+    expect(first.oldFile).toMatchObject({ name: "story.txt", contents: "base\n" });
+    expect(first.newFile).toMatchObject({ name: "story.txt", contents: "working tree\n" });
+    expect(first.oldFile?.contentId).toStartWith("sha256:");
+    expect(first.oldFile?.blobId).toMatch(/^[0-9a-f]+$/);
+    expect(first.newFile?.contentId).toStartWith("sha256:");
+    expect(first.newFile?.blobId).toBeUndefined();
+  });
+
+  test("returns merge-base and selected commit text for a non-active branch", async () => {
+    await commitFile(repo.dir, "selected.txt", "base\n", "Add selected file");
+    await createBranch(repo.dir, "feature/selected", "main");
+    await checkoutBranch(repo.dir, "feature/selected");
+    await commitFile(repo.dir, "selected.txt", "selected commit\n", "Edit selected file");
+    await checkoutBranch(repo.dir, "main");
+    writeFileSync(join(repo.dir, "selected.txt"), "unrelated working tree\n");
+
+    const result = await new Workspace(repo.dir).getDiffFileContents(
+      "selected.txt",
+      "selected.txt",
+      "branch",
+      "feature/selected",
+    );
+
+    expect(result.status).toBe("available");
+    if (result.status !== "available") throw new Error("Expected available contents");
+    expect(result.oldFile?.contents).toBe("base\n");
+    expect(result.newFile?.contents).toBe("selected commit\n");
+    expect(result.newFile?.contentId).toStartWith("sha256:");
+    expect(result.newFile?.blobId).toMatch(/^[0-9a-f]+$/);
+  });
+
+  test("returns HEAD and working-tree text in uncommitted mode, including untracked files", async () => {
+    await commitFile(repo.dir, "tracked.txt", "head\n", "Add tracked file");
+    writeFileSync(join(repo.dir, "tracked.txt"), "working\n");
+    writeFileSync(join(repo.dir, "untracked.txt"), "new working file\n");
+    const workspace = new Workspace(repo.dir);
+
+    const tracked = await workspace.getDiffFileContents("tracked.txt", "tracked.txt", "uncommitted");
+    const untracked = await workspace.getDiffFileContents(undefined, "untracked.txt", "uncommitted");
+
+    expect(tracked.status).toBe("available");
+    if (tracked.status !== "available") throw new Error("Expected tracked contents");
+    expect(tracked.oldFile?.contents).toBe("head\n");
+    expect(tracked.newFile?.contents).toBe("working\n");
+    expect(untracked).toMatchObject({
+      status: "available",
+      newFile: { name: "untracked.txt", contents: "new working file\n" },
+    });
+    if (untracked.status !== "available") throw new Error("Expected untracked contents");
+    expect(untracked.oldFile).toBeUndefined();
+  });
+
+  test("uses separate old and new paths for renames and represents deleted files as one-sided", async () => {
+    await commitFile(repo.dir, "before.txt", "renamed contents\n", "Add rename source");
+    await commitFile(repo.dir, "deleted.txt", "deleted contents\n", "Add deleted file");
+    await createBranch(repo.dir, "feature/files", "main");
+    await checkoutBranch(repo.dir, "feature/files");
+    renameSync(join(repo.dir, "before.txt"), join(repo.dir, "after.txt"));
+    await git(repo.dir, ["add", "before.txt", "after.txt"]);
+    await git(repo.dir, ["rm", "deleted.txt"]);
+
+    const workspace = new Workspace(repo.dir);
+    const renamed = await workspace.getDiffFileContents("before.txt", "after.txt", "branch");
+    const deleted = await workspace.getDiffFileContents("deleted.txt", undefined, "branch");
+
+    expect(renamed).toMatchObject({
+      status: "available",
+      oldFile: { name: "before.txt", contents: "renamed contents\n" },
+      newFile: { name: "after.txt", contents: "renamed contents\n" },
+    });
+    expect(deleted).toMatchObject({
+      status: "available",
+      oldFile: { name: "deleted.txt", contents: "deleted contents\n" },
+    });
+    if (deleted.status !== "available") throw new Error("Expected deleted contents");
+    expect(deleted.newFile).toBeUndefined();
+  });
+
+  test("returns stable unsupported and too-large outcomes without reading complete contents", async () => {
+    const binary = Buffer.from([1, 0, 2]);
+    writeFileSync(join(repo.dir, "binary.dat"), binary);
+    writeFileSync(join(repo.dir, "large.txt"), "x".repeat(1_048_577));
+    const workspace = new Workspace(repo.dir);
+
+    const unsupported = await workspace.getDiffFileContents(undefined, "binary.dat", "uncommitted");
+    const tooLarge = await workspace.getDiffFileContents(undefined, "large.txt", "uncommitted");
+
+    expect(unsupported).toEqual({ status: "unsupported", reason: "binary" });
+    expect(tooLarge).toEqual({ status: "too_large", limitBytes: 1_048_576 });
+  });
+});
 
 // ---------------------------------------------------------------------------
 // getDiffPatchStream

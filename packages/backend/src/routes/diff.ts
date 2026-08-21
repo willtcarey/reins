@@ -5,6 +5,7 @@
  *   GET /diff/files — lightweight file listing with +/− counts (for polling)
  *   GET /diff       — parsed diff hunks with raw text (highlighting done client-side)
  *   GET /diff/patch — raw unified patch text
+ *   GET /diff/contents — bounded complete old/new text for one diff file
  *
  * Both accept an optional `branch` query param. When provided, the diff is
  * computed against that branch instead of HEAD. If the branch is not currently
@@ -15,7 +16,9 @@
 
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
+import { badRequest } from "../errors.js";
 import { getCurrentBranch } from "../git.js";
+import { InvalidDiffContentPathError } from "../models/workspace.js";
 
 type DiffMode = "branch" | "uncommitted";
 
@@ -66,6 +69,24 @@ export function registerDiffRoutes(router: RouterGroup<ProjectRouteContext>) {
       branch: branch ?? currentBranch,
       baseBranch: ctx.project.baseBranch,
     });
+  });
+
+  /** Bounded complete text for lazy inline context expansion. */
+  router.get("/diff/contents", async (ctx) => {
+    const { mode, branch } = parseDiffParams(ctx.url);
+    const oldPath = ctx.url.searchParams.get("oldPath") ?? undefined;
+    const newPath = ctx.url.searchParams.get("path") ?? undefined;
+    if (!oldPath && !newPath) badRequest("Missing ?oldPath= or ?path= parameter");
+
+    try {
+      const result = await ctx.project.workspace.getDiffFileContents(oldPath, newPath, mode, branch);
+      return Response.json(result, {
+        headers: { "Cache-Control": "no-cache, no-store" },
+      });
+    } catch (err) {
+      if (err instanceof InvalidDiffContentPathError) badRequest(err.message);
+      throw err;
+    }
   });
 
   /** Raw unified patch text for CodeView/streamed diff consumers. */

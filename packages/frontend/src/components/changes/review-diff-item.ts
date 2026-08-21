@@ -2,9 +2,18 @@ import type { ChangeTypes } from "@pierre/diffs";
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { springCollapse } from "../../directives/spring-collapse.js";
+import type {
+  ReviewExpansionSnapshot,
+} from "../../models/changes/review-expansion-state.js";
 import type { ReviewItem } from "../../models/changes/review-items.js";
 import { clientTelemetry } from "../../models/client-telemetry.js";
-import { reviewItemMeasurementEvent, toggleCollapseEvent } from "../events.js";
+import {
+  reviewContextAcquireEvent,
+  reviewContextStateEvent,
+  reviewExpansionAnchorEvent,
+  reviewItemMeasurementEvent,
+  toggleCollapseEvent,
+} from "../events.js";
 import {
   addedFileIcon,
   deletedFileIcon,
@@ -12,7 +21,11 @@ import {
   renamedFileIcon,
 } from "../icons.js";
 import "./diff-file-action-buttons.js";
-import { createReviewFileDiffRenderer } from "./review-file-diff-renderer.js";
+import {
+  createReviewFileDiffRenderer,
+  type ReviewFileDiffTarget,
+  type ReviewFileExpansionInteraction,
+} from "./review-file-diff-renderer.js";
 
 const STATUS_ICON_DETAILS: Record<ChangeTypes, {
   label: string;
@@ -62,8 +75,18 @@ export class ReviewDiffItem extends LitElement {
   @property({ type: Number, attribute: false }) projectId: number | null = null;
   @property({ attribute: false }) branch: string | null = null;
   @property({ type: Number, attribute: false }) reservedHeight = 0;
+  @property({ attribute: false }) expansion: ReviewExpansionSnapshot | null = null;
 
-  private readonly _diff = createReviewFileDiffRenderer(this);
+  private readonly _diff = createReviewFileDiffRenderer(
+    this,
+    () => this._reconcileExpansionAnchor(),
+    (interaction) => this._requestAcquisition(interaction),
+    (interaction) => this._rememberExpansionAnchor(interaction),
+    (regions) => this._retainNativeExpansion(regions),
+  );
+  private _pendingExpansionAnchor: ReviewFileExpansionInteraction | null = null;
+  private _targetFileDiff: ReviewItem["fileDiff"] | null = null;
+  private _target: ReviewFileDiffTarget | null = null;
   private _heightObserver: ResizeObserver | null = null;
   private _mountGeneration = 0;
   private _lastMeasurement = "";
@@ -173,11 +196,61 @@ export class ReviewDiffItem extends LitElement {
     this.dispatchEvent(toggleCollapseEvent(this.item.id));
   }
 
+  private _requestAcquisition(interaction: ReviewFileExpansionInteraction) {
+    if (!this.item || this.expansion?.outcome !== "idle") return;
+    this._rememberExpansionAnchor(interaction);
+    this.dispatchEvent(reviewContextAcquireEvent(this.item.id));
+  }
+
+  private _rememberExpansionAnchor(interaction: ReviewFileExpansionInteraction) {
+    this._pendingExpansionAnchor = interaction;
+  }
+
+  private _retainNativeExpansion(regions: ReadonlyMap<number, { fromStart: number; fromEnd: number }>) {
+    if (!this.item || regions.size === 0) return;
+    this.dispatchEvent(reviewContextStateEvent({ id: this.item.id, regions }));
+  }
+
+  private _reconcileExpansionAnchor() {
+    const pending = this._pendingExpansionAnchor;
+    const root = this._diff.container?.shadowRoot;
+    if (!pending || !root) return;
+    const separator = root.querySelector<HTMLElement>(`[data-expand-index="${pending.hunkIndex}"]`);
+    const anchoredLine = pending.anchorLineNumber == null
+      ? null
+      : root.querySelector<HTMLElement>(`[data-column-number="${pending.anchorLineNumber}"]`);
+    const anchor = separator ?? anchoredLine;
+    if (!anchor) {
+      this._pendingExpansionAnchor = null;
+      return;
+    }
+    const delta = anchor.getBoundingClientRect().top - pending.anchorTop;
+    this._pendingExpansionAnchor = null;
+    if (delta === 0) return;
+    this.dispatchEvent(reviewExpansionAnchorEvent(delta));
+  }
+
+  private _diffTarget(item: ReviewItem): ReviewFileDiffTarget {
+    const fileDiff = this.expansion?.fileDiff ?? item.fileDiff;
+    if (fileDiff !== this._targetFileDiff) {
+      this._targetFileDiff = fileDiff;
+      this._target = {
+        fileDiff,
+        nativeExpandedHunks: this.expansion?.nativeExpandedHunks ?? new Map(),
+        initialExpansion: fileDiff.isPartial || !this._pendingExpansionAnchor
+          ? null
+          : this._pendingExpansionAnchor,
+      };
+    }
+    return this._target!;
+  }
+
   override render() {
     const item = this.item;
     if (!item) return nothing;
 
-    const diffBinding = this._diff.bind(item.fileDiff);
+    const diffTarget = this._diffTarget(item);
+    const diffBinding = this._diff.bind(diffTarget);
     const pendingHeight = !this.collapsed && !this.diffRendered && this.reservedHeight > 0
       ? `min-height:${this.reservedHeight}px`
       : nothing;
@@ -226,7 +299,15 @@ export class ReviewDiffItem extends LitElement {
         </header>
         ${springCollapse(
           this.collapsed,
-          () => html`<diffs-container data-pierre-file-diff ${diffBinding}></diffs-container>`,
+          () => html`
+            <diffs-container data-pierre-file-diff ${diffBinding}></diffs-container>
+            ${expansionMessage(this.expansion) ? html`
+              <div
+                class="border-t border-zinc-800 px-3 py-1 text-xs text-zinc-500"
+                role=${this.expansion?.outcome === "error" ? "alert" : "status"}
+              >${expansionMessage(this.expansion)}</div>
+            ` : nothing}
+          `,
           {
             onUnmount: () => this._diff.unmount(),
             animateContentResize: false,
@@ -235,6 +316,17 @@ export class ReviewDiffItem extends LitElement {
       </article>
     `;
   }
+}
+
+function expansionMessage(expansion: ReviewExpansionSnapshot | null): string | null {
+  if (!expansion) return null;
+  if (expansion.outcome === "error") return "Unable to load complete file context.";
+  if (expansion.unsupported?.reason === "binary") return "Context expansion is unavailable for binary files.";
+  if (expansion.unsupported?.reason === "too_large") {
+    const megabytes = expansion.unsupported.limitBytes / 1_048_576;
+    return `Context expansion is unavailable for files over ${megabytes.toFixed(megabytes % 1 === 0 ? 0 : 1)} MB.`;
+  }
+  return null;
 }
 
 function measuredHeight(element: HTMLElement | null | undefined): number | null {

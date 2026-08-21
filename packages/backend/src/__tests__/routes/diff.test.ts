@@ -169,6 +169,44 @@ describe("diff routes", () => {
     });
   });
 
+  describe("GET /api/projects/:id/diff/contents", () => {
+    test("returns both file sides using the selected diff semantics", async () => {
+      await commitFile(repo.dir, "story.txt", "base\n", "Add story");
+      await git(repo.dir, ["checkout", "-b", "feature/contents"]);
+      await commitFile(repo.dir, "story.txt", "feature\n", "Edit story");
+      await git(repo.dir, ["checkout", "main"]);
+
+      const res = await router.handle(
+        makeRequest(
+          "GET",
+          `/api/projects/${projectId}/diff/contents?mode=branch&branch=feature%2Fcontents&oldPath=story.txt&path=story.txt`,
+        ),
+        state,
+      );
+
+      expect(res!.status).toBe(200);
+      expect(await res!.json()).toMatchObject({
+        status: "available",
+        oldFile: { name: "story.txt", contents: "base\n" },
+        newFile: { name: "story.txt", contents: "feature\n" },
+      });
+    });
+
+    test("requires safe paths for at least one side", async () => {
+      const missing = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/diff/contents?mode=branch`),
+        state,
+      );
+      const traversal = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/diff/contents?mode=uncommitted&path=..%2Fsecret.txt`),
+        state,
+      );
+
+      expect(missing!.status).toBe(400);
+      expect(traversal!.status).toBe(400);
+    });
+  });
+
   describe("GET /api/projects/:id/diff/patch", () => {
     test("returns raw patch text with a diff content type", async () => {
       await git(repo.dir, ["checkout", "-b", "feature/raw-patch"]);

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { PartType, type PartInfo } from "lit/directive.js";
 import { ReviewDiffItem } from "../../../components/changes/review-diff-item.js";
 import { SpringCollapseDirective } from "../../../directives/spring-collapse.js";
+import { ReviewExpansionState } from "../../../models/changes/review-expansion-state.js";
 import { parseReviewItems } from "../../../models/changes/review-items.js";
 import {
   collectTemplateEventListeners,
@@ -102,9 +103,10 @@ describe("ReviewDiffItem", () => {
     };
     item.querySelector = querySelector;
     const renderer: object = Reflect.get(item, "_diff");
+    item.render();
+    const requested = Reflect.get(renderer, "requested");
     Reflect.set(renderer, "containerValue", container);
-    Reflect.set(renderer, "requested", reviewItem.fileDiff);
-    Reflect.set(renderer, "completed", reviewItem.fileDiff);
+    Reflect.set(renderer, "completed", requested);
     const measurements: unknown[] = [];
     item.addEventListener("review-item-measurement", (event) => measurements.push(event.detail));
 
@@ -129,8 +131,8 @@ describe("ReviewDiffItem", () => {
     item.getBoundingClientRect = () => testRect(137);
     Object.defineProperty(item, "isConnected", { configurable: true, value: true });
     const renderer: object = Reflect.get(item, "_diff");
-    Reflect.set(renderer, "requested", reviewItem.fileDiff);
-    Reflect.set(renderer, "completed", reviewItem.fileDiff);
+    item.render();
+    Reflect.set(renderer, "completed", Reflect.get(renderer, "requested"));
 
     const measurements: unknown[] = [];
     item.addEventListener("review-item-measurement", (event) => measurements.push(event.detail));
@@ -162,6 +164,26 @@ describe("ReviewDiffItem", () => {
     expect(output).toContain("src/example.ts");
     expect(output).not.toContain("<diffs-container data-pierre-file-diff");
     expect(toggledIds).toEqual([reviewItem.id]);
+  });
+
+  test("leaves expansion controls to Pierre and reports acquisition failure without replacing the diff", () => {
+    const reviewItem = parseReviewItems(PATCH, "project-7-v1").items[0]!;
+    const state = new ReviewExpansionState({ projectId: 7, mode: "branch" });
+    const item = new ReviewDiffItem();
+    item.item = reviewItem;
+    item.expansion = {
+      ...state.forItem(reviewItem),
+      outcome: "error",
+      error: "offline",
+    };
+
+    const output = renderOutput(item);
+
+    expect(output).toContain("<diffs-container data-pierre-file-diff");
+    expect(output).toContain("Unable to load complete file context.");
+    expect(output).not.toContain("Expand context");
+    expect(output).not.toContain("data-reins-context-control");
+    expect(output).not.toContain("Expand trailing unchanged context");
   });
 
   test("exposes accessible status labels for each changed-file status", () => {

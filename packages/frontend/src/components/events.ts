@@ -33,6 +33,9 @@ declare global {
     "active-file-change": CustomEvent<string | null>;
     "active-item-change": CustomEvent<string>;
     "review-item-measurement": CustomEvent<ReviewItemMeasurementDetail>;
+    "review-context-acquire": CustomEvent<ReviewContextAcquireDetail>;
+    "review-context-state": CustomEvent<ReviewContextStateDetail>;
+    "review-expansion-anchor": CustomEvent<ReviewExpansionAnchorDetail>;
     "toggle-collapse": CustomEvent<string>;
   }
 }
@@ -265,6 +268,31 @@ export function tabChangeEvent(index: number) {
 
 export function htmlPreviewEscapeEvent() {
   return componentSignal("html-preview-escape");
+}
+
+export interface ReviewContextAcquireDetail {
+  id: string;
+}
+
+export interface ReviewContextStateDetail {
+  id: string;
+  regions: ReadonlyMap<number, { fromStart: number; fromEnd: number }>;
+}
+
+export interface ReviewExpansionAnchorDetail {
+  delta: number;
+}
+
+export function reviewContextAcquireEvent(id: string) {
+  return componentEvent("review-context-acquire", { id });
+}
+
+export function reviewContextStateEvent(detail: ReviewContextStateDetail) {
+  return componentEvent("review-context-state", detail);
+}
+
+export function reviewExpansionAnchorEvent(delta: number) {
+  return componentEvent("review-expansion-anchor", { delta });
 }
 
 export interface ExpandDetail {

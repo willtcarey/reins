@@ -97,6 +97,19 @@ describe("VirtualListController", () => {
     expect(controller.window().activeId).toBe("visible");
   });
 
+  test("keeps an interacted point anchored while content inside an item grows", () => {
+    const host = fakeHost();
+    const controller = new VirtualListController(host, 0, 100);
+    controller.setItems(items);
+    const container = fakeContainer(120, 100);
+    controller.attach(container);
+
+    controller.adjustScrollBy(60);
+
+    expect(container.scrollTop).toBe(180);
+    expect(controller.window().activeId).toBe("visible");
+  });
+
   test("uses fixed geometry without discarding a prior fluid measurement", async () => {
     const host = fakeHost();
     const controller = new VirtualListController(host, 0);

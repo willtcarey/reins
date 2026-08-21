@@ -15,7 +15,7 @@ Each layer has one owner:
 - Lit owns keyed mounting and removal of review item elements.
 - `ReviewDiffItem` owns stable height observation and the render-readiness contract for one mounted file. It emits a narrow item-ID-and-height event only after the measurement is stable.
 - `PierreRenderer` owns one Pierre instance and container generation for the mounted lifetime.
-- Pierre owns diff rows and worker-backed highlighting inside the current container.
+- Pierre owns diff rows, native context-expansion regions, and worker-backed highlighting inside the current container. `ReviewExpansionState` only acquires complete contents and retains Pierre's opaque region snapshot across virtual remounts.
 
 Do not introduce another owner for top-level item positions or scroll correction. In particular, the controller must not advance coordinator viewport state ahead of the scroll container, the review adapter must not duplicate generic scroll state, and Pierre must not control the outer review scroll.
 
@@ -57,6 +57,7 @@ Do not introduce another owner for top-level item positions or scroll correction
 - The DOM scroll container is the source of truth for actual in-flight position.
 - Native CSS scroll anchoring remains disabled for this surface; Reins owns correction.
 - User wheel, touch, pointer, or scrolling-key input cancels programmatic navigation before anchor correction can fight it.
+- Inline context expansion records the interacted Pierre separator/adjacent line before rendering and applies its point delta through the existing controller correction path; it must not create a second geometry owner.
 
 ### File navigation
 
@@ -79,7 +80,6 @@ Do not introduce another owner for top-level item positions or scroll correction
 Do not expand the scope of top-level virtualization incidentally. These remain separate work unless explicitly requested:
 
 - Rich Markdown, image, PDF, or binary previews
-- Fluid context expansion and complete-file retrieval
 - Renderer or DOM pooling
 - Patch streaming
 - A second per-file virtualizer
@@ -95,6 +95,7 @@ The primary contract coverage lives in:
 - `packages/frontend/src/__tests__/controllers/virtual-list-controller.test.ts`
 - `packages/frontend/src/__tests__/components/changes/review-diff-panel.test.ts`
 - `packages/frontend/src/__tests__/components/changes/review-diff-item.test.ts`
+- `packages/frontend/src/__tests__/components/changes/review-file-diff-renderer.test.ts`
 - `packages/frontend/src/__tests__/controllers/pierre-renderer.test.ts`
 
 Regression tests should assert observable contracts such as bounded mounted records, stable navigation, preserved anchors, current render readiness, and cleanup across container generations. Avoid tests that only encode incidental private fields.

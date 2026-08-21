@@ -169,6 +169,15 @@ export class VirtualListController implements ReactiveController {
     });
   }
 
+  /** Compensate for content inserted above a user-interacted point inside an item. */
+  public adjustScrollBy(delta: number) {
+    if (!this.container || !Number.isFinite(delta) || delta === 0) return;
+    this.container.scrollTop += delta;
+    this.syncViewport();
+    this.rememberScrollPosition();
+    this.host.requestUpdate();
+  }
+
   public navigateTo(id: string): boolean {
     const top = this.coordinator.navigationTop(id);
     if (top === null || !this.container) return false;

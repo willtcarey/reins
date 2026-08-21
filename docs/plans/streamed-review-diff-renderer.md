@@ -63,14 +63,14 @@ This is the working implementation list. It is ordered from smallest functional 
    - [x] Avoid scheduling highlight work for items outside the visible/overscan window by not constructing their item components.
    - [x] Preserve Reins-owned headers/actions around the Pierre-rendered diff body.
 
-8. [ ] **Implement fluid inline context expansion.**
+8. [x] **Implement fluid inline context expansion through Pierre `FileDiff`.**
    - Treat each diff as a view into the complete file, with collapsed unchanged regions appearing naturally between hunks.
-   - Let the user reveal more lines directly in place; repeated expansion should continue opening the region until adjacent hunks join or the complete file is visible.
-   - Keep the interaction continuous: the file must not visibly switch modes, disappear, or be replaced while content is acquired.
-   - Add the per-file old/new content endpoint with diff semantics and retrieve complete contents invisibly on the first expansion when they are not already available.
-   - Update rendered lines and measured item height while anchoring the touched region in the viewport so expansion does not disorient the user.
-   - Consider prefetching likely expansion data where it meaningfully reduces first-interaction latency without loading every complete file eagerly.
-   - If complete content cannot be retrieved, leave the existing partial diff stable and show a non-disruptive error at the expansion control.
+   - Use Pierre's built-in `line-info` controls and `FileDiff.expandHunk`; Reins does not render expansion buttons or calculate/join hunk regions.
+   - Lazily retrieve bounded old/new contents together on the first interaction with a Pierre line-info row, then cache by blob/content identity.
+   - Keep the partial `FileDiff` mounted while acquisition is pending or fails. Remount once with complete metadata, replay the initiating call through `expandHunk`, and retain Pierre-reported regions only for unavoidable virtual remount restoration.
+   - Reconcile rendered height through the existing virtual measurement path and compensate the interacted separator's viewport point.
+   - Report retrieval, reconstruction, binary, and size failures beside the unchanged diff without replacing it.
+   - Prefetching remains deliberately deferred.
 
 9. [ ] **Measure and compare.**
    - Compare `classic`, `codeview`, and the Reins-owned virtual path.
@@ -127,7 +127,7 @@ Because `classic` and `codeview` remain available fallbacks, the Reins-owned pat
 - Worker-backed syntax highlighting is required even in the non-virtual scaffold; main-thread highlighting can make the scaffold unusable before top-level virtualization is added.
 - Raw patch parsing produces `FileDiffMetadata.isPartial === true`; complete old/new file contents are still required to reveal unchanged lines that are absent from the patch.
 - Content retrieval is an internal detail, not a user-visible transition. The collapsed region should remain the stable interaction point while complete contents are acquired, then open inline without replacing the file surface.
-- Direct `CodeView` does not expose a clean public async context-expansion interception hook. Lower-level/custom separator escape hatches exist but are deprecated or unsupported for core behavior.
+- `FileDiff` does not expose an async pre-expansion hook, and intentionally suppresses expansion controls when `FileDiffMetadata.isPartial` is true. For presentation only, Reins renders a shallow copy with `isPartial: false`, which makes Pierre emit its native line-info controls without inventing content or replacing any line arrays. A capture listener keyed to the original partial metadata intercepts pointer and keyboard activation before Pierre can call `expandHunk`; after acquisition Reins remounts with genuinely complete metadata and replays the interaction through public `FileDiff.expandHunk`. Reins adds keyboard metadata to Pierre's existing role-button nodes but does not use deprecated custom separators or inject controls into Pierre's shadow DOM.
 
 ## Detailed design notes
 
@@ -244,4 +244,12 @@ Metrics to capture:
 - [x] The item model remains open to mixed Reins review content without deprecated Pierre APIs.
 - [x] Classic remains stable and default.
 
-Fluid inline context expansion retains the endpoint/item-state/anchoring direction documented above, but its content retrieval and interaction remain deferred.
+### Completed context expansion seam
+
+`Workspace.getDiffFileContents` and `GET /diff/contents` own side resolution and bounded acquisition as one operation. They resolve merge-base/worktree sides for the active branch, merge-base/selected-commit sides for non-active branches, and HEAD/worktree sides for uncommitted changes, while accepting separate rename paths and absent new/deleted/untracked sides. The endpoint checks the declared size before reading, rejects NUL-classified binary content, caps each side at 1 MiB, and returns stable `available`, `unsupported`, or `too_large` outcomes. Available sides include a content hash and, for immutable Git sides, the blob ID.
+
+`ReviewExpansionState` owns only acquisition outcomes, request sharing, content-identity caches, complete metadata reconstruction, and an opaque copy of expansion regions reported by Pierre for virtual remount restoration. It does not apply directional increments or reproduce Pierre's joining/clamping rules. `ReviewDiffItem` leaves the partial `FileDiff` mounted during loading and failures. `review-file-diff-renderer.ts` configures the supported `line-info` UI and uses a guarded non-partial presentation copy so Pierre emits its own indexed role-button controls. Capture-phase pointer/keyboard interception uses the original partial object as the safety gate, so `expandHunk` cannot see incomplete arrays; after acquisition, the initiating and every subsequent reveal delegates to public `FileDiff.expandHunk`. Its small `ReviewFileDiff` subclass exposes the protected renderer's public expansion snapshot solely because `FileDiff` has no public remount serialization API. No custom hunk separator, injected shadow-DOM control, trailing button, or parallel expansion model is used.
+
+The generic virtual list remains the geometry owner. Before a native separator interaction, the item records the separator and following line point; after Pierre renders, `VirtualListController.adjustScrollBy` compensates that point. The existing stable `ResizeObserver` measurement then updates persistent item/total height and anchors the surrounding top-level list geometry.
+
+Pierre limitation: partial metadata cannot describe trailing context. A partial patch with no leading/inter-hunk collapsed region (for example, a sole hunk at line 1 with only unknown trailing content) offers no native line-info control and cannot trigger lazy acquisition. Fixing that completely requires an upstream Pierre async content hook or prefetching; Reins will not reintroduce a parallel trailing control. Other limitations: context state is in-memory for the current panel scope rather than persisted across reloads; failed acquisition is terminal until the diff scope/item changes; the text safeguard uses the existing NUL-byte binary heuristic rather than MIME-aware decoding; and the 1 MiB per-side limit is fixed. Prefetching, rich previews, patch streaming, and renderer polish remain deferred.
