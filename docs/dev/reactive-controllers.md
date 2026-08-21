@@ -140,6 +140,12 @@ Testing behavior controllers follows the same fake-host pattern. For DOM-interac
 
 The goal isn't 100% unit coverage of DOM code - it's to get the **state machine and decision logic** out of the component and into a testable place.
 
+## VirtualListController - Generic Bounded Lists
+
+`controllers/virtual-list-controller.ts` is the reusable behavior owner for variable-height top-level lists. Callers provide generic `{ id, estimatedHeight, measurementKey, fixedHeight? }` inputs, attach the rendered scroll container, submit stable measurements, navigate by ID, and render `window().items`. The controller owns viewport observation, measurement batching, semantic anchor correction after render, smooth-navigation retargeting/cancellation, scroll restoration, and frame scheduling. Its `observe` hook uses generic IDs and geometry only; feature adapters are responsible for translating observations into domain events or telemetry.
+
+The pure `models/virtual-list-coordinator.ts` retains geometry and measurements. Do not wrap it with a feature-specific controller or duplicate scroll/anchor state in a component. Feature components should remain adapters: for example, `ReviewDiffPanel` computes review estimates, maps collapse to `fixedHeight`, and maps active IDs back to files.
+
 ## Writing a Controller
 
 ```ts

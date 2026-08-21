@@ -77,9 +77,15 @@ file-viewer-code [data-pierre-file] {
   --diffs-bg-hover-override: #3f3f46;
 }
 
+[data-review-scroll] {
+  /* ReviewDiffPanel compensates measured heights against its virtual anchor. */
+  overflow-anchor: none;
+}
+
 review-diff-item {
   /* github-dark's editor background, shared by Pierre and Reins-owned chrome. */
   --reins-diff-background: #24292e;
+  box-sizing: border-box;
   display: block;
 }
 
@@ -87,8 +93,9 @@ review-diff-item {
   background-color: var(--reins-diff-background);
 }
 
-review-diff-item + review-diff-item {
-  margin-block-start: 1em;
+review-diff-item:not([data-review-first]) {
+  /* Keep inter-file spacing inside the measured virtual item box. */
+  padding-block-start: 1rem;
 }
 
 /* Diff line colors — background only so syntax highlighting shows through */

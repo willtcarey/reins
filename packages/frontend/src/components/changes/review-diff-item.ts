@@ -1,10 +1,10 @@
-import { FileDiff, type ChangeTypes, type FileDiffOptions } from "@pierre/diffs";
+import type { ChangeTypes } from "@pierre/diffs";
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { springCollapse } from "../../directives/spring-collapse.js";
-import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
 import type { ReviewItem } from "../../models/changes/review-items.js";
-import { diffRenderedEvent, toggleCollapseEvent } from "../events.js";
+import { clientTelemetry } from "../../models/client-telemetry.js";
+import { reviewItemMeasurementEvent, toggleCollapseEvent } from "../events.js";
 import {
   addedFileIcon,
   deletedFileIcon,
@@ -12,6 +12,7 @@ import {
   renamedFileIcon,
 } from "../icons.js";
 import "./diff-file-action-buttons.js";
+import { createReviewFileDiffRenderer } from "./review-file-diff-renderer.js";
 
 const STATUS_ICON_DETAILS: Record<ChangeTypes, {
   label: string;
@@ -50,16 +51,6 @@ function renderStatusIcon(status: ChangeTypes) {
   return details.icon(`h-3 w-3 shrink-0 ${details.colorClass}`, details.label);
 }
 
-const REINS_DIFF_OPTIONS: FileDiffOptions<undefined> = {
-  theme: PIERRE_SHIKI_THEME,
-  themeType: "dark",
-  diffStyle: "unified",
-  diffIndicators: "classic",
-  overflow: "scroll",
-  hunkSeparators: "line-info",
-  disableFileHeader: true,
-};
-
 @customElement("review-diff-item")
 export class ReviewDiffItem extends LitElement {
   override createRenderRoot() {
@@ -70,65 +61,104 @@ export class ReviewDiffItem extends LitElement {
   @property({ type: Boolean }) collapsed = false;
   @property({ type: Number, attribute: false }) projectId: number | null = null;
   @property({ attribute: false }) branch: string | null = null;
+  @property({ type: Number, attribute: false }) reservedHeight = 0;
 
-  private _fileDiff: FileDiff<undefined> | null = null;
-  private _renderedItem: ReviewItem | null = null;
-  private _diffRendered = false;
-  private _root: HTMLElement | null = null;
+  private readonly _diff = createReviewFileDiffRenderer(this);
+  private _heightObserver: ResizeObserver | null = null;
+  private _mountGeneration = 0;
+  private _lastMeasurement = "";
 
   public get diffRendered(): boolean {
-    return this._diffRendered && this._renderedItem?.fileDiff === this.item?.fileDiff;
+    return this._measurementReadiness().diffRendered;
+  }
+
+  override connectedCallback() {
+    this._mountGeneration += 1;
+    this._lastMeasurement = "";
+    super.connectedCallback();
   }
 
   override updated() {
-    this._syncFileDiff();
+    this._observeHeight();
+    this._emitStableMeasurement(this._mountGeneration);
   }
 
   override disconnectedCallback() {
+    this._mountGeneration += 1;
+    this._heightObserver?.disconnect();
+    this._heightObserver = null;
+    this._lastMeasurement = "";
     super.disconnectedCallback();
-    this._destroyFileDiff();
   }
 
-  protected getDiffRoot(): HTMLElement | null {
-    return this.querySelector<HTMLElement>("[data-pierre-file-diff]");
-  }
-
-  private _syncFileDiff() {
-    const root = this.getDiffRoot();
-    if (!root || !this.item) {
-      this._destroyFileDiff();
+  private _observeHeight() {
+    if (this.collapsed) {
+      this._heightObserver?.disconnect();
+      this._heightObserver = null;
       return;
     }
-    if (this._fileDiff && this._root === root) {
-      if (this._renderedItem?.fileDiff === this.item.fileDiff) {
-        this._renderedItem = this.item;
-        return;
-      }
-      this._diffRendered = false;
-      this._renderedItem = this.item;
-      this._fileDiff.render({ fileDiff: this.item.fileDiff, fileContainer: root });
-      return;
-    }
-
-    this._destroyFileDiff();
-    this._fileDiff = new FileDiff({
-      ...REINS_DIFF_OPTIONS,
-      onPostRender: (node, _instance, phase) => {
-        if (phase === "unmount" || node.shadowRoot?.querySelector("[data-placeholder]")) return;
-        this._markDiffRendered();
-      },
-    }, getPierreWorkerPool(), true);
-    this._root = root;
-    this._renderedItem = this.item;
-    this._fileDiff.render({ fileDiff: this.item.fileDiff, fileContainer: root });
+    if (typeof ResizeObserver === "undefined" || this._heightObserver) return;
+    const generation = this._mountGeneration;
+    this._heightObserver = new ResizeObserver(() => this._emitStableMeasurement(generation));
+    this._heightObserver.observe(this);
   }
 
-  private _destroyFileDiff() {
-    this._fileDiff?.cleanUp();
-    this._fileDiff = null;
-    this._root = null;
-    this._renderedItem = null;
-    this._diffRendered = false;
+  private _emitStableMeasurement(generation: number) {
+    const item = this.item;
+    if (!item || this.collapsed || generation !== this._mountGeneration) return;
+    const readiness = this._measurementReadiness();
+    const height = this.getBoundingClientRect().height || this.offsetHeight;
+    this._recordMeasurementTelemetry(generation, height, readiness);
+    if (!readiness.stable || height <= 0) return;
+    const signature = `${generation}:${item.id}:${item.contentKey}:${this.collapsed}:${height}`;
+    if (signature === this._lastMeasurement) return;
+    this._lastMeasurement = signature;
+    this.dispatchEvent(reviewItemMeasurementEvent({ id: item.id, height }));
+  }
+
+  /** Only settled states may replace the coordinator's persistent estimate. */
+  private _measurementReadiness() {
+    const connected = this.isConnected && typeof this.querySelector === "function";
+    const article = connected ? this.querySelector<HTMLElement>("article") : null;
+    const transition = connected ? this.querySelector<HTMLElement>("[data-spring-collapse]") : null;
+    const container = connected ? this.querySelector<HTMLElement>("[data-pierre-file-diff]") : null;
+    const shadowRoot = container?.shadowRoot;
+    const pre = shadowRoot?.querySelector<HTMLElement>("pre") ?? null;
+    const placeholder = shadowRoot?.querySelector("[data-placeholder]") != null;
+    const diffRendered = article?.isConnected === true
+      && container !== null
+      && container === this._diff.container
+      && pre !== null
+      && !placeholder
+      && this._diff.rendered;
+    const stable = article?.isConnected === true && diffRendered && !transition?.style.height;
+    return { article, connected, container, diffRendered, placeholder, pre, stable, transition };
+  }
+
+  private _recordMeasurementTelemetry(
+    generation: number,
+    height: number,
+    readiness: ReturnType<ReviewDiffItem["_measurementReadiness"]>,
+  ) {
+    if (!clientTelemetry.enabled) return;
+    clientTelemetry.record("review-virtualizer", "item-measurement-candidate", {
+      itemId: this.item?.id ?? null,
+      measuredHeight: Math.round(height),
+      reservedHeight: Math.round(this.reservedHeight),
+      stable: readiness.stable,
+      diffRendered: readiness.diffRendered,
+      connected: readiness.connected,
+      currentGeneration: generation === this._mountGeneration,
+      currentContainer: readiness.container === this._diff.container,
+      collapsed: this.collapsed,
+      collapseSettled: readiness.transition === null || !readiness.transition.style.height,
+      articleHeight: measuredHeight(readiness.article),
+      articleMinHeight: readiness.article?.style.minHeight || null,
+      containerHeight: measuredHeight(readiness.container),
+      shadowChildCount: readiness.container?.shadowRoot?.children.length ?? 0,
+      preHeight: measuredHeight(readiness.pre),
+      placeholder: readiness.placeholder,
+    });
   }
 
   private _fileUrl(path: string): string {
@@ -136,11 +166,6 @@ export class ReviewDiffItem extends LitElement {
     let url = `/api/projects/${this.projectId}/files/content?path=${encodeURIComponent(path)}`;
     if (this.branch) url += `&ref=${encodeURIComponent(this.branch)}`;
     return url;
-  }
-
-  private _markDiffRendered() {
-    this._diffRendered = true;
-    this.dispatchEvent(diffRenderedEvent());
   }
 
   private _toggleCollapsed() {
@@ -152,8 +177,13 @@ export class ReviewDiffItem extends LitElement {
     const item = this.item;
     if (!item) return nothing;
 
+    const diffBinding = this._diff.bind(item.fileDiff);
+    const pendingHeight = !this.collapsed && !this.diffRendered && this.reservedHeight > 0
+      ? `min-height:${this.reservedHeight}px`
+      : nothing;
+
     return html`
-      <article class="border-b border-zinc-700/70 bg-zinc-950">
+      <article class="border-b border-zinc-700/70 bg-zinc-950" style=${pendingHeight}>
         <header class="reins-diff-header sticky top-0 z-10 flex min-w-0 items-center gap-2 px-3 py-2">
           <button
             type="button"
@@ -196,15 +226,19 @@ export class ReviewDiffItem extends LitElement {
         </header>
         ${springCollapse(
           this.collapsed,
-          () => html`<diffs-container data-pierre-file-diff></diffs-container>`,
+          () => html`<diffs-container data-pierre-file-diff ${diffBinding}></diffs-container>`,
           {
-            onUnmount: () => this._destroyFileDiff(),
+            onUnmount: () => this._diff.unmount(),
             animateContentResize: false,
           },
         )}
       </article>
     `;
   }
+}
+
+function measuredHeight(element: HTMLElement | null | undefined): number | null {
+  return element ? Math.round(element.getBoundingClientRect().height) : null;
 }
 
 declare global {

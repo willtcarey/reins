@@ -32,7 +32,7 @@ declare global {
     "reload-request": CustomEvent<void>;
     "active-file-change": CustomEvent<string | null>;
     "active-item-change": CustomEvent<string>;
-    "diff-rendered": CustomEvent<void>;
+    "review-item-measurement": CustomEvent<ReviewItemMeasurementDetail>;
     "toggle-collapse": CustomEvent<string>;
   }
 }
@@ -118,8 +118,13 @@ export function activeItemChangeEvent(id: string) {
   return componentEvent("active-item-change", id);
 }
 
-export function diffRenderedEvent() {
-  return componentSignal("diff-rendered");
+export interface ReviewItemMeasurementDetail {
+  id: string;
+  height: number;
+}
+
+export function reviewItemMeasurementEvent(detail: ReviewItemMeasurementDetail) {
+  return componentEvent("review-item-measurement", detail);
 }
 
 export function toggleCollapseEvent(id: string) {

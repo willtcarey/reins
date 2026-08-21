@@ -2,46 +2,41 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import {
+  VirtualListController,
+  type VirtualListObservation,
+} from "../../controllers/virtual-list-controller.js";
+import {
   ReviewCollapseState,
+  reviewContentFingerprint,
   type ReviewCollapseScope,
 } from "../../models/changes/review-collapse-state.js";
-import { ScrollSpy } from "../../models/changes/scroll-spy.js";
 import {
   parseReviewItems,
   reconcileReviewItems,
+  type ReviewItem,
   type ReviewItemsResult,
 } from "../../models/changes/review-items.js";
+import {
+  estimateReviewItemHeight,
+  reviewItemGap,
+} from "../../models/changes/review-virtual-layout.js";
+import {
+  clientTelemetry,
+  type ClientTelemetryOperation,
+} from "../../models/client-telemetry.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
-import { activeFileChangeEvent, activeItemChangeEvent } from "../events.js";
+import {
+  activeFileChangeEvent,
+  activeItemChangeEvent,
+  type ReviewItemMeasurementDetail,
+} from "../events.js";
 import { branchIcon } from "../icons.js";
-import { ReviewDiffItem } from "./review-diff-item.js";
+import "./review-diff-item.js";
 
-type ScrollPositionContainer = Pick<HTMLElement, "scrollTop" | "clientHeight">;
+const DEFAULT_VIEWPORT_HEIGHT = 800;
+const REVIEW_ITEM_OVERSCAN = 600;
 
-export class ReviewScrollPosition {
-  private value: number | null = null;
-
-  remember(container: ScrollPositionContainer, visible: boolean) {
-    if (!visible || container.clientHeight <= 0) return;
-    this.value = container.scrollTop;
-  }
-
-  restore(container: ScrollPositionContainer, visible: boolean): boolean {
-    if (!visible || container.clientHeight <= 0 || this.value === null) return false;
-    container.scrollTop = this.value;
-    return true;
-  }
-
-  reset() {
-    this.value = null;
-  }
-}
-
-/**
- * Reins-owned renderer scaffold. It intentionally mounts every review item;
- * this is a functional boundary for a later top-level virtual list, not a
- * performance solution.
- */
+/** Review-specific adapter around the generic top-level virtual list behavior. */
 @customElement("review-diff-panel")
 export class ReviewDiffPanel extends LitElement {
   override createRenderRoot() {
@@ -61,7 +56,7 @@ export class ReviewDiffPanel extends LitElement {
     if (value === oldValue) return;
 
     this._store = value;
-    this._scrollPosition.reset();
+    this._virtualList.reset();
     this._resetParsedData();
     this._reconcilePatchData();
     this.requestUpdate("store", oldValue);
@@ -73,14 +68,18 @@ export class ReviewDiffPanel extends LitElement {
   private _pendingPath: string | null = null;
   private _parsedSource: DiffPatchData | null = null;
   private _parsedData: ReviewItemsResult | null = null;
-  private _scrollPosition = new ReviewScrollPosition();
   private _collapseState = new ReviewCollapseState();
-  private _scrollSpy = new ScrollSpy({
-    containerSelector: "[data-review-scroll]",
-    itemSelector: "[data-review-item-id]",
-    dataAttribute: "reviewItemId",
-    onActiveChange: (id) => this.reportActiveItem(id),
-  });
+  private _virtualList = new VirtualListController(
+    this,
+    REVIEW_ITEM_OVERSCAN,
+    DEFAULT_VIEWPORT_HEIGHT,
+  );
+  private _navigationTelemetry: ClientTelemetryOperation | null = null;
+
+  constructor() {
+    super();
+    this._virtualList.observe = (observation) => this._observeVirtualList(observation);
+  }
 
   override connectedCallback() {
     super.connectedCallback();
@@ -90,26 +89,23 @@ export class ReviewDiffPanel extends LitElement {
   override willUpdate(changed: Map<string, unknown>) {
     const storeChanged = changed.has("store");
     if (storeChanged) this._subscribe();
+    if (changed.has("visible")) this._virtualList.setVisible(this.visible);
     this._reconcilePatchData();
     if (this.visible && (storeChanged || changed.has("visible"))) this._fetchFresh();
   }
 
-  override updated(changed: Map<string, unknown>) {
-    this._scrollSpy.update(this);
-    const data = this._parsedData;
-    if (!this._activeItemId && data?.items[0]) this.reportActiveItem(data.items[0].id);
+  override updated() {
+    this._virtualList.attach(this._scrollContainer());
+    const activeId = this._virtualList.window().activeId;
+    if (activeId) this.reportActiveItem(activeId);
     this._syncPendingScroll();
-    if (changed.has("visible") && this.visible) {
-      const container = this.querySelector<HTMLElement>("[data-review-scroll]");
-      if (container) this._scrollPosition.restore(container, true);
-    }
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     this._unsubscribe?.();
     this._unsubscribe = null;
-    this._scrollSpy.destroy();
+    this._navigationTelemetry = null;
     this.store?.clearPatchDiff();
   }
 
@@ -123,26 +119,10 @@ export class ReviewDiffPanel extends LitElement {
 
     const itemId = this.itemIdForPath(path);
     if (!itemId) return;
-    if (this.isItemCollapsed(itemId)) {
-      this.setItemCollapsed(itemId, false);
-      return;
-    }
-    if (!this._itemsBeforeRendered(itemId)) return;
+    if (this.isItemCollapsed(itemId)) this.setItemCollapsed(itemId, false);
 
-    const item = this.querySelector<HTMLElement>(`[data-review-item-id="${CSS.escape(itemId)}"]`);
-    if (!item) return;
-
-    const container = this.querySelector<HTMLElement>("[data-review-scroll]");
-    if (container && typeof container.scrollTo === "function") {
-      const itemRect = item.getBoundingClientRect();
-      const containerRect = container.getBoundingClientRect();
-      container.scrollTo({
-        top: container.scrollTop + itemRect.top - containerRect.top,
-        behavior: "smooth",
-      });
-    } else {
-      item.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
+    this._virtualList.attach(this._scrollContainer());
+    if (!this._virtualList.navigateTo(itemId)) return;
     this._pendingPath = null;
     this.reportActiveItem(itemId);
   }
@@ -157,19 +137,17 @@ export class ReviewDiffPanel extends LitElement {
     const item = this._parsedData?.items.find((candidate) => candidate.id === id);
     const scope = this._collapseScope();
     if (!item || !scope || this.isItemCollapsed(id) === collapsed) return;
-    this._collapseState.setCollapsed(scope, item, collapsed);
-    this.requestUpdate();
-  }
 
-  private _handleDiffRendered() {
-    this._syncPendingScroll();
+    this._virtualList.attach(this._scrollContainer());
+    this._collapseState.setCollapsed(scope, item, collapsed);
+    this._syncVirtualItems();
+    this.requestUpdate();
   }
 
   public reportActiveItem(id: string) {
     const item = this._parsedData?.items.find((candidate) => candidate.id === id);
     if (!item || this._activeItemId === id) return;
     this._activeItemId = id;
-
     this.dispatchEvent(activeItemChangeEvent(id));
     this.dispatchEvent(activeFileChangeEvent(item.path));
   }
@@ -195,66 +173,174 @@ export class ReviewDiffPanel extends LitElement {
     this._parsedSource = null;
     this._parsedData = null;
     this._activeItemId = null;
+    this._navigationTelemetry = null;
   }
 
   private _reconcilePatchData() {
     const source = this.store?.patchData.data ?? null;
     if (!source) {
-      if (this._parsedSource || this._parsedData) this._resetParsedData();
+      if (this._parsedSource || this._parsedData) {
+        this._resetParsedData();
+        this._syncVirtualItems();
+      }
       return;
     }
     if (source === this._parsedSource) return;
 
     this._parsedSource = source;
-    const previousData = this._parsedData;
     this._parsedData = reconcileReviewItems(
-      previousData,
+      this._parsedData,
       parseReviewItems(source.patch, source.cacheKeyPrefix),
     );
     if (this._activeItemId && !this._parsedData.items.some((item) => item.id === this._activeItemId)) {
       this._activeItemId = null;
     }
+    this._syncVirtualItems();
   }
 
   private _collapseScope(): ReviewCollapseScope | null {
     const store = this.store;
     if (store?.projectId == null) return null;
-    return {
-      projectId: store.projectId,
-      branch: this._parsedSource?.branch ?? store.branch,
-    };
+    return { projectId: store.projectId, branch: this._parsedSource?.branch ?? store.branch };
   }
 
-  private _itemsBeforeRendered(id: string): boolean {
-    for (const item of this._parsedData?.items ?? []) {
-      if (item.id === id) return true;
-      if (this.isItemCollapsed(item.id)) continue;
-      const element = this.querySelector(
-        `[data-review-item-id="${CSS.escape(item.id)}"]`,
-      );
-      if (!(element instanceof ReviewDiffItem) || !element.diffRendered) return false;
-    }
-    return false;
+  private _measurementKey(item: ReviewItem): string {
+    const scope = this._collapseScope();
+    return `${scope?.projectId ?? "none"}:${scope?.branch ?? "none"}:${item.id}:${reviewContentFingerprint(item.contentKey)}`;
   }
 
-  private _handleScroll(event: Event) {
-    if (event.currentTarget instanceof HTMLElement) {
-      this._scrollPosition.remember(event.currentTarget, this.visible);
-    }
+  private _syncVirtualItems() {
+    this._virtualList.setItems((this._parsedData?.items ?? []).map((item, index) => {
+      const collapsed = this.isItemCollapsed(item.id);
+      return {
+        id: item.id,
+        measurementKey: this._measurementKey(item),
+        estimatedHeight: estimateReviewItemHeight(item, false, index),
+        fixedHeight: collapsed ? estimateReviewItemHeight(item, true, index) : undefined,
+      };
+    }));
+  }
+
+  private _scrollContainer(): HTMLElement | null {
+    if (typeof this.querySelector !== "function") return null;
+    return this.querySelector<HTMLElement>("[data-review-scroll]");
   }
 
   private _handleToggleCollapse(event: CustomEvent<string>) {
-    const id = event.detail;
-    this.setItemCollapsed(id, !this.isItemCollapsed(id));
+    this.setItemCollapsed(event.detail, !this.isItemCollapsed(event.detail));
+  }
+
+  private _handleItemMeasurement(event: CustomEvent<ReviewItemMeasurementDetail>) {
+    const item = this._parsedData?.items.find((candidate) => candidate.id === event.detail.id);
+    if (!item || this.isItemCollapsed(item.id)) return;
+    this._virtualList.measure({
+      id: item.id,
+      measurementKey: this._measurementKey(item),
+      height: event.detail.height,
+    });
   }
 
   private _syncPendingScroll() {
-    if (this.store?.patchData.loading || !this._pendingPath) return;
-
+    if (this.store?.patchData.loading || !this._pendingPath || !this._scrollContainer()) return;
     const path = this._pendingPath;
-    const itemId = this.itemIdForPath(path);
-    if (!itemId || !this._itemsBeforeRendered(itemId)) return;
-    requestAnimationFrame(() => this.scrollToFile(path));
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => this.scrollToFile(path));
+    else setTimeout(() => this.scrollToFile(path), 0);
+  }
+
+  private _observeVirtualList(observation: VirtualListObservation) {
+    switch (observation.type) {
+      case "navigation-start":
+        this._navigationTelemetry = clientTelemetry.startOperation("review-virtualizer");
+        this._recordTelemetry(observation.type, {
+          targetIndex: this._itemIndex(observation.targetId),
+          requestedTop: observation.requestedTop,
+          actualTop: observation.actualTop,
+          replacedCorrection: observation.replacedCorrection,
+          layoutVersion: observation.layoutVersion,
+        });
+        break;
+      case "scroll":
+        this._recordTelemetry(observation.type, {
+          actualTop: observation.actualTop,
+          activeIndex: this._itemIndex(observation.activeId),
+          navigationIndex: this._itemIndex(observation.navigationId),
+          layoutVersion: observation.layoutVersion,
+        });
+        if (observation.activeId) this.reportActiveItem(observation.activeId);
+        break;
+      case "navigation-cancelled":
+      case "navigation-complete":
+        this._recordTelemetry(observation.type, {
+          inputType: observation.inputType,
+          actualTop: observation.actualTop,
+          navigationIndex: this._itemIndex(observation.targetId),
+          layoutVersion: observation.layoutVersion,
+        });
+        this._navigationTelemetry = null;
+        break;
+      case "measurement-batch":
+        this._recordTelemetry(observation.type, {
+          submitted: observation.submitted,
+          accepted: observation.accepted,
+          correctedTop: observation.correctedTop,
+          scrollAdjustment: observation.scrollAdjustment,
+          actualTop: observation.actualTop,
+          layoutVersion: observation.layoutVersion,
+          candidates: observation.measurements.map((measurement) => ({
+            index: this._itemIndex(measurement.id),
+            measuredHeight: Math.round(measurement.height),
+            stable: true,
+          })),
+        });
+        this._syncPendingScroll();
+        break;
+      case "geometry-queued":
+        this._recordTelemetry(observation.type, {
+          reason: observation.reason,
+          requestedTop: observation.requestedTop,
+          actualTop: observation.actualTop,
+          navigationIndex: this._itemIndex(observation.navigationId),
+          layoutVersion: observation.layoutVersion,
+        });
+        break;
+      case "geometry-applied":
+        this._recordTelemetry(observation.type, {
+          requestedTop: observation.requestedTop,
+          actualBefore: observation.actualBefore,
+          actualAfter: observation.actualAfter,
+          smooth: observation.smooth,
+          navigationIndex: this._itemIndex(observation.navigationId),
+          layoutVersion: observation.layoutVersion,
+        });
+        break;
+      case "window-change": {
+        const firstIndex = this._itemIndex(observation.window.items[0]?.id ?? null);
+        const lastIndex = this._itemIndex(observation.window.items.at(-1)?.id ?? null);
+        this._recordTelemetry(observation.type, {
+          firstIndex,
+          lastIndex,
+          mountedCount: observation.window.items.length,
+          totalHeight: observation.window.totalHeight,
+          actualTop: observation.actualTop,
+          layoutVersion: observation.layoutVersion,
+        });
+        break;
+      }
+    }
+  }
+
+  private _recordTelemetry(
+    event: string,
+    attributes: Record<string, unknown> | (() => Record<string, unknown>),
+  ) {
+    if (this._navigationTelemetry) this._navigationTelemetry.record(event, attributes);
+    else clientTelemetry.record("review-virtualizer", event, attributes);
+  }
+
+  private _itemIndex(id: string | null): number | null {
+    if (!id) return null;
+    const index = this._parsedData?.items.findIndex((item) => item.id === id) ?? -1;
+    return index >= 0 ? index : null;
   }
 
   override render() {
@@ -268,47 +354,53 @@ export class ReviewDiffPanel extends LitElement {
     const items = data?.items ?? [];
     const branch = this._parsedSource?.branch ?? this.store.branch;
     const baseBranch = this._parsedSource?.baseBranch ?? this.store.fileData.data?.baseBranch;
+    const virtualWindow = this._virtualList.window();
+    const itemById = new Map(items.map((item, index) => [item.id, { item, index }]));
 
     return html`
       <div class="flex h-full min-h-0 flex-col" data-rendered-payload-version=${data ? this.store.patchData.data?.version ?? 0 : 0}>
         ${branch ? html`
           <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-700/50 px-4 py-2">
             ${baseBranch && baseBranch !== branch ? html`
-              <span class="text-xs font-mono text-zinc-500">${baseBranch}</span>
-              <span class="text-xs text-zinc-600">←</span>
+              <span class="text-xs font-mono text-zinc-500">${baseBranch}</span><span class="text-xs text-zinc-600">←</span>
             ` : nothing}
             <span class="inline-flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">
-              ${branchIcon("shrink-0 text-zinc-500", 12)}
-              ${branch}
+              ${branchIcon("shrink-0 text-zinc-500", 12)}${branch}
             </span>
           </div>
         ` : nothing}
-        <div
-          class="min-h-0 flex-1 overflow-y-auto"
-          data-review-scroll
-          @scroll=${this._handleScroll}
-        >
+        <div class="min-h-0 flex-1 overflow-y-auto" data-review-scroll>
           ${loading
             ? html`<div class="flex h-full items-center justify-center p-4 text-sm text-zinc-500">Loading Reins diff…</div>`
             : data?.parseError
               ? html`<div class="flex h-full items-center justify-center p-4 text-sm text-red-400">Unable to parse patch: ${data.parseError}</div>`
               : items.length > 0
-                ? repeat(
-                    items,
-                    (item) => item.id,
-                    (item) => html`
-                      <review-diff-item
-                        data-review-item-id=${item.id}
-                        data-file-path=${item.path}
-                        .item=${item}
-                        .collapsed=${this.isItemCollapsed(item.id)}
-                        .projectId=${this.store?.projectId ?? null}
-                        .branch=${branch ?? null}
-                        @toggle-collapse=${this._handleToggleCollapse}
-                        @diff-rendered=${this._handleDiffRendered}
-                      ></review-diff-item>
-                    `,
-                  )
+                ? html`<div data-review-virtual-window style=${`position:relative;height:${virtualWindow.totalHeight}px`}>
+                    ${repeat(
+                      virtualWindow.items,
+                      (entry) => entry.id,
+                      (entry) => {
+                        const record = itemById.get(entry.id);
+                        if (!record) return nothing;
+                        const { item, index } = record;
+                        return html`
+                          <review-diff-item
+                            style=${`position:absolute;top:${entry.top}px;left:0;right:0`}
+                            data-review-item-id=${item.id}
+                            data-file-path=${item.path}
+                            ?data-review-first=${item === items[0]}
+                            .item=${item}
+                            .collapsed=${this.isItemCollapsed(item.id)}
+                            .projectId=${this.store?.projectId ?? null}
+                            .branch=${branch ?? null}
+                            .reservedHeight=${Math.max(1, entry.height - reviewItemGap(index))}
+                            @toggle-collapse=${this._handleToggleCollapse}
+                            @review-item-measurement=${this._handleItemMeasurement}
+                          ></review-diff-item>
+                        `;
+                      },
+                    )}
+                  </div>`
                 : html`<div class="flex h-full items-center justify-center p-4 text-sm text-zinc-500">No changes yet</div>`}
         </div>
       </div>

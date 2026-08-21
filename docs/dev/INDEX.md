@@ -6,7 +6,9 @@
 | [backend-architecture.md](backend-architecture.md) | backend | Backend layering: routes, tools, models, stores, utilities |
 | [router.md](router.md) | backend | Router API, adding routes, error handling |
 | [logging.md](logging.md) | backend | Logger levels, test behavior, and runtime verbosity configuration |
+| [client-telemetry.md](client-telemetry.md) | all | Development-only browser diagnostics, bounded retention, inspection, and instrumentation |
 | [frontend-architecture.md](frontend-architecture.md) | frontend | Store layer, WS event flow, component structure, how views consume state |
+| [review-virtualization.md](review-virtualization.md) | frontend | Ownership boundaries and invariants for the Reins-owned virtual review surface |
 | [ui-design.md](ui-design.md) | frontend | CSS architecture, z-index layers, color palette, syntax highlighting, responsive patterns |
 | [macos.md](macos.md) | macos | Native Mac app shell: setup, dev workflow, building |
 | [tauri.md](tauri.md) | tauri | Tauri desktop wrapper: setup, backend URL behavior, packaging |

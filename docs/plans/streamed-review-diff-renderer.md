@@ -34,12 +34,12 @@ This is the working implementation list. It is ordered from smallest functional 
    - Render basic diff bodies using Pierre pieces where practical.
    - Use Pierre worker-pool/highlight-cache primitives from the start so syntax highlighting does not run on the main thread.
    - Keep stable cache keys wired through the scaffold so worker-highlight output can be reused after virtualization lands.
-   - Add `scrollToItem(id)` and active-item callback abstractions even if implemented with mounted DOM queries at first.
+   - Add item-ID navigation and active-item reporting seams, initially backed by mounted DOM queries.
    - Document in-code/plan that this scaffold may mount every file and is not a performance prototype.
 
 4. [x] **Add file tree integration against item IDs.**
    - File tree clicks resolve to review item IDs.
-   - `scrollToItem(id)` works in the scaffold.
+   - Item-ID navigation works in the scaffold.
    - Active file state is reported through the abstraction instead of depending on all files being permanently mounted.
 
 5. [ ] **Add Reins-owned behavior that `CodeView` cannot own cleanly.**
@@ -49,19 +49,19 @@ This is the working implementation list. It is ordered from smallest functional 
    - Image previews, PDF previews, and binary placeholders.
    - Reserve slots for future comments/annotations/actions.
 
-6. [ ] **Replace top-level mounting with a CodeView-like virtual list.**
-   - Swap `items.map(renderItem)` for a Reins-owned virtual list.
-   - Keep item records for all files in JS, but mount only visible/overscan item DOM.
-   - Render no offscreen file wrapper/placeholder DOM.
-   - Support scroll-to-item by ID without all item DOM mounted.
-   - Track estimated/measured heights and preserve scroll position on height changes.
-   - Add DOM pooling/recycling only if simple mount/unmount is not enough.
+6. [x] **Replace top-level mounting with a CodeView-like virtual list.**
+   - [x] Swap all-item rendering for a bounded visible/overscan window.
+   - [x] Keep item records for all files in JS, but mount only visible/overscan item DOM.
+   - [x] Render no offscreen file wrapper/placeholder DOM.
+   - [x] Support file-tree navigation by item ID without the target DOM being mounted.
+   - [x] Track estimated/measured heights and preserve scroll position on height changes.
+   - DOM pooling/recycling remains deferred; simple keyed mount/unmount is the chosen first implementation.
 
-7. [ ] **Adapt diff rendering/highlighting to the review path.**
-   - Render parsed `FileDiffMetadata` in visible `diff` items.
-   - Reuse the scaffold's worker-pool/highlight-cache integration.
-   - Avoid scheduling highlight work for items outside the visible/overscan window.
-   - Preserve Reins-owned headers/actions around the Pierre-rendered diff body.
+7. [x] **Adapt diff rendering/highlighting to the review path.**
+   - [x] Render parsed `FileDiffMetadata` in mounted `diff` items.
+   - [x] Reuse the scaffold's worker-pool/highlight-cache integration.
+   - [x] Avoid scheduling highlight work for items outside the visible/overscan window by not constructing their item components.
+   - [x] Preserve Reins-owned headers/actions around the Pierre-rendered diff body.
 
 8. [ ] **Implement fluid inline context expansion.**
    - Treat each diff as a view into the complete file, with collapsed unchanged regions appearing naturally between hunks.
@@ -85,9 +85,9 @@ The current CodeView renderer prototype proved an important point: **most of the
 
 ## Current status and decision
 
-The `diff_renderer` setting supports `codeview` for the direct Pierre `CodeView` proof point and `virtualized` for the first Reins-owned review scaffold. Both fetch `/diff/patch` as full text. The Reins-owned path parses renderer-specific review records, owns the file headers and item-ID navigation contract, and delegates text rows and worker-backed highlighting to Pierre `FileDiff`. Classic remains the default, so non-default renderer access is controlled by the stored preference rather than frontend dev-mode gating.
+The `diff_renderer` setting supports `codeview` for the direct Pierre `CodeView` proof point and `virtualized` for the Reins-owned review surface. Both fetch `/diff/patch` as full text. The Reins-owned path parses renderer-specific review records, owns the file headers and item-ID navigation contract, and delegates text rows and worker-backed highlighting to Pierre `FileDiff`. Classic remains the default, so non-default renderer access is controlled by the stored preference rather than frontend dev-mode gating.
 
-The `virtualized` renderer currently maps every review item into mounted DOM. It is intentionally a functional scaffold, not a performance solution. Its Reins-owned headers include accessible collapse controls plus the shared view, copy-path, and download actions. A collapsed item records the hash of that exact reviewed diff in local storage under its project, branch, and stable item ID; both diff modes share that reviewed state. Matching content remains collapsed across reconciliation, project switches, and reloads; changed content expands and invalidates the marker so a later revert also stays expanded. File-tree navigation expands its target before scrolling. Context expansion, per-file content retrieval, rich previews, streaming, and top-level virtualization remain follow-up work.
+The `virtualized` renderer now keeps all review records in JavaScript while the generic `VirtualListController` and `VirtualListCoordinator` expose only a balanced viewport/overscan window for keyed mounting. Its Reins-owned headers include accessible collapse controls plus the shared view, copy-path, and download actions. A collapsed item records the hash of that exact reviewed diff in local storage under its project, branch, and stable item ID; both diff modes share that reviewed state. Matching content remains collapsed across reconciliation, project switches, and reloads; changed content expands and invalidates the marker so a later revert also stays expanded. File-tree navigation resolves coordinator geometry and therefore works before the target wrapper exists. Active-file tracking uses that same geometry. Stable measurements are retained by item/content/render-state key and committed in batches against a semantic item plus viewport-offset anchor. Absolutely positioned wrappers in a fixed-total-height container prevent asynchronous sizing from moving siblings before the post-render scroll reconciliation. Balanced overscan supports reverse scrolling, while explicit input cancellation prevents smooth navigation and anchor correction from fighting touch, wheel, pointer, or keyboard scrolling. Context expansion, per-file content retrieval, rich previews, pooling, patch streaming, and performance measurement remain follow-up work.
 
 In particular:
 
@@ -98,7 +98,7 @@ In particular:
 
 ## New direction
 
-Build a Reins-owned review surface that uses lower-level Pierre primitives where they help, while Reins owns the mixed-content layout and interaction model. Implement it incrementally: start with a non-virtual functional scaffold behind a non-default renderer setting, then replace the top-level mounting strategy with a CodeView-like virtual list once the item model and interactions are proven.
+Build a Reins-owned review surface that uses lower-level Pierre primitives where they help, while Reins owns the mixed-content layout and interaction model. The non-virtual functional scaffold established the interaction model; the current slice replaces its mounting strategy with a CodeView-like bounded virtual window.
 
 Target final architecture:
 
@@ -117,17 +117,7 @@ GET /api/projects/:id/diff/patch as full text initially
 
 The key requirement for the eventual performance path is that the Reins-owned surface must be **CodeView-like**, not merely Pierre `Virtualizer` wrapped around thousands of mounted file containers. `CodeView` is fast because it keeps item records/heights for all files but only mounts DOM containers for the visible window plus overscan. The lower-level `Virtualizer` is more flexible but generally mounts every top-level file/diff container, which gives back a large part of the many-file performance win.
 
-Because `classic` and `codeview` remain available fallbacks, the first Reins-owned implementation may render non-virtually to get behavior and layout working sooner. That scaffold must keep a clean item-model boundary so virtualization can replace `items.map(renderItem)` later without redesigning interactions:
-
-```ts
-type ReviewItem = { id: string; kind: "diff" | "markdown-preview" | "image-preview" | "pdf-preview" | "binary-placeholder" };
-
-renderItem(item: ReviewItem): TemplateResult;
-scrollToItem(id: string): void;
-onActiveItemChange(id: string): void;
-```
-
-The non-virtual scaffold is **not** a performance prototype. It should be used only to validate Reins-owned headers/actions, mixed content, parsing, and interaction boundaries. Performance evaluation waits until the top-level list mounts only visible/overscan item DOM.
+Because `classic` and `codeview` remain available fallbacks, the Reins-owned path was first built non-virtually to validate behavior. That scaffold has now been replaced: `ReviewDiffPanel` derives virtual geometry from the stable renderer-owned item records and mounts only a viewport/overscan slice. The panel retains navigation, active-item, and collapse coordination rather than introducing a second stateful virtualizer lifecycle. Performance evaluation can now use this bounded mounting path.
 
 ## Prototype findings to preserve
 
@@ -141,22 +131,15 @@ The non-virtual scaffold is **not** a performance prototype. It should be used o
 
 ## Detailed design notes
 
-### Renderer item boundary
+### Chosen virtual layout seam
 
-The Reins-owned path should keep behavior behind item IDs from the start, even while the first scaffold is non-virtual:
+`VirtualListCoordinator` now provides the persistent generic geometry model. Stable IDs remain the source of identity, while measurement keys invalidate stale fluid heights and optional fixed heights temporarily override them without discarding valid measurements. `review-virtual-layout.ts` retains only review-specific Pierre height estimation: Pierre's 20px row metric, each hunk's exact `unifiedLineCount`, line-info separator geometry, no-newline metadata rows, the Reins header, and in-box inter-file spacing.
 
-```ts
-type ReviewItem = {
-  id: string;
-  kind: "diff" | "markdown-preview" | "image-preview" | "pdf-preview" | "binary-placeholder";
-};
+`VirtualListController` owns coordinator lifecycle, actual scroll-container viewport synchronization, balanced pixel overscan, measurement microtask batching, semantic post-render anchor correction, active-item lookup, unmounted-ID navigation and retargeting/cancellation, render-frame scheduling, and scroll restoration. `ReviewDiffPanel` supplies review item inputs, maps collapse to fixed height, renders the bounded window, and adapts generic observations to review events and telemetry. Each mounted wrapper uses coordinator geometry for its absolute top inside a fixed-total-height relative container; a worker completion therefore cannot push visible siblings while reconciliation is pending. Wrappers are keyed by stable review item ID so overlapping windows retain their mounted Pierre renderer rather than recycling every positional node and restarting worker work as the range moves. Newly mounted wrappers reserve their estimated block height until Pierre completes, keeping the sticky file surface present while highlighting starts.
 
-renderItem(item: ReviewItem): TemplateResult;
-scrollToItem(id: string): void;
-onActiveItemChange(id: string): void;
-```
+Measurement stability is explicit. Expanded items are measured only after Pierre's post-render has no placeholder and the expansion has settled. Collapsed geometry is deterministic—the inter-file gap plus fixed header estimate—so collapsed items are never measured; the previous expanded measurement remains cached and applies again after expansion. Unlike the previous forward-only/measurement-exception approach, valid measurements above the viewport are retained and corrected semantically, and equal overscan before and after supports reverse scrolling. File-tree navigation records its target, re-resolves that target when geometry changes during native smooth scrolling, and clears/stops the programmatic scroll on wheel, touch, pointer, or scrolling-key input. Native CSS anchoring remains disabled so there is only one owner of correction.
 
-The point is to make the later virtualization change a mounting-strategy swap rather than a rewrite of parsing, file tree navigation, actions, or preview state.
+The resulting seams are: parsing/reconciliation owns review records; the generic coordinator owns persistent geometry; the generic controller owns virtual-list DOM behavior; the panel owns review collapse policy, path resolution, active-file events, stores, and telemetry adaptation; Lit owns keyed mounting; and `ReviewDiffItem` owns a Pierre `FileDiff` only for its mounted lifetime. This remains deliberately top-level: pooling, rich previews, context expansion, and patch streaming are deferred.
 
 ### Fluid inline context expansion
 
@@ -221,9 +204,10 @@ Suggested tests:
 - per-file diff content endpoint returns correct old/new sides for branch, non-active branch, and uncommitted modes
 - per-file content endpoint handles rename/new/deleted/untracked files
 - virtual item model creates stable IDs/cache keys
-- top-level virtual list mounts only visible/overscan items
-- scroll-to-item works without all item DOM mounted
-- item height updates preserve scroll anchor
+- pure virtual geometry selects a bounded viewport/overscan window and finds active/target offsets
+- many-file panel contract proves offscreen file wrappers are not mounted
+- file-tree navigation works without target or preceding item DOM mounted
+- measured and collapse-driven height updates preserve the scroll anchor
 - first context expansion retrieves missing content and reveals lines without replacing the file surface
 - repeated context expansion joins adjacent regions while preserving the interaction point's viewport position
 - failed content retrieval leaves the partial diff stable and reports the error at the expansion control
@@ -251,11 +235,13 @@ Metrics to capture:
 - memory growth for large diffs
 - comparison against classic renderer and the `codeview` prototype
 
-## Done criteria for the next architecture slice
+## Completed virtualization slice
 
-- Reins-owned virtual list proves it can avoid mounting every file container.
-- It can render at least basic Pierre-backed diff items from raw patch metadata.
-- File tree navigation works without all item DOM mounted.
-- The design supports mixed Reins review content without relying on deprecated Pierre APIs.
-- Fluid inline context expansion has a concrete endpoint, item-state, and scroll-anchoring plan, even if not fully implemented in the first slice.
-- Classic remains stable and default.
+- [x] The Reins-owned list avoids mounting every file container, with a many-file DOM contract.
+- [x] Mounted records render Pierre-backed diffs from raw patch metadata and use the shared worker pool.
+- [x] File-tree navigation and active-item tracking work from geometry without all item DOM mounted.
+- [x] Collapse and measured-height changes preserve the viewport anchor.
+- [x] The item model remains open to mixed Reins review content without deprecated Pierre APIs.
+- [x] Classic remains stable and default.
+
+Fluid inline context expansion retains the endpoint/item-state/anchoring direction documented above, but its content retrieval and interaction remain deferred.

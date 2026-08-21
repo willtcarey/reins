@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import "../../helpers/local-storage.js";
 import { Loadable } from "../../../helpers/loadable.js";
-import {
-  ReviewDiffPanel,
-  ReviewScrollPosition,
-} from "../../../components/changes/review-diff-panel.js";
+import { ReviewDiffPanel } from "../../../components/changes/review-diff-panel.js";
 import { DiffStore, type DiffPatchData } from "../../../models/stores/diff-store.js";
-import { templateToString } from "../../helpers/lit-template.js";
+import "../../../components/changes/review-diff-item.js";
+import {
+  collectTemplateValues,
+  templateToString,
+} from "../../helpers/lit-template.js";
 
 const PATCH = `diff --git a/src/example.ts b/src/example.ts
 index 1111111..2222222 100644
@@ -16,20 +17,6 @@ index 1111111..2222222 100644
 -old
 +new
 `;
-
-function rectAt(top: number): DOMRect {
-  return {
-    bottom: top,
-    height: 0,
-    left: 0,
-    right: 0,
-    top,
-    width: 0,
-    x: 0,
-    y: top,
-    toJSON: () => ({}),
-  };
-}
 
 function loadedPatch(patch = PATCH): DiffPatchData {
   return {
@@ -41,29 +28,36 @@ function loadedPatch(patch = PATCH): DiffPatchData {
   };
 }
 
+interface RepeatDirectiveResult {
+  _$litDirective$: unknown;
+  values: [
+    Array<{ id: string }>,
+    (item: { id: string }, index: number) => unknown,
+    (item: { id: string }, index: number) => unknown,
+  ];
+}
+
+function isRepeatDirectiveResult(value: unknown): value is RepeatDirectiveResult {
+  return typeof value === "object"
+    && value !== null
+    && "_$litDirective$" in value
+    && "values" in value
+    && Array.isArray(value.values)
+    && value.values.length === 3;
+}
+
+function manyFilePatch(count: number): string {
+  return Array.from({ length: count }, (_, index) => `diff --git a/src/file-${index}.ts b/src/file-${index}.ts
+index 1111111..2222222 100644
+--- a/src/file-${index}.ts
++++ b/src/file-${index}.ts
+@@ -1 +1 @@
+-old-${index}
++new-${index}
+`).join("");
+}
 
 describe("ReviewDiffPanel", () => {
-  test("registers its review item dependency", () => {
-    const ReviewDiffItemElement = customElements.get("review-diff-item");
-
-    expect(typeof Reflect.get(ReviewDiffItemElement?.prototype ?? {}, "render")).toBe("function");
-  });
-
-  test("restores the last measurable scroll position after the hidden pane reports zero", () => {
-    const position = new ReviewScrollPosition();
-    const container = { scrollTop: 4944, clientHeight: 823 };
-
-    position.remember(container, true);
-    container.scrollTop = 0;
-    container.clientHeight = 0;
-    position.remember(container, false);
-    container.scrollTop = 1132;
-    container.clientHeight = 823;
-
-    expect(position.restore(container, true)).toBe(true);
-    expect(container.scrollTop).toBe(4944);
-  });
-
   test("refreshes a loaded patch when returning to the Changes tab", () => {
     const store = new DiffStore();
     store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
@@ -109,17 +103,24 @@ describe("ReviewDiffPanel", () => {
     }
   });
 
-  test("turns a loaded patch into stable path-based navigation", () => {
+  test("mounts only the initial viewport and overscan file wrappers for a many-file review", () => {
     const store = new DiffStore();
-    store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
+    store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(manyFilePatch(100)));
     const panel = new ReviewDiffPanel();
     panel.store = store;
 
-    const itemId = panel.itemIdForPath("src/example.ts");
-    const output = templateToString(panel.render());
+    const renderedPanel = panel.render();
+    const directive = collectTemplateValues(renderedPanel).find(isRepeatDirectiveResult);
+    if (!directive) throw new Error("Expected virtual review items");
+    const [mountedItems, , renderItem] = directive.values;
+    const output = templateToString(mountedItems.map(renderItem));
 
-    expect(itemId).toBe("review:change::src%2Fexample.ts:0");
-    expect(output).toContain("data-rendered-payload-version=1");
+    expect(mountedItems.length).toBeGreaterThan(0);
+    expect(mountedItems.length).toBeLessThan(20);
+    expect(templateToString(renderedPanel)).toContain("position:relative;height:");
+    expect(output).toContain("position:absolute;top:");
+    expect(output).toContain("src/file-0.ts");
+    expect(output).not.toContain("data-file-path=src/file-99.ts");
     store.dispose();
   });
 
@@ -146,38 +147,8 @@ describe("ReviewDiffPanel", () => {
     store.dispose();
   });
 
-  test("animates file-tree navigation after the target layout is ready", () => {
-    const cssDescriptor = Object.getOwnPropertyDescriptor(globalThis, "CSS");
-    Object.defineProperty(globalThis, "CSS", {
-      configurable: true,
-      value: { escape: (value: string) => value },
-    });
-    const store = new DiffStore();
-    try {
-      store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
-      const panel = new ReviewDiffPanel();
-      panel.store = store;
-      let behavior: ScrollBehavior | undefined;
-      panel.getBoundingClientRect = () => rectAt(0);
-      panel.scrollTo = (options?: ScrollToOptions | number) => {
-        if (typeof options !== "number") behavior = options?.behavior;
-      };
-      const querySelector: typeof panel.querySelector = () => panel;
-      panel.querySelector = querySelector;
-
-      panel.scrollToFile("src/example.ts");
-
-      expect(behavior).toBe("smooth");
-    } finally {
-      store.dispose();
-      if (cssDescriptor) Object.defineProperty(globalThis, "CSS", cssDescriptor);
-      else Reflect.deleteProperty(globalThis, "CSS");
-    }
-  });
-
   test("waits for an in-flight patch refresh before file-tree navigation scrolls", () => {
     const frameDescriptor = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
-    const cssDescriptor = Object.getOwnPropertyDescriptor(globalThis, "CSS");
     const frames: FrameRequestCallback[] = [];
     Object.defineProperty(globalThis, "requestAnimationFrame", {
       configurable: true,
@@ -185,10 +156,6 @@ describe("ReviewDiffPanel", () => {
         frames.push(callback);
         return frames.length;
       },
-    });
-    Object.defineProperty(globalThis, "CSS", {
-      configurable: true,
-      value: { escape: (value: string) => value },
     });
 
     const store = new DiffStore();
@@ -197,9 +164,9 @@ describe("ReviewDiffPanel", () => {
       const panel = new ReviewDiffPanel();
       panel.store = store;
       let scrollCount = 0;
-      panel.scrollIntoView = () => { scrollCount += 1; };
+      panel.scrollTo = () => { scrollCount += 1; };
       const querySelector: typeof panel.querySelector = (selector: string) => (
-        selector.startsWith("[data-review-item-id=") ? panel : null
+        selector === "[data-review-scroll]" ? panel : null
       );
       panel.querySelector = querySelector;
 
@@ -208,7 +175,7 @@ describe("ReviewDiffPanel", () => {
 
       store.patchData = store.patchData.asLoaded(loadedPatch());
       panel.willUpdate(new Map());
-      panel.updated(new Map());
+      panel.updated();
       frames.shift()?.(0);
 
       expect(scrollCount).toBe(1);
@@ -216,70 +183,27 @@ describe("ReviewDiffPanel", () => {
       store.dispose();
       if (frameDescriptor) Object.defineProperty(globalThis, "requestAnimationFrame", frameDescriptor);
       else Reflect.deleteProperty(globalThis, "requestAnimationFrame");
-      if (cssDescriptor) Object.defineProperty(globalThis, "CSS", cssDescriptor);
-      else Reflect.deleteProperty(globalThis, "CSS");
     }
   });
 
-  test("waits for preceding diff bodies to render before scrolling to a file", () => {
-    const frameDescriptor = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
-    const cssDescriptor = Object.getOwnPropertyDescriptor(globalThis, "CSS");
-    const frames: FrameRequestCallback[] = [];
-    Object.defineProperty(globalThis, "requestAnimationFrame", {
-      configurable: true,
-      value: (callback: FrameRequestCallback) => {
-        frames.push(callback);
-        return frames.length;
-      },
-    });
-    Object.defineProperty(globalThis, "CSS", {
-      configurable: true,
-      value: { escape: (value: string) => value },
-    });
-    const patch = `${PATCH}diff --git a/src/target.ts b/src/target.ts
-index 3333333..4444444 100644
---- a/src/target.ts
-+++ b/src/target.ts
-@@ -1 +1 @@
--before
-+after
-`;
+  test("navigates to an initially unmounted file from virtual layout geometry", () => {
     const store = new DiffStore();
-    try {
-      store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(patch));
-      const panel = new ReviewDiffPanel();
-      panel.store = store;
-      const precedingId = panel.itemIdForPath("src/example.ts")!;
-      let precedingRendered = false;
-      const ReviewDiffItemElement = customElements.get("review-diff-item");
-      if (!ReviewDiffItemElement) throw new Error("Expected review-diff-item to be registered");
-      const precedingItem = new ReviewDiffItemElement();
-      Object.defineProperty(precedingItem, "diffRendered", {
-        get: () => precedingRendered,
-      });
-      let targetQueries = 0;
-      const querySelector: typeof panel.querySelector = (selector: string) => {
-        if (selector.includes(precedingId)) return precedingItem;
-        targetQueries += 1;
-        return null;
-      };
-      panel.querySelector = querySelector;
+    store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(manyFilePatch(100)));
+    const panel = new ReviewDiffPanel();
+    panel.store = store;
+    let targetTop: number | undefined;
+    panel.scrollTo = (options?: ScrollToOptions | number) => {
+      if (typeof options !== "number") targetTop = options?.top;
+    };
+    const querySelector: typeof panel.querySelector = (selector: string) => (
+      selector === "[data-review-scroll]" ? panel : null
+    );
+    panel.querySelector = querySelector;
 
-      panel.scrollToFile("src/target.ts");
-      expect(targetQueries).toBe(0);
+    panel.scrollToFile("src/file-99.ts");
 
-      precedingRendered = true;
-      panel.updated(new Map());
-      frames.shift()?.(0);
-
-      expect(targetQueries).toBeGreaterThan(0);
-    } finally {
-      store.dispose();
-      if (frameDescriptor) Object.defineProperty(globalThis, "requestAnimationFrame", frameDescriptor);
-      else Reflect.deleteProperty(globalThis, "requestAnimationFrame");
-      if (cssDescriptor) Object.defineProperty(globalThis, "CSS", cssDescriptor);
-      else Reflect.deleteProperty(globalThis, "CSS");
-    }
+    expect(targetTop).toBeGreaterThan(0);
+    store.dispose();
   });
 
   test("expands a collapsed target before file-tree navigation scrolls to it", () => {
@@ -291,26 +215,31 @@ index 3333333..4444444 100644
     panel.store = store;
     const itemId = panel.itemIdForPath("src/example.ts")!;
     panel.setItemCollapsed(itemId, true);
-    let queryCount = 0;
-    const querySelector: typeof panel.querySelector = () => {
-      queryCount += 1;
-      return null;
-    };
+    let scrollCount = 0;
+    panel.scrollTo = () => { scrollCount += 1; };
+    const querySelector: typeof panel.querySelector = (selector: string) => (
+      selector === "[data-review-scroll]" ? panel : null
+    );
     panel.querySelector = querySelector;
 
     panel.scrollToFile("src/example.ts");
 
     expect(panel.isItemCollapsed(itemId)).toBe(false);
-    expect(queryCount).toBe(0);
+    expect(scrollCount).toBe(1);
     localStorage.clear();
     store.dispose();
   });
 
-  test("reports active review identity and file path through public events", () => {
+  test("reports active review identity and file path as the virtual viewport changes", () => {
     const store = new DiffStore();
-    store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
+    store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(manyFilePatch(3)));
     const panel = new ReviewDiffPanel();
     panel.store = store;
+    Object.defineProperty(panel, "clientHeight", { configurable: true, value: 100 });
+    const querySelector: typeof panel.querySelector = (selector: string) => (
+      selector === "[data-review-scroll]" ? panel : null
+    );
+    panel.querySelector = querySelector;
     const activeItems: unknown[] = [];
     const activeFiles: unknown[] = [];
     panel.addEventListener("active-item-change", (event) => {
@@ -319,13 +248,16 @@ index 3333333..4444444 100644
     panel.addEventListener("active-file-change", (event) => {
       if (event instanceof CustomEvent) activeFiles.push(event.detail);
     });
-    const itemId = panel.itemIdForPath("src/example.ts")!;
 
-    panel.reportActiveItem(itemId);
-    panel.reportActiveItem(itemId);
+    panel.updated();
+    panel.scrollTop = 150;
+    panel.dispatchEvent(new Event("scroll"));
 
-    expect(activeItems).toEqual([itemId]);
-    expect(activeFiles).toEqual(["src/example.ts"]);
+    expect(activeItems).toEqual([
+      panel.itemIdForPath("src/file-0.ts"),
+      panel.itemIdForPath("src/file-1.ts"),
+    ]);
+    expect(activeFiles).toEqual(["src/file-0.ts", "src/file-1.ts"]);
     store.dispose();
   });
 });

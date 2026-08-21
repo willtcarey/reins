@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { PartType, type PartInfo } from "lit/directive.js";
 import { ReviewDiffItem } from "../../../components/changes/review-diff-item.js";
 import { SpringCollapseDirective } from "../../../directives/spring-collapse.js";
@@ -12,6 +12,20 @@ import {
 interface DirectiveResult {
   _$litDirective$: typeof SpringCollapseDirective;
   values: Parameters<SpringCollapseDirective["render"]>;
+}
+
+function testRect(height: number): DOMRect {
+  return {
+    bottom: height,
+    height,
+    left: 0,
+    right: 0,
+    top: 0,
+    width: 0,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  };
 }
 
 function renderOutput(item: ReviewDiffItem): string {
@@ -39,41 +53,92 @@ index 1111111..2222222 100644
 `;
 
 describe("ReviewDiffItem", () => {
-  test("renders a Reins-owned file header, shared file actions, and Pierre text-diff surface", () => {
-    const parsed = parseReviewItems(PATCH, "project-7-v1");
-    const item = new ReviewDiffItem();
-    item.item = parsed.items[0] ?? null;
-    item.projectId = 7;
-    item.branch = "task/example";
+  const resizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
 
-    const output = renderOutput(item);
-
-    expect(output).toContain("src/example.ts");
-    expect(output).toContain("<header");
-    expect(output).toContain(">+1</span>");
-    expect(output).toContain(">-1</span>");
-    expect(output.indexOf(">-1</span>")).toBeLessThan(output.indexOf("<diff-view-file-button"));
-    expect(output).toContain("<diff-view-file-button .path=src/example.ts variant=\"header\">");
-    expect(output).toContain("<diff-copy-path-button .path=src/example.ts variant=\"header\">");
-    expect(output).toContain("<diff-download-file-button");
-    expect(output).toContain(".path=src/example.ts");
-    expect(output).toContain(".href=/api/projects/7/files/content?path=src%2Fexample.ts&ref=task%2Fexample");
-    expect(output).toContain("<diffs-container data-pierre-file-diff>");
+  afterEach(() => {
+    if (resizeObserverDescriptor) Object.defineProperty(globalThis, "ResizeObserver", resizeObserverDescriptor);
+    else Reflect.deleteProperty(globalThis, "ResizeObserver");
   });
 
-  test("does not animate asynchronous diff rendering as a user expansion", () => {
+  test("observes its own height and emits only a narrow stable measurement", () => {
+    let notifyResize: (() => void) | undefined;
+    const observed: Element[] = [];
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        notifyResize = () => callback([], this);
+      }
+      observe(target: Element) { observed.push(target); }
+      unobserve() {}
+      disconnect() {}
+    }
+    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: TestResizeObserver });
+
     const parsed = parseReviewItems(PATCH, "project-7-v1");
+    const reviewItem = parsed.items[0]!;
     const item = new ReviewDiffItem();
-    item.item = parsed.items[0] ?? null;
+    const article = new ReviewDiffItem();
+    const container = new ReviewDiffItem();
+    const pre = new ReviewDiffItem();
+    let placeholder = true;
+    item.item = reviewItem;
+    item.reservedHeight = 240;
+    Object.defineProperty(article, "isConnected", { configurable: true, value: true });
+    item.getBoundingClientRect = () => testRect(137);
+    Object.defineProperty(item, "isConnected", { configurable: true, value: true });
+    Object.defineProperty(container, "shadowRoot", {
+      configurable: true,
+      value: {
+        querySelector: (selector: string) => {
+          if (selector === "pre") return pre;
+          if (selector === "[data-placeholder]") return placeholder ? pre : null;
+          return null;
+        },
+      },
+    });
+    const querySelector: typeof item.querySelector = (selector: string) => {
+      if (selector === "article") return article;
+      if (selector === "[data-pierre-file-diff]") return container;
+      return null;
+    };
+    item.querySelector = querySelector;
+    const renderer: object = Reflect.get(item, "_diff");
+    Reflect.set(renderer, "containerValue", container);
+    Reflect.set(renderer, "requested", reviewItem.fileDiff);
+    Reflect.set(renderer, "completed", reviewItem.fileDiff);
+    const measurements: unknown[] = [];
+    item.addEventListener("review-item-measurement", (event) => measurements.push(event.detail));
 
-    const collapse = collectTemplateValues(item.render()).find((value): value is DirectiveResult => (
-      typeof value === "object"
-        && value !== null
-        && "_$litDirective$" in value
-        && value._$litDirective$ === SpringCollapseDirective
-    ));
+    item.updated();
+    notifyResize?.();
+    expect(measurements).toEqual([]);
 
-    expect(collapse?.values[2]).toMatchObject({ animateContentResize: false });
+    placeholder = false;
+    notifyResize?.();
+
+    expect(observed).toEqual([item]);
+    expect(measurements).toEqual([{ id: reviewItem.id, height: 137 }]);
+    expect(renderOutput(item)).not.toContain("min-height:240px");
+  });
+
+  test("does not emit for stale completion after Lit removes the current structure", () => {
+    const parsed = parseReviewItems(PATCH, "project-7-v1");
+    const reviewItem = parsed.items[0]!;
+    const item = new ReviewDiffItem();
+    item.item = reviewItem;
+    item.reservedHeight = 240;
+    item.getBoundingClientRect = () => testRect(137);
+    Object.defineProperty(item, "isConnected", { configurable: true, value: true });
+    const renderer: object = Reflect.get(item, "_diff");
+    Reflect.set(renderer, "requested", reviewItem.fileDiff);
+    Reflect.set(renderer, "completed", reviewItem.fileDiff);
+
+    const measurements: unknown[] = [];
+    item.addEventListener("review-item-measurement", (event) => measurements.push(event.detail));
+    item.updated();
+
+    expect(item.diffRendered).toBe(false);
+    expect(measurements).toEqual([]);
+    expect(renderOutput(item)).toContain("min-height:240px");
   });
 
   test("renders an accessible collapse control and hides only the diff body when collapsed", () => {
@@ -95,7 +160,7 @@ describe("ReviewDiffItem", () => {
     expect(output).toContain(`aria-label=Expand src/example.ts`);
     expect(output).toContain(`aria-expanded=false`);
     expect(output).toContain("src/example.ts");
-    expect(output).not.toContain("<diffs-container data-pierre-file-diff>");
+    expect(output).not.toContain("<diffs-container data-pierre-file-diff");
     expect(toggledIds).toEqual([reviewItem.id]);
   });
 
