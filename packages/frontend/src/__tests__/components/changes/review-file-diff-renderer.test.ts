@@ -129,6 +129,7 @@ ${additions}
         addController() {}, removeController() {}, requestUpdate() {}, updateComplete: Promise.resolve(true),
       };
       const acquisitions: number[] = [];
+      const relevantControls: number[] = [];
       const nativeInteractions: number[] = [];
       const controller = createReviewFileDiffRenderer(
         host,
@@ -136,6 +137,7 @@ ${additions}
         (interaction) => acquisitions.push(interaction.hunkIndex),
         (interaction) => nativeInteractions.push(interaction.hunkIndex),
         undefined,
+        (hunkIndexes) => relevantControls.push(...hunkIndexes),
         null,
       );
       const bindingValues = Reflect.get(controller.bind({
@@ -155,8 +157,9 @@ ${additions}
       expect(separator.dataset.expandIndex).toBeUndefined();
       expect(control.dataset.reinsAcquireHunkIndex).toBe("0");
       expect(control.getAttribute("role")).toBe("button");
-      expect(control.getAttribute("aria-label")).toBe("Load complete file context");
+      expect(control.getAttribute("aria-label")).toBe("Expand unchanged lines");
       expect(control.tabIndex).toBe(0);
+      expect(relevantControls).toEqual([0]);
       expect(acquisitions).toEqual([0]);
       expect(partialEvent.defaultPrevented).toBe(true);
       expect(expanded).toEqual([]);
@@ -176,6 +179,78 @@ ${additions}
       expect(nativeInteractions).toEqual([0]);
       expect(expanded).toEqual([[0, "down", undefined]]);
       expect(completeEvent.defaultPrevented).toBe(true);
+    } finally {
+      Reflect.set(ReviewFileDiff.prototype, "render", originalRender);
+      if (htmlElementDescriptor) Object.defineProperty(globalThis, "HTMLElement", htmlElementDescriptor);
+      else Reflect.deleteProperty(globalThis, "HTMLElement");
+    }
+  });
+
+  test("does not offer or pre-acquire context when patch metadata has no known collapsed region", () => {
+    const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+    const originalRender = ReviewFileDiff.prototype.render;
+    const queryResults = new Map<string, EventTarget[]>();
+    const root = {
+      addEventListener() {}, removeEventListener() {}, querySelector() { return null; },
+      querySelectorAll(selector: string) { return queryResults.get(selector) ?? []; },
+      replaceChildren() {},
+    };
+    class TestHTMLElement extends EventTarget {
+      shadowRoot = root;
+      dataset: Record<string, string> = {};
+      nextElementSibling: TestHTMLElement | null = null;
+      tabIndex = -1;
+      private readonly attributes = new Map<string, string>();
+      constructor(attributes: string[] = []) {
+        super();
+        for (const attribute of attributes) this.attributes.set(attribute, "");
+      }
+      hasAttribute(name: string) { return this.attributes.has(name); }
+      setAttribute(name: string, value: string) { this.attributes.set(name, value); }
+      closest: () => TestHTMLElement | null = () => null;
+    }
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: TestHTMLElement });
+    const partial = processFile(`diff --git a/file.txt b/file.txt
+--- a/file.txt
++++ b/file.txt
+@@ -1 +1 @@
+-old
++new
+`);
+    if (!partial) throw new Error("Expected parsed partial diff");
+    const separator = new TestHTMLElement(["data-separator"]);
+    const nextLine = new TestHTMLElement();
+    nextLine.dataset.lineIndex = `${partial.hunks[0]?.unifiedLineStart},${partial.hunks[0]?.splitLineStart}`;
+    separator.nextElementSibling = nextLine;
+    const control = new TestHTMLElement(["data-separator-content"]);
+    control.closest = () => separator;
+    queryResults.set("[data-separator-content]", [control]);
+    Reflect.set(ReviewFileDiff.prototype, "render", function render(
+      this: ReviewFileDiff,
+      props: { fileContainer: HTMLElement },
+    ) {
+      this.options.onPostRender?.(props.fileContainer, this, "mount");
+      return true;
+    });
+    try {
+      const host: ReactiveControllerHost = {
+        addController() {}, removeController() {}, requestUpdate() {}, updateComplete: Promise.resolve(true),
+      };
+      const relevantControls: number[][] = [];
+      const controller = createReviewFileDiffRenderer(
+        host, undefined, undefined, undefined, undefined,
+        (hunkIndexes) => relevantControls.push([...hunkIndexes]), null,
+      );
+      const bindingValues = Reflect.get(controller.bind({
+        fileDiff: partial, nativeExpandedHunks: new Map(), initialExpansion: null,
+      }), "values");
+      const attach = Array.isArray(bindingValues) ? bindingValues[0] : null;
+      if (typeof attach !== "function") throw new Error("Expected renderer ref binding");
+      attach(new TestHTMLElement());
+
+      expect(partial.hunks[0]?.collapsedBefore).toBe(0);
+      expect(control.dataset.reinsAcquireHunkIndex).toBeUndefined();
+      expect(relevantControls).toEqual([]);
     } finally {
       Reflect.set(ReviewFileDiff.prototype, "render", originalRender);
       if (htmlElementDescriptor) Object.defineProperty(globalThis, "HTMLElement", htmlElementDescriptor);

@@ -26,7 +26,21 @@ function response(body: DiffContentsResponse, status = 200): Response {
 }
 
 describe("ReviewExpansionState", () => {
-  test("acquires complete sides once on the first native expansion interaction", async () => {
+  test("does not fetch merely because an offscreen item has persistent expansion state", () => {
+    let requests = 0;
+    const state = new ReviewExpansionState(
+      { projectId: 7, mode: "branch" },
+      async () => {
+        requests += 1;
+        throw new Error("unexpected request");
+      },
+    );
+
+    expect(state.forItem(reviewItem()).outcome).toBe("idle");
+    expect(requests).toBe(0);
+  });
+
+  test("acquires complete sides once when mounted context becomes relevant", async () => {
     const requests: string[] = [];
     let resolveRequest!: (value: Response) => void;
     const pending = new Promise<Response>((resolve) => { resolveRequest = resolve; });

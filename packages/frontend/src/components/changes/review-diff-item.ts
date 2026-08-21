@@ -83,6 +83,7 @@ export class ReviewDiffItem extends LitElement {
     (interaction) => this._requestAcquisition(interaction),
     (interaction) => this._rememberExpansionAnchor(interaction),
     (regions) => this._retainNativeExpansion(regions),
+    () => this._contextControlRelevant(),
   );
   private _pendingExpansionAnchor: ReviewFileExpansionInteraction | null = null;
   private _targetFileDiff: ReviewItem["fileDiff"] | null = null;
@@ -196,10 +197,17 @@ export class ReviewDiffItem extends LitElement {
     this.dispatchEvent(toggleCollapseEvent(this.item.id));
   }
 
-  private _requestAcquisition(interaction: ReviewFileExpansionInteraction) {
+  private _contextControlRelevant() {
     if (!this.item || this.expansion?.outcome !== "idle") return;
-    this._rememberExpansionAnchor(interaction);
     this.dispatchEvent(reviewContextAcquireEvent(this.item.id));
+  }
+
+  private _requestAcquisition(interaction: ReviewFileExpansionInteraction) {
+    if (!this.item) return;
+    const outcome = this.expansion?.outcome;
+    if (outcome !== "idle" && outcome !== "loading") return;
+    this._rememberExpansionAnchor(interaction);
+    if (outcome === "idle") this.dispatchEvent(reviewContextAcquireEvent(this.item.id));
   }
 
   private _rememberExpansionAnchor(interaction: ReviewFileExpansionInteraction) {

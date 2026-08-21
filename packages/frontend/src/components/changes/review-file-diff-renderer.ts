@@ -69,6 +69,7 @@ export function createReviewFileDiffRenderer(
   onAcquire?: (interaction: ReviewFileExpansionInteraction) => void,
   onNativeInteraction?: (interaction: ReviewFileExpansionInteraction) => void,
   onNativeState?: (regions: ReadonlyMap<number, HunkExpansionRegion>) => void,
+  onAcquisitionRelevant?: (hunkIndexes: readonly number[]) => void,
   workerManager?: ReturnType<typeof getPierreWorkerPool> | null,
 ) {
   return new PierreRenderer<ReviewFileDiffTarget, ReviewFileDiff>(host, {
@@ -116,7 +117,8 @@ export function createReviewFileDiffRenderer(
             root.addEventListener("click", handleClick, true);
             root.addEventListener("keydown", handleKeydown, true);
           }
-          prepareNativeControls(root, target.fileDiff);
+          const acquisitionHunks = prepareNativeControls(root, target.fileDiff);
+          if (acquisitionHunks.length > 0) onAcquisitionRelevant?.(acquisitionHunks);
           if (instance instanceof ReviewFileDiff) {
             onNativeState?.(instance.nativeExpansionState());
           }
@@ -149,8 +151,8 @@ export function createReviewFileDiffRenderer(
   });
 }
 
-function prepareNativeControls(root: ShadowRoot | null, fileDiff: FileDiffMetadata): void {
-  if (!root) return;
+function prepareNativeControls(root: ShadowRoot | null, fileDiff: FileDiffMetadata): number[] {
+  if (!root) return [];
   for (const control of root.querySelectorAll<HTMLElement>("[data-expand-button][role='button']")) {
     control.tabIndex = 0;
     if (control.hasAttribute("aria-label")) continue;
@@ -164,13 +166,14 @@ function prepareNativeControls(root: ShadowRoot | null, fileDiff: FileDiffMetada
     control.setAttribute("aria-label", action);
   }
 
-  if (!fileDiff.isPartial) return;
+  if (!fileDiff.isPartial) return [];
+  const acquisitionHunks: number[] = [];
   for (const content of root.querySelectorAll<HTMLElement>("[data-separator-content]")) {
     const separator = content.closest<HTMLElement>("[data-separator]");
     if (!separator || separator.dataset.expandIndex) continue;
     const nextLineIndex = nextRenderedLineIndex(separator);
     const hunkIndex = fileDiff.hunks.findIndex((hunk) => hunk.unifiedLineStart === nextLineIndex);
-    if (hunkIndex < 0) continue;
+    if (hunkIndex < 0 || (fileDiff.hunks[hunkIndex]?.collapsedBefore ?? 0) <= 0) continue;
 
     // Pierre intentionally omits buttons for partial metadata. Keep its
     // structural expansion attributes untouched so the existing line-info
@@ -180,8 +183,10 @@ function prepareNativeControls(root: ShadowRoot | null, fileDiff: FileDiffMetada
     content.dataset.reinsAcquireDirection = hunkIndex === 0 ? "down" : "both";
     content.setAttribute("role", "button");
     content.tabIndex = 0;
-    content.setAttribute("aria-label", "Load complete file context");
+    content.setAttribute("aria-label", "Expand unchanged lines");
+    acquisitionHunks.push(hunkIndex);
   }
+  return acquisitionHunks;
 }
 
 function nextRenderedLineIndex(separator: HTMLElement): number {
