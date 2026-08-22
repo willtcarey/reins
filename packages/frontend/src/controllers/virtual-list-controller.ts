@@ -48,11 +48,45 @@ export type VirtualListObservation =
       readonly layoutVersion: number;
     }
   | {
+      readonly type: "expansion-anchor-registered";
+      readonly operationId: string;
+      readonly mode: "dom-point" | "measured-growth";
+      readonly itemId: string | null;
+      readonly delta: number;
+      readonly actualTop: number;
+      readonly viewportHeight: number;
+      readonly layoutVersion: number;
+    }
+  | {
+      readonly type: "expansion-anchor-cancelled";
+      readonly operationId: string;
+      readonly mode: "dom-point" | "measured-growth";
+      readonly inputType: string;
+      readonly actualTop: number;
+      readonly layoutVersion: number;
+    }
+  | {
+      readonly type: "measurement-submitted";
+      readonly operationId: string | null;
+      readonly itemId: string;
+      readonly oldHeight: number | null;
+      readonly measuredHeight: number;
+      readonly accepted: boolean;
+      readonly rejectionReason: string | null;
+      readonly layoutVersion: number;
+    }
+  | {
       readonly type: "measurement-batch";
       readonly submitted: number;
       readonly accepted: number;
       readonly correctedTop: number;
       readonly scrollAdjustment: number;
+      readonly coordinatorAdjustment: number;
+      readonly pointAdjustment: number;
+      readonly growthBefore: number | null;
+      readonly growthAfter: number | null;
+      readonly growthAdjustment: number;
+      readonly operationId: string | null;
       readonly actualTop: number | null;
       readonly measurements: readonly VirtualListMeasurement[];
       readonly layoutVersion: number;
@@ -63,6 +97,8 @@ export type VirtualListObservation =
       readonly requestedTop: number;
       readonly actualTop: number | null;
       readonly navigationId: string | null;
+      readonly operationId: string | null;
+      readonly totalHeight: number;
       readonly layoutVersion: number;
     }
   | {
@@ -72,6 +108,10 @@ export type VirtualListObservation =
       readonly actualAfter: number;
       readonly smooth: boolean;
       readonly navigationId: string | null;
+      readonly operationId: string | null;
+      readonly clampDifference: number;
+      readonly totalHeight: number;
+      readonly viewportHeight: number;
       readonly layoutVersion: number;
     }
   | {
@@ -102,6 +142,11 @@ export class VirtualListController implements ReactiveController {
   private pendingGeometryScrollTop: number | null = null;
   private pendingPointScrollAdjustment = 0;
   private pendingGrowthAnchorId: string | null = null;
+  private pendingExpansionOperation: {
+    id: string;
+    mode: "dom-point" | "measured-growth";
+  } | null = null;
+  private pendingGeometryOperationId: string | null = null;
   private navigationId: string | null = null;
   private visible = false;
   private rememberedScrollTop: number | null = null;
@@ -153,12 +198,30 @@ export class VirtualListController implements ReactiveController {
 
   public measure(measurement: VirtualListMeasurement) {
     const item = this.coordinator.item(measurement.id);
-    if (
-      !item
-      || item.fixedHeight !== undefined
-      || item.measurementKey !== measurement.measurementKey
-      || measurement.height <= 0
-    ) return;
+    const rejectionReason = !item
+      ? "missing-item"
+      : item.fixedHeight !== undefined
+        ? "fixed-height"
+        : item.measurementKey !== measurement.measurementKey
+          ? "stale-key"
+          : measurement.height <= 0
+            ? "non-positive-height"
+            : null;
+    const operationId = this.pendingExpansionOperation
+      && (this.pendingGrowthAnchorId === measurement.id || this.pendingExpansionOperation.mode === "dom-point")
+      ? this.pendingExpansionOperation.id
+      : null;
+    this.emit({
+      type: "measurement-submitted",
+      operationId,
+      itemId: measurement.id,
+      oldHeight: item?.height ?? null,
+      measuredHeight: measurement.height,
+      accepted: rejectionReason === null,
+      rejectionReason,
+      layoutVersion: this.coordinator.layoutVersion,
+    });
+    if (rejectionReason !== null) return;
 
     this.pendingMeasurements.set(measurement.id, measurement);
     if (this.measurementFlushQueued) return;
@@ -175,15 +238,17 @@ export class VirtualListController implements ReactiveController {
    * Retain a post-render point delta until the item's new virtual height is
    * committed. Applying it earlier can clamp against the stale total height.
    */
-  public adjustScrollBy(delta: number) {
+  public adjustScrollBy(delta: number, operationId?: string) {
     if (!this.container || !Number.isFinite(delta) || delta === 0) return;
     this.pendingPointScrollAdjustment += delta;
+    if (operationId) this.registerExpansionAnchor(operationId, "dom-point", null, delta);
   }
 
   /** Scroll by the measured height added above reviewed code in one item. */
-  public adjustScrollByItemGrowth(id: string) {
+  public adjustScrollByItemGrowth(id: string, operationId?: string) {
     if (!this.container || !this.coordinator.item(id)) return;
     this.pendingGrowthAnchorId = id;
+    if (operationId) this.registerExpansionAnchor(operationId, "measured-growth", id, 0);
   }
 
   public navigateTo(id: string): boolean {
@@ -222,6 +287,8 @@ export class VirtualListController implements ReactiveController {
     this.pendingGeometryScrollTop = null;
     this.pendingPointScrollAdjustment = 0;
     this.pendingGrowthAnchorId = null;
+    this.pendingExpansionOperation = null;
+    this.pendingGeometryOperationId = null;
     this.navigationId = null;
     this.rememberedScrollTop = null;
     this.restoreScrollAfterRender = false;
@@ -248,6 +315,8 @@ export class VirtualListController implements ReactiveController {
     this.measurementFlushQueued = false;
     this.pendingPointScrollAdjustment = 0;
     this.pendingGrowthAnchorId = null;
+    this.pendingExpansionOperation = null;
+    this.pendingGeometryOperationId = null;
   }
 
   private handleScroll = () => {
@@ -282,6 +351,21 @@ export class VirtualListController implements ReactiveController {
     if (!this.isScrollIntent(event)) return;
     this.pendingPointScrollAdjustment = 0;
     this.pendingGrowthAnchorId = null;
+    if (this.pendingExpansionOperation) {
+      this.emit({
+        type: "expansion-anchor-cancelled",
+        operationId: this.pendingExpansionOperation.id,
+        mode: this.pendingExpansionOperation.mode,
+        inputType: event.type,
+        actualTop: this.container?.scrollTop ?? 0,
+        layoutVersion: this.coordinator.layoutVersion,
+      });
+      this.pendingExpansionOperation = null;
+    }
+    if (this.pendingGeometryOperationId) {
+      this.pendingGeometryScrollTop = null;
+      this.pendingGeometryOperationId = null;
+    }
     if (!this.navigationId) return;
     const targetId = this.navigationId;
     this.navigationId = null;
@@ -329,6 +413,7 @@ export class VirtualListController implements ReactiveController {
       ? Math.max(0, growthAfter - growthBefore)
       : 0;
     if (includesGrowthAnchor) this.pendingGrowthAnchorId = null;
+    const operationId = this.pendingExpansionOperation?.id ?? null;
     const interactionAdjustment = pointAdjustment + growthAdjustment;
     const update = interactionAdjustment === 0
       ? measuredUpdate
@@ -343,14 +428,25 @@ export class VirtualListController implements ReactiveController {
       accepted: update.accepted,
       correctedTop: update.scrollTop,
       scrollAdjustment: update.scrollAdjustment,
+      coordinatorAdjustment: measuredUpdate.scrollAdjustment,
+      pointAdjustment,
+      growthBefore: growthBefore ?? null,
+      growthAfter: growthAfter ?? null,
+      growthAdjustment,
+      operationId,
       actualTop: this.container?.scrollTop ?? null,
       measurements,
       layoutVersion: this.coordinator.layoutVersion,
     });
-    this.queueGeometryUpdate(update, update.accepted > 0);
+    this.queueGeometryUpdate(update, update.accepted > 0, operationId);
+    if (interactionAdjustment === 0) this.pendingExpansionOperation = null;
   }
 
-  private queueGeometryUpdate(update: VirtualListGeometryUpdate, geometryChanged: boolean) {
+  private queueGeometryUpdate(
+    update: VirtualListGeometryUpdate,
+    geometryChanged: boolean,
+    operationId: string | null = null,
+  ) {
     let reason: "navigation-retarget" | "anchor-correction";
     if (this.navigationId && geometryChanged) {
       const navigationTop = this.coordinator.navigationTop(this.navigationId);
@@ -362,6 +458,7 @@ export class VirtualListController implements ReactiveController {
       reason = "navigation-retarget";
     } else if (update.scrollAdjustment !== 0) {
       this.pendingGeometryScrollTop = update.scrollTop;
+      this.pendingGeometryOperationId = operationId;
       reason = "anchor-correction";
     } else {
       return;
@@ -372,6 +469,8 @@ export class VirtualListController implements ReactiveController {
       requestedTop: this.pendingGeometryScrollTop,
       actualTop: this.container?.scrollTop ?? null,
       navigationId: this.navigationId,
+      operationId: this.pendingGeometryOperationId,
+      totalHeight: this.coordinator.totalSize,
       layoutVersion: this.coordinator.layoutVersion,
     });
     this.host.requestUpdate();
@@ -385,6 +484,8 @@ export class VirtualListController implements ReactiveController {
     this.pendingGeometryScrollTop = null;
     const actualBefore = container.scrollTop;
     const navigationId = this.navigationId;
+    const operationId = this.pendingGeometryOperationId;
+    this.pendingGeometryOperationId = null;
     if (navigationId) container.scrollTo({ top, behavior: "smooth" });
     else container.scrollTop = top;
     this.coordinator.setViewport(container.scrollTop, container.clientHeight || this.viewportHeight);
@@ -395,6 +496,30 @@ export class VirtualListController implements ReactiveController {
       actualAfter: container.scrollTop,
       smooth: navigationId !== null,
       navigationId,
+      operationId,
+      clampDifference: container.scrollTop - top,
+      totalHeight: this.coordinator.totalSize,
+      viewportHeight: container.clientHeight || this.viewportHeight,
+      layoutVersion: this.coordinator.layoutVersion,
+    });
+    if (operationId) this.pendingExpansionOperation = null;
+  }
+
+  private registerExpansionAnchor(
+    operationId: string,
+    mode: "dom-point" | "measured-growth",
+    itemId: string | null,
+    delta: number,
+  ) {
+    this.pendingExpansionOperation = { id: operationId, mode };
+    this.emit({
+      type: "expansion-anchor-registered",
+      operationId,
+      mode,
+      itemId,
+      delta,
+      actualTop: this.container?.scrollTop ?? 0,
+      viewportHeight: this.container?.clientHeight || this.viewportHeight,
       layoutVersion: this.coordinator.layoutVersion,
     });
   }

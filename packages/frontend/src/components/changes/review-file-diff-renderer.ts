@@ -26,12 +26,13 @@ export interface ReviewFileExpansionInteraction {
   readonly lineCount?: number;
   readonly anchorTop: number;
   readonly anchorLineNumber: number | null;
+  readonly anchorLineTop?: number | null;
 }
 
 export interface ReviewFileDiffTarget {
   readonly fileDiff: FileDiffMetadata;
   readonly nativeExpandedHunks: ReadonlyMap<number, HunkExpansionRegion>;
-  readonly initialExpansion: Pick<ReviewFileExpansionInteraction, "hunkIndex" | "direction" | "lineCount"> | null;
+  readonly initialExpansion: ReviewFileExpansionInteraction | null;
 }
 
 /**
@@ -239,5 +240,6 @@ function expansionInteraction(event: Event): ReviewFileExpansionInteraction | nu
     ...(expandAll ? { lineCount: Number.POSITIVE_INFINITY } : {}),
     anchorTop: separator.getBoundingClientRect().top,
     anchorLineNumber: Number.isNaN(anchorLineNumber) ? null : anchorLineNumber,
+    anchorLineTop: anchorLine?.getBoundingClientRect().top ?? null,
   };
 }

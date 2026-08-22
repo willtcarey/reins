@@ -237,7 +237,10 @@ describe("ReviewDiffItem", () => {
 
     Reflect.get(item, "_reconcileExpansionAnchor").call(item);
 
-    expect(anchors).toEqual([{ growthItemId: reviewItem.id }]);
+    expect(anchors).toEqual([{
+      growthItemId: reviewItem.id,
+      operationId: expect.stringMatching(/^review-expansion-/),
+    }]);
   });
 
   test("leaves expansion controls to Pierre and reports acquisition failure without replacing the diff", () => {

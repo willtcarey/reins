@@ -117,20 +117,71 @@ describe("VirtualListController", () => {
     expect(controller.window().activeId).toBe("visible");
   });
 
-  test("scrolls down by item growth when context expands upward", async () => {
+  test("reports correlated upward growth through final geometry application", async () => {
     const host = fakeHost();
+    const observations: VirtualListObservation[] = [];
     const controller = new VirtualListController(host, 0, 100);
+    controller.observe = (observation) => observations.push(observation);
     controller.setItems(items);
     const container = fakeContainer(120, 100);
     controller.attach(container);
 
-    controller.adjustScrollByItemGrowth("visible");
+    controller.adjustScrollByItemGrowth("visible", "review-expansion-7");
     controller.measure({ id: "visible", measurementKey: "visible-v1", height: 160 });
     await Promise.resolve();
     host.updated();
 
     expect(container.scrollTop).toBe(180);
     expect(controller.window().activeId).toBe("visible");
+    expect(observations).toContainEqual(expect.objectContaining({
+      type: "expansion-anchor-registered",
+      operationId: "review-expansion-7",
+      mode: "measured-growth",
+      itemId: "visible",
+    }));
+    expect(observations).toContainEqual(expect.objectContaining({
+      type: "measurement-batch",
+      operationId: "review-expansion-7",
+      growthBefore: 100,
+      growthAfter: 160,
+      growthAdjustment: 60,
+      correctedTop: 180,
+    }));
+    expect(observations).toContainEqual(expect.objectContaining({
+      type: "geometry-applied",
+      operationId: "review-expansion-7",
+      requestedTop: 180,
+      actualBefore: 120,
+      actualAfter: 180,
+      clampDifference: 0,
+      totalHeight: 360,
+    }));
+  });
+
+  test("reports and honors user cancellation of a pending expansion anchor", async () => {
+    const host = fakeHost();
+    const observations: VirtualListObservation[] = [];
+    const controller = new VirtualListController(host, 0, 100);
+    controller.observe = (observation) => observations.push(observation);
+    controller.setItems(items);
+    const container = fakeContainer(120, 100);
+    controller.attach(container);
+
+    controller.adjustScrollByItemGrowth("visible", "review-expansion-8");
+    controller.measure({ id: "visible", measurementKey: "visible-v1", height: 160 });
+    await Promise.resolve();
+    container.fire("touchstart");
+    host.updated();
+
+    expect(container.scrollTop).toBe(120);
+    expect(observations).toContainEqual(expect.objectContaining({
+      type: "expansion-anchor-cancelled",
+      operationId: "review-expansion-8",
+      mode: "measured-growth",
+      inputType: "touchstart",
+      actualTop: 120,
+    }));
+    expect(observations.find((event) => event.type === "geometry-applied")).toBeUndefined();
   });
 
   test("does not apply a stale point correction after user scroll intent", async () => {

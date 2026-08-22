@@ -281,9 +281,12 @@ export class ReviewDiffPanel extends LitElement {
 
   private _handleExpansionAnchor(event: CustomEvent<ReviewExpansionAnchorDetail>) {
     if (typeof event.detail.growthItemId === "string") {
-      this._virtualList.adjustScrollByItemGrowth(event.detail.growthItemId);
+      this._virtualList.adjustScrollByItemGrowth(
+        event.detail.growthItemId,
+        event.detail.operationId,
+      );
     } else if (typeof event.detail.delta === "number") {
-      this._virtualList.adjustScrollBy(event.detail.delta);
+      this._virtualList.adjustScrollBy(event.detail.delta, event.detail.operationId);
     }
   }
 
@@ -306,6 +309,34 @@ export class ReviewDiffPanel extends LitElement {
 
   private _observeVirtualList(observation: VirtualListObservation) {
     switch (observation.type) {
+      case "expansion-anchor-registered":
+        this._recordExpansionTelemetry(observation.type, observation.operationId, {
+          mode: observation.mode,
+          itemIndex: this._itemIndex(observation.itemId),
+          delta: observation.delta,
+          actualTop: observation.actualTop,
+          viewportHeight: observation.viewportHeight,
+          layoutVersion: observation.layoutVersion,
+        });
+        break;
+      case "expansion-anchor-cancelled":
+        this._recordExpansionTelemetry(observation.type, observation.operationId, {
+          mode: observation.mode,
+          inputType: observation.inputType,
+          actualTop: observation.actualTop,
+          layoutVersion: observation.layoutVersion,
+        });
+        break;
+      case "measurement-submitted":
+        this._recordControllerTelemetry(observation.type, observation.operationId, {
+          itemIndex: this._itemIndex(observation.itemId),
+          oldVirtualHeight: observation.oldHeight,
+          measuredHeight: Math.round(observation.measuredHeight),
+          accepted: observation.accepted,
+          rejectionReason: observation.rejectionReason,
+          layoutVersion: observation.layoutVersion,
+        });
+        break;
       case "navigation-start":
         this._navigationTelemetry = clientTelemetry.startOperation("review-virtualizer");
         this._recordTelemetry(observation.type, {
@@ -336,11 +367,16 @@ export class ReviewDiffPanel extends LitElement {
         this._navigationTelemetry = null;
         break;
       case "measurement-batch":
-        this._recordTelemetry(observation.type, {
+        this._recordControllerTelemetry(observation.type, observation.operationId, {
           submitted: observation.submitted,
           accepted: observation.accepted,
           correctedTop: observation.correctedTop,
           scrollAdjustment: observation.scrollAdjustment,
+          coordinatorAdjustment: observation.coordinatorAdjustment,
+          pointAdjustment: observation.pointAdjustment,
+          growthBefore: observation.growthBefore,
+          growthAfter: observation.growthAfter,
+          growthAdjustment: observation.growthAdjustment,
           actualTop: observation.actualTop,
           layoutVersion: observation.layoutVersion,
           candidates: observation.measurements.map((measurement) => ({
@@ -352,19 +388,23 @@ export class ReviewDiffPanel extends LitElement {
         this._syncPendingScroll();
         break;
       case "geometry-queued":
-        this._recordTelemetry(observation.type, {
+        this._recordControllerTelemetry(observation.type, observation.operationId, {
           reason: observation.reason,
           requestedTop: observation.requestedTop,
           actualTop: observation.actualTop,
           navigationIndex: this._itemIndex(observation.navigationId),
+          totalHeight: observation.totalHeight,
           layoutVersion: observation.layoutVersion,
         });
         break;
       case "geometry-applied":
-        this._recordTelemetry(observation.type, {
+        this._recordControllerTelemetry(observation.type, observation.operationId, {
           requestedTop: observation.requestedTop,
           actualBefore: observation.actualBefore,
           actualAfter: observation.actualAfter,
+          clampDifference: observation.clampDifference,
+          totalHeight: observation.totalHeight,
+          viewportHeight: observation.viewportHeight,
           smooth: observation.smooth,
           navigationIndex: this._itemIndex(observation.navigationId),
           layoutVersion: observation.layoutVersion,
@@ -384,6 +424,23 @@ export class ReviewDiffPanel extends LitElement {
         break;
       }
     }
+  }
+
+  private _recordControllerTelemetry(
+    event: string,
+    operationId: string | null,
+    attributes: Record<string, unknown>,
+  ) {
+    if (operationId) this._recordExpansionTelemetry(event, operationId, attributes);
+    else this._recordTelemetry(event, attributes);
+  }
+
+  private _recordExpansionTelemetry(
+    event: string,
+    operationId: string,
+    attributes: Record<string, unknown>,
+  ) {
+    clientTelemetry.record("review-expansion", event, { ...attributes, operationId });
   }
 
   private _recordTelemetry(

@@ -123,6 +123,10 @@ export class VirtualListCoordinator {
     return this.byId.get(id);
   }
 
+  public get totalSize(): number {
+    return this.totalHeight;
+  }
+
   public navigationTop(id: string): number | null {
     const item = this.byId.get(id);
     return item ? this.clampScrollTop(item.top) : null;

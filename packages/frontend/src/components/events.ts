@@ -280,8 +280,8 @@ export interface ReviewContextStateDetail {
 }
 
 export type ReviewExpansionAnchorDetail =
-  | { delta: number; growthItemId?: never }
-  | { growthItemId: string; delta?: never };
+  | { delta: number; operationId?: string; growthItemId?: never }
+  | { growthItemId: string; operationId?: string; delta?: never };
 
 export function reviewContextAcquireEvent(id: string) {
   return componentEvent("review-context-acquire", { id });
@@ -291,12 +291,18 @@ export function reviewContextStateEvent(detail: ReviewContextStateDetail) {
   return componentEvent("review-context-state", detail);
 }
 
-export function reviewExpansionAnchorEvent(delta: number) {
-  return componentEvent<ReviewExpansionAnchorDetail>("review-expansion-anchor", { delta });
+export function reviewExpansionAnchorEvent(delta: number, operationId?: string) {
+  return componentEvent<ReviewExpansionAnchorDetail>(
+    "review-expansion-anchor",
+    { delta, ...(operationId ? { operationId } : {}) },
+  );
 }
 
-export function reviewExpansionGrowthAnchorEvent(growthItemId: string) {
-  return componentEvent<ReviewExpansionAnchorDetail>("review-expansion-anchor", { growthItemId });
+export function reviewExpansionGrowthAnchorEvent(growthItemId: string, operationId?: string) {
+  return componentEvent<ReviewExpansionAnchorDetail>(
+    "review-expansion-anchor",
+    { growthItemId, ...(operationId ? { operationId } : {}) },
+  );
 }
 
 export interface ExpandDetail {

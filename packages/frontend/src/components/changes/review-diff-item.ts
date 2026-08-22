@@ -86,7 +86,8 @@ export class ReviewDiffItem extends LitElement {
     (regions) => this._retainNativeExpansion(regions),
     () => this._contextControlRelevant(),
   );
-  private _pendingExpansionAnchor: ReviewFileExpansionInteraction | null = null;
+  private _pendingExpansionAnchor: (ReviewFileExpansionInteraction & { operationId: string }) | null = null;
+  private _activeExpansionOperationId: string | null = null;
   private _targetFileDiff: ReviewItem["fileDiff"] | null = null;
   private _target: ReviewFileDiffTarget | null = null;
   private _heightObserver: ResizeObserver | null = null;
@@ -139,6 +140,7 @@ export class ReviewDiffItem extends LitElement {
     if (signature === this._lastMeasurement) return;
     this._lastMeasurement = signature;
     this.dispatchEvent(reviewItemMeasurementEvent({ id: item.id, height }));
+    this._activeExpansionOperationId = null;
   }
 
   /** Only settled states may replace the coordinator's persistent estimate. */
@@ -168,6 +170,7 @@ export class ReviewDiffItem extends LitElement {
     if (!clientTelemetry.enabled) return;
     clientTelemetry.record("review-virtualizer", "item-measurement-candidate", {
       itemId: this.item?.id ?? null,
+      operationId: this._activeExpansionOperationId,
       measuredHeight: Math.round(height),
       reservedHeight: Math.round(this.reservedHeight),
       stable: readiness.stable,
@@ -207,12 +210,49 @@ export class ReviewDiffItem extends LitElement {
     if (!this.item) return;
     const outcome = this.expansion?.outcome;
     if (outcome !== "idle" && outcome !== "loading") return;
-    this._rememberExpansionAnchor(interaction);
+    this._rememberExpansionAnchor(interaction, "acquisition");
+    this._recordExpansion("acquisition-state", {
+      outcome,
+      willRequest: outcome === "idle",
+    });
     if (outcome === "idle") this.dispatchEvent(reviewContextAcquireEvent(this.item.id));
   }
 
-  private _rememberExpansionAnchor(interaction: ReviewFileExpansionInteraction) {
-    this._pendingExpansionAnchor = interaction;
+  private _rememberExpansionAnchor(
+    interaction: ReviewFileExpansionInteraction,
+    source: "native" | "acquisition" = "native",
+  ) {
+    const operation = clientTelemetry.startOperation("review-expansion");
+    this._activeExpansionOperationId = operation.id;
+    this._pendingExpansionAnchor = { ...interaction, operationId: operation.id };
+    if (!clientTelemetry.enabled) return;
+    const itemRect = typeof this.getBoundingClientRect === "function"
+      ? this.getBoundingClientRect()
+      : null;
+    const diffContainer = this._diff.container;
+    const diffRect = diffContainer && typeof diffContainer.getBoundingClientRect === "function"
+      ? diffContainer.getBoundingClientRect()
+      : null;
+    const scroll = this._reviewScrollContainer();
+    operation.record("interaction-captured", {
+      source,
+      itemId: this.item?.id ?? null,
+      path: this.item?.path ?? null,
+      hunkIndex: interaction.hunkIndex,
+      direction: interaction.direction,
+      requestedLineCount: interaction.lineCount === Number.POSITIVE_INFINITY
+        ? "all"
+        : interaction.lineCount ?? 15,
+      separatorTop: Math.round(interaction.anchorTop),
+      anchorLineNumber: interaction.anchorLineNumber,
+      anchorLineTop: rounded(interaction.anchorLineTop),
+      itemTop: rounded(itemRect?.top),
+      itemHeight: rounded(itemRect?.height),
+      containerTop: rounded(diffRect?.top),
+      containerHeight: rounded(diffRect?.height),
+      scrollTop: rounded(scroll?.scrollTop),
+      viewportHeight: scroll?.clientHeight ?? null,
+    });
   }
 
   private _retainNativeExpansion(regions: ReadonlyMap<number, { fromStart: number; fromEnd: number }>) {
@@ -223,11 +263,6 @@ export class ReviewDiffItem extends LitElement {
   private _reconcileExpansionAnchor() {
     const pending = this._pendingExpansionAnchor;
     if (!pending) return;
-    if (pending.direction === "up" && this.item) {
-      this._pendingExpansionAnchor = null;
-      this.dispatchEvent(reviewExpansionGrowthAnchorEvent(this.item.id));
-      return;
-    }
     const root = this._diff.container?.shadowRoot;
     if (!root) return;
     const separator = root.querySelector<HTMLElement>(`[data-expand-index="${pending.hunkIndex}"]`);
@@ -235,14 +270,67 @@ export class ReviewDiffItem extends LitElement {
       ? null
       : root.querySelector<HTMLElement>(`[data-column-number="${pending.anchorLineNumber}"]`);
     const anchor = separator ?? anchoredLine;
-    if (!anchor) {
+    const newTop = anchor?.getBoundingClientRect().top ?? null;
+    if (pending.direction === "up" && this.item) {
       this._pendingExpansionAnchor = null;
+      this._recordExpansion("post-render-anchor-decision", {
+        direction: pending.direction,
+        mode: "measured-growth",
+        targetFound: anchor !== null,
+        targetKind: separator ? "separator" : anchoredLine ? "line" : null,
+        oldTop: pending.anchorTop,
+        oldSeparatorTop: pending.anchorTop,
+        oldAnchorLineTop: pending.anchorLineTop ?? null,
+        newTop,
+      }, pending.operationId);
+      this.dispatchEvent(reviewExpansionGrowthAnchorEvent(this.item.id, pending.operationId));
       return;
     }
-    const delta = anchor.getBoundingClientRect().top - pending.anchorTop;
+    if (!anchor) {
+      this._pendingExpansionAnchor = null;
+      this._recordExpansion("post-render-anchor-decision", {
+        direction: pending.direction,
+        mode: "unavailable",
+        targetFound: false,
+        oldTop: pending.anchorTop,
+        oldSeparatorTop: pending.anchorTop,
+        oldAnchorLineTop: pending.anchorLineTop ?? null,
+        newTop: null,
+      }, pending.operationId);
+      return;
+    }
+    const delta = newTop! - pending.anchorTop;
     this._pendingExpansionAnchor = null;
+    this._recordExpansion("post-render-anchor-decision", {
+      direction: pending.direction,
+      mode: "dom-point",
+      targetFound: true,
+      targetKind: separator ? "separator" : "line",
+      oldTop: pending.anchorTop,
+      oldSeparatorTop: pending.anchorTop,
+      oldAnchorLineTop: pending.anchorLineTop ?? null,
+      newTop,
+      delta,
+    }, pending.operationId);
     if (delta === 0) return;
-    this.dispatchEvent(reviewExpansionAnchorEvent(delta));
+    this.dispatchEvent(reviewExpansionAnchorEvent(delta, pending.operationId));
+  }
+
+  private _reviewScrollContainer(): HTMLElement | null {
+    if (typeof this.closest !== "function") return null;
+    return this.closest("review-diff-panel")?.querySelector<HTMLElement>("[data-review-scroll]") ?? null;
+  }
+
+  private _recordExpansion(
+    event: string,
+    attributes: Record<string, unknown>,
+    operationId = this._pendingExpansionAnchor?.operationId ?? this._activeExpansionOperationId,
+  ) {
+    clientTelemetry.record("review-expansion", event, {
+      ...attributes,
+      operationId,
+      itemId: this.item?.id ?? null,
+    });
   }
 
   private _diffTarget(item: ReviewItem): ReviewFileDiffTarget {
@@ -254,7 +342,18 @@ export class ReviewDiffItem extends LitElement {
         nativeExpandedHunks: this.expansion?.nativeExpandedHunks ?? new Map(),
         initialExpansion: fileDiff.isPartial || !this._pendingExpansionAnchor
           ? null
-          : this._pendingExpansionAnchor,
+          : {
+              hunkIndex: this._pendingExpansionAnchor.hunkIndex,
+              direction: this._pendingExpansionAnchor.direction,
+              ...(this._pendingExpansionAnchor.lineCount === undefined
+                ? {}
+                : { lineCount: this._pendingExpansionAnchor.lineCount }),
+              anchorTop: this._pendingExpansionAnchor.anchorTop,
+              anchorLineNumber: this._pendingExpansionAnchor.anchorLineNumber,
+              ...(this._pendingExpansionAnchor.anchorLineTop === undefined
+                ? {}
+                : { anchorLineTop: this._pendingExpansionAnchor.anchorLineTop }),
+            },
       };
     }
     return this._target!;
@@ -346,6 +445,10 @@ function expansionMessage(expansion: ReviewExpansionSnapshot | null): string | n
 
 function measuredHeight(element: HTMLElement | null | undefined): number | null {
   return element ? Math.round(element.getBoundingClientRect().height) : null;
+}
+
+function rounded(value: number | null | undefined): number | null {
+  return value == null ? null : Math.round(value);
 }
 
 declare global {
