@@ -243,6 +243,30 @@ describe("ReviewDiffItem", () => {
     }]);
   });
 
+  test("keeps scroll position unchanged when context expands visually downward", () => {
+    const reviewItem = parseReviewItems(PATCH, "project-7-v1").items[0]!;
+    const item = new ReviewDiffItem();
+    item.item = reviewItem;
+    const separator = new ReviewDiffItem();
+    separator.getBoundingClientRect = () => ({ ...testRect(0), top: 400, bottom: 400 });
+    const root = { querySelector: () => separator };
+    const container = new ReviewDiffItem();
+    Object.defineProperty(container, "shadowRoot", { configurable: true, value: root });
+    Reflect.set(Reflect.get(item, "_diff"), "containerValue", container);
+    Reflect.get(item, "_rememberExpansionAnchor").call(item, {
+      hunkIndex: 0,
+      direction: "up",
+      anchorTop: 100,
+      anchorLineNumber: 33,
+    });
+    const anchors: unknown[] = [];
+    item.addEventListener("review-expansion-anchor", (event) => anchors.push(event));
+
+    Reflect.get(item, "_reconcileExpansionAnchor").call(item);
+
+    expect(anchors).toEqual([]);
+  });
+
   test("leaves expansion controls to Pierre and reports acquisition failure without replacing the diff", () => {
     const reviewItem = parseReviewItems(PATCH, "project-7-v1").items[0]!;
     const state = new ReviewExpansionState({ projectId: 7, mode: "branch" });

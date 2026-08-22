@@ -289,6 +289,21 @@ export class ReviewDiffItem extends LitElement {
       this.dispatchEvent(reviewExpansionGrowthAnchorEvent(this.item.id, pending.operationId));
       return;
     }
+    if (pending.direction === "up") {
+      this._pendingExpansionAnchor = null;
+      this._recordExpansion("post-render-anchor-decision", {
+        direction: pending.direction,
+        mode: "none-from-start",
+        targetFound: anchor !== null,
+        targetKind: separator ? "separator" : anchoredLine ? "line" : null,
+        oldTop: pending.anchorTop,
+        oldSeparatorTop: pending.anchorTop,
+        oldAnchorLineTop: pending.anchorLineTop ?? null,
+        newTop,
+        delta: 0,
+      }, pending.operationId);
+      return;
+    }
     if (!anchor) {
       this._pendingExpansionAnchor = null;
       this._recordExpansion("post-render-anchor-decision", {
