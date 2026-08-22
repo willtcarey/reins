@@ -227,7 +227,12 @@ export class ReviewDiffItem extends LitElement {
     const anchoredLine = pending.anchorLineNumber == null
       ? null
       : root.querySelector<HTMLElement>(`[data-column-number="${pending.anchorLineNumber}"]`);
-    const anchor = separator ?? anchoredLine;
+    // Expanding upward moves the separator toward the previous hunk. Anchor
+    // the following changed line instead so newly revealed lines above it are
+    // compensated by scrolling down, preserving the reviewed code position.
+    const anchor = pending.direction === "up"
+      ? anchoredLine ?? separator
+      : separator ?? anchoredLine;
     if (!anchor) {
       this._pendingExpansionAnchor = null;
       return;

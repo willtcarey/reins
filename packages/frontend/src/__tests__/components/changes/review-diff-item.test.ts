@@ -206,6 +206,38 @@ describe("ReviewDiffItem", () => {
     expect(target.initialExpansion).toEqual(interaction);
   });
 
+  test("anchors the following changed line so upward expansion scrolls down", () => {
+    const item = new ReviewDiffItem();
+    const separator = new ReviewDiffItem();
+    const anchoredLine = new ReviewDiffItem();
+    separator.getBoundingClientRect = () => ({ ...testRect(0), top: 80, bottom: 80 });
+    anchoredLine.getBoundingClientRect = () => ({ ...testRect(0), top: 140, bottom: 140 });
+    const root = {
+      querySelector(selector: string) {
+        if (selector === `[data-expand-index="0"]`) return separator;
+        if (selector === `[data-column-number="33"]`) return anchoredLine;
+        return null;
+      },
+    };
+    const container = new ReviewDiffItem();
+    Object.defineProperty(container, "shadowRoot", { configurable: true, value: root });
+    Reflect.set(Reflect.get(item, "_diff"), "containerValue", container);
+    Reflect.get(item, "_rememberExpansionAnchor").call(item, {
+      hunkIndex: 0,
+      direction: "up",
+      anchorTop: 100,
+      anchorLineNumber: 33,
+    });
+    const deltas: number[] = [];
+    item.addEventListener("review-expansion-anchor", (event) => {
+      if (event instanceof CustomEvent) deltas.push(event.detail.delta);
+    });
+
+    Reflect.get(item, "_reconcileExpansionAnchor").call(item);
+
+    expect(deltas).toEqual([40]);
+  });
+
   test("leaves expansion controls to Pierre and reports acquisition failure without replacing the diff", () => {
     const reviewItem = parseReviewItems(PATCH, "project-7-v1").items[0]!;
     const state = new ReviewExpansionState({ projectId: 7, mode: "branch" });
