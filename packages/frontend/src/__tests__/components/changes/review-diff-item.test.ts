@@ -206,8 +206,10 @@ describe("ReviewDiffItem", () => {
     expect(target.initialExpansion).toEqual(interaction);
   });
 
-  test("anchors the following changed line so upward expansion scrolls down", () => {
+  test("anchors upward expansion to measured item growth", () => {
+    const reviewItem = parseReviewItems(PATCH, "project-7-v1").items[0]!;
     const item = new ReviewDiffItem();
+    item.item = reviewItem;
     const separator = new ReviewDiffItem();
     const anchoredLine = new ReviewDiffItem();
     separator.getBoundingClientRect = () => ({ ...testRect(0), top: 80, bottom: 80 });
@@ -228,14 +230,14 @@ describe("ReviewDiffItem", () => {
       anchorTop: 100,
       anchorLineNumber: 33,
     });
-    const deltas: number[] = [];
+    const anchors: unknown[] = [];
     item.addEventListener("review-expansion-anchor", (event) => {
-      if (event instanceof CustomEvent) deltas.push(event.detail.delta);
+      if (event instanceof CustomEvent) anchors.push(event.detail);
     });
 
     Reflect.get(item, "_reconcileExpansionAnchor").call(item);
 
-    expect(deltas).toEqual([40]);
+    expect(anchors).toEqual([{ growthItemId: reviewItem.id }]);
   });
 
   test("leaves expansion controls to Pierre and reports acquisition failure without replacing the diff", () => {

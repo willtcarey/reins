@@ -11,6 +11,7 @@ import {
   reviewContextAcquireEvent,
   reviewContextStateEvent,
   reviewExpansionAnchorEvent,
+  reviewExpansionGrowthAnchorEvent,
   reviewItemMeasurementEvent,
   toggleCollapseEvent,
 } from "../events.js";
@@ -221,18 +222,19 @@ export class ReviewDiffItem extends LitElement {
 
   private _reconcileExpansionAnchor() {
     const pending = this._pendingExpansionAnchor;
+    if (!pending) return;
+    if (pending.direction === "up" && this.item) {
+      this._pendingExpansionAnchor = null;
+      this.dispatchEvent(reviewExpansionGrowthAnchorEvent(this.item.id));
+      return;
+    }
     const root = this._diff.container?.shadowRoot;
-    if (!pending || !root) return;
+    if (!root) return;
     const separator = root.querySelector<HTMLElement>(`[data-expand-index="${pending.hunkIndex}"]`);
     const anchoredLine = pending.anchorLineNumber == null
       ? null
       : root.querySelector<HTMLElement>(`[data-column-number="${pending.anchorLineNumber}"]`);
-    // Expanding upward moves the separator toward the previous hunk. Anchor
-    // the following changed line instead so newly revealed lines above it are
-    // compensated by scrolling down, preserving the reviewed code position.
-    const anchor = pending.direction === "up"
-      ? anchoredLine ?? separator
-      : separator ?? anchoredLine;
+    const anchor = separator ?? anchoredLine;
     if (!anchor) {
       this._pendingExpansionAnchor = null;
       return;

@@ -117,20 +117,20 @@ describe("VirtualListController", () => {
     expect(controller.window().activeId).toBe("visible");
   });
 
-  test("applies an upward point correction after expanded geometry is available", async () => {
+  test("scrolls down by item growth when context expands upward", async () => {
     const host = fakeHost();
     const controller = new VirtualListController(host, 0, 100);
     controller.setItems(items);
     const container = fakeContainer(120, 100);
     controller.attach(container);
 
-    controller.adjustScrollBy(-40);
+    controller.adjustScrollByItemGrowth("visible");
     controller.measure({ id: "visible", measurementKey: "visible-v1", height: 160 });
     await Promise.resolve();
     host.updated();
 
-    expect(container.scrollTop).toBe(80);
-    expect(controller.window().activeId).toBe("above");
+    expect(container.scrollTop).toBe(180);
+    expect(controller.window().activeId).toBe("visible");
   });
 
   test("does not apply a stale point correction after user scroll intent", async () => {

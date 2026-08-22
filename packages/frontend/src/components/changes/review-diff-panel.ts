@@ -280,7 +280,11 @@ export class ReviewDiffPanel extends LitElement {
   }
 
   private _handleExpansionAnchor(event: CustomEvent<ReviewExpansionAnchorDetail>) {
-    this._virtualList.adjustScrollBy(event.detail.delta);
+    if (typeof event.detail.growthItemId === "string") {
+      this._virtualList.adjustScrollByItemGrowth(event.detail.growthItemId);
+    } else if (typeof event.detail.delta === "number") {
+      this._virtualList.adjustScrollBy(event.detail.delta);
+    }
   }
 
   private _handleItemMeasurement(event: CustomEvent<ReviewItemMeasurementDetail>) {

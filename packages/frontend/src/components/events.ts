@@ -279,9 +279,9 @@ export interface ReviewContextStateDetail {
   regions: ReadonlyMap<number, { fromStart: number; fromEnd: number }>;
 }
 
-export interface ReviewExpansionAnchorDetail {
-  delta: number;
-}
+export type ReviewExpansionAnchorDetail =
+  | { delta: number; growthItemId?: never }
+  | { growthItemId: string; delta?: never };
 
 export function reviewContextAcquireEvent(id: string) {
   return componentEvent("review-context-acquire", { id });
@@ -292,7 +292,11 @@ export function reviewContextStateEvent(detail: ReviewContextStateDetail) {
 }
 
 export function reviewExpansionAnchorEvent(delta: number) {
-  return componentEvent("review-expansion-anchor", { delta });
+  return componentEvent<ReviewExpansionAnchorDetail>("review-expansion-anchor", { delta });
+}
+
+export function reviewExpansionGrowthAnchorEvent(growthItemId: string) {
+  return componentEvent<ReviewExpansionAnchorDetail>("review-expansion-anchor", { growthItemId });
 }
 
 export interface ExpandDetail {

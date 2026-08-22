@@ -101,6 +101,7 @@ export class VirtualListController implements ReactiveController {
   private renderFrame: number | null = null;
   private pendingGeometryScrollTop: number | null = null;
   private pendingPointScrollAdjustment = 0;
+  private pendingGrowthAnchorId: string | null = null;
   private navigationId: string | null = null;
   private visible = false;
   private rememberedScrollTop: number | null = null;
@@ -179,6 +180,12 @@ export class VirtualListController implements ReactiveController {
     this.pendingPointScrollAdjustment += delta;
   }
 
+  /** Scroll by the measured height added above reviewed code in one item. */
+  public adjustScrollByItemGrowth(id: string) {
+    if (!this.container || !this.coordinator.item(id)) return;
+    this.pendingGrowthAnchorId = id;
+  }
+
   public navigateTo(id: string): boolean {
     const top = this.coordinator.navigationTop(id);
     if (top === null || !this.container) return false;
@@ -214,6 +221,7 @@ export class VirtualListController implements ReactiveController {
     this.measurementFlushQueued = false;
     this.pendingGeometryScrollTop = null;
     this.pendingPointScrollAdjustment = 0;
+    this.pendingGrowthAnchorId = null;
     this.navigationId = null;
     this.rememberedScrollTop = null;
     this.restoreScrollAfterRender = false;
@@ -239,6 +247,7 @@ export class VirtualListController implements ReactiveController {
     this.pendingMeasurements.clear();
     this.measurementFlushQueued = false;
     this.pendingPointScrollAdjustment = 0;
+    this.pendingGrowthAnchorId = null;
   }
 
   private handleScroll = () => {
@@ -272,6 +281,7 @@ export class VirtualListController implements ReactiveController {
   private handleScrollIntent = (event: Event) => {
     if (!this.isScrollIntent(event)) return;
     this.pendingPointScrollAdjustment = 0;
+    this.pendingGrowthAnchorId = null;
     if (!this.navigationId) return;
     const targetId = this.navigationId;
     this.navigationId = null;
@@ -307,15 +317,25 @@ export class VirtualListController implements ReactiveController {
     this.syncViewport();
     const measurements = [...this.pendingMeasurements.values()];
     this.pendingMeasurements.clear();
+    const growthAnchorId = this.pendingGrowthAnchorId;
+    const growthBefore = growthAnchorId ? this.coordinator.item(growthAnchorId)?.height : undefined;
+    const includesGrowthAnchor = growthAnchorId !== null
+      && measurements.some((measurement) => measurement.id === growthAnchorId);
     const measuredUpdate = this.coordinator.measure(measurements);
     const pointAdjustment = measuredUpdate.accepted > 0 ? this.pendingPointScrollAdjustment : 0;
     if (pointAdjustment !== 0) this.pendingPointScrollAdjustment = 0;
-    const update = pointAdjustment === 0
+    const growthAfter = growthAnchorId ? this.coordinator.item(growthAnchorId)?.height : undefined;
+    const growthAdjustment = includesGrowthAnchor && growthBefore !== undefined && growthAfter !== undefined
+      ? Math.max(0, growthAfter - growthBefore)
+      : 0;
+    if (includesGrowthAnchor) this.pendingGrowthAnchorId = null;
+    const interactionAdjustment = pointAdjustment + growthAdjustment;
+    const update = interactionAdjustment === 0
       ? measuredUpdate
       : {
           ...measuredUpdate,
-          scrollTop: measuredUpdate.scrollTop + pointAdjustment,
-          scrollAdjustment: measuredUpdate.scrollAdjustment + pointAdjustment,
+          scrollTop: measuredUpdate.scrollTop + interactionAdjustment,
+          scrollAdjustment: measuredUpdate.scrollAdjustment + interactionAdjustment,
         };
     this.emit({
       type: "measurement-batch",
