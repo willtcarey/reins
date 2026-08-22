@@ -271,7 +271,10 @@ export class ReviewDiffItem extends LitElement {
       : root.querySelector<HTMLElement>(`[data-column-number="${pending.anchorLineNumber}"]`);
     const anchor = separator ?? anchoredLine;
     const newTop = anchor?.getBoundingClientRect().top ?? null;
-    if (pending.direction === "up" && this.item) {
+    // Pierre calls the visually upward/from-end control "down": it reveals
+    // lines immediately before the following hunk, so preserve that reviewed
+    // code by scrolling down by the measured item growth.
+    if (pending.direction === "down" && this.item) {
       this._pendingExpansionAnchor = null;
       this._recordExpansion("post-render-anchor-decision", {
         direction: pending.direction,

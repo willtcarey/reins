@@ -206,7 +206,7 @@ describe("ReviewDiffItem", () => {
     expect(target.initialExpansion).toEqual(interaction);
   });
 
-  test("anchors upward expansion to measured item growth", () => {
+  test("anchors Pierre's from-end expansion to measured item growth", () => {
     const reviewItem = parseReviewItems(PATCH, "project-7-v1").items[0]!;
     const item = new ReviewDiffItem();
     item.item = reviewItem;
@@ -226,7 +226,7 @@ describe("ReviewDiffItem", () => {
     Reflect.set(Reflect.get(item, "_diff"), "containerValue", container);
     Reflect.get(item, "_rememberExpansionAnchor").call(item, {
       hunkIndex: 0,
-      direction: "up",
+      direction: "down",
       anchorTop: 100,
       anchorLineNumber: 33,
     });

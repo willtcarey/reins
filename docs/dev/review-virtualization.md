@@ -57,7 +57,7 @@ Do not introduce another owner for top-level item positions or scroll correction
 - The DOM scroll container is the source of truth for actual in-flight position.
 - Native CSS scroll anchoring remains disabled for this surface; Reins owns correction.
 - User wheel, touch, pointer, or scrolling-key input cancels programmatic navigation before anchor correction can fight it.
-- Inline context expansion records the interaction before rendering and submits it to the existing controller correction path. Upward expansion scrolls down by the expanded item's measured height growth, keeping the previously reviewed code in place even when Pierre removes or relocates the separator; other directions retain the separator where possible. The controller applies correction only after the new item height updates virtual geometry, avoiding stale-total-height clamping; user scroll intent cancels a pending correction.
+- Inline context expansion records the interaction before rendering and submits it to the existing controller correction path. Pierre names its visually upward/from-end reveal direction `down`; that operation scrolls down by the expanded item's measured height growth, keeping the following reviewed code in place even when Pierre leaves the separator fixed. The from-start operation retains the separator where possible. The controller applies correction only after the new item height updates virtual geometry, avoiding stale-total-height clamping; user scroll intent cancels a pending correction.
 - Never expose Pierre controls by changing `FileDiffMetadata.isPartial` without reconstructing complete old/new line arrays. Shiki highlighting treats non-partial hunk positions as indexes into complete contents.
 
 ### File navigation
