@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { PartType, type PartInfo } from "lit/directive.js";
 import { ReviewDiffItem } from "../../../components/changes/review-diff-item.js";
 import { SpringCollapseDirective } from "../../../directives/spring-collapse.js";
-import { ReviewExpansionState } from "../../../models/changes/review-expansion-state.js";
+import { ExpansionState } from "../../../models/changes/expansion-state.js";
 import { parseReviewItems } from "../../../models/changes/review-items.js";
 import {
   collectTemplateEventListeners,
@@ -172,7 +172,7 @@ describe("ReviewDiffItem", () => {
     const reviewItem = parseReviewItems(EXPANDABLE_PATCH, "project-7-v1").items[0]!;
     const item = new ReviewDiffItem();
     item.item = reviewItem;
-    item.expansion = new ReviewExpansionState({ projectId: 7, mode: "branch" }).forItem(reviewItem);
+    item.expansion = new ExpansionState({ projectId: 7, mode: "branch" }).forItem(reviewItem);
     const acquired: string[] = [];
     item.addEventListener("review-context-acquire", (event) => {
       if (event instanceof CustomEvent) acquired.push(event.detail.id);
@@ -189,7 +189,7 @@ describe("ReviewDiffItem", () => {
 
   test("retains a first-click intent while pre-acquisition is loading", () => {
     const reviewItem = parseReviewItems(EXPANDABLE_PATCH, "project-7-v1").items[0]!;
-    const state = new ReviewExpansionState({ projectId: 7, mode: "branch" });
+    const state = new ExpansionState({ projectId: 7, mode: "branch" });
     const item = new ReviewDiffItem();
     const interaction = {
       hunkIndex: 0, direction: "down" as const, anchorTop: 20, anchorLineNumber: 33,
@@ -269,7 +269,7 @@ describe("ReviewDiffItem", () => {
 
   test("leaves expansion controls to Pierre and reports acquisition failure without replacing the diff", () => {
     const reviewItem = parseReviewItems(PATCH, "project-7-v1").items[0]!;
-    const state = new ReviewExpansionState({ projectId: 7, mode: "branch" });
+    const state = new ExpansionState({ projectId: 7, mode: "branch" });
     const item = new ReviewDiffItem();
     item.item = reviewItem;
     item.expansion = {

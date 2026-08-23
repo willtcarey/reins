@@ -10,10 +10,8 @@ import {
   reviewContentFingerprint,
   type ReviewCollapseScope,
 } from "../../models/changes/review-collapse-state.js";
-import {
-  ReviewExpansionState,
-  type ReviewExpansionScope,
-} from "../../models/changes/review-expansion-state.js";
+import { ExpansionState } from "../../models/changes/expansion-state.js";
+import type { ExpansionScope } from "../../models/changes/file-contents.js";
 import {
   parseReviewItems,
   reconcileReviewItems,
@@ -82,7 +80,7 @@ export class ReviewDiffPanel extends LitElement {
     DEFAULT_VIEWPORT_HEIGHT,
   );
   private _navigationTelemetry: ClientTelemetryOperation | null = null;
-  private _expansionState: ReviewExpansionState | null = null;
+  private _expansionState: ExpansionState | null = null;
   private _expansionScopeKey = "";
   private _unsubscribeExpansion: (() => void) | null = null;
 
@@ -215,10 +213,10 @@ export class ReviewDiffPanel extends LitElement {
     this._syncVirtualItems();
   }
 
-  private _ensureExpansionState(): ReviewExpansionState | null {
+  private _ensureExpansionState(): ExpansionState | null {
     const store = this.store;
     if (store?.projectId == null) return null;
-    const scope: ReviewExpansionScope = {
+    const scope: ExpansionScope = {
       projectId: store.projectId,
       mode: store.diffMode,
       branch: this._parsedSource?.branch ?? store.branch,
@@ -228,7 +226,7 @@ export class ReviewDiffPanel extends LitElement {
 
     this._unsubscribeExpansion?.();
     this._expansionScopeKey = key;
-    this._expansionState = new ReviewExpansionState(scope);
+    this._expansionState = new ExpansionState(scope);
     this._unsubscribeExpansion = this._expansionState.subscribe(() => this.requestUpdate());
     return this._expansionState;
   }

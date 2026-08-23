@@ -3,8 +3,8 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { springCollapse } from "../../directives/spring-collapse.js";
 import type {
-  ReviewExpansionSnapshot,
-} from "../../models/changes/review-expansion-state.js";
+  ExpansionSnapshot,
+} from "../../models/changes/expansion-state.js";
 import type { ReviewItem } from "../../models/changes/review-items.js";
 import { clientTelemetry } from "../../models/client-telemetry.js";
 import {
@@ -76,7 +76,7 @@ export class ReviewDiffItem extends LitElement {
   @property({ type: Number, attribute: false }) projectId: number | null = null;
   @property({ attribute: false }) branch: string | null = null;
   @property({ type: Number, attribute: false }) reservedHeight = 0;
-  @property({ attribute: false }) expansion: ReviewExpansionSnapshot | null = null;
+  @property({ attribute: false }) expansion: ExpansionSnapshot | null = null;
 
   private readonly _diff = createReviewFileDiffRenderer(
     this,
@@ -450,7 +450,7 @@ export class ReviewDiffItem extends LitElement {
   }
 }
 
-function expansionMessage(expansion: ReviewExpansionSnapshot | null): string | null {
+function expansionMessage(expansion: ExpansionSnapshot | null): string | null {
   if (!expansion) return null;
   if (expansion.outcome === "error") return "Unable to load complete file context.";
   if (expansion.unsupported?.reason === "binary") return "Context expansion is unavailable for binary files.";
