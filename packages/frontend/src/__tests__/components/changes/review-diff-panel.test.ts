@@ -230,6 +230,58 @@ describe("ReviewDiffPanel", () => {
     store.dispose();
   });
 
+  test("returns to the file header when collapsing from inside its body", () => {
+    localStorage.clear();
+    const store = new DiffStore();
+    store.setProject(7);
+    store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(manyFilePatch(5)));
+    const panel = new ReviewDiffPanel();
+    panel.store = store;
+    Object.defineProperty(panel, "clientHeight", { configurable: true, value: 100 });
+    panel.scrollTo = (options?: ScrollToOptions | number) => {
+      if (typeof options === "object" && options.top != null) panel.scrollTop = Number(options.top);
+    };
+    const querySelector: typeof panel.querySelector = (selector: string) => (
+      selector === "[data-review-scroll]" ? panel : null
+    );
+    panel.querySelector = querySelector;
+    const itemId = panel.itemIdForPath("src/file-2.ts")!;
+
+    panel.scrollToFile("src/file-2.ts");
+    const headerTop = panel.scrollTop;
+    const virtualList = Reflect.get(panel, "_virtualList");
+    const expandedHeight = virtualList.item(itemId)?.height;
+    panel.scrollTop += 20;
+    panel.setItemCollapsed(itemId, true);
+
+    expect(panel.scrollTop).toBe(headerTop);
+    expect(virtualList.item(itemId)?.height).toBe(expandedHeight);
+
+    const handleTransitionHeight = Reflect.get(panel, "_handleTransitionHeight").bind(panel);
+    handleTransitionHeight(new CustomEvent("review-transition-height", {
+      detail: { id: itemId, bodyHeight: 20, settled: false },
+    }));
+    expect(virtualList.item(itemId)?.height).toBe(73);
+
+    handleTransitionHeight(new CustomEvent("review-transition-height", {
+      detail: { id: itemId, bodyHeight: 0, settled: true },
+    }));
+    expect(virtualList.item(itemId)?.height).toBe(53);
+
+    panel.setItemCollapsed(itemId, false);
+    expect(virtualList.item(itemId)?.height).toBe(53);
+    handleTransitionHeight(new CustomEvent("review-transition-height", {
+      detail: { id: itemId, bodyHeight: 20, settled: false },
+    }));
+    expect(virtualList.item(itemId)?.height).toBe(73);
+    handleTransitionHeight(new CustomEvent("review-transition-height", {
+      detail: { id: itemId, bodyHeight: 0, settled: true },
+    }));
+    expect(virtualList.item(itemId)?.height).toBe(expandedHeight);
+    localStorage.clear();
+    store.dispose();
+  });
+
   test("reports active review identity and file path as the virtual viewport changes", () => {
     const store = new DiffStore();
     store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(manyFilePatch(3)));

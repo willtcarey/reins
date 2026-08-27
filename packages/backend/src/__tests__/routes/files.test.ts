@@ -239,6 +239,7 @@ describe("file routes", () => {
 
       expect(res!.status).toBe(200);
       expect(res!.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
+      expect(res!.headers.get("X-Reins-Content-Kind")).toBe("binary-placeholder");
       expect(res!.headers.get("Content-Disposition")).toBeNull();
       const body = await res!.text();
       expect(body).toContain("Binary file (2.0 MB)");

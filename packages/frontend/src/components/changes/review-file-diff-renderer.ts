@@ -68,7 +68,7 @@ export function createReviewFileDiffRenderer(
   host: ReactiveControllerHost,
   onRendered?: () => void,
   onAcquire?: (interaction: ReviewFileExpansionInteraction) => void,
-  onNativeInteraction?: (interaction: ReviewFileExpansionInteraction) => void,
+  onNativeInteraction?: (interaction: ReviewFileExpansionInteraction, mutate: () => void) => void,
   onNativeState?: (regions: ReadonlyMap<number, HunkExpansionRegion>) => void,
   onAcquisitionRelevant?: (hunkIndexes: readonly number[]) => void,
   workerManager?: ReturnType<typeof getPierreWorkerPool> | null,
@@ -77,34 +77,31 @@ export function createReviewFileDiffRenderer(
     create: (target, rendered) => {
       let listeningRoot: ShadowRoot | null = null;
       let renderer: ReviewFileDiff;
-      const handleInteraction = (event: Event, keyboard: boolean) => {
+      const handleInteraction = (event: Event) => {
         const interaction = expansionInteraction(event);
         if (!interaction) return;
+        // Own activation before Pierre's bubbling InteractionManager. Partial
+        // arrays must never reach expandHunk, and complete activation needs the
+        // same first-hunk direction for pointer and keyboard input.
+        event.preventDefault();
+        event.stopImmediatePropagation();
         if (target.fileDiff.isPartial) {
-          // Capture before Pierre's bubbling InteractionManager so it can
-          // never expand partial arrays while acquisition is idle, loading,
-          // unsupported, or failed.
-          event.preventDefault();
-          event.stopImmediatePropagation();
           onAcquire?.(interaction);
           return;
         }
 
-        onNativeInteraction?.(interaction);
-        if (keyboard) {
-          // Pierre's native controls currently have button roles but no native
-          // keyboard handler. Delegate keyboard activation to its public API.
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          renderer.expandHunk(interaction.hunkIndex, interaction.direction, interaction.lineCount);
-        }
-        // Pointer activation bubbles to Pierre's InteractionManager, which
-        // invokes the same native expandHunk API itself.
+        const mutate = () => renderer.expandHunk(
+          interaction.hunkIndex,
+          interaction.direction,
+          interaction.lineCount,
+        );
+        if (onNativeInteraction) onNativeInteraction(interaction, mutate);
+        else mutate();
       };
-      const handleClick = (event: Event) => handleInteraction(event, false);
+      const handleClick = (event: Event) => handleInteraction(event);
       const handleKeydown = (event: Event) => {
         if (!("key" in event) || (event.key !== "Enter" && event.key !== " ")) return;
-        handleInteraction(event, true);
+        handleInteraction(event);
       };
       renderer = new ReviewFileDiff({
         ...REINS_DIFF_OPTIONS,
@@ -133,11 +130,14 @@ export function createReviewFileDiffRenderer(
       });
       renderer.restoreNativeExpansion(target.nativeExpandedHunks);
       if (target.initialExpansion) {
-        renderer.expandHunk(
-          target.initialExpansion.hunkIndex,
-          target.initialExpansion.direction,
-          target.initialExpansion.lineCount,
+        const interaction = target.initialExpansion;
+        const mutate = () => renderer.expandHunk(
+          interaction.hunkIndex,
+          interaction.direction,
+          interaction.lineCount,
         );
+        if (onNativeInteraction) onNativeInteraction(interaction, mutate);
+        else mutate();
       }
       return renderer;
     },
@@ -218,6 +218,7 @@ function expansionInteraction(event: Event): ReviewFileExpansionInteraction | nu
   );
   if (Number.isNaN(hunkIndex)) return null;
   let direction: ExpansionDirections = nativeControl.dataset.reinsAcquireDirection === "down"
+    || (nativeControl.hasAttribute("data-unmodified-lines") && hunkIndex === 0)
     ? "down"
     : "both";
   if (nativeControl.hasAttribute("data-expand-up")) direction = "up";

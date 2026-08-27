@@ -25,7 +25,6 @@ Inspect the current and rotated files with:
 ls -lh /tmp/reins-client-telemetry.jsonl*
 tail -n 100 /tmp/reins-client-telemetry.jsonl
 jq -c 'select(.scope == "review-virtualizer")' /tmp/reins-client-telemetry.jsonl*
-jq -c 'select(.scope == "review-expansion")' /tmp/reins-client-telemetry.jsonl*
 ```
 
 Start with a clean capture by removing all generations:
@@ -58,7 +57,7 @@ Events follow a small OpenTelemetry-inspired shape:
 }
 ```
 
-`runId` groups one page lifetime, while `sequence` preserves browser emission order. `operationId` correlates events belonging to one interaction without requiring a page reload; the review virtualizer starts a new operation for every file-tree navigation, and inline context expansion uses one operation from native interaction through post-layout geometry. `receivedAt` is added by the backend. The review virtualizer records navigation, scrolling, measurement batches, geometry corrections, cancellation, and mounted-window changes. Expansion anchoring uses the `review-expansion` scope so its interaction, Pierre anchor decision, stable measurement, controller correction, cancellation, and final applied geometry can be filtered as one timeline.
+`runId` groups one page lifetime, while `sequence` preserves browser emission order. `operationId` correlates events belonging to one interaction without requiring a page reload; the review virtualizer starts a new operation for every file-tree navigation. `receivedAt` is added by the backend. The review virtualizer records navigation, scrolling, measurement batches, geometry corrections, cancellation, and mounted-window changes.
 
 ## Adding instrumentation
 

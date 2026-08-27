@@ -33,9 +33,10 @@ declare global {
     "active-file-change": CustomEvent<string | null>;
     "active-item-change": CustomEvent<string>;
     "review-item-measurement": CustomEvent<ReviewItemMeasurementDetail>;
+    "review-transition-height": CustomEvent<ReviewTransitionHeightDetail>;
     "review-context-acquire": CustomEvent<ReviewContextAcquireDetail>;
     "review-context-state": CustomEvent<ReviewContextStateDetail>;
-    "review-expansion-anchor": CustomEvent<ReviewExpansionAnchorDetail>;
+    "review-preserve-scroll": CustomEvent<ReviewPreserveScrollDetail>;
     "toggle-collapse": CustomEvent<string>;
   }
 }
@@ -128,6 +129,16 @@ export interface ReviewItemMeasurementDetail {
 
 export function reviewItemMeasurementEvent(detail: ReviewItemMeasurementDetail) {
   return componentEvent("review-item-measurement", detail);
+}
+
+export interface ReviewTransitionHeightDetail {
+  id: string;
+  bodyHeight: number;
+  settled: boolean;
+}
+
+export function reviewTransitionHeightEvent(detail: ReviewTransitionHeightDetail) {
+  return componentEvent("review-transition-height", detail);
 }
 
 export function toggleCollapseEvent(id: string) {
@@ -279,9 +290,11 @@ export interface ReviewContextStateDetail {
   regions: ReadonlyMap<number, { fromStart: number; fromEnd: number }>;
 }
 
-export type ReviewExpansionAnchorDetail =
-  | { delta: number; operationId?: string; growthItemId?: never }
-  | { growthItemId: string; operationId?: string; delta?: never };
+export interface ReviewPreserveScrollDetail {
+  id: string;
+  anchor: "item-end" | (() => number | null);
+  mutate: () => void;
+}
 
 export function reviewContextAcquireEvent(id: string) {
   return componentEvent("review-context-acquire", { id });
@@ -291,18 +304,8 @@ export function reviewContextStateEvent(detail: ReviewContextStateDetail) {
   return componentEvent("review-context-state", detail);
 }
 
-export function reviewExpansionAnchorEvent(delta: number, operationId?: string) {
-  return componentEvent<ReviewExpansionAnchorDetail>(
-    "review-expansion-anchor",
-    { delta, ...(operationId ? { operationId } : {}) },
-  );
-}
-
-export function reviewExpansionGrowthAnchorEvent(growthItemId: string, operationId?: string) {
-  return componentEvent<ReviewExpansionAnchorDetail>(
-    "review-expansion-anchor",
-    { growthItemId, ...(operationId ? { operationId } : {}) },
-  );
+export function reviewPreserveScrollEvent(detail: ReviewPreserveScrollDetail) {
+  return componentEvent("review-preserve-scroll", detail);
 }
 
 export interface ExpandDetail {

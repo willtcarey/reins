@@ -135,7 +135,10 @@ ${additions}
         host,
         undefined,
         (interaction) => acquisitions.push(interaction.hunkIndex),
-        (interaction) => nativeInteractions.push(interaction.hunkIndex),
+        (interaction, mutate) => {
+          nativeInteractions.push(interaction.hunkIndex);
+          mutate();
+        },
         undefined,
         (hunkIndexes) => relevantControls.push(...hunkIndexes),
         null,
@@ -179,6 +182,18 @@ ${additions}
       expect(nativeInteractions).toEqual([0]);
       expect(expanded).toEqual([[0, "down", undefined]]);
       expect(completeEvent.defaultPrevented).toBe(true);
+
+      const nativeControlText = new TestHTMLElement(["data-unmodified-lines"]);
+      nativeControlText.closest = () => separator;
+      const firstHunkTextEvent = interactionEvent("click", [nativeControlText, separator]);
+      listeners.get("click")?.(firstHunkTextEvent);
+
+      expect(nativeInteractions).toEqual([0, 0]);
+      expect(expanded).toEqual([
+        [0, "down", undefined],
+        [0, "down", undefined],
+      ]);
+      expect(firstHunkTextEvent.defaultPrevented).toBe(true);
     } finally {
       Reflect.set(ReviewFileDiff.prototype, "render", originalRender);
       if (htmlElementDescriptor) Object.defineProperty(globalThis, "HTMLElement", htmlElementDescriptor);

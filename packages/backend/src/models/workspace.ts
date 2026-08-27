@@ -1,14 +1,12 @@
-import { createHash } from "node:crypto";
 import { constants, existsSync } from "node:fs";
-import { access, copyFile, lstat, mkdtemp, rm } from "node:fs/promises";
+import { access, copyFile, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import {
   trackFile,
   getCurrentBranch,
   getDiffNumstat,
   getGitBlobInfo,
-  GitFileNotFoundError,
   getGitPath,
   listUntrackedFiles,
   mergeBase,
@@ -17,81 +15,22 @@ import {
   streamGitBlob,
 } from "../git.js";
 import { asyncIterableToText } from "../async-iterable.js";
+import { detectMimeTypeFromBytes, detectMimeTypeFromFile } from "../mime.js";
 import { DiffParser, type DiffFile, type DiffFileSummary } from "./diff-parser.js";
 
 export type DiffMode = "branch" | "uncommitted";
 
-export const DIFF_CONTENTS_SIZE_LIMIT = 1_048_576;
+export class InvalidWorkspacePathError extends Error {}
+export class WorkspaceFileNotFoundError extends Error {}
 
-export class InvalidDiffContentPathError extends Error {}
-
-export interface DiffFileContent {
-  name: string;
-  contents: string;
-  /** Stable identity of the exact UTF-8 bytes returned. */
-  contentId: string;
-  /** Git object identity when this side came from an immutable tree. */
-  blobId?: string;
-}
-
-export type DiffFileContentsResult =
-  | { status: "available"; oldFile?: DiffFileContent; newFile?: DiffFileContent }
-  | { status: "unsupported"; reason: "binary" }
-  | { status: "too_large"; limitBytes: number };
-
-interface ContentSource {
-  name: string;
+export interface WorkspaceFile {
+  filename: string;
+  mimeType: string;
   size: number;
-  blobId?: string;
-  readPrefix: () => Promise<Uint8Array>;
-  read: () => Promise<Uint8Array>;
+  openBody: () => Blob | ReadableStream<Uint8Array>;
 }
 
 async function noopCleanup() {}
-
-function resolveWorkspaceFile(projectDir: string, filePath: string): string {
-  const resolved = resolve(projectDir, filePath);
-  const rel = relative(projectDir, resolved);
-  if (rel === "" || rel === ".." || rel.startsWith("../") || isAbsolute(rel)) {
-    throw new InvalidDiffContentPathError("File path must stay inside the project");
-  }
-  return resolved;
-}
-
-async function readBoundedStream(
-  stream: ReadableStream<Uint8Array>,
-  expectedSize: number,
-): Promise<Uint8Array> {
-  const reader = stream.getReader();
-  const result = new Uint8Array(expectedSize);
-  let offset = 0;
-
-  try {
-    while (offset < expectedSize) {
-      const next = await reader.read();
-      if (next.done) break;
-      if (offset + next.value.byteLength > expectedSize) {
-        throw new Error("Content exceeded its declared size");
-      }
-      result.set(next.value, offset);
-      offset += next.value.byteLength;
-    }
-    const trailing = await reader.read();
-    if (!trailing.done) throw new Error("Content exceeded its declared size");
-  } finally {
-    await reader.cancel().catch(() => undefined);
-  }
-
-  return offset === expectedSize ? result : result.slice(0, offset);
-}
-
-function containsNullByte(bytes: Uint8Array): boolean {
-  return bytes.includes(0);
-}
-
-function contentId(bytes: Uint8Array): string {
-  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-}
 
 /**
  * Build a temporary Git index that mirrors the real index, then mark untracked
@@ -140,59 +79,30 @@ export class Workspace {
   ) {}
 
   /**
-   * Complete bounded text for both sides of one diff item.
+   * Open one file relative to this workspace root.
    *
-   * The endpoint-facing result uses explicit non-error outcomes for content
-   * that cannot be expanded, while repository/read failures still reject.
+   * With no ref, or when ref is the active branch, the working tree is used so
+   * callers see uncommitted changes. Other refs are read from Git.
    */
-  async getDiffFileContents(
-    oldPath: string | undefined,
-    newPath: string | undefined,
-    mode: DiffMode = "branch",
-    branch?: string,
-  ): Promise<DiffFileContentsResult> {
-    const currentBranch = await getCurrentBranch(this.projectDir);
-    const requestedBranchActive = !branch || branch === currentBranch;
-    const selectedRef = branch ?? "HEAD";
+  async openFile(filePath: string, ref?: string | null): Promise<WorkspaceFile> {
+    const resolved = this.resolveFilePath(filePath);
+    const readFromGit = ref && ref !== await getCurrentBranch(this.projectDir);
+    if (readFromGit) return this.openGitFile(filePath, ref);
 
-    let oldRef: string;
-    let newRef: string | undefined;
-    if (mode === "uncommitted") {
-      // A non-active branch has no associated working tree. Match the diff
-      // contract by exposing its committed state on both sides (there is no
-      // uncommitted diff to expand).
-      oldRef = requestedBranchActive ? "HEAD" : selectedRef;
-      newRef = requestedBranchActive ? undefined : selectedRef;
-    } else {
-      const comparisonRef = requestedBranchActive ? "HEAD" : selectedRef;
-      oldRef = await mergeBase(this.projectDir, this.baseBranch, comparisonRef);
-      newRef = requestedBranchActive ? undefined : selectedRef;
+    let fileStats;
+    try {
+      fileStats = await stat(resolved);
+    } catch {
+      throw new WorkspaceFileNotFoundError();
     }
+    if (!fileStats.isFile()) throw new WorkspaceFileNotFoundError();
 
-    const [oldSource, newSource] = await Promise.all([
-      oldPath ? this.openGitContentSource(oldPath, oldRef) : undefined,
-      newPath
-        ? newRef
-          ? this.openGitContentSource(newPath, newRef)
-          : this.openWorktreeContentSource(newPath)
-        : undefined,
-    ]);
-    const sources = [oldSource, newSource].filter((source) => source !== undefined);
-
-    if (sources.some((source) => source.size > DIFF_CONTENTS_SIZE_LIMIT)) {
-      return { status: "too_large", limitBytes: DIFF_CONTENTS_SIZE_LIMIT };
-    }
-
-    const prefixes = await Promise.all(sources.map((source) => source.readPrefix()));
-    if (prefixes.some(containsNullByte)) {
-      return { status: "unsupported", reason: "binary" };
-    }
-
-    const [oldFile, newFile] = await Promise.all([
-      oldSource ? this.readContentSource(oldSource) : undefined,
-      newSource ? this.readContentSource(newSource) : undefined,
-    ]);
-    return { status: "available", oldFile, newFile };
+    return {
+      filename: basename(filePath) || filePath,
+      mimeType: await detectMimeTypeFromFile(resolved),
+      size: fileStats.size,
+      openBody: () => Bun.file(resolved),
+    };
   }
 
   /** Lightweight changed-file summaries using the diff endpoint branch/mode semantics. */
@@ -234,61 +144,29 @@ export class Workspace {
     return DiffParser.parsePatch(raw);
   }
 
-  private async openWorktreeContentSource(filePath: string): Promise<ContentSource | undefined> {
-    const resolved = resolveWorkspaceFile(this.projectDir, filePath);
-    let fileStats;
-    try {
-      fileStats = await lstat(resolved);
-    } catch (err) {
-      if (typeof err === "object" && err !== null && Reflect.get(err, "code") === "ENOENT") {
-        return undefined;
-      }
-      throw err;
+  private resolveFilePath(filePath: string): string {
+    const resolved = resolve(this.projectDir, filePath);
+    const rel = relative(this.projectDir, resolved);
+    if (rel === "" || rel === ".." || rel.startsWith("../") || isAbsolute(rel)) {
+      throw new InvalidWorkspacePathError("Path traversal not allowed");
     }
-    if (!fileStats.isFile()) return undefined;
-
-    const file = Bun.file(resolved);
-    return {
-      name: filePath,
-      size: fileStats.size,
-      readPrefix: async () => new Uint8Array(
-        await file.slice(0, Math.min(fileStats.size, 8192)).arrayBuffer(),
-      ),
-      read: async () => {
-        const bytes = new Uint8Array(await file.slice(0, fileStats.size + 1).arrayBuffer());
-        if (bytes.byteLength > fileStats.size) throw new Error("File grew while it was being read");
-        return bytes;
-      },
-    };
+    return resolved;
   }
 
-  private async openGitContentSource(filePath: string, ref: string): Promise<ContentSource | undefined> {
-    resolveWorkspaceFile(this.projectDir, filePath);
-    let info;
+  private async openGitFile(filePath: string, ref: string): Promise<WorkspaceFile> {
+    this.resolveFilePath(filePath);
     try {
-      info = await getGitBlobInfo(this.projectDir, ref, filePath);
-    } catch (err) {
-      if (err instanceof GitFileNotFoundError) return undefined;
-      throw err;
+      const { objectId, size } = await getGitBlobInfo(this.projectDir, ref, filePath);
+      const prefix = await readGitBlobPrefix(this.projectDir, objectId);
+      return {
+        filename: basename(filePath) || filePath,
+        mimeType: await detectMimeTypeFromBytes(prefix),
+        size,
+        openBody: () => streamGitBlob(this.projectDir, objectId),
+      };
+    } catch {
+      throw new WorkspaceFileNotFoundError("File not found in ref");
     }
-
-    return {
-      name: filePath,
-      size: info.size,
-      blobId: info.objectId,
-      readPrefix: () => readGitBlobPrefix(this.projectDir, info.objectId),
-      read: () => readBoundedStream(streamGitBlob(this.projectDir, info.objectId), info.size),
-    };
-  }
-
-  private async readContentSource(source: ContentSource): Promise<DiffFileContent> {
-    const bytes = await source.read();
-    return {
-      name: source.name,
-      contents: new TextDecoder().decode(bytes),
-      contentId: contentId(bytes),
-      ...(source.blobId ? { blobId: source.blobId } : {}),
-    };
   }
 
   private async prepareWorkspaceDiff(

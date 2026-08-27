@@ -30,10 +30,11 @@ import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js
 import {
   activeFileChangeEvent,
   activeItemChangeEvent,
+  type ReviewTransitionHeightDetail,
   type ReviewContextAcquireDetail,
   type ReviewContextStateDetail,
-  type ReviewExpansionAnchorDetail,
   type ReviewItemMeasurementDetail,
+  type ReviewPreserveScrollDetail,
 } from "../events.js";
 import { branchIcon } from "../icons.js";
 import "./review-diff-item.js";
@@ -83,6 +84,7 @@ export class ReviewDiffPanel extends LitElement {
   private _expansionState: ExpansionState | null = null;
   private _expansionScopeKey = "";
   private _unsubscribeExpansion: (() => void) | null = null;
+  private _transitionHeights = new Map<string, number>();
 
   constructor() {
     super();
@@ -148,9 +150,20 @@ export class ReviewDiffPanel extends LitElement {
     const scope = this._collapseScope();
     if (!item || !scope || this.isItemCollapsed(id) === collapsed) return;
 
-    this._virtualList.attach(this._scrollContainer());
+    const scroll = this._scrollContainer();
+    this._virtualList.attach(scroll);
+    const geometry = this._virtualList.item(id);
+    const returnToHeader = collapsed
+      && scroll !== null
+      && geometry !== undefined
+      && scroll.scrollTop > geometry.top
+      && scroll.scrollTop < geometry.top + geometry.height;
+
+    if (geometry) this._transitionHeights.set(id, geometry.height);
+    else this._transitionHeights.delete(id);
     this._collapseState.setCollapsed(scope, item, collapsed);
     this._syncVirtualItems();
+    if (returnToHeader) this._virtualList.scrollToItemStart(id);
     this.requestUpdate();
   }
 
@@ -188,6 +201,7 @@ export class ReviewDiffPanel extends LitElement {
     this._unsubscribeExpansion = null;
     this._expansionState = null;
     this._expansionScopeKey = "";
+    this._transitionHeights.clear();
   }
 
   private _reconcilePatchData() {
@@ -243,13 +257,15 @@ export class ReviewDiffPanel extends LitElement {
   }
 
   private _syncVirtualItems() {
+    const scope = this._collapseScope();
     this._virtualList.setItems((this._parsedData?.items ?? []).map((item, index) => {
-      const collapsed = this.isItemCollapsed(item.id);
+      const collapsed = scope ? this._collapseState.isCollapsed(scope, item) : false;
       return {
         id: item.id,
         measurementKey: this._measurementKey(item),
         estimatedHeight: estimateReviewItemHeight(item, false, index),
-        fixedHeight: collapsed ? estimateReviewItemHeight(item, true, index) : undefined,
+        fixedHeight: this._transitionHeights.get(item.id)
+          ?? (collapsed ? estimateReviewItemHeight(item, true, index) : undefined),
       };
     }));
   }
@@ -261,6 +277,27 @@ export class ReviewDiffPanel extends LitElement {
 
   private _handleToggleCollapse(event: CustomEvent<string>) {
     this.setItemCollapsed(event.detail, !this.isItemCollapsed(event.detail));
+  }
+
+  private _handleTransitionHeight(event: CustomEvent<ReviewTransitionHeightDetail>) {
+    const index = this._parsedData?.items.findIndex((item) => item.id === event.detail.id) ?? -1;
+    const item = index >= 0 ? this._parsedData?.items[index] : undefined;
+    if (!item) {
+      this._transitionHeights.delete(event.detail.id);
+      return;
+    }
+
+    if (event.detail.settled) {
+      this._transitionHeights.delete(item.id);
+      this._syncVirtualItems();
+      this.requestUpdate();
+      return;
+    }
+
+    const collapsedHeight = estimateReviewItemHeight(item, true, index);
+    const transitionHeight = collapsedHeight + event.detail.bodyHeight;
+    this._transitionHeights.set(item.id, transitionHeight);
+    this._virtualList.setItemFixedHeight(item.id, transitionHeight);
   }
 
   private _handleContextAcquire(event: CustomEvent<ReviewContextAcquireDetail>) {
@@ -277,15 +314,8 @@ export class ReviewDiffPanel extends LitElement {
     expansion.retainNativeExpansion(item, event.detail.regions);
   }
 
-  private _handleExpansionAnchor(event: CustomEvent<ReviewExpansionAnchorDetail>) {
-    if (typeof event.detail.growthItemId === "string") {
-      this._virtualList.adjustScrollByItemGrowth(
-        event.detail.growthItemId,
-        event.detail.operationId,
-      );
-    } else if (typeof event.detail.delta === "number") {
-      this._virtualList.adjustScrollBy(event.detail.delta, event.detail.operationId);
-    }
+  private _handlePreserveScroll(event: CustomEvent<ReviewPreserveScrollDetail>) {
+    this._virtualList.preserveScroll(event.detail.id, event.detail.anchor, event.detail.mutate);
   }
 
   private _handleItemMeasurement(event: CustomEvent<ReviewItemMeasurementDetail>) {
@@ -307,34 +337,6 @@ export class ReviewDiffPanel extends LitElement {
 
   private _observeVirtualList(observation: VirtualListObservation) {
     switch (observation.type) {
-      case "expansion-anchor-registered":
-        this._recordExpansionTelemetry(observation.type, observation.operationId, {
-          mode: observation.mode,
-          itemIndex: this._itemIndex(observation.itemId),
-          delta: observation.delta,
-          actualTop: observation.actualTop,
-          viewportHeight: observation.viewportHeight,
-          layoutVersion: observation.layoutVersion,
-        });
-        break;
-      case "expansion-anchor-cancelled":
-        this._recordExpansionTelemetry(observation.type, observation.operationId, {
-          mode: observation.mode,
-          inputType: observation.inputType,
-          actualTop: observation.actualTop,
-          layoutVersion: observation.layoutVersion,
-        });
-        break;
-      case "measurement-submitted":
-        this._recordControllerTelemetry(observation.type, observation.operationId, {
-          itemIndex: this._itemIndex(observation.itemId),
-          oldVirtualHeight: observation.oldHeight,
-          measuredHeight: Math.round(observation.measuredHeight),
-          accepted: observation.accepted,
-          rejectionReason: observation.rejectionReason,
-          layoutVersion: observation.layoutVersion,
-        });
-        break;
       case "navigation-start":
         this._navigationTelemetry = clientTelemetry.startOperation("review-virtualizer");
         this._recordTelemetry(observation.type, {
@@ -365,16 +367,11 @@ export class ReviewDiffPanel extends LitElement {
         this._navigationTelemetry = null;
         break;
       case "measurement-batch":
-        this._recordControllerTelemetry(observation.type, observation.operationId, {
+        this._recordTelemetry(observation.type, {
           submitted: observation.submitted,
           accepted: observation.accepted,
           correctedTop: observation.correctedTop,
           scrollAdjustment: observation.scrollAdjustment,
-          coordinatorAdjustment: observation.coordinatorAdjustment,
-          pointAdjustment: observation.pointAdjustment,
-          growthBefore: observation.growthBefore,
-          growthAfter: observation.growthAfter,
-          growthAdjustment: observation.growthAdjustment,
           actualTop: observation.actualTop,
           layoutVersion: observation.layoutVersion,
           candidates: observation.measurements.map((measurement) => ({
@@ -386,23 +383,19 @@ export class ReviewDiffPanel extends LitElement {
         this._syncPendingScroll();
         break;
       case "geometry-queued":
-        this._recordControllerTelemetry(observation.type, observation.operationId, {
+        this._recordTelemetry(observation.type, {
           reason: observation.reason,
           requestedTop: observation.requestedTop,
           actualTop: observation.actualTop,
           navigationIndex: this._itemIndex(observation.navigationId),
-          totalHeight: observation.totalHeight,
           layoutVersion: observation.layoutVersion,
         });
         break;
       case "geometry-applied":
-        this._recordControllerTelemetry(observation.type, observation.operationId, {
+        this._recordTelemetry(observation.type, {
           requestedTop: observation.requestedTop,
           actualBefore: observation.actualBefore,
           actualAfter: observation.actualAfter,
-          clampDifference: observation.clampDifference,
-          totalHeight: observation.totalHeight,
-          viewportHeight: observation.viewportHeight,
           smooth: observation.smooth,
           navigationIndex: this._itemIndex(observation.navigationId),
           layoutVersion: observation.layoutVersion,
@@ -422,23 +415,6 @@ export class ReviewDiffPanel extends LitElement {
         break;
       }
     }
-  }
-
-  private _recordControllerTelemetry(
-    event: string,
-    operationId: string | null,
-    attributes: Record<string, unknown>,
-  ) {
-    if (operationId) this._recordExpansionTelemetry(event, operationId, attributes);
-    else this._recordTelemetry(event, attributes);
-  }
-
-  private _recordExpansionTelemetry(
-    event: string,
-    operationId: string,
-    attributes: Record<string, unknown>,
-  ) {
-    clientTelemetry.record("review-expansion", event, { ...attributes, operationId });
   }
 
   private _recordTelemetry(
@@ -508,9 +484,10 @@ export class ReviewDiffPanel extends LitElement {
                             .reservedHeight=${Math.max(1, entry.height - reviewItemGap(index))}
                             .expansion=${this._ensureExpansionState()?.forItem(item) ?? null}
                             @toggle-collapse=${this._handleToggleCollapse}
+                            @review-transition-height=${this._handleTransitionHeight}
                             @review-context-acquire=${this._handleContextAcquire}
                             @review-context-state=${this._handleContextState}
-                            @review-expansion-anchor=${this._handleExpansionAnchor}
+                            @review-preserve-scroll=${this._handlePreserveScroll}
                             @review-item-measurement=${this._handleItemMeasurement}
                           ></review-diff-item>
                         `;

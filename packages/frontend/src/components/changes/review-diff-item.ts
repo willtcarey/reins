@@ -8,11 +8,11 @@ import type {
 import type { ReviewItem } from "../../models/changes/review-items.js";
 import { clientTelemetry } from "../../models/client-telemetry.js";
 import {
+  reviewTransitionHeightEvent,
   reviewContextAcquireEvent,
   reviewContextStateEvent,
-  reviewExpansionAnchorEvent,
-  reviewExpansionGrowthAnchorEvent,
   reviewItemMeasurementEvent,
+  reviewPreserveScrollEvent,
   toggleCollapseEvent,
 } from "../events.js";
 import {
@@ -80,9 +80,9 @@ export class ReviewDiffItem extends LitElement {
 
   private readonly _diff = createReviewFileDiffRenderer(
     this,
-    () => this._reconcileExpansionAnchor(),
+    undefined,
     (interaction) => this._requestAcquisition(interaction),
-    (interaction) => this._rememberExpansionAnchor(interaction),
+    (interaction, mutate) => this._preserveExpansionScroll(interaction, mutate),
     (regions) => this._retainNativeExpansion(regions),
     () => this._contextControlRelevant(),
   );
@@ -201,6 +201,11 @@ export class ReviewDiffItem extends LitElement {
     this.dispatchEvent(toggleCollapseEvent(this.item.id));
   }
 
+  private _reportTransitionHeight(bodyHeight: number, settled: boolean) {
+    if (!this.item) return;
+    this.dispatchEvent(reviewTransitionHeightEvent({ id: this.item.id, bodyHeight, settled }));
+  }
+
   private _contextControlRelevant() {
     if (!this.item || this.expansion?.outcome !== "idle") return;
     this.dispatchEvent(reviewContextAcquireEvent(this.item.id));
@@ -260,78 +265,36 @@ export class ReviewDiffItem extends LitElement {
     this.dispatchEvent(reviewContextStateEvent({ id: this.item.id, regions }));
   }
 
-  private _reconcileExpansionAnchor() {
-    const pending = this._pendingExpansionAnchor;
-    if (!pending) return;
-    const root = this._diff.container?.shadowRoot;
-    if (!root) return;
-    const separator = root.querySelector<HTMLElement>(`[data-expand-index="${pending.hunkIndex}"]`);
-    const anchoredLine = pending.anchorLineNumber == null
-      ? null
-      : root.querySelector<HTMLElement>(`[data-column-number="${pending.anchorLineNumber}"]`);
-    const anchor = separator ?? anchoredLine;
-    const newTop = anchor?.getBoundingClientRect().top ?? null;
-    // Pierre calls the visually upward/from-end control "down": it reveals
-    // lines immediately before the following hunk, so preserve that reviewed
-    // code by scrolling down by the measured item growth.
-    if (pending.direction === "down" && this.item) {
-      this._pendingExpansionAnchor = null;
-      this._recordExpansion("post-render-anchor-decision", {
-        direction: pending.direction,
-        mode: "measured-growth",
-        targetFound: anchor !== null,
-        targetKind: separator ? "separator" : anchoredLine ? "line" : null,
-        oldTop: pending.anchorTop,
-        oldSeparatorTop: pending.anchorTop,
-        oldAnchorLineTop: pending.anchorLineTop ?? null,
-        newTop,
-      }, pending.operationId);
-      this.dispatchEvent(reviewExpansionGrowthAnchorEvent(this.item.id, pending.operationId));
+  private _preserveExpansionScroll(
+    interaction: ReviewFileExpansionInteraction,
+    mutate: () => void,
+  ) {
+    if (!this.item) {
+      mutate();
       return;
     }
-    if (pending.direction === "up") {
+    this._rememberExpansionAnchor(interaction);
+    if (interaction.direction === "up") {
       this._pendingExpansionAnchor = null;
-      this._recordExpansion("post-render-anchor-decision", {
-        direction: pending.direction,
-        mode: "none-from-start",
-        targetFound: anchor !== null,
-        targetKind: separator ? "separator" : anchoredLine ? "line" : null,
-        oldTop: pending.anchorTop,
-        oldSeparatorTop: pending.anchorTop,
-        oldAnchorLineTop: pending.anchorLineTop ?? null,
-        newTop,
-        delta: 0,
-      }, pending.operationId);
+      mutate();
       return;
     }
-    if (!anchor) {
-      this._pendingExpansionAnchor = null;
-      this._recordExpansion("post-render-anchor-decision", {
-        direction: pending.direction,
-        mode: "unavailable",
-        targetFound: false,
-        oldTop: pending.anchorTop,
-        oldSeparatorTop: pending.anchorTop,
-        oldAnchorLineTop: pending.anchorLineTop ?? null,
-        newTop: null,
-      }, pending.operationId);
-      return;
-    }
-    const delta = newTop! - pending.anchorTop;
+
+    const anchor = interaction.direction === "down"
+      ? "item-end" as const
+      : () => this._expansionAnchorTop(interaction);
+    this.dispatchEvent(reviewPreserveScrollEvent({ id: this.item.id, anchor, mutate }));
     this._pendingExpansionAnchor = null;
-    this._recordExpansion("post-render-anchor-decision", {
-      direction: pending.direction,
-      mode: "dom-point",
-      targetFound: true,
-      targetKind: separator ? "separator" : "line",
-      oldTop: pending.anchorTop,
-      oldSeparatorTop: pending.anchorTop,
-      oldAnchorLineTop: pending.anchorLineTop ?? null,
-      newTop,
-      delta,
-    }, pending.operationId);
-    if (delta === 0) return;
-    this.dispatchEvent(reviewExpansionAnchorEvent(delta, pending.operationId));
+  }
+
+  private _expansionAnchorTop(interaction: ReviewFileExpansionInteraction): number | null {
+    const root = this._diff.container?.shadowRoot;
+    if (!root) return null;
+    const separator = root.querySelector<HTMLElement>(`[data-expand-index="${interaction.hunkIndex}"]`);
+    const anchoredLine = interaction.anchorLineNumber == null
+      ? null
+      : root.querySelector<HTMLElement>(`[data-column-number="${interaction.anchorLineNumber}"]`);
+    return (separator ?? anchoredLine)?.getBoundingClientRect().top ?? null;
   }
 
   private _reviewScrollContainer(): HTMLElement | null {
@@ -349,6 +312,14 @@ export class ReviewDiffItem extends LitElement {
       operationId,
       itemId: this.item?.id ?? null,
     });
+  }
+
+  private _unmountDiff() {
+    this._diff.unmount();
+    // A collapsed body can outlive native expansion updates in ExpansionState.
+    // Rebuild the target on remount so its retained Pierre regions are current.
+    this._targetFileDiff = null;
+    this._target = null;
   }
 
   private _diffTarget(item: ReviewItem): ReviewFileDiffTarget {
@@ -441,7 +412,8 @@ export class ReviewDiffItem extends LitElement {
             ` : nothing}
           `,
           {
-            onUnmount: () => this._diff.unmount(),
+            onUnmount: () => this._unmountDiff(),
+            onHeightChange: (height, settled) => this._reportTransitionHeight(height, settled),
             animateContentResize: false,
           },
         )}

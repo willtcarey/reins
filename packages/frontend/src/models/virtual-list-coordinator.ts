@@ -69,6 +69,18 @@ export class VirtualListCoordinator {
     return this.resolveGeometryUpdate(anchor, 0);
   }
 
+  public setItemFixedHeight(id: string, fixedHeight: number): VirtualListGeometryUpdate | null {
+    const index = this.inputs.findIndex((input) => input.id === id);
+    if (index < 0) return null;
+    const nextHeight = Math.max(1, fixedHeight);
+    if (this.inputs[index]?.fixedHeight === nextHeight) {
+      return { accepted: 0, scrollTop: this.scrollTop, scrollAdjustment: 0 };
+    }
+    const inputs = [...this.inputs];
+    inputs[index] = { ...inputs[index]!, fixedHeight: nextHeight };
+    return this.setItems(inputs);
+  }
+
   public setViewport(scrollTop: number, viewportHeight: number) {
     this.viewportHeight = Math.max(1, viewportHeight);
     this.scrollTop = this.clampScrollTop(scrollTop);

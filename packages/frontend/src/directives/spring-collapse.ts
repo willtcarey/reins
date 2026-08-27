@@ -16,6 +16,8 @@ const MAX_STRENGTH_SCALE = 1.6;
 export interface SpringCollapseOptions {
   /** Called after collapsed content has been removed from the DOM. */
   onUnmount?: () => void;
+  /** Reports the animated body height so an external layout can move siblings. */
+  onHeightChange?: (height: number, settled: boolean) => void;
   /** Animate ambient body resizes after expansion has settled. */
   animateContentResize?: boolean;
 }
@@ -79,6 +81,7 @@ export class SpringCollapseDirective extends AsyncDirective {
         this.pending = false;
         this.velocity = 0;
         this.mounted = !collapsed;
+        this.options.onHeightChange?.(0, true);
         if (collapsed) this.options.onUnmount?.();
       } else {
         this.mounted = true;
@@ -228,7 +231,9 @@ export class SpringCollapseDirective extends AsyncDirective {
       onUpdate: (value, velocity) => {
         if (generation !== this.generation || this.element !== element) return;
         const upperBound = Math.max(naturalHeight, start);
-        element.style.height = `${Math.max(0, Math.min(value, upperBound))}px`;
+        const renderedHeight = Math.max(0, Math.min(value, upperBound));
+        element.style.height = `${renderedHeight}px`;
+        this.options.onHeightChange?.(renderedHeight, false);
         this.velocity = velocity;
       },
       onSettle: () => {
@@ -246,10 +251,12 @@ export class SpringCollapseDirective extends AsyncDirective {
     if (this.collapsed) {
       this.mounted = false;
       this.disconnectResizeObserver();
+      this.options.onHeightChange?.(0, true);
       this.setValue(nothing);
       this.options.onUnmount?.();
       return;
     }
+    this.options.onHeightChange?.(this.naturalHeight ?? 0, true);
     element.style.removeProperty("height");
     element.style.removeProperty("overflow");
   }

@@ -5,19 +5,14 @@
  * GET /files/content — read a single file's content (working tree or git ref)
  */
 
-import { stat } from "node:fs/promises";
-import { basename, isAbsolute, relative, resolve } from "node:path";
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
 import { badRequest, notFound } from "../errors.js";
 import { PathTraversalError, FileNotFoundError } from "../models/projects.js";
-import { detectMimeTypeFromBytes, detectMimeTypeFromFile } from "../mime.js";
 import {
-  getCurrentBranch,
-  getGitBlobInfo,
-  readGitBlobPrefix,
-  streamGitBlob,
-} from "../git.js";
+  InvalidWorkspacePathError,
+  WorkspaceFileNotFoundError,
+} from "../models/workspace.js";
 
 const TEXT_APPLICATION_TYPES = new Set([
   "application/json",
@@ -38,22 +33,6 @@ const TEXT_APPLICATION_TYPES = new Set([
   "application/x-httpd-php",
 ]);
 
-interface FileContentSource {
-  filename: string;
-  mimeType: string;
-  size: number;
-  openBody: () => Blob | ReadableStream<Uint8Array>;
-}
-
-function assertInsideProject(projectDir: string, filePath: string): string {
-  const resolved = resolve(projectDir, filePath);
-  const rel = relative(projectDir, resolved);
-  if (rel === "" || rel === ".." || rel.startsWith("../") || isAbsolute(rel)) {
-    throw new PathTraversalError();
-  }
-  return resolved;
-}
-
 function isTextMimeType(mimeType: string): boolean {
   if (mimeType.startsWith("text/")) return true;
   return TEXT_APPLICATION_TYPES.has(mimeType);
@@ -67,55 +46,6 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-async function shouldReadFromGit(projectDir: string, ref: string | null): Promise<boolean> {
-  if (!ref) return false;
-  const currentBranch = await getCurrentBranch(projectDir);
-  return currentBranch !== ref;
-}
-
-async function openWorkingTreeFile(projectDir: string, filePath: string): Promise<FileContentSource> {
-  const resolved = assertInsideProject(projectDir, filePath);
-  let stats;
-  try {
-    stats = await stat(resolved);
-  } catch {
-    throw new FileNotFoundError();
-  }
-  if (!stats.isFile()) {
-    throw new FileNotFoundError();
-  }
-
-  return {
-    filename: basename(filePath) || filePath,
-    mimeType: await detectMimeTypeFromFile(resolved),
-    size: stats.size,
-    openBody: () => Bun.file(resolved),
-  };
-}
-
-async function openGitFile(projectDir: string, filePath: string, ref: string): Promise<FileContentSource> {
-  assertInsideProject(projectDir, filePath);
-
-  try {
-    const { objectId, size } = await getGitBlobInfo(projectDir, ref, filePath);
-    const prefix = await readGitBlobPrefix(projectDir, objectId);
-    return {
-      filename: basename(filePath) || filePath,
-      mimeType: await detectMimeTypeFromBytes(prefix),
-      size,
-      openBody: () => streamGitBlob(projectDir, objectId),
-    };
-  } catch {
-    throw new FileNotFoundError("File not found in ref");
-  }
-}
-
-async function openFileContent(projectDir: string, filePath: string, ref: string | null): Promise<FileContentSource> {
-  return await shouldReadFromGit(projectDir, ref)
-    ? openGitFile(projectDir, filePath, ref!)
-    : openWorkingTreeFile(projectDir, filePath);
 }
 
 export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
@@ -148,7 +78,7 @@ export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
     const download = ctx.url.searchParams.get("download") === "1";
 
     try {
-      const source = await openFileContent(ctx.project.projectDir, filePath!, ref);
+      const source = await ctx.project.workspace.openFile(filePath!, ref);
       const headers: Record<string, string> = {
         "Content-Type": source.mimeType,
         "Content-Length": String(source.size),
@@ -166,14 +96,15 @@ export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
           headers: {
             "Content-Type": "text/plain; charset=utf-8",
             "Cache-Control": "no-cache, no-store",
+            "X-Reins-Content-Kind": "binary-placeholder",
           },
         });
       }
 
       return new Response(source.openBody(), { headers });
     } catch (err: any) {
-      if (err instanceof PathTraversalError) badRequest(err.message);
-      if (err instanceof FileNotFoundError) notFound(err.message);
+      if (err instanceof InvalidWorkspacePathError) badRequest(err.message);
+      if (err instanceof WorkspaceFileNotFoundError) notFound(err.message);
       throw err;
     }
   });

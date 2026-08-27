@@ -1,6 +1,7 @@
 export const DEFAULT_SPRING_STIFFNESS = 0.00055;
 export const DEFAULT_SPRING_DAMPING = 0.0302;
 const SPRING_MAX_FRAME_MS = 32;
+const SPRING_MAX_INTEGRATION_STEP_MS = 16;
 const SPRING_SETTLED_DISTANCE_PX = 0.75;
 const SPRING_SETTLED_VELOCITY_PX_PER_MS = 0.03;
 
@@ -99,13 +100,23 @@ function springStep(
   stiffness: number,
   damping: number,
 ): SpringState {
-  const dt = Math.max(0, Math.min(deltaMs, SPRING_MAX_FRAME_MS));
-  const displacement = state.value - targetValue;
-  const acceleration = -stiffness * displacement - damping * state.velocity;
-  const velocity = state.velocity + acceleration * dt;
-  const value = state.value + velocity * dt;
+  let remaining = Math.max(0, Math.min(deltaMs, SPRING_MAX_FRAME_MS));
+  let next = state;
 
-  return { value, velocity };
+  // Semi-implicit Euler becomes unstable for stronger springs when a frame
+  // approaches the 32 ms cap. Integrate slow frames in bounded substeps so a
+  // dropped frame cannot alternate between the animation's clamped extremes.
+  while (remaining > 0) {
+    const dt = Math.min(remaining, SPRING_MAX_INTEGRATION_STEP_MS);
+    const displacement = next.value - targetValue;
+    const acceleration = -stiffness * displacement - damping * next.velocity;
+    const velocity = next.velocity + acceleration * dt;
+    const value = next.value + velocity * dt;
+    next = { value, velocity };
+    remaining -= dt;
+  }
+
+  return next;
 }
 
 function springSettled(

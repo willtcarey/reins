@@ -98,6 +98,43 @@ describe("Spring", () => {
     }
   });
 
+  test("stays stable when a strong spring receives slow frames", () => {
+    const originalWindow = globalThis.window;
+    const frameCallbacks: FrameRequestCallback[] = [];
+    const values: number[] = [];
+    let settled = false;
+
+    Reflect.set(globalThis, "window", {
+      requestAnimationFrame(callback: FrameRequestCallback) {
+        frameCallbacks.push(callback);
+        return frameCallbacks.length;
+      },
+      cancelAnimationFrame() {},
+    });
+
+    try {
+      new Spring({
+        value: 1_000,
+        target: 0,
+        velocity: 0,
+        stiffness: 0.00104,
+        damping: 0.063245553,
+        onUpdate: (value) => values.push(value),
+        onSettle: () => { settled = true; },
+      });
+
+      for (let index = 0; index < frameCallbacks.length && index < 100; index += 1) {
+        frameCallbacks[index](index * 32);
+      }
+
+      expect(settled).toBe(true);
+      expect(values.every((value) => value >= 0 && value <= 1_000)).toBe(true);
+      expect(values.at(-1)).toBe(0);
+    } finally {
+      Reflect.set(globalThis, "window", originalWindow);
+    }
+  });
+
   test("cancels an in-flight animation", () => {
     const originalWindow = globalThis.window;
     const canceledFrame: { value: number | null } = { value: null };

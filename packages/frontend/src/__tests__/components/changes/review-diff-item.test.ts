@@ -187,6 +187,29 @@ describe("ReviewDiffItem", () => {
     expect(acquired).toEqual([reviewItem.id]);
   });
 
+  test("restores expanded context after the diff body unmounts for collapse", () => {
+    const reviewItem = parseReviewItems(EXPANDABLE_PATCH, "project-7-v1").items[0]!;
+    const state = new ExpansionState({ projectId: 7, mode: "branch" });
+    const item = new ReviewDiffItem();
+    item.item = reviewItem;
+    item.expansion = state.forItem(reviewItem);
+    const rendered = item.render();
+    const collapse = collectTemplateValues(rendered).find((value): value is DirectiveResult => (
+      typeof value === "object"
+        && value !== null
+        && "_$litDirective$" in value
+        && value._$litDirective$ === SpringCollapseDirective
+    ));
+    if (!collapse) throw new Error("Expected spring collapse directive");
+
+    const expandedRegions = new Map([[0, { fromStart: 0, fromEnd: 15 }]]);
+    item.expansion = { ...item.expansion, nativeExpandedHunks: expandedRegions };
+    collapse.values[2]?.onUnmount?.();
+    const remountedTarget = Reflect.get(item, "_diffTarget").call(item, reviewItem);
+
+    expect(remountedTarget.nativeExpandedHunks).toBe(expandedRegions);
+  });
+
   test("retains a first-click intent while pre-acquisition is loading", () => {
     const reviewItem = parseReviewItems(EXPANDABLE_PATCH, "project-7-v1").items[0]!;
     const state = new ExpansionState({ projectId: 7, mode: "branch" });
@@ -206,65 +229,49 @@ describe("ReviewDiffItem", () => {
     expect(target.initialExpansion).toEqual(interaction);
   });
 
-  test("anchors Pierre's from-end expansion to measured item growth", () => {
+  test("preserves the item end when context expands before reviewed code", () => {
     const reviewItem = parseReviewItems(PATCH, "project-7-v1").items[0]!;
     const item = new ReviewDiffItem();
     item.item = reviewItem;
-    const separator = new ReviewDiffItem();
-    const anchoredLine = new ReviewDiffItem();
-    separator.getBoundingClientRect = () => ({ ...testRect(0), top: 80, bottom: 80 });
-    anchoredLine.getBoundingClientRect = () => ({ ...testRect(0), top: 140, bottom: 140 });
-    const root = {
-      querySelector(selector: string) {
-        if (selector === `[data-expand-index="0"]`) return separator;
-        if (selector === `[data-column-number="33"]`) return anchoredLine;
-        return null;
-      },
-    };
-    const container = new ReviewDiffItem();
-    Object.defineProperty(container, "shadowRoot", { configurable: true, value: root });
-    Reflect.set(Reflect.get(item, "_diff"), "containerValue", container);
-    Reflect.get(item, "_rememberExpansionAnchor").call(item, {
+    const preservations: unknown[] = [];
+    item.addEventListener("review-preserve-scroll", (event) => {
+      if (event instanceof CustomEvent) preservations.push(event.detail);
+    });
+    let mutations = 0;
+    const mutate = () => { mutations += 1; };
+
+    Reflect.get(item, "_preserveExpansionScroll").call(item, {
       hunkIndex: 0,
       direction: "down",
       anchorTop: 100,
       anchorLineNumber: 33,
-    });
-    const anchors: unknown[] = [];
-    item.addEventListener("review-expansion-anchor", (event) => {
-      if (event instanceof CustomEvent) anchors.push(event.detail);
-    });
+    }, mutate);
 
-    Reflect.get(item, "_reconcileExpansionAnchor").call(item);
-
-    expect(anchors).toEqual([{
-      growthItemId: reviewItem.id,
-      operationId: expect.stringMatching(/^review-expansion-/),
+    expect(preservations).toEqual([{
+      id: reviewItem.id,
+      anchor: "item-end",
+      mutate,
     }]);
+    expect(mutations).toBe(0);
   });
 
-  test("keeps scroll position unchanged when context expands visually downward", () => {
+  test("expands directly when new context is below reviewed code", () => {
     const reviewItem = parseReviewItems(PATCH, "project-7-v1").items[0]!;
     const item = new ReviewDiffItem();
     item.item = reviewItem;
-    const separator = new ReviewDiffItem();
-    separator.getBoundingClientRect = () => ({ ...testRect(0), top: 400, bottom: 400 });
-    const root = { querySelector: () => separator };
-    const container = new ReviewDiffItem();
-    Object.defineProperty(container, "shadowRoot", { configurable: true, value: root });
-    Reflect.set(Reflect.get(item, "_diff"), "containerValue", container);
-    Reflect.get(item, "_rememberExpansionAnchor").call(item, {
+    const preservations: unknown[] = [];
+    let mutations = 0;
+    item.addEventListener("review-preserve-scroll", (event) => preservations.push(event));
+
+    Reflect.get(item, "_preserveExpansionScroll").call(item, {
       hunkIndex: 0,
       direction: "up",
       anchorTop: 100,
       anchorLineNumber: 33,
-    });
-    const anchors: unknown[] = [];
-    item.addEventListener("review-expansion-anchor", (event) => anchors.push(event));
+    }, () => { mutations += 1; });
 
-    Reflect.get(item, "_reconcileExpansionAnchor").call(item);
-
-    expect(anchors).toEqual([]);
+    expect(preservations).toEqual([]);
+    expect(mutations).toBe(1);
   });
 
   test("leaves expansion controls to Pierre and reports acquisition failure without replacing the diff", () => {
