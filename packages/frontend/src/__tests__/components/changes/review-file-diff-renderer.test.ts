@@ -60,7 +60,7 @@ ${additions}
     expect(partial.isPartial).toBe(true);
   });
 
-  test("uses the full-width partial separator content for acquisition without mutating Pierre's structure", () => {
+  test("renders a visible partial acquisition button without loading until activation", () => {
     const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
     const originalRender = ReviewFileDiff.prototype.render;
     const listeners = new Map<string, EventListener>();
@@ -78,8 +78,15 @@ ${additions}
       shadowRoot = root;
       dataset: Record<string, string> = {};
       nextElementSibling: TestHTMLElement | null = null;
+      insertedBefore: TestHTMLElement | null = null;
+      children: TestHTMLElement[] = [];
+      style = { borderTopLeftRadius: "", borderBottomLeftRadius: "" };
       tabIndex = -1;
       private readonly attributes = new Map<string, string>();
+      readonly ownerDocument = {
+        createElement: () => new TestHTMLElement(),
+        createElementNS: () => new TestHTMLElement(),
+      };
       constructor(attributes: string[] = []) {
         super();
         for (const attribute of attributes) this.attributes.set(attribute, "");
@@ -87,6 +94,8 @@ ${additions}
       hasAttribute(name: string) { return this.attributes.has(name); }
       setAttribute(name: string, value: string) { this.attributes.set(name, value); }
       getAttribute(name: string) { return this.attributes.get(name) ?? null; }
+      appendChild(child: TestHTMLElement) { this.children.push(child); return child; }
+      before(element: TestHTMLElement) { this.insertedBefore = element; }
       closest: () => TestHTMLElement | null = () => null;
       getBoundingClientRect() { return { top: 20 }; }
     }
@@ -129,7 +138,6 @@ ${additions}
         addController() {}, removeController() {}, requestUpdate() {}, updateComplete: Promise.resolve(true),
       };
       const acquisitions: number[] = [];
-      const relevantControls: number[] = [];
       const nativeInteractions: number[] = [];
       const controller = createReviewFileDiffRenderer(
         host,
@@ -140,7 +148,6 @@ ${additions}
           mutate();
         },
         undefined,
-        (hunkIndexes) => relevantControls.push(...hunkIndexes),
         null,
       );
       const bindingValues = Reflect.get(controller.bind({
@@ -152,7 +159,12 @@ ${additions}
       if (typeof attach !== "function") throw new Error("Expected renderer ref binding");
       attach(new TestHTMLElement());
 
-      const partialEvent = interactionEvent("click", [controlText, control, separator]);
+      expect(acquisitions).toEqual([]);
+
+      const acquisitionButton = control.insertedBefore;
+      if (!acquisitionButton) throw new Error("Expected visible acquisition button");
+      acquisitionButton.closest = () => separator;
+      const partialEvent = interactionEvent("click", [acquisitionButton, separator]);
       listeners.get("click")?.(partialEvent);
 
       expect(renderedMetadata[0]).toBe(partial);
@@ -162,7 +174,14 @@ ${additions}
       expect(control.getAttribute("role")).toBe("button");
       expect(control.getAttribute("aria-label")).toBe("Expand unchanged lines");
       expect(control.tabIndex).toBe(0);
-      expect(relevantControls).toEqual([0]);
+      expect(control.style.borderTopLeftRadius).toBe("0px");
+      expect(control.style.borderBottomLeftRadius).toBe("0px");
+      expect(acquisitionButton.hasAttribute("data-expand-button")).toBe(true);
+      expect(acquisitionButton.hasAttribute("data-expand-down")).toBe(true);
+      expect(acquisitionButton.dataset.reinsAcquireHunkIndex).toBe("0");
+      expect(acquisitionButton.getAttribute("aria-label")).toBe("Expand unchanged lines above");
+      expect(acquisitionButton.tabIndex).toBe(0);
+      expect(acquisitionButton.children).toHaveLength(1);
       expect(acquisitions).toEqual([0]);
       expect(partialEvent.defaultPrevented).toBe(true);
       expect(expanded).toEqual([]);
@@ -201,7 +220,7 @@ ${additions}
     }
   });
 
-  test("does not offer or pre-acquire context when patch metadata has no known collapsed region", () => {
+  test("does not offer context when patch metadata has no known collapsed region", () => {
     const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
     const originalRender = ReviewFileDiff.prototype.render;
     const queryResults = new Map<string, EventTarget[]>();
@@ -251,10 +270,8 @@ ${additions}
       const host: ReactiveControllerHost = {
         addController() {}, removeController() {}, requestUpdate() {}, updateComplete: Promise.resolve(true),
       };
-      const relevantControls: number[][] = [];
       const controller = createReviewFileDiffRenderer(
-        host, undefined, undefined, undefined, undefined,
-        (hunkIndexes) => relevantControls.push([...hunkIndexes]), null,
+        host, undefined, undefined, undefined, undefined, null,
       );
       const bindingValues = Reflect.get(controller.bind({
         fileDiff: partial, nativeExpandedHunks: new Map(), initialExpansion: null,
@@ -265,7 +282,6 @@ ${additions}
 
       expect(partial.hunks[0]?.collapsedBefore).toBe(0);
       expect(control.dataset.reinsAcquireHunkIndex).toBeUndefined();
-      expect(relevantControls).toEqual([]);
     } finally {
       Reflect.set(ReviewFileDiff.prototype, "render", originalRender);
       if (htmlElementDescriptor) Object.defineProperty(globalThis, "HTMLElement", htmlElementDescriptor);

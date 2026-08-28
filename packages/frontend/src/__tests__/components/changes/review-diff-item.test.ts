@@ -168,7 +168,7 @@ describe("ReviewDiffItem", () => {
     expect(toggledIds).toEqual([reviewItem.id]);
   });
 
-  test("pre-acquires complete content only after a mounted expandable control is relevant", () => {
+  test("does not request complete content merely by rendering an expandable file", () => {
     const reviewItem = parseReviewItems(EXPANDABLE_PATCH, "project-7-v1").items[0]!;
     const item = new ReviewDiffItem();
     item.item = reviewItem;
@@ -178,13 +178,9 @@ describe("ReviewDiffItem", () => {
       if (event instanceof CustomEvent) acquired.push(event.detail.id);
     });
 
-    // Constructing/rendering an item does not acquire: only the mounted Pierre
-    // control relevance callback crosses the acquisition seam.
     item.render();
-    expect(acquired).toEqual([]);
-    Reflect.get(item, "_contextControlRelevant").call(item);
 
-    expect(acquired).toEqual([reviewItem.id]);
+    expect(acquired).toEqual([]);
   });
 
   test("restores expanded context after the diff body unmounts for collapse", () => {
@@ -210,7 +206,7 @@ describe("ReviewDiffItem", () => {
     expect(remountedTarget.nativeExpandedHunks).toBe(expandedRegions);
   });
 
-  test("retains a first-click intent while pre-acquisition is loading", () => {
+  test("retains a first-click intent while acquisition is loading", () => {
     const reviewItem = parseReviewItems(EXPANDABLE_PATCH, "project-7-v1").items[0]!;
     const state = new ExpansionState({ projectId: 7, mode: "branch" });
     const item = new ReviewDiffItem();

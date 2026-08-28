@@ -70,7 +70,6 @@ export function createReviewFileDiffRenderer(
   onAcquire?: (interaction: ReviewFileExpansionInteraction) => void,
   onNativeInteraction?: (interaction: ReviewFileExpansionInteraction, mutate: () => void) => void,
   onNativeState?: (regions: ReadonlyMap<number, HunkExpansionRegion>) => void,
-  onAcquisitionRelevant?: (hunkIndexes: readonly number[]) => void,
   workerManager?: ReturnType<typeof getPierreWorkerPool> | null,
 ) {
   return new PierreRenderer<ReviewFileDiffTarget, ReviewFileDiff>(host, {
@@ -115,8 +114,7 @@ export function createReviewFileDiffRenderer(
             root.addEventListener("click", handleClick, true);
             root.addEventListener("keydown", handleKeydown, true);
           }
-          const acquisitionHunks = prepareNativeControls(root, target.fileDiff);
-          if (acquisitionHunks.length > 0) onAcquisitionRelevant?.(acquisitionHunks);
+          prepareNativeControls(root, target.fileDiff);
           if (instance instanceof ReviewFileDiff) {
             onNativeState?.(instance.nativeExpansionState());
           }
@@ -152,8 +150,8 @@ export function createReviewFileDiffRenderer(
   });
 }
 
-function prepareNativeControls(root: ShadowRoot | null, fileDiff: FileDiffMetadata): number[] {
-  if (!root) return [];
+function prepareNativeControls(root: ShadowRoot | null, fileDiff: FileDiffMetadata): void {
+  if (!root) return;
   for (const control of root.querySelectorAll<HTMLElement>("[data-expand-button][role='button']")) {
     control.tabIndex = 0;
     if (control.hasAttribute("aria-label")) continue;
@@ -167,8 +165,7 @@ function prepareNativeControls(root: ShadowRoot | null, fileDiff: FileDiffMetada
     control.setAttribute("aria-label", action);
   }
 
-  if (!fileDiff.isPartial) return [];
-  const acquisitionHunks: number[] = [];
+  if (!fileDiff.isPartial) return;
   for (const content of root.querySelectorAll<HTMLElement>("[data-separator-content]")) {
     const separator = content.closest<HTMLElement>("[data-separator]");
     if (!separator || separator.dataset.expandIndex) continue;
@@ -180,14 +177,51 @@ function prepareNativeControls(root: ShadowRoot | null, fileDiff: FileDiffMetada
     // structural expansion attributes untouched so the existing line-info
     // content retains Pierre's full-width layout. Reins owns only this first
     // acquisition marker; complete metadata uses Pierre's native controls.
+    const direction = hunkIndex === 0 ? "down" : "both";
     content.dataset.reinsAcquireHunkIndex = `${hunkIndex}`;
-    content.dataset.reinsAcquireDirection = hunkIndex === 0 ? "down" : "both";
+    content.dataset.reinsAcquireDirection = direction;
     content.setAttribute("role", "button");
     content.tabIndex = 0;
     content.setAttribute("aria-label", "Expand unchanged lines");
-    acquisitionHunks.push(hunkIndex);
+    // Complete separators get this joined edge from Pierre's data-expand-index
+    // selector. Keep partial metadata truthful and reproduce only that styling.
+    content.style.borderTopLeftRadius = "0px";
+    content.style.borderBottomLeftRadius = "0px";
+    if (content.dataset.reinsAcquireButtonPrepared === undefined) {
+      content.dataset.reinsAcquireButtonPrepared = "";
+      content.before(createAcquisitionButton(content.ownerDocument, hunkIndex, direction));
+    }
   }
-  return acquisitionHunks;
+}
+
+function createAcquisitionButton(
+  document: Document,
+  hunkIndex: number,
+  direction: "down" | "both",
+): HTMLElement {
+  const button = document.createElement("div");
+  button.setAttribute("role", "button");
+  button.setAttribute("data-expand-button", "");
+  button.setAttribute(direction === "down" ? "data-expand-down" : "data-expand-both", "");
+  button.setAttribute(
+    "aria-label",
+    direction === "down" ? "Expand unchanged lines above" : "Expand unchanged lines",
+  );
+  button.dataset.reinsAcquireHunkIndex = `${hunkIndex}`;
+  button.dataset.reinsAcquireDirection = direction;
+  button.tabIndex = 0;
+
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("data-icon", "");
+  icon.setAttribute("width", "16");
+  icon.setAttribute("height", "16");
+  icon.setAttribute("viewBox", "0 0 16 16");
+  icon.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", direction === "both" ? "#diffs-icon-expand-all" : "#diffs-icon-expand");
+  icon.appendChild(use);
+  button.appendChild(icon);
+  return button;
 }
 
 function nextRenderedLineIndex(separator: HTMLElement): number {

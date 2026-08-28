@@ -84,7 +84,6 @@ export class ReviewDiffItem extends LitElement {
     (interaction) => this._requestAcquisition(interaction),
     (interaction, mutate) => this._preserveExpansionScroll(interaction, mutate),
     (regions) => this._retainNativeExpansion(regions),
-    () => this._contextControlRelevant(),
   );
   private _pendingExpansionAnchor: (ReviewFileExpansionInteraction & { operationId: string }) | null = null;
   private _activeExpansionOperationId: string | null = null;
@@ -204,11 +203,6 @@ export class ReviewDiffItem extends LitElement {
   private _reportTransitionHeight(bodyHeight: number, settled: boolean) {
     if (!this.item) return;
     this.dispatchEvent(reviewTransitionHeightEvent({ id: this.item.id, bodyHeight, settled }));
-  }
-
-  private _contextControlRelevant() {
-    if (!this.item || this.expansion?.outcome !== "idle") return;
-    this.dispatchEvent(reviewContextAcquireEvent(this.item.id));
   }
 
   private _requestAcquisition(interaction: ReviewFileExpansionInteraction) {
