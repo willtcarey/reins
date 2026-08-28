@@ -1,5 +1,5 @@
 import { DEFAULT_VIRTUAL_FILE_METRICS } from "@pierre/diffs";
-import type { ReviewItem } from "./review-items.js";
+import type { FileChange } from "./file-changes.js";
 
 const REVIEW_HEADER_HEIGHT = 37;
 const REVIEW_ITEM_GAP = 16;
@@ -7,20 +7,20 @@ const PIERRE_LINE_HEIGHT = DEFAULT_VIRTUAL_FILE_METRICS.lineHeight;
 const PIERRE_SPACING = DEFAULT_VIRTUAL_FILE_METRICS.spacing;
 const PIERRE_HUNK_SEPARATOR_HEIGHT = DEFAULT_VIRTUAL_FILE_METRICS.hunkSeparatorHeight ?? 32;
 
-export function reviewItemGap(index: number): number {
+export function fileChangeGap(index: number): number {
   return index === 0 ? 0 : REVIEW_ITEM_GAP;
 }
 
-export function estimateReviewItemHeight(
-  item: ReviewItem,
+export function estimateFileChangeHeight(
+  change: FileChange,
   collapsed: boolean,
   index: number,
 ): number {
-  const gap = reviewItemGap(index);
+  const gap = fileChangeGap(index);
   if (collapsed) return gap + REVIEW_HEADER_HEIGHT;
 
   let bodyHeight = PIERRE_SPACING;
-  for (const [hunkIndex, hunk] of item.fileDiff.hunks.entries()) {
+  for (const [hunkIndex, hunk] of change.fileDiff.hunks.entries()) {
     if (hunk.collapsedBefore > 0) {
       bodyHeight += PIERRE_HUNK_SEPARATOR_HEIGHT + PIERRE_SPACING;
       if (hunkIndex > 0) bodyHeight += PIERRE_SPACING;
@@ -28,12 +28,12 @@ export function estimateReviewItemHeight(
     bodyHeight += hunk.unifiedLineCount * PIERRE_LINE_HEIGHT;
     bodyHeight += unifiedMetadataRows(hunk) * PIERRE_LINE_HEIGHT;
   }
-  if (item.fileDiff.hunks.length > 0) bodyHeight += PIERRE_SPACING;
+  if (change.fileDiff.hunks.length > 0) bodyHeight += PIERRE_SPACING;
 
   return gap + REVIEW_HEADER_HEIGHT + bodyHeight;
 }
 
-type ReviewHunk = ReviewItem["fileDiff"]["hunks"][number];
+type ReviewHunk = FileChange["fileDiff"]["hunks"][number];
 
 function unifiedMetadataRows(hunk: ReviewHunk): number {
   if (!hunk.noEOFCRAdditions && !hunk.noEOFCRDeletions) return 0;

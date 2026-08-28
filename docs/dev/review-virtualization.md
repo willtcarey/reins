@@ -12,7 +12,7 @@ Each layer has one owner:
 - The generic `VirtualListCoordinator` owns estimated/measured geometry, bounded windows, semantic anchors, and offsets for unmounted IDs. Its item vocabulary is limited to IDs, estimated heights, measurement keys, and optional fixed heights.
 - The generic `VirtualListController` owns coordinator lifecycle, scroll-container and viewport synchronization, measurement microtask batching, post-render anchor correction, navigation and cancellation, render-frame scheduling, and scroll restoration. Its optional observation hook reports generic list behavior without importing review telemetry.
 - `ReviewDiffPanel` is the review adapter. It owns patch reconciliation and height estimates, maps collapse to fixed geometry, resolves paths to item IDs, maps generic observations to review active-file events and telemetry, and coordinates store refreshes.
-- Lit owns keyed mounting and removal of review item elements.
+- Lit owns keyed mounting and removal of file-change elements.
 - `ReviewDiffItem` owns stable height observation and the render-readiness contract for one mounted file. It emits a narrow item-ID-and-height event only after the measurement is stable.
 - `PierreRenderer` owns one Pierre instance and container generation for the mounted lifetime.
 - Pierre owns diff rows, native context-expansion regions, and worker-backed highlighting inside the current container. `ExpansionState` coordinates lazy acquisition and retains Pierre's opaque region snapshot across virtual remounts. `loadFileContents` acquires the complete resulting file, while the patch module reconstructs the old file from the retained Git patch. New/deleted files derive both sides from their complete one-sided patches. Partial metadata must remain marked partial when passed to Pierre; for hunks whose patch metadata reports `collapsedBefore > 0`, its existing full-width separator-content row is exposed immediately with a Pierre-styled acquisition button because Pierre suppresses its native buttons for partial metadata. Merely mounting those controls does not acquire content. The user's first click, Enter, or Space activation starts acquisition, is retained while loading, and is replayed after the exact patch is hydrated with truthful complete metadata.
@@ -29,7 +29,7 @@ Do not introduce another owner for top-level item positions or scroll correction
 
 ### Stable identity and reuse
 
-- Key mounted wrappers by stable review item ID.
+- Key mounted wrappers by stable file-change ID.
 - Files that remain in overlapping windows retain their component and renderer. Collapsing unmounts only the renderer; expansion rebuilds its target from the latest retained native context regions so the cached expanded height still matches the restored body.
 - A file that leaves the window may be destroyed; returning later creates a new mount generation.
 - Completion callbacks and item-owned resize observations from an old generation must not affect the current generation.

@@ -7,7 +7,7 @@ import {
   type ExpansionUnsupported,
   type FetchResponse,
 } from "./file-contents.js";
-import type { ReviewItem } from "./review-items.js";
+import type { FileChange } from "./file-changes.js";
 
 export type ExpansionStatus = "idle" | "loading" | "available" | "unsupported" | "error";
 
@@ -45,37 +45,37 @@ export class ExpansionState {
     return () => this.listeners.delete(listener);
   }
 
-  forItem(item: ReviewItem): ExpansionSnapshot {
-    return this.entryFor(item).snapshot;
+  forChange(change: FileChange): ExpansionSnapshot {
+    return this.entryFor(change).snapshot;
   }
 
   /** Concurrent first native interactions share one complete-content request. */
-  async acquire(item: ReviewItem): Promise<ExpansionSnapshot> {
-    const entry = this.entryFor(item);
+  async acquire(change: FileChange): Promise<ExpansionSnapshot> {
+    const entry = this.entryFor(change);
     if (entry.snapshot.outcome === "idle") {
       this.update(entry, { ...entry.snapshot, outcome: "loading" });
-      entry.request = this.load(item, entry);
+      entry.request = this.load(change, entry);
     }
     if (entry.request) await entry.request;
     return entry.snapshot;
   }
 
   /** Retain Pierre's own expansion state without deriving or mutating regions. */
-  retainNativeExpansion(item: ReviewItem, regions: ReadonlyMap<number, HunkExpansionRegion>): void {
-    const entry = this.entryFor(item);
+  retainNativeExpansion(change: FileChange, regions: ReadonlyMap<number, HunkExpansionRegion>): void {
+    const entry = this.entryFor(change);
     const nativeExpandedHunks = new Map<number, HunkExpansionRegion>();
     for (const [index, region] of regions) nativeExpandedHunks.set(index, { ...region });
     entry.snapshot = { ...entry.snapshot, nativeExpandedHunks };
   }
 
-  private entryFor(item: ReviewItem): ItemEntry {
-    const key = `${item.id}\0${item.contentKey}`;
+  private entryFor(change: FileChange): ItemEntry {
+    const key = `${change.id}\0${change.contentKey}`;
     let entry = this.entries.get(key);
     if (!entry) {
       entry = {
         snapshot: {
           outcome: "idle",
-          fileDiff: item.fileDiff,
+          fileDiff: change.fileDiff,
           oldFile: null,
           newFile: null,
           nativeExpandedHunks: new Map(),
@@ -89,10 +89,10 @@ export class ExpansionState {
     return entry;
   }
 
-  private async load(item: ReviewItem, entry: ItemEntry): Promise<void> {
+  private async load(change: FileChange, entry: ItemEntry): Promise<void> {
     try {
-      const files = await loadFileContents(item, this.scope, this.fetchResponse);
-      const fileDiff = buildFileDiff(item, files);
+      const files = await loadFileContents(change, this.scope, this.fetchResponse);
+      const fileDiff = buildFileDiff(change, files);
       this.update(entry, {
         ...entry.snapshot,
         outcome: "available",

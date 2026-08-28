@@ -1,29 +1,29 @@
 import { processFile, type FileDiffMetadata } from "@pierre/diffs";
 import type { FilePair } from "./file-contents.js";
-import type { ReviewItem } from "./review-items.js";
+import type { FileChange } from "./file-changes.js";
 
-export function buildFileDiff(item: ReviewItem, files: FilePair): FileDiffMetadata {
+export function buildFileDiff(change: FileChange, files: FilePair): FileDiffMetadata {
   const cacheKey = `${files.oldFile.cacheKey}:${files.newFile.cacheKey}`;
-  const reconstructed = processFile(item.filePatch, {
+  const reconstructed = processFile(change.filePatch, {
     ...files,
     cacheKey,
     throwOnError: true,
   });
   if (!reconstructed) throw new Error("Complete diff reconstruction failed");
-  if (!sameChangedLines(item.fileDiff, reconstructed)) {
+  if (!sameChangedLines(change.fileDiff, reconstructed)) {
     throw new Error("Complete contents no longer match the reviewed diff");
   }
   return {
     ...reconstructed,
-    name: item.fileDiff.name,
-    type: item.fileDiff.type,
+    name: change.fileDiff.name,
+    type: change.fileDiff.type,
     cacheKey,
-    ...(item.fileDiff.prevName ? { prevName: item.fileDiff.prevName } : {}),
-    ...(item.fileDiff.lang ? { lang: item.fileDiff.lang } : {}),
-    ...(item.fileDiff.newObjectId ? { newObjectId: item.fileDiff.newObjectId } : {}),
-    ...(item.fileDiff.prevObjectId ? { prevObjectId: item.fileDiff.prevObjectId } : {}),
-    ...(item.fileDiff.mode ? { mode: item.fileDiff.mode } : {}),
-    ...(item.fileDiff.prevMode ? { prevMode: item.fileDiff.prevMode } : {}),
+    ...(change.fileDiff.prevName ? { prevName: change.fileDiff.prevName } : {}),
+    ...(change.fileDiff.lang ? { lang: change.fileDiff.lang } : {}),
+    ...(change.fileDiff.newObjectId ? { newObjectId: change.fileDiff.newObjectId } : {}),
+    ...(change.fileDiff.prevObjectId ? { prevObjectId: change.fileDiff.prevObjectId } : {}),
+    ...(change.fileDiff.mode ? { mode: change.fileDiff.mode } : {}),
+    ...(change.fileDiff.prevMode ? { prevMode: change.fileDiff.prevMode } : {}),
   };
 }
 

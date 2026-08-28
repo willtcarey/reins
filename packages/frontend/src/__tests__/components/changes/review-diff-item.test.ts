@@ -3,7 +3,7 @@ import { PartType, type PartInfo } from "lit/directive.js";
 import { ReviewDiffItem } from "../../../components/changes/review-diff-item.js";
 import { SpringCollapseDirective } from "../../../directives/spring-collapse.js";
 import { ExpansionState } from "../../../models/changes/expansion-state.js";
-import { parseReviewItems } from "../../../models/changes/review-items.js";
+import { parseFileChanges } from "../../../models/changes/file-changes.js";
 import {
   collectTemplateEventListeners,
   collectTemplateValues,
@@ -76,14 +76,14 @@ describe("ReviewDiffItem", () => {
     }
     Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: TestResizeObserver });
 
-    const parsed = parseReviewItems(PATCH, "project-7-v1");
-    const reviewItem = parsed.items[0]!;
+    const parsed = parseFileChanges(PATCH, "project-7-v1");
+    const fileChange = parsed.changes[0]!;
     const item = new ReviewDiffItem();
     const article = new ReviewDiffItem();
     const container = new ReviewDiffItem();
     const pre = new ReviewDiffItem();
     let placeholder = true;
-    item.item = reviewItem;
+    item.change = fileChange;
     item.reservedHeight = 240;
     Object.defineProperty(article, "isConnected", { configurable: true, value: true });
     item.getBoundingClientRect = () => testRect(137);
@@ -120,15 +120,15 @@ describe("ReviewDiffItem", () => {
     notifyResize?.();
 
     expect(observed).toEqual([item]);
-    expect(measurements).toEqual([{ id: reviewItem.id, height: 137 }]);
+    expect(measurements).toEqual([{ id: fileChange.id, height: 137 }]);
     expect(renderOutput(item)).not.toContain("min-height:240px");
   });
 
   test("does not emit for stale completion after Lit removes the current structure", () => {
-    const parsed = parseReviewItems(PATCH, "project-7-v1");
-    const reviewItem = parsed.items[0]!;
+    const parsed = parseFileChanges(PATCH, "project-7-v1");
+    const fileChange = parsed.changes[0]!;
     const item = new ReviewDiffItem();
-    item.item = reviewItem;
+    item.change = fileChange;
     item.reservedHeight = 240;
     item.getBoundingClientRect = () => testRect(137);
     Object.defineProperty(item, "isConnected", { configurable: true, value: true });
@@ -146,10 +146,10 @@ describe("ReviewDiffItem", () => {
   });
 
   test("renders an accessible collapse control and hides only the diff body when collapsed", () => {
-    const parsed = parseReviewItems(PATCH, "project-7-v1");
-    const reviewItem = parsed.items[0]!;
+    const parsed = parseFileChanges(PATCH, "project-7-v1");
+    const fileChange = parsed.changes[0]!;
     const item = new ReviewDiffItem();
-    item.item = reviewItem;
+    item.change = fileChange;
     item.collapsed = true;
     const toggledIds: string[] = [];
     item.addEventListener("toggle-collapse", (event) => {
@@ -165,14 +165,14 @@ describe("ReviewDiffItem", () => {
     expect(output).toContain(`aria-expanded=false`);
     expect(output).toContain("src/example.ts");
     expect(output).not.toContain("<diffs-container data-pierre-file-diff");
-    expect(toggledIds).toEqual([reviewItem.id]);
+    expect(toggledIds).toEqual([fileChange.id]);
   });
 
   test("does not request complete content merely by rendering an expandable file", () => {
-    const reviewItem = parseReviewItems(EXPANDABLE_PATCH, "project-7-v1").items[0]!;
+    const fileChange = parseFileChanges(EXPANDABLE_PATCH, "project-7-v1").changes[0]!;
     const item = new ReviewDiffItem();
-    item.item = reviewItem;
-    item.expansion = new ExpansionState({ projectId: 7, mode: "branch" }).forItem(reviewItem);
+    item.change = fileChange;
+    item.expansion = new ExpansionState({ projectId: 7, mode: "branch" }).forChange(fileChange);
     const acquired: string[] = [];
     item.addEventListener("review-context-acquire", (event) => {
       if (event instanceof CustomEvent) acquired.push(event.detail.id);
@@ -184,11 +184,11 @@ describe("ReviewDiffItem", () => {
   });
 
   test("restores expanded context after the diff body unmounts for collapse", () => {
-    const reviewItem = parseReviewItems(EXPANDABLE_PATCH, "project-7-v1").items[0]!;
+    const fileChange = parseFileChanges(EXPANDABLE_PATCH, "project-7-v1").changes[0]!;
     const state = new ExpansionState({ projectId: 7, mode: "branch" });
     const item = new ReviewDiffItem();
-    item.item = reviewItem;
-    item.expansion = state.forItem(reviewItem);
+    item.change = fileChange;
+    item.expansion = state.forChange(fileChange);
     const rendered = item.render();
     const collapse = collectTemplateValues(rendered).find((value): value is DirectiveResult => (
       typeof value === "object"
@@ -201,34 +201,34 @@ describe("ReviewDiffItem", () => {
     const expandedRegions = new Map([[0, { fromStart: 0, fromEnd: 15 }]]);
     item.expansion = { ...item.expansion, nativeExpandedHunks: expandedRegions };
     collapse.values[2]?.onUnmount?.();
-    const remountedTarget = Reflect.get(item, "_diffTarget").call(item, reviewItem);
+    const remountedTarget = Reflect.get(item, "_diffTarget").call(item, fileChange);
 
     expect(remountedTarget.nativeExpandedHunks).toBe(expandedRegions);
   });
 
   test("retains a first-click intent while acquisition is loading", () => {
-    const reviewItem = parseReviewItems(EXPANDABLE_PATCH, "project-7-v1").items[0]!;
+    const fileChange = parseFileChanges(EXPANDABLE_PATCH, "project-7-v1").changes[0]!;
     const state = new ExpansionState({ projectId: 7, mode: "branch" });
     const item = new ReviewDiffItem();
     const interaction = {
       hunkIndex: 0, direction: "down" as const, anchorTop: 20, anchorLineNumber: 33,
     };
-    item.item = reviewItem;
-    item.expansion = { ...state.forItem(reviewItem), outcome: "loading" };
-    Reflect.get(item, "_diffTarget").call(item, reviewItem);
+    item.change = fileChange;
+    item.expansion = { ...state.forChange(fileChange), outcome: "loading" };
+    Reflect.get(item, "_diffTarget").call(item, fileChange);
 
     Reflect.get(item, "_requestAcquisition").call(item, interaction);
-    const completeFileDiff = { ...reviewItem.fileDiff, isPartial: false };
+    const completeFileDiff = { ...fileChange.fileDiff, isPartial: false };
     item.expansion = { ...item.expansion, outcome: "available", fileDiff: completeFileDiff };
-    const target = Reflect.get(item, "_diffTarget").call(item, reviewItem);
+    const target = Reflect.get(item, "_diffTarget").call(item, fileChange);
 
     expect(target.initialExpansion).toEqual(interaction);
   });
 
   test("preserves the item end when context expands before reviewed code", () => {
-    const reviewItem = parseReviewItems(PATCH, "project-7-v1").items[0]!;
+    const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
     const item = new ReviewDiffItem();
-    item.item = reviewItem;
+    item.change = fileChange;
     const preservations: unknown[] = [];
     item.addEventListener("review-preserve-scroll", (event) => {
       if (event instanceof CustomEvent) preservations.push(event.detail);
@@ -244,7 +244,7 @@ describe("ReviewDiffItem", () => {
     }, mutate);
 
     expect(preservations).toEqual([{
-      id: reviewItem.id,
+      id: fileChange.id,
       anchor: "item-end",
       mutate,
     }]);
@@ -252,9 +252,9 @@ describe("ReviewDiffItem", () => {
   });
 
   test("expands directly when new context is below reviewed code", () => {
-    const reviewItem = parseReviewItems(PATCH, "project-7-v1").items[0]!;
+    const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
     const item = new ReviewDiffItem();
-    item.item = reviewItem;
+    item.change = fileChange;
     const preservations: unknown[] = [];
     let mutations = 0;
     item.addEventListener("review-preserve-scroll", (event) => preservations.push(event));
@@ -271,12 +271,12 @@ describe("ReviewDiffItem", () => {
   });
 
   test("leaves expansion controls to Pierre and reports acquisition failure without replacing the diff", () => {
-    const reviewItem = parseReviewItems(PATCH, "project-7-v1").items[0]!;
+    const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
     const state = new ExpansionState({ projectId: 7, mode: "branch" });
     const item = new ReviewDiffItem();
-    item.item = reviewItem;
+    item.change = fileChange;
     item.expansion = {
-      ...state.forItem(reviewItem),
+      ...state.forChange(fileChange),
       outcome: "error",
       error: "offline",
     };
@@ -291,9 +291,9 @@ describe("ReviewDiffItem", () => {
   });
 
   test("exposes accessible status labels for each changed-file status", () => {
-    const parsed = parseReviewItems(PATCH, "project-7-v1");
+    const parsed = parseFileChanges(PATCH, "project-7-v1");
     const item = new ReviewDiffItem();
-    const reviewItem = parsed.items[0]!;
+    const fileChange = parsed.changes[0]!;
 
     for (const [status, label] of [
       ["change", "Modified file"],
@@ -302,7 +302,7 @@ describe("ReviewDiffItem", () => {
       ["rename-pure", "Renamed file"],
       ["rename-changed", "Renamed file"],
     ] as const) {
-      item.item = { ...reviewItem, status };
+      item.change = { ...fileChange, status };
       expect(templateToString(item.render())).toContain(`aria-label="${label}"`);
     }
   });

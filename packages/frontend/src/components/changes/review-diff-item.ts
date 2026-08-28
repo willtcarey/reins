@@ -5,7 +5,7 @@ import { springCollapse } from "../../directives/spring-collapse.js";
 import type {
   ExpansionSnapshot,
 } from "../../models/changes/expansion-state.js";
-import type { ReviewItem } from "../../models/changes/review-items.js";
+import type { FileChange } from "../../models/changes/file-changes.js";
 import { clientTelemetry } from "../../models/client-telemetry.js";
 import {
   reviewTransitionHeightEvent,
@@ -71,7 +71,7 @@ export class ReviewDiffItem extends LitElement {
     return this;
   }
 
-  @property({ attribute: false }) item: ReviewItem | null = null;
+  @property({ attribute: false }) change: FileChange | null = null;
   @property({ type: Boolean }) collapsed = false;
   @property({ type: Number, attribute: false }) projectId: number | null = null;
   @property({ attribute: false }) branch: string | null = null;
@@ -87,7 +87,7 @@ export class ReviewDiffItem extends LitElement {
   );
   private _pendingExpansionAnchor: (ReviewFileExpansionInteraction & { operationId: string }) | null = null;
   private _activeExpansionOperationId: string | null = null;
-  private _targetFileDiff: ReviewItem["fileDiff"] | null = null;
+  private _targetFileDiff: FileChange["fileDiff"] | null = null;
   private _target: ReviewFileDiffTarget | null = null;
   private _heightObserver: ResizeObserver | null = null;
   private _mountGeneration = 0;
@@ -129,16 +129,16 @@ export class ReviewDiffItem extends LitElement {
   }
 
   private _emitStableMeasurement(generation: number) {
-    const item = this.item;
-    if (!item || this.collapsed || generation !== this._mountGeneration) return;
+    const change = this.change;
+    if (!change || this.collapsed || generation !== this._mountGeneration) return;
     const readiness = this._measurementReadiness();
     const height = this.getBoundingClientRect().height || this.offsetHeight;
     this._recordMeasurementTelemetry(generation, height, readiness);
     if (!readiness.stable || height <= 0) return;
-    const signature = `${generation}:${item.id}:${item.contentKey}:${this.collapsed}:${height}`;
+    const signature = `${generation}:${change.id}:${change.contentKey}:${this.collapsed}:${height}`;
     if (signature === this._lastMeasurement) return;
     this._lastMeasurement = signature;
-    this.dispatchEvent(reviewItemMeasurementEvent({ id: item.id, height }));
+    this.dispatchEvent(reviewItemMeasurementEvent({ id: change.id, height }));
     this._activeExpansionOperationId = null;
   }
 
@@ -168,7 +168,7 @@ export class ReviewDiffItem extends LitElement {
   ) {
     if (!clientTelemetry.enabled) return;
     clientTelemetry.record("review-virtualizer", "item-measurement-candidate", {
-      itemId: this.item?.id ?? null,
+      itemId: this.change?.id ?? null,
       operationId: this._activeExpansionOperationId,
       measuredHeight: Math.round(height),
       reservedHeight: Math.round(this.reservedHeight),
@@ -196,17 +196,17 @@ export class ReviewDiffItem extends LitElement {
   }
 
   private _toggleCollapsed() {
-    if (!this.item) return;
-    this.dispatchEvent(toggleCollapseEvent(this.item.id));
+    if (!this.change) return;
+    this.dispatchEvent(toggleCollapseEvent(this.change.id));
   }
 
   private _reportTransitionHeight(bodyHeight: number, settled: boolean) {
-    if (!this.item) return;
-    this.dispatchEvent(reviewTransitionHeightEvent({ id: this.item.id, bodyHeight, settled }));
+    if (!this.change) return;
+    this.dispatchEvent(reviewTransitionHeightEvent({ id: this.change.id, bodyHeight, settled }));
   }
 
   private _requestAcquisition(interaction: ReviewFileExpansionInteraction) {
-    if (!this.item) return;
+    if (!this.change) return;
     const outcome = this.expansion?.outcome;
     if (outcome !== "idle" && outcome !== "loading") return;
     this._rememberExpansionAnchor(interaction, "acquisition");
@@ -214,7 +214,7 @@ export class ReviewDiffItem extends LitElement {
       outcome,
       willRequest: outcome === "idle",
     });
-    if (outcome === "idle") this.dispatchEvent(reviewContextAcquireEvent(this.item.id));
+    if (outcome === "idle") this.dispatchEvent(reviewContextAcquireEvent(this.change.id));
   }
 
   private _rememberExpansionAnchor(
@@ -235,8 +235,8 @@ export class ReviewDiffItem extends LitElement {
     const scroll = this._reviewScrollContainer();
     operation.record("interaction-captured", {
       source,
-      itemId: this.item?.id ?? null,
-      path: this.item?.path ?? null,
+      itemId: this.change?.id ?? null,
+      path: this.change?.path ?? null,
       hunkIndex: interaction.hunkIndex,
       direction: interaction.direction,
       requestedLineCount: interaction.lineCount === Number.POSITIVE_INFINITY
@@ -255,15 +255,15 @@ export class ReviewDiffItem extends LitElement {
   }
 
   private _retainNativeExpansion(regions: ReadonlyMap<number, { fromStart: number; fromEnd: number }>) {
-    if (!this.item || regions.size === 0) return;
-    this.dispatchEvent(reviewContextStateEvent({ id: this.item.id, regions }));
+    if (!this.change || regions.size === 0) return;
+    this.dispatchEvent(reviewContextStateEvent({ id: this.change.id, regions }));
   }
 
   private _preserveExpansionScroll(
     interaction: ReviewFileExpansionInteraction,
     mutate: () => void,
   ) {
-    if (!this.item) {
+    if (!this.change) {
       mutate();
       return;
     }
@@ -277,7 +277,7 @@ export class ReviewDiffItem extends LitElement {
     const anchor = interaction.direction === "down"
       ? "item-end" as const
       : () => this._expansionAnchorTop(interaction);
-    this.dispatchEvent(reviewPreserveScrollEvent({ id: this.item.id, anchor, mutate }));
+    this.dispatchEvent(reviewPreserveScrollEvent({ id: this.change.id, anchor, mutate }));
     this._pendingExpansionAnchor = null;
   }
 
@@ -304,7 +304,7 @@ export class ReviewDiffItem extends LitElement {
     clientTelemetry.record("review-expansion", event, {
       ...attributes,
       operationId,
-      itemId: this.item?.id ?? null,
+      itemId: this.change?.id ?? null,
     });
   }
 
@@ -316,8 +316,8 @@ export class ReviewDiffItem extends LitElement {
     this._target = null;
   }
 
-  private _diffTarget(item: ReviewItem): ReviewFileDiffTarget {
-    const fileDiff = this.expansion?.fileDiff ?? item.fileDiff;
+  private _diffTarget(change: FileChange): ReviewFileDiffTarget {
+    const fileDiff = this.expansion?.fileDiff ?? change.fileDiff;
     if (fileDiff !== this._targetFileDiff) {
       this._targetFileDiff = fileDiff;
       this._target = {
@@ -343,10 +343,10 @@ export class ReviewDiffItem extends LitElement {
   }
 
   override render() {
-    const item = this.item;
-    if (!item) return nothing;
+    const change = this.change;
+    if (!change) return nothing;
 
-    const diffTarget = this._diffTarget(item);
+    const diffTarget = this._diffTarget(change);
     const diffBinding = this._diff.bind(diffTarget);
     const pendingHeight = !this.collapsed && !this.diffRendered && this.reservedHeight > 0
       ? `min-height:${this.reservedHeight}px`
@@ -358,38 +358,38 @@ export class ReviewDiffItem extends LitElement {
           <button
             type="button"
             class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded font-mono text-[10px] text-zinc-500 hover:bg-zinc-700/60 hover:text-zinc-200"
-            aria-label=${`${this.collapsed ? "Expand" : "Collapse"} ${item.path}`}
+            aria-label=${`${this.collapsed ? "Expand" : "Collapse"} ${change.path}`}
             aria-expanded=${String(!this.collapsed)}
             @click=${this._toggleCollapsed}
           >
             <span aria-hidden="true">${this.collapsed ? "▶" : "▼"}</span>
           </button>
-          ${renderStatusIcon(item.status)}
-          ${item.oldPath && item.oldPath !== item.path
+          ${renderStatusIcon(change.status)}
+          ${change.oldPath && change.oldPath !== change.path
             ? html`
-                <span class="reins-diff-path min-w-0 truncate font-mono text-sm text-zinc-500" title=${item.oldPath}>
-                  <bdi>${item.oldPath}</bdi>
+                <span class="reins-diff-path min-w-0 truncate font-mono text-sm text-zinc-500" title=${change.oldPath}>
+                  <bdi>${change.oldPath}</bdi>
                 </span>
                 <span class="shrink-0 text-xs text-zinc-500" aria-hidden="true">→</span>
               `
             : nothing}
-          <span class="reins-diff-path min-w-0 flex-1 truncate font-mono text-sm text-zinc-200" title=${item.path}>
-            <bdi>${item.path}</bdi>
+          <span class="reins-diff-path min-w-0 flex-1 truncate font-mono text-sm text-zinc-200" title=${change.path}>
+            <bdi>${change.path}</bdi>
           </span>
-          ${item.additions > 0 || item.removals > 0
+          ${change.additions > 0 || change.removals > 0
             ? html`
                 <span class="flex shrink-0 items-center gap-2 font-mono text-xs">
-                  ${item.additions > 0 ? html`<span class="text-green-400">+${item.additions}</span>` : nothing}
-                  ${item.removals > 0 ? html`<span class="text-red-400">-${item.removals}</span>` : nothing}
+                  ${change.additions > 0 ? html`<span class="text-green-400">+${change.additions}</span>` : nothing}
+                  ${change.removals > 0 ? html`<span class="text-red-400">-${change.removals}</span>` : nothing}
                 </span>
               `
             : nothing}
           <span class="flex shrink-0 items-center gap-1">
-            <diff-view-file-button .path=${item.path} variant="header"></diff-view-file-button>
-            <diff-copy-path-button .path=${item.path} variant="header"></diff-copy-path-button>
+            <diff-view-file-button .path=${change.path} variant="header"></diff-view-file-button>
+            <diff-copy-path-button .path=${change.path} variant="header"></diff-copy-path-button>
             <diff-download-file-button
-              .path=${item.path}
-              .href=${this._fileUrl(item.path)}
+              .path=${change.path}
+              .href=${this._fileUrl(change.path)}
               variant="header"
             ></diff-download-file-button>
           </span>

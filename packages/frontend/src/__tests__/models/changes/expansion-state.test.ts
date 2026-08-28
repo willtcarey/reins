@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseReviewItems } from "../../../models/changes/review-items.js";
+import { parseFileChanges } from "../../../models/changes/file-changes.js";
 import { ExpansionState } from "../../../models/changes/expansion-state.js";
 
 const PATCH = `diff --git a/src/old.ts b/src/new.ts
@@ -14,8 +14,8 @@ index 1111111..2222222 100644
 +new changed
 `;
 
-function reviewItem(patch = PATCH) {
-  return parseReviewItems(patch, "snapshot").items[0]!;
+function fileChange(patch = PATCH) {
+  return parseFileChanges(patch, "snapshot").changes[0]!;
 }
 
 function textResponse(contents: string, headers: Record<string, string> = {}): Response {
@@ -29,7 +29,7 @@ function textResponse(contents: string, headers: Record<string, string> = {}): R
 }
 
 describe("ExpansionState", () => {
-  test("does not fetch merely because an offscreen item has persistent expansion state", () => {
+  test("does not fetch merely because an offscreen change has persistent expansion state", () => {
     let requests = 0;
     const state = new ExpansionState(
       { projectId: 7, mode: "branch" },
@@ -39,7 +39,7 @@ describe("ExpansionState", () => {
       },
     );
 
-    expect(state.forItem(reviewItem()).outcome).toBe("idle");
+    expect(state.forChange(fileChange()).outcome).toBe("idle");
     expect(requests).toBe(0);
   });
 
@@ -54,11 +54,11 @@ describe("ExpansionState", () => {
         return pending;
       },
     );
-    const item = reviewItem();
+    const change = fileChange();
 
-    const first = state.acquire(item);
-    const second = state.acquire(item);
-    expect(state.forItem(item).outcome).toBe("loading");
+    const first = state.acquire(change);
+    const second = state.acquire(change);
+    expect(state.forChange(change).outcome).toBe("loading");
     expect(requests).toEqual([
       "/api/projects/7/files/content?path=src%2Fnew.ts&ref=feature%2Freview",
     ]);
@@ -66,7 +66,7 @@ describe("ExpansionState", () => {
     resolveRequest(textResponse("before\nnew changed\nafter\n"));
     await Promise.all([first, second]);
 
-    const acquired = state.forItem(item);
+    const acquired = state.forChange(change);
     expect(acquired).toMatchObject({
       outcome: "available",
       oldFile: { name: "src/old.ts", contents: "before\nold changed\nafter\n" },
@@ -78,10 +78,10 @@ describe("ExpansionState", () => {
         isPartial: false,
       },
     });
-    expect(acquired.fileDiff).not.toBe(item.fileDiff);
+    expect(acquired.fileDiff).not.toBe(change.fileDiff);
     expect(acquired.nativeExpandedHunks.size).toBe(0);
 
-    await state.acquire(reviewItem());
+    await state.acquire(fileChange());
     expect(requests).toHaveLength(1);
   });
 
@@ -95,22 +95,22 @@ describe("ExpansionState", () => {
       },
     );
 
-    await state.acquire(reviewItem());
+    await state.acquire(fileChange());
 
     expect(requests).toEqual(["/api/projects/7/files/content?path=src%2Fnew.ts"]);
-    expect(state.forItem(reviewItem()).outcome).toBe("available");
+    expect(state.forChange(fileChange()).outcome).toBe("available");
   });
 
   test("retains only expansion state reported by Pierre for virtual remount restoration", () => {
     const state = new ExpansionState({ projectId: 7, mode: "branch" });
-    const item = reviewItem();
+    const change = fileChange();
     const pierreState = new Map([[0, { fromStart: 15, fromEnd: 5 }]]);
 
-    state.retainNativeExpansion(item, pierreState);
+    state.retainNativeExpansion(change, pierreState);
 
-    expect(state.forItem(item).nativeExpandedHunks).toEqual(pierreState);
+    expect(state.forChange(change).nativeExpandedHunks).toEqual(pierreState);
     pierreState.get(0)!.fromStart = 999;
-    expect(state.forItem(item).nativeExpandedHunks.get(0)).toEqual({ fromStart: 15, fromEnd: 5 });
+    expect(state.forChange(change).nativeExpandedHunks.get(0)).toEqual({ fromStart: 15, fromEnd: 5 });
   });
 
   test("keeps the partial diff stable for binary, too-large, stale, and retrieval failures", async () => {
@@ -120,7 +120,7 @@ describe("ExpansionState", () => {
       textResponse("stale new\n"),
       new Error("offline"),
     ];
-    const item = reviewItem();
+    const change = fileChange();
 
     for (const result of outcomes) {
       const state = new ExpansionState(
@@ -130,10 +130,10 @@ describe("ExpansionState", () => {
           return result;
         },
       );
-      await state.acquire(item);
-      const snapshot = state.forItem(item);
+      await state.acquire(change);
+      const snapshot = state.forChange(change);
 
-      expect(snapshot.fileDiff).toBe(item.fileDiff);
+      expect(snapshot.fileDiff).toBe(change.fileDiff);
       expect(snapshot.nativeExpandedHunks.size).toBe(0);
       expect(["unsupported", "error"]).toContain(snapshot.outcome);
     }
@@ -156,23 +156,23 @@ describe("ExpansionState", () => {
         { projectId: 7, mode: "branch" },
         async () => response,
       );
-      const item = reviewItem();
-      await state.acquire(item);
+      const change = fileChange();
+      await state.acquire(change);
 
-      expect(state.forItem(item)).toMatchObject({ outcome: "unsupported", unsupported: expected[index] });
-      expect(state.forItem(item).fileDiff).toBe(item.fileDiff);
+      expect(state.forChange(change)).toMatchObject({ outcome: "unsupported", unsupported: expected[index] });
+      expect(state.forChange(change).fileDiff).toBe(change.fileDiff);
     }
   });
 
   test("derives complete new and deleted files from their patches without fetching", async () => {
-    const newItem = reviewItem(`diff --git a/new.txt b/new.txt
+    const newItem = fileChange(`diff --git a/new.txt b/new.txt
 new file mode 100644
 --- /dev/null
 +++ b/new.txt
 @@ -0,0 +1 @@
 +hello
 `);
-    const deletedItem = reviewItem(`diff --git a/gone.txt b/gone.txt
+    const deletedItem = fileChange(`diff --git a/gone.txt b/gone.txt
 deleted file mode 100644
 --- a/gone.txt
 +++ /dev/null
@@ -192,13 +192,13 @@ deleted file mode 100644
     await state.acquire(deletedItem);
 
     expect(requests).toBe(0);
-    expect(state.forItem(newItem)).toMatchObject({
+    expect(state.forChange(newItem)).toMatchObject({
       outcome: "available",
       oldFile: { name: "new.txt", contents: "" },
       newFile: { name: "new.txt", contents: "hello\n" },
       fileDiff: { name: "new.txt", type: "new", isPartial: false },
     });
-    expect(state.forItem(deletedItem)).toMatchObject({
+    expect(state.forChange(deletedItem)).toMatchObject({
       outcome: "available",
       oldFile: { name: "gone.txt", contents: "goodbye\n" },
       newFile: { name: "gone.txt", contents: "" },

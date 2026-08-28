@@ -1,5 +1,5 @@
 import type { FileContents } from "@pierre/diffs";
-import type { ReviewItem } from "./review-items.js";
+import type { FileChange } from "./file-changes.js";
 import { extractFile, reversePatch } from "./patch.js";
 
 const SIZE_LIMIT = 1_048_576;
@@ -34,30 +34,30 @@ export class UnsupportedFileContents extends Error {
 }
 
 export async function loadFileContents(
-  item: ReviewItem,
+  change: FileChange,
   scope: ExpansionScope,
   fetchResponse: FetchResponse,
 ): Promise<FilePair> {
-  const oldName = item.oldPath ?? item.path;
-  const oldKey = `review-expansion:${item.contentKey}:old`;
-  const newKey = `review-expansion:${item.contentKey}:new`;
+  const oldName = change.oldPath ?? change.path;
+  const oldKey = `review-expansion:${change.contentKey}:old`;
+  const newKey = `review-expansion:${change.contentKey}:new`;
 
-  if (item.status === "new" || item.status === "deleted") {
+  if (change.status === "new" || change.status === "deleted") {
     return {
-      oldFile: { name: oldName, contents: extractFile(item.filePatch, "old"), cacheKey: oldKey },
-      newFile: { name: item.path, contents: extractFile(item.filePatch, "new"), cacheKey: newKey },
+      oldFile: { name: oldName, contents: extractFile(change.filePatch, "old"), cacheKey: oldKey },
+      newFile: { name: change.path, contents: extractFile(change.filePatch, "new"), cacheKey: newKey },
     };
   }
 
-  const params = new URLSearchParams({ path: item.path });
+  const params = new URLSearchParams({ path: change.path });
   if (scope.branch) params.set("ref", scope.branch);
   const response = await fetchResponse(`/api/projects/${scope.projectId}/files/content?${params}`);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const newContents = await readText(response);
-  const oldContents = reversePatch(item.filePatch, newContents);
+  const oldContents = reversePatch(change.filePatch, newContents);
   return {
     oldFile: { name: oldName, contents: oldContents, cacheKey: oldKey },
-    newFile: { name: item.path, contents: newContents, cacheKey: newKey },
+    newFile: { name: change.path, contents: newContents, cacheKey: newKey },
   };
 }
 

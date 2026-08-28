@@ -340,7 +340,7 @@ The diff/changes feature spans both `models/changes/` (pure logic) and `componen
 - `highlighter.ts` — Pure-function interface to the Shiki Web Worker: text lines in, HTML lines out via callback. Exports `IHighlighter` for test fakes.
 - `highlight-worker.ts` — Web Worker for off-main-thread Shiki highlighting
 - `pierre-diffs-worker.ts` / `pierre-worker-pool.ts` — Shared `@pierre/diffs` worker entry plus sizing/highlighter setup for Pierre-backed source and diff renderers.
-- `review-items.ts` — Parses raw patches into stable Reins-owned review item identities, Pierre cache keys, and path-to-item navigation records.
+- `file-changes.ts` — Parses raw patches into stable file-change identities, Pierre cache keys, and path-to-change navigation records.
 - `review-virtual-layout.ts` — Review-specific initial and collapsed height estimation for Pierre-backed review records.
 - `models/virtual-list-coordinator.ts` — Generic persistent virtual-list geometry: estimated/measured and optional fixed heights, balanced bounded overscan, semantic anchors, active-item lookup, and offsets for unmounted IDs. `VirtualListController` owns its lifecycle and DOM synchronization; follow [review-virtualization.md](review-virtualization.md).
 - `review-collapse-state.ts` — Encapsulates reviewed-content persistence behind `ReviewCollapseState`; production uses local storage, while tests inject the narrow storage interface. It restores matching collapse state and invalidates changed content.
