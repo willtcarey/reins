@@ -12,6 +12,7 @@
 import type { DiffFile, DiffFileSummary, DiffHunk, DiffLine } from "../changes/types.js";
 import { sortDiffFiles, sortFileSummaries } from "../changes/diff-sort.js";
 import { Loadable, type Loadable as LoadableState } from "../../helpers/loadable.js";
+import { beginDiffBenchmark, endDiffBenchmark } from "../changes/diff-benchmark-instrumentation.js";
 
 const DEFAULT_CONTEXT = 3;
 const EXPAND_STEP = 15;
@@ -499,7 +500,12 @@ export class DiffStore {
         this.notify();
         return;
       }
+      const nextVersion = this.fullDiffVersion + 1;
+      beginDiffBenchmark("classic", "payload-decode", nextVersion);
+      beginDiffBenchmark("classic", "parse", nextVersion);
       const json = await resp.json();
+      endDiffBenchmark("classic", "parse", nextVersion);
+      endDiffBenchmark("classic", "payload-decode", nextVersion);
       const files = sortDiffFiles(json.files ?? []);
       this.fullData = this.fullData.asLoaded({
         files,
@@ -545,9 +551,13 @@ export class DiffStore {
         return;
       }
 
-      const patch = await resp.text();
-      if (requestGeneration !== this._patchRequestGeneration) return;
       const version = this._patchDiffVersion + 1;
+      beginDiffBenchmark("codeview", "payload-decode", version);
+      beginDiffBenchmark("virtualized", "payload-decode", version);
+      const patch = await resp.text();
+      endDiffBenchmark("codeview", "payload-decode", version);
+      endDiffBenchmark("virtualized", "payload-decode", version);
+      if (requestGeneration !== this._patchRequestGeneration) return;
       this._patchDiffVersion = version;
       this.patchData = this.patchData.asLoaded({
         patch,

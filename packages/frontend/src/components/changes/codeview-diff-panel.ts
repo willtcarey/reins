@@ -4,6 +4,11 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
 import { compareFilePaths } from "../../models/changes/diff-sort.js";
 import { getPierreWorkerPool } from "../../models/changes/pierre-worker-pool.js";
+import {
+  beginDiffBenchmark,
+  endDiffBenchmark,
+  measureDiffBenchmark,
+} from "../../models/changes/diff-benchmark-instrumentation.js";
 import { activeFileChangeEvent } from "../events.js";
 import { spinnerIcon } from "../icons.js";
 import type { DiffCopyPathButton, DiffDownloadFileButton, DiffViewFileButton } from "./diff-file-action-buttons.js";
@@ -162,6 +167,7 @@ export class CodeViewDiffPanel extends LitElement {
   private _parsedPatchData: CodeViewDiffData | null = null;
   private _syncedCodeViewData: CodeViewDiffData | null = null;
   private _codeViewItemVersion = 0;
+  private _benchmarkRenderVersion = 0;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -177,11 +183,19 @@ export class CodeViewDiffPanel extends LitElement {
     if (changed.has("visible") && this.visible) {
       this._fetchFresh();
     }
+    const version = this.store?.patchData.data?.version ?? 0;
+    if (version > 0 && version !== this._benchmarkRenderVersion) {
+      this._benchmarkRenderVersion = version;
+      beginDiffBenchmark("codeview", "render", version);
+    }
   }
 
   override updated() {
     this._syncCodeView();
     this._syncPendingScroll();
+    if (this._benchmarkRenderVersion > 0) {
+      endDiffBenchmark("codeview", "render", this._benchmarkRenderVersion);
+    }
   }
 
   override disconnectedCallback() {
@@ -353,10 +367,12 @@ export class CodeViewDiffPanel extends LitElement {
     }
     if (this._parsedPatchSource === source) return this._parsedPatchData;
 
-    const parsed = parseCodeViewDiffPatch(source.patch, {
-      cacheKeyPrefix: source.cacheKeyPrefix,
-      itemVersion: source.version,
-    });
+    const parsed = measureDiffBenchmark("codeview", "parse", source.version, () => (
+      parseCodeViewDiffPatch(source.patch, {
+        cacheKeyPrefix: source.cacheKeyPrefix,
+        itemVersion: source.version,
+      })
+    ));
     this._parsedPatchSource = source;
     this._codeViewItemVersion = source.version;
     this._parsedPatchData = {
@@ -436,7 +452,7 @@ export class CodeViewDiffPanel extends LitElement {
               Loading CodeView diff…
             </div>
           ` : items.length > 0
-            ? html`<div class="flex-1 min-h-0 overflow-y-auto bg-zinc-950" data-pierre-code-view></div>`
+            ? html`<div class="flex-1 min-h-0 overflow-y-auto bg-zinc-950" data-diff-scroll-surface data-pierre-code-view></div>`
             : html`<div class="flex-1 flex items-center justify-center text-zinc-500 text-sm p-4">No changes yet</div>`
           }
         </div>

@@ -72,10 +72,11 @@ This is the working implementation list. It is ordered from smallest functional 
    - Report retrieval, reconstruction, binary, and size failures beside the unchanged diff without replacing it.
    - Prefetching remains deliberately deferred.
 
-9. [ ] **Measure and compare.**
-   - Compare `classic`, `codeview`, and the Reins-owned virtual path.
-   - Capture time to first visible diff, mounted item/container count, total DOM nodes, scroll responsiveness, memory growth, and expansion latency.
-   - Only after this pass decide whether streaming/chunking is still worth implementing.
+9. [x] **Measure and compare.**
+   - Compared `classic`, `codeview`, and the Reins-owned virtual path across small, 300-file, and 25,000-line fixtures in desktop/mobile-sized and normal/4× CPU-throttled Chromium profiles.
+   - Captured API/body size, first-visible, development parse/setup marks, wrappers/DOM, heap, trace work/long tasks, controlled scroll, context expansion, and fixed post-visible idle work over five runs per scenario.
+   - Results and limitations are in [`docs/benchmarks/diff-renderers.md`](../benchmarks/diff-renderers.md), with raw machine-readable output in [`diff-renderers-results.json`](../benchmarks/diff-renderers-results.json).
+   - The API was a small part of measured first-visible latency, so these results do not justify prioritizing streaming/chunking. Virtualized led many/large first-visible and bounded mounting, while its aggressive many-file scroll proxy and deferred large-file work require focused follow-up rather than assumption-driven redesign.
 
 10. [ ] **Optionally add streaming/chunking later.**
     - If full-patch fetch/parse is a bottleneck, frame complete file patches from the raw stream and append item records in batches.
@@ -179,6 +180,8 @@ raw patch stream
 | Streaming | Deferred | Optional later optimization |
 
 ## Testing and measurement
+
+The repeatable benchmark and 2026-08-29 results are documented in [`docs/benchmarks/diff-renderers.md`](../benchmarks/diff-renderers.md); machine-readable runs and medians/ranges are in [`docs/benchmarks/diff-renderers-results.json`](../benchmarks/diff-renderers-results.json).
 
 Follow red/green/refactor for implementation work.
 

@@ -19,6 +19,7 @@ import {
   type ExpansionScrollSnapshot,
 } from "../../models/changes/diff-utils.js";
 import { ScrollSpy } from "../../models/changes/scroll-spy.js";
+import { beginDiffBenchmark, endDiffBenchmark } from "../../models/changes/diff-benchmark-instrumentation.js";
 import { activeFileChangeEvent, type ExpandDetail } from "../events.js";
 import { branchIcon, spinnerIcon } from "../icons.js";
 import "./diff-file-card.js";
@@ -52,6 +53,7 @@ export class DiffPanel extends LitElement {
   private _pendingScrollTarget: string | null = null;
 
   private _unsubscribe: (() => void) | null = null;
+  private _benchmarkRenderVersion = 0;
 
   private scrollSpy = new ScrollSpy({
     containerSelector: "[data-diff-scroll]",
@@ -75,10 +77,18 @@ export class DiffPanel extends LitElement {
         this._fetchFresh();
       }
     }
+    const version = this.store?.fullDiffVersion ?? 0;
+    if (version > 0 && version !== this._benchmarkRenderVersion) {
+      this._benchmarkRenderVersion = version;
+      beginDiffBenchmark("classic", "render", version);
+    }
   }
 
   override updated() {
     this.scrollSpy.update(this);
+    if (this._benchmarkRenderVersion > 0) {
+      endDiffBenchmark("classic", "render", this._benchmarkRenderVersion);
+    }
   }
 
   override disconnectedCallback() {
@@ -287,6 +297,7 @@ export class DiffPanel extends LitElement {
   private renderFile(file: DiffFile) {
     return html`
       <diff-file-card
+        data-diff-file-wrapper
         .file=${file}
         .expandingHunks=${this.expandingHunks}
         .projectId=${this.store?.projectId ?? null}
@@ -335,7 +346,7 @@ export class DiffPanel extends LitElement {
           ` : nothing}
 
           <!-- Scrollable diff list -->
-          <div class="flex-1 overflow-y-auto" data-diff-scroll
+          <div class="flex-1 overflow-y-auto" data-diff-scroll data-diff-scroll-surface
             @expand-up=${this._onExpandUp}
             @expand-down=${this._onExpandDown}
           >

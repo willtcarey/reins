@@ -23,6 +23,11 @@ import {
   fileChangeGap,
 } from "../../models/changes/review-virtual-layout.js";
 import {
+  beginDiffBenchmark,
+  endDiffBenchmark,
+  measureDiffBenchmark,
+} from "../../models/changes/diff-benchmark-instrumentation.js";
+import {
   clientTelemetry,
   type ClientTelemetryOperation,
 } from "../../models/client-telemetry.js";
@@ -81,6 +86,7 @@ export class ReviewDiffPanel extends LitElement {
   private _contextState: FileDiffContextState | null = null;
   private _contextScopeKey = "";
   private _transitionHeights = new Map<string, number>();
+  private _benchmarkRenderVersion = 0;
   private readonly _expandFileContext = (
     change: FileChange,
     interaction: ReviewFileExpansionInteraction,
@@ -114,6 +120,11 @@ export class ReviewDiffPanel extends LitElement {
     if (changed.has("visible")) this._virtualList.setVisible(this.visible);
     this._reconcilePatchData();
     if (this.visible && (storeChanged || changed.has("visible"))) this._fetchFresh();
+    const version = this.store?.patchData.data?.version ?? 0;
+    if (version > 0 && version !== this._benchmarkRenderVersion) {
+      this._benchmarkRenderVersion = version;
+      beginDiffBenchmark("virtualized", "render", version);
+    }
   }
 
   override updated() {
@@ -121,6 +132,9 @@ export class ReviewDiffPanel extends LitElement {
     const activeId = this._virtualList.window().activeId;
     if (activeId) this.reportActiveItem(activeId);
     this._syncPendingScroll();
+    if (this._benchmarkRenderVersion > 0) {
+      endDiffBenchmark("virtualized", "render", this._benchmarkRenderVersion);
+    }
   }
 
   override disconnectedCallback() {
@@ -226,7 +240,9 @@ export class ReviewDiffPanel extends LitElement {
     this._parsedSource = source;
     this._parsedData = reconcileFileChanges(
       this._parsedData,
-      parseFileChanges(source.patch, source.cacheKeyPrefix),
+      measureDiffBenchmark("virtualized", "parse", source.version, () => (
+        parseFileChanges(source.patch, source.cacheKeyPrefix)
+      )),
     );
     if (this._activeItemId && !this._parsedData.changes.some((change) => change.id === this._activeItemId)) {
       this._activeItemId = null;
@@ -441,7 +457,7 @@ export class ReviewDiffPanel extends LitElement {
             </span>
           </div>
         ` : nothing}
-        <div class="min-h-0 flex-1 overflow-y-auto" data-review-scroll>
+        <div class="min-h-0 flex-1 overflow-y-auto" data-diff-scroll-surface data-review-scroll>
           ${loading
             ? html`<div class="flex h-full items-center justify-center p-4 text-sm text-zinc-500">Loading Reins diff…</div>`
             : data?.parseError
@@ -458,6 +474,7 @@ export class ReviewDiffPanel extends LitElement {
                         return html`
                           <review-file-diff
                             style=${`position:absolute;top:${entry.top}px;left:0;right:0`}
+                            data-diff-file-wrapper
                             data-review-item-id=${change.id}
                             data-file-path=${change.path}
                             ?data-review-first=${change === changes[0]}
