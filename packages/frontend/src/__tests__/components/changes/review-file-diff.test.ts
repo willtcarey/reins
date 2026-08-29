@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { PartType, type PartInfo } from "lit/directive.js";
 import { ReviewFileDiff } from "../../../components/changes/review-file-diff.js";
 import { SpringCollapseDirective } from "../../../directives/spring-collapse.js";
@@ -56,54 +56,15 @@ index 1111111..2222222 100644
 const EXPANDABLE_PATCH = PATCH.replace("@@ -1 +1 @@", "@@ -33 +33 @@");
 
 describe("ReviewFileDiff", () => {
-  const resizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
-
-  afterEach(() => {
-    if (resizeObserverDescriptor) Object.defineProperty(globalThis, "ResizeObserver", resizeObserverDescriptor);
-    else Reflect.deleteProperty(globalThis, "ResizeObserver");
-  });
-
-  test("observes its own height and emits only a narrow stable measurement", () => {
-    let notifyResize: (() => void) | undefined;
-    const observed: Element[] = [];
-    class TestResizeObserver {
-      constructor(callback: ResizeObserverCallback) {
-        notifyResize = () => callback([], this);
-      }
-      observe(target: Element) { observed.push(target); }
-      unobserve() {}
-      disconnect() {}
-    }
-    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: TestResizeObserver });
-
-    const parsed = parseFileChanges(PATCH, "project-7-v1");
-    const fileChange = parsed.changes[0]!;
+  test("measures its host after the current Pierre render completes", () => {
+    const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
     const item = new ReviewFileDiff();
-    const article = new ReviewFileDiff();
     const container = new ReviewFileDiff();
-    const pre = new ReviewFileDiff();
-    let placeholder = true;
     item.change = fileChange;
     item.reservedHeight = 240;
-    Object.defineProperty(article, "isConnected", { configurable: true, value: true });
     item.getBoundingClientRect = () => testRect(137);
+    item.querySelector = () => { throw new Error("ReviewFileDiff must not inspect rendered DOM"); };
     Object.defineProperty(item, "isConnected", { configurable: true, value: true });
-    Object.defineProperty(container, "shadowRoot", {
-      configurable: true,
-      value: {
-        querySelector: (selector: string) => {
-          if (selector === "pre") return pre;
-          if (selector === "[data-placeholder]") return placeholder ? pre : null;
-          return null;
-        },
-      },
-    });
-    const querySelector: typeof item.querySelector = (selector: string) => {
-      if (selector === "article") return article;
-      if (selector === "[data-pierre-file-diff]") return container;
-      return null;
-    };
-    item.querySelector = querySelector;
     const renderer: object = Reflect.get(item, "_diff");
     item.render();
     const requested = Reflect.get(renderer, "requested");
@@ -113,13 +74,7 @@ describe("ReviewFileDiff", () => {
     item.onHeightChange = (_change, update) => measurements.push(update);
 
     item.updated();
-    notifyResize?.();
-    expect(measurements).toEqual([]);
 
-    placeholder = false;
-    notifyResize?.();
-
-    expect(observed).toEqual([item]);
     expect(measurements).toEqual([{ kind: "measurement", height: 137 }]);
     expect(renderOutput(item)).not.toContain("min-height:240px");
   });

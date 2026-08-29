@@ -31,7 +31,7 @@ describe("PierreReviewFileDiff", () => {
         if (typeof listener === "function") listeners.set(type, listener);
       },
       removeEventListener(type: string) { listeners.delete(type); },
-      querySelector() { return null; },
+      querySelector(selector: string) { return queryResults.get(selector)?.[0] ?? null; },
       querySelectorAll(selector: string) { return queryResults.get(selector) ?? []; },
       replaceChildren() {},
     };
@@ -79,6 +79,7 @@ describe("PierreReviewFileDiff", () => {
     const controlText = new TestHTMLElement(["data-unmodified-lines"]);
     controlText.closest = () => separator;
     queryResults.set("[data-separator-content]", [control]);
+    queryResults.set('[data-expand-index="0"]', [separator]);
     const unchanged = Array.from({ length: 32 }, (_, index) => `line ${index + 1}`).join("\n");
     const complete = parseDiffFromFile(
       { name: "file.txt", contents: `${unchanged}\nold\n` },
@@ -100,12 +101,14 @@ describe("PierreReviewFileDiff", () => {
       };
       const acquisitions: number[] = [];
       const nativeInteractions: number[] = [];
+      const anchorResolvers: Array<() => number | null> = [];
       const controller = createReviewFileDiffRenderer(
         host,
         undefined,
         (interaction) => acquisitions.push(interaction.hunkIndex),
-        (interaction, mutate) => {
+        (interaction, mutate, anchor) => {
           nativeInteractions.push(interaction.hunkIndex);
+          anchorResolvers.push(anchor);
           mutate();
         },
         undefined,
@@ -150,6 +153,7 @@ describe("PierreReviewFileDiff", () => {
 
       expect(nativeInteractions).toEqual([0]);
       expect(expanded).toEqual([[0, "down", undefined]]);
+      expect(anchorResolvers[0]?.()).toBe(20);
       expect(completeEvent.defaultPrevented).toBe(true);
 
       const nativeControlText = new TestHTMLElement(["data-unmodified-lines"]);

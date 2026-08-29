@@ -68,7 +68,11 @@ export function createReviewFileDiffRenderer(
   host: ReactiveControllerHost,
   onRendered?: () => void,
   onAcquire?: (interaction: ReviewFileExpansionInteraction) => void,
-  onNativeInteraction?: (interaction: ReviewFileExpansionInteraction, mutate: () => void) => void,
+  onNativeInteraction?: (
+    interaction: ReviewFileExpansionInteraction,
+    mutate: () => void,
+    resolveAnchor: () => number | null,
+  ) => void,
   onNativeState?: (regions: ReadonlyMap<number, HunkExpansionRegion>) => void,
   workerManager?: ReturnType<typeof getPierreWorkerPool> | null,
 ) {
@@ -94,8 +98,11 @@ export function createReviewFileDiffRenderer(
           interaction.direction,
           interaction.lineCount,
         );
-        if (onNativeInteraction) onNativeInteraction(interaction, mutate);
-        else mutate();
+        if (onNativeInteraction) {
+          onNativeInteraction(interaction, mutate, () => expansionAnchorTop(listeningRoot, interaction));
+        } else {
+          mutate();
+        }
       };
       const handleClick = (event: Event) => handleInteraction(event);
       const handleKeydown = (event: Event) => {
@@ -134,8 +141,11 @@ export function createReviewFileDiffRenderer(
           interaction.direction,
           interaction.lineCount,
         );
-        if (onNativeInteraction) onNativeInteraction(interaction, mutate);
-        else mutate();
+        if (onNativeInteraction) {
+          onNativeInteraction(interaction, mutate, () => expansionAnchorTop(listeningRoot, interaction));
+        } else {
+          mutate();
+        }
       }
       return renderer;
     },
@@ -232,6 +242,18 @@ function nextRenderedLineIndex(separator: HTMLElement): number {
     nextLine = nextLine.nextElementSibling;
   }
   return Number.NaN;
+}
+
+function expansionAnchorTop(
+  root: ShadowRoot | null,
+  interaction: ReviewFileExpansionInteraction,
+): number | null {
+  if (!root) return null;
+  const separator = root.querySelector<HTMLElement>(`[data-expand-index="${interaction.hunkIndex}"]`);
+  const anchoredLine = interaction.anchorLineNumber == null
+    ? null
+    : root.querySelector<HTMLElement>(`[data-column-number="${interaction.anchorLineNumber}"]`);
+  return (separator ?? anchoredLine)?.getBoundingClientRect().top ?? null;
 }
 
 function expansionInteraction(event: Event): ReviewFileExpansionInteraction | null {
