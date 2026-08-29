@@ -17,6 +17,7 @@ import {
   type FileChange,
   type FileChangesResult,
 } from "../../models/changes/file-changes.js";
+import { InlineReviewComments } from "../../models/changes/inline-review-comments.js";
 import {
   estimateFileChangeHeight,
   fileChangeGap,
@@ -80,6 +81,8 @@ export class ReviewDiffPanel extends LitElement {
   private _contextState: FileDiffContextState | null = null;
   private _contextScopeKey = "";
   private _transitionHeights = new Map<string, number>();
+  private _comments = new InlineReviewComments();
+  private _unsubscribeComments: (() => void) | null = null;
   private readonly _expandFileContext = (
     change: FileChange,
     interaction: ReviewFileExpansionInteraction,
@@ -96,15 +99,23 @@ export class ReviewDiffPanel extends LitElement {
   private readonly _toggleFileCollapse = (id: string) => {
     this.setItemCollapsed(id, !this.isItemCollapsed(id));
   };
+  private readonly _handleCommentLayoutChange = (
+    change: FileChange,
+    resolveAnchor: () => number | null,
+  ) => {
+    this._virtualList.preserveScroll(change.id, resolveAnchor, () => {});
+  };
 
   constructor() {
     super();
     this._virtualList.observe = (observation) => this._observeVirtualList(observation);
+    this._subscribeComments();
   }
 
   override connectedCallback() {
     super.connectedCallback();
     this._subscribe();
+    this._subscribeComments();
   }
 
   override willUpdate(changed: Map<string, unknown>) {
@@ -126,6 +137,8 @@ export class ReviewDiffPanel extends LitElement {
     super.disconnectedCallback();
     this._unsubscribe?.();
     this._unsubscribe = null;
+    this._unsubscribeComments?.();
+    this._unsubscribeComments = null;
     this._navigationTelemetry = null;
     this.store?.clearPatchDiff();
   }
@@ -184,6 +197,16 @@ export class ReviewDiffPanel extends LitElement {
     this.dispatchEvent(activeFileChangeEvent(change.path));
   }
 
+  private _subscribeComments() {
+    if (this._unsubscribeComments) return;
+    this._unsubscribeComments = this._comments.subscribe(() => {
+      queueMicrotask(() => {
+        this._syncVirtualItems();
+        this.requestUpdate();
+      });
+    });
+  }
+
   private _subscribe() {
     this._unsubscribe?.();
     this._unsubscribe = null;
@@ -209,6 +232,7 @@ export class ReviewDiffPanel extends LitElement {
     this._contextState = null;
     this._contextScopeKey = "";
     this._transitionHeights.clear();
+    this._comments.clear();
   }
 
   private _reconcilePatchData() {
@@ -231,6 +255,11 @@ export class ReviewDiffPanel extends LitElement {
       this._activeItemId = null;
     }
     this._ensureContextState();
+    const store = this.store;
+    this._comments.reconcile(
+      `${store?.projectId ?? "none"}:${store?.diffMode ?? "branch"}:${source.branch ?? store?.branch ?? ""}`,
+      this._parsedData.changes.map((change) => ({ fileId: change.id, contentKey: change.contentKey })),
+    );
     this._syncVirtualItems();
   }
 
@@ -258,7 +287,8 @@ export class ReviewDiffPanel extends LitElement {
 
   private _measurementKey(change: FileChange): string {
     const scope = this._collapseScope();
-    return `${scope?.projectId ?? "none"}:${scope?.branch ?? "none"}:${change.id}:${change.contentKey}`;
+    const commentRevision = this._comments.project(change.id).layoutRevision;
+    return `${scope?.projectId ?? "none"}:${scope?.branch ?? "none"}:${change.id}:${change.contentKey}:comments-${commentRevision}`;
   }
 
   private _syncVirtualItems() {
@@ -427,6 +457,14 @@ export class ReviewDiffPanel extends LitElement {
     const branch = this._parsedSource?.branch ?? this.store.branch;
     const baseBranch = this._parsedSource?.baseBranch ?? this.store.fileData.data?.baseBranch;
     const virtualWindow = this._virtualList.window();
+    const pinnedComposerId = this._comments.activeComposerFileId;
+    const pinnedComposer = pinnedComposerId && !virtualWindow.items.some((entry) => entry.id === pinnedComposerId)
+      ? this._virtualList.item(pinnedComposerId)
+      : null;
+    const mountedItems = [
+      ...virtualWindow.items,
+      ...(pinnedComposer ? [pinnedComposer] : []),
+    ].toSorted((left, right) => left.top - right.top);
     const changeById = new Map(changes.map((change) => [change.id, change]));
 
     return html`
@@ -449,7 +487,7 @@ export class ReviewDiffPanel extends LitElement {
               : changes.length > 0
                 ? html`<div data-review-virtual-window style=${`position:relative;height:${virtualWindow.totalHeight}px`}>
                     ${repeat(
-                      virtualWindow.items,
+                      mountedItems,
                       (entry) => entry.id,
                       (entry) => {
                         const change = changeById.get(entry.id);
@@ -466,8 +504,10 @@ export class ReviewDiffPanel extends LitElement {
                             .branch=${branch ?? null}
                             .reservedHeight=${Math.max(1, entry.height - entry.gapBefore)}
                             .contextState=${this._ensureContextState()}
+                            .comments=${this._comments}
                             .onToggleCollapse=${this._toggleFileCollapse}
                             .onHeightChange=${this._handleFileHeightChange}
+                            .onCommentLayoutChange=${this._handleCommentLayoutChange}
                             .onContextExpansion=${this._expandFileContext}
                           ></review-file-diff>
                         `;

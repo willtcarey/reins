@@ -4,12 +4,15 @@ import {
   processFile,
   type ExpansionDirections,
   type FileDiffMetadata,
+  type SelectedLineRange,
 } from "@pierre/diffs";
 import type { ReactiveControllerHost } from "lit";
+import { InlineReviewCommentPlacementElement } from "../../../components/changes/inline-review-comment-placement.js";
 import {
   createReviewFileDiffRenderer,
   PierreReviewFileDiff,
 } from "../../../components/changes/review-file-diff-renderer.js";
+import { InlineReviewComments } from "../../../models/changes/inline-review-comments.js";
 
 function interactionEvent(type: string, path: EventTarget[], properties: Record<string, unknown> = {}): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
@@ -89,10 +92,10 @@ describe("PierreReviewFileDiff", () => {
     const expanded: Array<[number, ExpansionDirections, number | undefined]> = [];
     Reflect.set(PierreReviewFileDiff.prototype, "render", function render(
       this: PierreReviewFileDiff,
-      props: { fileDiff: FileDiffMetadata; fileContainer: HTMLElement },
+      props: { fileDiff: FileDiffMetadata; containerWrapper: HTMLElement },
     ) {
       renderedMetadata.push(props.fileDiff);
-      this.options.onPostRender?.(props.fileContainer, this, "mount");
+      this.options.onPostRender?.(props.containerWrapper, this, "mount");
       return true;
     });
     try {
@@ -174,6 +177,103 @@ describe("PierreReviewFileDiff", () => {
     }
   });
 
+  test("nests an unmanaged diff and adapts public selection and annotation hooks", () => {
+    const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+    const originalRender = PierreReviewFileDiff.prototype.render;
+    class TestHTMLElement extends EventTarget {
+      shadowRoot = { replaceChildren() {} };
+      dataset: Record<string, string> = {};
+      children: TestHTMLElement[] = [];
+      appendChild(child: TestHTMLElement) { this.children.push(child); return child; }
+      setAttribute() {}
+    }
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: TestHTMLElement });
+    const partial = processFile(`diff --git a/file.txt b/file.txt
+--- a/file.txt
++++ b/file.txt
+@@ -4,4 +4,4 @@
+ one
+ two
+-old
++new
+ four
+`);
+    if (!partial) throw new Error("Expected parsed diff");
+    let renderProps: Record<string, unknown> | null = null;
+    Reflect.set(PierreReviewFileDiff.prototype, "render", function render(
+      this: PierreReviewFileDiff,
+      props: Record<string, unknown>,
+    ) {
+      renderProps = props;
+      return true;
+    });
+    try {
+      const host: ReactiveControllerHost = {
+        addController() {}, removeController() {}, requestUpdate() {}, updateComplete: Promise.resolve(true),
+      };
+      const comments = new InlineReviewComments();
+      comments.reconcile("scope", [{ fileId: "file-a", contentKey: "one" }]);
+      const controller = createReviewFileDiffRenderer(host, undefined, undefined, undefined, undefined, null);
+      const target = {
+        fileDiff: partial,
+        nativeExpandedHunks: new Map(),
+        initialExpansion: null,
+        comments,
+        fileId: "file-a",
+      };
+      const bindingValues = Reflect.get(controller.bind(target), "values");
+      const attach = Array.isArray(bindingValues) ? bindingValues[0] : null;
+      if (typeof attach !== "function") throw new Error("Expected renderer ref binding");
+      const mount = new TestHTMLElement();
+      attach(mount);
+      const instance = controller.instance;
+      if (!instance) throw new Error("Expected renderer instance");
+
+      instance.options.onLineSelected?.({ start: 7, end: 4, side: "additions", endSide: "additions" });
+      expect(comments.project("file-a").selection).toEqual({ side: "new", startLine: 4, endLine: 7 });
+      instance.options.onGutterUtilityClick?.({ start: 4, end: 7, side: "deletions", endSide: "additions" });
+      expect(comments.project("file-a").error).toBe("Inline comments must stay on one side of the diff.");
+      instance.options.onGutterUtilityClick?.({ start: 4, end: 7, side: "additions", endSide: "additions" });
+
+      let annotations: Parameters<typeof instance.setLineAnnotations>[0] = [];
+      const selections: Array<SelectedLineRange | null> = [];
+      let rerenders = 0;
+      instance.setLineAnnotations = (value) => { annotations = value; };
+      instance.setSelectedLines = (value) => { selections.push(value); };
+      instance.rerender = () => { rerenders += 1; };
+      controller.refreshInlineComments();
+
+      expect(renderProps).toMatchObject({ containerWrapper: mount });
+      expect(renderProps).not.toHaveProperty("fileContainer");
+      expect(annotations).toEqual([{
+        side: "additions",
+        lineNumber: 7,
+        metadata: { placementId: comments.project("file-a").placements[0]?.id },
+      }]);
+      expect(selections).toEqual([{
+        start: 4,
+        end: 7,
+        side: "additions",
+        endSide: "additions",
+      }]);
+      expect(rerenders).toBe(1);
+
+      const annotation = annotations[0];
+      if (!annotation) throw new Error("Expected annotation");
+      const annotationElement = instance.options.renderAnnotation?.(annotation);
+      if (!(annotationElement instanceof InlineReviewCommentPlacementElement)) {
+        throw new Error("Expected Reins annotation element");
+      }
+      expect(annotationElement.comments).toBe(comments);
+      expect(annotationElement.fileId).toBe("file-a");
+      expect(annotationElement.placementId).toBe(comments.project("file-a").placements[0]?.id);
+    } finally {
+      Reflect.set(PierreReviewFileDiff.prototype, "render", originalRender);
+      if (htmlElementDescriptor) Object.defineProperty(globalThis, "HTMLElement", htmlElementDescriptor);
+      else Reflect.deleteProperty(globalThis, "HTMLElement");
+    }
+  });
+
   test("does not offer context when patch metadata has no known collapsed region", () => {
     const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
     const originalRender = PierreReviewFileDiff.prototype.render;
@@ -215,9 +315,9 @@ describe("PierreReviewFileDiff", () => {
     queryResults.set("[data-separator-content]", [control]);
     Reflect.set(PierreReviewFileDiff.prototype, "render", function render(
       this: PierreReviewFileDiff,
-      props: { fileContainer: HTMLElement },
+      props: { containerWrapper: HTMLElement },
     ) {
-      this.options.onPostRender?.(props.fileContainer, this, "mount");
+      this.options.onPostRender?.(props.containerWrapper, this, "mount");
       return true;
     });
     try {

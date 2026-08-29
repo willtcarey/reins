@@ -2,7 +2,9 @@
 
 ## Status and recommendation
 
-**Investigation complete; implementation not started.** This document is based on the exact installed `@pierre/diffs` **1.2.11** (`bun.lock` integrity `sha512-lSkl…`) and Reins' current `FileDiff` integration.
+**Investigation complete; in-memory MVP implemented; durable persistence not started.** This document is based on the exact installed `@pierre/diffs` **1.2.11** (`bun.lock` integrity `sha512-lSkl…`) and Reins' current `FileDiff` integration.
+
+The implemented `virtualized` slice now uses an unmanaged nested `<diffs-container>`, public line annotations, controlled selection, and the public gutter callback. `InlineReviewComments` owns current-panel drafts, threads, grouping, normalization, and file-content reconciliation in memory. A Reins annotation element owns only rendering and commands. Whole-item resize observation feeds the top-level virtual list, comment layout revisions invalidate measurements, and the active composer item is pinned. A labeled file-header side/start/end form supplies the keyboard fallback. Comments survive collapse and virtual remount within the panel, but browser refresh and review-scope/content changes may discard them.
 
 Use Pierre's public line-annotation and selection interfaces, but keep comment identity, persistence, interaction state, and top-level layout in Reins.
 
@@ -16,9 +18,9 @@ The recommended rendering path is:
 
 Do **not** put comments into `FileDiffMetadata`, add synthetic lines, fake `isPartial`, use functional hunk separators, mutate Pierre's rendered rows, or subclass the protected injected-row hooks.
 
-One integration prerequisite matters: Reins currently constructs `FileDiff` with its undocumented `isContainerManaged = true` constructor argument. In 1.2.11 that mode deliberately skips the vanilla `renderAnnotation` and `renderGutterUtility` mounting paths; React/CodeView supplies those slots externally. Before comments, the adapter should let an ordinary, unmanaged `FileDiff` own a nested `<diffs-container>` under the Lit-owned mount, or encapsulate equivalent slot ownership in one adapter. Prefer the former because it exercises the documented/default vanilla interface. Do not switch the existing Lit-owned node directly to unmanaged mode: `FileDiff.cleanUp()` removes an unmanaged file container.
+One integration prerequisite mattered: Reins previously constructed `FileDiff` with its undocumented `isContainerManaged = true` constructor argument. In 1.2.11 that mode deliberately skips the vanilla `renderAnnotation` and `renderGutterUtility` mounting paths; React/CodeView supplies those slots externally. The MVP corrected this by letting an ordinary unmanaged `FileDiff` own a nested `<diffs-container>` under the Lit-owned mount. The Lit-owned node was not switched directly to unmanaged mode because `FileDiff.cleanUp()` removes an unmanaged file container.
 
-No throwaway prototype was added. The published declarations, source maps, and implementation make both the supported path and the current managed-container limitation explicit. A production-adjacent adapter slice with a real browser interaction test will provide more evidence than a fake-DOM package test.
+The implementation is production-adjacent rather than a throwaway prototype. Focused adapter and presentation tests cover the supported interfaces; a real-browser interaction test remains useful evidence for annotation sizing, gutter behavior, and cleanup across supported browsers.
 
 ## Scope
 
@@ -116,17 +118,11 @@ Pierre receives one annotation per visible placement:
 
 `renderAnnotation` resolves `placementId` back to Reins-owned state and returns a Reins custom element containing the composer and/or threads. Pierre should not receive comment bodies, persistence identifiers used as line identity, or fabricated file contents.
 
-### Required adapter correction
+### Implemented adapter correction
 
-Current construction:
+The previous construction passed `true` as the third `FileDiff` constructor argument. That argument is not part of the documented usage. In managed mode, 1.2.11's `renderAnnotations()` clears its cache and returns, and `renderGutterUtility()` expects an externally supplied slot. This is why merely adding `renderAnnotation` to `REINS_DIFF_OPTIONS` would not work.
 
-```ts
-new PierreReviewFileDiff(options, workerManager, true)
-```
-
-The third argument is not part of the documented `FileDiff` usage. In managed mode, 1.2.11's `renderAnnotations()` clears its cache and returns, and `renderGutterUtility()` expects an externally supplied slot. This is why merely adding `renderAnnotation` to `REINS_DIFF_OPTIONS` would not work.
-
-Recommended correction in the first implementation slice:
+The MVP now uses:
 
 ```txt
 Lit-owned mount node
@@ -389,39 +385,39 @@ Each behavior slice starts with a failing contract test per `docs/dev/workflow.m
 
 ### 1. Public annotation adapter proof
 
-- Refactor `PierreReviewFileDiff` ownership so an unmanaged Pierre container is nested beneath the Lit mount without changing visible review behavior.
-- Add a guarded fixture with one addition-side annotation and one old-side annotation.
-- Prove through a real browser interaction test that annotation content renders inline, changes file height, `setLineAnnotations` updates without replacing file metadata, and cleanup removes only the Pierre-owned inner node.
-- Prove current context expansion still works.
-- No persistence or composer.
+- [x] Refactor `PierreReviewFileDiff` ownership so an unmanaged Pierre container is nested beneath the Lit mount without changing visible review behavior.
+- [x] Add focused old/new annotation and selection adapter coverage.
+- [ ] Add a real-browser interaction test proving inline placement, dynamic height, and inner-node-only cleanup across supported browsers. Focused adapter/component tests currently cover the contract without a browser system spec.
+- [x] Preserve current context expansion behavior and tests.
 
 ### 2. Outer measurement contract
 
-- Observe mounted file item height.
-- Feed annotation growth/shrink through the existing virtual measurement batch.
-- Test height change above the viewport, at the selected line, and below it; verify semantic scroll preservation and user-input cancellation.
-- Invalidate expanded height cache by comment-layout revision.
+- [x] Observe mounted whole-file item height and feed annotation growth/shrink through the existing virtual measurement batch.
+- [x] Preserve the Reins-owned annotation point where available and retain the generic virtual list's existing above-viewport correction and input cancellation.
+- [ ] Add browser-level comment-height cases above, at, and below the selected line.
+- [x] Invalidate expanded height measurements by comment-layout revision.
 
 ### 3. Reins anchor module, in memory
 
-- Introduce Reins `ReviewScope`, `ReviewAnchor`, projection, and command types with no Pierre imports.
-- Implement same-snapshot validation, same-side range normalization, grouping, and explicit outdated state.
-- Test rename old/new mapping, unrelated-file edit relocation, changed selected text, repeated/ambiguous context, and cross-side rejection.
-- Add exact snapshot/base/head identity to the patch response before durable persistence.
+- [x] Introduce a small Reins projection/command module with no Pierre imports.
+- [x] Implement same-side range normalization, endpoint grouping, drafts/threads, cross-side rejection, and current file-content-key invalidation.
+- [ ] Add durable `ReviewScope`/`ReviewAnchor` evidence, outdated state, relocation, rename mapping, and ambiguous-context tests. The MVP deliberately clears changed-content state instead of relocating it.
+- [ ] Add exact snapshot/base/head identity to the patch response before durable persistence.
 
 ### 4. Pointer/touch composer
 
-- Enable controlled Pierre selection and the public gutter add action.
-- Render one Reins-owned annotation host with an in-memory composer.
-- Preserve selection, draft, expansion, and thread projection across virtual unmount/remount and collapse.
-- Pin the open-composer item.
-- Verify 44×44 touch action and scroll-vs-selection behavior.
+- [x] Enable controlled Pierre selection and the public gutter add action.
+- [x] Render one grouped Reins-owned annotation host per side/endpoint with an in-memory composer and deletable threads.
+- [x] Preserve selection, draft, expansion, and thread projection across virtual unmount/remount and collapse.
+- [x] Pin the open-composer item.
+- [ ] Verify Pierre's default gutter touch behavior and scroll-vs-selection behavior in supported mobile browsers. Reins-owned fallback/composer actions use 44px touch targets.
 
 ### 5. Accessible keyboard path
 
-- Add the file-header **Add inline comment** action and side/start/end dialog.
-- Add live selection announcements, labels, focus movement/restoration, Escape behavior, contrast, and reduced-motion behavior.
-- Test keyboard-only creation without querying or modifying Pierre row internals.
+- [x] Add the file-header **Add inline comment** action and labeled side/start/end dialog/form.
+- [x] Add live selection announcements, explicit composer labels, focus movement/restoration, and Escape cancellation with non-empty-draft confirmation.
+- [x] Cover keyboard-form creation without querying or modifying Pierre comment row internals.
+- [ ] Complete browser accessibility verification for contrast, focus order, and assistive-technology announcements.
 
 ### 6. Persistence and refresh reconciliation
 

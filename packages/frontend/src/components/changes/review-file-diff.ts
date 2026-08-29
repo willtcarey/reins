@@ -11,6 +11,12 @@ import {
   diffRenderBlockedMessage,
   isDiffRenderBlocked,
 } from "../../models/changes/diff-render-limit.js";
+import {
+  type InlineReviewComments,
+  normalizeReviewLineRange,
+  type ReviewLineRange,
+  type ReviewSide,
+} from "../../models/changes/inline-review-comments.js";
 import { clientTelemetry } from "../../models/client-telemetry.js";
 import {
   addedFileIcon,
@@ -20,6 +26,7 @@ import {
 } from "../icons.js";
 import "./diff-file-action-buttons.js";
 import {
+  canCommentOnReviewRange,
   createReviewFileDiffRenderer,
   type ReviewFileDiffTarget,
   type ReviewFileExpansionInteraction,
@@ -80,6 +87,9 @@ export class ReviewFileDiff extends LitElement {
 
   private _contextState: FileDiffContextState | null = null;
   private _unsubscribeContext: (() => void) | null = null;
+  private _comments: InlineReviewComments | null = null;
+  private _unsubscribeComments: (() => void) | null = null;
+  private _resizeObserver: ResizeObserver | null = null;
 
   @property({ attribute: false })
   get contextState(): FileDiffContextState | null {
@@ -96,9 +106,28 @@ export class ReviewFileDiff extends LitElement {
     this.requestUpdate("contextState", previous);
   }
 
+  @property({ attribute: false })
+  get comments(): InlineReviewComments | null {
+    return this._comments;
+  }
+
+  set comments(value: InlineReviewComments | null) {
+    const previous = this._comments;
+    if (value === previous) return;
+    this._unsubscribeComments?.();
+    this._unsubscribeComments = null;
+    this._comments = value;
+    this._hadComposer = Boolean(value && this.change && value.project(this.change.id).composer);
+    this._subscribeComments();
+    this._targetFileDiff = null;
+    this.requestUpdate("comments", previous);
+  }
+
   @property({ attribute: false }) onToggleCollapse: ((id: string) => void) | null = null;
   @property({ attribute: false }) onHeightChange:
     ((change: FileChange, update: ReviewFileDiffHeightChange) => void) | null = null;
+  @property({ attribute: false }) onCommentLayoutChange:
+    ((change: FileChange, resolveAnchor: () => number | null) => void) | null = null;
   @property({ attribute: false }) onContextExpansion:
     ((
       change: FileChange,
@@ -120,6 +149,14 @@ export class ReviewFileDiff extends LitElement {
   private _target: ReviewFileDiffTarget | null = null;
   private _transitioning = false;
   private _lastMeasurement = "";
+  private _anchorFormOpen = false;
+  private _anchorSide: ReviewSide = "new";
+  private _anchorStart = "";
+  private _anchorEnd = "";
+  private _anchorError: string | null = null;
+  private _focusAnchorForm = false;
+  private _restoreHeaderFocus = false;
+  private _hadComposer = false;
 
   public get diffRendered(): boolean {
     return this.isConnected && this._diff.container !== null && this._diff.rendered;
@@ -128,16 +165,32 @@ export class ReviewFileDiff extends LitElement {
   override connectedCallback() {
     this._lastMeasurement = "";
     this._subscribeContext();
+    this._subscribeComments();
     super.connectedCallback();
+    if (typeof ResizeObserver !== "undefined") {
+      this._resizeObserver = new ResizeObserver(() => this._emitMeasurement());
+      this._resizeObserver.observe(this);
+    }
   }
 
   override updated() {
     this._emitMeasurement();
+    if (this._focusAnchorForm) {
+      this._focusAnchorForm = false;
+      this.querySelector<HTMLInputElement>("[data-inline-comment-start]")?.focus();
+    } else if (this._restoreHeaderFocus) {
+      this._restoreHeaderFocus = false;
+      this.querySelector<HTMLButtonElement>("[data-add-inline-comment]")?.focus();
+    }
   }
 
   override disconnectedCallback() {
     this._unsubscribeContext?.();
     this._unsubscribeContext = null;
+    this._unsubscribeComments?.();
+    this._unsubscribeComments = null;
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = null;
     this._lastMeasurement = "";
     super.disconnectedCallback();
   }
@@ -147,6 +200,34 @@ export class ReviewFileDiff extends LitElement {
     this._unsubscribeContext = this._contextState.subscribe((changeId) => {
       if (changeId === this.change?.id) this.requestUpdate();
     });
+  }
+
+  private _subscribeComments() {
+    if (!this.isConnected || !this._comments || this._unsubscribeComments) return;
+    this._unsubscribeComments = this._comments.subscribe((update) => {
+      const change = this.change;
+      if (!change || update.fileId !== change.id) return;
+      if (update.layoutChanged) {
+        this.onCommentLayoutChange?.(change, () => this._commentAnchorTop(update.placementId));
+      }
+      const hasComposer = this._comments?.project(change.id).composer !== null;
+      if (this._hadComposer && !hasComposer) this._restoreHeaderFocus = true;
+      this._hadComposer = hasComposer;
+      this._diff.refreshInlineComments();
+      this.requestUpdate();
+    });
+  }
+
+  private _commentAnchorTop(placementId: string | null): number | null {
+    if (!placementId || typeof this.querySelectorAll !== "function") return null;
+    for (const element of this.querySelectorAll("review-inline-comment-placement")) {
+      if (
+        element instanceof HTMLElement
+        && "placementId" in element
+        && element.placementId === placementId
+      ) return element.getBoundingClientRect().top;
+    }
+    return null;
   }
 
   private _emitMeasurement() {
@@ -190,6 +271,67 @@ export class ReviewFileDiff extends LitElement {
     this._transitioning = !settled;
     if (this.change) this.onHeightChange?.(this.change, { kind: "transition", bodyHeight, settled });
     if (settled && !this.collapsed) queueMicrotask(() => this._emitMeasurement());
+  }
+
+  private _openAnchorForm() {
+    if (this.collapsed && this.change) this.onToggleCollapse?.(this.change.id);
+    const selection = this.change && this.comments?.project(this.change.id).selection;
+    this._anchorSide = selection?.side ?? "new";
+    this._anchorStart = selection ? `${selection.startLine}` : "";
+    this._anchorEnd = selection ? `${selection.endLine}` : "";
+    this._anchorError = null;
+    this._anchorFormOpen = true;
+    this._focusAnchorForm = true;
+    this.requestUpdate();
+  }
+
+  private _closeAnchorForm() {
+    this._anchorFormOpen = false;
+    this._anchorError = null;
+    this._restoreHeaderFocus = true;
+    this.requestUpdate();
+  }
+
+  private _setAnchorSide(event: Event) {
+    const value = eventValue(event);
+    this._anchorSide = value === "old" ? "old" : "new";
+  }
+
+  private _setAnchorStart(event: Event) {
+    this._anchorStart = eventValue(event);
+  }
+
+  private _setAnchorEnd(event: Event) {
+    this._anchorEnd = eventValue(event);
+  }
+
+  private _submitAnchorForm(event: Event) {
+    event.preventDefault();
+    const change = this.change;
+    if (!change || !this.comments) return;
+    const startLine = Number(this._anchorStart);
+    const endLine = this._anchorEnd.trim() ? Number(this._anchorEnd) : startLine;
+    const normalized = normalizeReviewLineRange({
+      side: this._anchorSide,
+      startLine,
+      endLine,
+    });
+    if (!normalized.ok) {
+      this._anchorError = normalized.error;
+      this.requestUpdate();
+      return;
+    }
+    if (!canCommentOnReviewRange(this._diffTarget(change), normalized.range)) {
+      this._anchorError = "Choose lines currently shown in this diff.";
+      this.requestUpdate();
+      return;
+    }
+    if (this.collapsed) this.onToggleCollapse?.(change.id);
+    this.comments.dispatch({ type: "select", fileId: change.id, selection: normalized.range });
+    this.comments.dispatch({ type: "open-composer", fileId: change.id, selection: normalized.range });
+    this._anchorFormOpen = false;
+    this._anchorError = null;
+    this.requestUpdate();
   }
 
   private _requestAcquisition(interaction: ReviewFileExpansionInteraction) {
@@ -282,6 +424,8 @@ export class ReviewFileDiff extends LitElement {
       this._target = {
         fileDiff,
         nativeExpandedHunks: expansion?.nativeExpandedHunks ?? new Map(),
+        comments: this.comments,
+        fileId: change.id,
         initialExpansion: fileDiff.isPartial || !this._pendingExpansion
           ? null
           : {
@@ -306,6 +450,7 @@ export class ReviewFileDiff extends LitElement {
     if (!change) return nothing;
 
     const renderBlocked = isDiffRenderBlocked(change);
+    const comments = renderBlocked ? null : this.comments?.project(change.id) ?? null;
     const expansion = renderBlocked ? null : this._expansion();
     const diffBinding = renderBlocked ? nothing : this._diff.bind(this._diffTarget(change));
     const pendingHeight = !renderBlocked && !this.collapsed && !this.diffRendered && this.reservedHeight > 0
@@ -344,7 +489,22 @@ export class ReviewFileDiff extends LitElement {
                 </span>
               `
             : nothing}
+          ${comments && (comments.threadCount > 0 || comments.draftCount > 0) ? html`
+            <span class="shrink-0 rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-300" aria-label=${`${comments.threadCount} inline comments, ${comments.draftCount} drafts`}>
+              ${comments.threadCount} comment${comments.threadCount === 1 ? "" : "s"}${comments.draftCount ? ` · ${comments.draftCount} draft` : ""}
+            </span>
+          ` : nothing}
           <span class="flex shrink-0 items-center gap-1">
+            ${!renderBlocked ? html`
+              <button
+                type="button"
+                class="-my-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded px-3 text-xs text-zinc-300 hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-sky-400"
+                aria-label="Add inline comment"
+                title="Add inline comment"
+                data-add-inline-comment
+                @click=${this._openAnchorForm}
+              >+ Comment</button>
+            ` : nothing}
             <diff-view-file-button .path=${change.path} variant="header"></diff-view-file-button>
             <diff-copy-path-button .path=${change.path} variant="header"></diff-copy-path-button>
             <diff-download-file-button
@@ -354,12 +514,66 @@ export class ReviewFileDiff extends LitElement {
             ></diff-download-file-button>
           </span>
         </header>
+        ${comments?.selection ? html`
+          <p class="sr-only" aria-live="polite">${selectionAnnouncement(comments.selection)}</p>
+        ` : nothing}
+        ${comments?.error && !this._anchorFormOpen ? html`
+          <p class="border-t border-zinc-800 px-3 py-2 text-xs text-amber-300" role="status">${comments.error}</p>
+        ` : nothing}
+        ${this._anchorFormOpen && !renderBlocked ? html`
+          <form
+            class="flex flex-wrap items-end gap-3 border-t border-zinc-700 bg-zinc-900 px-3 py-3"
+            role="dialog"
+            aria-label="Add inline comment by line range"
+            aria-modal="false"
+            @submit=${this._submitAnchorForm}
+          >
+            <label class="grid gap-1 text-xs text-zinc-300">
+              Side
+              <select
+                class="min-h-11 rounded border border-zinc-600 bg-zinc-950 px-3 text-sm text-zinc-100"
+                .value=${this._anchorSide}
+                @change=${this._setAnchorSide}
+              >
+                <option value="new">New</option>
+                <option value="old">Old</option>
+              </select>
+            </label>
+            <label class="grid gap-1 text-xs text-zinc-300">
+              Start line
+              <input
+                class="min-h-11 w-28 rounded border border-zinc-600 bg-zinc-950 px-3 text-sm text-zinc-100"
+                data-inline-comment-start
+                type="number"
+                min="1"
+                step="1"
+                required
+                .value=${this._anchorStart}
+                @input=${this._setAnchorStart}
+              />
+            </label>
+            <label class="grid gap-1 text-xs text-zinc-300">
+              End line <span class="sr-only">optional</span>
+              <input
+                class="min-h-11 w-28 rounded border border-zinc-600 bg-zinc-950 px-3 text-sm text-zinc-100"
+                type="number"
+                min="1"
+                step="1"
+                .value=${this._anchorEnd}
+                @input=${this._setAnchorEnd}
+              />
+            </label>
+            <button type="button" class="min-h-11 rounded px-4 text-sm text-zinc-300 hover:bg-zinc-700" @click=${this._closeAnchorForm}>Cancel</button>
+            <button type="submit" class="min-h-11 rounded bg-sky-600 px-4 text-sm font-medium text-white hover:bg-sky-500">Open composer</button>
+            ${this._anchorError ? html`<p class="basis-full text-xs text-red-300" role="alert">${this._anchorError}</p>` : nothing}
+          </form>
+        ` : nothing}
         ${springCollapse(
           this.collapsed,
           () => renderBlocked
             ? html`<div class="border-t border-zinc-800 px-3 py-4 text-sm text-zinc-400" data-diff-render-blocked>${diffRenderBlockedMessage(change)}</div>`
             : html`
-                <diffs-container data-pierre-file-diff ${diffBinding}></diffs-container>
+                <div data-pierre-file-diff ${diffBinding}></div>
                 ${expansionMessage(expansion) ? html`
                   <div
                     class="border-t border-zinc-800 px-3 py-1 text-xs text-zinc-500"
@@ -377,6 +591,23 @@ export class ReviewFileDiff extends LitElement {
       </article>
     `;
   }
+}
+
+function eventValue(event: Event): string {
+  const target = event.currentTarget;
+  return typeof target === "object"
+    && target !== null
+    && "value" in target
+    && typeof target.value === "string"
+    ? target.value
+    : "";
+}
+
+function selectionAnnouncement(range: ReviewLineRange): string {
+  const side = range.side === "old" ? "Old" : "New";
+  return range.startLine === range.endLine
+    ? `${side} line ${range.startLine} selected`
+    : `${side} lines ${range.startLine} through ${range.endLine} selected`;
 }
 
 function expansionMessage(expansion: FileDiffContextSnapshot | null): string | null {

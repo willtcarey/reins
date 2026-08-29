@@ -1,15 +1,27 @@
 import {
   FileDiff,
+  type DiffLineAnnotation,
   type ExpansionDirections,
   type FileDiffMetadata,
   type FileDiffOptions,
   type HunkExpansionRegion,
+  type SelectedLineRange,
 } from "@pierre/diffs";
 import type { ReactiveControllerHost } from "lit";
 import { PierreRenderer } from "../../controllers/pierre-renderer.js";
+import type {
+  InlineReviewComments,
+  ReviewLineRange,
+  ReviewLineSelection,
+} from "../../models/changes/inline-review-comments.js";
 import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
+import { InlineReviewCommentPlacementElement } from "./inline-review-comment-placement.js";
 
-const REINS_DIFF_OPTIONS: FileDiffOptions<undefined> = {
+interface PierreCommentPlacementMetadata {
+  readonly placementId: string;
+}
+
+const REINS_DIFF_OPTIONS: FileDiffOptions<PierreCommentPlacementMetadata> = {
   theme: PIERRE_SHIKI_THEME,
   themeType: "dark",
   diffStyle: "unified",
@@ -18,6 +30,9 @@ const REINS_DIFF_OPTIONS: FileDiffOptions<undefined> = {
   hunkSeparators: "line-info",
   expansionLineCount: 15,
   disableFileHeader: true,
+  enableLineSelection: true,
+  controlledSelection: true,
+  enableGutterUtility: true,
 };
 
 export interface ReviewFileExpansionInteraction {
@@ -33,13 +48,15 @@ export interface ReviewFileDiffTarget {
   readonly fileDiff: FileDiffMetadata;
   readonly nativeExpandedHunks: ReadonlyMap<number, HunkExpansionRegion>;
   readonly initialExpansion: ReviewFileExpansionInteraction | null;
+  readonly comments?: InlineReviewComments | null;
+  readonly fileId?: string;
 }
 
 /**
  * The only state adapter around FileDiff expansion. Pierre remains responsible
  * for changing, clamping, and joining expanded hunk regions.
  */
-export class PierreReviewFileDiff extends FileDiff<undefined> {
+export class PierreReviewFileDiff extends FileDiff<PierreCommentPlacementMetadata> {
   private interactionCleanup: (() => void) | null = null;
 
   setInteractionCleanup(cleanup: () => void): void {
@@ -64,6 +81,24 @@ export class PierreReviewFileDiff extends FileDiff<undefined> {
   }
 }
 
+export class ReviewFileDiffRenderer extends PierreRenderer<ReviewFileDiffTarget, PierreReviewFileDiff> {
+  private target: ReviewFileDiffTarget | null = null;
+
+  override bind(target: ReviewFileDiffTarget) {
+    this.target = target;
+    return super.bind(target);
+  }
+
+  refreshInlineComments(): void {
+    const target = this.target;
+    const renderer = this.instance;
+    if (!target || !renderer) return;
+    renderer.setLineAnnotations(commentAnnotations(target));
+    renderer.setSelectedLines(commentSelection(target), { notify: false });
+    renderer.rerender();
+  }
+}
+
 export function createReviewFileDiffRenderer(
   host: ReactiveControllerHost,
   onRendered?: () => void,
@@ -76,7 +111,7 @@ export function createReviewFileDiffRenderer(
   onNativeState?: (regions: ReadonlyMap<number, HunkExpansionRegion>) => void,
   workerManager?: ReturnType<typeof getPierreWorkerPool> | null,
 ) {
-  return new PierreRenderer<ReviewFileDiffTarget, PierreReviewFileDiff>(host, {
+  return new ReviewFileDiffRenderer(host, {
     create: (target, rendered) => {
       let listeningRoot: ShadowRoot | null = null;
       let renderer: PierreReviewFileDiff;
@@ -111,6 +146,30 @@ export function createReviewFileDiffRenderer(
       };
       renderer = new PierreReviewFileDiff({
         ...REINS_DIFF_OPTIONS,
+        onLineSelected: (range) => {
+          if (!target.comments || !target.fileId) return;
+          target.comments.dispatch({
+            type: "select",
+            fileId: target.fileId,
+            selection: range ? reviewSelection(range) : null,
+          });
+        },
+        onGutterUtilityClick: (range) => {
+          if (!target.comments || !target.fileId) return;
+          target.comments.dispatch({
+            type: "open-composer",
+            fileId: target.fileId,
+            selection: reviewSelection(range),
+          });
+        },
+        renderAnnotation: (annotation) => {
+          if (!target.comments || !target.fileId) return undefined;
+          const element = new InlineReviewCommentPlacementElement();
+          element.comments = target.comments;
+          element.fileId = target.fileId;
+          element.placementId = annotation.metadata.placementId;
+          return element;
+        },
         onPostRender: (node, instance, phase) => {
           if (phase === "unmount" || node.shadowRoot?.querySelector("[data-placeholder]")) return;
           const root = node.shadowRoot;
@@ -127,7 +186,7 @@ export function createReviewFileDiffRenderer(
           }
           rendered();
         },
-      }, workerManager === null ? undefined : workerManager ?? getPierreWorkerPool(), true);
+      }, workerManager === null ? undefined : workerManager ?? getPierreWorkerPool());
       renderer.setInteractionCleanup(() => {
         listeningRoot?.removeEventListener("click", handleClick, true);
         listeningRoot?.removeEventListener("keydown", handleKeydown, true);
@@ -151,13 +210,64 @@ export function createReviewFileDiffRenderer(
     },
     render: (renderer, target, container) => renderer.render({
       // Never mark patch-only arrays complete: Pierre and Shiki use complete
-      // hunk positions to index lines whenever isPartial is false.
+      // hunk positions to index lines whenever isPartial is false. The normal
+      // unmanaged FileDiff owns a nested <diffs-container>; Lit owns only this
+      // stable wrapper, so cleanup cannot remove Lit's mount.
       fileDiff: target.fileDiff,
-      fileContainer: container,
+      containerWrapper: container,
+      lineAnnotations: commentAnnotations(target),
     }),
     sameInput: (left, right) => left === right,
     onRendered,
   });
+}
+
+export function canCommentOnReviewRange(
+  target: ReviewFileDiffTarget,
+  range: ReviewLineRange,
+): boolean {
+  for (let line = range.startLine; line <= range.endLine; line += 1) {
+    const exists = target.fileDiff.hunks.some((hunk, hunkIndex) => {
+      const start = range.side === "old" ? hunk.deletionStart : hunk.additionStart;
+      const count = range.side === "old" ? hunk.deletionCount : hunk.additionCount;
+      if (line >= start && line < start + count) return true;
+
+      const expanded = target.nativeExpandedHunks.get(hunkIndex);
+      if (!expanded || hunk.collapsedBefore <= 0) return false;
+      const collapsedStart = start - hunk.collapsedBefore;
+      const visibleFromStart = line >= collapsedStart
+        && line < collapsedStart + expanded.fromStart;
+      const visibleFromEnd = line >= start - expanded.fromEnd && line < start;
+      return visibleFromStart || visibleFromEnd;
+    });
+    if (!exists) return false;
+  }
+  return true;
+}
+
+function commentAnnotations(
+  target: ReviewFileDiffTarget,
+): DiffLineAnnotation<PierreCommentPlacementMetadata>[] {
+  if (!target.comments || !target.fileId) return [];
+  return target.comments.project(target.fileId).placements.map((placement) => ({
+    side: placement.side === "old" ? "deletions" : "additions",
+    lineNumber: placement.lineNumber,
+    metadata: { placementId: placement.id },
+  }));
+}
+
+function commentSelection(target: ReviewFileDiffTarget): SelectedLineRange | null {
+  if (!target.comments || !target.fileId) return null;
+  const selection = target.comments.project(target.fileId).selection;
+  if (!selection) return null;
+  const side = selection.side === "old" ? "deletions" : "additions";
+  return { start: selection.startLine, end: selection.endLine, side, endSide: side };
+}
+
+function reviewSelection(range: SelectedLineRange): ReviewLineSelection {
+  const side = range.side === "deletions" ? "old" : "new";
+  const endSide = (range.endSide ?? range.side) === "deletions" ? "old" : "new";
+  return { side, startLine: range.start, endLine: range.end, endSide };
 }
 
 function prepareNativeControls(root: ShadowRoot | null, fileDiff: FileDiffMetadata): void {

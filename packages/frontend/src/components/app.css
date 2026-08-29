@@ -89,6 +89,12 @@ review-file-diff {
   display: block;
 }
 
+review-inline-comment-placement {
+  box-sizing: border-box;
+  display: block;
+  min-width: 0;
+}
+
 .reins-diff-header {
   background-color: var(--reins-diff-background);
 }

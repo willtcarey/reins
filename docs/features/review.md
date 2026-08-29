@@ -18,6 +18,14 @@ Shows **all changes** on the selected session's branch compared to the base bran
 
 Shows **only uncommitted working-tree changes** — edits that haven't been committed yet. Useful when a task has accumulated many commits and you want to see just what's been modified since the last commit.
 
+## Inline comments (virtualized renderer)
+
+The experimental `virtualized` renderer supports inline review comments on old or new lines. Select a line number or drag a same-side line range, then use Pierre's gutter add action to open the inline composer. Keyboard users can choose **Add inline comment** in the file header and enter the side, start line, and optional end line without interacting with the diff gutter. Comments can be saved, viewed below their anchored line, and deleted; an open composer can be canceled.
+
+Inline comments are currently kept only in memory for the open review panel. They survive file collapse/expand and virtual scrolling that unmounts and remounts a file, but they are not sent to the backend and can be lost on page refresh, project/session changes, or when the reviewed file content changes. They are not yet agent feedback, collaborative comments, or durable review records. Classic and `codeview` renderers do not show this comment interface.
+
+Cross-side ranges are rejected. Files blocked by the large-file safeguard do not offer line comments because their line rows are not rendered.
+
 ## Hunk expansion
 
 Each diff shows a few lines of context around changes by default. You can expand to see more of the surrounding file:

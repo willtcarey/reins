@@ -4,6 +4,7 @@ import { ReviewFileDiff } from "../../../components/changes/review-file-diff.js"
 import { SpringCollapseDirective } from "../../../directives/spring-collapse.js";
 import { FileDiffContextState } from "../../../models/changes/file-diff-context-state.js";
 import { parseFileChanges } from "../../../models/changes/file-changes.js";
+import { InlineReviewComments } from "../../../models/changes/inline-review-comments.js";
 import {
   collectTemplateEventListeners,
   collectTemplateValues,
@@ -138,8 +139,43 @@ describe("ReviewFileDiff", () => {
     expect(output).toContain(`aria-label=Expand src/example.ts`);
     expect(output).toContain(`aria-expanded=false`);
     expect(output).toContain("src/example.ts");
-    expect(output).not.toContain("<diffs-container data-pierre-file-diff");
+    expect(output).not.toContain("data-pierre-file-diff");
     expect(toggledIds).toEqual([fileChange.id]);
+  });
+
+  test("offers a keyboard line-range form that opens the inline composer", () => {
+    const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
+    const comments = new InlineReviewComments();
+    comments.reconcile("scope", [{ fileId: fileChange.id, contentKey: fileChange.contentKey }]);
+    comments.dispatch({
+      type: "select",
+      fileId: fileChange.id,
+      selection: { side: "new", startLine: 1, endLine: 1 },
+    });
+    const item = new ReviewFileDiff();
+    item.change = fileChange;
+    item.comments = comments;
+
+    let rendered = item.render();
+    expect(renderOutput(item)).toContain("Add inline comment");
+    collectTemplateEventListeners(rendered, "click")[1]?.call(item, new Event("click"));
+
+    rendered = item.render();
+    const output = renderOutput(item);
+    expect(output).toContain('role="dialog"');
+    expect(output).toContain("Side");
+    expect(output).toContain("Start line");
+    expect(output).toContain("End line");
+    collectTemplateEventListeners(rendered, "submit")[0]?.call(
+      item,
+      new Event("submit", { cancelable: true }),
+    );
+
+    expect(comments.project(fileChange.id).composer?.range).toEqual({
+      side: "new",
+      startLine: 1,
+      endLine: 1,
+    });
   });
 
   test("does not request complete content merely by rendering an expandable file", () => {
@@ -185,7 +221,7 @@ describe("ReviewFileDiff", () => {
 
     const output = renderOutput(item);
 
-    expect(output).toContain("<diffs-container data-pierre-file-diff");
+    expect(output).toContain("<div data-pierre-file-diff");
     expect(output).toContain("Unable to load complete file context.");
     expect(output).not.toContain("Expand context");
     expect(output).not.toContain("data-reins-context-control");
