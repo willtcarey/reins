@@ -117,7 +117,7 @@ export class InlineReviewCommentPlacementElement extends LitElement {
             </label>
             <textarea
               id=${`inline-comment-${this.placementId}`}
-              class="min-h-24 w-full resize-y rounded border border-zinc-600 bg-zinc-950 p-2 text-sm text-zinc-100 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/30"
+              class="min-h-24 w-full resize-y rounded border border-zinc-600 bg-zinc-950 p-2 text-base text-zinc-100 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/30"
               .value=${placement.composer.body}
               aria-describedby=${placement.composer.error ? `inline-comment-error-${this.placementId}` : nothing}
               @input=${this.updateDraft}

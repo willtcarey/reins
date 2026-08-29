@@ -536,7 +536,7 @@ export class ReviewFileDiff extends LitElement {
             <label class="grid gap-1 text-xs text-zinc-300">
               Side
               <select
-                class="min-h-11 rounded border border-zinc-600 bg-zinc-950 px-3 text-sm text-zinc-100"
+                class="min-h-11 rounded border border-zinc-600 bg-zinc-950 px-3 text-base text-zinc-100"
                 .value=${this._anchorSide}
                 @change=${this._setAnchorSide}
               >
@@ -547,7 +547,7 @@ export class ReviewFileDiff extends LitElement {
             <label class="grid gap-1 text-xs text-zinc-300">
               Start line
               <input
-                class="min-h-11 w-28 rounded border border-zinc-600 bg-zinc-950 px-3 text-sm text-zinc-100"
+                class="min-h-11 w-28 rounded border border-zinc-600 bg-zinc-950 px-3 text-base text-zinc-100"
                 data-inline-comment-start
                 type="number"
                 min="1"
@@ -560,7 +560,7 @@ export class ReviewFileDiff extends LitElement {
             <label class="grid gap-1 text-xs text-zinc-300">
               End line <span class="sr-only">optional</span>
               <input
-                class="min-h-11 w-28 rounded border border-zinc-600 bg-zinc-950 px-3 text-sm text-zinc-100"
+                class="min-h-11 w-28 rounded border border-zinc-600 bg-zinc-950 px-3 text-base text-zinc-100"
                 type="number"
                 min="1"
                 step="1"
