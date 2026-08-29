@@ -12,7 +12,7 @@ import {
   createReviewFileDiffRenderer,
   PierreReviewFileDiff,
 } from "../../../components/changes/review-file-diff-renderer.js";
-import { InlineReviewComments } from "../../../models/changes/inline-review-comments.js";
+import { ReviewComments } from "../../../models/changes/review-comments.js";
 
 function interactionEvent(type: string, path: EventTarget[], properties: Record<string, unknown> = {}): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
@@ -211,7 +211,7 @@ describe("PierreReviewFileDiff", () => {
       const host: ReactiveControllerHost = {
         addController() {}, removeController() {}, requestUpdate() {}, updateComplete: Promise.resolve(true),
       };
-      const comments = new InlineReviewComments();
+      const comments = new ReviewComments();
       comments.reconcile("scope", [{ fileId: "file-a", contentKey: "one" }]);
       const controller = createReviewFileDiffRenderer(host, undefined, undefined, undefined, undefined, null);
       const target = {

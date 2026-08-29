@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
-  InlineReviewComments,
+  ReviewComments,
   normalizeReviewLineRange,
-} from "../../../models/changes/inline-review-comments.js";
+} from "../../../models/changes/review-comments.js";
 
-describe("InlineReviewComments", () => {
+describe("ReviewComments", () => {
   test("normalizes same-side ranges and rejects cross-side selections", () => {
     expect(normalizeReviewLineRange({
       side: "old",
@@ -22,7 +22,7 @@ describe("InlineReviewComments", () => {
   });
 
   test("owns drafts and groups saved comments at one side and endpoint placement", () => {
-    const comments = new InlineReviewComments();
+    const comments = new ReviewComments();
     comments.reconcile("project:7:branch:task/example", [
       { fileId: "file-a", contentKey: "content-a" },
     ]);
@@ -65,7 +65,7 @@ describe("InlineReviewComments", () => {
   });
 
   test("retains a non-empty draft across projections and virtual remounts", () => {
-    const comments = new InlineReviewComments();
+    const comments = new ReviewComments();
     comments.reconcile("scope", [{ fileId: "file-a", contentKey: "one" }]);
     comments.dispatch({
       type: "open-composer",
@@ -86,7 +86,7 @@ describe("InlineReviewComments", () => {
   });
 
   test("validates empty comments and cancels a draft without creating a thread", () => {
-    const comments = new InlineReviewComments();
+    const comments = new ReviewComments();
     comments.reconcile("scope", [{ fileId: "file-a", contentKey: "one" }]);
     comments.dispatch({
       type: "open-composer",

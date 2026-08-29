@@ -17,7 +17,7 @@ import {
   type FileChange,
   type FileChangesResult,
 } from "../../models/changes/file-changes.js";
-import { InlineReviewComments } from "../../models/changes/inline-review-comments.js";
+import { ReviewComments } from "../../models/changes/review-comments.js";
 import {
   estimateFileChangeHeight,
   fileChangeGap,
@@ -81,7 +81,7 @@ export class ReviewDiffPanel extends LitElement {
   private _contextState: FileDiffContextState | null = null;
   private _contextScopeKey = "";
   private _transitionHeights = new Map<string, number>();
-  private _comments = new InlineReviewComments();
+  private _comments = new ReviewComments();
   private _unsubscribeComments: (() => void) | null = null;
   private readonly _expandFileContext = (
     change: FileChange,

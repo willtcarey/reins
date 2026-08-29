@@ -1,6 +1,6 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { InlineReviewComments } from "../../models/changes/inline-review-comments.js";
+import type { ReviewComments } from "../../models/changes/review-comments.js";
 
 @customElement("review-comment-thread")
 export class ReviewCommentThread extends LitElement {
@@ -8,7 +8,7 @@ export class ReviewCommentThread extends LitElement {
     return this;
   }
 
-  @property({ attribute: false }) comments: InlineReviewComments | null = null;
+  @property({ attribute: false }) comments: ReviewComments | null = null;
   @property() fileId = "";
   @property({ attribute: "data-placement-id" }) placementId = "";
 

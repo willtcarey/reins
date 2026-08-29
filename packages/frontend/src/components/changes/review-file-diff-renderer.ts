@@ -10,9 +10,9 @@ import {
 import type { ReactiveControllerHost } from "lit";
 import { PierreRenderer } from "../../controllers/pierre-renderer.js";
 import type {
-  InlineReviewComments,
+  ReviewComments,
   ReviewLineSelection,
-} from "../../models/changes/inline-review-comments.js";
+} from "../../models/changes/review-comments.js";
 import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
 import { ReviewCommentThread } from "./review-comment-thread.js";
 
@@ -45,7 +45,7 @@ export interface ReviewFileDiffTarget {
   readonly fileDiff: FileDiffMetadata;
   readonly nativeExpandedHunks: ReadonlyMap<number, HunkExpansionRegion>;
   readonly initialExpansion: ReviewFileExpansionInteraction | null;
-  readonly comments?: InlineReviewComments | null;
+  readonly comments?: ReviewComments | null;
   readonly fileId?: string;
 }
 

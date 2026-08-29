@@ -12,9 +12,9 @@ import {
   isDiffRenderBlocked,
 } from "../../models/changes/diff-render-limit.js";
 import {
-  type InlineReviewComments,
+  type ReviewComments,
   type ReviewLineRange,
-} from "../../models/changes/inline-review-comments.js";
+} from "../../models/changes/review-comments.js";
 import { clientTelemetry } from "../../models/client-telemetry.js";
 import {
   addedFileIcon,
@@ -84,7 +84,7 @@ export class ReviewFileDiff extends LitElement {
 
   private _contextState: FileDiffContextState | null = null;
   private _unsubscribeContext: (() => void) | null = null;
-  private _comments: InlineReviewComments | null = null;
+  private _comments: ReviewComments | null = null;
   private _unsubscribeComments: (() => void) | null = null;
   private _resizeObserver: ResizeObserver | null = null;
 
@@ -104,11 +104,11 @@ export class ReviewFileDiff extends LitElement {
   }
 
   @property({ attribute: false })
-  get comments(): InlineReviewComments | null {
+  get comments(): ReviewComments | null {
     return this._comments;
   }
 
-  set comments(value: InlineReviewComments | null) {
+  set comments(value: ReviewComments | null) {
     const previous = this._comments;
     if (value === previous) return;
     this._unsubscribeComments?.();

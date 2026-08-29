@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { ReviewCommentThread } from "../../../components/changes/review-comment-thread.js";
-import { InlineReviewComments } from "../../../models/changes/inline-review-comments.js";
+import { ReviewComments } from "../../../models/changes/review-comments.js";
 import { collectTemplateEventListeners, templateToString } from "../../helpers/lit-template.js";
 
 describe("ReviewCommentThread", () => {
   test("renders a labeled composer and saves and deletes its Reins-owned thread", () => {
-    const comments = new InlineReviewComments();
+    const comments = new ReviewComments();
     comments.reconcile("scope", [{ fileId: "file-a", contentKey: "one" }]);
     comments.dispatch({
       type: "open-composer",

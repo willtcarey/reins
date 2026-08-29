@@ -4,7 +4,7 @@
 
 **Investigation complete; in-memory MVP implemented; durable persistence not started.** This document is based on the exact installed `@pierre/diffs` **1.2.11** (`bun.lock` integrity `sha512-lSkl…`) and Reins' current `FileDiff` integration.
 
-The implemented `virtualized` slice now uses an unmanaged nested `<diffs-container>`, public line annotations, controlled selection, and the public gutter callback. `InlineReviewComments` owns current-panel drafts, threads, grouping, normalization, and file-content reconciliation in memory. A Reins annotation element owns only rendering and commands. Whole-item resize observation feeds the top-level virtual list, comment layout revisions invalidate measurements, and the active composer item is pinned. Comment creation stays attached to selecting code and using its gutter action; manual side/line-number entry was removed because it is not a credible review interaction. Comments survive collapse and virtual remount within the panel, but browser refresh and review-scope/content changes may discard them.
+The implemented `virtualized` slice now uses an unmanaged nested `<diffs-container>`, public line annotations, controlled selection, and the public gutter callback. `ReviewComments` owns current-panel drafts, threads, grouping, normalization, and file-content reconciliation in memory. A Reins annotation element owns only rendering and commands. Whole-item resize observation feeds the top-level virtual list, comment layout revisions invalidate measurements, and the active composer item is pinned. Comment creation stays attached to selecting code and using its gutter action; manual side/line-number entry was removed because it is not a credible review interaction. Comments survive collapse and virtual remount within the panel, but browser refresh and review-scope/content changes may discard them.
 
 Use Pierre's public line-annotation and selection interfaces, but keep comment identity, persistence, interaction state, and top-level layout in Reins.
 
@@ -203,10 +203,10 @@ The seam belongs between `ReviewFileDiff` and Pierre, not in `FileDiffMetadata`,
 
 ### Reins-owned module
 
-Call the module `InlineReviewComments` (name is provisional). Its small external interface should be expressed entirely in Reins types:
+The `ReviewComments` module has a small external interface expressed entirely in Reins types:
 
 ```ts
-interface InlineReviewComments {
+interface ReviewComments {
   project(context: ReviewFileContext): ReviewCommentProjection;
   dispatch(command: ReviewCommentCommand): Promise<void>;
   subscribe(listener: (fileItemId: string) => void): () => void;
@@ -245,7 +245,7 @@ A focused `PierreInlineReviewAdapter` inside `review-file-diff-renderer.ts` maps
 
 Pierre types stop at this seam. The domain module must not know hunk indexes, `DiffLineAnnotation`, `annotationSide`, shadow DOM selectors, or Pierre instance lifetime.
 
-`ReviewDiffPanel` remains the owner of file ordering, top-level virtual geometry, collapse, navigation, and semantic scroll preservation. It supplies review scope and one `InlineReviewComments` instance to mounted file items. It does not manipulate individual threads.
+`ReviewDiffPanel` remains the owner of file ordering, top-level virtual geometry, collapse, navigation, and semantic scroll preservation. It supplies review scope and one `ReviewComments` instance to mounted file items. It does not manipulate individual threads.
 
 ## Interaction contract
 
@@ -326,7 +326,7 @@ To avoid destroying focused editing UI during ordinary overscan movement, pin th
 
 ### Collapse
 
-Collapsing removes Pierre and annotation DOM today. Preserve thread/draft state in `InlineReviewComments`, show a header badge for thread/draft counts, and restore widgets on expand. If focus is inside an open composer, collapse should first move focus to the header collapse control and announce that the draft remains available.
+Collapsing removes Pierre and annotation DOM today. Preserve thread/draft state in `ReviewComments`, show a header badge for thread/draft counts, and restore widgets on expand. If focus is inside an open composer, collapse should first move focus to the header collapse control and announce that the draft remains available.
 
 Collapsed fixed height remains header-only. Do not include hidden comment height in collapsed geometry. The expanded measured height cache may be reused only when both file content and comment-layout revision match; otherwise use an estimate until remeasured.
 

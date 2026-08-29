@@ -4,7 +4,7 @@ import { ReviewFileDiff } from "../../../components/changes/review-file-diff.js"
 import { SpringCollapseDirective } from "../../../directives/spring-collapse.js";
 import { FileDiffContextState } from "../../../models/changes/file-diff-context-state.js";
 import { parseFileChanges } from "../../../models/changes/file-changes.js";
-import { InlineReviewComments } from "../../../models/changes/inline-review-comments.js";
+import { ReviewComments } from "../../../models/changes/review-comments.js";
 import {
   collectTemplateEventListeners,
   collectTemplateValues,
@@ -157,7 +157,7 @@ describe("ReviewFileDiff", () => {
 
   test("keeps draft keystrokes inside the mounted annotation element", () => {
     const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
-    const comments = new InlineReviewComments();
+    const comments = new ReviewComments();
     comments.reconcile("scope", [{ fileId: fileChange.id, contentKey: fileChange.contentKey }]);
     comments.dispatch({
       type: "open-composer",

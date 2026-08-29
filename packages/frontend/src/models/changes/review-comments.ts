@@ -13,39 +13,39 @@ export interface ReviewLineRange {
   readonly endLine: number;
 }
 
-export interface InlineReviewComment {
+export interface ReviewComment {
   readonly id: string;
   readonly body: string;
   readonly author: "You";
   readonly range: ReviewLineRange;
 }
 
-export interface InlineReviewComposer {
+export interface ReviewCommentComposer {
   readonly body: string;
   readonly error: string | null;
   readonly range: ReviewLineRange;
 }
 
-export interface InlineReviewCommentPlacement {
+export interface ReviewCommentThread {
   readonly id: string;
   readonly side: ReviewSide;
   readonly lineNumber: number;
   readonly range: ReviewLineRange;
-  readonly comments: readonly InlineReviewComment[];
-  readonly composer: InlineReviewComposer | null;
+  readonly comments: readonly ReviewComment[];
+  readonly composer: ReviewCommentComposer | null;
 }
 
-export interface InlineReviewCommentProjection {
-  readonly placements: readonly InlineReviewCommentPlacement[];
+export interface ReviewCommentsProjection {
+  readonly placements: readonly ReviewCommentThread[];
   readonly selection: ReviewLineRange | null;
-  readonly composer: InlineReviewComposer | null;
+  readonly composer: ReviewCommentComposer | null;
   readonly error: string | null;
   readonly threadCount: number;
   readonly draftCount: number;
   readonly layoutRevision: number;
 }
 
-export type InlineReviewCommentCommand =
+export type ReviewCommentCommand =
   | { readonly type: "select"; readonly fileId: string; readonly selection: ReviewLineSelection | null }
   | { readonly type: "open-composer"; readonly fileId: string; readonly selection: ReviewLineSelection }
   | { readonly type: "update-draft"; readonly fileId: string; readonly body: string }
@@ -53,18 +53,18 @@ export type InlineReviewCommentCommand =
   | { readonly type: "cancel-composer"; readonly fileId: string }
   | { readonly type: "delete-comment"; readonly fileId: string; readonly commentId: string };
 
-export type InlineReviewCommentResult =
+export type ReviewCommentResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly error: string };
 
-export interface InlineReviewCommentsChange {
+export interface ReviewCommentsChange {
   readonly fileId: string;
   readonly placementId: string | null;
   readonly layoutChanged: boolean;
   readonly selectionChanged: boolean;
 }
 
-interface StoredComment extends InlineReviewComment {
+interface StoredComment extends ReviewComment {
   readonly placementId: string;
 }
 
@@ -113,7 +113,7 @@ export function normalizeReviewLineRange(
  * threads, grouping, selection, and remount restoration all live here rather
  * than in annotation elements.
  */
-export class InlineReviewComments {
+export class ReviewComments {
   private scopeKey = "";
   private fileContentKeys = new Map<string, string>();
   private comments: StoredComment[] = [];
@@ -122,14 +122,14 @@ export class InlineReviewComments {
   private activeDraftKey: string | null = null;
   private errors = new Map<string, string>();
   private layoutRevisions = new Map<string, number>();
-  private listeners = new Set<(change: InlineReviewCommentsChange) => void>();
+  private listeners = new Set<(change: ReviewCommentsChange) => void>();
   private nextCommentId = 1;
 
   get activeComposerFileId(): string | null {
     return this.activeDraftKey ? this.drafts.get(this.activeDraftKey)?.fileId ?? null : null;
   }
 
-  subscribe(listener: (change: InlineReviewCommentsChange) => void): () => void {
+  subscribe(listener: (change: ReviewCommentsChange) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
@@ -181,7 +181,7 @@ export class InlineReviewComments {
     for (const fileId of affected) this.notify(fileId, null, true, fileId === selectionFileId);
   }
 
-  project(fileId: string): InlineReviewCommentProjection {
+  project(fileId: string): ReviewCommentsProjection {
     const grouped = new Map<string, StoredComment[]>();
     for (const comment of this.comments) {
       if (fileIdFromPlacement(comment.placementId) !== fileId) continue;
@@ -205,7 +205,7 @@ export class InlineReviewComments {
         range,
         comments: storedComments.map(({ placementId: _placementId, ...comment }) => comment),
         composer: draft ? composerFromDraft(draft) : null,
-      } satisfies InlineReviewCommentPlacement;
+      } satisfies ReviewCommentThread;
     }).toSorted((left, right) => left.lineNumber - right.lineNumber || left.side.localeCompare(right.side));
 
     return {
@@ -219,7 +219,7 @@ export class InlineReviewComments {
     };
   }
 
-  dispatch(command: InlineReviewCommentCommand): InlineReviewCommentResult {
+  dispatch(command: ReviewCommentCommand): ReviewCommentResult {
     switch (command.type) {
       case "select":
         return this.select(command.fileId, command.selection);
@@ -236,7 +236,7 @@ export class InlineReviewComments {
     }
   }
 
-  private select(fileId: string, selection: ReviewLineSelection | null): InlineReviewCommentResult {
+  private select(fileId: string, selection: ReviewLineSelection | null): ReviewCommentResult {
     if (selection === null) {
       this.selection = null;
       this.errors.delete(fileId);
@@ -251,7 +251,7 @@ export class InlineReviewComments {
     return { ok: true };
   }
 
-  private openComposer(fileId: string, selection: ReviewLineSelection): InlineReviewCommentResult {
+  private openComposer(fileId: string, selection: ReviewLineSelection): ReviewCommentResult {
     const normalized = normalizeReviewLineRange(selection);
     if (!normalized.ok) return this.reject(fileId, normalized.error);
     const range = normalized.range;
@@ -275,7 +275,7 @@ export class InlineReviewComments {
     return { ok: true };
   }
 
-  private updateDraft(fileId: string, body: string): InlineReviewCommentResult {
+  private updateDraft(fileId: string, body: string): ReviewCommentResult {
     const draft = this.activeDraft(fileId);
     if (!draft) return this.reject(fileId, "Open a comment composer first.");
     draft.body = body;
@@ -284,7 +284,7 @@ export class InlineReviewComments {
     return { ok: true };
   }
 
-  private saveComment(fileId: string): InlineReviewCommentResult {
+  private saveComment(fileId: string): ReviewCommentResult {
     const draft = this.activeDraft(fileId);
     if (!draft) return this.reject(fileId, "Open a comment composer first.");
     const body = draft.body.trim();
@@ -307,7 +307,7 @@ export class InlineReviewComments {
     return { ok: true };
   }
 
-  private cancelComposer(fileId: string): InlineReviewCommentResult {
+  private cancelComposer(fileId: string): ReviewCommentResult {
     const draft = this.activeDraft(fileId);
     if (!draft) return { ok: true };
     this.drafts.delete(this.activeDraftKey!);
@@ -318,7 +318,7 @@ export class InlineReviewComments {
     return { ok: true };
   }
 
-  private deleteComment(fileId: string, commentId: string): InlineReviewCommentResult {
+  private deleteComment(fileId: string, commentId: string): ReviewCommentResult {
     const comment = this.comments.find((candidate) => candidate.id === commentId);
     if (!comment || fileIdFromPlacement(comment.placementId) !== fileId) return { ok: true };
     this.comments = this.comments.filter((candidate) => candidate.id !== commentId);
@@ -333,7 +333,7 @@ export class InlineReviewComments {
     return draft?.fileId === fileId ? draft : null;
   }
 
-  private reject(fileId: string, error: string): InlineReviewCommentResult {
+  private reject(fileId: string, error: string): ReviewCommentResult {
     this.errors.set(fileId, error);
     this.notify(fileId, null, false);
     return { ok: false, error };
@@ -354,7 +354,7 @@ export class InlineReviewComments {
   }
 }
 
-function composerFromDraft(draft: StoredDraft): InlineReviewComposer {
+function composerFromDraft(draft: StoredDraft): ReviewCommentComposer {
   return { body: draft.body, error: draft.error, range: draft.range };
 }
 
