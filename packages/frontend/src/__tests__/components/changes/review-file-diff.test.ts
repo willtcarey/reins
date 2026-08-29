@@ -143,39 +143,16 @@ describe("ReviewFileDiff", () => {
     expect(toggledIds).toEqual([fileChange.id]);
   });
 
-  test("offers a keyboard line-range form that opens the inline composer", () => {
+  test("keeps comment creation on selected diff lines instead of offering manual range entry", () => {
     const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
-    const comments = new InlineReviewComments();
-    comments.reconcile("scope", [{ fileId: fileChange.id, contentKey: fileChange.contentKey }]);
-    comments.dispatch({
-      type: "select",
-      fileId: fileChange.id,
-      selection: { side: "new", startLine: 1, endLine: 1 },
-    });
     const item = new ReviewFileDiff();
     item.change = fileChange;
-    item.comments = comments;
 
-    let rendered = item.render();
-    expect(renderOutput(item)).toContain("Add inline comment");
-    collectTemplateEventListeners(rendered, "click")[1]?.call(item, new Event("click"));
-
-    rendered = item.render();
     const output = renderOutput(item);
-    expect(output).toContain('role="dialog"');
-    expect(output).toContain("Side");
-    expect(output).toContain("Start line");
-    expect(output).toContain("End line");
-    collectTemplateEventListeners(rendered, "submit")[0]?.call(
-      item,
-      new Event("submit", { cancelable: true }),
-    );
 
-    expect(comments.project(fileChange.id).composer?.range).toEqual({
-      side: "new",
-      startLine: 1,
-      endLine: 1,
-    });
+    expect(output).not.toContain("Add inline comment");
+    expect(output).not.toContain('role="dialog"');
+    expect(output).not.toContain("Start line");
   });
 
   test("keeps draft keystrokes inside the mounted annotation element", () => {

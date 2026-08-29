@@ -4,7 +4,7 @@
 
 **Investigation complete; in-memory MVP implemented; durable persistence not started.** This document is based on the exact installed `@pierre/diffs` **1.2.11** (`bun.lock` integrity `sha512-lSkl…`) and Reins' current `FileDiff` integration.
 
-The implemented `virtualized` slice now uses an unmanaged nested `<diffs-container>`, public line annotations, controlled selection, and the public gutter callback. `InlineReviewComments` owns current-panel drafts, threads, grouping, normalization, and file-content reconciliation in memory. A Reins annotation element owns only rendering and commands. Whole-item resize observation feeds the top-level virtual list, comment layout revisions invalidate measurements, and the active composer item is pinned. A labeled file-header side/start/end form supplies the keyboard fallback. Comments survive collapse and virtual remount within the panel, but browser refresh and review-scope/content changes may discard them.
+The implemented `virtualized` slice now uses an unmanaged nested `<diffs-container>`, public line annotations, controlled selection, and the public gutter callback. `InlineReviewComments` owns current-panel drafts, threads, grouping, normalization, and file-content reconciliation in memory. A Reins annotation element owns only rendering and commands. Whole-item resize observation feeds the top-level virtual list, comment layout revisions invalidate measurements, and the active composer item is pinned. Comment creation stays attached to selecting code and using its gutter action; manual side/line-number entry was removed because it is not a credible review interaction. Comments survive collapse and virtual remount within the panel, but browser refresh and review-scope/content changes may discard them.
 
 Use Pierre's public line-annotation and selection interfaces, but keep comment identity, persistence, interaction state, and top-level layout in Reins.
 
@@ -265,16 +265,15 @@ Pierre 1.2.11 selection is pointer-only, and its built-in plus button has no acc
 
 Minimum accessible contract:
 
-- A Reins-owned **Add inline comment** action is keyboard reachable from each file header. It opens a dialog/form with side, start line, and optional end line, initialized from the current selection when present. This is the no-private-DOM fallback for keyboard users.
 - Pointer-created selection is announced in a polite live region (for example, “New lines 12 through 15 selected”).
 - The gutter add action has `aria-label` containing side and range, a 44×44 touch target, and visible focus.
 - Composer fields have explicit labels; Save/Cancel are buttons; `Escape` cancels with confirmation if the draft is non-empty.
-- Opening moves focus to the composer. Saving/canceling restores focus to the invoking add action or, if it was virtualized away, to the file-header action.
+- Opening moves focus to the composer. Saving/canceling restores focus to a stable file-header control if the gutter action is no longer mounted.
 - Threads use semantic author/time/body/action markup and do not put every code line in the tab order.
 - Selected colors and focus indicators meet contrast requirements and do not rely only on red/green side color.
 - Range order is normalized for speech (“old lines 20–24”) even though Pierre preserves drag direction internally.
 
-A richer roving-tabstop keyboard gutter can be proposed upstream later. Do not implement it by assigning tabindex and key handlers to Pierre's private row markup in Reins.
+Keyboard-only comment creation remains an explicit gap. Design a credible roving-tabstop or keyboard gutter interaction with Pierre/upstream rather than exposing manual side and line-number fields or assigning tabindex and key handlers to Pierre's private row markup in Reins.
 
 ### Mobile layout
 
@@ -368,8 +367,8 @@ Comments and expansion share line-side coordinates, so they compose without meta
 
 ## Risks and upstream gaps
 
-1. **Managed-container mismatch.** Reins' current advanced constructor mode bypasses vanilla annotation mounting. Validate the nested unmanaged-container adapter in Chrome, Safari, and Firefox before building thread UI.
-2. **No keyboard line selection.** The file-header line-range dialog is necessary for the first accessible slice; request a public keyboard/roving-gutter interface upstream.
+1. **Managed-container mismatch.** Reins now uses the nested unmanaged-container adapter; validate it in Chrome, Safari, and Firefox before treating the comment UI as production-ready.
+2. **No keyboard line selection.** Manual line-number entry was rejected as an implausible review interaction. Request or design a public keyboard/roving-gutter interface upstream.
 3. **Gutter utility labeling.** The 1.2.11 default button has no generated accessible name. Reins may need custom content or an upstream fix.
 4. **Safari custom-gutter behavior.** Current upstream docs warn of scroll jumping with custom gutter utility plus `line-info`. Prefer the default utility and verify Reins' supported Safari versions.
 5. **Annotation lifecycle.** Annotation elements can be recreated. Draft/focus/state must remain Reins-owned.
@@ -414,9 +413,9 @@ Each behavior slice starts with a failing contract test per `docs/dev/workflow.m
 
 ### 5. Accessible keyboard path
 
-- [x] Add the file-header **Add inline comment** action and labeled side/start/end dialog/form.
 - [x] Add live selection announcements, explicit composer labels, focus movement/restoration, and Escape cancellation with non-empty-draft confirmation.
-- [x] Cover keyboard-form creation without querying or modifying Pierre comment row internals.
+- [x] Remove the file-header manual side/start/end form; users create comments from selected code, not entered coordinates.
+- [ ] Design and implement a credible keyboard line-selection/gutter interaction through a public Pierre seam.
 - [ ] Complete browser accessibility verification for contrast, focus order, and assistive-technology announcements.
 
 ### 6. Persistence and refresh reconciliation
@@ -441,6 +440,6 @@ Each behavior slice starts with a failing contract test per `docs/dev/workflow.m
 - A changed target never receives a comment solely because path and line number still match.
 - Drafts and threads survive refresh, collapse, context remount, and top-level virtual remount.
 - Opening/closing and async resizing do not visibly jump unrelated content.
-- Pointer, touch, and keyboard-only users can create a comment.
+- Pointer and touch users can create a comment; a credible keyboard-only line-selection interaction is required before production readiness.
 - Large-diff safeguards remain in force; blocked files expose file-level review only.
 - Classic and `codeview` remain unaffected while `virtualized` is developed.

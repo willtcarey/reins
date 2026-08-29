@@ -48,7 +48,7 @@ This is the working implementation list. It is ordered from smallest functional 
    - Markdown diff/preview tabs.
    - Image previews, PDF previews, and binary placeholders.
    - [x] Investigate inline comments and define the supported seam; see [Inline Review Comments on the Virtualized Diff](inline-review-comments.md).
-   - [x] Correct the managed-container adapter and add an in-memory inline-comment MVP through Pierre's public annotations, selection, and gutter hooks. Reins owns drafts/threads, keyboard range entry, remount restoration, and outer measurement; durable anchors, backend persistence, and refresh reconciliation remain deferred. Do not put comments in diff metadata or use protected/deprecated row hooks.
+   - [x] Correct the managed-container adapter and add an in-memory inline-comment MVP through Pierre's public annotations, selection, and gutter hooks. Reins owns drafts/threads, remount restoration, and outer measurement; durable anchors, backend persistence, refresh reconciliation, and a keyboard line-selection interaction remain deferred. Do not put comments in diff metadata or use protected/deprecated row hooks.
 
 6. [x] **Replace top-level mounting with a CodeView-like virtual list.**
    - [x] Swap all-item rendering for a bounded visible/overscan window.

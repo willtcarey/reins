@@ -11,7 +11,6 @@ import type { ReactiveControllerHost } from "lit";
 import { PierreRenderer } from "../../controllers/pierre-renderer.js";
 import type {
   InlineReviewComments,
-  ReviewLineRange,
   ReviewLineSelection,
 } from "../../models/changes/inline-review-comments.js";
 import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
@@ -225,29 +224,6 @@ export function createReviewFileDiffRenderer(
     sameInput: (left, right) => left === right,
     onRendered,
   });
-}
-
-export function canCommentOnReviewRange(
-  target: ReviewFileDiffTarget,
-  range: ReviewLineRange,
-): boolean {
-  for (let line = range.startLine; line <= range.endLine; line += 1) {
-    const exists = target.fileDiff.hunks.some((hunk, hunkIndex) => {
-      const start = range.side === "old" ? hunk.deletionStart : hunk.additionStart;
-      const count = range.side === "old" ? hunk.deletionCount : hunk.additionCount;
-      if (line >= start && line < start + count) return true;
-
-      const expanded = target.nativeExpandedHunks.get(hunkIndex);
-      if (!expanded || hunk.collapsedBefore <= 0) return false;
-      const collapsedStart = start - hunk.collapsedBefore;
-      const visibleFromStart = line >= collapsedStart
-        && line < collapsedStart + expanded.fromStart;
-      const visibleFromEnd = line >= start - expanded.fromEnd && line < start;
-      return visibleFromStart || visibleFromEnd;
-    });
-    if (!exists) return false;
-  }
-  return true;
 }
 
 function commentAnnotations(
