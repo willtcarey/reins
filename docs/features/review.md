@@ -28,6 +28,10 @@ Each diff shows a few lines of context around changes by default. You can expand
 
 When expanding closes the gap between two adjacent hunks, they automatically merge into a single hunk. In the leading hidden region before the first hunk, activating the unmodified-lines link expands only toward that hunk rather than opening both ends of the region. The complete resulting file is fetched on demand (not included in the initial diff payload), while the reviewed Git patch reconstructs its previous version in the browser. New and deleted files already carry their complete one-sided content in the patch. Expanded lines are syntax-highlighted in the background, and upward expansion keeps your scroll position anchored on the original hunk content. If content changed since the patch was loaded, retrieval fails, or the file is binary or over 1 MiB, the existing partial diff remains in place.
 
+## Large file safeguards
+
+A single file with more than 10,000 changed lines (additions plus removals) keeps its file header and actions available, but its diff rows are not rendered. Reins shows the changed-line count and limit in place of the body. This applies to every diff renderer and prevents generated files or large data snapshots from monopolizing rendering and syntax-highlighting work; other files in the review remain available normally.
+
 ## Markdown files
 
 Markdown files (`.md`, `.mdx`, `.markdown`) get two view modes toggled via tabs above the diff:

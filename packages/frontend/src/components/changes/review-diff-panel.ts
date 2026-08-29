@@ -7,7 +7,6 @@ import {
 } from "../../controllers/virtual-list-controller.js";
 import {
   ReviewCollapseState,
-  reviewContentFingerprint,
   type ReviewCollapseScope,
 } from "../../models/changes/review-collapse-state.js";
 import { FileDiffContextState } from "../../models/changes/file-diff-context-state.js";
@@ -22,11 +21,6 @@ import {
   estimateFileChangeHeight,
   fileChangeGap,
 } from "../../models/changes/review-virtual-layout.js";
-import {
-  beginDiffBenchmark,
-  endDiffBenchmark,
-  measureDiffBenchmark,
-} from "../../models/changes/diff-benchmark-instrumentation.js";
 import {
   clientTelemetry,
   type ClientTelemetryOperation,
@@ -86,7 +80,6 @@ export class ReviewDiffPanel extends LitElement {
   private _contextState: FileDiffContextState | null = null;
   private _contextScopeKey = "";
   private _transitionHeights = new Map<string, number>();
-  private _benchmarkRenderVersion = 0;
   private readonly _expandFileContext = (
     change: FileChange,
     interaction: ReviewFileExpansionInteraction,
@@ -120,11 +113,6 @@ export class ReviewDiffPanel extends LitElement {
     if (changed.has("visible")) this._virtualList.setVisible(this.visible);
     this._reconcilePatchData();
     if (this.visible && (storeChanged || changed.has("visible"))) this._fetchFresh();
-    const version = this.store?.patchData.data?.version ?? 0;
-    if (version > 0 && version !== this._benchmarkRenderVersion) {
-      this._benchmarkRenderVersion = version;
-      beginDiffBenchmark("virtualized", "render", version);
-    }
   }
 
   override updated() {
@@ -132,9 +120,6 @@ export class ReviewDiffPanel extends LitElement {
     const activeId = this._virtualList.window().activeId;
     if (activeId) this.reportActiveItem(activeId);
     this._syncPendingScroll();
-    if (this._benchmarkRenderVersion > 0) {
-      endDiffBenchmark("virtualized", "render", this._benchmarkRenderVersion);
-    }
   }
 
   override disconnectedCallback() {
@@ -183,7 +168,7 @@ export class ReviewDiffPanel extends LitElement {
       && scroll.scrollTop > geometry.top
       && scroll.scrollTop < geometry.top + geometry.height;
 
-    if (geometry) this._transitionHeights.set(id, geometry.height);
+    if (geometry) this._transitionHeights.set(id, geometry.height - geometry.gapBefore);
     else this._transitionHeights.delete(id);
     this._collapseState.setCollapsed(scope, change, collapsed);
     this._syncVirtualItems();
@@ -240,9 +225,7 @@ export class ReviewDiffPanel extends LitElement {
     this._parsedSource = source;
     this._parsedData = reconcileFileChanges(
       this._parsedData,
-      measureDiffBenchmark("virtualized", "parse", source.version, () => (
-        parseFileChanges(source.patch, source.cacheKeyPrefix)
-      )),
+      parseFileChanges(source.patch, source.cacheKeyPrefix),
     );
     if (this._activeItemId && !this._parsedData.changes.some((change) => change.id === this._activeItemId)) {
       this._activeItemId = null;
@@ -275,7 +258,7 @@ export class ReviewDiffPanel extends LitElement {
 
   private _measurementKey(change: FileChange): string {
     const scope = this._collapseScope();
-    return `${scope?.projectId ?? "none"}:${scope?.branch ?? "none"}:${change.id}:${reviewContentFingerprint(change.contentKey)}`;
+    return `${scope?.projectId ?? "none"}:${scope?.branch ?? "none"}:${change.id}:${change.contentKey}`;
   }
 
   private _syncVirtualItems() {
@@ -285,9 +268,10 @@ export class ReviewDiffPanel extends LitElement {
       return {
         id: change.id,
         measurementKey: this._measurementKey(change),
-        estimatedHeight: estimateFileChangeHeight(change, false, index),
+        estimatedHeight: estimateFileChangeHeight(change, false),
+        gapBefore: fileChangeGap(index),
         fixedHeight: this._transitionHeights.get(change.id)
-          ?? (collapsed ? estimateFileChangeHeight(change, true, index) : undefined),
+          ?? (collapsed ? estimateFileChangeHeight(change, true) : undefined),
       };
     }));
   }
@@ -322,7 +306,7 @@ export class ReviewDiffPanel extends LitElement {
       return;
     }
 
-    const collapsedHeight = estimateFileChangeHeight(change, true, index);
+    const collapsedHeight = estimateFileChangeHeight(change, true);
     const transitionHeight = collapsedHeight + update.bodyHeight;
     this._transitionHeights.set(change.id, transitionHeight);
     this._virtualList.setItemFixedHeight(change.id, transitionHeight);
@@ -443,7 +427,7 @@ export class ReviewDiffPanel extends LitElement {
     const branch = this._parsedSource?.branch ?? this.store.branch;
     const baseBranch = this._parsedSource?.baseBranch ?? this.store.fileData.data?.baseBranch;
     const virtualWindow = this._virtualList.window();
-    const changeById = new Map(changes.map((change, index) => [change.id, { change, index }]));
+    const changeById = new Map(changes.map((change) => [change.id, change]));
 
     return html`
       <div class="flex h-full min-h-0 flex-col" data-rendered-payload-version=${data ? this.store.patchData.data?.version ?? 0 : 0}>
@@ -457,7 +441,7 @@ export class ReviewDiffPanel extends LitElement {
             </span>
           </div>
         ` : nothing}
-        <div class="min-h-0 flex-1 overflow-y-auto" data-diff-scroll-surface data-review-scroll>
+        <div class="min-h-0 flex-1 overflow-y-auto" data-review-scroll>
           ${loading
             ? html`<div class="flex h-full items-center justify-center p-4 text-sm text-zinc-500">Loading Reins diff…</div>`
             : data?.parseError
@@ -468,13 +452,11 @@ export class ReviewDiffPanel extends LitElement {
                       virtualWindow.items,
                       (entry) => entry.id,
                       (entry) => {
-                        const record = changeById.get(entry.id);
-                        if (!record) return nothing;
-                        const { change, index } = record;
+                        const change = changeById.get(entry.id);
+                        if (!change) return nothing;
                         return html`
                           <review-file-diff
-                            style=${`position:absolute;top:${entry.top}px;left:0;right:0`}
-                            data-diff-file-wrapper
+                            style=${`position:absolute;top:${entry.top + entry.gapBefore}px;left:0;right:0`}
                             data-review-item-id=${change.id}
                             data-file-path=${change.path}
                             ?data-review-first=${change === changes[0]}
@@ -482,7 +464,7 @@ export class ReviewDiffPanel extends LitElement {
                             .collapsed=${this.isItemCollapsed(change.id)}
                             .projectId=${this.store?.projectId ?? null}
                             .branch=${branch ?? null}
-                            .reservedHeight=${Math.max(1, entry.height - fileChangeGap(index))}
+                            .reservedHeight=${Math.max(1, entry.height - entry.gapBefore)}
                             .contextState=${this._ensureContextState()}
                             .onToggleCollapse=${this._toggleFileCollapse}
                             .onHeightChange=${this._handleFileHeightChange}

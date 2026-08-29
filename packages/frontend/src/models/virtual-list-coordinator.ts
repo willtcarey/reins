@@ -1,14 +1,22 @@
 export interface VirtualListItemInput {
   readonly id: string;
+  /** Estimated content height, excluding the leading gap. */
   readonly estimatedHeight: number;
+  /** Spacing reserved before this item's content. */
+  readonly gapBefore?: number;
   /** Changes whenever a previously measured fluid height is no longer valid. */
   readonly measurementKey: string;
-  /** Temporarily replaces fluid geometry without discarding its measurement. */
+  /** Temporarily replaces fluid content height without discarding its measurement. */
   readonly fixedHeight?: number;
 }
 
-export interface VirtualListItem extends VirtualListItemInput {
+interface NormalizedVirtualListItemInput extends VirtualListItemInput {
+  readonly gapBefore: number;
+}
+
+export interface VirtualListItem extends NormalizedVirtualListItemInput {
   readonly top: number;
+  /** Total slot height, including the leading gap. */
   readonly height: number;
 }
 
@@ -26,6 +34,7 @@ export interface VirtualListWindow {
 export interface VirtualListMeasurement {
   readonly id: string;
   readonly measurementKey: string;
+  /** Measured content height, excluding the item's leading gap. */
   readonly height: number;
 }
 
@@ -44,7 +53,7 @@ export interface VirtualListGeometryUpdate {
  */
 export class VirtualListCoordinator {
   private readonly measurements = new Map<string, number>();
-  private inputs: readonly VirtualListItemInput[] = [];
+  private inputs: readonly NormalizedVirtualListItemInput[] = [];
   private items: readonly VirtualListItem[] = [];
   private byId = new Map<string, VirtualListItem>();
   private scrollTop = 0;
@@ -59,6 +68,7 @@ export class VirtualListCoordinator {
     this.inputs = inputs.map((input) => ({
       ...input,
       estimatedHeight: Math.max(1, input.estimatedHeight),
+      gapBefore: Math.max(0, input.gapBefore ?? 0),
       fixedHeight: input.fixedHeight === undefined ? undefined : Math.max(1, input.fixedHeight),
     }));
     const validMeasurementKeys = new Set(this.inputs.map((input) => input.measurementKey));
@@ -147,9 +157,10 @@ export class VirtualListCoordinator {
   private rebuild() {
     let top = 0;
     this.items = this.inputs.map((input) => {
-      const height = input.fixedHeight
+      const contentHeight = input.fixedHeight
         ?? this.measurements.get(input.measurementKey)
         ?? input.estimatedHeight;
+      const height = input.gapBefore + contentHeight;
       const item = { ...input, top, height };
       top += height;
       return item;

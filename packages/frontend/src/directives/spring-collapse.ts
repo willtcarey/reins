@@ -20,6 +20,8 @@ export interface SpringCollapseOptions {
   onHeightChange?: (height: number, settled: boolean) => void;
   /** Animate ambient body resizes after expansion has settled. */
   animateContentResize?: boolean;
+  /** Cap only the opening spring; full natural height is restored on settle. */
+  maxExpansionHeight?: number;
 }
 
 type RenderBody = () => unknown;
@@ -191,7 +193,11 @@ export class SpringCollapseDirective extends AsyncDirective {
     const start = this.collapsed
       ? (Number.isFinite(renderedHeight) ? renderedHeight : naturalHeight)
       : (Number.isFinite(renderedHeight) ? renderedHeight : 0);
-    const target = this.collapsed ? 0 : naturalHeight;
+    const maxExpansionHeight = this.options.maxExpansionHeight;
+    const openingTarget = maxExpansionHeight !== undefined && Number.isFinite(maxExpansionHeight)
+      ? Math.min(naturalHeight, Math.max(1, maxExpansionHeight))
+      : naturalHeight;
+    const target = this.collapsed ? 0 : openingTarget;
 
     element.style.overflow = "hidden";
     element.style.height = `${Math.max(0, start)}px`;

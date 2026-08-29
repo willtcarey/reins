@@ -17,7 +17,7 @@ function file(path: string): DiffFile {
   };
 }
 
-describe("DiffFileCard file actions", () => {
+describe("DiffFileCard", () => {
   test("uses shared file action buttons", () => {
     const card = new DiffFileCard();
     card.file = file("src/app.ts");
@@ -29,5 +29,19 @@ describe("DiffFileCard file actions", () => {
     expect(output).toContain("<diff-copy-path-button");
     expect(output).toContain("<diff-download-file-button");
     expect(output).toContain("/api/projects/1/files/content?path=src%2Fapp.ts");
+  });
+
+  test("presents an oversized file as an actionable limit notice", () => {
+    const card = new DiffFileCard();
+    card.file = { ...file("generated/results.json"), additions: 10_001 };
+
+    const output = templateToString(card.render());
+
+    expect(output).toContain("generated/results.json");
+    expect(output).toContain("Diff not rendered");
+    expect(output).toContain("10,001 changed lines exceeds the 10,000-line limit");
+    expect(output).toContain("<diff-view-file-button");
+    expect(output).toContain("<diff-copy-path-button");
+    expect(output).not.toContain("<diff-hunk");
   });
 });

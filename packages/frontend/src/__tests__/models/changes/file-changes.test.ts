@@ -42,6 +42,17 @@ describe("parseFileChanges", () => {
     expect(result.pathToChangeId.get("src/old.ts")).toBe(result.changes[0]?.id);
   });
 
+  test("gives equal content a compact stable identity and changes it with reviewed content", () => {
+    const first = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
+    const sameContent = parseFileChanges(PATCH, "project-7-v2").changes[0]!;
+    const changedContent = parseFileChanges(PATCH.replace("+new", "+updated"), "project-7-v3").changes[0]!;
+
+    expect(first.contentKey).toMatch(/^v1:[0-9a-f]+:[0-9a-z]+$/);
+    expect(first.contentKey.length).toBeLessThan(64);
+    expect(sameContent.contentKey).toBe(first.contentKey);
+    expect(changedContent.contentKey).not.toBe(first.contentKey);
+  });
+
   test("uses occurrence to keep duplicate records unique and reports malformed patches", () => {
     const duplicatePatch = `${PATCH}${PATCH}`;
     const duplicate = parseFileChanges(duplicatePatch, "snapshot");

@@ -118,7 +118,6 @@ describe("ReviewDiffPanel", () => {
     expect(mountedItems.length).toBeLessThan(20);
     expect(templateToString(renderedPanel)).toContain("position:relative;height:");
     expect(output).toContain("position:absolute;top:");
-    expect(output).toContain("data-diff-file-wrapper");
     expect(output).toContain("src/file-0.ts");
     expect(output).not.toContain("data-file-path=src/file-99.ts");
     store.dispose();

@@ -14,6 +14,33 @@ function installResizeObserver() {
   });
 }
 
+async function expandMeasuredBody(contentHeight: number, maxExpansionHeight: number) {
+  installResizeObserver();
+  const heights: Array<[number, boolean]> = [];
+  const collapse = new SpringCollapseDirective(childPart);
+  const renderBody = () => html`<p>Body</p>`;
+  collapse.render(true, renderBody);
+  collapse.render(false, renderBody, {
+    maxExpansionHeight,
+    onHeightChange: (height, settled) => heights.push([height, settled]),
+  });
+
+  // Bun's test DOM does not mount Lit refs; provide their element boundary so
+  // the public height callback can describe the complete opening lifecycle.
+  const style = {
+    height: "",
+    overflow: "",
+    removeProperty(property: string) {
+      if (property === "height") this.height = "";
+      if (property === "overflow") this.overflow = "";
+    },
+  };
+  Reflect.set(collapse, "element", { style });
+  Reflect.set(collapse, "content", { scrollHeight: contentHeight });
+  await Promise.resolve();
+  return heights;
+}
+
 afterEach(() => {
   Reflect.set(globalThis, "ResizeObserver", originalResizeObserver);
 });
@@ -49,6 +76,13 @@ describe("springCollapse", () => {
     expect(templateToString(expanded)).toContain("<p>Body</p>");
     expect(templateToString(collapsing)).toContain("<p>Body</p>");
     expect(bodyRenders).toBe(2);
+  });
+
+  test("reveals one viewport before settling a taller body at full height", async () => {
+    const heights = await expandMeasuredBody(1_000, 300);
+
+    expect(heights).toContainEqual([300, false]);
+    expect(heights.at(-1)).toEqual([1_000, true]);
   });
 
   test("skips animation when ResizeObserver is unavailable", () => {

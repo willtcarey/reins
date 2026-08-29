@@ -9,6 +9,7 @@ export interface FileChange {
   readonly additions: number;
   readonly removals: number;
   readonly occurrence: number;
+  /** Compact fingerprint computed once while parsing; never raw serialized diff content. */
   readonly contentKey: string;
   readonly cacheKey: string;
   /** Exact Git patch segment used to hydrate complete Pierre metadata lazily. */
@@ -66,10 +67,10 @@ export function parseFileChanges(
         const occurrence = occurrences.get(occurrenceKey) ?? 0;
         occurrences.set(occurrenceKey, occurrence + 1);
         const identity = `${occurrenceKey}:${occurrence}`;
-        const contentKey = JSON.stringify(
+        const contentKey = contentFingerprint(JSON.stringify(
           { fileDiff: parsedFileDiff, filePatch },
           (key, value) => key === "cacheKey" ? undefined : value,
-        );
+        ));
         const cacheKey = `${cacheKeyPrefix}:${identity}`;
         const fileDiff = { ...parsedFileDiff, cacheKey };
         const additions = fileDiff.hunks.reduce((total, hunk) => total + hunk.additionLines, 0);
@@ -117,4 +118,21 @@ function splitFilePatches(patch: string): string[] {
 
 function fileChangeIdentity(status: ChangeTypes, oldPath: string | null, path: string): string {
   return `${status}:${oldPath ? encodeURIComponent(oldPath) : ""}:${encodeURIComponent(path)}`;
+}
+
+/** Compact deterministic identity; diff content is not security-sensitive input. */
+function contentFingerprint(content: string): string {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (let index = 0; index < content.length; index += 1) {
+    const code = content.charCodeAt(index);
+    first = Math.imul(first ^ code, 0x01000193);
+    second = Math.imul(second ^ code, 0x85ebca6b);
+    second = (second << 13) | (second >>> 19);
+  }
+  return `v1:${toHex(first)}${toHex(second)}:${content.length.toString(36)}`;
+}
+
+function toHex(value: number): string {
+  return (value >>> 0).toString(16).padStart(8, "0");
 }
