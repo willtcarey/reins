@@ -1,8 +1,10 @@
 import { DEFAULT_VIRTUAL_FILE_METRICS } from "@pierre/diffs";
 import type { FileChange } from "./file-changes.js";
+import { isDiffRenderBlocked } from "./diff-render-limit.js";
 
 const REVIEW_HEADER_HEIGHT = 37;
 const REVIEW_ITEM_GAP = 16;
+const REVIEW_BLOCKED_BODY_HEIGHT = 53;
 const PIERRE_LINE_HEIGHT = DEFAULT_VIRTUAL_FILE_METRICS.lineHeight;
 const PIERRE_SPACING = DEFAULT_VIRTUAL_FILE_METRICS.spacing;
 const PIERRE_HUNK_SEPARATOR_HEIGHT = DEFAULT_VIRTUAL_FILE_METRICS.hunkSeparatorHeight ?? 32;
@@ -14,10 +16,9 @@ export function fileChangeGap(index: number): number {
 export function estimateFileChangeHeight(
   change: FileChange,
   collapsed: boolean,
-  index: number,
 ): number {
-  const gap = fileChangeGap(index);
-  if (collapsed) return gap + REVIEW_HEADER_HEIGHT;
+  if (collapsed) return REVIEW_HEADER_HEIGHT;
+  if (isDiffRenderBlocked(change)) return REVIEW_HEADER_HEIGHT + REVIEW_BLOCKED_BODY_HEIGHT;
 
   let bodyHeight = PIERRE_SPACING;
   for (const [hunkIndex, hunk] of change.fileDiff.hunks.entries()) {
@@ -30,7 +31,7 @@ export function estimateFileChangeHeight(
   }
   if (change.fileDiff.hunks.length > 0) bodyHeight += PIERRE_SPACING;
 
-  return gap + REVIEW_HEADER_HEIGHT + bodyHeight;
+  return REVIEW_HEADER_HEIGHT + bodyHeight;
 }
 
 type ReviewHunk = FileChange["fileDiff"]["hunks"][number];

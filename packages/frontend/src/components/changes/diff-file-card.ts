@@ -17,6 +17,10 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { DiffFile } from "../../models/changes/types.js";
+import {
+  diffRenderBlockedMessage,
+  isDiffRenderBlocked,
+} from "../../models/changes/diff-render-limit.js";
 import { isMarkdown, isImage, isPdf, shouldWrapLines, fileCardId, gutterWidth } from "../../models/changes/diff-utils.js";
 import "./diff-file-action-buttons.js";
 import "./diff-hunk.js";
@@ -189,6 +193,7 @@ export class DiffFileCard extends LitElement {
     const isMd = isMarkdown(file.path);
     const isImg = isImage(file.path);
     const isPdfFile = isPdf(file.path);
+    const renderBlocked = isDiffRenderBlocked(file);
 
     return html`
       <div class="mx-4 mb-3 first:mt-4 border border-zinc-700 rounded-lg" id=${fileCardId(file.path)} data-file-path=${file.path}>
@@ -221,7 +226,11 @@ export class DiffFileCard extends LitElement {
               <div class="p-4 text-red-400 text-sm">${this.markdownError}</div>
             ` : nothing}
           ` : nothing}
-          ${!(isMd && this.rendered) && !isImg && !isPdfFile ? this.renderDiffContent() : nothing}
+          ${renderBlocked
+            ? html`<div class="p-4 text-sm text-zinc-400" data-diff-render-blocked>${diffRenderBlockedMessage(file)}</div>`
+            : !(isMd && this.rendered) && !isImg && !isPdfFile
+              ? this.renderDiffContent()
+              : nothing}
         ` : nothing}
       </div>
     `;

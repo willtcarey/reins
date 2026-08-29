@@ -7,6 +7,10 @@ import {
   FileDiffContextState,
 } from "../../models/changes/file-diff-context-state.js";
 import type { FileChange } from "../../models/changes/file-changes.js";
+import {
+  diffRenderBlockedMessage,
+  isDiffRenderBlocked,
+} from "../../models/changes/diff-render-limit.js";
 import { clientTelemetry } from "../../models/client-telemetry.js";
 import {
   addedFileIcon,
@@ -147,7 +151,8 @@ export class ReviewFileDiff extends LitElement {
 
   private _emitMeasurement() {
     const change = this.change;
-    if (!change || this.collapsed || this._transitioning || !this.diffRendered) return;
+    const renderComplete = change && (isDiffRenderBlocked(change) || this.diffRendered);
+    if (!change || this.collapsed || this._transitioning || !renderComplete) return;
     const height = this.getBoundingClientRect().height || this.offsetHeight;
     if (height <= 0) return;
     const signature = `${change.id}:${change.contentKey}:${height}`;
@@ -168,6 +173,12 @@ export class ReviewFileDiff extends LitElement {
     let url = `/api/projects/${this.projectId}/files/content?path=${encodeURIComponent(path)}`;
     if (this.branch) url += `&ref=${encodeURIComponent(this.branch)}`;
     return url;
+  }
+
+  private _expansionAnimationHeight(): number | undefined {
+    if (typeof this.closest !== "function") return undefined;
+    const viewport = this.closest<HTMLElement>("[data-review-scroll]");
+    return viewport && viewport.clientHeight > 0 ? viewport.clientHeight : undefined;
   }
 
   private _toggleCollapsed() {
@@ -294,15 +305,15 @@ export class ReviewFileDiff extends LitElement {
     const change = this.change;
     if (!change) return nothing;
 
-    const expansion = this._expansion();
-    const diffTarget = this._diffTarget(change);
-    const diffBinding = this._diff.bind(diffTarget);
-    const pendingHeight = !this.collapsed && !this.diffRendered && this.reservedHeight > 0
-      ? `min-height:${this.reservedHeight}px`
-      : nothing;
+    const renderBlocked = isDiffRenderBlocked(change);
+    const expansion = renderBlocked ? null : this._expansion();
+    const diffBinding = renderBlocked ? nothing : this._diff.bind(this._diffTarget(change));
+    const pendingHeight = !renderBlocked && !this.collapsed && !this.diffRendered && this.reservedHeight > 0
+      ? `min-height:${this.reservedHeight}px;`
+      : "";
 
     return html`
-      <article class="border-b border-zinc-700/70 bg-zinc-950" style=${pendingHeight}>
+      <article class="border-b border-zinc-700/70" style=${`${pendingHeight}background-color:var(--reins-diff-background)`}>
         <header class="reins-diff-header sticky top-0 z-10 flex min-w-0 items-center gap-2 px-3 py-2">
           <button
             type="button"
@@ -345,19 +356,22 @@ export class ReviewFileDiff extends LitElement {
         </header>
         ${springCollapse(
           this.collapsed,
-          () => html`
-            <diffs-container data-pierre-file-diff ${diffBinding}></diffs-container>
-            ${expansionMessage(expansion) ? html`
-              <div
-                class="border-t border-zinc-800 px-3 py-1 text-xs text-zinc-500"
-                role=${expansion?.outcome === "error" ? "alert" : "status"}
-              >${expansionMessage(expansion)}</div>
-            ` : nothing}
-          `,
+          () => renderBlocked
+            ? html`<div class="border-t border-zinc-800 px-3 py-4 text-sm text-zinc-400" data-diff-render-blocked>${diffRenderBlockedMessage(change)}</div>`
+            : html`
+                <diffs-container data-pierre-file-diff ${diffBinding}></diffs-container>
+                ${expansionMessage(expansion) ? html`
+                  <div
+                    class="border-t border-zinc-800 px-3 py-1 text-xs text-zinc-500"
+                    role=${expansion?.outcome === "error" ? "alert" : "status"}
+                  >${expansionMessage(expansion)}</div>
+                ` : nothing}
+              `,
           {
             onUnmount: () => this._unmountDiff(),
             onHeightChange: (height, settled) => this._reportTransitionHeight(height, settled),
             animateContentResize: false,
+            maxExpansionHeight: this._expansionAnimationHeight(),
           },
         )}
       </article>

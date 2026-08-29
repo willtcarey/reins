@@ -21,7 +21,7 @@ export class ReviewCollapseState {
     const key = storageKey(scope, change.id);
     try {
       const reviewedHash = this.storage.getItem(key);
-      const matches = reviewedHash === reviewContentFingerprint(change.contentKey);
+      const matches = reviewedHash === change.contentKey;
       if (reviewedHash && !matches) this.storage.removeItem(key);
       return matches;
     } catch {
@@ -33,7 +33,7 @@ export class ReviewCollapseState {
   setCollapsed(scope: ReviewCollapseScope, change: FileChange, collapsed: boolean): void {
     const key = storageKey(scope, change.id);
     try {
-      if (collapsed) this.storage.setItem(key, reviewContentFingerprint(change.contentKey));
+      if (collapsed) this.storage.setItem(key, change.contentKey);
       else this.storage.removeItem(key);
     } catch { /* localStorage may be disabled or full */ }
   }
@@ -46,21 +46,4 @@ function storageKey(scope: ReviewCollapseScope, itemId: string): string {
     scope.branch,
     itemId,
   ])}`;
-}
-
-/** Fast deterministic fingerprint; the diff content is not security-sensitive input. */
-export function reviewContentFingerprint(content: string): string {
-  let first = 0x811c9dc5;
-  let second = 0x9e3779b9;
-  for (let index = 0; index < content.length; index += 1) {
-    const code = content.charCodeAt(index);
-    first = Math.imul(first ^ code, 0x01000193);
-    second = Math.imul(second ^ code, 0x85ebca6b);
-    second = (second << 13) | (second >>> 19);
-  }
-  return `v1:${toHex(first)}${toHex(second)}:${content.length.toString(36)}`;
-}
-
-function toHex(value: number): string {
-  return (value >>> 0).toString(16).padStart(8, "0");
 }

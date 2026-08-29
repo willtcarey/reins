@@ -7,7 +7,6 @@ import {
 } from "../../controllers/virtual-list-controller.js";
 import {
   ReviewCollapseState,
-  reviewContentFingerprint,
   type ReviewCollapseScope,
 } from "../../models/changes/review-collapse-state.js";
 import { FileDiffContextState } from "../../models/changes/file-diff-context-state.js";
@@ -169,7 +168,7 @@ export class ReviewDiffPanel extends LitElement {
       && scroll.scrollTop > geometry.top
       && scroll.scrollTop < geometry.top + geometry.height;
 
-    if (geometry) this._transitionHeights.set(id, geometry.height);
+    if (geometry) this._transitionHeights.set(id, geometry.height - geometry.gapBefore);
     else this._transitionHeights.delete(id);
     this._collapseState.setCollapsed(scope, change, collapsed);
     this._syncVirtualItems();
@@ -259,7 +258,7 @@ export class ReviewDiffPanel extends LitElement {
 
   private _measurementKey(change: FileChange): string {
     const scope = this._collapseScope();
-    return `${scope?.projectId ?? "none"}:${scope?.branch ?? "none"}:${change.id}:${reviewContentFingerprint(change.contentKey)}`;
+    return `${scope?.projectId ?? "none"}:${scope?.branch ?? "none"}:${change.id}:${change.contentKey}`;
   }
 
   private _syncVirtualItems() {
@@ -269,9 +268,10 @@ export class ReviewDiffPanel extends LitElement {
       return {
         id: change.id,
         measurementKey: this._measurementKey(change),
-        estimatedHeight: estimateFileChangeHeight(change, false, index),
+        estimatedHeight: estimateFileChangeHeight(change, false),
+        gapBefore: fileChangeGap(index),
         fixedHeight: this._transitionHeights.get(change.id)
-          ?? (collapsed ? estimateFileChangeHeight(change, true, index) : undefined),
+          ?? (collapsed ? estimateFileChangeHeight(change, true) : undefined),
       };
     }));
   }
@@ -306,7 +306,7 @@ export class ReviewDiffPanel extends LitElement {
       return;
     }
 
-    const collapsedHeight = estimateFileChangeHeight(change, true, index);
+    const collapsedHeight = estimateFileChangeHeight(change, true);
     const transitionHeight = collapsedHeight + update.bodyHeight;
     this._transitionHeights.set(change.id, transitionHeight);
     this._virtualList.setItemFixedHeight(change.id, transitionHeight);
@@ -427,7 +427,7 @@ export class ReviewDiffPanel extends LitElement {
     const branch = this._parsedSource?.branch ?? this.store.branch;
     const baseBranch = this._parsedSource?.baseBranch ?? this.store.fileData.data?.baseBranch;
     const virtualWindow = this._virtualList.window();
-    const changeById = new Map(changes.map((change, index) => [change.id, { change, index }]));
+    const changeById = new Map(changes.map((change) => [change.id, change]));
 
     return html`
       <div class="flex h-full min-h-0 flex-col" data-rendered-payload-version=${data ? this.store.patchData.data?.version ?? 0 : 0}>
@@ -452,12 +452,11 @@ export class ReviewDiffPanel extends LitElement {
                       virtualWindow.items,
                       (entry) => entry.id,
                       (entry) => {
-                        const record = changeById.get(entry.id);
-                        if (!record) return nothing;
-                        const { change, index } = record;
+                        const change = changeById.get(entry.id);
+                        if (!change) return nothing;
                         return html`
                           <review-file-diff
-                            style=${`position:absolute;top:${entry.top}px;left:0;right:0`}
+                            style=${`position:absolute;top:${entry.top + entry.gapBefore}px;left:0;right:0`}
                             data-review-item-id=${change.id}
                             data-file-path=${change.path}
                             ?data-review-first=${change === changes[0]}
@@ -465,7 +464,7 @@ export class ReviewDiffPanel extends LitElement {
                             .collapsed=${this.isItemCollapsed(change.id)}
                             .projectId=${this.store?.projectId ?? null}
                             .branch=${branch ?? null}
-                            .reservedHeight=${Math.max(1, entry.height - fileChangeGap(index))}
+                            .reservedHeight=${Math.max(1, entry.height - entry.gapBefore)}
                             .contextState=${this._ensureContextState()}
                             .onToggleCollapse=${this._toggleFileCollapse}
                             .onHeightChange=${this._handleFileHeightChange}

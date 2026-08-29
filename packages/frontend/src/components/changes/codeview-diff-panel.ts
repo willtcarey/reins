@@ -4,6 +4,10 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { DiffPatchData, DiffStore } from "../../models/stores/diff-store.js";
 import { compareFilePaths } from "../../models/changes/diff-sort.js";
 import { getPierreWorkerPool } from "../../models/changes/pierre-worker-pool.js";
+import {
+  diffRenderBlockedMessage,
+  isDiffRenderBlocked,
+} from "../../models/changes/diff-render-limit.js";
 import { activeFileChangeEvent } from "../events.js";
 import { spinnerIcon } from "../icons.js";
 import type { DiffCopyPathButton, DiffDownloadFileButton, DiffViewFileButton } from "./diff-file-action-buttons.js";
@@ -41,8 +45,16 @@ export interface CodeViewDiffItemState {
   collapsed?: boolean;
 }
 
+export interface CodeViewBlockedItemState {
+  id: string;
+  path: string;
+  additions: number;
+  removals: number;
+}
+
 export interface CodeViewDiffParseResult {
   items: CodeViewDiffItemState[];
+  blockedItems: CodeViewBlockedItemState[];
   pathToItemId: Map<string, string>;
 }
 
@@ -58,6 +70,7 @@ export function parseCodeViewDiffPatch(
   const parsedPatches = parsePatchFiles(patch, options.cacheKeyPrefix, true);
   const version = options.itemVersion ?? 1;
   const items: CodeViewDiffItemState[] = [];
+  const blockedItems: CodeViewBlockedItemState[] = [];
   const pathToItemId = new Map<string, string>();
   const pathOccurrences = new Map<string, number>();
 
@@ -67,18 +80,28 @@ export function parseCodeViewDiffPatch(
       const occurrence = pathOccurrences.get(path) ?? 0;
       pathOccurrences.set(path, occurrence + 1);
       const id = codeViewDiffItemId(path, occurrence);
-      items.push({
-        id,
-        type: "diff",
-        path,
-        fileDiff,
-        version,
-      });
+      const additions = fileDiff.hunks.reduce((total, hunk) => total + hunk.additionLines, 0);
+      const removals = fileDiff.hunks.reduce((total, hunk) => total + hunk.deletionLines, 0);
+      if (isDiffRenderBlocked({ additions, removals })) {
+        blockedItems.push({ id, path, additions, removals });
+      } else {
+        items.push({
+          id,
+          type: "diff",
+          path,
+          fileDiff,
+          version,
+        });
+      }
       if (!pathToItemId.has(path)) pathToItemId.set(path, id);
     }
   }
 
-  return { items: items.toSorted((a, b) => compareFilePaths(a.path, b.path)), pathToItemId };
+  return {
+    items: items.toSorted((a, b) => compareFilePaths(a.path, b.path)),
+    blockedItems: blockedItems.toSorted((a, b) => compareFilePaths(a.path, b.path)),
+    pathToItemId,
+  };
 }
 
 export function codeViewDiffItemId(path: string, occurrence: number): string {
@@ -194,6 +217,15 @@ export class CodeViewDiffPanel extends LitElement {
 
   public scrollToFile(path: string) {
     const data = this._getParsedPatchData();
+    const blocked = data?.blockedItems.find((item) => item.path === path);
+    if (blocked) {
+      this.querySelector(`[data-codeview-blocked-id="${CSS.escape(blocked.id)}"]`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+      this._pendingScrollTarget = null;
+      return;
+    }
     const itemId = data?.pathToItemId.get(path);
     const item = data?.items.find((candidate) => candidate.id === itemId);
     if (item?.collapsed === true) {
@@ -262,9 +294,13 @@ export class CodeViewDiffPanel extends LitElement {
   }
 
   private _syncPendingScroll() {
-    if (!this._pendingScrollTarget || !this._getParsedPatchData() || !this._codeView) return;
+    if (!this._pendingScrollTarget) return;
+    const data = this._getParsedPatchData();
+    if (!data) return;
     const target = this._pendingScrollTarget;
-    const itemId = this._parsedPatchData?.pathToItemId.get(target);
+    const blocked = data.blockedItems.some((item) => item.path === target);
+    if (!blocked && !this._codeView) return;
+    const itemId = data.pathToItemId.get(target);
     if (!itemId) return;
     this._pendingScrollTarget = null;
     scheduleCodeViewDiffFrame(() => this.scrollToFile(target));
@@ -409,6 +445,7 @@ export class CodeViewDiffPanel extends LitElement {
     const isInitialLoading = this.store.patchData.loading && !this.store.patchData.data;
     const data = this._getParsedPatchData();
     const items = data?.items ?? [];
+    const blockedItems = data?.blockedItems ?? [];
     const branch = data?.branch ?? this.store.branch;
     const baseBranch = data?.baseBranch ?? this.store.fileData.data?.baseBranch;
 
@@ -435,8 +472,27 @@ export class CodeViewDiffPanel extends LitElement {
               ${spinnerIcon()}
               Loading CodeView diff…
             </div>
-          ` : items.length > 0
-            ? html`<div class="flex-1 min-h-0 overflow-y-auto bg-zinc-950" data-pierre-code-view></div>`
+          ` : items.length > 0 || blockedItems.length > 0
+            ? html`
+                <div class="flex-1 min-h-0 overflow-y-auto bg-zinc-950">
+                  ${blockedItems.map((item) => html`
+                    <article class="m-4 overflow-hidden rounded-lg border border-zinc-700" data-codeview-blocked-id=${item.id}>
+                      <header class="flex min-w-0 items-center gap-2 bg-zinc-900 px-3 py-2">
+                        <span class="min-w-0 flex-1 truncate font-mono text-xs text-zinc-300">${item.path}</span>
+                        <diff-view-file-button variant="header" .path=${item.path}></diff-view-file-button>
+                        <diff-copy-path-button variant="header" .path=${item.path}></diff-copy-path-button>
+                        <diff-download-file-button variant="header" .path=${item.path} .href=${this._fileUrl(item.path) ?? ""}></diff-download-file-button>
+                      </header>
+                      <div class="border-t border-zinc-800 px-3 py-4 text-sm text-zinc-400" data-diff-render-blocked>
+                        ${diffRenderBlockedMessage(item)}
+                      </div>
+                    </article>
+                  `)}
+                  ${items.length > 0
+                    ? html`<div class="min-h-full" data-pierre-code-view></div>`
+                    : nothing}
+                </div>
+              `
             : html`<div class="flex-1 flex items-center justify-center text-zinc-500 text-sm p-4">No changes yet</div>`
           }
         </div>

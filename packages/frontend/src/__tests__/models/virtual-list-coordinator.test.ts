@@ -67,6 +67,30 @@ describe("VirtualListCoordinator", () => {
     expect(coordinator.item("anchor")?.height).toBe(100);
   });
 
+  test("owns leading gaps independently from estimated, measured, and fixed content heights", () => {
+    const coordinator = new VirtualListCoordinator(0);
+    coordinator.setItems([
+      { id: "first", measurementKey: "first", estimatedHeight: 100 },
+      { id: "second", measurementKey: "second", estimatedHeight: 100, gapBefore: 16 },
+      { id: "third", measurementKey: "third", estimatedHeight: 100, gapBefore: 16 },
+    ]);
+
+    expect(coordinator.item("second")).toMatchObject({ top: 100, gapBefore: 16, height: 116 });
+    expect(coordinator.item("third")?.top).toBe(216);
+
+    coordinator.measure([{ id: "second", measurementKey: "second", height: 140 }]);
+    expect(coordinator.item("second")?.height).toBe(156);
+    expect(coordinator.item("third")?.top).toBe(256);
+
+    coordinator.setItems([
+      { id: "first", measurementKey: "first", estimatedHeight: 100 },
+      { id: "second", measurementKey: "second", estimatedHeight: 100, gapBefore: 16, fixedHeight: 37 },
+      { id: "third", measurementKey: "third", estimatedHeight: 100, gapBefore: 16 },
+    ]);
+    expect(coordinator.item("second")?.height).toBe(53);
+    expect(coordinator.item("third")?.top).toBe(153);
+  });
+
   test("uses fixed geometry without replacing the fluid measurement", () => {
     const coordinator = new VirtualListCoordinator(0);
     coordinator.setItems([

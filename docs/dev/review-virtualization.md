@@ -8,8 +8,8 @@ The goal is to keep long reviews usable by mounting only a bounded top-level win
 
 Each layer has one owner:
 
-- Patch parsing and reconciliation own stable review records and IDs.
-- The generic `VirtualListCoordinator` owns estimated/measured geometry, bounded windows, semantic anchors, and offsets for unmounted IDs. Its item vocabulary is limited to IDs, estimated heights, measurement keys, and optional fixed heights.
+- Patch parsing and reconciliation own stable review records, IDs, and compact content fingerprints. Virtual layout and collapse updates consume the retained fingerprint directly; they must never rescan serialized patch content during animation frames.
+- The generic `VirtualListCoordinator` owns estimated/measured geometry, per-item leading gaps, bounded windows, semantic anchors, and offsets for unmounted IDs. Estimated, measured, and fixed heights describe content only; the coordinator adds `gapBefore` to produce each item's total slot height.
 - The generic `VirtualListController` owns coordinator lifecycle, scroll-container and viewport synchronization, measurement microtask batching, post-render anchor correction, navigation and cancellation, render-frame scheduling, and scroll restoration. Its optional observation hook reports generic list behavior without importing review telemetry.
 - `ReviewDiffPanel` is the review adapter. It owns patch reconciliation and height estimates, maps collapse to fixed geometry, resolves paths to item IDs, maps generic observations to review active-file events and telemetry, and coordinates store refreshes.
 - Lit owns keyed mounting and removal of file-change elements.
@@ -26,6 +26,7 @@ Do not introduce another owner for top-level item positions or scroll correction
 - Keep all review records in JavaScript, but mount only the viewport plus balanced bounded overscan.
 - Do not render placeholder wrappers for every file.
 - A single large file must not cause every other file to mount.
+- Files over the shared 10,000 changed-line limit retain bounded header/notice geometry and must not bind or schedule a Pierre renderer.
 
 ### Stable identity and reuse
 
@@ -37,11 +38,14 @@ Do not introduce another owner for top-level item positions or scroll correction
 ### Geometry
 
 - Every record always has usable estimated geometry, including before its DOM exists.
+- Inter-file spacing belongs to the virtual list: item geometry reserves the leading gap and the mounted wrapper is positioned after it. `ReviewFileDiff` must not add its own outer padding or margin.
 - Settled collapsed geometry is deterministic: the inter-file gap plus the fixed header estimate. During collapse and expansion springs, `ReviewFileDiff` reports the animated body height and the panel supplies it as temporary fixed geometry so following virtual items move with the spring instead of reserving either endpoint immediately. Collapsed items are never measured, and collapsed measurements are never accepted or stored.
+- Render-blocked files start from bounded header/notice estimates and measure their Reins-owned surface after render so wrapped notices remain accurate at narrow viewports. They never wait for or inspect Pierre output.
 - An expanded measured height may replace an estimate only when the file is connected, its current Pierre input has completed, and no collapse transition is active.
 - The Pierre adapter does not report completion for placeholder renders. `ReviewFileDiff` measures only its own host and does not inspect Pierre-owned or spring-owned DOM.
+- Opening a body taller than the review viewport springs only through one viewport of height before releasing to its full natural height. This keeps the visible reveal perceptible instead of traversing a multi-viewport target mostly below the fold; the final geometry release may move only siblings that are already offscreen. Closing continues to spring from the currently rendered height.
 - Expanded measurements are retained by project, branch, item, and content fingerprint across a collapse/expand cycle; collapsed geometry temporarily overrides them without replacing them.
-- The panel enriches accepted item measurements with the current measurement key; the generic controller commits them to the coordinator in a microtask batch, not one scroll correction per observed element.
+- The panel enriches accepted content measurements with the current measurement key; the generic controller commits them to the coordinator in a microtask batch, and the coordinator adds the retained leading gap rather than requiring the panel to modify measurements.
 
 ### Reserved geometry
 

@@ -56,6 +56,27 @@ index 1111111..2222222 100644
 const EXPANDABLE_PATCH = PATCH.replace("@@ -1 +1 @@", "@@ -33 +33 @@");
 
 describe("ReviewFileDiff", () => {
+  test("presents an oversized file as a measured limit notice", () => {
+    const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
+    const item = new ReviewFileDiff();
+    item.change = { ...fileChange, additions: 10_000 };
+    item.getBoundingClientRect = () => testRect(122);
+    Object.defineProperty(item, "isConnected", { configurable: true, value: true });
+    const measurements: unknown[] = [];
+    item.onHeightChange = (_change, update) => measurements.push(update);
+
+    const output = renderOutput(item);
+    item.updated();
+
+    expect(output).toContain("src/example.ts");
+    expect(output).toContain("Diff not rendered");
+    expect(output).toContain("10,001 changed lines exceeds the 10,000-line limit");
+    expect(output).toContain("background-color:var(--reins-diff-background)");
+    expect(output).toContain("<diff-view-file-button");
+    expect(measurements).toEqual([{ kind: "measurement", height: 122 }]);
+    expect(output).not.toContain("<diffs-container");
+  });
+
   test("measures its host after the current Pierre render completes", () => {
     const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
     const item = new ReviewFileDiff();
