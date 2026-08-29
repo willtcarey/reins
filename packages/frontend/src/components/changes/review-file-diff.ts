@@ -213,8 +213,13 @@ export class ReviewFileDiff extends LitElement {
       const hasComposer = this._comments?.project(change.id).composer !== null;
       if (this._hadComposer && !hasComposer) this._restoreHeaderFocus = true;
       this._hadComposer = hasComposer;
-      this._diff.refreshInlineComments();
-      this.requestUpdate();
+      if (update.layoutChanged) this._diff.refreshInlineComments();
+      else if (update.selectionChanged) this._diff.refreshInlineSelection();
+      // Draft input is owned by the mounted annotation element. Updating the
+      // file host or Pierre here would replace that element while it is typing.
+      if (update.layoutChanged || update.selectionChanged || update.placementId === null) {
+        this.requestUpdate();
+      }
     });
   }
 

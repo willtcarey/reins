@@ -17,9 +17,7 @@ import type {
 import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
 import { InlineReviewCommentPlacementElement } from "./inline-review-comment-placement.js";
 
-interface PierreCommentPlacementMetadata {
-  readonly placementId: string;
-}
+type PierreCommentPlacementMetadata = string;
 
 const REINS_DIFF_OPTIONS: FileDiffOptions<PierreCommentPlacementMetadata> = {
   theme: PIERRE_SHIKI_THEME,
@@ -97,6 +95,13 @@ export class ReviewFileDiffRenderer extends PierreRenderer<ReviewFileDiffTarget,
     renderer.setSelectedLines(commentSelection(target), { notify: false });
     renderer.rerender();
   }
+
+  refreshInlineSelection(): void {
+    const target = this.target;
+    const renderer = this.instance;
+    if (!target || !renderer) return;
+    renderer.setSelectedLines(commentSelection(target), { notify: false });
+  }
 }
 
 export function createReviewFileDiffRenderer(
@@ -167,7 +172,7 @@ export function createReviewFileDiffRenderer(
           const element = new InlineReviewCommentPlacementElement();
           element.comments = target.comments;
           element.fileId = target.fileId;
-          element.placementId = annotation.metadata.placementId;
+          element.placementId = annotation.metadata;
           return element;
         },
         onPostRender: (node, instance, phase) => {
@@ -252,7 +257,7 @@ function commentAnnotations(
   return target.comments.project(target.fileId).placements.map((placement) => ({
     side: placement.side === "old" ? "deletions" : "additions",
     lineNumber: placement.lineNumber,
-    metadata: { placementId: placement.id },
+    metadata: placement.id,
   }));
 }
 

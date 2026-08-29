@@ -61,6 +61,7 @@ export interface InlineReviewCommentsChange {
   readonly fileId: string;
   readonly placementId: string | null;
   readonly layoutChanged: boolean;
+  readonly selectionChanged: boolean;
 }
 
 interface StoredComment extends InlineReviewComment {
@@ -145,6 +146,9 @@ export class InlineReviewComments {
       if (nextFiles.get(fileId) !== contentKey) invalidFiles.add(fileId);
     }
     if (invalidFiles.size > 0) {
+      const invalidSelectionFileId = this.selection && invalidFiles.has(this.selection.fileId)
+        ? this.selection.fileId
+        : null;
       this.comments = this.comments.filter((comment) => !invalidFiles.has(fileIdFromPlacement(comment.placementId)));
       for (const [key, draft] of this.drafts) {
         if (invalidFiles.has(draft.fileId)) this.drafts.delete(key);
@@ -154,16 +158,18 @@ export class InlineReviewComments {
       for (const fileId of invalidFiles) {
         this.errors.delete(fileId);
         this.bumpLayout(fileId);
-        this.notify(fileId, null, true);
+        this.notify(fileId, null, true, fileId === invalidSelectionFileId);
       }
     }
     this.fileContentKeys = nextFiles;
   }
 
   clear(): void {
+    const selectionFileId = this.selection?.fileId ?? null;
     const affected = new Set([
       ...this.comments.map((comment) => fileIdFromPlacement(comment.placementId)),
       ...[...this.drafts.values()].map((draft) => draft.fileId),
+      ...(selectionFileId ? [selectionFileId] : []),
     ]);
     this.comments = [];
     this.drafts.clear();
@@ -172,7 +178,7 @@ export class InlineReviewComments {
     this.errors.clear();
     this.fileContentKeys.clear();
     this.layoutRevisions.clear();
-    for (const fileId of affected) this.notify(fileId, null, true);
+    for (const fileId of affected) this.notify(fileId, null, true, fileId === selectionFileId);
   }
 
   project(fileId: string): InlineReviewCommentProjection {
@@ -234,14 +240,14 @@ export class InlineReviewComments {
     if (selection === null) {
       this.selection = null;
       this.errors.delete(fileId);
-      this.notify(fileId, null, false);
+      this.notify(fileId, null, false, true);
       return { ok: true };
     }
     const normalized = normalizeReviewLineRange(selection);
     if (!normalized.ok) return this.reject(fileId, normalized.error);
     this.selection = { fileId, range: normalized.range };
     this.errors.delete(fileId);
-    this.notify(fileId, placementId(fileId, normalized.range), false);
+    this.notify(fileId, placementId(fileId, normalized.range), false, true);
     return { ok: true };
   }
 
@@ -262,10 +268,10 @@ export class InlineReviewComments {
     this.errors.delete(fileId);
     if (previousFileId && previousFileId !== fileId) {
       this.bumpLayout(previousFileId);
-      this.notify(previousFileId, null, true);
+      this.notify(previousFileId, null, true, false);
     }
     this.bumpLayout(fileId);
-    this.notify(fileId, id, true);
+    this.notify(fileId, id, true, true);
     return { ok: true };
   }
 
@@ -337,8 +343,13 @@ export class InlineReviewComments {
     this.layoutRevisions.set(fileId, (this.layoutRevisions.get(fileId) ?? 0) + 1);
   }
 
-  private notify(fileId: string, placementIdValue: string | null, layoutChanged: boolean): void {
-    const change = { fileId, placementId: placementIdValue, layoutChanged };
+  private notify(
+    fileId: string,
+    placementIdValue: string | null,
+    layoutChanged: boolean,
+    selectionChanged = false,
+  ): void {
+    const change = { fileId, placementId: placementIdValue, layoutChanged, selectionChanged };
     for (const listener of this.listeners) listener(change);
   }
 }

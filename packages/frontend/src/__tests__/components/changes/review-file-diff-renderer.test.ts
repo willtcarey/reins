@@ -248,7 +248,7 @@ describe("PierreReviewFileDiff", () => {
       expect(annotations).toEqual([{
         side: "additions",
         lineNumber: 7,
-        metadata: { placementId: comments.project("file-a").placements[0]?.id },
+        metadata: comments.project("file-a").placements[0]?.id,
       }]);
       expect(selections).toEqual([{
         start: 4,
@@ -267,6 +267,10 @@ describe("PierreReviewFileDiff", () => {
       expect(annotationElement.comments).toBe(comments);
       expect(annotationElement.fileId).toBe("file-a");
       expect(annotationElement.placementId).toBe(comments.project("file-a").placements[0]?.id);
+
+      const metadata = annotation.metadata;
+      controller.refreshInlineComments();
+      expect(annotations[0]?.metadata).toBe(metadata);
     } finally {
       Reflect.set(PierreReviewFileDiff.prototype, "render", originalRender);
       if (htmlElementDescriptor) Object.defineProperty(globalThis, "HTMLElement", htmlElementDescriptor);

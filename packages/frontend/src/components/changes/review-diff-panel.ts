@@ -199,7 +199,8 @@ export class ReviewDiffPanel extends LitElement {
 
   private _subscribeComments() {
     if (this._unsubscribeComments) return;
-    this._unsubscribeComments = this._comments.subscribe(() => {
+    this._unsubscribeComments = this._comments.subscribe((change) => {
+      if (!change.layoutChanged) return;
       queueMicrotask(() => {
         this._syncVirtualItems();
         this.requestUpdate();

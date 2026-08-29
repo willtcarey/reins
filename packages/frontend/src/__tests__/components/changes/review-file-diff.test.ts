@@ -178,6 +178,40 @@ describe("ReviewFileDiff", () => {
     });
   });
 
+  test("keeps draft keystrokes inside the mounted annotation element", () => {
+    const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
+    const comments = new InlineReviewComments();
+    comments.reconcile("scope", [{ fileId: fileChange.id, contentKey: fileChange.contentKey }]);
+    comments.dispatch({
+      type: "open-composer",
+      fileId: fileChange.id,
+      selection: { side: "new", startLine: 1, endLine: 1 },
+    });
+    const item = new ReviewFileDiff();
+    item.change = fileChange;
+    Object.defineProperty(item, "isConnected", { configurable: true, value: true });
+    const renderer: {
+      refreshInlineComments: () => void;
+      refreshInlineSelection: () => void;
+    } = Reflect.get(item, "_diff");
+    let commentRefreshes = 0;
+    let selectionRefreshes = 0;
+    let hostUpdates = 0;
+    renderer.refreshInlineComments = () => { commentRefreshes += 1; };
+    renderer.refreshInlineSelection = () => { selectionRefreshes += 1; };
+    item.requestUpdate = () => { hostUpdates += 1; };
+    item.comments = comments;
+    commentRefreshes = 0;
+    selectionRefreshes = 0;
+    hostUpdates = 0;
+
+    comments.dispatch({ type: "update-draft", fileId: fileChange.id, body: "abc" });
+
+    expect(commentRefreshes).toBe(0);
+    expect(selectionRefreshes).toBe(0);
+    expect(hostUpdates).toBe(0);
+  });
+
   test("does not request complete content merely by rendering an expandable file", () => {
     const fileChange = parseFileChanges(EXPANDABLE_PATCH, "project-7-v1").changes[0]!;
     const item = new ReviewFileDiff();
