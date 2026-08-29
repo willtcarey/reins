@@ -13,6 +13,9 @@ import {
 } from "../git.js";
 import { asyncIterableToText } from "../async-iterable.js";
 import { DiffParser, type DiffFile, type DiffFileSummary } from "./diff-parser.js";
+import type { FileSystem, WorkspaceFile } from "./file-system.js";
+import { GitTreeFileSystem } from "./git-tree-file-system.js";
+import { WorkingTreeFileSystem } from "./working-tree-file-system.js";
 
 export type DiffMode = "branch" | "uncommitted";
 
@@ -64,6 +67,11 @@ export class Workspace {
     readonly baseBranch = "main",
   ) {}
 
+  /** Open a working-tree or committed Git file from this workspace. */
+  async openFile(filePath: string, ref?: string | null): Promise<WorkspaceFile> {
+    return (await this.fileSystemFor(ref)).openFile(filePath);
+  }
+
   /** Lightweight changed-file summaries using the diff endpoint branch/mode semantics. */
   async getChangedFiles(
     mode: DiffMode = "branch",
@@ -101,6 +109,13 @@ export class Workspace {
     const stream = this.getDiffPatchStream(contextLines, mode, branch);
     const raw = await asyncIterableToText(stream);
     return DiffParser.parsePatch(raw);
+  }
+
+  private async fileSystemFor(ref?: string | null): Promise<FileSystem> {
+    if (!ref || ref === await getCurrentBranch(this.projectDir)) {
+      return new WorkingTreeFileSystem(this.projectDir);
+    }
+    return new GitTreeFileSystem(this.projectDir, ref);
   }
 
   private async prepareWorkspaceDiff(

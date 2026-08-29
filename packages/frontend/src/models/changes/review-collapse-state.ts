@@ -1,4 +1,4 @@
-import type { ReviewItem } from "./review-items.js";
+import type { FileChange } from "./file-changes.js";
 
 const STORAGE_KEY_PREFIX = "reins:reviewed-diff:";
 
@@ -17,11 +17,11 @@ export class ReviewCollapseState {
   constructor(private readonly storage: KeyValueStorage = globalThis.localStorage) {}
 
   /** Read reviewed state and invalidate stale content so a later revert stays expanded. */
-  isCollapsed(scope: ReviewCollapseScope, item: ReviewItem): boolean {
-    const key = storageKey(scope, item.id);
+  isCollapsed(scope: ReviewCollapseScope, change: FileChange): boolean {
+    const key = storageKey(scope, change.id);
     try {
       const reviewedHash = this.storage.getItem(key);
-      const matches = reviewedHash === reviewContentFingerprint(item.contentKey);
+      const matches = reviewedHash === reviewContentFingerprint(change.contentKey);
       if (reviewedHash && !matches) this.storage.removeItem(key);
       return matches;
     } catch {
@@ -30,10 +30,10 @@ export class ReviewCollapseState {
   }
 
   /** Persist collapse as "this exact file diff has been reviewed." */
-  setCollapsed(scope: ReviewCollapseScope, item: ReviewItem, collapsed: boolean): void {
-    const key = storageKey(scope, item.id);
+  setCollapsed(scope: ReviewCollapseScope, change: FileChange, collapsed: boolean): void {
+    const key = storageKey(scope, change.id);
     try {
-      if (collapsed) this.storage.setItem(key, reviewContentFingerprint(item.contentKey));
+      if (collapsed) this.storage.setItem(key, reviewContentFingerprint(change.contentKey));
       else this.storage.removeItem(key);
     } catch { /* localStorage may be disabled or full */ }
   }

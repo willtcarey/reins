@@ -3,7 +3,6 @@ import "../../helpers/local-storage.js";
 import { Loadable } from "../../../helpers/loadable.js";
 import { ReviewDiffPanel } from "../../../components/changes/review-diff-panel.js";
 import { DiffStore, type DiffPatchData } from "../../../models/stores/diff-store.js";
-import "../../../components/changes/review-diff-item.js";
 import {
   collectTemplateValues,
   templateToString,
@@ -226,6 +225,34 @@ describe("ReviewDiffPanel", () => {
 
     expect(panel.isItemCollapsed(itemId)).toBe(false);
     expect(scrollCount).toBe(1);
+    localStorage.clear();
+    store.dispose();
+  });
+
+  test("returns to the file header when collapsing from inside its body", () => {
+    localStorage.clear();
+    const store = new DiffStore();
+    store.setProject(7);
+    store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(manyFilePatch(5)));
+    const panel = new ReviewDiffPanel();
+    panel.store = store;
+    Object.defineProperty(panel, "clientHeight", { configurable: true, value: 100 });
+    panel.scrollTo = (options?: ScrollToOptions | number) => {
+      if (typeof options === "object" && options.top != null) panel.scrollTop = Number(options.top);
+    };
+    const querySelector: typeof panel.querySelector = (selector: string) => (
+      selector === "[data-review-scroll]" ? panel : null
+    );
+    panel.querySelector = querySelector;
+    const itemId = panel.itemIdForPath("src/file-2.ts")!;
+
+    panel.scrollToFile("src/file-2.ts");
+    const headerTop = panel.scrollTop;
+    panel.scrollTop += 20;
+
+    panel.setItemCollapsed(itemId, true);
+
+    expect(panel.scrollTop).toBe(headerTop);
     localStorage.clear();
     store.dispose();
   });

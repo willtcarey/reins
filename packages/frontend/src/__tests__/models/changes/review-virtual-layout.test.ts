@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { estimateReviewItemHeight } from "../../../models/changes/review-virtual-layout.js";
-import { parseReviewItems } from "../../../models/changes/review-items.js";
+import { estimateFileChangeHeight } from "../../../models/changes/review-virtual-layout.js";
+import { parseFileChanges } from "../../../models/changes/file-changes.js";
 
 describe("review virtual layout", () => {
-  test("estimates Pierre rows, separators, metadata, and stable item spacing", () => {
+  test("estimates Pierre rows, separators, metadata, and stable file-change spacing", () => {
     const patch = `diff --git a/a.ts b/a.ts
 --- a/a.ts
 +++ b/a.ts
@@ -17,11 +17,11 @@ describe("review virtual layout", () => {
 +after
 \\ No newline at end of file
 `;
-    const item = parseReviewItems(patch, "snapshot").items[0]!;
+    const change = parseFileChanges(patch, "snapshot").changes[0]!;
 
-    expect(estimateReviewItemHeight(item, false, 0)).toBe(281);
-    expect(estimateReviewItemHeight(item, false, 1)).toBe(297);
-    expect(estimateReviewItemHeight(item, true, 0)).toBe(37);
-    expect(estimateReviewItemHeight(item, true, 1)).toBe(53);
+    expect(estimateFileChangeHeight(change, false, 0)).toBe(281);
+    expect(estimateFileChangeHeight(change, false, 1)).toBe(297);
+    expect(estimateFileChangeHeight(change, true, 0)).toBe(37);
+    expect(estimateFileChangeHeight(change, true, 1)).toBe(53);
   });
 });

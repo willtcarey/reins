@@ -5,6 +5,10 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { asyncIterableToText } from "../../async-iterable.js";
 import { createBranch, checkoutBranch } from "../../git.js";
+import {
+  InvalidWorkspacePathError,
+  WorkspaceFileNotFoundError,
+} from "../../models/file-system.js";
 import { Workspace } from "../../models/workspace.js";
 import { dedent } from "../helpers/text.js";
 import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
@@ -18,6 +22,49 @@ async function expectNoNewTempDiffIndexes(before: Set<string>) {
   const after = await listTempDiffIndexes();
   expect([...after].filter((entry) => !before.has(entry))).toEqual([]);
 }
+
+// ---------------------------------------------------------------------------
+// openFile
+// ---------------------------------------------------------------------------
+
+describe("openFile", () => {
+  const repo = useTestRepo();
+
+  test("opens a rooted working-tree file with streaming metadata", async () => {
+    mkdirSync(join(repo.dir, "docs"), { recursive: true });
+    writeFileSync(join(repo.dir, "docs", "guide.txt"), "working contents\n");
+
+    const file = await new Workspace(repo.dir).openFile("docs/guide.txt");
+
+    expect(file.filename).toBe("guide.txt");
+    expect(file.mimeType).toBe("text/plain");
+    expect(file.size).toBe(17);
+    expect(await new Response(file.openBody()).text()).toBe("working contents\n");
+  });
+
+  test("reads checked-out and Git branch files through their respective filesystems", async () => {
+    await commitFile(repo.dir, "story.txt", "main contents\n", "Add story");
+    await createBranch(repo.dir, "feature/story", "main");
+    await checkoutBranch(repo.dir, "feature/story");
+    await commitFile(repo.dir, "story.txt", "feature contents\n", "Edit story");
+    await checkoutBranch(repo.dir, "main");
+    writeFileSync(join(repo.dir, "story.txt"), "working contents\n");
+    const workspace = new Workspace(repo.dir);
+
+    const checkedOut = await workspace.openFile("story.txt", "main");
+    const branch = await workspace.openFile("story.txt", "feature/story");
+
+    expect(await new Response(checkedOut.openBody()).text()).toBe("working contents\n");
+    expect(await new Response(branch.openBody()).text()).toBe("feature contents\n");
+  });
+
+  test("rejects paths outside the root and missing files", async () => {
+    const workspace = new Workspace(repo.dir);
+
+    await expect(workspace.openFile("../outside.txt")).rejects.toBeInstanceOf(InvalidWorkspacePathError);
+    await expect(workspace.openFile("missing.txt")).rejects.toBeInstanceOf(WorkspaceFileNotFoundError);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // getDiffPatchStream

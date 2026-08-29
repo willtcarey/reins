@@ -4,7 +4,7 @@ The Changes tab lets you review the work an agent has done. It shows a syntax-hi
 
 When viewing a task session, the diff shows changes on the task's branch compared to the base branch. When viewing a scratch session (no task), the diff shows the live working copy.
 
-Each file header can collapse or expand the file's diff body with a spring animation while leaving the header available, and provides actions to open the file in Reins, copy its path, or download its current version. The animation is skipped when reduced motion is preferred. Choosing a file in the tree while viewing Chat switches to Changes and waits for the selected renderer to mount before navigating; a collapsed target expands first.
+Each file header can collapse or expand the file's diff body with a spring animation while leaving the header available, and provides actions to open the file in Reins, copy its path, or download its current version. The animation is skipped when reduced motion is preferred. Collapsing while scrolled inside a file returns the viewport to that file's header so the spring begins visibly. Choosing a file in the tree while viewing Chat switches to Changes and waits for the selected renderer to mount before navigating; a collapsed target expands first.
 
 ## Diff modes
 
@@ -26,7 +26,7 @@ Each diff shows a few lines of context around changes by default. You can expand
 - **Below a hunk** — a button at the bottom of the last hunk reveals more lines below.
 - **Between hunks** — when two hunks are separated by hidden lines, controls show how many lines are hidden. If the gap is small (≤ 15 lines), one **Expand** control reveals them all upward from the following hunk. For larger gaps, separate controls reveal context downward from the preceding hunk or upward from the following hunk.
 
-When expanding closes the gap between two adjacent hunks, they automatically merge into a single hunk. Expanded lines are fetched from the full file on demand (not included in the initial diff payload), syntax-highlighted in the background, and upward expansion keeps your scroll position anchored on the original hunk content.
+When expanding closes the gap between two adjacent hunks, they automatically merge into a single hunk. In the leading hidden region before the first hunk, activating the unmodified-lines link expands only toward that hunk rather than opening both ends of the region. The complete resulting file is fetched on demand (not included in the initial diff payload), while the reviewed Git patch reconstructs its previous version in the browser. New and deleted files already carry their complete one-sided content in the patch. Expanded lines are syntax-highlighted in the background, and upward expansion keeps your scroll position anchored on the original hunk content. If content changed since the patch was loaded, retrieval fails, or the file is binary or over 1 MiB, the existing partial diff remains in place.
 
 ## Markdown files
 

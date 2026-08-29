@@ -479,7 +479,10 @@ export async function getGitBlobInfo(
   ref: string,
   filePath: string,
 ): Promise<GitBlobInfo> {
-  const objectId = (await runGit(projectDir, ["rev-parse", "--verify", `${ref}:${filePath}`])).trim();
+  const objectId = (await runGit(
+    projectDir,
+    ["rev-parse", "--verify", `${ref}:${filePath}`],
+  )).trim();
   const type = (await runGit(projectDir, ["cat-file", "-t", objectId])).trim();
   if (type !== "blob") {
     throw new Error(`Not a file blob: ${ref}:${filePath}`);

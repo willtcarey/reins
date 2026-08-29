@@ -24,6 +24,8 @@ export interface VirtualListContainer {
   scrollTo(options?: ScrollToOptions | number, y?: number): void;
 }
 
+export type VirtualListScrollAnchor = "item-end" | (() => number | null);
+
 export type VirtualListObservation =
   | {
       readonly type: "scroll";
@@ -100,6 +102,12 @@ export class VirtualListController implements ReactiveController {
   private generation = 0;
   private renderFrame: number | null = null;
   private pendingGeometryScrollTop: number | null = null;
+  private pendingScrollPreservation: {
+    itemId: string;
+    anchor: VirtualListScrollAnchor;
+    before: number;
+    itemHeightBefore: number;
+  } | null = null;
   private navigationId: string | null = null;
   private visible = false;
   private rememberedScrollTop: number | null = null;
@@ -120,6 +128,15 @@ export class VirtualListController implements ReactiveController {
     this.syncViewport();
     this.queueGeometryUpdate(this.coordinator.setItems(items), true);
     this.host.requestUpdate();
+  }
+
+  public setItemFixedHeight(id: string, height: number): boolean {
+    this.syncViewport();
+    const update = this.coordinator.setItemFixedHeight(id, height);
+    if (!update) return false;
+    this.queueGeometryUpdate(update, true);
+    this.host.requestUpdate();
+    return true;
   }
 
   public attach(container: VirtualListContainer | null) {
@@ -151,12 +168,16 @@ export class VirtualListController implements ReactiveController {
 
   public measure(measurement: VirtualListMeasurement) {
     const item = this.coordinator.item(measurement.id);
-    if (
-      !item
-      || item.fixedHeight !== undefined
-      || item.measurementKey !== measurement.measurementKey
-      || measurement.height <= 0
-    ) return;
+    const rejectionReason = !item
+      ? "missing-item"
+      : item.fixedHeight !== undefined
+        ? "fixed-height"
+        : item.measurementKey !== measurement.measurementKey
+          ? "stale-key"
+          : measurement.height <= 0
+            ? "non-positive-height"
+            : null;
+    if (rejectionReason !== null) return;
 
     this.pendingMeasurements.set(measurement.id, measurement);
     if (this.measurementFlushQueued) return;
@@ -167,6 +188,29 @@ export class VirtualListController implements ReactiveController {
       this.measurementFlushQueued = false;
       this.commitMeasurements();
     });
+  }
+
+  /** Run an item mutation and preserve one semantic viewport point through its next measurement. */
+  public preserveScroll(id: string, anchor: VirtualListScrollAnchor, mutate: () => void) {
+    const item = this.coordinator.item(id);
+    const before = anchor === "item-end" ? item?.height ?? null : anchor();
+    if (!this.container || !item || before === null || !Number.isFinite(before)) {
+      mutate();
+      return;
+    }
+
+    this.pendingScrollPreservation = {
+      itemId: id,
+      anchor,
+      before,
+      itemHeightBefore: item.height,
+    };
+    try {
+      mutate();
+    } catch (error) {
+      this.pendingScrollPreservation = null;
+      throw error;
+    }
   }
 
   public navigateTo(id: string): boolean {
@@ -187,6 +231,20 @@ export class VirtualListController implements ReactiveController {
     return true;
   }
 
+  /** Immediately align an item after an interaction changes its geometry. */
+  public scrollToItemStart(id: string): boolean {
+    const top = this.coordinator.navigationTop(id);
+    if (top === null || !this.container) return false;
+
+    this.pendingGeometryScrollTop = null;
+    this.navigationId = null;
+    this.container.scrollTop = top;
+    this.coordinator.setViewport(top, this.container.clientHeight || this.viewportHeight);
+    this.rememberScrollPosition();
+    this.host.requestUpdate();
+    return true;
+  }
+
   public window(): VirtualListWindow {
     return this.coordinator.window();
   }
@@ -203,6 +261,7 @@ export class VirtualListController implements ReactiveController {
     this.pendingMeasurements.clear();
     this.measurementFlushQueued = false;
     this.pendingGeometryScrollTop = null;
+    this.pendingScrollPreservation = null;
     this.navigationId = null;
     this.rememberedScrollTop = null;
     this.restoreScrollAfterRender = false;
@@ -227,6 +286,7 @@ export class VirtualListController implements ReactiveController {
     this.generation += 1;
     this.pendingMeasurements.clear();
     this.measurementFlushQueued = false;
+    this.pendingScrollPreservation = null;
   }
 
   private handleScroll = () => {
@@ -258,7 +318,10 @@ export class VirtualListController implements ReactiveController {
   };
 
   private handleScrollIntent = (event: Event) => {
-    if (!this.isScrollIntent(event) || !this.navigationId) return;
+    if (!this.isScrollIntent(event)) return;
+    this.pendingScrollPreservation = null;
+    this.pendingGeometryScrollTop = null;
+    if (!this.navigationId) return;
     const targetId = this.navigationId;
     this.navigationId = null;
     this.emit({
@@ -293,7 +356,28 @@ export class VirtualListController implements ReactiveController {
     this.syncViewport();
     const measurements = [...this.pendingMeasurements.values()];
     this.pendingMeasurements.clear();
-    const update = this.coordinator.measure(measurements);
+    const preservation = this.pendingScrollPreservation;
+    const measuredUpdate = this.coordinator.measure(measurements);
+    const itemHeightAfter = preservation ? this.coordinator.item(preservation.itemId)?.height : undefined;
+    const targetChanged = preservation !== null
+      && measurements.some((measurement) => measurement.id === preservation.itemId)
+      && itemHeightAfter !== undefined
+      && itemHeightAfter !== preservation.itemHeightBefore;
+    const pointAdjustment = targetChanged && typeof preservation.anchor === "function"
+      ? (preservation.anchor() ?? preservation.before) - preservation.before
+      : 0;
+    const growthAdjustment = targetChanged && preservation.anchor === "item-end"
+      ? itemHeightAfter! - preservation.itemHeightBefore
+      : 0;
+    const interactionAdjustment = pointAdjustment + growthAdjustment;
+    if (targetChanged) this.pendingScrollPreservation = null;
+    const update = interactionAdjustment === 0
+      ? measuredUpdate
+      : {
+          ...measuredUpdate,
+          scrollTop: measuredUpdate.scrollTop + interactionAdjustment,
+          scrollAdjustment: measuredUpdate.scrollAdjustment + interactionAdjustment,
+        };
     this.emit({
       type: "measurement-batch",
       submitted: measurements.length,
@@ -304,6 +388,9 @@ export class VirtualListController implements ReactiveController {
       measurements,
       layoutVersion: this.coordinator.layoutVersion,
     });
+    // Absolute item positions must repaint even when the semantic anchor means
+    // the changed geometry requires no scroll correction.
+    if (update.accepted > 0) this.host.requestUpdate();
     this.queueGeometryUpdate(update, update.accepted > 0);
   }
 

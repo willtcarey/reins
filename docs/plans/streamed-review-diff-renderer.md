@@ -22,8 +22,8 @@ This is the working implementation list. It is ordered from smallest functional 
    - Route the setting to a placeholder panel without changing `classic` or `codeview`.
    - Keep the review shell behind the `virtualized` renderer setting; it does not need production parity yet.
 
-2. [x] **Create renderer-specific review item records.**
-   - Parse the already-loaded raw patch into Reins-owned item records.
+2. [x] **Create renderer-specific file-change records.**
+   - Parse the already-loaded raw patch into Reins-owned file changes.
    - Use stable item IDs from path/old path/status/occurrence, and reconcile file-level content fingerprints so unchanged records and cache keys survive a refreshed patch.
    - Keep this state separate from `DiffStore.fullData`.
    - Define item-level state by ID: collapsed/expanded, active tab, parse errors, later height cache.
@@ -38,7 +38,7 @@ This is the working implementation list. It is ordered from smallest functional 
    - Document in-code/plan that this scaffold may mount every file and is not a performance prototype.
 
 4. [x] **Add file tree integration against item IDs.**
-   - File tree clicks resolve to review item IDs.
+   - File tree clicks resolve to file-change IDs.
    - Item-ID navigation works in the scaffold.
    - Active file state is reported through the abstraction instead of depending on all files being permanently mounted.
 
@@ -63,14 +63,14 @@ This is the working implementation list. It is ordered from smallest functional 
    - [x] Avoid scheduling highlight work for items outside the visible/overscan window by not constructing their item components.
    - [x] Preserve Reins-owned headers/actions around the Pierre-rendered diff body.
 
-8. [ ] **Implement fluid inline context expansion.**
+8. [x] **Implement fluid inline context expansion through Pierre `FileDiff`.**
    - Treat each diff as a view into the complete file, with collapsed unchanged regions appearing naturally between hunks.
-   - Let the user reveal more lines directly in place; repeated expansion should continue opening the region until adjacent hunks join or the complete file is visible.
-   - Keep the interaction continuous: the file must not visibly switch modes, disappear, or be replaced while content is acquired.
-   - Add the per-file old/new content endpoint with diff semantics and retrieve complete contents invisibly on the first expansion when they are not already available.
-   - Update rendered lines and measured item height while anchoring the touched region in the viewport so expansion does not disorient the user.
-   - Consider prefetching likely expansion data where it meaningfully reduces first-interaction latency without loading every complete file eagerly.
-   - If complete content cannot be retrieved, leave the existing partial diff stable and show a non-disruptive error at the expansion control.
+   - Use Pierre's `line-info` rows and `FileDiff.expandHunk`; Reins renders only the initial acquisition button that Pierre suppresses for partial metadata, while Pierre owns all complete-metadata expansion controls and region calculations.
+   - Lazily retrieve the bounded complete resulting file on the first interaction with a Pierre line-info row, reverse-apply the retained Git patch to reconstruct the old file, and share the request for that reviewed item.
+   - Keep the partial `FileDiff` mounted while acquisition is pending or fails. Remount once with complete metadata, replay the initiating call through `expandHunk`, and retain Pierre-reported regions only for unavoidable virtual remount restoration.
+   - Reconcile rendered height through the existing virtual measurement path and compensate the interacted separator's viewport point.
+   - Report retrieval, reconstruction, binary, and size failures beside the unchanged diff without replacing it.
+   - Prefetching remains deliberately deferred.
 
 9. [ ] **Measure and compare.**
    - Compare `classic`, `codeview`, and the Reins-owned virtual path.
@@ -85,9 +85,9 @@ The current CodeView renderer prototype proved an important point: **most of the
 
 ## Current status and decision
 
-The `diff_renderer` setting supports `codeview` for the direct Pierre `CodeView` proof point and `virtualized` for the Reins-owned review surface. Both fetch `/diff/patch` as full text. The Reins-owned path parses renderer-specific review records, owns the file headers and item-ID navigation contract, and delegates text rows and worker-backed highlighting to Pierre `FileDiff`. Classic remains the default, so non-default renderer access is controlled by the stored preference rather than frontend dev-mode gating.
+The `diff_renderer` setting supports `codeview` for the direct Pierre `CodeView` proof point and `virtualized` for the Reins-owned review surface. Both fetch `/diff/patch` as full text. The Reins-owned path parses renderer-specific file changes, owns the file headers and item-ID navigation contract, and delegates text rows and worker-backed highlighting to Pierre `FileDiff`. Classic remains the default, so non-default renderer access is controlled by the stored preference rather than frontend dev-mode gating.
 
-The `virtualized` renderer now keeps all review records in JavaScript while the generic `VirtualListController` and `VirtualListCoordinator` expose only a balanced viewport/overscan window for keyed mounting. Its Reins-owned headers include accessible collapse controls plus the shared view, copy-path, and download actions. A collapsed item records the hash of that exact reviewed diff in local storage under its project, branch, and stable item ID; both diff modes share that reviewed state. Matching content remains collapsed across reconciliation, project switches, and reloads; changed content expands and invalidates the marker so a later revert also stays expanded. File-tree navigation resolves coordinator geometry and therefore works before the target wrapper exists. Active-file tracking uses that same geometry. Stable measurements are retained by item/content/render-state key and committed in batches against a semantic item plus viewport-offset anchor. Absolutely positioned wrappers in a fixed-total-height container prevent asynchronous sizing from moving siblings before the post-render scroll reconciliation. Balanced overscan supports reverse scrolling, while explicit input cancellation prevents smooth navigation and anchor correction from fighting touch, wheel, pointer, or keyboard scrolling. Context expansion, per-file content retrieval, rich previews, pooling, patch streaming, and performance measurement remain follow-up work.
+The `virtualized` renderer now keeps all file changes in JavaScript while the generic `VirtualListController` and `VirtualListCoordinator` expose only a balanced viewport/overscan window for keyed mounting. Its Reins-owned headers include accessible collapse controls plus the shared view, copy-path, and download actions. A collapsed item records the hash of that exact reviewed diff in local storage under its project, branch, and stable item ID; both diff modes share that reviewed state. Matching content remains collapsed across reconciliation, project switches, and reloads; changed content expands and invalidates the marker so a later revert also stays expanded. File-tree navigation resolves coordinator geometry and therefore works before the target wrapper exists. Active-file tracking uses that same geometry. Stable measurements are retained by item/content/render-state key and committed in batches against a semantic item plus viewport-offset anchor. Absolutely positioned wrappers in a fixed-total-height container prevent asynchronous sizing from moving siblings before the post-render scroll reconciliation. Balanced overscan supports reverse scrolling, while explicit input cancellation prevents smooth navigation and anchor correction from fighting touch, wheel, pointer, or keyboard scrolling. Rich previews, pooling, patch streaming, and performance measurement remain follow-up work.
 
 In particular:
 
@@ -106,7 +106,7 @@ Target final architecture:
 GET /api/projects/:id/diff/patch as full text initially
   → DiffStore fetches raw patch text with active diff params
   → renderer-specific components parse with @pierre/diffs parsePatchFiles/processFile
-  → store renderer-specific virtual item records outside DiffStore.fullData
+  → store renderer-specific file changes outside DiffStore.fullData
   → render through a Reins-owned top-level virtual list
        ├─ code diff item: Pierre VirtualizedFileDiff/FileDiff pieces
        ├─ markdown preview item/panel: Reins renderer
@@ -117,7 +117,7 @@ GET /api/projects/:id/diff/patch as full text initially
 
 The key requirement for the eventual performance path is that the Reins-owned surface must be **CodeView-like**, not merely Pierre `Virtualizer` wrapped around thousands of mounted file containers. `CodeView` is fast because it keeps item records/heights for all files but only mounts DOM containers for the visible window plus overscan. The lower-level `Virtualizer` is more flexible but generally mounts every top-level file/diff container, which gives back a large part of the many-file performance win.
 
-Because `classic` and `codeview` remain available fallbacks, the Reins-owned path was first built non-virtually to validate behavior. That scaffold has now been replaced: `ReviewDiffPanel` derives virtual geometry from the stable renderer-owned item records and mounts only a viewport/overscan slice. The panel retains navigation, active-item, and collapse coordination rather than introducing a second stateful virtualizer lifecycle. Performance evaluation can now use this bounded mounting path.
+Because `classic` and `codeview` remain available fallbacks, the Reins-owned path was first built non-virtually to validate behavior. That scaffold has now been replaced: `ReviewDiffPanel` derives virtual geometry from stable renderer-owned file changes and mounts only a viewport/overscan slice. The panel retains navigation, active-item, and collapse coordination rather than introducing a second stateful virtualizer lifecycle. Performance evaluation can now use this bounded mounting path.
 
 ## Prototype findings to preserve
 
@@ -127,7 +127,7 @@ Because `classic` and `codeview` remain available fallbacks, the Reins-owned pat
 - Worker-backed syntax highlighting is required even in the non-virtual scaffold; main-thread highlighting can make the scaffold unusable before top-level virtualization is added.
 - Raw patch parsing produces `FileDiffMetadata.isPartial === true`; complete old/new file contents are still required to reveal unchanged lines that are absent from the patch.
 - Content retrieval is an internal detail, not a user-visible transition. The collapsed region should remain the stable interaction point while complete contents are acquired, then open inline without replacing the file surface.
-- Direct `CodeView` does not expose a clean public async context-expansion interception hook. Lower-level/custom separator escape hatches exist but are deprecated or unsupported for core behavior.
+- `FileDiff` does not expose an async pre-expansion hook, and intentionally suppresses expansion buttons when `FileDiffMetadata.isPartial` is true. Reins always passes that truthful partial metadata to Pierre: marking partial line arrays complete makes Pierre's highlighter expand absent context and can produce invalid Shiki decoration positions. For each leading or inter-hunk region whose following patch hunk reports `collapsedBefore > 0`, Reins makes Pierre's existing full-width `data-separator-content` row keyboard-accessible and inserts a matching visible acquisition button without changing Pierre's `data-expand-index` structure. Mounting those bounded controls does not acquire content; capture-phase click, Enter, or Space activation both starts acquisition and records the intended native expansion while loading. After acquisition Reins hydrates the retained per-file Git patch with complete old/new contents and replays that intent through public `FileDiff.expandHunk`. Reins does not prefetch mounted or offscreen items, add synthetic lines, fake metadata completeness, use deprecated custom separators, or implement expansion-region calculations.
 
 ## Detailed design notes
 
@@ -135,11 +135,11 @@ Because `classic` and `codeview` remain available fallbacks, the Reins-owned pat
 
 `VirtualListCoordinator` now provides the persistent generic geometry model. Stable IDs remain the source of identity, while measurement keys invalidate stale fluid heights and optional fixed heights temporarily override them without discarding valid measurements. `review-virtual-layout.ts` retains only review-specific Pierre height estimation: Pierre's 20px row metric, each hunk's exact `unifiedLineCount`, line-info separator geometry, no-newline metadata rows, the Reins header, and in-box inter-file spacing.
 
-`VirtualListController` owns coordinator lifecycle, actual scroll-container viewport synchronization, balanced pixel overscan, measurement microtask batching, semantic post-render anchor correction, active-item lookup, unmounted-ID navigation and retargeting/cancellation, render-frame scheduling, and scroll restoration. `ReviewDiffPanel` supplies review item inputs, maps collapse to fixed height, renders the bounded window, and adapts generic observations to review events and telemetry. Each mounted wrapper uses coordinator geometry for its absolute top inside a fixed-total-height relative container; a worker completion therefore cannot push visible siblings while reconciliation is pending. Wrappers are keyed by stable review item ID so overlapping windows retain their mounted Pierre renderer rather than recycling every positional node and restarting worker work as the range moves. Newly mounted wrappers reserve their estimated block height until Pierre completes, keeping the sticky file surface present while highlighting starts.
+`VirtualListController` owns coordinator lifecycle, actual scroll-container viewport synchronization, balanced pixel overscan, measurement microtask batching, semantic post-render anchor correction, active-item lookup, unmounted-ID navigation and retargeting/cancellation, render-frame scheduling, and scroll restoration. `ReviewDiffPanel` supplies file changes as generic virtual-list inputs, maps collapse to fixed height, renders the bounded window, and adapts generic observations to review events and telemetry. Each mounted wrapper uses coordinator geometry for its absolute top inside a fixed-total-height relative container; a worker completion therefore cannot push visible siblings while reconciliation is pending. Wrappers are keyed by stable file-change ID so overlapping windows retain their mounted Pierre renderer rather than recycling every positional node and restarting worker work as the range moves. Newly mounted wrappers reserve their estimated block height until Pierre completes, keeping the sticky file surface present while highlighting starts.
 
 Measurement stability is explicit. Expanded items are measured only after Pierre's post-render has no placeholder and the expansion has settled. Collapsed geometry is deterministic—the inter-file gap plus fixed header estimate—so collapsed items are never measured; the previous expanded measurement remains cached and applies again after expansion. Unlike the previous forward-only/measurement-exception approach, valid measurements above the viewport are retained and corrected semantically, and equal overscan before and after supports reverse scrolling. File-tree navigation records its target, re-resolves that target when geometry changes during native smooth scrolling, and clears/stops the programmatic scroll on wheel, touch, pointer, or scrolling-key input. Native CSS anchoring remains disabled so there is only one owner of correction.
 
-The resulting seams are: parsing/reconciliation owns review records; the generic coordinator owns persistent geometry; the generic controller owns virtual-list DOM behavior; the panel owns review collapse policy, path resolution, active-file events, stores, and telemetry adaptation; Lit owns keyed mounting; and `ReviewDiffItem` owns a Pierre `FileDiff` only for its mounted lifetime. This remains deliberately top-level: pooling, rich previews, context expansion, and patch streaming are deferred.
+The resulting seams are: parsing/reconciliation owns review records; the generic coordinator owns persistent geometry; the generic controller owns virtual-list DOM behavior; the panel owns review collapse policy, path resolution, active-file events, stores, and telemetry adaptation; Lit owns keyed mounting; and `ReviewFileDiff` owns a Pierre `FileDiff` only for its mounted lifetime. This remains deliberately top-level: pooling, rich previews, context expansion, and patch streaming are deferred.
 
 ### Fluid inline context expansion
 
@@ -147,23 +147,7 @@ The interaction contract is that a diff behaves like a window into the complete 
 
 The line or collapsed region the user acts on should remain visually anchored while its surrounding content opens. The renderer should update item height and compensate scroll position as needed rather than allowing content above the interaction point to push it away.
 
-To support this behavior, the per-file content endpoint should understand:
-
-- branch mode for active checked-out branch: old side is merge-base, new side is working tree/index state as appropriate
-- branch mode for non-active selected branch: old side is merge-base, new side is selected branch commit
-- uncommitted mode: old side is `HEAD`, new side is working tree/index state
-- renames: old path may be `prevName`, new path may be `name`
-- new/deleted files: one side may be absent
-- untracked files: old side absent, new side working tree content
-
-Suggested response shape:
-
-```ts
-type DiffFileContentsResponse = {
-  oldFile?: { name: string; contents: string; cacheKey?: string };
-  newFile?: { name: string; contents: string; cacheKey?: string };
-};
-```
+Acquisition reuses `GET /files/content` with the same semantics as file previews: an active or omitted branch reads the working tree, while a non-active selected branch reads that Git ref. Renames request the resulting path and retain the old path as reconstructed metadata. The frontend enforces a 1 MiB bound from `Content-Length` when available and while consuming the actual body, rejects binary MIME/placeholder/NUL/invalid-UTF-8 responses, and leaves the partial diff mounted on every failure. New and deleted files make no content request because Git includes their complete one-sided text in the patch.
 
 ### Optional streaming/chunking shape
 
@@ -244,4 +228,12 @@ Metrics to capture:
 - [x] The item model remains open to mixed Reins review content without deprecated Pierre APIs.
 - [x] Classic remains stable and default.
 
-Fluid inline context expansion retains the endpoint/item-state/anchoring direction documented above, but its content retrieval and interaction remain deferred.
+### Completed context expansion seam
+
+`GET /files/content` owns resulting-file acquisition and preserves file-preview ref behavior: active/omitted refs stream the working tree, and a non-active selected ref streams that branch's blob. Binary placeholder responses carry an explicit response header so expansion cannot mistake their human-readable message for source text. The frontend checks declared and consumed byte size, MIME, NUL bytes, and UTF-8 validity under the 1 MiB safeguard.
+
+`FileDiffContextState` owns acquisition outcomes, per-file request sharing, and an opaque copy of expansion regions reported by Pierre for virtual remount restoration. It delegates content loading to `loadFileContents` and complete metadata construction to `buildFileDiff`; it does not apply directional increments or reproduce Pierre's joining/clamping rules. Each `FileChange` retains its exact per-file Git patch. The focused `patch` module reverse-applies that patch to complete resulting text, validates every context/addition line and hunk range, and supports multiple hunks, additions/deletions, zero-length ranges, and no-newline-at-EOF markers. New/deleted file sides are derived directly from their complete one-sided patches. The reconstructed sides then go through `processFile(filePatch, { oldFile, newFile })` exactly as before, without regrouping reviewed hunks. `ReviewFileDiff` leaves the truthful partial Pierre `FileDiff` mounted during loading and failures. `review-file-diff-renderer.ts` configures the supported `line-info` UI; before complete contents exist, it identifies leading/inter-hunk acquisition rows from `collapsedBefore`, exposes Pierre's existing full-width separator-content row, and inserts a Pierre-styled visible acquisition button without fetching merely because the bounded control is mounted. Capture-phase pointer/keyboard interception starts acquisition only on the first activation, guarantees `expandHunk` cannot see incomplete arrays, and retains that click, Enter, or Space intent while loading; after acquisition, the intent and every subsequent reveal delegate to public `FileDiff.expandHunk`, which produces Pierre's native full-width controls. Its small `PierreReviewFileDiff` subclass exposes the protected renderer's public expansion snapshot solely because Pierre's `FileDiff` has no public remount serialization interface. No mounted-control prefetch, synthetic line content, false `isPartial` value, custom hunk separator, trailing control, or parallel expansion model is used.
+
+The generic virtual list remains the geometry owner. Context expansion runs through its generic `preserveScroll` transaction, which captures the selected semantic anchor, performs Pierre's mutation, waits for the resizing item's next changed measurement, and commits geometry plus scroll correction together. Pierre's visually upward/from-end control reports direction `down`, so the adapter preserves the item end and scrolls by measured growth; the visually downward/from-start control reports `up` and needs no transaction because context is inserted below reviewed code. Bidirectional expansion supplies a resolver for Pierre's internal separator point. This prevents bottom clamping against stale total height; intervening user scroll intent cancels the transaction.
+
+Pierre limitation: partial metadata cannot describe trailing context unless an authoritative total line count is separately available, and Pierre does not emit native expansion buttons for any partial region. Reins can safely use an existing leading/inter-hunk line-info row whose following hunk has `collapsedBefore > 0`, but a partial patch with no such row (for example, a sole hunk at line 1 with only unknown trailing content) cannot trigger lazy acquisition. Fixing that completely requires an upstream Pierre async content hook or authoritative totals; Reins will not preload every file, fake metadata completeness, or reintroduce a parallel trailing control. Other limitations: context state is in-memory for the current panel scope rather than persisted across reloads; failed acquisition is terminal until the diff scope/item changes; and the 1 MiB resulting-file limit is fixed. Prefetching, rich previews, patch streaming, and renderer polish remain deferred.

@@ -97,6 +97,121 @@ describe("VirtualListController", () => {
     expect(controller.window().activeId).toBe("visible");
   });
 
+  test("requests a repaint when changed geometry needs no scroll correction", async () => {
+    const host = fakeHost();
+    const controller = new VirtualListController(host, 0, 100);
+    controller.setItems(items);
+    const container = fakeContainer(0, 100);
+    controller.attach(container);
+    const updatesBeforeMeasurement = host.updates;
+
+    controller.measure({ id: "visible", measurementKey: "visible-v1", height: 160 });
+    await Promise.resolve();
+
+    expect(controller.item("below")?.top).toBe(260);
+    expect(host.updates).toBe(updatesBeforeMeasurement + 1);
+  });
+
+  test("keeps an interacted point anchored after expanded item geometry is rendered", async () => {
+    const host = fakeHost();
+    const controller = new VirtualListController(host, 0, 100);
+    controller.setItems(items);
+    const container = fakeContainer(120, 100);
+    controller.attach(container);
+
+    let anchorTop = 100;
+    controller.preserveScroll("visible", () => anchorTop, () => { anchorTop = 160; });
+    expect(container.scrollTop).toBe(120);
+
+    controller.measure({ id: "visible", measurementKey: "visible-v1", height: 160 });
+    await Promise.resolve();
+    expect(container.scrollTop).toBe(120);
+
+    host.updated();
+
+    expect(container.scrollTop).toBe(180);
+    expect(controller.window().activeId).toBe("visible");
+  });
+
+  test("preserves an item end through final geometry application", async () => {
+    const host = fakeHost();
+    const observations: VirtualListObservation[] = [];
+    const controller = new VirtualListController(host, 0, 100);
+    controller.observe = (observation) => observations.push(observation);
+    controller.setItems(items);
+    const container = fakeContainer(120, 100);
+    controller.attach(container);
+
+    controller.preserveScroll("visible", "item-end", () => {});
+    controller.measure({ id: "visible", measurementKey: "visible-v1", height: 160 });
+    await Promise.resolve();
+    host.updated();
+
+    expect(container.scrollTop).toBe(180);
+    expect(controller.window().activeId).toBe("visible");
+    expect(observations).toContainEqual(expect.objectContaining({
+      type: "measurement-batch",
+      correctedTop: 180,
+      scrollAdjustment: 60,
+    }));
+    expect(observations).toContainEqual(expect.objectContaining({
+      type: "geometry-applied",
+      requestedTop: 180,
+      actualBefore: 120,
+      actualAfter: 180,
+    }));
+  });
+
+  test("reports and honors user cancellation of a pending expansion anchor", async () => {
+    const host = fakeHost();
+    const observations: VirtualListObservation[] = [];
+    const controller = new VirtualListController(host, 0, 100);
+    controller.observe = (observation) => observations.push(observation);
+    controller.setItems(items);
+    const container = fakeContainer(120, 100);
+    controller.attach(container);
+
+    controller.preserveScroll("visible", "item-end", () => {});
+    container.fire("touchstart");
+    controller.measure({ id: "visible", measurementKey: "visible-v1", height: 160 });
+    await Promise.resolve();
+    host.updated();
+
+    expect(container.scrollTop).toBe(120);
+    expect(observations.find((event) => event.type === "geometry-applied")).toBeUndefined();
+  });
+
+  test("does not apply a stale point correction after user scroll intent", async () => {
+    const host = fakeHost();
+    const controller = new VirtualListController(host, 0, 100);
+    controller.setItems(items);
+    const container = fakeContainer(120, 100);
+    controller.attach(container);
+
+    let anchorTop = 100;
+    controller.preserveScroll("visible", () => anchorTop, () => { anchorTop = 160; });
+    container.fire("wheel");
+    controller.measure({ id: "visible", measurementKey: "visible-v1", height: 160 });
+    await Promise.resolve();
+    host.updated();
+
+    expect(container.scrollTop).toBe(120);
+  });
+
+  test("updates one temporary fixed height without rebuilding caller inputs", () => {
+    const host = fakeHost();
+    const controller = new VirtualListController(host, 0, 100);
+    controller.setItems(items);
+    const container = fakeContainer(0, 100);
+    controller.attach(container);
+
+    expect(controller.setItemFixedHeight("visible", 60)).toBe(true);
+
+    expect(controller.item("above")?.height).toBe(100);
+    expect(controller.item("visible")?.height).toBe(60);
+    expect(controller.item("below")?.top).toBe(160);
+  });
+
   test("uses fixed geometry without discarding a prior fluid measurement", async () => {
     const host = fakeHost();
     const controller = new VirtualListController(host, 0);

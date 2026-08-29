@@ -1,16 +1,14 @@
 /**
  * Project Model
  *
- * Business logic for project lifecycle: creation, remote sync, and file
- * content reading. Orchestrates store calls, git operations, and
- * WebSocket broadcasts.
+ * Business logic for project lifecycle, remote sync, and uploads. Orchestrates
+ * store calls, git operations, and WebSocket broadcasts.
  *
  * `createProject()` remains a standalone function (pre-project context).
  * For project-scoped operations, construct a `ProjectModel` instance.
  */
 
 import { resolve, normalize, basename, join } from "path";
-import { detectMimeTypeFromBytes } from "../mime.js";
 import { mkdirSync, readdirSync } from "fs";
 import {
   createProject as storeCreateProject,
@@ -30,8 +28,6 @@ import {
   getCurrentBranch,
   checkoutBranch,
   deleteBranch,
-  showFile,
-  showFileBinary,
   listTrackedFiles,
   listUntrackedFiles,
 } from "../git.js";
@@ -64,19 +60,6 @@ export class NoFilesError extends Error {
 
 export class InvalidFilenameError extends Error {
   constructor(message = "Invalid filename") { super(message); }
-}
-
-// ---------------------------------------------------------------------------
-// Serve-file result
-// ---------------------------------------------------------------------------
-
-export interface ServeFileResult {
-  /** Raw file bytes. Callers decide whether to decode as text. */
-  content: Uint8Array;
-  /** Detected MIME type (e.g. "text/plain; charset=utf-8") */
-  mimeType: string;
-  /** Bare filename extracted from the path (e.g. "report.xlsx") */
-  filename: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -227,77 +210,7 @@ export class ProjectModel {
     }
   }
 
-  // ---- File I/O ------------------------------------------------------------
-
-  /**
-   * Read a file's content, either from a git ref or the working tree.
-   *
-   * When `ref` is provided and doesn't match the currently checked-out
-   * branch, the content is read from that git ref via `git show`.
-   * Otherwise the working tree is used so uncommitted edits are visible.
-   *
-   * Validates that the path doesn't escape the project directory.
-   *
-   * Throws `PathTraversalError` for path traversal, `FileNotFoundError`
-   * when the file doesn't exist.
-   */
-  async readFile(filePath: string, ref?: string | null): Promise<string>;
-  async readFile(filePath: string, ref: string | null | undefined, binary: true): Promise<Uint8Array>;
-  async readFile(filePath: string, ref?: string | null, binary?: boolean): Promise<string | Uint8Array> {
-    const resolved = resolve(this.projectDir, filePath);
-    this.assertInsideProject(resolved);
-
-    // Decide whether to read from git or the working tree.
-    // If a ref is given but it matches the currently checked-out branch,
-    // prefer the working tree so that uncommitted changes are visible.
-    let useGit = false;
-    if (ref) {
-      const currentBranch = await getCurrentBranch(this.projectDir);
-      useGit = currentBranch !== ref;
-    }
-
-    if (useGit) {
-      try {
-        return binary
-          ? await showFileBinary(this.projectDir, ref!, filePath)
-          : await showFile(this.projectDir, ref!, filePath);
-      } catch {
-        throw new FileNotFoundError("File not found in ref");
-      }
-    }
-
-    // Read from working tree
-    try {
-      const file = Bun.file(resolved);
-      return binary ? new Uint8Array(await file.arrayBuffer()) : await file.text();
-    } catch {
-      throw new FileNotFoundError();
-    }
-  }
-
-  /**
-   * Serve a file with MIME type detection and filename extraction.
-   *
-   * Always returns raw bytes. HTTP responses are bytes on the wire; text
-   * callers can decode with `Response.text()`, while image/PDF previews receive
-   * the exact original bytes without relying on `download=1`.
-   *
-   * The caller (route handler) uses the returned metadata to build
-   * Content-Type and Content-Disposition headers.
-   */
-  async serveFile(
-    filePath: string,
-    ref?: string | null,
-  ): Promise<ServeFileResult> {
-    const resolved = resolve(this.projectDir, filePath);
-    this.assertInsideProject(resolved);
-
-    const content = await this.readFile(filePath, ref, true);
-    const mimeType = await detectMimeTypeFromBytes(content);
-    const filename = basename(filePath) || filePath;
-
-    return { content, mimeType, filename };
-  }
+  // ---- File uploads --------------------------------------------------------
 
   /**
    * Write one or more files into the project directory.
