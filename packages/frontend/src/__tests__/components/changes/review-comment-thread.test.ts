@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { InlineReviewCommentPlacementElement } from "../../../components/changes/inline-review-comment-placement.js";
+import { ReviewCommentThread } from "../../../components/changes/review-comment-thread.js";
 import { InlineReviewComments } from "../../../models/changes/inline-review-comments.js";
 import { collectTemplateEventListeners, templateToString } from "../../helpers/lit-template.js";
 
-describe("InlineReviewCommentPlacementElement", () => {
+describe("ReviewCommentThread", () => {
   test("renders a labeled composer and saves and deletes its Reins-owned thread", () => {
     const comments = new InlineReviewComments();
     comments.reconcile("scope", [{ fileId: "file-a", contentKey: "one" }]);
@@ -14,7 +14,7 @@ describe("InlineReviewCommentPlacementElement", () => {
     });
     const placementId = comments.project("file-a").placements[0]?.id;
     if (!placementId) throw new Error("Expected placement");
-    const element = new InlineReviewCommentPlacementElement();
+    const element = new ReviewCommentThread();
     element.comments = comments;
     element.fileId = "file-a";
     element.placementId = placementId;

@@ -14,7 +14,7 @@ import type {
   ReviewLineSelection,
 } from "../../models/changes/inline-review-comments.js";
 import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
-import { InlineReviewCommentPlacementElement } from "./inline-review-comment-placement.js";
+import { ReviewCommentThread } from "./review-comment-thread.js";
 
 type PierreCommentPlacementMetadata = string;
 
@@ -168,7 +168,7 @@ export function createReviewFileDiffRenderer(
         },
         renderAnnotation: (annotation) => {
           if (!target.comments || !target.fileId) return undefined;
-          const element = new InlineReviewCommentPlacementElement();
+          const element = new ReviewCommentThread();
           element.comments = target.comments;
           element.fileId = target.fileId;
           element.placementId = annotation.metadata;

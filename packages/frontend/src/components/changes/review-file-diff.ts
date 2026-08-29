@@ -213,7 +213,7 @@ export class ReviewFileDiff extends LitElement {
 
   private _commentAnchorTop(placementId: string | null): number | null {
     if (!placementId || typeof this.querySelectorAll !== "function") return null;
-    for (const element of this.querySelectorAll("review-inline-comment-placement")) {
+    for (const element of this.querySelectorAll("review-comment-thread")) {
       if (
         element instanceof HTMLElement
         && "placementId" in element

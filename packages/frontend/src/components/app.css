@@ -89,7 +89,7 @@ review-file-diff {
   display: block;
 }
 
-review-inline-comment-placement {
+review-comment-thread {
   box-sizing: border-box;
   display: block;
   min-width: 0;

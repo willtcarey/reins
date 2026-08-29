@@ -2,8 +2,8 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { InlineReviewComments } from "../../models/changes/inline-review-comments.js";
 
-@customElement("review-inline-comment-placement")
-export class InlineReviewCommentPlacementElement extends LitElement {
+@customElement("review-comment-thread")
+export class ReviewCommentThread extends LitElement {
   override createRenderRoot() {
     return this;
   }
@@ -161,6 +161,6 @@ function hasValue(value: unknown): value is { value: string } {
 
 declare global {
   interface HTMLElementTagNameMap {
-    "review-inline-comment-placement": InlineReviewCommentPlacementElement;
+    "review-comment-thread": ReviewCommentThread;
   }
 }

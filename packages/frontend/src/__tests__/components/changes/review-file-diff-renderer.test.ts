@@ -7,7 +7,7 @@ import {
   type SelectedLineRange,
 } from "@pierre/diffs";
 import type { ReactiveControllerHost } from "lit";
-import { InlineReviewCommentPlacementElement } from "../../../components/changes/inline-review-comment-placement.js";
+import { ReviewCommentThread } from "../../../components/changes/review-comment-thread.js";
 import {
   createReviewFileDiffRenderer,
   PierreReviewFileDiff,
@@ -261,7 +261,7 @@ describe("PierreReviewFileDiff", () => {
       const annotation = annotations[0];
       if (!annotation) throw new Error("Expected annotation");
       const annotationElement = instance.options.renderAnnotation?.(annotation);
-      if (!(annotationElement instanceof InlineReviewCommentPlacementElement)) {
+      if (!(annotationElement instanceof ReviewCommentThread)) {
         throw new Error("Expected Reins annotation element");
       }
       expect(annotationElement.comments).toBe(comments);
