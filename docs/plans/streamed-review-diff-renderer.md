@@ -47,7 +47,8 @@ This is the working implementation list. It is ordered from smallest functional 
    - [x] Copy path / download / open in browser actions.
    - Markdown diff/preview tabs.
    - Image previews, PDF previews, and binary placeholders.
-   - Reserve slots for future comments/annotations/actions.
+   - [x] Investigate inline comments and define the supported seam; see [Inline Review Comments on the Virtualized Diff](inline-review-comments.md).
+   - Implement comments incrementally through Pierre's public annotations after correcting the current managed-container adapter; do not put comments in diff metadata or use protected/deprecated row hooks.
 
 6. [x] **Replace top-level mounting with a CodeView-like virtual list.**
    - [x] Swap all-item rendering for a bounded visible/overscan window.
@@ -90,6 +91,7 @@ The `virtualized` renderer now keeps all file changes in JavaScript while the ge
 
 In particular:
 
+- Follow [Inline Review Comments on the Virtualized Diff](inline-review-comments.md) for comment anchors, interaction, accessibility, virtual measurement, and the Reins/Pierre seam. The installed Pierre 1.2.11 supports public line annotations and pointer selection, but Reins owns thread semantics and durable identity.
 - Do not continue polishing direct `CodeView` as if it were the final architecture.
 - Do not prioritize streaming/chunked patch loading before replacing the `CodeView`-owned surface.
 - Do not build core behavior on deprecated `hunkSeparators(hunkData, instance)` APIs.
