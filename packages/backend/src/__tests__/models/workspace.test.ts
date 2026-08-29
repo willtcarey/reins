@@ -7,9 +7,9 @@ import { asyncIterableToText } from "../../async-iterable.js";
 import { createBranch, checkoutBranch } from "../../git.js";
 import {
   InvalidWorkspacePathError,
-  Workspace,
   WorkspaceFileNotFoundError,
-} from "../../models/workspace.js";
+} from "../../models/file-system.js";
+import { Workspace } from "../../models/workspace.js";
 import { dedent } from "../helpers/text.js";
 import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
 
@@ -42,7 +42,7 @@ describe("openFile", () => {
     expect(await new Response(file.openBody()).text()).toBe("working contents\n");
   });
 
-  test("uses the working tree for the active branch and Git for another branch", async () => {
+  test("reads checked-out and Git branch files through their respective filesystems", async () => {
     await commitFile(repo.dir, "story.txt", "main contents\n", "Add story");
     await createBranch(repo.dir, "feature/story", "main");
     await checkoutBranch(repo.dir, "feature/story");
@@ -51,11 +51,11 @@ describe("openFile", () => {
     writeFileSync(join(repo.dir, "story.txt"), "working contents\n");
     const workspace = new Workspace(repo.dir);
 
-    const active = await workspace.openFile("story.txt", "main");
-    const other = await workspace.openFile("story.txt", "feature/story");
+    const checkedOut = await workspace.openFile("story.txt", "main");
+    const branch = await workspace.openFile("story.txt", "feature/story");
 
-    expect(await new Response(active.openBody()).text()).toBe("working contents\n");
-    expect(await new Response(other.openBody()).text()).toBe("feature contents\n");
+    expect(await new Response(checkedOut.openBody()).text()).toBe("working contents\n");
+    expect(await new Response(branch.openBody()).text()).toBe("feature contents\n");
   });
 
   test("rejects paths outside the root and missing files", async () => {

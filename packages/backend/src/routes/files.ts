@@ -12,7 +12,7 @@ import { PathTraversalError, FileNotFoundError } from "../models/projects.js";
 import {
   InvalidWorkspacePathError,
   WorkspaceFileNotFoundError,
-} from "../models/workspace.js";
+} from "../models/file-system.js";
 
 const TEXT_APPLICATION_TYPES = new Set([
   "application/json",

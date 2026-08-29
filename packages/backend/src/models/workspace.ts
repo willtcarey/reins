@@ -1,34 +1,23 @@
 import { constants, existsSync } from "node:fs";
-import { access, copyFile, mkdtemp, rm, stat } from "node:fs/promises";
+import { access, copyFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join } from "node:path";
 import {
   trackFile,
   getCurrentBranch,
   getDiffNumstat,
-  getGitBlobInfo,
   getGitPath,
   listUntrackedFiles,
   mergeBase,
-  readGitBlobPrefix,
   streamDiffPatch,
-  streamGitBlob,
 } from "../git.js";
 import { asyncIterableToText } from "../async-iterable.js";
-import { detectMimeTypeFromBytes, detectMimeTypeFromFile } from "../mime.js";
 import { DiffParser, type DiffFile, type DiffFileSummary } from "./diff-parser.js";
+import type { FileSystem, WorkspaceFile } from "./file-system.js";
+import { GitTreeFileSystem } from "./git-tree-file-system.js";
+import { WorkingTreeFileSystem } from "./working-tree-file-system.js";
 
 export type DiffMode = "branch" | "uncommitted";
-
-export class InvalidWorkspacePathError extends Error {}
-export class WorkspaceFileNotFoundError extends Error {}
-
-export interface WorkspaceFile {
-  filename: string;
-  mimeType: string;
-  size: number;
-  openBody: () => Blob | ReadableStream<Uint8Array>;
-}
 
 async function noopCleanup() {}
 
@@ -78,31 +67,9 @@ export class Workspace {
     readonly baseBranch = "main",
   ) {}
 
-  /**
-   * Open one file relative to this workspace root.
-   *
-   * With no ref, or when ref is the active branch, the working tree is used so
-   * callers see uncommitted changes. Other refs are read from Git.
-   */
+  /** Open a working-tree or committed Git file from this workspace. */
   async openFile(filePath: string, ref?: string | null): Promise<WorkspaceFile> {
-    const resolved = this.resolveFilePath(filePath);
-    const readFromGit = ref && ref !== await getCurrentBranch(this.projectDir);
-    if (readFromGit) return this.openGitFile(filePath, ref);
-
-    let fileStats;
-    try {
-      fileStats = await stat(resolved);
-    } catch {
-      throw new WorkspaceFileNotFoundError();
-    }
-    if (!fileStats.isFile()) throw new WorkspaceFileNotFoundError();
-
-    return {
-      filename: basename(filePath) || filePath,
-      mimeType: await detectMimeTypeFromFile(resolved),
-      size: fileStats.size,
-      openBody: () => Bun.file(resolved),
-    };
+    return (await this.fileSystemFor(ref)).openFile(filePath);
   }
 
   /** Lightweight changed-file summaries using the diff endpoint branch/mode semantics. */
@@ -144,29 +111,11 @@ export class Workspace {
     return DiffParser.parsePatch(raw);
   }
 
-  private resolveFilePath(filePath: string): string {
-    const resolved = resolve(this.projectDir, filePath);
-    const rel = relative(this.projectDir, resolved);
-    if (rel === "" || rel === ".." || rel.startsWith("../") || isAbsolute(rel)) {
-      throw new InvalidWorkspacePathError("Path traversal not allowed");
+  private async fileSystemFor(ref?: string | null): Promise<FileSystem> {
+    if (!ref || ref === await getCurrentBranch(this.projectDir)) {
+      return new WorkingTreeFileSystem(this.projectDir);
     }
-    return resolved;
-  }
-
-  private async openGitFile(filePath: string, ref: string): Promise<WorkspaceFile> {
-    this.resolveFilePath(filePath);
-    try {
-      const { objectId, size } = await getGitBlobInfo(this.projectDir, ref, filePath);
-      const prefix = await readGitBlobPrefix(this.projectDir, objectId);
-      return {
-        filename: basename(filePath) || filePath,
-        mimeType: await detectMimeTypeFromBytes(prefix),
-        size,
-        openBody: () => streamGitBlob(this.projectDir, objectId),
-      };
-    } catch {
-      throw new WorkspaceFileNotFoundError("File not found in ref");
-    }
+    return new GitTreeFileSystem(this.projectDir, ref);
   }
 
   private async prepareWorkspaceDiff(
