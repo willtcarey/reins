@@ -49,7 +49,7 @@ html, body {
    inherit into Pierre's shadow roots. Internal shadow-DOM selectors remain in
    each renderer's unsafeCSS option. */
 [data-pierre-code-view] diffs-container,
-review-diff-item [data-pierre-file-diff],
+review-file-diff [data-pierre-file-diff],
 file-viewer-code [data-pierre-file] {
   --diffs-dark-bg: var(--reins-diff-background, #09090b);
   --diffs-dark: #e6edf3;
@@ -58,7 +58,7 @@ file-viewer-code [data-pierre-file] {
 }
 
 [data-pierre-code-view] diffs-container,
-review-diff-item [data-pierre-file-diff] {
+review-file-diff [data-pierre-file-diff] {
   --diffs-bg-buffer-override: #18181b;
   --diffs-bg-separator-override: #30363d;
   --diffs-addition-color-override: #3fb950;
@@ -82,7 +82,7 @@ file-viewer-code [data-pierre-file] {
   overflow-anchor: none;
 }
 
-review-diff-item {
+review-file-diff {
   /* github-dark's editor background, shared by Pierre and Reins-owned chrome. */
   --reins-diff-background: #24292e;
   box-sizing: border-box;
@@ -93,7 +93,7 @@ review-diff-item {
   background-color: var(--reins-diff-background);
 }
 
-review-diff-item:not([data-review-first]) {
+review-file-diff:not([data-review-first]) {
   /* Keep inter-file spacing inside the measured virtual item box. */
   padding-block-start: 1rem;
 }

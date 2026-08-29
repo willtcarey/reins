@@ -10,7 +10,7 @@ const TEXT_APPLICATION_TYPES = new Set([
   "application/x-awk", "application/x-lua", "application/x-makefile", "application/x-httpd-php",
 ]);
 
-export interface ExpansionScope {
+export interface FileDiffContextScope {
   projectId: number;
   mode: "branch" | "uncommitted";
   branch?: string | null;
@@ -35,7 +35,7 @@ export class UnsupportedFileContents extends Error {
 
 export async function loadFileContents(
   change: FileChange,
-  scope: ExpansionScope,
+  scope: FileDiffContextScope,
   fetchResponse: FetchResponse,
 ): Promise<FilePair> {
   const oldName = change.oldPath ?? change.path;

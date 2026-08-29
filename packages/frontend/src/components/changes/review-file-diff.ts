@@ -2,19 +2,12 @@ import type { ChangeTypes } from "@pierre/diffs";
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { springCollapse } from "../../directives/spring-collapse.js";
-import type {
-  ExpansionSnapshot,
-} from "../../models/changes/expansion-state.js";
+import {
+  type FileDiffContextSnapshot,
+  FileDiffContextState,
+} from "../../models/changes/file-diff-context-state.js";
 import type { FileChange } from "../../models/changes/file-changes.js";
 import { clientTelemetry } from "../../models/client-telemetry.js";
-import {
-  reviewTransitionHeightEvent,
-  reviewContextAcquireEvent,
-  reviewContextStateEvent,
-  reviewItemMeasurementEvent,
-  reviewPreserveScrollEvent,
-  toggleCollapseEvent,
-} from "../events.js";
 import {
   addedFileIcon,
   deletedFileIcon,
@@ -65,8 +58,12 @@ function renderStatusIcon(status: ChangeTypes) {
   return details.icon(`h-3 w-3 shrink-0 ${details.colorClass}`, details.label);
 }
 
-@customElement("review-diff-item")
-export class ReviewDiffItem extends LitElement {
+export type ReviewFileDiffHeightChange =
+  | { kind: "measurement"; height: number }
+  | { kind: "transition"; bodyHeight: number; settled: boolean };
+
+@customElement("review-file-diff")
+export class ReviewFileDiff extends LitElement {
   override createRenderRoot() {
     return this;
   }
@@ -76,13 +73,41 @@ export class ReviewDiffItem extends LitElement {
   @property({ type: Number, attribute: false }) projectId: number | null = null;
   @property({ attribute: false }) branch: string | null = null;
   @property({ type: Number, attribute: false }) reservedHeight = 0;
-  @property({ attribute: false }) expansion: ExpansionSnapshot | null = null;
+
+  private _contextState: FileDiffContextState | null = null;
+  private _unsubscribeContext: (() => void) | null = null;
+
+  @property({ attribute: false })
+  get contextState(): FileDiffContextState | null {
+    return this._contextState;
+  }
+
+  set contextState(value: FileDiffContextState | null) {
+    const previous = this._contextState;
+    if (value === previous) return;
+    this._unsubscribeContext?.();
+    this._unsubscribeContext = null;
+    this._contextState = value;
+    this._subscribeContext();
+    this.requestUpdate("contextState", previous);
+  }
+
+  @property({ attribute: false }) onToggleCollapse: ((id: string) => void) | null = null;
+  @property({ attribute: false }) onHeightChange:
+    ((change: FileChange, update: ReviewFileDiffHeightChange) => void) | null = null;
+  @property({ attribute: false }) onContextExpansion:
+    ((
+      change: FileChange,
+      interaction: ReviewFileExpansionInteraction,
+      mutate: () => void,
+      resolveAnchor: () => number | null,
+    ) => void) | null = null;
 
   private readonly _diff = createReviewFileDiffRenderer(
     this,
     undefined,
     (interaction) => this._requestAcquisition(interaction),
-    (interaction, mutate) => this._preserveExpansionScroll(interaction, mutate),
+    (interaction, mutate) => this._expandContext(interaction, mutate),
     (regions) => this._retainNativeExpansion(regions),
   );
   private _pendingExpansionAnchor: (ReviewFileExpansionInteraction & { operationId: string }) | null = null;
@@ -100,6 +125,7 @@ export class ReviewDiffItem extends LitElement {
   override connectedCallback() {
     this._mountGeneration += 1;
     this._lastMeasurement = "";
+    this._subscribeContext();
     super.connectedCallback();
   }
 
@@ -112,8 +138,17 @@ export class ReviewDiffItem extends LitElement {
     this._mountGeneration += 1;
     this._heightObserver?.disconnect();
     this._heightObserver = null;
+    this._unsubscribeContext?.();
+    this._unsubscribeContext = null;
     this._lastMeasurement = "";
     super.disconnectedCallback();
+  }
+
+  private _subscribeContext() {
+    if (!this.isConnected || !this._contextState || this._unsubscribeContext) return;
+    this._unsubscribeContext = this._contextState.subscribe((changeId) => {
+      if (changeId === this.change?.id) this.requestUpdate();
+    });
   }
 
   private _observeHeight() {
@@ -138,7 +173,7 @@ export class ReviewDiffItem extends LitElement {
     const signature = `${generation}:${change.id}:${change.contentKey}:${this.collapsed}:${height}`;
     if (signature === this._lastMeasurement) return;
     this._lastMeasurement = signature;
-    this.dispatchEvent(reviewItemMeasurementEvent({ id: change.id, height }));
+    this.onHeightChange?.(change, { kind: "measurement", height });
     this._activeExpansionOperationId = null;
   }
 
@@ -164,7 +199,7 @@ export class ReviewDiffItem extends LitElement {
   private _recordMeasurementTelemetry(
     generation: number,
     height: number,
-    readiness: ReturnType<ReviewDiffItem["_measurementReadiness"]>,
+    readiness: ReturnType<ReviewFileDiff["_measurementReadiness"]>,
   ) {
     if (!clientTelemetry.enabled) return;
     clientTelemetry.record("review-virtualizer", "item-measurement-candidate", {
@@ -197,24 +232,24 @@ export class ReviewDiffItem extends LitElement {
 
   private _toggleCollapsed() {
     if (!this.change) return;
-    this.dispatchEvent(toggleCollapseEvent(this.change.id));
+    this.onToggleCollapse?.(this.change.id);
   }
 
   private _reportTransitionHeight(bodyHeight: number, settled: boolean) {
     if (!this.change) return;
-    this.dispatchEvent(reviewTransitionHeightEvent({ id: this.change.id, bodyHeight, settled }));
+    this.onHeightChange?.(this.change, { kind: "transition", bodyHeight, settled });
   }
 
   private _requestAcquisition(interaction: ReviewFileExpansionInteraction) {
     if (!this.change) return;
-    const outcome = this.expansion?.outcome;
+    const outcome = this._expansion()?.outcome;
     if (outcome !== "idle" && outcome !== "loading") return;
     this._rememberExpansionAnchor(interaction, "acquisition");
     this._recordExpansion("acquisition-state", {
       outcome,
       willRequest: outcome === "idle",
     });
-    if (outcome === "idle") this.dispatchEvent(reviewContextAcquireEvent(this.change.id));
+    if (outcome === "idle" && this.contextState) void this.contextState.acquire(this.change);
   }
 
   private _rememberExpansionAnchor(
@@ -255,29 +290,30 @@ export class ReviewDiffItem extends LitElement {
   }
 
   private _retainNativeExpansion(regions: ReadonlyMap<number, { fromStart: number; fromEnd: number }>) {
-    if (!this.change || regions.size === 0) return;
-    this.dispatchEvent(reviewContextStateEvent({ id: this.change.id, regions }));
+    if (!this.change || !this.contextState || regions.size === 0) return;
+    this.contextState.retainNativeExpansion(this.change, regions);
   }
 
-  private _preserveExpansionScroll(
+  private _expandContext(
     interaction: ReviewFileExpansionInteraction,
     mutate: () => void,
   ) {
-    if (!this.change) {
+    const change = this.change;
+    if (!change) {
       mutate();
       return;
     }
     this._rememberExpansionAnchor(interaction);
-    if (interaction.direction === "up") {
-      this._pendingExpansionAnchor = null;
+    if (this.onContextExpansion) {
+      this.onContextExpansion(
+        change,
+        interaction,
+        mutate,
+        () => this._expansionAnchorTop(interaction),
+      );
+    } else {
       mutate();
-      return;
     }
-
-    const anchor = interaction.direction === "down"
-      ? "item-end" as const
-      : () => this._expansionAnchorTop(interaction);
-    this.dispatchEvent(reviewPreserveScrollEvent({ id: this.change.id, anchor, mutate }));
     this._pendingExpansionAnchor = null;
   }
 
@@ -310,19 +346,24 @@ export class ReviewDiffItem extends LitElement {
 
   private _unmountDiff() {
     this._diff.unmount();
-    // A collapsed body can outlive native expansion updates in ExpansionState.
+    // A collapsed body can outlive native expansion updates in FileDiffContextState.
     // Rebuild the target on remount so its retained Pierre regions are current.
     this._targetFileDiff = null;
     this._target = null;
   }
 
+  private _expansion(): FileDiffContextSnapshot | null {
+    return this.change && this.contextState ? this.contextState.forChange(this.change) : null;
+  }
+
   private _diffTarget(change: FileChange): ReviewFileDiffTarget {
-    const fileDiff = this.expansion?.fileDiff ?? change.fileDiff;
+    const expansion = this._expansion();
+    const fileDiff = expansion?.fileDiff ?? change.fileDiff;
     if (fileDiff !== this._targetFileDiff) {
       this._targetFileDiff = fileDiff;
       this._target = {
         fileDiff,
-        nativeExpandedHunks: this.expansion?.nativeExpandedHunks ?? new Map(),
+        nativeExpandedHunks: expansion?.nativeExpandedHunks ?? new Map(),
         initialExpansion: fileDiff.isPartial || !this._pendingExpansionAnchor
           ? null
           : {
@@ -346,6 +387,7 @@ export class ReviewDiffItem extends LitElement {
     const change = this.change;
     if (!change) return nothing;
 
+    const expansion = this._expansion();
     const diffTarget = this._diffTarget(change);
     const diffBinding = this._diff.bind(diffTarget);
     const pendingHeight = !this.collapsed && !this.diffRendered && this.reservedHeight > 0
@@ -398,11 +440,11 @@ export class ReviewDiffItem extends LitElement {
           this.collapsed,
           () => html`
             <diffs-container data-pierre-file-diff ${diffBinding}></diffs-container>
-            ${expansionMessage(this.expansion) ? html`
+            ${expansionMessage(expansion) ? html`
               <div
                 class="border-t border-zinc-800 px-3 py-1 text-xs text-zinc-500"
-                role=${this.expansion?.outcome === "error" ? "alert" : "status"}
-              >${expansionMessage(this.expansion)}</div>
+                role=${expansion?.outcome === "error" ? "alert" : "status"}
+              >${expansionMessage(expansion)}</div>
             ` : nothing}
           `,
           {
@@ -416,7 +458,7 @@ export class ReviewDiffItem extends LitElement {
   }
 }
 
-function expansionMessage(expansion: ExpansionSnapshot | null): string | null {
+function expansionMessage(expansion: FileDiffContextSnapshot | null): string | null {
   if (!expansion) return null;
   if (expansion.outcome === "error") return "Unable to load complete file context.";
   if (expansion.unsupported?.reason === "binary") return "Context expansion is unavailable for binary files.";
@@ -437,6 +479,6 @@ function rounded(value: number | null | undefined): number | null {
 
 declare global {
   interface HTMLElementTagNameMap {
-    "review-diff-item": ReviewDiffItem;
+    "review-file-diff": ReviewFileDiff;
   }
 }

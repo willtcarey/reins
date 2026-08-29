@@ -32,12 +32,6 @@ declare global {
     "reload-request": CustomEvent<void>;
     "active-file-change": CustomEvent<string | null>;
     "active-item-change": CustomEvent<string>;
-    "review-item-measurement": CustomEvent<ReviewItemMeasurementDetail>;
-    "review-transition-height": CustomEvent<ReviewTransitionHeightDetail>;
-    "review-context-acquire": CustomEvent<ReviewContextAcquireDetail>;
-    "review-context-state": CustomEvent<ReviewContextStateDetail>;
-    "review-preserve-scroll": CustomEvent<ReviewPreserveScrollDetail>;
-    "toggle-collapse": CustomEvent<string>;
   }
 }
 
@@ -120,29 +114,6 @@ export function activeFileChangeEvent(path: string | null) {
 
 export function activeItemChangeEvent(id: string) {
   return componentEvent("active-item-change", id);
-}
-
-export interface ReviewItemMeasurementDetail {
-  id: string;
-  height: number;
-}
-
-export function reviewItemMeasurementEvent(detail: ReviewItemMeasurementDetail) {
-  return componentEvent("review-item-measurement", detail);
-}
-
-export interface ReviewTransitionHeightDetail {
-  id: string;
-  bodyHeight: number;
-  settled: boolean;
-}
-
-export function reviewTransitionHeightEvent(detail: ReviewTransitionHeightDetail) {
-  return componentEvent("review-transition-height", detail);
-}
-
-export function toggleCollapseEvent(id: string) {
-  return componentEvent("toggle-collapse", id);
 }
 
 export function selectSessionEvent(sessionId: string, projectId?: number | null) {
@@ -279,33 +250,6 @@ export function tabChangeEvent(index: number) {
 
 export function htmlPreviewEscapeEvent() {
   return componentSignal("html-preview-escape");
-}
-
-export interface ReviewContextAcquireDetail {
-  id: string;
-}
-
-export interface ReviewContextStateDetail {
-  id: string;
-  regions: ReadonlyMap<number, { fromStart: number; fromEnd: number }>;
-}
-
-export interface ReviewPreserveScrollDetail {
-  id: string;
-  anchor: "item-end" | (() => number | null);
-  mutate: () => void;
-}
-
-export function reviewContextAcquireEvent(id: string) {
-  return componentEvent("review-context-acquire", { id });
-}
-
-export function reviewContextStateEvent(detail: ReviewContextStateDetail) {
-  return componentEvent("review-context-state", detail);
-}
-
-export function reviewPreserveScrollEvent(detail: ReviewPreserveScrollDetail) {
-  return componentEvent("review-preserve-scroll", detail);
 }
 
 export interface ExpandDetail {

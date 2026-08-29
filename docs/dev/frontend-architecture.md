@@ -356,7 +356,7 @@ The diff/changes feature spans both `models/changes/` (pure logic) and `componen
 - `diff-hunk.ts` — Single hunk: separator/expand-up button, hunk header, diff lines, trailer/expand-down button.
 - `codeview-diff-panel.ts` — Prototype renderer that consumes `DiffStore`'s raw `/diff/patch` text, parses renderer-specific CodeView diff data with `@pierre/diffs`, converts it into `CodeView` items, adds Reins header actions/collapse toggles, and lets Pierre own diff row rendering/highlighting/virtualization.
 - `review-diff-panel.ts` — Reins-owned review adapter. It parses/reconciles review records, maps review collapse and measurements into `VirtualListController`, renders the controller's bounded keyed window, and adapts active IDs and generic observations to review events and telemetry.
-- `review-diff-item.ts` — One review diff item's collapsible Reins-owned file header and measurement contract.
+- `review-file-diff.ts` — One file diff's collapsible Reins-owned header, expansion integration, and virtual-layout contract.
 - `review-file-diff-renderer.ts` — Configures the shared `PierreRenderer` for `FileDiff`, including worker-render completion semantics and shared highlighting options.
 - `diff-file-action-buttons.ts` — Shared Lit action buttons for opening, copying, and downloading changed files across diff renderers.
 - `diff-markdown-preview.ts` — Markdown Diff/Preview tab bar and rendered content area.

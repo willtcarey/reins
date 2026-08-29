@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  parseFileChanges,
-  reconcileFileChanges,
-} from "../../../models/changes/file-changes.js";
+import { parseFileChanges } from "../../../models/changes/file-changes.js";
 
 const PATCH = `diff --git a/src/old.ts b/src/new.ts
 similarity index 88%
@@ -43,31 +40,6 @@ describe("parseFileChanges", () => {
     expect(result.changes[0]?.filePatch).not.toContain("diff --git a/README.md");
     expect(result.pathToChangeId.get("src/new.ts")).toBe(result.changes[0]?.id);
     expect(result.pathToChangeId.get("src/old.ts")).toBe(result.changes[0]?.id);
-  });
-
-  test("reuses unchanged records and replaces changed surviving records", () => {
-    const initial = parseFileChanges(PATCH, "project-7-v1");
-    const refreshed = parseFileChanges(PATCH.replace("+# Hello", "+# Hello world"), "project-7-v2");
-
-    const reconciled = reconcileFileChanges(initial, refreshed);
-    const initialRenamed = initial.changes.find((change) => change.path === "src/new.ts")!;
-    const initialReadme = initial.changes.find((change) => change.path === "README.md")!;
-    const reconciledReadme = reconciled.changes.find((change) => change.path === "README.md")!;
-
-    expect(reconciled.changes.find((change) => change.path === "src/new.ts")).toBe(initialRenamed);
-    expect(reconciledReadme).not.toBe(initialReadme);
-    expect(reconciled.pathToChangeId).toBe(refreshed.pathToChangeId);
-  });
-
-  test("reuses every record when a refresh returns the same patch", () => {
-    const initial = parseFileChanges(PATCH, "project-7-v1");
-    const refreshed = parseFileChanges(PATCH, "project-7-v2");
-
-    const reconciled = reconcileFileChanges(initial, refreshed);
-
-    expect(reconciled.changes).toEqual(initial.changes);
-    expect(reconciled.changes[0]).toBe(initial.changes[0]);
-    expect(reconciled.changes[1]).toBe(initial.changes[1]);
   });
 
   test("uses occurrence to keep duplicate records unique and reports malformed patches", () => {

@@ -39,7 +39,7 @@ export interface ReviewFileDiffTarget {
  * The only state adapter around FileDiff expansion. Pierre remains responsible
  * for changing, clamping, and joining expanded hunk regions.
  */
-export class ReviewFileDiff extends FileDiff<undefined> {
+export class PierreReviewFileDiff extends FileDiff<undefined> {
   private interactionCleanup: (() => void) | null = null;
 
   setInteractionCleanup(cleanup: () => void): void {
@@ -72,10 +72,10 @@ export function createReviewFileDiffRenderer(
   onNativeState?: (regions: ReadonlyMap<number, HunkExpansionRegion>) => void,
   workerManager?: ReturnType<typeof getPierreWorkerPool> | null,
 ) {
-  return new PierreRenderer<ReviewFileDiffTarget, ReviewFileDiff>(host, {
+  return new PierreRenderer<ReviewFileDiffTarget, PierreReviewFileDiff>(host, {
     create: (target, rendered) => {
       let listeningRoot: ShadowRoot | null = null;
-      let renderer: ReviewFileDiff;
+      let renderer: PierreReviewFileDiff;
       const handleInteraction = (event: Event) => {
         const interaction = expansionInteraction(event);
         if (!interaction) return;
@@ -102,7 +102,7 @@ export function createReviewFileDiffRenderer(
         if (!("key" in event) || (event.key !== "Enter" && event.key !== " ")) return;
         handleInteraction(event);
       };
-      renderer = new ReviewFileDiff({
+      renderer = new PierreReviewFileDiff({
         ...REINS_DIFF_OPTIONS,
         onPostRender: (node, instance, phase) => {
           if (phase === "unmount" || node.shadowRoot?.querySelector("[data-placeholder]")) return;
@@ -115,7 +115,7 @@ export function createReviewFileDiffRenderer(
             root.addEventListener("keydown", handleKeydown, true);
           }
           prepareNativeControls(root, target.fileDiff);
-          if (instance instanceof ReviewFileDiff) {
+          if (instance instanceof PierreReviewFileDiff) {
             onNativeState?.(instance.nativeExpansionState());
           }
           rendered();

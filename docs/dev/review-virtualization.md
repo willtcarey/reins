@@ -1,6 +1,6 @@
 # Review Virtualization
 
-This document defines the implementation invariants for the Reins-owned virtualized review surface. Read it before changing `review-diff-panel.ts`, `review-diff-item.ts`, `virtual-list-controller.ts`, `virtual-list-coordinator.ts`, `review-virtual-layout.ts`, `review-file-diff-renderer.ts`, or `pierre-renderer.ts`.
+This document defines the implementation invariants for the Reins-owned virtualized review surface. Read it before changing `review-diff-panel.ts`, `review-file-diff.ts`, `virtual-list-controller.ts`, `virtual-list-coordinator.ts`, `review-virtual-layout.ts`, `review-file-diff-renderer.ts`, or `pierre-renderer.ts`.
 
 The goal is to keep long reviews usable by mounting only a bounded top-level window while preserving normal review navigation and scrolling behavior.
 
@@ -13,9 +13,9 @@ Each layer has one owner:
 - The generic `VirtualListController` owns coordinator lifecycle, scroll-container and viewport synchronization, measurement microtask batching, post-render anchor correction, navigation and cancellation, render-frame scheduling, and scroll restoration. Its optional observation hook reports generic list behavior without importing review telemetry.
 - `ReviewDiffPanel` is the review adapter. It owns patch reconciliation and height estimates, maps collapse to fixed geometry, resolves paths to item IDs, maps generic observations to review active-file events and telemetry, and coordinates store refreshes.
 - Lit owns keyed mounting and removal of file-change elements.
-- `ReviewDiffItem` owns stable height observation and the render-readiness contract for one mounted file. It emits a narrow item-ID-and-height event only after the measurement is stable.
+- `ReviewFileDiff` owns stable height observation and the render-readiness contract for one mounted file. It uses `FileDiffContextState` directly for context acquisition and remount state. Height changes, context-expansion intent, and collapse intent cross the single panel boundary through direct callback properties; the panel decides how expansion affects virtual scroll. Reserve bubbling custom events for communication that intentionally crosses several component boundaries.
 - `PierreRenderer` owns one Pierre instance and container generation for the mounted lifetime.
-- Pierre owns diff rows, native context-expansion regions, and worker-backed highlighting inside the current container. `ExpansionState` coordinates lazy acquisition and retains Pierre's opaque region snapshot across virtual remounts. `loadFileContents` acquires the complete resulting file, while the patch module reconstructs the old file from the retained Git patch. New/deleted files derive both sides from their complete one-sided patches. Partial metadata must remain marked partial when passed to Pierre; for hunks whose patch metadata reports `collapsedBefore > 0`, its existing full-width separator-content row is exposed immediately with a Pierre-styled acquisition button because Pierre suppresses its native buttons for partial metadata. Merely mounting those controls does not acquire content. The user's first click, Enter, or Space activation starts acquisition, is retained while loading, and is replayed after the exact patch is hydrated with truthful complete metadata.
+- Pierre owns diff rows, native context-expansion regions, and worker-backed highlighting inside the current container. `FileDiffContextState` coordinates lazy acquisition and retains Pierre's opaque region snapshot across virtual remounts. `loadFileContents` acquires the complete resulting file, while the patch module reconstructs the old file from the retained Git patch. New/deleted files derive both sides from their complete one-sided patches. Partial metadata must remain marked partial when passed to Pierre; for hunks whose patch metadata reports `collapsedBefore > 0`, its existing full-width separator-content row is exposed immediately with a Pierre-styled acquisition button because Pierre suppresses its native buttons for partial metadata. Merely mounting those controls does not acquire content. The user's first click, Enter, or Space activation starts acquisition, is retained while loading, and is replayed after the exact patch is hydrated with truthful complete metadata.
 
 Do not introduce another owner for top-level item positions or scroll correction. In particular, the controller must not advance coordinator viewport state ahead of the scroll container, the review adapter must not duplicate generic scroll state, and Pierre must not control the outer review scroll.
 
@@ -37,12 +37,12 @@ Do not introduce another owner for top-level item positions or scroll correction
 ### Geometry
 
 - Every record always has usable estimated geometry, including before its DOM exists.
-- Settled collapsed geometry is deterministic: the inter-file gap plus the fixed header estimate. During collapse and expansion springs, `ReviewDiffItem` reports the animated body height and the panel supplies it as temporary fixed geometry so following virtual items move with the spring instead of reserving either endpoint immediately. Collapsed items are never measured, and collapsed measurement events are never accepted or stored.
+- Settled collapsed geometry is deterministic: the inter-file gap plus the fixed header estimate. During collapse and expansion springs, `ReviewFileDiff` reports the animated body height and the panel supplies it as temporary fixed geometry so following virtual items move with the spring instead of reserving either endpoint immediately. Collapsed items are never measured, and collapsed measurements are never accepted or stored.
 - An expanded measured height may replace an estimate only when it belongs to the current item, content, and mount generation.
 - Expanded measurements require a connected current article, the current Pierre container, a rendered `<pre>`, no placeholder, and no active collapse transition.
 - Provisional worker renders, empty Lit teardown shells, stale observer deliveries, and duplicate renderer DOM are never stable measurements.
 - Expanded measurements are retained by project, branch, item, and content fingerprint across a collapse/expand cycle; collapsed geometry temporarily overrides them without replacing them.
-- The panel enriches accepted item measurement events with the current measurement key; the generic controller commits them to the coordinator in a microtask batch, not one scroll correction per observed element.
+- The panel enriches accepted item measurements with the current measurement key; the generic controller commits them to the coordinator in a microtask batch, not one scroll correction per observed element.
 
 ### Reserved geometry
 
@@ -96,7 +96,7 @@ The primary contract coverage lives in:
 - `packages/frontend/src/__tests__/models/changes/review-virtual-layout.test.ts`
 - `packages/frontend/src/__tests__/controllers/virtual-list-controller.test.ts`
 - `packages/frontend/src/__tests__/components/changes/review-diff-panel.test.ts`
-- `packages/frontend/src/__tests__/components/changes/review-diff-item.test.ts`
+- `packages/frontend/src/__tests__/components/changes/review-file-diff.test.ts`
 - `packages/frontend/src/__tests__/components/changes/review-file-diff-renderer.test.ts`
 - `packages/frontend/src/__tests__/controllers/pierre-renderer.test.ts`
 
@@ -114,6 +114,6 @@ When diagnosing a failure, correlate one navigation by `operationId` and compare
 - previous, reserved, measured, container, and `<pre>` heights
 - renderer readiness, placeholder state, and shadow child count
 
-Item-level readiness telemetry is recorded by `ReviewDiffItem`, which is the only layer allowed to inspect Pierre's child structure. The generic controller emits an optional generic observation stream for batch geometry, navigation, anchoring, and window changes; `ReviewDiffPanel` alone adapts those observations to review/client telemetry.
+File-level readiness telemetry is recorded by `ReviewFileDiff`, which is the only layer allowed to inspect Pierre's child structure. The generic controller emits an optional generic observation stream for batch geometry, navigation, anchoring, and window changes; `ReviewDiffPanel` alone adapts those observations to review/client telemetry.
 
 Telemetry is evidence, not an alternative contract. Fix the violated invariant rather than adding compensating scroll behavior around unstable geometry.

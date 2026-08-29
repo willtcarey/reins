@@ -3,7 +3,6 @@ import "../../helpers/local-storage.js";
 import { Loadable } from "../../../helpers/loadable.js";
 import { ReviewDiffPanel } from "../../../components/changes/review-diff-panel.js";
 import { DiffStore, type DiffPatchData } from "../../../models/stores/diff-store.js";
-import "../../../components/changes/review-diff-item.js";
 import {
   collectTemplateValues,
   templateToString,
@@ -249,35 +248,11 @@ describe("ReviewDiffPanel", () => {
 
     panel.scrollToFile("src/file-2.ts");
     const headerTop = panel.scrollTop;
-    const virtualList = Reflect.get(panel, "_virtualList");
-    const expandedHeight = virtualList.item(itemId)?.height;
     panel.scrollTop += 20;
+
     panel.setItemCollapsed(itemId, true);
 
     expect(panel.scrollTop).toBe(headerTop);
-    expect(virtualList.item(itemId)?.height).toBe(expandedHeight);
-
-    const handleTransitionHeight = Reflect.get(panel, "_handleTransitionHeight").bind(panel);
-    handleTransitionHeight(new CustomEvent("review-transition-height", {
-      detail: { id: itemId, bodyHeight: 20, settled: false },
-    }));
-    expect(virtualList.item(itemId)?.height).toBe(73);
-
-    handleTransitionHeight(new CustomEvent("review-transition-height", {
-      detail: { id: itemId, bodyHeight: 0, settled: true },
-    }));
-    expect(virtualList.item(itemId)?.height).toBe(53);
-
-    panel.setItemCollapsed(itemId, false);
-    expect(virtualList.item(itemId)?.height).toBe(53);
-    handleTransitionHeight(new CustomEvent("review-transition-height", {
-      detail: { id: itemId, bodyHeight: 20, settled: false },
-    }));
-    expect(virtualList.item(itemId)?.height).toBe(73);
-    handleTransitionHeight(new CustomEvent("review-transition-height", {
-      detail: { id: itemId, bodyHeight: 0, settled: true },
-    }));
-    expect(virtualList.item(itemId)?.height).toBe(expandedHeight);
     localStorage.clear();
     store.dispose();
   });

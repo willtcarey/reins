@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseFileChanges } from "../../../models/changes/file-changes.js";
-import { ExpansionState } from "../../../models/changes/expansion-state.js";
+import { FileDiffContextState } from "../../../models/changes/file-diff-context-state.js";
 
 const PATCH = `diff --git a/src/old.ts b/src/new.ts
 similarity index 80%
@@ -28,10 +28,10 @@ function textResponse(contents: string, headers: Record<string, string> = {}): R
   });
 }
 
-describe("ExpansionState", () => {
-  test("does not fetch merely because an offscreen change has persistent expansion state", () => {
+describe("FileDiffContextState", () => {
+  test("does not fetch merely because an offscreen change has persistent context state", () => {
     let requests = 0;
-    const state = new ExpansionState(
+    const state = new FileDiffContextState(
       { projectId: 7, mode: "branch" },
       async () => {
         requests += 1;
@@ -47,7 +47,7 @@ describe("ExpansionState", () => {
     const requests: string[] = [];
     let resolveRequest!: (value: Response) => void;
     const pending = new Promise<Response>((resolve) => { resolveRequest = resolve; });
-    const state = new ExpansionState(
+    const state = new FileDiffContextState(
       { projectId: 7, mode: "branch", branch: "feature/review" },
       async (input) => {
         requests.push(String(input));
@@ -87,7 +87,7 @@ describe("ExpansionState", () => {
 
   test("omits ref when the review scope has no selected branch", async () => {
     const requests: string[] = [];
-    const state = new ExpansionState(
+    const state = new FileDiffContextState(
       { projectId: 7, mode: "uncommitted" },
       async (input) => {
         requests.push(String(input));
@@ -102,7 +102,7 @@ describe("ExpansionState", () => {
   });
 
   test("retains only expansion state reported by Pierre for virtual remount restoration", () => {
-    const state = new ExpansionState({ projectId: 7, mode: "branch" });
+    const state = new FileDiffContextState({ projectId: 7, mode: "branch" });
     const change = fileChange();
     const pierreState = new Map([[0, { fromStart: 15, fromEnd: 5 }]]);
 
@@ -123,7 +123,7 @@ describe("ExpansionState", () => {
     const change = fileChange();
 
     for (const result of outcomes) {
-      const state = new ExpansionState(
+      const state = new FileDiffContextState(
         { projectId: 7, mode: "branch" },
         async () => {
           if (result instanceof Error) throw result;
@@ -152,7 +152,7 @@ describe("ExpansionState", () => {
     ];
 
     for (const [index, response] of responses.entries()) {
-      const state = new ExpansionState(
+      const state = new FileDiffContextState(
         { projectId: 7, mode: "branch" },
         async () => response,
       );
@@ -180,7 +180,7 @@ deleted file mode 100644
 -goodbye
 `);
     let requests = 0;
-    const state = new ExpansionState(
+    const state = new FileDiffContextState(
       { projectId: 7, mode: "branch" },
       async () => {
         requests += 1;
