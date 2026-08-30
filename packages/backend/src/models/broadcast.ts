@@ -24,6 +24,7 @@ export type ServerMessage =
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number }
+  | { type: "code_review_updated"; projectId: number; taskId: number | null; reviewId: string; revision: number; status: "open" | "submitted" | "abandoned" }
   | { type: "user_message"; sessionId: string; projectId: number; message: ClientPromptContent }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number };
 

@@ -80,6 +80,20 @@ export class CodeReview {
     return this.currentStatus;
   }
 
+  /** Return the authoritative transport/persistence shape without exposing internals. */
+  toJSON(): CodeReviewState {
+    return {
+      id: this.id,
+      projectId: this.projectId,
+      taskId: this.taskId,
+      status: this.status,
+      revision: this.revision,
+      annotations: this.annotations,
+      createdAt: this.createdAt,
+      updatedAt: this.updatedAt,
+    };
+  }
+
   addAnnotation(input: NewReviewAnnotation): void {
     this.ensureOpen("add annotations to");
     this.ensureIdentityAvailable(input.id, input.entry);

@@ -25,6 +25,7 @@ import { registerOAuthRoutes } from "./oauth.js";
 import { registerAuthRoutes } from "./auth.js";
 import { registerAttachmentRoutes } from "./attachments.js";
 import { registerClientTelemetryRoutes } from "./client-telemetry.js";
+import { registerCodeReviewRoutes } from "./code-reviews.js";
 
 export type ProjectRouteContext = RouteContext & { project: ProjectModel };
 
@@ -71,6 +72,7 @@ export function buildRouter() {
     registerDiffRoutes(r);
     registerFileRoutes(r);
     registerTaskRoutes(r);
+    registerCodeReviewRoutes(r);
     registerGitRoutes(r);
     registerUploadRoutes(r);
     registerSkillRoutes(r);

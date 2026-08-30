@@ -55,6 +55,17 @@ export function getCodeReview(id: string): CodeReview | null {
   return row ? fromRow(row) : null;
 }
 
+/** Return the one open review in an exact project/task scope. */
+export function getOpenCodeReview(scope: CodeReviewScope): CodeReview | null {
+  const row = getDb()
+    .query<CodeReviewRow, [number, number | null]>(
+      `SELECT * FROM code_reviews
+       WHERE project_id = ? AND task_id IS ? AND status = 'open'`,
+    )
+    .get(scope.projectId, scope.taskId);
+  return row ? fromRow(row) : null;
+}
+
 /** Return every review in the exact project/task scope, newest first. */
 export function listCodeReviews(scope: CodeReviewScope): CodeReview[] {
   return getDb()

@@ -5,6 +5,7 @@ import {
   createCodeReview,
   deleteCodeReview,
   getCodeReview,
+  getOpenCodeReview,
   listCodeReviews,
   saveCodeReview,
 } from "../code-review-store.js";
@@ -83,8 +84,10 @@ describe("code review store", () => {
 
     expect(listCodeReviews({ projectId, taskId }).map((review) => review.id).toSorted())
       .toEqual(["review-1", "review-2"]);
+    expect(getOpenCodeReview({ projectId, taskId })?.id).toBe("review-2");
     expect(listCodeReviews({ projectId, taskId: null }).map((review) => review.id))
       .toEqual(["project-review"]);
+    expect(getOpenCodeReview({ projectId, taskId: null })?.id).toBe("project-review");
   });
 
   test("allows only one open review in each task or project scope", () => {
