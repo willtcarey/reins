@@ -74,13 +74,27 @@ describe("code review store", () => {
     });
   });
 
-  test("lists all reviews in an exact project/task scope", () => {
-    createCodeReview({ id: "review-1", projectId, taskId });
+  test("lists review history in an exact project/task scope", () => {
+    const first = createCodeReview({ id: "review-1", projectId, taskId });
+    first.markSubmitted();
+    saveCodeReview(first);
     createCodeReview({ id: "review-2", projectId, taskId });
     createCodeReview({ id: "project-review", projectId, taskId: null });
 
     expect(listCodeReviews({ projectId, taskId }).map((review) => review.id).toSorted())
       .toEqual(["review-1", "review-2"]);
+    expect(listCodeReviews({ projectId, taskId: null }).map((review) => review.id))
+      .toEqual(["project-review"]);
+  });
+
+  test("allows only one open review in each task or project scope", () => {
+    createCodeReview({ id: "task-review", projectId, taskId });
+    createCodeReview({ id: "project-review", projectId, taskId: null });
+
+    expect(() => createCodeReview({ id: "second-task-review", projectId, taskId })).toThrow();
+    expect(() => createCodeReview({ id: "second-project-review", projectId, taskId: null })).toThrow();
+    expect(listCodeReviews({ projectId, taskId }).map((review) => review.id))
+      .toEqual(["task-review"]);
     expect(listCodeReviews({ projectId, taskId: null }).map((review) => review.id))
       .toEqual(["project-review"]);
   });

@@ -34,7 +34,7 @@ export class CodeReviewRevisionConflictError extends Error {
   }
 }
 
-/** Multiple open reviews may share a scope until product ownership rules exist. */
+/** Create the one open review allowed in a project/task scope. */
 export function createCodeReview(input: CreateCodeReviewInput): CodeReview {
   const row = getDb()
     .query<CodeReviewRow, [string, number, number | null]>(

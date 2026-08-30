@@ -186,6 +186,15 @@ const MIGRATIONS: Migration[] = [
     CREATE INDEX idx_code_reviews_scope
       ON code_reviews(project_id, task_id, status, updated_at DESC)`,
   ],
+  [
+    "023_unique_open_code_review_scope",
+    `CREATE UNIQUE INDEX idx_code_reviews_open_task_scope
+       ON code_reviews(project_id, task_id)
+       WHERE status = 'open' AND task_id IS NOT NULL;
+     CREATE UNIQUE INDEX idx_code_reviews_open_project_scope
+       ON code_reviews(project_id)
+       WHERE status = 'open' AND task_id IS NULL`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {
