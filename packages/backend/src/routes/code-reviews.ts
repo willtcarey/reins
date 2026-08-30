@@ -44,14 +44,14 @@ const AddAnnotationBody = Type.Object({
 export function registerCodeReviewRoutes(router: RouterGroup<ProjectRouteContext>): void {
   router.get("/code-review", (ctx) => {
     try {
-      return Response.json(ctx.project.codeReviews().getOpen(scopeFromRequest(ctx)));
+      return Response.json(ctx.project.codeReviews().getOpen(getReviewScope(ctx)));
     } catch (error) {
       return translateError(error);
     }
   });
 
   router.post("/code-review/annotations", async (ctx) => {
-    const scope = scopeFromRequest(ctx);
+    const scope = getReviewScope(ctx);
     const body = await parseBody(AddAnnotationBody, ctx.req);
 
     try {
@@ -67,7 +67,7 @@ export function registerCodeReviewRoutes(router: RouterGroup<ProjectRouteContext
   });
 }
 
-function scopeFromRequest(ctx: ProjectRouteContext): CodeReviewScope {
+function getReviewScope(ctx: ProjectRouteContext): CodeReviewScope {
   const value = ctx.url.searchParams.get("taskId");
   if (value === null) return { taskId: null };
   const taskId = Number(value);
