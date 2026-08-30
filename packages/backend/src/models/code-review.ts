@@ -1,51 +1,80 @@
-export type CodeReviewStatus = "open" | "submitted" | "abandoned";
-export type ReviewSide = "old" | "new";
+import { Type, type Static } from "@sinclair/typebox";
 
-export interface ReviewAnchorEvidence {
-  path: string;
-  oldPath: string | null;
-  side: ReviewSide;
-  startLine: number;
-  endLine: number;
-  excerpt: string;
-  contextBefore: string | null;
-  contextAfter: string | null;
-  fileFingerprint: string | null;
-  baseRevision: string | null;
-  headRevision: string | null;
-}
+const NonEmptyStringSchema = Type.String({ minLength: 1, pattern: "\\S" });
+const NullableStringSchema = Type.Union([Type.String(), Type.Null()]);
 
-export interface ReviewEntry {
-  id: string;
-  author: string;
-  body: string;
-  createdAt: string;
-  sourceKey?: string;
-  sourceUrl?: string;
-}
+export const CodeReviewStatusSchema = Type.Union([
+  Type.Literal("open"),
+  Type.Literal("submitted"),
+  Type.Literal("abandoned"),
+]);
+export type CodeReviewStatus = Static<typeof CodeReviewStatusSchema>;
 
-export interface ReviewAnnotation {
-  id: string;
-  anchor: ReviewAnchorEvidence;
-  entries: ReviewEntry[];
-}
+export const ReviewSideSchema = Type.Union([Type.Literal("old"), Type.Literal("new")]);
+export type ReviewSide = Static<typeof ReviewSideSchema>;
 
-export interface NewReviewAnnotation {
-  id: string;
-  anchor: ReviewAnchorEvidence;
-  entry: ReviewEntry;
-}
+export const ReviewAnchorEvidenceSchema = Type.Object({
+  path: NonEmptyStringSchema,
+  oldPath: NullableStringSchema,
+  side: ReviewSideSchema,
+  startLine: Type.Integer({ minimum: 1 }),
+  endLine: Type.Integer({ minimum: 1 }),
+  excerpt: Type.String(),
+  contextBefore: NullableStringSchema,
+  contextAfter: NullableStringSchema,
+  fileFingerprint: NullableStringSchema,
+  baseRevision: NullableStringSchema,
+  headRevision: NullableStringSchema,
+});
+export type ReviewAnchorEvidence = Static<typeof ReviewAnchorEvidenceSchema>;
 
-export interface CodeReviewState {
-  id: string;
-  projectId: number;
-  taskId: number | null;
-  status: CodeReviewStatus;
-  revision: number;
-  annotations: ReviewAnnotation[];
-  createdAt: string;
-  updatedAt: string;
-}
+export const ReviewEntrySchema = Type.Object({
+  id: NonEmptyStringSchema,
+  author: NonEmptyStringSchema,
+  body: NonEmptyStringSchema,
+  createdAt: NonEmptyStringSchema,
+  sourceKey: Type.Optional(NonEmptyStringSchema),
+  sourceUrl: Type.Optional(NonEmptyStringSchema),
+});
+export type ReviewEntry = Static<typeof ReviewEntrySchema>;
+
+export const ReviewAnnotationSchema = Type.Object({
+  id: NonEmptyStringSchema,
+  anchor: ReviewAnchorEvidenceSchema,
+  entries: Type.Array(ReviewEntrySchema),
+});
+export type ReviewAnnotation = Static<typeof ReviewAnnotationSchema>;
+
+export const NewReviewAnnotationSchema = Type.Object({
+  id: NonEmptyStringSchema,
+  anchor: ReviewAnchorEvidenceSchema,
+  entry: ReviewEntrySchema,
+});
+export type NewReviewAnnotation = Static<typeof NewReviewAnnotationSchema>;
+
+export const ExpectedCodeReviewSchema = Type.Object({
+  id: NonEmptyStringSchema,
+  revision: Type.Integer({ minimum: 0 }),
+});
+export type ExpectedCodeReview = Static<typeof ExpectedCodeReviewSchema>;
+
+export const AddCodeReviewAnnotationInputSchema = Type.Object({
+  expectedReview: Type.Optional(ExpectedCodeReviewSchema),
+  annotation: NewReviewAnnotationSchema,
+});
+export type AddCodeReviewAnnotationInput = Static<typeof AddCodeReviewAnnotationInputSchema>;
+
+export const CodeReviewStateSchema = Type.Object({
+  id: NonEmptyStringSchema,
+  projectId: Type.Integer({ minimum: 1 }),
+  taskId: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+  status: CodeReviewStatusSchema,
+  revision: Type.Integer({ minimum: 0 }),
+  annotations: Type.Array(ReviewAnnotationSchema),
+  createdAt: NonEmptyStringSchema,
+  updatedAt: NonEmptyStringSchema,
+});
+export type CodeReviewState = Static<typeof CodeReviewStateSchema>;
 
 /**
  * A saved code review. Composer state stays in the frontend; this model owns

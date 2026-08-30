@@ -16,15 +16,13 @@ interface CodeReviewRow {
   updated_at: string;
 }
 
-export interface CreateCodeReviewInput {
-  id: string;
-  projectId: number;
-  taskId?: number | null;
-}
-
-export interface CodeReviewScope {
+export interface CodeReviewPersistenceScope {
   projectId: number;
   taskId: number | null;
+}
+
+export interface CreateCodeReviewInput extends CodeReviewPersistenceScope {
+  id: string;
 }
 
 export class CodeReviewRevisionConflictError extends Error {
@@ -56,7 +54,7 @@ export function getCodeReview(id: string): CodeReview | null {
 }
 
 /** Return the one open review in an exact project/task scope. */
-export function getOpenCodeReview(scope: CodeReviewScope): CodeReview | null {
+export function getOpenCodeReview(scope: CodeReviewPersistenceScope): CodeReview | null {
   const row = getDb()
     .query<CodeReviewRow, [number, number | null]>(
       `SELECT * FROM code_reviews
@@ -67,7 +65,7 @@ export function getOpenCodeReview(scope: CodeReviewScope): CodeReview | null {
 }
 
 /** Return every review in the exact project/task scope, newest first. */
-export function listCodeReviews(scope: CodeReviewScope): CodeReview[] {
+export function listCodeReviews(scope: CodeReviewPersistenceScope): CodeReview[] {
   return getDb()
     .query<CodeReviewRow, [number, number | null]>(
       `SELECT * FROM code_reviews

@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { AddCodeReviewAnnotationInputSchema } from "../models/code-review.js";
 import {
   CodeReviewMutationConflictError,
   CodeReviewScopeNotFoundError,
@@ -9,37 +9,6 @@ import type { RouterGroup } from "../router.js";
 import { badRequest, conflict, notFound } from "../errors.js";
 import type { ProjectRouteContext } from "./index.js";
 import { parseBody } from "./validate.js";
-
-const NonEmptyString = Type.String({ minLength: 1, pattern: "\\S" });
-const NullableString = Type.Union([Type.String(), Type.Null()]);
-const Anchor = Type.Object({
-  path: NonEmptyString,
-  oldPath: NullableString,
-  side: Type.Union([Type.Literal("old"), Type.Literal("new")]),
-  startLine: Type.Integer({ minimum: 1 }),
-  endLine: Type.Integer({ minimum: 1 }),
-  excerpt: Type.String(),
-  contextBefore: NullableString,
-  contextAfter: NullableString,
-  fileFingerprint: NullableString,
-  baseRevision: NullableString,
-  headRevision: NullableString,
-});
-const Entry = Type.Object({
-  id: NonEmptyString,
-  author: NonEmptyString,
-  body: NonEmptyString,
-  createdAt: NonEmptyString,
-  sourceKey: Type.Optional(NonEmptyString),
-  sourceUrl: Type.Optional(NonEmptyString),
-});
-const AddAnnotationBody = Type.Object({
-  expectedReview: Type.Optional(Type.Object({
-    id: NonEmptyString,
-    revision: Type.Integer({ minimum: 0 }),
-  })),
-  annotation: Type.Object({ id: NonEmptyString, anchor: Anchor, entry: Entry }),
-});
 
 export function registerCodeReviewRoutes(router: RouterGroup<ProjectRouteContext>): void {
   router.get("/code-review", (ctx) => {
@@ -52,7 +21,7 @@ export function registerCodeReviewRoutes(router: RouterGroup<ProjectRouteContext
 
   router.post("/code-review/annotations", async (ctx) => {
     const scope = getReviewScope(ctx);
-    const body = await parseBody(AddAnnotationBody, ctx.req);
+    const body = await parseBody(AddCodeReviewAnnotationInputSchema, ctx.req);
 
     try {
       const result = ctx.project.codeReviews().addAnnotation({

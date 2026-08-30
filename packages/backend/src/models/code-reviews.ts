@@ -9,22 +9,20 @@ import {
 import { getDb } from "../db.js";
 import { getTask } from "../task-store.js";
 import type { Broadcast } from "./broadcast.js";
-import type { CodeReview, NewReviewAnnotation, ReviewAnnotation } from "./code-review.js";
+import type {
+  AddCodeReviewAnnotationInput,
+  CodeReview,
+  NewReviewAnnotation,
+  ReviewAnnotation,
+} from "./code-review.js";
 
 export interface CodeReviewScope {
   taskId: number | null;
 }
 
-export interface ExpectedCodeReview {
-  id: string;
-  revision: number;
-}
-
-export interface AddCodeReviewAnnotationCommand {
+export type AddCodeReviewAnnotationCommand = AddCodeReviewAnnotationInput & {
   scope: CodeReviewScope;
-  annotation: NewReviewAnnotation;
-  expectedReview?: ExpectedCodeReview;
-}
+};
 
 export interface AddCodeReviewAnnotationResult {
   review: CodeReview;
