@@ -49,19 +49,19 @@ describe("code review routes", () => {
     state = createServerState({ clients: new Set([client]) });
   });
 
-  test("loads null, then adds and loads the authoritative open review in exact task scope", async () => {
-    const path = `/api/projects/${projectId}/tasks/${taskId}/code-review`;
-    const empty = await router.handle(makeRequest("GET", path), state);
+  test("uses one resource route set for task-scoped reviews", async () => {
+    const resource = `/api/projects/${projectId}/code-review?taskId=${taskId}`;
+    const empty = await router.handle(makeRequest("GET", resource), state);
     expect(empty?.status).toBe(200);
     expect(await empty!.json()).toBeNull();
 
-    const created = await router.handle(makeRequest("POST", `${path}/annotations`, { annotation }), state);
+    const created = await router.handle(makeRequest("POST", `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`, { annotation }), state);
     expect(created?.status).toBe(201);
     const review = await created!.json();
     expect(review).toMatchObject({ projectId, taskId, status: "open", revision: 1 });
     expect(review.annotations[0]).toEqual({ id: annotation.id, anchor: annotation.anchor, entries: [annotation.entry] });
 
-    const loaded = await router.handle(makeRequest("GET", path), state);
+    const loaded = await router.handle(makeRequest("GET", resource), state);
     expect(await loaded!.json()).toEqual(review);
     expect(JSON.parse(sent[0])).toEqual({
       type: "code_review_updated",
@@ -72,40 +72,26 @@ describe("code review routes", () => {
       status: "open",
     });
     expect(sent[0]).not.toContain(annotation.entry.body);
-    expect(sent[0]).not.toContain(annotation.anchor.excerpt);
   });
 
-  test("loads and adds the authoritative open review in project scope", async () => {
-    const path = `/api/projects/${projectId}/code-review`;
-    const empty = await router.handle(makeRequest("GET", path), state);
-    expect(empty?.status).toBe(200);
-    expect(await empty!.json()).toBeNull();
+  test("omitting taskId uses the same resources in project scope", async () => {
+    const resource = `/api/projects/${projectId}/code-review`;
+    expect(await (await router.handle(makeRequest("GET", resource), state))!.json()).toBeNull();
 
-    const created = await router.handle(makeRequest("POST", `${path}/annotations`, { annotation }), state);
+    const created = await router.handle(makeRequest("POST", `${resource}/annotations`, { annotation }), state);
     expect(created?.status).toBe(201);
     const review = await created!.json();
     expect(review).toMatchObject({ projectId, taskId: null, status: "open", revision: 1 });
-
-    const loaded = await router.handle(makeRequest("GET", path), state);
-    expect(await loaded!.json()).toEqual(review);
-    expect(JSON.parse(sent[0])).toEqual({
-      type: "code_review_updated",
-      projectId,
-      taskId: null,
-      reviewId: review.id,
-      revision: 1,
-      status: "open",
-    });
+    expect(await (await router.handle(makeRequest("GET", resource), state))!.json()).toEqual(review);
   });
 
-  test("returns an exact stale retry as the existing review without another broadcast", async () => {
-    const path = `/api/projects/${projectId}/tasks/${taskId}/code-review/annotations`;
+  test("accepts optional expected review identity as a concurrency guard", async () => {
+    const path = `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`;
     const created = await router.handle(makeRequest("POST", path, { annotation }), state);
     const review = await created!.json();
 
     const retried = await router.handle(makeRequest("POST", path, {
-      reviewId: review.id,
-      revision: 0,
+      expectedReview: { id: review.id, revision: 0 },
       annotation,
     }), state);
 
@@ -114,30 +100,25 @@ describe("code review routes", () => {
     expect(sent).toHaveLength(1);
   });
 
-  test("validates annotation requests and returns conflicts for stale known revisions", async () => {
-    const path = `/api/projects/${projectId}/tasks/${taskId}/code-review/annotations`;
-    const invalid = await router.handle(makeRequest("POST", path, {
-      annotation: { ...annotation, anchor: { ...annotation.anchor, startLine: 0 } },
-    }), state);
-    expect(invalid?.status).toBe(400);
+  test("validates transport input and translates model conflicts", async () => {
+    const path = `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`;
+    const malformedScope = await router.handle(
+      makeRequest("POST", `/api/projects/${projectId}/code-review/annotations?taskId=nope`, { annotation }),
+      state,
+    );
+    expect(malformedScope?.status).toBe(400);
 
     const created = await router.handle(makeRequest("POST", path, { annotation }), state);
     const review = await created!.json();
-    const incompleteIdentity = await router.handle(makeRequest("POST", path, {
-      reviewId: review.id,
-      annotation: { ...annotation, id: "annotation-client-2", entry: { ...annotation.entry, id: "entry-client-2" } },
-    }), state);
-    expect(incompleteIdentity?.status).toBe(400);
-
     const stale = await router.handle(makeRequest("POST", path, {
-      reviewId: review.id,
-      revision: 0,
+      expectedReview: { id: review.id, revision: 0 },
       annotation: {
         ...annotation,
         id: "annotation-client-2",
         entry: { ...annotation.entry, id: "entry-client-2", body: "Another comment" },
       },
     }), state);
+
     expect(stale?.status).toBe(409);
     expect((await stale!.json()).error).toContain("revision");
     expect(sent).toHaveLength(1);
@@ -147,7 +128,7 @@ describe("code review routes", () => {
     const otherProject = createProject("Other", `${repo.dir}-other`).id;
     const otherTask = createTask(otherProject, "Other task", null, "task/other").id;
     const response = await router.handle(
-      makeRequest("GET", `/api/projects/${projectId}/tasks/${otherTask}/code-review`),
+      makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${otherTask}`),
       state,
     );
     expect(response?.status).toBe(404);

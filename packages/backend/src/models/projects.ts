@@ -37,6 +37,7 @@ import type { ManagedSession } from "../state.js";
 import { logger } from "../logger.js";
 import { Sessions } from "./sessions.js";
 import { ProjectTasks } from "./tasks.js";
+import { ProjectCodeReviews } from "./code-reviews.js";
 
 // ---------------------------------------------------------------------------
 // Domain errors
@@ -136,6 +137,11 @@ export class ProjectModel {
       this.sessionRegistry,
       this.broadcast,
     );
+  }
+
+  /** Project-scoped code-review operations shared by HTTP and agent callers. */
+  codeReviews(): ProjectCodeReviews {
+    return new ProjectCodeReviews(this.projectId, this.broadcast);
   }
 
   /**
