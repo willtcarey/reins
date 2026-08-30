@@ -85,21 +85,6 @@ describe("code review routes", () => {
     expect(await (await router.handle(makeRequest("GET", resource), state))!.json()).toEqual(review);
   });
 
-  test("accepts optional expected review identity as a concurrency guard", async () => {
-    const path = `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`;
-    const created = await router.handle(makeRequest("POST", path, { annotation }), state);
-    const review = await created!.json();
-
-    const retried = await router.handle(makeRequest("POST", path, {
-      expectedReview: { id: review.id, revision: 0 },
-      annotation,
-    }), state);
-
-    expect(retried?.status).toBe(200);
-    expect(await retried!.json()).toEqual(review);
-    expect(sent).toHaveLength(1);
-  });
-
   test("validates transport input and translates model conflicts", async () => {
     const path = `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`;
     const malformedScope = await router.handle(

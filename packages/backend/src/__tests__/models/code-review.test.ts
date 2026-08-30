@@ -79,12 +79,12 @@ describe("CodeReview", () => {
     }]);
   });
 
-  test("owns annotation validation and idempotent client identity", () => {
+  test("owns annotation validation and unique client identity", () => {
     const codeReview = review();
     const input = annotation();
 
-    expect(codeReview.addAnnotation(input)).toBe("added");
-    expect(codeReview.addAnnotation(input)).toBe("unchanged");
+    codeReview.addAnnotation(input);
+    expect(() => codeReview.addAnnotation(input)).toThrow(CodeReviewError);
     expect(codeReview.annotations).toHaveLength(1);
 
     expect(() => codeReview.addAnnotation(annotation({

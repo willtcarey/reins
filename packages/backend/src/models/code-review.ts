@@ -1,5 +1,4 @@
 import { Type, type Static } from "@sinclair/typebox";
-import { isDeepStrictEqual } from "util";
 
 const NonEmptyStringSchema = Type.String({ minLength: 1, pattern: "\\S" });
 const NullableStringSchema = Type.Union([Type.String(), Type.Null()]);
@@ -90,8 +89,6 @@ export class CodeReviewError extends Error {
   }
 }
 
-export type AddReviewAnnotationResult = "added" | "unchanged";
-
 /**
  * A saved code review. Composer state stays in the frontend; this model owns
  * persisted annotations, their thread entries, and import identity.
@@ -139,18 +136,15 @@ export class CodeReview {
     };
   }
 
-  addAnnotation(input: NewReviewAnnotation): AddReviewAnnotationResult {
+  addAnnotation(input: NewReviewAnnotation): void {
     this.ensureOpen("add annotations to");
     this.ensureValidAnchor(input.anchor);
 
-    const identityCollision = this.findIdentityCollision(input.id, input.entry);
-    if (identityCollision) {
-      if (sameAnnotation(identityCollision, input)) return "unchanged";
+    if (this.findIdentityCollision(input.id, input.entry)) {
       throw new CodeReviewError("Review annotation or entry identity is already in use", "conflict");
     }
 
     this.annotations.push({ id: input.id, anchor: input.anchor, entries: [input.entry] });
-    return "added";
   }
 
   /** Import or refresh an annotation using a review-wide source identity. */
@@ -232,12 +226,4 @@ export class CodeReview {
     }
     return null;
   }
-}
-
-function sameAnnotation(existing: ReviewAnnotation, input: NewReviewAnnotation): boolean {
-  const entry = existing.entries.find((candidate) => candidate.id === input.entry.id);
-  return existing.id === input.id
-    && entry !== undefined
-    && isDeepStrictEqual(existing.anchor, input.anchor)
-    && isDeepStrictEqual(entry, input.entry);
 }

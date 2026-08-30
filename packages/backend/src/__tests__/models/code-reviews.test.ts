@@ -60,38 +60,22 @@ describe("ProjectCodeReviews", () => {
     }]);
   });
 
-  test("does not require review identity but uses a known review as a concurrency guard", () => {
+  test("uses a known review identity as an optional concurrency guard", () => {
     const projectId = createProject("Review Project", "/tmp/review-project").id;
     const taskId = createTask(projectId, "Review task", null, "task/review").id;
     const broadcast = mock<Broadcast>(() => {});
     const reviews = new ProjectCodeReviews(projectId, broadcast);
     const open = createCodeReview({ id: "review-existing", projectId, taskId });
-    const first = reviews.addAnnotation({
+
+    const result = reviews.addAnnotation({
       scope: { taskId },
       expectedReview: { id: open.id, revision: open.revision },
       annotation,
     });
 
-    reviews.addAnnotation({
-      scope: { taskId },
-      expectedReview: { id: first.review.id, revision: first.review.revision },
-      annotation: {
-        ...annotation,
-        id: "annotation-client-2",
-        entry: { ...annotation.entry, id: "entry-client-2", body: "A later comment" },
-      },
-    });
-
-    const retried = reviews.addAnnotation({
-      scope: { taskId },
-      expectedReview: { id: open.id, revision: open.revision },
-      annotation,
-    });
-
-    expect(retried).toMatchObject({ created: false });
-    expect(retried.review).toMatchObject({ id: first.review.id, revision: 2 });
-    expect(retried.review.annotations).toHaveLength(2);
-    expect(broadcast).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ created: false });
+    expect(result.review).toMatchObject({ id: open.id, revision: 1 });
+    expect(broadcast).toHaveBeenCalledTimes(1);
   });
 
   test("conflicts instead of switching a stale or terminal known review", () => {

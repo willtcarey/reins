@@ -30,8 +30,8 @@ export interface AddCodeReviewAnnotationResult {
 
 /**
  * Project-scoped code-review operations shared by REST and agent adapters.
- * Owns scope validation, persistence orchestration, concurrency, idempotency,
- * and post-commit invalidation.
+ * Owns scope validation, persistence orchestration, concurrency, and
+ * post-commit invalidation.
  */
 export class ProjectCodeReviews {
   constructor(
@@ -50,11 +50,6 @@ export class ProjectCodeReviews {
     const mutation = getDb().transaction(() => {
       const resolved = this.resolveReview(command);
       const { review } = resolved;
-      const annotationResult = review.addAnnotation(command.annotation);
-      if (annotationResult === "unchanged") {
-        return { review, created: false, changed: false };
-      }
-
       if (command.expectedReview && review.revision !== command.expectedReview.revision) {
         throw new CodeReviewError(
           `Code review revision conflict: expected ${command.expectedReview.revision}, found ${review.revision}`,
@@ -62,25 +57,24 @@ export class ProjectCodeReviews {
         );
       }
 
+      review.addAnnotation(command.annotation);
       const saved = saveCodeReview(review);
       if (!saved) {
         throw new CodeReviewError(`Code review ${review.id} no longer exists`, "conflict");
       }
-      return { review: saved, created: resolved.created, changed: true };
+      return { review: saved, created: resolved.created };
     });
 
     try {
       const result = mutation.immediate();
-      if (result.changed) {
-        this.broadcast({
-          type: "code_review_updated",
-          projectId: result.review.projectId,
-          taskId: result.review.taskId,
-          reviewId: result.review.id,
-          revision: result.review.revision,
-          status: result.review.status,
-        });
-      }
+      this.broadcast({
+        type: "code_review_updated",
+        projectId: result.review.projectId,
+        taskId: result.review.taskId,
+        reviewId: result.review.id,
+        revision: result.review.revision,
+        status: result.review.status,
+      });
       return { review: result.review, created: result.created };
     } catch (error) {
       if (error instanceof CodeReviewRevisionConflictError) {
