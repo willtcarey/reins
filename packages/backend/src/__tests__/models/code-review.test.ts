@@ -102,6 +102,15 @@ describe("CodeReview", () => {
     }
     if (!(invalidError instanceof CodeReviewError)) throw invalidError;
     expect(invalidError.kind).toBe("invalid");
+
+    codeReview.addAnnotation(annotation({
+      id: "annotation-2",
+      entry: { ...input.entry, id: "entry-2", sourceKey: "provider:comment:99" },
+    }));
+    expect(() => codeReview.addAnnotation(annotation({
+      id: "annotation-3",
+      entry: { ...input.entry, id: "entry-3", sourceKey: "provider:comment:99" },
+    }))).toThrow(CodeReviewError);
   });
 
   test("upserts imported annotations by non-null source key across the review", () => {

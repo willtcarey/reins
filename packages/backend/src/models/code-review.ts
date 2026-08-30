@@ -143,13 +143,12 @@ export class CodeReview {
     this.ensureOpen("add annotations to");
     this.ensureValidAnchor(input.anchor);
 
-    const identityCollision = this.findIdentityCollision(input);
+    const identityCollision = this.findIdentityCollision(input.id, input.entry);
     if (identityCollision) {
       if (sameAnnotation(identityCollision, input)) return "unchanged";
       throw new CodeReviewError("Review annotation or entry identity is already in use", "conflict");
     }
 
-    this.ensureIdentityAvailable(input.id, input.entry);
     this.annotations.push({ id: input.id, anchor: input.anchor, entries: [input.entry] });
     return "added";
   }
@@ -175,7 +174,9 @@ export class CodeReview {
 
   addReply(annotationId: string, entry: ReviewEntry): void {
     this.ensureOpen("add replies to");
-    this.ensureIdentityAvailable(null, entry);
+    if (this.findIdentityCollision(null, entry)) {
+      throw new CodeReviewError("Review entry identity is already in use", "conflict");
+    }
     const annotation = this.annotations.find((candidate) => candidate.id === annotationId);
     if (!annotation) {
       throw new CodeReviewError(`Review annotation not found: ${annotationId}`, "not-found");
@@ -211,27 +212,17 @@ export class CodeReview {
     }
   }
 
-  private findIdentityCollision(input: NewReviewAnnotation): ReviewAnnotation | null {
+  private findIdentityCollision(
+    annotationId: string | null,
+    entry: ReviewEntry,
+  ): ReviewAnnotation | null {
     return this.annotations.find((annotation) =>
-      annotation.id === input.id
-      || annotation.entries.some((entry) => entry.id === input.entry.id),
+      (annotationId !== null && annotation.id === annotationId)
+      || annotation.entries.some((existing) =>
+        existing.id === entry.id
+        || (entry.sourceKey != null && existing.sourceKey === entry.sourceKey),
+      ),
     ) ?? null;
-  }
-
-  private ensureIdentityAvailable(annotationId: string | null, entry: ReviewEntry): void {
-    for (const annotation of this.annotations) {
-      if (annotationId !== null && annotation.id === annotationId) {
-        throw new CodeReviewError(`Duplicate review annotation id: ${annotationId}`, "conflict");
-      }
-      for (const existing of annotation.entries) {
-        if (existing.id === entry.id) {
-          throw new CodeReviewError(`Duplicate review entry id: ${entry.id}`, "conflict");
-        }
-        if (entry.sourceKey != null && existing.sourceKey === entry.sourceKey) {
-          throw new CodeReviewError(`Duplicate review source key: ${entry.sourceKey}`, "conflict");
-        }
-      }
-    }
   }
 
   private findEntryBySourceKey(sourceKey: string): ReviewEntry | null {
