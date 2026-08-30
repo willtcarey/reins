@@ -2,9 +2,11 @@
 
 ## Status and recommendation
 
-**Investigation complete; in-memory MVP implemented; durable persistence not started.** This document is based on the exact installed `@pierre/diffs` **1.2.11** (`bun.lock` integrity `sha512-lSkl…`) and Reins' current `FileDiff` integration.
+**Investigation complete; in-memory UI MVP plus a small code-review domain/store slice implemented.** This document is based on the exact installed `@pierre/diffs` **1.2.11** (`bun.lock` integrity `sha512-lSkl…`) and Reins' current `FileDiff` integration.
 
 The implemented `virtualized` slice now uses an unmanaged nested `<diffs-container>`, public line annotations, controlled selection, and the public gutter callback. `ReviewComments` owns current-panel drafts, threads, grouping, normalization, and file-content reconciliation in memory. A Reins annotation element owns only rendering and commands. Whole-item resize observation feeds the top-level virtual list, comment layout revisions invalidate measurements, and the active composer item is pinned. Comment creation stays attached to selecting code and using its gutter action; manual side/line-number entry was removed because it is not a credible review interaction. Comments survive collapse and virtual remount within the panel, but browser refresh and review-scope/content changes may discard them.
+
+A small detached `CodeReview` entity represents the eventual server-synced ephemeral review. Its direct methods own annotation creation, review-wide source-key upsert, replies, and terminal lifecycle transitions. A SQLite store is only the persistence adapter: it creates, loads, lists, saves, and deletes entities while enforcing optimistic revision compare-and-swap. Unsaved composer text remains frontend-local draft state. This slice has no routes, application-state initialization, UI/Pierre wiring, Git/filesystem reconciliation, agent scripting, message compilation, or delivery.
 
 Use Pierre's public line-annotation and selection interfaces, but keep comment identity, persistence, interaction state, and top-level layout in Reins.
 
@@ -32,7 +34,7 @@ This investigation answers whether the Reins-owned top-level virtual renderer ca
 - retaining correct attachment across refreshes;
 - surviving top-level virtual unmount/remount, collapse, and context expansion.
 
-It does not design comment delivery to an agent, permissions, collaborative updates, or the final backend schema.
+It does not implement comment delivery to an agent, permissions, collaborative synchronization, or UI/backend integration. The standalone model and SQLite store define saved review state and optimistic persistence; the submission contract belongs to a future server mediator that can reconcile against current code.
 
 ## Evidence and version caveat
 
@@ -195,7 +197,25 @@ interface ReviewThread {
 10. **Object IDs are evidence, not the whole interface.** Pierre exposes patch `prevObjectId/newObjectId`, but the current Git patch does not request `--full-index` and absent sides may be zero IDs. A persistence implementation should return authoritative full side/blob IDs or snapshot fingerprints from Reins' backend rather than treating abbreviated Pierre values as durable IDs.
 11. **Expanded unchanged anchors validate lazily.** If the initial patch does not contain the selected range/context, retrieve the complete file through the existing bounded context path before creating or reattaching that anchor.
 
-Do not overwrite an anchor's original evidence during automatic relocation. Store a separate current projection or relocation record so an incorrect future match can be audited and reversed.
+Do not overwrite an anchor's original evidence during automatic relocation. Reconciliation is transient submission work: the server produces an exact, relocated, or unanchored resolution for the outgoing message without writing that projection back to the saved review.
+
+## Ephemeral code-review domain and persistence contract
+
+The detached entity lives at `packages/backend/src/models/code-review.ts`, without imports from Pierre, UI state, the database, Git, sessions, or message delivery. `CodeReview` owns operations and invariants concerning only its state: annotation creation, review-wide source-key upsert, replies, and transitions from `open` to `submitted` or `abandoned`. Annotation operations are rejected after either terminal transition. It has no command dispatch, composer state, persisted reconciliation projection, or handwritten JSON schema parser. “Draft” is reserved for unsaved composer text, which remains local frontend state.
+
+- A code review belongs to one project and optionally one task. Its persistence status is only `open`, `submitted`, or `abandoned`; delivery attempts and retries are not domain state.
+- Its annotations contain thread entries. Each entry has an identity, plain string `author`, body, creation time, and optional `sourceKey`/`sourceUrl`.
+- A non-null `sourceKey` is unique across all entries in one review. Import upsert finds that key review-wide and updates the existing entry while preserving thread/entry identity, creation time, and original anchor evidence.
+- Stored anchor evidence includes side/path lineage, range, excerpt/context, file and revision hints. Actual filesystem/Git matching remains future integration work and produces a transient exact, relocated, or unanchored submission resolution.
+- No submission payload is modeled yet. That contract belongs at the future server submission seam, where annotations can be reconciled against current code.
+
+Migration `022_create_code_reviews` and `code-review-store.ts` persist a structured envelope (`id`, project/task foreign keys, status, optimistic revision, and timestamps) plus one `annotations_json` column. The store is only a persistence adapter: create/get/list/save/delete, row mapping, and compare-and-swap. `saveCodeReview(review)` persists the detached entity's current state and returns a fresh entity with the incremented database revision; it never performs a lifecycle transition through store options. Multiple open reviews are intentionally allowed in one project/task scope: current product behavior has no ownership rule that would justify silently coalescing separate browser/device work. Retrieval therefore returns all matching reviews; a later synchronization interface must decide which one a client opens or merges.
+
+Simple route or tool callers may load → mutate through `CodeReview` → save directly. A future cross-module submission workflow may coordinate Git reconciliation, sessions, messages, and broadcasts before marking and saving the review, but that orchestration must not move annotation or lifecycle rules out of the detached entity. No such workflow or submission payload is part of this slice.
+
+The store relies on TypeScript/domain construction for the annotation shape; future shape changes should use ordinary database migrations rather than per-row schema versions or a handwritten parser for every JSON property. The database enforces foreign keys, lifecycle status, non-negative revision, valid JSON, and an indexed scope lookup. Annotation entries remain in one JSON aggregate because they share the review lifecycle.
+
+This model/store slice remains separate from the current frontend-only `ReviewComments` projection module. Routes, client synchronization, persistence initialization, reconciliation, and UI integration should adapt it rather than expanding Pierre-facing state into the durable model.
 
 ## Recommended deep module and seam
 
@@ -396,12 +416,15 @@ Each behavior slice starts with a failing contract test per `docs/dev/workflow.m
 - [ ] Add browser-level comment-height cases above, at, and below the selected line.
 - [x] Invalidate expanded height measurements by comment-layout revision.
 
-### 3. Reins anchor module, in memory
+### 3. Reins anchor and code-review modules
 
 - [x] Introduce a small Reins projection/command module with no Pierre imports.
 - [x] Implement same-side range normalization, endpoint grouping, drafts/threads, cross-side rejection, and current file-content-key invalidation.
-- [ ] Add durable `ReviewScope`/`ReviewAnchor` evidence, outdated state, relocation, rename mapping, and ambiguous-context tests. The MVP deliberately clears changed-content state instead of relocating it.
-- [ ] Add exact snapshot/base/head identity to the patch response before durable persistence.
+- [x] Add a small `CodeReview` class with project/optional-task persistence scope, string-attributed thread entries, and review-wide source-key idempotency.
+- [x] Preserve original anchor evidence without persisting transient reconciliation projections; defer the payload shape to the future submission mediator.
+- [ ] Connect the frontend projection module to server-synced `CodeReview` instances; the current UI module still clears changed-content state and is not durable.
+- [ ] Implement actual Git/filesystem reconciliation, rename mapping, and ambiguous-context matching as transient submission resolution.
+- [ ] Add exact snapshot/base/head identity before persisted anchors are treated as refresh-durable.
 
 ### 4. Pointer/touch composer
 
@@ -420,11 +443,13 @@ Each behavior slice starts with a failing contract test per `docs/dev/workflow.m
 
 ### 6. Persistence and refresh reconciliation
 
-- Persist threads/comments separately from renderer records.
-- Save original anchor evidence and current projection/relocation separately.
-- Reconcile on patch refresh and surface outdated threads without line placement.
-- Restore comments for exact snapshots; lazily hydrate expanded unchanged anchors.
-- Only after this slice connect comments to agent/session feedback.
+- [x] Persist each code review as a project/task/status/revision envelope plus one annotations JSON aggregate.
+- [x] Add exact-scope retrieval and optimistic compare-and-swap updates; allow multiple open reviews per scope rather than guessing an ownership constraint.
+- [x] Save original anchor evidence without persisting a current projection that would immediately become stale.
+- [ ] Add routes and initialize synchronization in application state.
+- [ ] Reconcile on patch refresh and surface outdated threads without line placement.
+- [ ] Restore comments for exact snapshots; lazily hydrate expanded unchanged anchors.
+- [ ] Only after these integrations connect comments to agent/session feedback.
 
 ### 7. Navigation and polish
 

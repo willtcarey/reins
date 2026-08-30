@@ -171,6 +171,21 @@ const MIGRATIONS: Migration[] = [
     "021_add_session_activity_state",
     `ALTER TABLE sessions ADD COLUMN activity_state TEXT CHECK(activity_state IN ('running', 'finished'))`,
   ],
+  [
+    "022_create_code_reviews",
+    `CREATE TABLE code_reviews (
+      id TEXT PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'submitted', 'abandoned')),
+      annotations_json TEXT NOT NULL CHECK(json_valid(annotations_json)),
+      revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+    CREATE INDEX idx_code_reviews_scope
+      ON code_reviews(project_id, task_id, status, updated_at DESC)`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {
