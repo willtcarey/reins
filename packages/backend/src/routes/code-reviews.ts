@@ -1,10 +1,8 @@
-import { AddCodeReviewAnnotationInputSchema } from "../models/code-review.js";
 import {
-  CodeReviewMutationConflictError,
-  CodeReviewScopeNotFoundError,
-  InvalidCodeReviewAnnotationError,
-  type CodeReviewScope,
-} from "../models/code-reviews.js";
+  AddCodeReviewAnnotationInputSchema,
+  CodeReviewError,
+} from "../models/code-review.js";
+import { type CodeReviewScope } from "../models/code-reviews.js";
 import type { RouterGroup } from "../router.js";
 import { badRequest, conflict, notFound } from "../errors.js";
 import type { ProjectRouteContext } from "./index.js";
@@ -45,8 +43,8 @@ function getReviewScope(ctx: ProjectRouteContext): CodeReviewScope {
 }
 
 function translateError(error: unknown): never {
-  if (error instanceof CodeReviewScopeNotFoundError) notFound(error.message);
-  if (error instanceof CodeReviewMutationConflictError) conflict(error.message);
-  if (error instanceof InvalidCodeReviewAnnotationError) badRequest(error.message);
-  throw error;
+  if (!(error instanceof CodeReviewError)) throw error;
+  if (error.kind === "not-found") notFound(error.message);
+  if (error.kind === "conflict") conflict(error.message);
+  badRequest(error.message);
 }

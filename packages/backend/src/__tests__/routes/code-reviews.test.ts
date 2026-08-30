@@ -108,6 +108,14 @@ describe("code review routes", () => {
     );
     expect(malformedScope?.status).toBe(400);
 
+    const invalidAnnotation = await router.handle(makeRequest("POST", path, {
+      annotation: {
+        ...annotation,
+        anchor: { ...annotation.anchor, startLine: 5, endLine: 4 },
+      },
+    }), state);
+    expect(invalidAnnotation?.status).toBe(400);
+
     const created = await router.handle(makeRequest("POST", path, { annotation }), state);
     const review = await created!.json();
     const stale = await router.handle(makeRequest("POST", path, {

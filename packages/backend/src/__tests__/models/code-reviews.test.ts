@@ -1,11 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 import { createCodeReview, getCodeReview, saveCodeReview } from "../../code-review-store.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
-import {
-  CodeReviewMutationConflictError,
-  CodeReviewScopeNotFoundError,
-  ProjectCodeReviews,
-} from "../../models/code-reviews.js";
+import { CodeReviewError } from "../../models/code-review.js";
+import { ProjectCodeReviews } from "../../models/code-reviews.js";
 import { createProject } from "../../project-store.js";
 import { createTask } from "../../task-store.js";
 import { useTestDb } from "../helpers/test-db.js";
@@ -108,7 +105,7 @@ describe("ProjectCodeReviews", () => {
       scope: { taskId },
       expectedReview: { id: first.review.id, revision: 0 },
       annotation: { ...annotation, id: "annotation-2", entry: { ...annotation.entry, id: "entry-2" } },
-    })).toThrow(CodeReviewMutationConflictError);
+    })).toThrow(CodeReviewError);
 
     const current = getCodeReview(first.review.id)!;
     current.abandon();
@@ -117,23 +114,16 @@ describe("ProjectCodeReviews", () => {
       scope: { taskId },
       expectedReview: { id: terminal.id, revision: terminal.revision },
       annotation: { ...annotation, id: "annotation-3", entry: { ...annotation.entry, id: "entry-3" } },
-    })).toThrow(CodeReviewMutationConflictError);
+    })).toThrow(CodeReviewError);
     expect(broadcast).toHaveBeenCalledTimes(1);
   });
 
-  test("validates task ownership and annotation range for every caller", () => {
+  test("validates task ownership for every caller", () => {
     const projectId = createProject("Review Project", "/tmp/review-project").id;
     const otherProjectId = createProject("Other Project", "/tmp/other-review-project").id;
     const otherTaskId = createTask(otherProjectId, "Other task", null, "task/other").id;
     const reviews = new ProjectCodeReviews(projectId, mock<Broadcast>(() => {}));
 
-    expect(() => reviews.getOpen({ taskId: otherTaskId })).toThrow(CodeReviewScopeNotFoundError);
-    expect(() => reviews.addAnnotation({
-      scope: { taskId: null },
-      annotation: {
-        ...annotation,
-        anchor: { ...annotation.anchor, startLine: 5, endLine: 4 },
-      },
-    })).toThrow("endLine");
+    expect(() => reviews.getOpen({ taskId: otherTaskId })).toThrow(CodeReviewError);
   });
 });

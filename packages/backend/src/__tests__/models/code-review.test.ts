@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   CodeReview,
+  CodeReviewError,
   type NewReviewAnnotation,
   type ReviewAnchorEvidence,
 } from "../../models/code-review.js";
@@ -76,6 +77,31 @@ describe("CodeReview", () => {
         },
       ],
     }]);
+  });
+
+  test("owns annotation validation and idempotent client identity", () => {
+    const codeReview = review();
+    const input = annotation();
+
+    expect(codeReview.addAnnotation(input)).toBe("added");
+    expect(codeReview.addAnnotation(input)).toBe("unchanged");
+    expect(codeReview.annotations).toHaveLength(1);
+
+    expect(() => codeReview.addAnnotation(annotation({
+      entry: { ...input.entry, body: "Changed under the same identity" },
+    }))).toThrow(CodeReviewError);
+    let invalidError: unknown = null;
+    try {
+      codeReview.addAnnotation(annotation({
+        id: "annotation-2",
+        anchor: { ...originalAnchor, startLine: 15, endLine: 14 },
+        entry: { ...input.entry, id: "entry-2" },
+      }));
+    } catch (error) {
+      invalidError = error;
+    }
+    if (!(invalidError instanceof CodeReviewError)) throw invalidError;
+    expect(invalidError.kind).toBe("invalid");
   });
 
   test("upserts imported annotations by non-null source key across the review", () => {

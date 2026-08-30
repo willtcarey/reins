@@ -1,4 +1,5 @@
 import { Type, type Static } from "@sinclair/typebox";
+import { isDeepStrictEqual } from "util";
 
 const NonEmptyStringSchema = Type.String({ minLength: 1, pattern: "\\S" });
 const NullableStringSchema = Type.Union([Type.String(), Type.Null()]);
@@ -76,6 +77,21 @@ export const CodeReviewStateSchema = Type.Object({
 });
 export type CodeReviewState = Static<typeof CodeReviewStateSchema>;
 
+export type CodeReviewErrorKind = "invalid" | "not-found" | "conflict";
+
+/** One domain error surface shared by direct, project-scoped, and adapter callers. */
+export class CodeReviewError extends Error {
+  constructor(
+    message: string,
+    readonly kind: CodeReviewErrorKind,
+  ) {
+    super(message);
+    this.name = "CodeReviewError";
+  }
+}
+
+export type AddReviewAnnotationResult = "added" | "unchanged";
+
 /**
  * A saved code review. Composer state stays in the frontend; this model owns
  * persisted annotations, their thread entries, and import identity.
@@ -123,17 +139,28 @@ export class CodeReview {
     };
   }
 
-  addAnnotation(input: NewReviewAnnotation): void {
+  addAnnotation(input: NewReviewAnnotation): AddReviewAnnotationResult {
     this.ensureOpen("add annotations to");
+    this.ensureValidAnchor(input.anchor);
+
+    const identityCollision = this.findIdentityCollision(input);
+    if (identityCollision) {
+      if (sameAnnotation(identityCollision, input)) return "unchanged";
+      throw new CodeReviewError("Review annotation or entry identity is already in use", "conflict");
+    }
+
     this.ensureIdentityAvailable(input.id, input.entry);
     this.annotations.push({ id: input.id, anchor: input.anchor, entries: [input.entry] });
+    return "added";
   }
 
   /** Import or refresh an annotation using a review-wide source identity. */
   upsertAnnotation(input: NewReviewAnnotation): void {
     this.ensureOpen("upsert annotations in");
     const sourceKey = input.entry.sourceKey;
-    if (sourceKey == null) throw new Error("Review annotation upsert requires sourceKey");
+    if (sourceKey == null) {
+      throw new CodeReviewError("Review annotation upsert requires sourceKey", "invalid");
+    }
 
     const existing = this.findEntryBySourceKey(sourceKey);
     if (!existing) {
@@ -150,7 +177,9 @@ export class CodeReview {
     this.ensureOpen("add replies to");
     this.ensureIdentityAvailable(null, entry);
     const annotation = this.annotations.find((candidate) => candidate.id === annotationId);
-    if (!annotation) throw new Error(`Review annotation not found: ${annotationId}`);
+    if (!annotation) {
+      throw new CodeReviewError(`Review annotation not found: ${annotationId}`, "not-found");
+    }
     annotation.entries.push(entry);
   }
 
@@ -169,19 +198,37 @@ export class CodeReview {
 
   private ensureOpen(action: string): void {
     if (this.status !== "open") {
-      throw new Error(`Cannot ${action} ${this.status} code review`);
+      throw new CodeReviewError(`Cannot ${action} ${this.status} code review`, "conflict");
     }
+  }
+
+  private ensureValidAnchor(anchor: ReviewAnchorEvidence): void {
+    if (anchor.startLine < 1 || anchor.endLine < anchor.startLine) {
+      throw new CodeReviewError(
+        "Review annotation endLine must be greater than or equal to a positive startLine",
+        "invalid",
+      );
+    }
+  }
+
+  private findIdentityCollision(input: NewReviewAnnotation): ReviewAnnotation | null {
+    return this.annotations.find((annotation) =>
+      annotation.id === input.id
+      || annotation.entries.some((entry) => entry.id === input.entry.id),
+    ) ?? null;
   }
 
   private ensureIdentityAvailable(annotationId: string | null, entry: ReviewEntry): void {
     for (const annotation of this.annotations) {
       if (annotationId !== null && annotation.id === annotationId) {
-        throw new Error(`Duplicate review annotation id: ${annotationId}`);
+        throw new CodeReviewError(`Duplicate review annotation id: ${annotationId}`, "conflict");
       }
       for (const existing of annotation.entries) {
-        if (existing.id === entry.id) throw new Error(`Duplicate review entry id: ${entry.id}`);
+        if (existing.id === entry.id) {
+          throw new CodeReviewError(`Duplicate review entry id: ${entry.id}`, "conflict");
+        }
         if (entry.sourceKey != null && existing.sourceKey === entry.sourceKey) {
-          throw new Error(`Duplicate review source key: ${entry.sourceKey}`);
+          throw new CodeReviewError(`Duplicate review source key: ${entry.sourceKey}`, "conflict");
         }
       }
     }
@@ -194,4 +241,12 @@ export class CodeReview {
     }
     return null;
   }
+}
+
+function sameAnnotation(existing: ReviewAnnotation, input: NewReviewAnnotation): boolean {
+  const entry = existing.entries.find((candidate) => candidate.id === input.entry.id);
+  return existing.id === input.id
+    && entry !== undefined
+    && isDeepStrictEqual(existing.anchor, input.anchor)
+    && isDeepStrictEqual(entry, input.entry);
 }
