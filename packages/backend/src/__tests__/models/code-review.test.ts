@@ -39,7 +39,6 @@ function review(): CodeReview {
     id: "review-1",
     projectId: 7,
     taskId: 11,
-    status: "open",
     revision: 0,
     annotations: [],
     createdAt: "2026-08-29T10:00:00.000Z",
@@ -157,34 +156,4 @@ describe("CodeReview", () => {
     expect(() => review().upsertAnnotation(annotation())).toThrow("sourceKey");
   });
 
-  test("owns terminal lifecycle transitions and rejects later annotation mutations", () => {
-    const submitted = review();
-    submitted.addAnnotation(annotation());
-    submitted.markSubmitted();
-
-    expect(submitted.status).toBe("submitted");
-    expect(() => submitted.addReply("annotation-1", {
-      id: "entry-2",
-      author: "Grace Hopper",
-      body: "Too late",
-      createdAt: "2026-08-29T10:02:00.000Z",
-    })).toThrow("submitted");
-    expect(() => submitted.upsertAnnotation(annotation({
-      id: "annotation-2",
-      entry: {
-        id: "entry-2",
-        author: "review-bot",
-        body: "Late import",
-        createdAt: "2026-08-29T10:03:00.000Z",
-        sourceKey: "provider:comment:100",
-      },
-    }))).toThrow("submitted");
-
-    const abandoned = review();
-    abandoned.abandon();
-
-    expect(abandoned.status).toBe("abandoned");
-    expect(() => abandoned.addAnnotation(annotation())).toThrow("abandoned");
-    expect(() => abandoned.markSubmitted()).toThrow("abandoned");
-  });
 });

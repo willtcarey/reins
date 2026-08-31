@@ -74,6 +74,28 @@ describe("WS client EventListener contract", () => {
     expect(received[0].event.type).toBe("task_updated");
   });
 
+  it("passes scoped code review invalidations", () => {
+    const received = simulateMessage({
+      type: "code_review_updated",
+      projectId: 7,
+      taskId: 11,
+      reviewId: "review-1",
+      revision: 3,
+    });
+
+    expect(received).toEqual([{
+      sessionId: "",
+      projectId: 7,
+      event: {
+        type: "code_review_updated",
+        projectId: 7,
+        taskId: 11,
+        reviewId: "review-1",
+        revision: 3,
+      },
+    }]);
+  });
+
   it("passes projectId for 'session_created' messages", () => {
     const received = simulateMessage({
       type: "session_created",

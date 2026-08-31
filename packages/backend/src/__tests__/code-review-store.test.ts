@@ -6,7 +6,6 @@ import {
   deleteCodeReview,
   getCodeReview,
   getOpenCodeReview,
-  listCodeReviews,
   saveCodeReview,
 } from "../code-review-store.js";
 import type { CodeReview } from "../models/code-review.js";
@@ -55,39 +54,16 @@ describe("code review store", () => {
     if (!loaded) throw new Error("Expected persisted code review");
 
     addComment(loaded, "First");
-    loaded.markSubmitted();
     const saved = saveCodeReview(loaded);
 
     expect(saved).not.toBe(loaded);
     expect(loaded.revision).toBe(0);
-    expect(saved).toMatchObject({
-      id: "review-1",
-      projectId,
-      taskId,
-      status: "submitted",
-      revision: 1,
-    });
+    expect(saved).toMatchObject({ id: "review-1", projectId, taskId, revision: 1 });
     expect(saved?.annotations[0]?.entries[0]?.body).toBe("First");
     expect(getCodeReview("review-1")).toMatchObject({
-      status: "submitted",
       revision: 1,
       annotations: [{ entries: [{ body: "First" }] }],
     });
-  });
-
-  test("lists review history in an exact project/task scope", () => {
-    const first = createCodeReview({ id: "review-1", projectId, taskId });
-    first.markSubmitted();
-    saveCodeReview(first);
-    createCodeReview({ id: "review-2", projectId, taskId });
-    createCodeReview({ id: "project-review", projectId, taskId: null });
-
-    expect(listCodeReviews({ projectId, taskId }).map((review) => review.id).toSorted())
-      .toEqual(["review-1", "review-2"]);
-    expect(getOpenCodeReview({ projectId, taskId })?.id).toBe("review-2");
-    expect(listCodeReviews({ projectId, taskId: null }).map((review) => review.id))
-      .toEqual(["project-review"]);
-    expect(getOpenCodeReview({ projectId, taskId: null })?.id).toBe("project-review");
   });
 
   test("allows only one open review in each task or project scope", () => {
@@ -96,10 +72,8 @@ describe("code review store", () => {
 
     expect(() => createCodeReview({ id: "second-task-review", projectId, taskId })).toThrow();
     expect(() => createCodeReview({ id: "second-project-review", projectId, taskId: null })).toThrow();
-    expect(listCodeReviews({ projectId, taskId }).map((review) => review.id))
-      .toEqual(["task-review"]);
-    expect(listCodeReviews({ projectId, taskId: null }).map((review) => review.id))
-      .toEqual(["project-review"]);
+    expect(getOpenCodeReview({ projectId, taskId })?.id).toBe("task-review");
+    expect(getOpenCodeReview({ projectId, taskId: null })?.id).toBe("project-review");
   });
 
   test("rejects saving a stale detached revision", () => {
@@ -109,11 +83,11 @@ describe("code review store", () => {
 
     addComment(original, "Ready");
     const saved = saveCodeReview(original);
-    stale.abandon();
+    addComment(stale, "Stale");
 
     expect(() => saveCodeReview(stale)).toThrow(CodeReviewRevisionConflictError);
-    expect(saved).toMatchObject({ status: "open", revision: 1 });
-    expect(getCodeReview("review-1")).toMatchObject({ status: "open", revision: 1 });
+    expect(saved).toMatchObject({ revision: 1 });
+    expect(getCodeReview("review-1")).toMatchObject({ revision: 1 });
   });
 
   test("returns null for a missing save and deletes persisted reviews", () => {

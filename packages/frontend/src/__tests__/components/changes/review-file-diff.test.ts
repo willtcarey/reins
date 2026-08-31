@@ -101,6 +101,38 @@ describe("ReviewFileDiff", () => {
     expect(renderOutput(item)).not.toContain("min-height:240px");
   });
 
+  test("remeasures the same height after the comment layout revision changes", () => {
+    const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
+    const comments = new ReviewComments();
+    comments.reconcile("scope", [{ fileId: fileChange.id, contentKey: fileChange.contentKey }]);
+    const item = new ReviewFileDiff();
+    const container = new ReviewFileDiff();
+    item.change = fileChange;
+    item.comments = comments;
+    item.getBoundingClientRect = () => testRect(137);
+    Object.defineProperty(item, "isConnected", { configurable: true, value: true });
+    const renderer: object = Reflect.get(item, "_diff");
+    item.render();
+    const requested = Reflect.get(renderer, "requested");
+    Reflect.set(renderer, "containerValue", container);
+    Reflect.set(renderer, "completed", requested);
+    const measurements: unknown[] = [];
+    item.onHeightChange = (_change, update) => measurements.push(update);
+
+    item.updated();
+    comments.dispatch({
+      type: "open-composer",
+      fileId: fileChange.id,
+      selection: { side: "new", startLine: 1, endLine: 1 },
+    });
+    item.updated();
+
+    expect(measurements).toEqual([
+      { kind: "measurement", height: 137 },
+      { kind: "measurement", height: 137 },
+    ]);
+  });
+
   test("does not emit for stale completion after Lit removes the current structure", () => {
     const parsed = parseFileChanges(PATCH, "project-7-v1");
     const fileChange = parsed.changes[0]!;
@@ -141,6 +173,36 @@ describe("ReviewFileDiff", () => {
     expect(output).toContain("src/example.ts");
     expect(output).not.toContain("data-pierre-file-diff");
     expect(toggledIds).toEqual([fileChange.id]);
+  });
+
+  test("shows the inline comment count with a comment icon in the file header", () => {
+    const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
+    const comments = new ReviewComments();
+    comments.reconcile("scope", [{ fileId: fileChange.id, contentKey: fileChange.contentKey }]);
+    for (const side of ["old", "new"] as const) {
+      comments.dispatch({
+        type: "open-composer",
+        fileId: fileChange.id,
+        selection: { side, startLine: 1, endLine: 1 },
+      });
+      comments.dispatch({ type: "update-draft", fileId: fileChange.id, body: `${side} note` });
+      comments.dispatch({ type: "save-comment", fileId: fileChange.id });
+    }
+    comments.dispatch({
+      type: "open-composer",
+      fileId: fileChange.id,
+      selection: { side: "new", startLine: 1, endLine: 1 },
+    });
+    const item = new ReviewFileDiff();
+    item.change = fileChange;
+    item.comments = comments;
+
+    const output = renderOutput(item);
+
+    expect(output).toContain("aria-label=2 inline comments");
+    expect(output).toContain(">2</span>");
+    expect(output).not.toContain("2 comments");
+    expect(output).not.toContain("draft");
   });
 
   test("keeps comment creation on selected diff lines instead of offering manual range entry", () => {

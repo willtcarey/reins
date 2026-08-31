@@ -13,11 +13,11 @@ import { StubClient } from "./helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
 import { messagePage } from "./helpers/conversations.js";
 
-function sessionDetail(isRunning: boolean) {
+function sessionDetail(isRunning: boolean, taskId: number | null = null) {
   return {
     id: "sess-1",
     projectId: 42,
-    taskId: null,
+    taskId,
     parentSessionId: null,
     name: null,
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -53,6 +53,40 @@ describe("AppStore reconnect catch-up", () => {
     client.fireConnection(true);
 
     expect(store.projectsStore.refreshFromServer).toHaveBeenCalled();
+  });
+
+  test("sets the code review scope from the viewed session", async () => {
+    const setScope = mock(async () => {});
+    store.codeReviewStore.setScope = setScope;
+    mockFetch((url) => {
+      if (url === "/api/sessions/sess-1") return Response.json(sessionDetail(false, 11));
+      if (url === "/api/sessions/sess-1/messages") return Response.json(messagePage());
+      return Response.json([]);
+    });
+
+    await store.setRoute("sess-1");
+
+    expect(setScope).toHaveBeenLastCalledWith({ projectId: 42, taskId: 11 });
+  });
+
+  test("applies scoped code review invalidations", () => {
+    const handleUpdated = mock(async () => {});
+    store.codeReviewStore.handleUpdated = handleUpdated;
+
+    client.fireEvent("", 7, {
+      type: "code_review_updated",
+      projectId: 7,
+      taskId: 11,
+      reviewId: "review-1",
+      revision: 2,
+    });
+
+    expect(handleUpdated).toHaveBeenCalledWith({
+      projectId: 7,
+      taskId: 11,
+      reviewId: "review-1",
+      revision: 2,
+    });
   });
 
   test("reconnect refreshes active session state", async () => {

@@ -2,6 +2,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { DiffStore } from "../../models/stores/diff-store.js";
 import type { DiffRenderer } from "../../models/stores/settings-store.js";
+import type { CodeReviewStore } from "../../models/stores/code-review-store.js";
 import type { DiffRendererPanel } from "./diff-renderer-panel.js";
 import "./diff-panel.js";
 import "./codeview-diff-panel.js";
@@ -14,7 +15,10 @@ export class DiffRendererShell extends LitElement {
   }
 
   @property({ attribute: false }) store: DiffStore | null = null;
+  @property({ attribute: false }) reviewStore: CodeReviewStore | null = null;
   @property({ type: Boolean }) visible = false;
+  @property() sessionId = "";
+  @property({ type: Boolean }) sessionRunning = false;
   @property() renderer: DiffRenderer = "classic";
 
   public scrollToFile(path: string) {
@@ -57,6 +61,9 @@ export class DiffRendererShell extends LitElement {
             <review-diff-panel
               class="block h-full min-h-0 ${this.visible ? "" : "hidden"}"
               .store=${store}
+              .reviewStore=${this.reviewStore}
+              .sessionId=${this.sessionId}
+              .sessionRunning=${this.sessionRunning}
               .visible=${this.visible}
             ></review-diff-panel>
           `;

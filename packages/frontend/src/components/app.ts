@@ -273,6 +273,9 @@ export class AppShell extends LitElement {
       <diff-renderer-shell
         class="block h-full min-h-0 min-w-0"
         .store=${store.diffStore}
+        .reviewStore=${store.codeReviewStore}
+        .sessionId=${store.sessionId}
+        .sessionRunning=${store.activeSessionStore?.sessionData?.activityState === "running"}
         .renderer=${diffRenderer}
         .visible=${visible}
         @active-file-change=${(e: CustomEvent<string | null>) => { this.activeDiffFile = e.detail; }}
@@ -286,6 +289,7 @@ export class AppShell extends LitElement {
         class="block h-full min-h-0 flex-1"
         data-swipe-surface
         .store=${store.diffStore}
+        .reviewStore=${store.codeReviewStore}
         .treeState=${this.fileTreeState}
         .activeFile=${this.activeDiffFile}
         @file-select=${(e: CustomEvent<string>) => this.handleChatFileSelect(e)}

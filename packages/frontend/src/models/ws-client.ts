@@ -66,6 +66,7 @@ export type ServerMessage =
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number }
+  | { type: "code_review_updated"; projectId: number; taskId: number | null; reviewId: string; revision: number }
   | { type: "user_message"; sessionId: string; projectId: number; message: ClientPromptContent }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
   | { type: "ack"; command: string }
@@ -81,6 +82,7 @@ export type FrontendEvent =
   | { type: "task_updated"; projectId: number }
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number }
+  | { type: "code_review_updated"; projectId: number; taskId: number | null; reviewId: string; revision: number }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
   | { type: "ws_ack"; command: string }
   | { type: "ws_error"; sessionId?: string; error: string };
@@ -290,6 +292,12 @@ export class AppClient implements IAppClient {
             sessionId: msg.sessionId,
             projectId: msg.projectId,
           });
+        }
+        break;
+
+      case "code_review_updated":
+        for (const listener of this.eventListeners) {
+          listener("", msg.projectId, msg);
         }
         break;
 

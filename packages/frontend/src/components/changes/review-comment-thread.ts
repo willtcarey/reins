@@ -100,12 +100,14 @@ export class ReviewCommentThread extends LitElement {
           <article class="mb-3 rounded-md border border-zinc-700 bg-zinc-800/80 p-3">
             <header class="mb-2 flex items-center justify-between gap-3">
               <strong class="text-xs text-zinc-300">${comment.author}</strong>
-              <button
-                type="button"
-                class="inline-flex min-h-11 items-center rounded px-3 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-red-300 focus-visible:outline-2 focus-visible:outline-sky-400"
-                aria-label="Delete comment"
-                @click=${() => this.deleteComment(comment.id)}
-              >Delete</button>
+              ${comment.canDelete ? html`
+                <button
+                  type="button"
+                  class="inline-flex min-h-11 items-center rounded px-3 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-red-300 focus-visible:outline-2 focus-visible:outline-sky-400"
+                  aria-label="Delete comment"
+                  @click=${() => this.deleteComment(comment.id)}
+                >Delete</button>
+              ` : nothing}
             </header>
             <p class="whitespace-pre-wrap break-words text-sm text-zinc-100">${comment.body}</p>
           </article>
@@ -119,6 +121,7 @@ export class ReviewCommentThread extends LitElement {
               id=${`inline-comment-${this.placementId}`}
               class="min-h-24 w-full resize-y rounded border border-zinc-600 bg-zinc-950 p-2 text-base text-zinc-100 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/30"
               .value=${placement.composer.body}
+              ?disabled=${placement.composer.saving}
               aria-describedby=${placement.composer.error ? `inline-comment-error-${this.placementId}` : nothing}
               @input=${this.updateDraft}
               @keydown=${this.handleComposerKeydown}
@@ -133,13 +136,15 @@ export class ReviewCommentThread extends LitElement {
                 type="button"
                 class="min-h-11 rounded px-4 text-sm text-zinc-300 hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-sky-400"
                 aria-label="Cancel comment"
+                ?disabled=${placement.composer.saving}
                 @click=${this.cancel}
               >Cancel</button>
               <button
                 type="submit"
                 class="min-h-11 rounded bg-sky-600 px-4 text-sm font-medium text-white hover:bg-sky-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400"
                 aria-label="Save comment"
-              >Save comment</button>
+                ?disabled=${placement.composer.saving}
+              >${placement.composer.saving ? "Saving…" : "Save comment"}</button>
             </div>
           </form>
         ` : nothing}

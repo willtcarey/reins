@@ -18,6 +18,7 @@ import {
 import { clientTelemetry } from "../../models/client-telemetry.js";
 import {
   addedFileIcon,
+  conversationIcon,
   deletedFileIcon,
   modifiedFileIcon,
   renamedFileIcon,
@@ -229,7 +230,8 @@ export class ReviewFileDiff extends LitElement {
     if (!change || this.collapsed || this._transitioning || !renderComplete) return;
     const height = this.getBoundingClientRect().height || this.offsetHeight;
     if (height <= 0) return;
-    const signature = `${change.id}:${change.contentKey}:${height}`;
+    const commentLayoutRevision = this.comments?.project(change.id).layoutRevision ?? 0;
+    const signature = `${change.id}:${change.contentKey}:comments-${commentLayoutRevision}:${height}`;
     if (signature === this._lastMeasurement) return;
     this._lastMeasurement = signature;
     clientTelemetry.record("review-virtualizer", "item-measurement", {
@@ -422,9 +424,9 @@ export class ReviewFileDiff extends LitElement {
                 </span>
               `
             : nothing}
-          ${comments && (comments.threadCount > 0 || comments.draftCount > 0) ? html`
-            <span class="shrink-0 rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-300" aria-label=${`${comments.threadCount} inline comments, ${comments.draftCount} drafts`}>
-              ${comments.threadCount} comment${comments.threadCount === 1 ? "" : "s"}${comments.draftCount ? ` · ${comments.draftCount} draft` : ""}
+          ${comments && comments.threadCount > 0 ? html`
+            <span class="inline-flex shrink-0 items-center gap-1 rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-300" aria-label=${`${comments.threadCount} inline comments`}>
+              ${conversationIcon("shrink-0", 12)}<span>${comments.threadCount}</span>
             </span>
           ` : nothing}
           <span class="flex shrink-0 items-center gap-1">

@@ -50,6 +50,13 @@ export type VirtualListObservation =
       readonly layoutVersion: number;
     }
   | {
+      readonly type: "measurement-rejected";
+      readonly measurement: VirtualListMeasurement;
+      readonly reason: "missing-item" | "fixed-height" | "stale-key" | "non-positive-height";
+      readonly itemHeight: number | null;
+      readonly layoutVersion: number;
+    }
+  | {
       readonly type: "measurement-batch";
       readonly submitted: number;
       readonly accepted: number;
@@ -177,7 +184,16 @@ export class VirtualListController implements ReactiveController {
           : measurement.height <= 0
             ? "non-positive-height"
             : null;
-    if (rejectionReason !== null) return;
+    if (rejectionReason !== null) {
+      this.emit({
+        type: "measurement-rejected",
+        measurement,
+        reason: rejectionReason,
+        itemHeight: item?.height ?? null,
+        layoutVersion: this.coordinator.layoutVersion,
+      });
+      return;
+    }
 
     this.pendingMeasurements.set(measurement.id, measurement);
     if (this.measurementFlushQueued) return;

@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import "../../helpers/local-storage.js";
 import { Loadable } from "../../../helpers/loadable.js";
 import { ReviewDiffPanel } from "../../../components/changes/review-diff-panel.js";
+import { ReviewComments } from "../../../models/changes/review-comments.js";
+import { CodeReviewStore } from "../../../models/stores/code-review-store.js";
 import { DiffStore, type DiffPatchData } from "../../../models/stores/diff-store.js";
 import {
   collectTemplateValues,
@@ -57,6 +59,66 @@ index 1111111..2222222 100644
 }
 
 describe("ReviewDiffPanel", () => {
+  test("keeps virtual layout subscribed when the code review store is replaced", () => {
+    const store = new DiffStore();
+    store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
+    const panel = new ReviewDiffPanel();
+    panel.store = store;
+    panel.reviewStore = new CodeReviewStore();
+    let updates = 0;
+    panel.requestUpdate = () => { updates += 1; };
+    const comments = Reflect.get(panel, "_comments");
+    if (!(comments instanceof ReviewComments)) throw new Error("Expected review comments");
+    const fileId = panel.itemIdForPath("src/example.ts");
+    if (!fileId) throw new Error("Expected file ID");
+
+    comments.dispatch({
+      type: "open-composer",
+      fileId,
+      selection: { side: "new", startLine: 1, endLine: 1 },
+    });
+
+    expect(updates).toBeGreaterThan(0);
+    store.dispose();
+  });
+
+  test("offers review submission only for an active review and an idle session", () => {
+    const store = new DiffStore();
+    store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
+    const reviewStore = new CodeReviewStore();
+    const panel = new ReviewDiffPanel();
+    panel.store = store;
+    panel.reviewStore = reviewStore;
+    panel.sessionId = "session-1";
+
+    expect(templateToString(panel.render())).not.toContain("Submit review");
+
+    reviewStore.review = {
+      id: "review-1",
+      projectId: 7,
+      taskId: 11,
+      revision: 1,
+      annotations: [{
+        id: "annotation-1",
+        anchor: {
+          path: "src/example.ts", oldPath: null, side: "new", startLine: 1, endLine: 1,
+          excerpt: "new", contextBefore: null, contextAfter: null, fileFingerprint: null,
+          baseRevision: null, headRevision: null,
+        },
+        entries: [{ id: "entry-1", author: "You", body: "Fix this", createdAt: "now" }],
+      }],
+      createdAt: "2026-08-30T10:00:00.000Z",
+      updatedAt: "2026-08-30T10:00:00.000Z",
+    };
+    panel.sessionRunning = false;
+    expect(templateToString(panel.render())).toContain("Submit review");
+    expect(templateToString(panel.render())).toContain("aria-disabled=false");
+
+    panel.sessionRunning = true;
+    expect(templateToString(panel.render())).toContain("aria-disabled=true");
+    store.dispose();
+  });
+
   test("refreshes a loaded patch when returning to the Changes tab", () => {
     const store = new DiffStore();
     store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());

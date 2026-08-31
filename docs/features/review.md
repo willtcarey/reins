@@ -20,9 +20,13 @@ Shows **only uncommitted working-tree changes** — edits that haven't been comm
 
 ## Inline comments (virtualized renderer)
 
-The experimental `virtualized` renderer supports inline review comments on old or new lines. Select a line number or drag a same-side line range, then use Pierre's gutter add action to open the inline composer. Comments can be saved, viewed below their anchored line, and deleted; an open composer can be canceled.
+The experimental `virtualized` renderer supports inline review comments on old or new lines. Select a line number or drag a same-side line range, then use Pierre's gutter add action to open the inline composer. Comments can be saved and viewed below their anchored line; an open composer can be canceled.
 
-Inline comments are currently kept only in memory for the open review panel. They survive file collapse/expand and virtual scrolling that unmounts and remounts a file, but they are not sent to the backend and can be lost on page refresh, project/session changes, or when the reviewed file content changes. They are not yet agent feedback, collaborative comments, or durable review records. Classic and `codeview` renderers do not show this comment interface.
+Saved comments are synchronized to the open code review for the selected session's exact project/task scope and return after page refresh. Unsaved composer text remains browser-local, survives file collapse/expand and virtual scrolling that remounts a file, and is discarded when its review scope or reviewed content changes. A saved comment remains attached to its original side and line range while that range still exists in the rendered diff, even when later edits change its text or the rest of the file.
+
+The fixed branch header includes **Submit review**. It is enabled when the open review has saved comments and the selected session is idle. Submission compiles saved comments into one concise ordinary user message organized by `file:line` references. Deleted-side locations add a `(deleted)` label. Comments at the same location form one thread, with later comments marked as replies; saved code excerpts and surrounding context are not repeated in the message. Reins sends it to the session selected at click time and never steers an active turn. Once the message and review deletion commit atomically, the consumed review disappears; saving another comment starts a new review. Progress and submission errors appear beside the header action.
+
+Outdated-thread navigation, reanchoring, deletion, and collaborative editing are not implemented yet. Classic and `codeview` renderers do not show this comment interface.
 
 Cross-side ranges are rejected. Files blocked by the large-file safeguard do not offer line comments because their line rows are not rendered.
 

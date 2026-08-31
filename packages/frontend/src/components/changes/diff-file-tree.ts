@@ -13,8 +13,10 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { DiffFileSummary } from "../../models/changes/types.js";
 import type { DiffStore } from "../../models/stores/diff-store.js";
+import type { CodeReviewStore } from "../../models/stores/code-review-store.js";
 import type { FileTreeState } from "../../models/changes/file-tree-state.js";
 import { fileSelectEvent } from "../events.js";
+import { conversationIcon } from "../icons.js";
 import "../tree-view.js";
 import type { TreeNode, RenderNodeTrailer } from "../tree-view.js";
 
@@ -112,10 +114,12 @@ export class DiffFileTree extends LitElement {
   }
 
   @property({ attribute: false }) store: DiffStore | null = null;
+  @property({ attribute: false }) reviewStore: CodeReviewStore | null = null;
   @property({ type: String }) activeFile: string | null = null;
   @property({ attribute: false }) treeState: FileTreeState | null = null;
 
   private _unsubscribe: (() => void) | null = null;
+  private _unsubscribeReview: (() => void) | null = null;
   private _unsubscribeTree: (() => void) | null = null;
 
   override connectedCallback() {
@@ -124,7 +128,7 @@ export class DiffFileTree extends LitElement {
   }
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("store") || changed.has("treeState")) {
+    if (changed.has("store") || changed.has("reviewStore") || changed.has("treeState")) {
       this._subscribe();
     }
   }
@@ -132,16 +136,22 @@ export class DiffFileTree extends LitElement {
   override disconnectedCallback() {
     super.disconnectedCallback();
     this._unsubscribe?.();
+    this._unsubscribeReview?.();
     this._unsubscribeTree?.();
   }
 
   private _subscribe() {
     this._unsubscribe?.();
     this._unsubscribe = null;
+    this._unsubscribeReview?.();
+    this._unsubscribeReview = null;
     this._unsubscribeTree?.();
     this._unsubscribeTree = null;
     if (this.store) {
       this._unsubscribe = this.store.subscribe(() => this.requestUpdate());
+    }
+    if (this.reviewStore) {
+      this._unsubscribeReview = this.reviewStore.subscribe(() => this.requestUpdate());
     }
     if (this.treeState) {
       this._unsubscribeTree = this.treeState.subscribe(() => this.requestUpdate());
@@ -170,12 +180,25 @@ export class DiffFileTree extends LitElement {
   private _renderNodeTrailer: RenderNodeTrailer = (node) => {
     if (node.type !== "file") return nothing;
     const stats = statsMap.get(node.path);
-    if (!stats) return nothing;
-    const { additions, removals } = stats;
-    if (additions === 0 && removals === 0) return nothing;
+    const additions = stats?.additions ?? 0;
+    const removals = stats?.removals ?? 0;
+    const commentCount = this.reviewStore?.review
+      ? this.reviewStore.review.annotations
+        .filter((annotation) => annotation.anchor.path === node.path)
+        .reduce((count, annotation) => count + annotation.entries.length, 0)
+      : 0;
+    if (additions === 0 && removals === 0 && commentCount === 0) return nothing;
+    const commentLabel = `${commentCount} review comment${commentCount === 1 ? "" : "s"}`;
 
     return html`
       <span class="ml-auto flex items-center gap-1.5 shrink-0 pl-2">
+        ${commentCount > 0 ? html`
+          <span
+            class="inline-flex items-center gap-0.5 text-blue-300 font-mono text-[10px]"
+            aria-label=${commentLabel}
+            title=${commentLabel}
+          >${conversationIcon("shrink-0", 11)}${commentCount}</span>
+        ` : nothing}
         ${additions > 0
           ? html`<span class="text-green-400 font-mono text-[10px]">+${additions}</span>`
           : nothing}

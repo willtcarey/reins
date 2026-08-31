@@ -45,7 +45,7 @@ Do not introduce another owner for top-level item positions or scroll correction
 - The Pierre adapter does not report completion for placeholder renders. `ReviewFileDiff` measures only its own host and does not inspect Pierre-owned or spring-owned DOM.
 - Opening a body taller than the review viewport springs only through one viewport of height before releasing to its full natural height. This keeps the visible reveal perceptible instead of traversing a multi-viewport target mostly below the fold; the final geometry release may move only siblings that are already offscreen. Closing continues to spring from the currently rendered height.
 - Expanded measurements are retained by project, branch, item, and content fingerprint across a collapse/expand cycle; collapsed geometry temporarily overrides them without replacing them.
-- The panel enriches accepted content measurements with the current measurement key; the generic controller commits them to the coordinator in a microtask batch, and the coordinator adds the retained leading gap rather than requiring the panel to modify measurements.
+- The panel enriches accepted content measurements with the current measurement key; comment layout notifications advance that key synchronously before mounted file listeners can submit the corresponding DOM measurement. `ReviewFileDiff` deduplicates measurements against the same comment layout revision, so a new revision can re-submit an unchanged numeric height. The generic controller commits measurements to the coordinator in a microtask batch, and the coordinator adds the retained leading gap rather than requiring the panel to modify measurements.
 
 ### Reserved geometry
 

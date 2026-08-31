@@ -3,13 +3,6 @@ import { Type, type Static } from "@sinclair/typebox";
 const NonEmptyStringSchema = Type.String({ minLength: 1, pattern: "\\S" });
 const NullableStringSchema = Type.Union([Type.String(), Type.Null()]);
 
-export const CodeReviewStatusSchema = Type.Union([
-  Type.Literal("open"),
-  Type.Literal("submitted"),
-  Type.Literal("abandoned"),
-]);
-export type CodeReviewStatus = Static<typeof CodeReviewStatusSchema>;
-
 export const ReviewSideSchema = Type.Union([Type.Literal("old"), Type.Literal("new")]);
 export type ReviewSide = Static<typeof ReviewSideSchema>;
 
@@ -68,7 +61,6 @@ export const CodeReviewStateSchema = Type.Object({
   id: NonEmptyStringSchema,
   projectId: Type.Integer({ minimum: 1 }),
   taskId: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
-  status: CodeReviewStatusSchema,
   revision: Type.Integer({ minimum: 0 }),
   annotations: Type.Array(ReviewAnnotationSchema),
   createdAt: NonEmptyStringSchema,
@@ -101,13 +93,11 @@ export class CodeReview {
   readonly createdAt: string;
   readonly updatedAt: string;
   annotations: ReviewAnnotation[];
-  private currentStatus: CodeReviewStatus;
 
   private constructor(state: CodeReviewState) {
     this.id = state.id;
     this.projectId = state.projectId;
     this.taskId = state.taskId;
-    this.currentStatus = state.status;
     this.revision = state.revision;
     this.createdAt = state.createdAt;
     this.updatedAt = state.updatedAt;
@@ -118,17 +108,12 @@ export class CodeReview {
     return new CodeReview(state);
   }
 
-  get status(): CodeReviewStatus {
-    return this.currentStatus;
-  }
-
   /** Return the authoritative transport/persistence shape without exposing internals. */
   toJSON(): CodeReviewState {
     return {
       id: this.id,
       projectId: this.projectId,
       taskId: this.taskId,
-      status: this.status,
       revision: this.revision,
       annotations: this.annotations,
       createdAt: this.createdAt,
@@ -137,7 +122,6 @@ export class CodeReview {
   }
 
   addAnnotation(input: NewReviewAnnotation): void {
-    this.ensureOpen("add annotations to");
     this.ensureValidAnchor(input.anchor);
 
     if (this.findIdentityCollision(input.id, input.entry)) {
@@ -149,7 +133,6 @@ export class CodeReview {
 
   /** Import or refresh an annotation using a review-wide source identity. */
   upsertAnnotation(input: NewReviewAnnotation): void {
-    this.ensureOpen("upsert annotations in");
     const sourceKey = input.entry.sourceKey;
     if (sourceKey == null) {
       throw new CodeReviewError("Review annotation upsert requires sourceKey", "invalid");
@@ -167,7 +150,6 @@ export class CodeReview {
   }
 
   addReply(annotationId: string, entry: ReviewEntry): void {
-    this.ensureOpen("add replies to");
     if (this.findIdentityCollision(null, entry)) {
       throw new CodeReviewError("Review entry identity is already in use", "conflict");
     }
@@ -176,25 +158,6 @@ export class CodeReview {
       throw new CodeReviewError(`Review annotation not found: ${annotationId}`, "not-found");
     }
     annotation.entries.push(entry);
-  }
-
-  markSubmitted(): void {
-    this.transitionTo("submitted");
-  }
-
-  abandon(): void {
-    this.transitionTo("abandoned");
-  }
-
-  private transitionTo(status: Exclude<CodeReviewStatus, "open">): void {
-    this.ensureOpen(`mark as ${status}`);
-    this.currentStatus = status;
-  }
-
-  private ensureOpen(action: string): void {
-    if (this.status !== "open") {
-      throw new CodeReviewError(`Cannot ${action} ${this.status} code review`, "conflict");
-    }
   }
 
   private ensureValidAnchor(anchor: ReviewAnchorEvidence): void {

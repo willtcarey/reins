@@ -195,6 +195,47 @@ const MIGRATIONS: Migration[] = [
        ON code_reviews(project_id)
        WHERE status = 'open' AND task_id IS NULL`,
   ],
+  [
+    "024_add_code_review_submission_receipt",
+    `ALTER TABLE code_reviews ADD COLUMN submitted_session_id TEXT;
+     ALTER TABLE code_reviews ADD COLUMN submitted_message_id INTEGER;
+     CREATE UNIQUE INDEX idx_code_reviews_submitted_message
+       ON code_reviews(submitted_message_id)
+       WHERE submitted_message_id IS NOT NULL`,
+  ],
+  [
+    "025_make_code_reviews_pending_only",
+    `PRAGMA foreign_keys = OFF;
+     DROP INDEX idx_code_reviews_scope;
+     DROP INDEX idx_code_reviews_open_task_scope;
+     DROP INDEX idx_code_reviews_open_project_scope;
+     DROP INDEX idx_code_reviews_submitted_message;
+     ALTER TABLE code_reviews RENAME TO code_review_history;
+     CREATE TABLE code_reviews (
+       id TEXT PRIMARY KEY,
+       project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+       task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+       annotations_json TEXT NOT NULL CHECK(json_valid(annotations_json)),
+       revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+     );
+     INSERT INTO code_reviews
+       (id, project_id, task_id, annotations_json, revision, created_at, updated_at)
+       SELECT id, project_id, task_id, annotations_json, revision, created_at, updated_at
+       FROM code_review_history
+       WHERE status = 'open';
+     DROP TABLE code_review_history;
+     CREATE INDEX idx_code_reviews_scope
+       ON code_reviews(project_id, task_id, updated_at DESC);
+     CREATE UNIQUE INDEX idx_code_reviews_pending_task_scope
+       ON code_reviews(project_id, task_id)
+       WHERE task_id IS NOT NULL;
+     CREATE UNIQUE INDEX idx_code_reviews_pending_project_scope
+       ON code_reviews(project_id)
+       WHERE task_id IS NULL;
+     PRAGMA foreign_keys = ON`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

@@ -1,3 +1,9 @@
+import type {
+  CodeReviewState,
+  NewReviewAnnotation,
+  ReviewAnnotation,
+} from "../stores/code-review-store.js";
+
 export type ReviewSide = "old" | "new";
 
 export interface ReviewLineSelection {
@@ -16,14 +22,16 @@ export interface ReviewLineRange {
 export interface ReviewComment {
   readonly id: string;
   readonly body: string;
-  readonly author: "You";
+  readonly author: string;
   readonly range: ReviewLineRange;
+  readonly canDelete: boolean;
 }
 
 export interface ReviewCommentComposer {
   readonly body: string;
   readonly error: string | null;
   readonly range: ReviewLineRange;
+  readonly saving: boolean;
 }
 
 export interface ReviewCommentThread {
@@ -57,6 +65,20 @@ export type ReviewCommentResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly error: string };
 
+export interface ReviewCommentsPersistence {
+  readonly review: CodeReviewState | null;
+  subscribe(listener: () => void): () => void;
+  addAnnotation(annotation: NewReviewAnnotation): Promise<CodeReviewState>;
+}
+
+export interface ReviewCommentFile {
+  readonly fileId: string;
+  readonly contentKey: string;
+  readonly path?: string;
+  readonly oldPath?: string | null;
+  readonly lineText?: (side: ReviewSide, line: number) => string | null;
+}
+
 export interface ReviewCommentsChange {
   readonly fileId: string;
   readonly placementId: string | null;
@@ -66,6 +88,7 @@ export interface ReviewCommentsChange {
 
 interface StoredComment extends ReviewComment {
   readonly placementId: string;
+  readonly persisted: boolean;
 }
 
 interface StoredDraft {
@@ -74,6 +97,7 @@ interface StoredDraft {
   readonly range: ReviewLineRange;
   body: string;
   error: string | null;
+  saving: boolean;
 }
 
 interface ActiveSelection {
@@ -115,7 +139,7 @@ export function normalizeReviewLineRange(
  */
 export class ReviewComments {
   private scopeKey = "";
-  private fileContentKeys = new Map<string, string>();
+  private files = new Map<string, ReviewCommentFile>();
   private comments: StoredComment[] = [];
   private drafts = new Map<string, StoredDraft>();
   private selection: ActiveSelection | null = null;
@@ -124,6 +148,19 @@ export class ReviewComments {
   private layoutRevisions = new Map<string, number>();
   private listeners = new Set<(change: ReviewCommentsChange) => void>();
   private nextCommentId = 1;
+  private unsubscribePersistence: (() => void) | null = null;
+  private syncedReview: CodeReviewState | null | undefined;
+
+  constructor(private readonly persistence: ReviewCommentsPersistence | null = null) {
+    if (persistence) {
+      this.unsubscribePersistence = persistence.subscribe(() => this.syncPersistedComments());
+    }
+  }
+
+  dispose(): void {
+    this.unsubscribePersistence?.();
+    this.unsubscribePersistence = null;
+  }
 
   get activeComposerFileId(): string | null {
     return this.activeDraftKey ? this.drafts.get(this.activeDraftKey)?.fileId ?? null : null;
@@ -136,20 +173,20 @@ export class ReviewComments {
 
   reconcile(
     scopeKey: string,
-    files: readonly { readonly fileId: string; readonly contentKey: string }[],
+    files: readonly ReviewCommentFile[],
   ): void {
     if (this.scopeKey && this.scopeKey !== scopeKey) this.clear();
     this.scopeKey = scopeKey;
-    const nextFiles = new Map(files.map((file) => [file.fileId, file.contentKey]));
+    const nextFiles = new Map(files.map((file) => [file.fileId, file]));
     const invalidFiles = new Set<string>();
-    for (const [fileId, contentKey] of this.fileContentKeys) {
-      if (nextFiles.get(fileId) !== contentKey) invalidFiles.add(fileId);
+    for (const [fileId, file] of this.files) {
+      if (nextFiles.get(fileId)?.contentKey !== file.contentKey) invalidFiles.add(fileId);
     }
     if (invalidFiles.size > 0) {
       const invalidSelectionFileId = this.selection && invalidFiles.has(this.selection.fileId)
         ? this.selection.fileId
         : null;
-      this.comments = this.comments.filter((comment) => !invalidFiles.has(fileIdFromPlacement(comment.placementId)));
+      this.comments = this.comments.filter((comment) => comment.persisted || !invalidFiles.has(fileIdFromPlacement(comment.placementId)));
       for (const [key, draft] of this.drafts) {
         if (invalidFiles.has(draft.fileId)) this.drafts.delete(key);
       }
@@ -161,7 +198,8 @@ export class ReviewComments {
         this.notify(fileId, null, true, fileId === invalidSelectionFileId);
       }
     }
-    this.fileContentKeys = nextFiles;
+    this.files = nextFiles;
+    this.syncPersistedComments(true);
   }
 
   clear(): void {
@@ -176,7 +214,7 @@ export class ReviewComments {
     this.selection = null;
     this.activeDraftKey = null;
     this.errors.clear();
-    this.fileContentKeys.clear();
+    this.files.clear();
     this.layoutRevisions.clear();
     for (const fileId of affected) this.notify(fileId, null, true, fileId === selectionFileId);
   }
@@ -203,7 +241,7 @@ export class ReviewComments {
         side: range.side,
         lineNumber: range.endLine,
         range,
-        comments: storedComments.map(({ placementId: _placementId, ...comment }) => comment),
+        comments: storedComments.map(({ placementId: _placementId, persisted: _persisted, ...comment }) => comment),
         composer: draft ? composerFromDraft(draft) : null,
       } satisfies ReviewCommentThread;
     }).toSorted((left, right) => left.lineNumber - right.lineNumber || left.side.localeCompare(right.side));
@@ -219,7 +257,7 @@ export class ReviewComments {
     };
   }
 
-  dispatch(command: ReviewCommentCommand): ReviewCommentResult {
+  dispatch(command: ReviewCommentCommand): ReviewCommentResult | Promise<ReviewCommentResult> {
     switch (command.type) {
       case "select":
         return this.select(command.fileId, command.selection);
@@ -259,7 +297,7 @@ export class ReviewComments {
     const key = draftKey(fileId, range);
     let draft = this.drafts.get(key);
     if (!draft) {
-      draft = { fileId, placementId: id, range, body: "", error: null };
+      draft = { fileId, placementId: id, range, body: "", error: null, saving: false };
       this.drafts.set(key, draft);
     }
     const previousFileId = this.activeComposerFileId;
@@ -284,26 +322,28 @@ export class ReviewComments {
     return { ok: true };
   }
 
-  private saveComment(fileId: string): ReviewCommentResult {
+  private saveComment(fileId: string): ReviewCommentResult | Promise<ReviewCommentResult> {
     const draft = this.activeDraft(fileId);
     if (!draft) return this.reject(fileId, "Open a comment composer first.");
+    if (draft.saving) return { ok: true };
     const body = draft.body.trim();
     if (!body) {
       draft.error = "Enter a comment before saving.";
       this.notify(fileId, draft.placementId, false);
       return { ok: false, error: draft.error };
     }
+    if (this.persistence) return this.persistComment(fileId, draft, body);
+
     this.comments.push({
       id: `inline-comment-${this.nextCommentId++}`,
       placementId: draft.placementId,
       body,
       author: "You",
       range: draft.range,
+      persisted: false,
+      canDelete: true,
     });
-    this.drafts.delete(this.activeDraftKey!);
-    this.activeDraftKey = null;
-    this.bumpLayout(fileId);
-    this.notify(fileId, draft.placementId, true);
+    this.finishSavedDraft(fileId, draft);
     return { ok: true };
   }
 
@@ -321,10 +361,120 @@ export class ReviewComments {
   private deleteComment(fileId: string, commentId: string): ReviewCommentResult {
     const comment = this.comments.find((candidate) => candidate.id === commentId);
     if (!comment || fileIdFromPlacement(comment.placementId) !== fileId) return { ok: true };
+    if (comment.persisted) return this.reject(fileId, "Deleting saved review comments is not supported yet.");
     this.comments = this.comments.filter((candidate) => candidate.id !== commentId);
     this.bumpLayout(fileId);
     this.notify(fileId, comment.placementId, true);
     return { ok: true };
+  }
+
+  private async persistComment(fileId: string, draft: StoredDraft, body: string): Promise<ReviewCommentResult> {
+    const file = this.files.get(fileId);
+    if (!file?.path) return this.reject(fileId, "This file cannot be anchored for review.");
+    draft.saving = true;
+    this.notify(fileId, draft.placementId, false);
+    const lineText = file.lineText ?? (() => null);
+    const annotation: NewReviewAnnotation = {
+      id: newIdentity("annotation"),
+      anchor: {
+        path: file.path,
+        oldPath: file.oldPath ?? null,
+        side: draft.range.side,
+        startLine: draft.range.startLine,
+        endLine: draft.range.endLine,
+        excerpt: linesForRange(draft.range, lineText).join("\n"),
+        contextBefore: lineText(draft.range.side, draft.range.startLine - 1),
+        contextAfter: lineText(draft.range.side, draft.range.endLine + 1),
+        fileFingerprint: file.contentKey,
+        baseRevision: null,
+        headRevision: null,
+      },
+      entry: {
+        id: newIdentity("entry"),
+        author: "You",
+        body,
+        createdAt: new Date().toISOString(),
+      },
+    };
+
+    try {
+      await this.persistence!.addAnnotation(annotation);
+      this.finishSavedDraft(fileId, draft);
+      return { ok: true };
+    } catch (error) {
+      draft.saving = false;
+      draft.error = error instanceof Error ? error.message : String(error);
+      this.notify(fileId, draft.placementId, false);
+      return { ok: false, error: draft.error };
+    }
+  }
+
+  private finishSavedDraft(fileId: string, draft: StoredDraft): void {
+    const key = draftKey(fileId, draft.range);
+    this.drafts.delete(key);
+    if (this.activeDraftKey === key) this.activeDraftKey = null;
+    this.bumpLayout(fileId);
+    this.notify(fileId, draft.placementId, true);
+  }
+
+  private syncPersistedComments(force = false): void {
+    if (!this.persistence) return;
+    if (!force && this.syncedReview === this.persistence.review) return;
+    this.syncedReview = this.persistence.review;
+    const previousFileIds = new Set(this.comments.filter((comment) => comment.persisted).map(
+      (comment) => fileIdFromPlacement(comment.placementId),
+    ));
+    this.comments = this.comments.filter((comment) => !comment.persisted);
+    for (const annotation of this.persistence.review?.annotations ?? []) {
+      const file = this.fileForAnnotation(annotation);
+      if (!file) continue;
+      previousFileIds.add(file.fileId);
+      const range = {
+        side: annotation.anchor.side,
+        startLine: annotation.anchor.startLine,
+        endLine: annotation.anchor.endLine,
+      };
+      const id = placementId(file.fileId, range);
+      for (const entry of annotation.entries) {
+        this.comments.push({
+          id: entry.id,
+          placementId: id,
+          body: entry.body,
+          author: entry.author,
+          range,
+          persisted: true,
+          canDelete: false,
+        });
+      }
+    }
+    for (const fileId of previousFileIds) {
+      this.bumpLayout(fileId);
+      this.notify(fileId, null, true);
+    }
+  }
+
+  private fileForAnnotation(annotation: ReviewAnnotation): ReviewCommentFile | null {
+    for (const file of this.files.values()) {
+      const pathMatches = file.path === annotation.anchor.path || file.oldPath === annotation.anchor.path;
+      if (!pathMatches) continue;
+
+      if (file.lineText) {
+        let rangeExists = true;
+        for (let line = annotation.anchor.startLine; line <= annotation.anchor.endLine; line += 1) {
+          if (file.lineText(annotation.anchor.side, line) === null) {
+            rangeExists = false;
+            break;
+          }
+        }
+        if (rangeExists) return file;
+        continue;
+      }
+
+      const fingerprintMatches = annotation.anchor.fileFingerprint === null
+        || annotation.anchor.fileFingerprint === file.contentKey;
+      if (fingerprintMatches) return file;
+    }
+    return null;
   }
 
   private activeDraft(fileId: string): StoredDraft | null {
@@ -355,7 +505,7 @@ export class ReviewComments {
 }
 
 function composerFromDraft(draft: StoredDraft): ReviewCommentComposer {
-  return { body: draft.body, error: draft.error, range: draft.range };
+  return { body: draft.body, error: draft.error, range: draft.range, saving: draft.saving };
 }
 
 function placementId(fileId: string, range: ReviewLineRange): string {
@@ -368,4 +518,21 @@ function fileIdFromPlacement(id: string): string {
 
 function draftKey(fileId: string, range: ReviewLineRange): string {
   return `${placementId(fileId, range)}:${range.startLine}-${range.endLine}`;
+}
+
+function linesForRange(
+  range: ReviewLineRange,
+  lineText: (side: ReviewSide, line: number) => string | null,
+): string[] {
+  const lines: string[] = [];
+  for (let line = range.startLine; line <= range.endLine; line += 1) {
+    const text = lineText(range.side, line);
+    if (text !== null) lines.push(text);
+  }
+  return lines;
+}
+
+function newIdentity(prefix: string): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }

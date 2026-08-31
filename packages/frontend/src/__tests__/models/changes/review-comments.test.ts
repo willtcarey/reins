@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import {
   ReviewComments,
   normalizeReviewLineRange,
+  type ReviewCommentsPersistence,
 } from "../../../models/changes/review-comments.js";
+import type {
+  CodeReviewState,
+  NewReviewAnnotation,
+} from "../../../models/stores/code-review-store.js";
 
 describe("ReviewComments", () => {
   test("normalizes same-side ranges and rejects cross-side selections", () => {
@@ -83,6 +88,162 @@ describe("ReviewComments", () => {
     comments.reconcile("scope", [{ fileId: "file-a", contentKey: "changed" }]);
     expect(comments.project("file-a").placements).toEqual([]);
     expect(comments.project("file-a").composer).toBeNull();
+  });
+
+  test("keeps a saved comment at its line number when the reviewed file changes", () => {
+    const persistence: ReviewCommentsPersistence = {
+      review: {
+        id: "review-1",
+        projectId: 7,
+        taskId: 11,
+        revision: 1,
+        annotations: [{
+          id: "annotation-1",
+          anchor: {
+            path: "src/example.ts",
+            oldPath: null,
+            side: "new",
+            startLine: 2,
+            endLine: 2,
+            excerpt: "original text",
+            contextBefore: null,
+            contextAfter: null,
+            fileFingerprint: "old-content",
+            baseRevision: null,
+            headRevision: null,
+          },
+          entries: [{
+            id: "entry-1",
+            author: "You",
+            body: "Still show this",
+            createdAt: "2026-08-30T10:00:00.000Z",
+          }],
+        }],
+        createdAt: "2026-08-30T10:00:00.000Z",
+        updatedAt: "2026-08-30T10:00:00.000Z",
+      },
+      subscribe: () => () => {},
+      async addAnnotation() { throw new Error("Not used"); },
+    };
+    const comments = new ReviewComments(persistence);
+
+    comments.reconcile("scope", [{
+      fileId: "file-a",
+      contentKey: "new-content",
+      path: "src/example.ts",
+      lineText: (_side, line) => line === 2 ? "changed text" : null,
+    }]);
+
+    expect(comments.project("file-a").placements[0]).toMatchObject({
+      lineNumber: 2,
+      comments: [{ body: "Still show this" }],
+    });
+
+    comments.reconcile("scope", [{
+      fileId: "file-a",
+      contentKey: "newer-content",
+      path: "src/example.ts",
+      lineText: () => null,
+    }]);
+
+    expect(comments.project("file-a").placements).toEqual([]);
+  });
+
+  test("loads server annotations and saves new comments through the review store", async () => {
+    let review: CodeReviewState | null = {
+      id: "review-1",
+      projectId: 7,
+      taskId: 11,
+      revision: 1,
+      annotations: [{
+        id: "annotation-existing",
+        anchor: {
+          path: "src/example.ts",
+          oldPath: null,
+          side: "new",
+          startLine: 2,
+          endLine: 2,
+          excerpt: "new line",
+          contextBefore: "first line",
+          contextAfter: null,
+          fileFingerprint: "content-a",
+          baseRevision: null,
+          headRevision: null,
+        },
+        entries: [{
+          id: "entry-existing",
+          author: "Reviewer",
+          body: "Existing note",
+          createdAt: "2026-08-30T10:00:00.000Z",
+        }],
+      }],
+      createdAt: "2026-08-30T10:00:00.000Z",
+      updatedAt: "2026-08-30T10:00:00.000Z",
+    };
+    const saved: NewReviewAnnotation[] = [];
+    const listeners = new Set<() => void>();
+    const persistence: ReviewCommentsPersistence = {
+      get review() { return review; },
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      async addAnnotation(annotation) {
+        saved.push(annotation);
+        review = {
+          ...review!,
+          revision: 2,
+          annotations: [...review!.annotations, {
+            id: annotation.id,
+            anchor: annotation.anchor,
+            entries: [annotation.entry],
+          }],
+        };
+        for (const listener of listeners) listener();
+        return review;
+      },
+    };
+    const comments = new ReviewComments(persistence);
+    comments.reconcile("scope", [{
+      fileId: "file-a",
+      contentKey: "content-a",
+      path: "src/example.ts",
+      oldPath: null,
+      lineText: (_side, line) => ["first line", "new line", "last line"][line - 1] ?? null,
+    }]);
+
+    expect(comments.project("file-a").placements[0]?.comments[0]).toMatchObject({
+      id: "entry-existing",
+      author: "Reviewer",
+      body: "Existing note",
+    });
+
+    await comments.dispatch({
+      type: "open-composer",
+      fileId: "file-a",
+      selection: { side: "new", startLine: 3, endLine: 3 },
+    });
+    await comments.dispatch({ type: "update-draft", fileId: "file-a", body: "New note" });
+    await comments.dispatch({ type: "save-comment", fileId: "file-a" });
+
+    expect(saved[0]).toMatchObject({
+      anchor: {
+        path: "src/example.ts",
+        oldPath: null,
+        side: "new",
+        startLine: 3,
+        endLine: 3,
+        excerpt: "last line",
+        contextBefore: "new line",
+        contextAfter: null,
+        fileFingerprint: "content-a",
+      },
+      entry: { author: "You", body: "New note" },
+    });
+    expect(comments.project("file-a").placements.flatMap((placement) => placement.comments).map((comment) => comment.body)).toEqual([
+      "Existing note",
+      "New note",
+    ]);
   });
 
   test("validates empty comments and cancels a draft without creating a thread", () => {

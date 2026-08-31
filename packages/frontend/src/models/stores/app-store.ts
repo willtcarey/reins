@@ -18,6 +18,7 @@ import { ConversationsStore } from "./conversations-store.js";
 import { SessionCache } from "./session-cache.js";
 import { SettingsStore } from "./settings-store.js";
 import { openInBrowserEvent } from "../../components/events.js";
+import { CodeReviewStore } from "./code-review-store.js";
 
 // Tools that modify files and should trigger a diff refresh
 const FILE_MODIFYING_TOOLS = new Set(["write", "edit", "bash"]);
@@ -44,6 +45,9 @@ export class AppStore {
   /** Diff/sync sub-store — owned and coordinated by AppStore. */
   readonly diffStore = new DiffStore();
 
+  /** Server-synced code review state for the viewed session's exact scope. */
+  readonly codeReviewStore = new CodeReviewStore();
+
   /** Shared persisted settings state for app-wide preferences and the settings panel. */
   readonly settingsStore = new SettingsStore();
 
@@ -66,6 +70,7 @@ export class AppStore {
     this._unsubChildren = [
       this.projectsStore.subscribe(() => this.notify()),
       this.diffStore.subscribe(() => this.notify()),
+      this.codeReviewStore.subscribe(() => this.notify()),
       this.settingsStore.subscribe(() => this.notify()),
     ];
 
@@ -87,6 +92,12 @@ export class AppStore {
       // Handle task_updated broadcast (not tagged with a sessionId)
       if (event.type === "task_updated") {
         void this.projectsStore.handleTaskUpdated(event.projectId);
+        return;
+      }
+
+      if (event.type === "code_review_updated") {
+        const { projectId: reviewProjectId, taskId, reviewId, revision } = event;
+        void this.codeReviewStore.handleUpdated({ projectId: reviewProjectId, taskId, reviewId, revision });
         return;
       }
 
@@ -133,6 +144,7 @@ export class AppStore {
     this._unsubscribeActiveSession = null;
     this.activeSessionStore?.dispose();
     this.activeSessionStore = null;
+    void this.codeReviewStore.setScope(null);
     this.notify();
   }
 
@@ -193,6 +205,14 @@ export class AppStore {
     // previous route was still fetching. The newer route owns AppStore-level
     // coordination from here.
     if (this.activeSessionStore !== activeSession) return;
+
+    const reviewProjectId = activeSession.sessionData?.projectId;
+    if (reviewProjectId != null) {
+      void this.codeReviewStore.setScope({
+        projectId: reviewProjectId,
+        taskId: activeSession.sessionData?.taskId ?? null,
+      });
+    }
 
     // Update diff store project when it changes
     if (this.projectId !== previousProjectId) {
@@ -305,6 +325,7 @@ export class AppStore {
       await Promise.allSettled([
         this.projectsStore.refreshFromServer(),
         activeSessionStore?.refreshFromServer(),
+        this.codeReviewStore.refresh(),
       ]);
       this.activeConversationsStore.pruneInactive();
     })().finally(() => {

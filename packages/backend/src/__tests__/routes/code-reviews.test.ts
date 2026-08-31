@@ -2,11 +2,27 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createTask } from "../../task-store.js";
+import { createSession, updateActivityState } from "../../session-store.js";
+import { loadMessages } from "../../messages-store.js";
+import type { AgentRuntime } from "../../runtimes/registry.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import type { WsClient } from "../../state.js";
+
+function reviewRuntime(prompts: unknown[]): AgentRuntime {
+  return {
+    prompt(message) { prompts.push(message); return Promise.resolve(); },
+    async steer() {},
+    async abort() {},
+    async setModel() {},
+    subscribe() { return () => {}; },
+    async getMessages() { return []; },
+    isStreaming() { return false; },
+    async close() {},
+  };
+}
 
 const annotation = {
   id: "annotation-client-1",
@@ -58,7 +74,7 @@ describe("code review routes", () => {
     const created = await router.handle(makeRequest("POST", `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`, { annotation }), state);
     expect(created?.status).toBe(201);
     const review = await created!.json();
-    expect(review).toMatchObject({ projectId, taskId, status: "open", revision: 1 });
+    expect(review).toMatchObject({ projectId, taskId, revision: 1 });
     expect(review.annotations[0]).toEqual({ id: annotation.id, anchor: annotation.anchor, entries: [annotation.entry] });
 
     const loaded = await router.handle(makeRequest("GET", resource), state);
@@ -69,7 +85,6 @@ describe("code review routes", () => {
       taskId,
       reviewId: review.id,
       revision: 1,
-      status: "open",
     });
     expect(sent[0]).not.toContain(annotation.entry.body);
   });
@@ -81,7 +96,7 @@ describe("code review routes", () => {
     const created = await router.handle(makeRequest("POST", `${resource}/annotations`, { annotation }), state);
     expect(created?.status).toBe(201);
     const review = await created!.json();
-    expect(review).toMatchObject({ projectId, taskId: null, status: "open", revision: 1 });
+    expect(review).toMatchObject({ projectId, taskId: null, revision: 1 });
     expect(await (await router.handle(makeRequest("GET", resource), state))!.json()).toEqual(review);
   });
 
@@ -115,6 +130,109 @@ describe("code review routes", () => {
     expect(stale?.status).toBe(409);
     expect((await stale!.json()).error).toContain("revision");
     expect(sent).toHaveLength(1);
+  });
+
+  test("submits saved comments as one durable prompt to the selected idle session", async () => {
+    createSession("session-1", projectId, { agentRuntimeType: "pi", taskId });
+    const prompts: unknown[] = [];
+    const runtime = reviewRuntime(prompts);
+    state.sessions.set("session-1", { id: "session-1", runtime, lastActivity: Date.now() });
+    const annotationResponse = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`,
+      { annotation },
+    ), state);
+    const createdReview = await annotationResponse!.json();
+    const replyResponse = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`,
+      {
+        expectedReview: { id: createdReview.id, revision: createdReview.revision },
+        annotation: {
+          ...annotation,
+          id: "annotation-client-2",
+          entry: {
+            ...annotation.entry,
+            id: "entry-client-2",
+            body: "This is a follow-up.",
+            createdAt: "2026-08-30T10:01:00.000Z",
+          },
+        },
+      },
+    ), state);
+    const openReview = await replyResponse!.json();
+
+    const response = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/submissions?taskId=${taskId}`,
+      { reviewId: openReview.id, expectedRevision: openReview.revision, sessionId: "session-1" },
+    ), state);
+    const submitted = await response!.json();
+
+    expect(response?.status).toBe(200);
+    expect(submitted).toEqual({ messageId: expect.any(String) });
+    expect(await (await router.handle(
+      makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`),
+      state,
+    ))!.json()).toBeNull();
+    const [message] = loadMessages("session-1");
+    expect(message?.role).toBe("user");
+    const text = message?.content?.[0]?.type === "text" ? message.content[0].text : "";
+    expect(text).toBe([
+      "src/example.ts:4",
+      "",
+      "Reviewer: Please explain this.",
+      "↳ Reviewer: This is a follow-up.",
+    ].join("\n"));
+    expect(prompts).toEqual([[{ type: "text", text }]]);
+  });
+
+  test("deletes the accepted review so retries cannot duplicate its message", async () => {
+    createSession("session-1", projectId, { agentRuntimeType: "pi", taskId });
+    const prompts: unknown[] = [];
+    const runtime = reviewRuntime(prompts);
+    state.sessions.set("session-1", { id: "session-1", runtime, lastActivity: Date.now() });
+    const created = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`,
+      { annotation },
+    ), state);
+    const openReview = await created!.json();
+    const submissionPath = `/api/projects/${projectId}/code-review/submissions?taskId=${taskId}`;
+    const body = { reviewId: openReview.id, expectedRevision: openReview.revision, sessionId: "session-1" };
+
+    const first = await router.handle(makeRequest("POST", submissionPath, body), state);
+    const retry = await router.handle(makeRequest("POST", submissionPath, body), state);
+
+    expect(first?.status).toBe(200);
+    expect(retry?.status).toBe(409);
+    expect(loadMessages("session-1")).toHaveLength(1);
+    expect(prompts).toHaveLength(1);
+  });
+
+  test("rejects submission to an active or differently scoped session and keeps the review open", async () => {
+    createSession("running-session", projectId, { agentRuntimeType: "pi", taskId });
+    updateActivityState("running-session", "running");
+    const created = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`,
+      { annotation },
+    ), state);
+    const review = await created!.json();
+
+    const response = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/submissions?taskId=${taskId}`,
+      { reviewId: review.id, expectedRevision: review.revision, sessionId: "running-session" },
+    ), state);
+    const loaded = await router.handle(
+      makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`),
+      state,
+    );
+
+    expect(response?.status).toBe(409);
+    expect(await loaded!.json()).toMatchObject({ id: review.id });
+    expect(loadMessages("running-session")).toEqual([]);
   });
 
   test("rejects a task from another project scope", async () => {

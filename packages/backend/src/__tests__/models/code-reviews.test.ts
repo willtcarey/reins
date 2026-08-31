@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { createCodeReview, getCodeReview, saveCodeReview } from "../../code-review-store.js";
+import { createCodeReview, getCodeReview } from "../../code-review-store.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import { CodeReviewError } from "../../models/code-review.js";
 import { ProjectCodeReviews } from "../../models/code-reviews.js";
@@ -47,7 +47,7 @@ describe("ProjectCodeReviews", () => {
     const result = reviews.addAnnotation({ scope: { taskId }, annotation });
 
     expect(result.created).toBe(true);
-    expect(result.review).toMatchObject({ projectId, taskId, status: "open", revision: 1 });
+    expect(result.review).toMatchObject({ projectId, taskId, revision: 1 });
     expect(reviews.getOpen({ taskId })?.id).toBe(result.review.id);
     expect(result.review.annotations).toEqual([{ id: annotation.id, anchor: annotation.anchor, entries: [annotation.entry] }]);
     expect(messages).toEqual([{
@@ -56,7 +56,6 @@ describe("ProjectCodeReviews", () => {
       taskId,
       reviewId: result.review.id,
       revision: 1,
-      status: "open",
     }]);
   });
 
@@ -78,7 +77,7 @@ describe("ProjectCodeReviews", () => {
     expect(broadcast).toHaveBeenCalledTimes(1);
   });
 
-  test("conflicts instead of switching a stale or terminal known review", () => {
+  test("conflicts instead of switching a stale known review", () => {
     const projectId = createProject("Review Project", "/tmp/review-project").id;
     const taskId = createTask(projectId, "Review task", null, "task/review").id;
     const broadcast = mock<Broadcast>(() => {});
@@ -91,23 +90,23 @@ describe("ProjectCodeReviews", () => {
       annotation: { ...annotation, id: "annotation-2", entry: { ...annotation.entry, id: "entry-2" } },
     })).toThrow(CodeReviewError);
 
-    const current = getCodeReview(first.review.id)!;
-    current.abandon();
-    const terminal = saveCodeReview(current)!;
-    expect(() => reviews.addAnnotation({
-      scope: { taskId },
-      expectedReview: { id: terminal.id, revision: terminal.revision },
-      annotation: { ...annotation, id: "annotation-3", entry: { ...annotation.entry, id: "entry-3" } },
-    })).toThrow(CodeReviewError);
     expect(broadcast).toHaveBeenCalledTimes(1);
   });
 
-  test("validates task ownership for every caller", () => {
+  test("resolves expected reviews only within the exact project and task scope", () => {
     const projectId = createProject("Review Project", "/tmp/review-project").id;
+    const taskId = createTask(projectId, "Review task", null, "task/review").id;
+    const otherTaskId = createTask(projectId, "Other task", null, "task/other").id;
     const otherProjectId = createProject("Other Project", "/tmp/other-review-project").id;
-    const otherTaskId = createTask(otherProjectId, "Other task", null, "task/other").id;
+    const foreignTaskId = createTask(otherProjectId, "Foreign task", null, "task/foreign").id;
+    const review = createCodeReview({ id: "review-1", projectId, taskId });
     const reviews = new ProjectCodeReviews(projectId, mock<Broadcast>(() => {}));
 
-    expect(() => reviews.getOpen({ taskId: otherTaskId })).toThrow(CodeReviewError);
+    expect(reviews.getExpected({ taskId }, { id: review.id, revision: 0 })).toMatchObject({ id: review.id });
+    expect(() => reviews.getExpected({ taskId: otherTaskId }, { id: review.id, revision: 0 }))
+      .toThrow("requested scope");
+    expect(() => reviews.getExpected({ taskId }, { id: review.id, revision: 1 }))
+      .toThrow("revision");
+    expect(() => reviews.getOpen({ taskId: foreignTaskId })).toThrow(CodeReviewError);
   });
 });

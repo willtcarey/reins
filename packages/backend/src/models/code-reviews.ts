@@ -13,6 +13,7 @@ import {
   CodeReviewError,
   type AddCodeReviewAnnotationInput,
   type CodeReview,
+  type ExpectedCodeReview,
 } from "./code-review.js";
 
 export interface CodeReviewScope {
@@ -44,18 +45,38 @@ export class ProjectCodeReviews {
     return getOpenCodeReview({ projectId: this.projectId, taskId: scope.taskId });
   }
 
+  /** Resolve a review only within this project's exact task scope. */
+  get(scope: CodeReviewScope, reviewId: string): CodeReview {
+    this.ensureScope(scope);
+    const review = getCodeReview(reviewId);
+    if (!review || review.projectId !== this.projectId || review.taskId !== scope.taskId) {
+      throw new CodeReviewError("Code review does not belong to the requested scope", "conflict");
+    }
+    return review;
+  }
+
+  /** Resolve an exact scoped review and enforce its optimistic revision. */
+  getExpected(scope: CodeReviewScope, expected: ExpectedCodeReview): CodeReview {
+    const review = this.get(scope, expected.id);
+    this.expectRevision(review, expected.revision);
+    return review;
+  }
+
+  expectRevision(review: CodeReview, expectedRevision: number): void {
+    if (review.revision !== expectedRevision) {
+      throw new CodeReviewError(
+        `Code review revision conflict: expected ${expectedRevision}, found ${review.revision}`,
+        "conflict",
+      );
+    }
+  }
+
   addAnnotation(command: AddCodeReviewAnnotationCommand): AddCodeReviewAnnotationResult {
     this.ensureScope(command.scope);
 
     const mutation = getDb().transaction(() => {
       const resolved = this.resolveReview(command);
       const { review } = resolved;
-      if (command.expectedReview && review.revision !== command.expectedReview.revision) {
-        throw new CodeReviewError(
-          `Code review revision conflict: expected ${command.expectedReview.revision}, found ${review.revision}`,
-          "conflict",
-        );
-      }
 
       review.addAnnotation(command.annotation);
       const saved = saveCodeReview(review);
@@ -73,7 +94,6 @@ export class ProjectCodeReviews {
         taskId: result.review.taskId,
         reviewId: result.review.id,
         revision: result.review.revision,
-        status: result.review.status,
       });
       return { review: result.review, created: result.created };
     } catch (error) {
@@ -86,14 +106,10 @@ export class ProjectCodeReviews {
 
   private resolveReview(command: AddCodeReviewAnnotationCommand): AddCodeReviewAnnotationResult {
     if (command.expectedReview) {
-      const review = getCodeReview(command.expectedReview.id);
-      if (!review) {
-        throw new CodeReviewError(`Code review ${command.expectedReview.id} not found`, "conflict");
-      }
-      if (review.projectId !== this.projectId || review.taskId !== command.scope.taskId) {
-        throw new CodeReviewError("Code review does not belong to the requested scope", "conflict");
-      }
-      return { review, created: false };
+      return {
+        review: this.getExpected(command.scope, command.expectedReview),
+        created: false,
+      };
     }
 
     const existing = getOpenCodeReview({
