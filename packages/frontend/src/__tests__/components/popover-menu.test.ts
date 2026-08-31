@@ -25,6 +25,31 @@ describe("PopoverMenu", () => {
     expect(el.open).toBe(false);
   });
 
+  test("keeps the panel open while its content scrolls", () => {
+    const el = new PopoverMenu();
+    const scroller = {};
+    el.content = () => html`<div>Scrollable content</div>`;
+    // @ts-expect-error testing rendered open state
+    el.open = true;
+
+    // @ts-expect-error exercising the document scroll listener
+    el._onScroll({ composedPath: () => [scroller, el] });
+
+    expect(templateToString(el.render())).toContain('popover="manual"');
+  });
+
+  test("closes the panel when an external container scrolls", () => {
+    const el = new PopoverMenu();
+    el.content = () => html`<div>Popover content</div>`;
+    // @ts-expect-error testing rendered open state
+    el.open = true;
+
+    // @ts-expect-error exercising the document scroll listener
+    el._onScroll({ composedPath: () => [{}] });
+
+    expect(templateToString(el.render())).not.toContain('popover="manual"');
+  });
+
   test("promotes an open panel to the top layer so transformed panes do not offset it", () => {
     const el = new PopoverMenu();
     const showPopover = mock(() => {});
