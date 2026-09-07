@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import "../../helpers/local-storage.js";
 import { Loadable } from "../../../helpers/loadable.js";
 import { ReviewDiffPanel } from "../../../components/changes/review-diff-panel.js";
-import { ReviewComments } from "../../../models/changes/review-comments.js";
+import { InlineReviewController } from "../../../controllers/inline-review-controller.js";
 import { CodeReviewStore } from "../../../models/stores/code-review-store.js";
 import { DiffStore, type DiffPatchData } from "../../../models/stores/diff-store.js";
 import {
@@ -67,16 +67,12 @@ describe("ReviewDiffPanel", () => {
     panel.reviewStore = new CodeReviewStore();
     let updates = 0;
     panel.requestUpdate = () => { updates += 1; };
-    const comments = Reflect.get(panel, "_comments");
-    if (!(comments instanceof ReviewComments)) throw new Error("Expected review comments");
+    const comments = Reflect.get(panel, "_inlineReview");
+    if (!(comments instanceof InlineReviewController)) throw new Error("Expected inline review controller");
     const fileId = panel.itemIdForPath("src/example.ts");
     if (!fileId) throw new Error("Expected file ID");
 
-    comments.dispatch({
-      type: "open-composer",
-      fileId,
-      selection: { side: "new", startLine: 1, endLine: 1 },
-    });
+    comments.file(fileId).openComposer({ side: "new", startLine: 1, endLine: 1 });
 
     expect(updates).toBeGreaterThan(0);
     store.dispose();

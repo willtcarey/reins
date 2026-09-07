@@ -4,9 +4,9 @@
 
 **Investigation complete; inline UI and server-synchronized annotation creation implemented.** This document is based on the exact installed `@pierre/diffs` **1.2.11** (`bun.lock` integrity `sha512-lSkl…`) and Reins' current `FileDiff` integration.
 
-The implemented `virtualized` slice now uses an unmanaged nested `<diffs-container>`, public line annotations, controlled selection, and the public gutter callback. `ReviewComments` owns current-panel drafts, grouping, normalization, and file-content projection. A Reins annotation element owns only rendering and commands. Whole-item resize observation feeds the top-level virtual list, comment layout revisions invalidate measurements, and the active composer item is pinned. Comment creation stays attached to selecting code and using its gutter action; manual side/line-number entry was removed because it is not a credible review interaction. Drafts survive collapse and virtual remount within the panel.
+The implemented `virtualized` slice uses an unmanaged nested `<diffs-container>`, public line annotations, controlled selection, and the public gutter callback. `CodeReviewStore` keeps raw server state synchronized; two pure functions project placements and build anchor evidence. One panel-owned `InlineReviewController` retains the selection and composer across collapse and virtual remounts and exposes one per-file interface to the UI. The Pierre adapter alone normalizes Pierre gestures into Reins ranges. Annotation elements receive only their current placement, with composer actions attached to the composer value. Whole-item resize observation feeds the top-level virtual list, one layout revision invalidates measurements, and the active composer item is pinned.
 
-A detached backend `CodeReview` entity owns annotation creation, review-wide source-key upsert, and replies. SQLite persists its project/task/revision envelope and annotation aggregate with optimistic compare-and-swap. The frontend `CodeReviewStore` loads the exact session scope, sends annotation writes with the current review identity/revision, reloads on reconnect and newer matching `code_review_updated` invalidations, and supplies authoritative aggregates to `ReviewComments`. Saved comments return after browser refresh at their original side and line range whenever that range still exists in the rendered diff; unsaved composer text remains frontend-local. Review submission is now implemented for the virtualized renderer: a fixed-header action targets the selected idle session, and `CodeReviewSubmission` atomically replaces the pending review with one compiled ordinary user message. This slice still has no outdated-thread surface, Git/filesystem relocation, deletion route, or agent scripting.
+A detached backend `CodeReview` entity owns annotation creation, review-wide source-key upsert, and replies. SQLite persists its project/task/revision envelope and annotation aggregate with optimistic compare-and-swap. The frontend `CodeReviewStore` loads the exact session scope, sends annotation writes with the current review identity/revision, reloads on reconnect and newer matching `code_review_updated` invalidations, and is the sole publisher of authoritative raw review state. Saved comments return after browser refresh at their original side and line range whenever that range still exists in the rendered diff; unsaved composer text remains frontend-local. Review submission is now implemented for the virtualized renderer: a fixed-header action targets the selected idle session, and `CodeReviewSubmission` atomically replaces the pending review with one compiled ordinary user message. This slice still has no outdated-thread surface, Git/filesystem relocation, deletion route, or agent scripting.
 
 Use Pierre's public line-annotation and selection interfaces, but keep comment identity, persistence, interaction state, and top-level layout in Reins.
 
@@ -215,43 +215,19 @@ The code-review migrations and `code-review-store.ts` persist a structured envel
 
 The store relies on TypeScript/domain construction for the annotation shape; future shape changes should use ordinary database migrations rather than per-row schema versions or a handwritten parser for every JSON property. The database enforces foreign keys, non-negative revision, valid JSON, and a unique indexed scope lookup. Annotation entries remain in one JSON aggregate because they share the review lifecycle.
 
-The durable model/store remains separate from the frontend `ReviewComments` projection module. `CodeReviewStore` adapts REST and WebSocket synchronization into an authoritative frontend aggregate; `ReviewComments` maps that aggregate to current path/fingerprint placements and keeps drafts outside the durable model. Future reconciliation and submission work should preserve this separation rather than expanding Pierre-facing state into the durable model.
+Frontend ownership has two state owners: `CodeReviewStore` synchronizes raw `CodeReviewState`, while the panel-lifetime `InlineReviewController` owns one selection and unsaved composer. Stateless placement and anchor functions live with the review transport types. There is no frontend aggregate wrapper, second subscription mechanism, command bus, per-file action map, or stateful annotation element.
 
 ## Recommended deep module and seam
 
 The seam belongs between `ReviewFileDiff` and Pierre, not in `FileDiffMetadata`, `ReviewDiffPanel`, or each comment custom element.
 
-### Reins-owned module
+### Smallest Reins-owned interface
 
-The `ReviewComments` module has a small external interface expressed entirely in Reins types:
+`CodeReviewStore` owns synchronized raw state. Pure `reviewPlacements(review, file)` and `buildReviewAnnotation(file, range, entry)` functions contain the only durable projection rules.
 
-```ts
-interface ReviewComments {
-  project(context: ReviewFileContext): ReviewCommentProjection;
-  dispatch(command: ReviewCommentCommand): Promise<void>;
-  subscribe(listener: (fileItemId: string) => void): () => void;
-}
+`InlineReviewController` is owned by the stable `ReviewDiffPanel`. Its UI seam is a single `file(id)` method returning the current placements, selection, count, error, layout revision, and the three line-level actions Pierre needs. If a placement has a composer, that composer carries its own `input`, `save`, and `cancel` actions. Typing updates retained draft state silently; structural changes update the host and layout revision.
 
-interface ReviewCommentProjection {
-  placements: readonly ReviewCommentPlacement[];
-  selection: ReviewLineRange | null;
-  openComposer: ReviewLineRange | null;
-  hasDetachedThreads: boolean;
-}
-```
-
-Behind this interface the module owns:
-
-- anchor creation, normalization, validation, and relocation;
-- one active panel selection/composer policy;
-- drafts and thread state independent of DOM lifetime;
-- persistence and optimistic/error state;
-- grouping multiple threads into one line placement;
-- old/new path and mode/branch scoping;
-- detached/outdated projections;
-- commands to create, cancel, save, resolve, and reanchor.
-
-The deletion test justifies the module: removing it would spread anchor correctness, remount restoration, grouping, draft lifetime, and persistence coordination across the panel, renderer, and thread elements.
+This removes the earlier frontend aggregate wrapper, broad pub/sub interface, command union, per-file action map, and model subscriptions from annotation elements. Deleting the controller would still spread remount-safe draft and selection state across the panel, file items, and virtualizer, so that one seam earns its keep.
 
 ### Pierre adapter
 
@@ -259,13 +235,13 @@ A focused `PierreInlineReviewAdapter` inside `review-file-diff-renderer.ts` maps
 
 - Reins placements → `DiffLineAnnotation<{ placementId: string }>`;
 - Pierre `SelectedLineRange` → normalized same-side `ReviewLineRange`;
-- gutter/selection callbacks → Reins commands;
+- gutter/selection callbacks → direct Reins methods;
 - `renderAnnotation` → a Reins-owned annotation host element;
 - controlled selection → `setSelectedLines`.
 
 Pierre types stop at this seam. The domain module must not know hunk indexes, `DiffLineAnnotation`, `annotationSide`, shadow DOM selectors, or Pierre instance lifetime.
 
-`ReviewDiffPanel` remains the owner of file ordering, top-level virtual geometry, collapse, navigation, and semantic scroll preservation. It supplies review scope and one `ReviewComments` instance to mounted file items. It does not manipulate individual threads.
+`ReviewDiffPanel` remains the owner of file ordering, top-level virtual geometry, collapse, navigation, and semantic scroll preservation. It passes the current `file(id)` value through mounted file items. Pierre-created thread elements receive one placement and never subscribe to a model or store.
 
 ## Interaction contract
 
@@ -346,7 +322,7 @@ To avoid destroying focused editing UI during ordinary overscan movement, pin th
 
 ### Collapse
 
-Collapsing removes Pierre and annotation DOM today. Preserve thread/draft state in `ReviewComments`, show a header badge for thread/draft counts, and restore widgets on expand. If focus is inside an open composer, collapse should first move focus to the header collapse control and announce that the draft remains available.
+Collapsing removes Pierre and annotation DOM today. Preserve saved threads in `CodeReviewStore` state and draft state in the panel's `InlineReviewController`, show a header badge for thread/draft counts, and restore widgets on expand. If focus is inside an open composer, collapse should first move focus to the header collapse control and announce that the draft remains available.
 
 Collapsed fixed height remains header-only. Do not include hidden comment height in collapsed geometry. The expanded measured height cache may be reused only when both file content and comment-layout revision match; otherwise use an estimate until remeasured.
 
@@ -419,17 +395,17 @@ Each behavior slice starts with a failing contract test per `docs/dev/workflow.m
 ### 3. Reins anchor and code-review modules
 
 - [x] Introduce a small Reins projection/command module with no Pierre imports.
-- [x] Implement same-side range normalization, endpoint grouping, drafts/threads, cross-side rejection, and current file-content-key invalidation.
+- [x] Implement same-side range normalization at the Pierre adapter seam, endpoint grouping, one local draft, persisted-thread projection, cross-side rejection, and current file-content-key invalidation.
 - [x] Add a small `CodeReview` class with project/optional-task persistence scope, string-attributed thread entries, and review-wide source-key idempotency.
 - [x] Preserve original anchor evidence without persisting transient reconciliation projections; defer the payload shape to the future submission mediator.
-- [x] Connect the frontend projection module to server-synced `CodeReview` instances while keeping unsaved composers local.
+- [x] Keep synchronized review state raw, use pure projection/anchor functions, and retain unsaved composers in the panel controller.
 - [ ] Implement actual Git/filesystem reconciliation, rename mapping, and ambiguous-context matching as transient submission resolution.
 - [ ] Add exact snapshot/base/head identity before persisted anchors are treated as refresh-durable.
 
 ### 4. Pointer/touch composer
 
 - [x] Enable controlled Pierre selection and the public gutter add action.
-- [x] Render one grouped Reins-owned annotation host per side/endpoint with an in-memory composer and deletable threads.
+- [x] Render one grouped Reins-owned annotation host per side/endpoint with one in-memory composer and persisted threads. Deletion remains absent until a persistence route exists.
 - [x] Preserve selection, draft, expansion, and thread projection across virtual unmount/remount and collapse.
 - [x] Pin the open-composer item.
 - [ ] Verify Pierre's default gutter touch behavior and scroll-vs-selection behavior in supported mobile browsers. Reins-owned fallback/composer actions use 44px touch targets.

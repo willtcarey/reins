@@ -4,7 +4,6 @@ import { ReviewFileDiff } from "../../../components/changes/review-file-diff.js"
 import { SpringCollapseDirective } from "../../../directives/spring-collapse.js";
 import { FileDiffContextState } from "../../../models/changes/file-diff-context-state.js";
 import { parseFileChanges } from "../../../models/changes/file-changes.js";
-import { ReviewComments } from "../../../models/changes/review-comments.js";
 import {
   collectTemplateEventListeners,
   collectTemplateValues,
@@ -103,12 +102,11 @@ describe("ReviewFileDiff", () => {
 
   test("remeasures the same height after the comment layout revision changes", () => {
     const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
-    const comments = new ReviewComments();
-    comments.reconcile("scope", [{ fileId: fileChange.id, contentKey: fileChange.contentKey }]);
     const item = new ReviewFileDiff();
     const container = new ReviewFileDiff();
     item.change = fileChange;
-    item.comments = comments;
+    item.inlineReview = { placements: [], selection: null, error: null, threadCount: 0, layoutRevision: 0,
+      select: () => {}, openComposer: () => {}, reportError: () => {} };
     item.getBoundingClientRect = () => testRect(137);
     Object.defineProperty(item, "isConnected", { configurable: true, value: true });
     const renderer: object = Reflect.get(item, "_diff");
@@ -120,11 +118,12 @@ describe("ReviewFileDiff", () => {
     item.onHeightChange = (_change, update) => measurements.push(update);
 
     item.updated();
-    comments.dispatch({
-      type: "open-composer",
-      fileId: fileChange.id,
-      selection: { side: "new", startLine: 1, endLine: 1 },
-    });
+    const previous = item.inlineReview;
+    item.inlineReview = { placements: [{ id: "draft", range: { side: "new", startLine: 1, endLine: 1 }, comments: [], composer: {
+      body: "", error: null, saving: false, input: () => {}, save: async () => {}, cancel: () => {},
+    } }], selection: { side: "new", startLine: 1, endLine: 1 }, error: null, threadCount: 0, layoutRevision: 1,
+      select: () => {}, openComposer: () => {}, reportError: () => {} };
+    item.willUpdate(new Map([["inlineReview", previous]]));
     item.updated();
 
     expect(measurements).toEqual([
@@ -175,27 +174,20 @@ describe("ReviewFileDiff", () => {
     expect(toggledIds).toEqual([fileChange.id]);
   });
 
-  test("shows the inline comment count with a comment icon in the file header", () => {
+  test("shows the inline comment count with a comment icon in the file header", async () => {
     const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
-    const comments = new ReviewComments();
-    comments.reconcile("scope", [{ fileId: fileChange.id, contentKey: fileChange.contentKey }]);
-    for (const side of ["old", "new"] as const) {
-      comments.dispatch({
-        type: "open-composer",
-        fileId: fileChange.id,
-        selection: { side, startLine: 1, endLine: 1 },
-      });
-      comments.dispatch({ type: "update-draft", fileId: fileChange.id, body: `${side} note` });
-      comments.dispatch({ type: "save-comment", fileId: fileChange.id });
-    }
-    comments.dispatch({
-      type: "open-composer",
-      fileId: fileChange.id,
-      selection: { side: "new", startLine: 1, endLine: 1 },
-    });
     const item = new ReviewFileDiff();
     item.change = fileChange;
-    item.comments = comments;
+    item.inlineReview = {
+      placements: [
+        { id: "old", range: { side: "old", startLine: 1, endLine: 1 }, comments: [{ id: "1", author: "You", body: "old note" }], composer: null },
+        { id: "new", range: { side: "new", startLine: 1, endLine: 1 }, comments: [{ id: "2", author: "You", body: "new note" }], composer: {
+          body: "", error: null, saving: false, input: () => {}, save: async () => {}, cancel: () => {},
+        } },
+      ],
+      selection: { side: "new", startLine: 1, endLine: 1 }, error: null, threadCount: 2, layoutRevision: 3,
+      select: () => {}, openComposer: () => {}, reportError: () => {},
+    };
 
     const output = renderOutput(item);
 
@@ -215,40 +207,6 @@ describe("ReviewFileDiff", () => {
     expect(output).not.toContain("Add inline comment");
     expect(output).not.toContain('role="dialog"');
     expect(output).not.toContain("Start line");
-  });
-
-  test("keeps draft keystrokes inside the mounted annotation element", () => {
-    const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
-    const comments = new ReviewComments();
-    comments.reconcile("scope", [{ fileId: fileChange.id, contentKey: fileChange.contentKey }]);
-    comments.dispatch({
-      type: "open-composer",
-      fileId: fileChange.id,
-      selection: { side: "new", startLine: 1, endLine: 1 },
-    });
-    const item = new ReviewFileDiff();
-    item.change = fileChange;
-    Object.defineProperty(item, "isConnected", { configurable: true, value: true });
-    const renderer: {
-      refreshInlineComments: () => void;
-      refreshInlineSelection: () => void;
-    } = Reflect.get(item, "_diff");
-    let commentRefreshes = 0;
-    let selectionRefreshes = 0;
-    let hostUpdates = 0;
-    renderer.refreshInlineComments = () => { commentRefreshes += 1; };
-    renderer.refreshInlineSelection = () => { selectionRefreshes += 1; };
-    item.requestUpdate = () => { hostUpdates += 1; };
-    item.comments = comments;
-    commentRefreshes = 0;
-    selectionRefreshes = 0;
-    hostUpdates = 0;
-
-    comments.dispatch({ type: "update-draft", fileId: fileChange.id, body: "abc" });
-
-    expect(commentRefreshes).toBe(0);
-    expect(selectionRefreshes).toBe(0);
-    expect(hostUpdates).toBe(0);
   });
 
   test("does not request complete content merely by rendering an expandable file", () => {

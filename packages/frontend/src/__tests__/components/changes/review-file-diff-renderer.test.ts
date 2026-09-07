@@ -11,8 +11,8 @@ import { ReviewCommentThread } from "../../../components/changes/review-comment-
 import {
   createReviewFileDiffRenderer,
   PierreReviewFileDiff,
+  type ReviewFileDiffTarget,
 } from "../../../components/changes/review-file-diff-renderer.js";
-import { ReviewComments } from "../../../models/changes/review-comments.js";
 
 function interactionEvent(type: string, path: EventTarget[], properties: Record<string, unknown> = {}): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
@@ -211,15 +211,33 @@ describe("PierreReviewFileDiff", () => {
       const host: ReactiveControllerHost = {
         addController() {}, removeController() {}, requestUpdate() {}, updateComplete: Promise.resolve(true),
       };
-      const comments = new ReviewComments();
-      comments.reconcile("scope", [{ fileId: "file-a", contentKey: "one" }]);
       const controller = createReviewFileDiffRenderer(host, undefined, undefined, undefined, undefined, null);
-      const target = {
+      const observed: {
+        selection: { side: "old" | "new"; startLine: number; endLine: number } | null;
+        error: string | null;
+      } = { selection: null, error: null };
+      const target: ReviewFileDiffTarget = {
         fileDiff: partial,
         nativeExpandedHunks: new Map(),
         initialExpansion: null,
-        comments,
-        fileId: "file-a",
+        inlineReview: {
+          placements: [], selection: null, error: null, threadCount: 0, layoutRevision: 0,
+          select: (range) => { observed.selection = range; },
+          openComposer: (range) => {
+            observed.selection = range;
+            target.inlineReview = {
+              placements: [{
+                id: "file-a:new:7", range, comments: [],
+                composer: { body: "", error: null, saving: false, input: () => {}, save: async () => {}, cancel: () => {} },
+              }],
+              selection: range, error: null, threadCount: 0, layoutRevision: 1,
+              select: target.inlineReview!.select,
+              openComposer: target.inlineReview!.openComposer,
+              reportError: target.inlineReview!.reportError,
+            };
+          },
+          reportError: (message: string) => { observed.error = message; },
+        },
       };
       const bindingValues = Reflect.get(controller.bind(target), "values");
       const attach = Array.isArray(bindingValues) ? bindingValues[0] : null;
@@ -230,9 +248,9 @@ describe("PierreReviewFileDiff", () => {
       if (!instance) throw new Error("Expected renderer instance");
 
       instance.options.onLineSelected?.({ start: 7, end: 4, side: "additions", endSide: "additions" });
-      expect(comments.project("file-a").selection).toEqual({ side: "new", startLine: 4, endLine: 7 });
+      expect(observed.selection).toEqual({ side: "new", startLine: 4, endLine: 7 });
       instance.options.onGutterUtilityClick?.({ start: 4, end: 7, side: "deletions", endSide: "additions" });
-      expect(comments.project("file-a").error).toBe("Inline comments must stay on one side of the diff.");
+      expect(observed.error).toBe("Inline comments must stay on one side of the diff.");
       instance.options.onGutterUtilityClick?.({ start: 4, end: 7, side: "additions", endSide: "additions" });
 
       let annotations: Parameters<typeof instance.setLineAnnotations>[0] = [];
@@ -248,7 +266,7 @@ describe("PierreReviewFileDiff", () => {
       expect(annotations).toEqual([{
         side: "additions",
         lineNumber: 7,
-        metadata: comments.project("file-a").placements[0]?.id,
+        metadata: "file-a:new:7",
       }]);
       expect(selections).toEqual([{
         start: 4,
@@ -264,13 +282,27 @@ describe("PierreReviewFileDiff", () => {
       if (!(annotationElement instanceof ReviewCommentThread)) {
         throw new Error("Expected Reins annotation element");
       }
-      expect(annotationElement.comments).toBe(comments);
-      expect(annotationElement.fileId).toBe("file-a");
-      expect(annotationElement.placementId).toBe(comments.project("file-a").placements[0]?.id);
+      expect(annotationElement.placement?.id).toBe("file-a:new:7");
 
       const metadata = annotation.metadata;
+      target.inlineReview = {
+        placements: [{
+          id: "file-a:new:7",
+          range: { side: "new", startLine: 4, endLine: 7 },
+          comments: [{ id: "comment-1", author: "You", body: "Saved comment" }],
+          composer: null,
+        }],
+        selection: { side: "new", startLine: 4, endLine: 7 },
+        error: null,
+        threadCount: 1,
+        layoutRevision: 2,
+        select: target.inlineReview!.select,
+        openComposer: target.inlineReview!.openComposer,
+        reportError: target.inlineReview!.reportError,
+      };
       controller.refreshInlineComments();
       expect(annotations[0]?.metadata).toBe(metadata);
+      expect(annotationElement.placement).toEqual(target.inlineReview.placements[0]);
     } finally {
       Reflect.set(PierreReviewFileDiff.prototype, "render", originalRender);
       if (htmlElementDescriptor) Object.defineProperty(globalThis, "HTMLElement", htmlElementDescriptor);

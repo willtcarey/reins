@@ -1,6 +1,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
+import { InlineReviewController } from "../../controllers/inline-review-controller.js";
 import {
   VirtualListController,
   type VirtualListObservation,
@@ -17,10 +18,7 @@ import {
   type FileChange,
   type FileChangesResult,
 } from "../../models/changes/file-changes.js";
-import {
-  ReviewComments,
-  type ReviewSide,
-} from "../../models/changes/review-comments.js";
+import type { ReviewSide } from "../../models/code-review.js";
 import {
   estimateFileChangeHeight,
   fileChangeGap,
@@ -79,12 +77,11 @@ export class ReviewDiffPanel extends LitElement {
   set reviewStore(value: CodeReviewStore | null) {
     const oldValue = this._reviewStore;
     if (value === oldValue) return;
+    this._unsubscribeReview?.();
+    this._unsubscribeReview = null;
     this._reviewStore = value;
-    this._unsubscribeComments?.();
-    this._unsubscribeComments = null;
-    this._comments.dispose();
-    this._comments = new ReviewComments(value);
-    this._subscribeComments();
+    this._inlineReview.setReview(value?.review ?? null);
+    this._subscribeReview();
     this._reconcilePatchData(true);
     this.requestUpdate("reviewStore", oldValue);
   }
@@ -107,8 +104,11 @@ export class ReviewDiffPanel extends LitElement {
   private _contextState: FileDiffContextState | null = null;
   private _contextScopeKey = "";
   private _transitionHeights = new Map<string, number>();
-  private _comments = new ReviewComments();
-  private _unsubscribeComments: (() => void) | null = null;
+  private _unsubscribeReview: (() => void) | null = null;
+  private _inlineReview = new InlineReviewController(this, async (annotation) => {
+    if (!this.reviewStore) throw new Error("Code review comments are unavailable.");
+    return this.reviewStore.addAnnotation(annotation);
+  });
   private readonly _expandFileContext = (
     change: FileChange,
     interaction: ReviewFileExpansionInteraction,
@@ -135,13 +135,13 @@ export class ReviewDiffPanel extends LitElement {
   constructor() {
     super();
     this._virtualList.observe = (observation) => this._observeVirtualList(observation);
-    this._subscribeComments();
+    this._inlineReview.onLayoutChange = () => this._syncVirtualItems();
   }
 
   override connectedCallback() {
     super.connectedCallback();
     this._subscribe();
-    this._subscribeComments();
+    this._subscribeReview();
   }
 
   override willUpdate(changed: Map<string, unknown>) {
@@ -163,8 +163,8 @@ export class ReviewDiffPanel extends LitElement {
     super.disconnectedCallback();
     this._unsubscribe?.();
     this._unsubscribe = null;
-    this._unsubscribeComments?.();
-    this._unsubscribeComments = null;
+    this._unsubscribeReview?.();
+    this._unsubscribeReview = null;
     this._navigationTelemetry = null;
     this.store?.clearPatchDiff();
   }
@@ -223,14 +223,10 @@ export class ReviewDiffPanel extends LitElement {
     this.dispatchEvent(activeFileChangeEvent(change.path));
   }
 
-  private _subscribeComments() {
-    if (this._unsubscribeComments) return;
-    this._unsubscribeComments = this._comments.subscribe((change) => {
-      if (!change.layoutChanged) return;
-      // Advance the accepted measurement key before mounted file listeners
-      // measure the corresponding DOM change. Deferring this reconciliation
-      // allows a valid new height to race against the previous key.
-      this._syncVirtualItems();
+  private _subscribeReview() {
+    if (this._unsubscribeReview || !this.reviewStore || !this.isConnected) return;
+    this._unsubscribeReview = this.reviewStore.subscribe(() => {
+      this._inlineReview.setReview(this.reviewStore?.review ?? null);
       this.requestUpdate();
     });
   }
@@ -273,7 +269,7 @@ export class ReviewDiffPanel extends LitElement {
     this._contextState = null;
     this._contextScopeKey = "";
     this._transitionHeights.clear();
-    this._comments.clear();
+    this._inlineReview.clear();
   }
 
   private _reconcilePatchData(force = false) {
@@ -297,10 +293,10 @@ export class ReviewDiffPanel extends LitElement {
     }
     this._ensureContextState();
     const store = this.store;
-    this._comments.reconcile(
+    this._inlineReview.reconcile(
       `${store?.projectId ?? "none"}:${store?.diffMode ?? "branch"}:${source.branch ?? store?.branch ?? ""}`,
       this._parsedData.changes.map((change) => ({
-        fileId: change.id,
+        id: change.id,
         contentKey: change.contentKey,
         path: change.path,
         oldPath: change.oldPath,
@@ -334,7 +330,7 @@ export class ReviewDiffPanel extends LitElement {
 
   private _measurementKey(change: FileChange): string {
     const scope = this._collapseScope();
-    const commentRevision = this._comments.project(change.id).layoutRevision;
+    const commentRevision = this._inlineReview.file(change.id).layoutRevision;
     return `${scope?.projectId ?? "none"}:${scope?.branch ?? "none"}:${change.id}:${change.contentKey}:comments-${commentRevision}`;
   }
 
@@ -513,7 +509,7 @@ export class ReviewDiffPanel extends LitElement {
     const branch = this._parsedSource?.branch ?? this.store.branch;
     const baseBranch = this._parsedSource?.baseBranch ?? this.store.fileData.data?.baseBranch;
     const virtualWindow = this._virtualList.window();
-    const pinnedComposerId = this._comments.activeComposerFileId;
+    const pinnedComposerId = this._inlineReview.activeComposerFileId;
     const pinnedComposer = pinnedComposerId && !virtualWindow.items.some((entry) => entry.id === pinnedComposerId)
       ? this._virtualList.item(pinnedComposerId)
       : null;
@@ -582,7 +578,7 @@ export class ReviewDiffPanel extends LitElement {
                             .branch=${branch ?? null}
                             .reservedHeight=${Math.max(1, entry.height - entry.gapBefore)}
                             .contextState=${this._ensureContextState()}
-                            .comments=${this._comments}
+                            .inlineReview=${this._inlineReview.file(change.id)}
                             .onToggleCollapse=${this._toggleFileCollapse}
                             .onHeightChange=${this._handleFileHeightChange}
                             .onCommentLayoutChange=${this._handleCommentLayoutChange}

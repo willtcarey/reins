@@ -11,10 +11,8 @@ import {
   diffRenderBlockedMessage,
   isDiffRenderBlocked,
 } from "../../models/changes/diff-render-limit.js";
-import {
-  type ReviewComments,
-  type ReviewLineRange,
-} from "../../models/changes/review-comments.js";
+import type { InlineReviewFile } from "../../controllers/inline-review-controller.js";
+import type { ReviewLineRange } from "../../models/code-review.js";
 import { clientTelemetry } from "../../models/client-telemetry.js";
 import {
   addedFileIcon,
@@ -85,9 +83,8 @@ export class ReviewFileDiff extends LitElement {
 
   private _contextState: FileDiffContextState | null = null;
   private _unsubscribeContext: (() => void) | null = null;
-  private _comments: ReviewComments | null = null;
-  private _unsubscribeComments: (() => void) | null = null;
   private _resizeObserver: ResizeObserver | null = null;
+  @property({ attribute: false }) inlineReview: InlineReviewFile | null = null;
 
   @property({ attribute: false })
   get contextState(): FileDiffContextState | null {
@@ -102,23 +99,6 @@ export class ReviewFileDiff extends LitElement {
     this._contextState = value;
     this._subscribeContext();
     this.requestUpdate("contextState", previous);
-  }
-
-  @property({ attribute: false })
-  get comments(): ReviewComments | null {
-    return this._comments;
-  }
-
-  set comments(value: ReviewComments | null) {
-    const previous = this._comments;
-    if (value === previous) return;
-    this._unsubscribeComments?.();
-    this._unsubscribeComments = null;
-    this._comments = value;
-    this._hadComposer = Boolean(value && this.change && value.project(this.change.id).composer);
-    this._subscribeComments();
-    this._targetFileDiff = null;
-    this.requestUpdate("comments", previous);
   }
 
   @property({ attribute: false }) onToggleCollapse: ((id: string) => void) | null = null;
@@ -157,11 +137,32 @@ export class ReviewFileDiff extends LitElement {
   override connectedCallback() {
     this._lastMeasurement = "";
     this._subscribeContext();
-    this._subscribeComments();
     super.connectedCallback();
     if (typeof ResizeObserver !== "undefined") {
       this._resizeObserver = new ResizeObserver(() => this._emitMeasurement());
       this._resizeObserver.observe(this);
+    }
+  }
+
+  override willUpdate(changed: Map<string, unknown>) {
+    if (changed.has("inlineReview")) {
+      const previousValue = changed.get("inlineReview");
+      const previous: InlineReviewFile | null | undefined = isInlineReviewFile(previousValue)
+        ? previousValue
+        : previousValue === null ? null : undefined;
+      const composerOpen = hasComposer(this.inlineReview);
+      if (this._hadComposer && !composerOpen) this._restoreHeaderFocus = true;
+      this._hadComposer = composerOpen;
+      if (this._target) this._target.inlineReview = this.inlineReview;
+      const layoutChanged = previous?.layoutRevision !== this.inlineReview?.layoutRevision;
+      if (layoutChanged || composerSignature(previous ?? null) !== composerSignature(this.inlineReview)) {
+        if (layoutChanged && this.change) {
+          this.onCommentLayoutChange?.(this.change, () => this._commentAnchorTop(this._activePlacementId()));
+        }
+        this._diff.refreshInlineComments();
+      } else {
+        this._diff.refreshInlineSelection();
+      }
     }
   }
 
@@ -176,8 +177,6 @@ export class ReviewFileDiff extends LitElement {
   override disconnectedCallback() {
     this._unsubscribeContext?.();
     this._unsubscribeContext = null;
-    this._unsubscribeComments?.();
-    this._unsubscribeComments = null;
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
     this._lastMeasurement = "";
@@ -191,25 +190,8 @@ export class ReviewFileDiff extends LitElement {
     });
   }
 
-  private _subscribeComments() {
-    if (!this.isConnected || !this._comments || this._unsubscribeComments) return;
-    this._unsubscribeComments = this._comments.subscribe((update) => {
-      const change = this.change;
-      if (!change || update.fileId !== change.id) return;
-      if (update.layoutChanged) {
-        this.onCommentLayoutChange?.(change, () => this._commentAnchorTop(update.placementId));
-      }
-      const hasComposer = this._comments?.project(change.id).composer !== null;
-      if (this._hadComposer && !hasComposer) this._restoreHeaderFocus = true;
-      this._hadComposer = hasComposer;
-      if (update.layoutChanged) this._diff.refreshInlineComments();
-      else if (update.selectionChanged) this._diff.refreshInlineSelection();
-      // Draft input is owned by the mounted annotation element. Updating the
-      // file host or Pierre here would replace that element while it is typing.
-      if (update.layoutChanged || update.selectionChanged || update.placementId === null) {
-        this.requestUpdate();
-      }
-    });
+  private _activePlacementId(): string | null {
+    return this.inlineReview?.placements.find((placement) => placement.composer)?.id ?? null;
   }
 
   private _commentAnchorTop(placementId: string | null): number | null {
@@ -230,7 +212,7 @@ export class ReviewFileDiff extends LitElement {
     if (!change || this.collapsed || this._transitioning || !renderComplete) return;
     const height = this.getBoundingClientRect().height || this.offsetHeight;
     if (height <= 0) return;
-    const commentLayoutRevision = this.comments?.project(change.id).layoutRevision ?? 0;
+    const commentLayoutRevision = this.inlineReview?.layoutRevision ?? 0;
     const signature = `${change.id}:${change.contentKey}:comments-${commentLayoutRevision}:${height}`;
     if (signature === this._lastMeasurement) return;
     this._lastMeasurement = signature;
@@ -358,8 +340,7 @@ export class ReviewFileDiff extends LitElement {
       this._target = {
         fileDiff,
         nativeExpandedHunks: expansion?.nativeExpandedHunks ?? new Map(),
-        comments: this.comments,
-        fileId: change.id,
+        inlineReview: this.inlineReview,
         initialExpansion: fileDiff.isPartial || !this._pendingExpansion
           ? null
           : {
@@ -384,7 +365,7 @@ export class ReviewFileDiff extends LitElement {
     if (!change) return nothing;
 
     const renderBlocked = isDiffRenderBlocked(change);
-    const comments = renderBlocked ? null : this.comments?.project(change.id) ?? null;
+    const comments = renderBlocked ? null : this.inlineReview;
     const expansion = renderBlocked ? null : this._expansion();
     const diffBinding = renderBlocked ? nothing : this._diff.bind(this._diffTarget(change));
     const pendingHeight = !renderBlocked && !this.collapsed && !this.diffRendered && this.reservedHeight > 0
@@ -468,6 +449,21 @@ export class ReviewFileDiff extends LitElement {
       </article>
     `;
   }
+}
+
+function isInlineReviewFile(value: unknown): value is InlineReviewFile {
+  return typeof value === "object" && value !== null && "placements" in value && "layoutRevision" in value;
+}
+
+function hasComposer(snapshot: { placements: readonly { composer: unknown | null }[] } | null): boolean {
+  return snapshot?.placements.some((placement) => placement.composer !== null) ?? false;
+}
+
+function composerSignature(snapshot: InlineReviewFile | null): string {
+  const placement = snapshot?.placements.find((candidate) => candidate.composer);
+  return placement?.composer
+    ? `${placement.id}:${placement.composer.saving}:${placement.composer.error ?? ""}`
+    : "";
 }
 
 function selectionAnnouncement(range: ReviewLineRange): string {

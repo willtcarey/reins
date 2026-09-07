@@ -1,64 +1,8 @@
-export type ReviewSide = "old" | "new";
+import type { CodeReviewState, NewReviewAnnotation } from "../code-review.js";
 
-export interface ReviewAnchorEvidence {
-  readonly path: string;
-  readonly oldPath: string | null;
-  readonly side: ReviewSide;
-  readonly startLine: number;
-  readonly endLine: number;
-  readonly excerpt: string;
-  readonly contextBefore: string | null;
-  readonly contextAfter: string | null;
-  readonly fileFingerprint: string | null;
-  readonly baseRevision: string | null;
-  readonly headRevision: string | null;
-}
-
-export interface ReviewEntry {
-  readonly id: string;
-  readonly author: string;
-  readonly body: string;
-  readonly createdAt: string;
-  readonly sourceKey?: string;
-  readonly sourceUrl?: string;
-}
-
-export interface ReviewAnnotation {
-  readonly id: string;
-  readonly anchor: ReviewAnchorEvidence;
-  readonly entries: readonly ReviewEntry[];
-}
-
-export interface NewReviewAnnotation {
-  readonly id: string;
-  readonly anchor: ReviewAnchorEvidence;
-  readonly entry: ReviewEntry;
-}
-
-export interface CodeReviewSubmissionResult {
-  readonly messageId: string;
-}
-
-export interface CodeReviewState {
-  readonly id: string;
+interface CodeReviewScope {
   readonly projectId: number;
   readonly taskId: number | null;
-  readonly revision: number;
-  readonly annotations: readonly ReviewAnnotation[];
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
-
-export interface CodeReviewScope {
-  readonly projectId: number;
-  readonly taskId: number | null;
-}
-
-export interface CodeReviewUpdated {
-  readonly projectId: number;
-  readonly taskId: number | null;
-  readonly reviewId: string;
-  readonly revision: number;
 }
 
 export class CodeReviewStore {
@@ -152,7 +96,7 @@ export class CodeReviewStore {
     }
   }
 
-  async submit(sessionId: string): Promise<CodeReviewSubmissionResult> {
+  async submit(sessionId: string): Promise<{ readonly messageId: string }> {
     const scope = this.scope;
     const review = this.review;
     if (!scope || !review) throw new Error("No open code review to submit");
@@ -173,7 +117,7 @@ export class CodeReviewStore {
         }),
       });
       if (!response.ok) throw new Error(await responseError(response, "Unable to submit code review"));
-      const result: CodeReviewSubmissionResult = await response.json();
+      const result: { readonly messageId: string } = await response.json();
       if (sameScope(this.scope, scope)) {
         this.review = null;
         this.error = null;
@@ -190,7 +134,12 @@ export class CodeReviewStore {
     }
   }
 
-  async handleUpdated(update: CodeReviewUpdated): Promise<void> {
+  async handleUpdated(update: {
+    readonly projectId: number;
+    readonly taskId: number | null;
+    readonly reviewId: string;
+    readonly revision: number;
+  }): Promise<void> {
     if (!this.scope || update.projectId !== this.scope.projectId || update.taskId !== this.scope.taskId) return;
     if (this.review && update.reviewId === this.review.id && update.revision <= this.review.revision) return;
     await this.refresh();

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { CodeReviewStore, type CodeReviewState } from "../../../models/stores/code-review-store.js";
+import type { CodeReviewState } from "../../../models/code-review.js";
+import { CodeReviewStore } from "../../../models/stores/code-review-store.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 
 const EMPTY_REVIEW: CodeReviewState = {

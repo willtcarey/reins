@@ -1,45 +1,54 @@
 import { describe, expect, test } from "bun:test";
 import { ReviewCommentThread } from "../../../components/changes/review-comment-thread.js";
-import { ReviewComments } from "../../../models/changes/review-comments.js";
 import { collectTemplateEventListeners, templateToString } from "../../helpers/lit-template.js";
 
 describe("ReviewCommentThread", () => {
-  test("renders a labeled composer and saves and deletes its Reins-owned thread", () => {
-    const comments = new ReviewComments();
-    comments.reconcile("scope", [{ fileId: "file-a", contentKey: "one" }]);
-    comments.dispatch({
-      type: "open-composer",
-      fileId: "file-a",
-      selection: { side: "new", startLine: 2, endLine: 4 },
-    });
-    const placementId = comments.project("file-a").placements[0]?.id;
-    if (!placementId) throw new Error("Expected placement");
+  test("keeps typed draft presentation local while invoking narrow composer actions", async () => {
     const element = new ReviewCommentThread();
-    element.comments = comments;
-    element.fileId = "file-a";
-    element.placementId = placementId;
+    let body = "";
+    let saves = 0;
+    let cancels = 0;
+    element.placement = {
+      id: "file-a:new:4",
+      range: { side: "new", startLine: 2, endLine: 4 },
+      comments: [],
+      composer: {
+        body: "", saving: false, error: "Enter a comment before saving.",
+        input: (value) => { body = value; },
+        save: async () => { saves += 1; },
+        cancel: () => { cancels += 1; },
+      },
+    };
 
-    let rendered = element.render();
-    let output = templateToString(rendered);
+    const rendered = element.render();
+    const output = templateToString(rendered);
     expect(output).toContain("Comment on new lines 2–4");
-    expect(output).toContain("Save comment");
-    expect(output).toContain("Cancel comment");
+    expect(output).toContain("Enter a comment before saving.");
 
-    const input = collectTemplateEventListeners(rendered, "input")[0];
-    const submit = collectTemplateEventListeners(rendered, "submit")[0];
     const inputEvent = new Event("input");
-    Object.defineProperty(inputEvent, "currentTarget", {
-      value: { value: "Please simplify this." },
-    });
-    input?.call(element, inputEvent);
-    submit?.call(element, new Event("submit", { cancelable: true }));
+    Object.defineProperty(inputEvent, "currentTarget", { value: { value: "Please simplify this." } });
+    collectTemplateEventListeners(rendered, "input")[0]?.call(element, inputEvent);
+    expect(body).toBe("Please simplify this.");
+    expect(templateToString(element.render())).not.toContain("Enter a comment before saving.");
 
-    rendered = element.render();
-    output = templateToString(rendered);
-    expect(output).toContain("Please simplify this.");
-    expect(output).toContain("Delete comment");
+    const previousConfirm = globalThis.confirm;
+    let confirmation = "";
+    globalThis.confirm = (message?: string) => {
+      confirmation = message ?? "";
+      return false;
+    };
+    try {
+      const updated = element.render();
+      collectTemplateEventListeners(updated, "click")[0]?.call(element, new Event("click"));
+      expect(confirmation).toBe("Discard this inline comment draft?");
+      expect(cancels).toBe(0);
+    } finally {
+      globalThis.confirm = previousConfirm;
+    }
 
-    collectTemplateEventListeners(rendered, "click")[0]?.call(element, new Event("click"));
-    expect(comments.project("file-a").placements).toEqual([]);
+    collectTemplateEventListeners(element.render(), "submit")[0]?.call(element, new Event("submit", { cancelable: true }));
+    await Promise.resolve();
+    expect(saves).toBe(1);
+    expect(output).not.toContain("Delete comment");
   });
 });

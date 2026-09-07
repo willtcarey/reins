@@ -9,10 +9,8 @@ import {
 } from "@pierre/diffs";
 import type { ReactiveControllerHost } from "lit";
 import { PierreRenderer } from "../../controllers/pierre-renderer.js";
-import type {
-  ReviewComments,
-  ReviewLineSelection,
-} from "../../models/changes/review-comments.js";
+import type { InlineReviewFile } from "../../controllers/inline-review-controller.js";
+import type { ReviewLineRange } from "../../models/code-review.js";
 import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
 import { ReviewCommentThread } from "./review-comment-thread.js";
 
@@ -45,8 +43,7 @@ export interface ReviewFileDiffTarget {
   readonly fileDiff: FileDiffMetadata;
   readonly nativeExpandedHunks: ReadonlyMap<number, HunkExpansionRegion>;
   readonly initialExpansion: ReviewFileExpansionInteraction | null;
-  readonly comments?: ReviewComments | null;
-  readonly fileId?: string;
+  inlineReview?: InlineReviewFile | null;
 }
 
 /**
@@ -80,16 +77,28 @@ export class PierreReviewFileDiff extends FileDiff<PierreCommentPlacementMetadat
 
 export class ReviewFileDiffRenderer extends PierreRenderer<ReviewFileDiffTarget, PierreReviewFileDiff> {
   private target: ReviewFileDiffTarget | null = null;
+  private commentElements = new Map<string, ReviewCommentThread>();
 
   override bind(target: ReviewFileDiffTarget) {
     this.target = target;
     return super.bind(target);
   }
 
+  resetInlineCommentElements(): void {
+    this.commentElements.clear();
+  }
+
+  trackInlineCommentElement(id: string, element: ReviewCommentThread): void {
+    this.commentElements.set(id, element);
+  }
+
   refreshInlineComments(): void {
     const target = this.target;
     const renderer = this.instance;
     if (!target || !renderer) return;
+    for (const [id, element] of this.commentElements) {
+      element.placement = target.inlineReview?.placements.find((placement) => placement.id === id) ?? null;
+    }
     renderer.setLineAnnotations(commentAnnotations(target));
     renderer.setSelectedLines(commentSelection(target), { notify: false });
     renderer.rerender();
@@ -115,8 +124,10 @@ export function createReviewFileDiffRenderer(
   onNativeState?: (regions: ReadonlyMap<number, HunkExpansionRegion>) => void,
   workerManager?: ReturnType<typeof getPierreWorkerPool> | null,
 ) {
-  return new ReviewFileDiffRenderer(host, {
+  let controller: ReviewFileDiffRenderer;
+  controller = new ReviewFileDiffRenderer(host, {
     create: (target, rendered) => {
+      controller.resetInlineCommentElements();
       let listeningRoot: ShadowRoot | null = null;
       let renderer: PierreReviewFileDiff;
       const handleInteraction = (event: Event) => {
@@ -151,27 +162,24 @@ export function createReviewFileDiffRenderer(
       renderer = new PierreReviewFileDiff({
         ...REINS_DIFF_OPTIONS,
         onLineSelected: (range) => {
-          if (!target.comments || !target.fileId) return;
-          target.comments.dispatch({
-            type: "select",
-            fileId: target.fileId,
-            selection: range ? reviewSelection(range) : null,
-          });
+          if (!target.inlineReview) return;
+          if (!range) return target.inlineReview.select(null);
+          const normalized = normalizePierreRange(range);
+          if (typeof normalized === "string") target.inlineReview.reportError(normalized);
+          else target.inlineReview.select(normalized);
         },
         onGutterUtilityClick: (range) => {
-          if (!target.comments || !target.fileId) return;
-          target.comments.dispatch({
-            type: "open-composer",
-            fileId: target.fileId,
-            selection: reviewSelection(range),
-          });
+          if (!target.inlineReview) return;
+          const normalized = normalizePierreRange(range);
+          if (typeof normalized === "string") target.inlineReview.reportError(normalized);
+          else target.inlineReview.openComposer(normalized);
         },
         renderAnnotation: (annotation) => {
-          if (!target.comments || !target.fileId) return undefined;
+          const placement = target.inlineReview?.placements.find(({ id }) => id === annotation.metadata);
+          if (!placement) return undefined;
           const element = new ReviewCommentThread();
-          element.comments = target.comments;
-          element.fileId = target.fileId;
-          element.placementId = annotation.metadata;
+          element.placement = placement;
+          controller.trackInlineCommentElement(placement.id, element);
           return element;
         },
         onPostRender: (node, instance, phase) => {
@@ -224,31 +232,34 @@ export function createReviewFileDiffRenderer(
     sameInput: (left, right) => left === right,
     onRendered,
   });
+  return controller;
 }
 
 function commentAnnotations(
   target: ReviewFileDiffTarget,
 ): DiffLineAnnotation<PierreCommentPlacementMetadata>[] {
-  if (!target.comments || !target.fileId) return [];
-  return target.comments.project(target.fileId).placements.map((placement) => ({
-    side: placement.side === "old" ? "deletions" : "additions",
-    lineNumber: placement.lineNumber,
+  return (target.inlineReview?.placements ?? []).map((placement) => ({
+    side: placement.range.side === "old" ? "deletions" : "additions",
+    lineNumber: placement.range.endLine,
     metadata: placement.id,
   }));
 }
 
 function commentSelection(target: ReviewFileDiffTarget): SelectedLineRange | null {
-  if (!target.comments || !target.fileId) return null;
-  const selection = target.comments.project(target.fileId).selection;
+  const selection = target.inlineReview?.selection;
   if (!selection) return null;
   const side = selection.side === "old" ? "deletions" : "additions";
   return { start: selection.startLine, end: selection.endLine, side, endSide: side };
 }
 
-function reviewSelection(range: SelectedLineRange): ReviewLineSelection {
-  const side = range.side === "deletions" ? "old" : "new";
-  const endSide = (range.endSide ?? range.side) === "deletions" ? "old" : "new";
-  return { side, startLine: range.start, endLine: range.end, endSide };
+function normalizePierreRange(range: SelectedLineRange): ReviewLineRange | string {
+  const endSide = range.endSide ?? range.side;
+  if (range.side !== endSide) return "Inline comments must stay on one side of the diff.";
+  return {
+    side: range.side === "deletions" ? "old" : "new",
+    startLine: Math.min(range.start, range.end),
+    endLine: Math.max(range.start, range.end),
+  };
 }
 
 function prepareNativeControls(root: ShadowRoot | null, fileDiff: FileDiffMetadata): void {
