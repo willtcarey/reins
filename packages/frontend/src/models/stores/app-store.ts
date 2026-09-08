@@ -389,7 +389,6 @@ export class AppStore {
 
   /** Open the WebSocket connection. */
   connect() {
-    void this.settingsStore.loadSettings(["diff_renderer"]);
     this._removeBrowserResumeHandlers ??= this.installBrowserResumeHandlers();
     this._client.connect();
   }

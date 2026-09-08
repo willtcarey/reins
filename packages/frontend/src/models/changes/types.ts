@@ -1,7 +1,4 @@
-/**
- * Shared types for the changes/diff components.
- * Mirrors the backend diff API response shapes.
- */
+/** Shared changed-file and tool diff types. */
 
 /** Lightweight file summary — returned by the polled /diff/files endpoint. */
 export interface DiffFileSummary {
@@ -21,12 +18,4 @@ export interface DiffLine {
 export interface DiffHunk {
   header: string;
   lines: DiffLine[];
-}
-
-/** Parsed file diff — returned by the on-demand /diff endpoint. */
-export interface DiffFile {
-  path: string;
-  additions: number;
-  removals: number;
-  hunks: DiffHunk[];
 }

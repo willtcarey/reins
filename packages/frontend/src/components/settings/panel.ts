@@ -13,7 +13,6 @@ import { SettingsStore, type SettingsChange, type SettingsKey } from "../../mode
 import { showToast } from "../toast.js";
 import { closeIcon } from "../icons.js";
 import "./api-keys-section.js";
-import "./diff-renderer-section.js";
 import "./model-setting-section.js";
 
 interface SettingRenderContext {
@@ -48,14 +47,6 @@ const DEFAULT_MODEL_SETTING: SettingDefinition = {
   `,
 };
 
-const DIFF_RENDERER_SETTING: SettingDefinition = {
-  id: "diff-renderer",
-  settingKeys: ["diff_renderer"],
-  render: ({ settingsStore }) => html`
-    <settings-diff-renderer-section .store=${settingsStore}></settings-diff-renderer-section>
-  `,
-};
-
 const UTILITY_MODEL_SETTING: SettingDefinition = {
   id: "utility-model",
   settingKeys: ["utility_model"],
@@ -75,7 +66,6 @@ function visibleSettings(): readonly SettingDefinition[] {
   return [
     API_KEYS_SETTING,
     DEFAULT_MODEL_SETTING,
-    DIFF_RENDERER_SETTING,
     UTILITY_MODEL_SETTING,
   ];
 }

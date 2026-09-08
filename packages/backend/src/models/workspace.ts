@@ -11,8 +11,7 @@ import {
   mergeBase,
   streamDiffPatch,
 } from "../git.js";
-import { asyncIterableToText } from "../async-iterable.js";
-import { DiffParser, type DiffFile, type DiffFileSummary } from "./diff-parser.js";
+import { DiffParser, type DiffFileSummary } from "./diff-parser.js";
 import type { FileSystem, WorkspaceFile } from "./file-system.js";
 import { GitTreeFileSystem } from "./git-tree-file-system.js";
 import { WorkingTreeFileSystem } from "./working-tree-file-system.js";
@@ -98,17 +97,6 @@ export class Workspace {
     } finally {
       await cleanup().catch(() => undefined);
     }
-  }
-
-  /** Parsed diff hunks with raw text lines (highlighting is client-side). */
-  async getDiff(
-    contextLines = 3,
-    mode: DiffMode = "branch",
-    branch?: string,
-  ): Promise<DiffFile[]> {
-    const stream = this.getDiffPatchStream(contextLines, mode, branch);
-    const raw = await asyncIterableToText(stream);
-    return DiffParser.parsePatch(raw);
   }
 
   private async fileSystemFor(ref?: string | null): Promise<FileSystem> {

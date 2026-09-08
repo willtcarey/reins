@@ -76,7 +76,7 @@ describe("SettingsPanel", () => {
     modelRegistry.resolve(jsonResponse([]));
   });
 
-  test("renders the diff renderer setting", async () => {
+  test("loads only the model settings exposed by the panel", async () => {
     const requests = mockSettingsPanelFetch();
 
     const el = makePanel();
@@ -84,10 +84,8 @@ describe("SettingsPanel", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const output = templateToString(el.render());
-
-    expect(output).toContain("<settings-diff-renderer-section");
-    expect(requests).toContain("/api/settings?key=default_model&key=diff_renderer&key=utility_model");
+    expect(requests).toContain("/api/settings?key=default_model&key=utility_model");
+    expect(templateToString(el.render())).not.toContain("Diff renderer");
   });
 
   test("renders with an injected shared settings store", () => {

@@ -42,9 +42,8 @@ export function reconcileFileChanges(
 }
 
 /**
- * Converts a complete raw patch into renderer-owned records. The records are
- * independent from DiffStore.fullData so a later virtual list can change only
- * the mounting strategy.
+ * Converts a complete raw patch into review records whose identity remains
+ * stable when the virtual list changes its mounting strategy.
  */
 export function parseFileChanges(
   patch: string,

@@ -1,5 +1,7 @@
 # Review Diff Renderer Direction
 
+**Complete.** The Reins-owned bounded review surface is the sole Changes renderer. The renderer preference, Classic implementation, parsed JSON diff endpoint, and `DiffStore.fullData` path were removed. Raw patches, changed-file polling, file-tree navigation, comments, context expansion, collapse state, binary placeholders, branch/diff modes, and worker-backed highlighting remain supported. Rich Markdown, image, and PDF previews remain in the file browser. Patch streaming is still an optional future optimization rather than unfinished scope in this plan.
+
 ## Goal
 
 Build a future Changes renderer that keeps the performance benefits demonstrated by `@pierre/diffs` while preserving Reins review behavior: selected-session branch scoping, file tree navigation, fluid inline context expansion, file actions, binary-change clarity, and inline review comments.
@@ -49,7 +51,7 @@ This is the working implementation list. It is ordered from smallest functional 
    - [x] Keep Markdown rendering and preview tabs in the file browser. The diff surface remains focused on reviewing textual changes rather than becoming a second file viewer.
    - [x] Keep image and PDF previews in the file browser for the same reason; the diff surface should identify their binary change and retain its file actions, not render the asset.
    - [x] Add an explicit placeholder for binary changes that have no textual diff.
-   - [x] Investigate inline comments and define the supported seam; see [Inline Review Comments on the Virtualized Diff](completed/inline-review-comments.md).
+   - [x] Investigate inline comments and define the supported seam; see [Inline Review Comments](inline-review-comments.md).
    - [x] Implement inline comments through Pierre's public annotations, selection, and gutter hooks. Reins owns drafts, persisted threads, durable anchor evidence, remount restoration, outer measurement, deletion, and submission. Do not put comments in diff metadata or use protected/deprecated row hooks.
 
 6. [x] **Replace top-level mounting with a CodeView-like virtual list.**
@@ -93,7 +95,7 @@ The `virtualized` renderer now keeps all file changes in JavaScript while the ge
 
 In particular:
 
-- Follow the completed [Inline Review Comments on the Virtualized Diff](completed/inline-review-comments.md) plan for comment anchors, interaction, accessibility, virtual measurement, and the Reins/Pierre seam. The installed Pierre 1.4.1 supports public line annotations, pointer selection, and async partial-diff hydration; Reins owns drafts, persisted threads, durable anchor evidence, synchronization, deletion, and review submission.
+- Follow the completed [Inline Review Comments](inline-review-comments.md) plan for comment anchors, interaction, accessibility, virtual measurement, and the Reins/Pierre seam. The installed Pierre 1.4.1 supports public line annotations, pointer selection, and async partial-diff hydration; Reins owns drafts, persisted threads, durable anchor evidence, synchronization, deletion, and review submission.
 - Do not continue polishing direct `CodeView` as if it were the final architecture.
 - Do not prioritize streaming/chunked patch loading before replacing the `CodeView`-owned surface.
 - Do not build core behavior on deprecated `hunkSeparators(hunkData, instance)` APIs.

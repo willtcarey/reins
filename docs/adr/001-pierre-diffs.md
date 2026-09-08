@@ -1,7 +1,7 @@
 # ADR-001: Evaluated `@pierre/diffs` for Diff Viewer
 
-- **Status:** Rejected (twice)
-- **Date:** 2026-02-13 (original), 2026-03-06 (revisited)
+- **Status:** Accepted after further evaluation
+- **Date:** 2026-02-13 (original), 2026-03-06 and 2026-09-08 (revisited)
 - **Author:** Will (with Claude)
 
 ## Context
@@ -81,8 +81,10 @@ The migration was supposed to eliminate ~950 lines of custom code. Instead, the 
 
 The issues above consumed all the migration effort, so the features that motivated the attempt (annotations, word-level inline diffs) were never actually integrated. Those will need to be built into the custom implementation instead.
 
-## Final Decision
+## Third Evaluation and Final Decision (2026-09-08)
 
-**Rejected.** Keep the custom diff implementation. Build desired features (annotations, inline word-level diffs) directly rather than adopting this library. The expansion model and rendering performance are fundamental mismatches with REINS's architecture.
+**Accepted as a lower-level rendering dependency inside a Reins-owned review surface.** Newer `@pierre/diffs` releases added public async partial-diff hydration, annotations, line selection, gutter actions, and worker-backed highlighting. Reins avoided the earlier performance failure by owning the top-level bounded virtual list rather than mounting every file or delegating the entire Changes surface to Pierre's `CodeView`.
 
-Do not revisit this decision unless `@pierre/diffs` adds support for lazy/on-demand file content loading for hunk expansion.
+The resulting architecture fetches a Git-native raw patch, parses stable per-file review records in the frontend, mounts only the visible/overscan window, and delegates mounted text rows to Pierre `FileDiff`. Reins retains file headers and actions, collapse persistence, item-ID navigation, inline comment state, context acquisition and validation, virtual measurement, binary placeholders, and review submission. Rich Markdown, image, and PDF previews remain in the file browser.
+
+The Classic renderer and parsed JSON diff endpoint were removed after this path reached parity. See the completed [Review Diff Renderer Direction](../plans/completed/streamed-review-diff-renderer.md) plan for the implementation history and detailed invariants.

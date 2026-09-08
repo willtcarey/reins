@@ -46,7 +46,7 @@ models/
 │   └── settings-store.ts
 ├── changes/             Diff/highlighting pure logic
 │   ├── diff-sort.ts, diff-utils.ts, file-tree-state.ts
-│   ├── highlighter.ts, highlight-worker.ts, scroll-spy.ts
+│   ├── highlighter.ts, highlight-worker.ts
 │   └── types.ts
 ├── tools/               Tool data extraction helpers
 │   ├── read.ts, edit.ts, write.ts, bash.ts
@@ -68,9 +68,9 @@ Lit custom elements that own rendering and user interaction. Import from `models
 
 ```
 components/
-├── changes/             Diff viewer components
-│   ├── diff-panel.ts, diff-file-card.ts, diff-file-tree.ts
-│   ├── diff-hunk.ts, diff-markdown-preview.ts
+├── changes/             Review surface components
+│   ├── review-diff-panel.ts, review-file-diff.ts
+│   ├── diff-file-tree.ts, diff-file-action-buttons.ts
 ├── tools/               Tool-specific chat renderers
 │   ├── read.ts, edit.ts, write.ts, bash.ts
 │   ├── create-task.ts, delegate.ts, generic.ts
@@ -178,7 +178,7 @@ Store/component boundary:
 Keep store descriptions at the ownership-boundary level. Avoid listing every endpoint, event, or feature a store currently supports; those details belong in code, tests, or feature-specific docs when they affect behavior.
 
 - **AppStore** (`models/stores/app-store.ts`) — Top-level orchestration for route-derived app state, WebSocket/reconnect side effects, shared app-wide settings, and sub-store coordination. Components should prefer semantic AppStore/sub-store methods over reaching into lower-level internals.
-- **DiffStore** (`models/stores/diff-store.ts`) — Git diff domain state and mutations, including polling and expansion. Rendering concerns such as syntax highlighting stay in controllers/components.
+- **DiffStore** (`models/stores/diff-store.ts`) — Git diff domain state, lightweight changed-file polling, raw patch loading, diff-mode selection, and branch synchronization. Context expansion state belongs to the review model rather than the store; rendering concerns such as syntax highlighting stay in controllers/components.
 - **CodeReviewStore** (`models/stores/code-review-store.ts`) — Synchronizes raw `CodeReviewState` for the viewed session's exact project/task scope and owns loads, optimistic annotation writes, submission, revision-aware invalidation reloads, and notifications. Pure functions in `models/code-review.ts` project saved annotations and build anchor evidence without wrapping transport state in another object. The panel's `InlineReviewController` owns one selection and composer across virtual remounts and exposes one per-file interface to the diff UI. Submission receives the selected session identity at action time; runtime activity remains owned by `SessionCache`.
 - **SessionCache** (`models/stores/session-cache.ts`) — Canonical client cache for server-provided session metadata and the sole frontend owner of runtime activity. Stores and components derive running/activity views from it rather than duplicating activity in conversation or component state.
 - **ConversationsStore** (`models/stores/conversations-store.ts`) — Keyed per-session conversation presentation state that must survive route changes or missed streaming events. Internally it retains raw persistence/runtime records so reconciliation remains faithful to those protocols; its public `ConversationView` projects them into `Message` domain objects as the primary display interface. Each display message carries its persisted entry/parent IDs or store-local render identity, owns raw Markdown copy semantics, and assistants expose ordered blocks whose tool calls already reference their matching persisted `ToolResultMessage` or live `ToolExecution`. Standalone tool-result records are therefore not display messages. Successful prompt and steer actions add optimistic user entries immediately; peer `user_message` events add equivalent live entries. Components own only outgoing animation metadata and must not maintain parallel pending-message or persistence-reconciliation state. `ActiveSessionStore.prompt()` and `steer()` return the exact `LiveConversationEntry` inserted so local-only interactions can use its store-local render key. Runtime `agent_end` user messages are ignored because they may contain runtime-only skill expansion. During a run, assistant display comes from normalized message snapshots; `agent_start` and `agent_settled` are presentation no-ops, while `agent_end` promotes fresh final assistants and tool results before clearing streaming assistants without completing runtime activity. Genuinely new persisted forward user rows consume pending live users FIFO, independent of content, and replace them with canonical persisted entries. Stale/overlapping pages and earlier-history loads never consume pending users. Persisted IDs flow through render keys and history anchors; do not reconstruct persisted identity from message content, roles, or timestamps. `ConversationsStore` owns persisted-message queries and cursor traversal, merges API records by ID and parent links, and reconciles live/streaming state separately. Ordered streaming snapshots keep only matching tool-execution overlays, keyed by stable tool-call ID; complete snapshot updates can recover missed starts/deltas. Persisted assistant timestamps remove matching streaming snapshots while unmatched newer work remains. Persisted tool results replace live results by tool-call ID. Disconnect and route/metadata updates do not discard received snapshots. When authoritative metadata is non-running, `ActiveSessionStore` narrowly clears only stale compaction presentation and synchronizes canonical messages when needed. Runtime activity remains solely owned by `SessionCache`.
@@ -259,7 +259,7 @@ app-shell                    — root shell, creates store, applies routes, rend
 │   │   └── message-action-menu — action sheet/context menu lifecycle, focus, positioning, and menu feedback
 │   ├── ChatHistoryController — earlier-history triggering + viewport preservation
 │   └── chat-composer        — prompt input, autosize, skill suggestions, image attachments
-├── diff-panel               — full diff view with file cards
+├── review-diff-panel        — bounded Changes review surface
 ├── diff-file-tree           — app-owned changed-file pane/sidebar
 ├── quick-open               — Cmd+K fuzzy search across all sessions
 ├── file-search              — Cmd+P fuzzy file search (uses search-palette)
@@ -337,9 +337,8 @@ The diff/changes feature spans both `models/changes/` (pure logic) and `componen
 
 **Pure logic (`models/changes/`):**
 - `diff-sort.ts` — Sorting utilities for diff files
-- `diff-utils.ts` — Pure helpers (isMarkdown, fileCardId, escapeHtml, gutterWidth, getHunkEndLine, diffLineKey)
+- `diff-utils.ts` — Shared file-type, line-wrapping, and HTML-escaping helpers
 - `file-tree-state.ts` — UI-local state for tree expansion (not in store — ephemeral)
-- `scroll-spy.ts` — Tracks which diff card is visible for tree highlighting
 - `highlighter.ts` — Pure-function interface to the Shiki Web Worker: text lines in, HTML lines out via callback. Exports `IHighlighter` for test fakes.
 - `highlight-worker.ts` — Web Worker for off-main-thread Shiki highlighting
 - `pierre-diffs-worker.ts` / `pierre-worker-pool.ts` — Shared `@pierre/diffs` worker entry plus sizing/highlighter setup for Pierre-backed source and diff renderers.
@@ -353,19 +352,12 @@ The diff/changes feature spans both `models/changes/` (pure logic) and `componen
 - `spring-collapse.ts` — Shared structural spring-collapse behavior. It lazily renders a supplied body, tracks asynchronous body resizing, retains it through collapse, honors reduced motion, supports in-flight reversal, and unmounts it after settling. The shared `Spring` integrator substeps slow frames so stronger height springs remain stable instead of flashing between clamped extremes.
 
 **Components (`components/changes/`):**
-- `diff-panel.ts` — Layout shell: branch header, scroll container, file tree sidebar. Owns state coordination and wires child events to the DiffStore.
-- `diff-renderer-shell.ts` — Chooses the active Changes renderer from the `diff_renderer` setting while keeping classic as the default path.
-- `diff-file-card.ts` — Per-file card: collapsible header with copy/download actions, delegates to `<diff-hunk>` and `<diff-markdown-preview>`.
-- `diff-hunk.ts` — Single hunk: separator/expand-up button, hunk header, diff lines, trailer/expand-down button.
-- `review-diff-panel.ts` — Reins-owned review adapter. It parses/reconciles review records, maps review collapse and measurements into `VirtualListController`, renders the controller's bounded keyed window, and adapts active IDs and generic observations to review events and telemetry.
-- `review-file-diff.ts` — One file diff's collapsible Reins-owned header, expansion integration, and virtual-layout contract.
+- `review-diff-panel.ts` — The Changes surface. It parses/reconciles raw patch records, maps review collapse and measurements into `VirtualListController`, renders the controller's bounded keyed window, and adapts active IDs and generic observations to review events and telemetry.
+- `review-file-diff.ts` — One file diff's collapsible Reins-owned header, inline comments, context expansion, binary/large-file placeholders, and virtual-layout contract.
 - `review-file-diff-renderer.ts` — Configures the shared `PierreRenderer` for `FileDiff`, including worker-render completion semantics and shared highlighting options.
-- `diff-file-action-buttons.ts` — Shared Lit action buttons for opening, copying, and downloading changed files across diff renderers.
-- `diff-markdown-preview.ts` — Markdown Diff/Preview tab bar and rendered content area.
-- `diff-file-tree.ts` — Collapsible file tree with scroll spy integration
+- `diff-file-action-buttons.ts` — Shared Lit action buttons for opening, copying, and downloading changed files.
+- `diff-file-tree.ts` — Collapsible changed-file tree with item-ID navigation and diff-mode selection.
 
-`DiffStore` owns the diff lifecycle and exposes the classic JSON representation (`fullData`) and raw `/diff/patch` text (`patchData`) as `Loadable<T>` values. The Reins-owned `virtualized` renderer consumes `patchData` and owns its parsed records. Collapse markers are keyed by project, branch, item, and reviewed content.
+`DiffStore` owns the diff lifecycle and exposes raw `/diff/patch` text (`patchData`) as a `Loadable<T>` value. `ReviewDiffPanel` parses it into renderer-owned records. Collapse markers are keyed by project, branch, item, and reviewed content. The retired parsed JSON diff payload is not loaded or exposed.
 
-The Reins-owned renderer's geometry, mounting, navigation, anchoring, measurement, and cleanup contracts are defined in [review-virtualization.md](review-virtualization.md). Generic virtual behavior belongs to `VirtualListController` and `VirtualListCoordinator`; review policy remains in `ReviewDiffPanel`. Pierre-backed renderers share one `WorkerPoolManager` from `pierre-worker-pool.ts`, while the review `FileDiff` and standalone file source renderer also share `PierreRenderer` for ref mounting, input reconciliation, completion, and cleanup. Their theme variables live on `<diffs-container>` hosts in `app.css`; only selectors that target shadow-DOM internals remain renderer-local. Rich Markdown, HTML, image, PDF, and binary file-viewer renderers remain outside Pierre.
-
-`diff-file-card` and `diff-hunk` use `StoreController<DiffStore>` to re-render on store notifications. Each `<diff-hunk>` owns a `HighlightController` that sends the hunk's text lines to the Shiki web worker for syntax highlighting. The controller stores the resulting HTML strings — the highlighter never mutates `DiffLine` objects. During render, `diff-hunk` reads `controller.getLineHtml(index)` and falls back to escaped plain text if highlighting hasn't completed yet (see [reactive-controllers.md](reactive-controllers.md)).
+The Changes surface's geometry, mounting, navigation, anchoring, measurement, and cleanup contracts are defined in [review-virtualization.md](review-virtualization.md). Generic virtual behavior belongs to `VirtualListController` and `VirtualListCoordinator`; review policy remains in `ReviewDiffPanel`. Pierre-backed renderers share one `WorkerPoolManager` from `pierre-worker-pool.ts`, while the review `FileDiff` and standalone file source renderer also share `PierreRenderer` for ref mounting, input reconciliation, completion, and cleanup. Their theme variables live on `<diffs-container>` hosts in `app.css`; only selectors that target shadow-DOM internals remain renderer-local. Rich Markdown, HTML, image, PDF, and binary file-viewer renderers remain outside Pierre. Tool output and Markdown code blocks continue to use the shared Shiki highlighter independently of the Changes renderer.
