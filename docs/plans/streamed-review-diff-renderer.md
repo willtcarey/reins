@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a future Changes renderer that keeps the performance benefits demonstrated by `@pierre/diffs` while preserving Reins review behavior: selected-session branch scoping, file tree navigation, fluid inline context expansion, file actions, markdown/image/PDF previews, and future mixed review content.
+Build a future Changes renderer that keeps the performance benefits demonstrated by `@pierre/diffs` while preserving Reins review behavior: selected-session branch scoping, file tree navigation, fluid inline context expansion, file actions, binary-change clarity, and inline review comments.
 
 ## Implementation plan
 
@@ -46,8 +46,9 @@ This is the working implementation list. It is ordered from smallest functional 
 5. [ ] **Add Reins-owned behavior that `CodeView` cannot own cleanly.**
    - [x] Collapsed file state.
    - [x] Copy path / download / open in browser actions.
-   - Markdown diff/preview tabs.
-   - Image previews, PDF previews, and binary placeholders.
+   - [x] Keep Markdown rendering and preview tabs in the file browser. The diff surface remains focused on reviewing textual changes rather than becoming a second file viewer.
+   - [x] Keep image and PDF previews in the file browser for the same reason; the diff surface should identify their binary change and retain its file actions, not render the asset.
+   - Add an explicit placeholder for binary changes that have no textual diff.
    - [x] Investigate inline comments and define the supported seam; see [Inline Review Comments on the Virtualized Diff](completed/inline-review-comments.md).
    - [x] Implement inline comments through Pierre's public annotations, selection, and gutter hooks. Reins owns drafts, persisted threads, durable anchor evidence, remount restoration, outer measurement, deletion, and submission. Do not put comments in diff metadata or use protected/deprecated row hooks.
 
@@ -88,7 +89,7 @@ The former CodeView renderer prototype proved an important point: **most of the 
 
 The `diff_renderer` setting supports `classic` and `virtualized`; the direct Pierre `CodeView` proof point is no longer selectable. The Reins-owned path fetches `/diff/patch` as full text, parses renderer-specific file changes, owns the file headers and item-ID navigation contract, and delegates text rows and worker-backed highlighting to Pierre `FileDiff`. Classic remains the default, so Reins renderer access is controlled by the stored preference rather than frontend dev-mode gating.
 
-The `virtualized` renderer now keeps all file changes in JavaScript while the generic `VirtualListController` and `VirtualListCoordinator` expose only a balanced viewport/overscan window for keyed mounting. Its Reins-owned headers include accessible collapse controls plus the shared view, copy-path, and download actions. A collapsed item records the hash of that exact reviewed diff in local storage under its project, branch, and stable item ID; both diff modes share that reviewed state. Matching content remains collapsed across reconciliation, project switches, and reloads; changed content expands and invalidates the marker so a later revert also stays expanded. File-tree navigation resolves coordinator geometry and therefore works before the target wrapper exists. Active-file tracking uses that same geometry. Stable measurements are retained by item/content/render-state key and committed in batches against a semantic item plus viewport-offset anchor. Absolutely positioned wrappers in a fixed-total-height container prevent asynchronous sizing from moving siblings before the post-render scroll reconciliation. Balanced overscan supports reverse scrolling, while explicit input cancellation prevents smooth navigation and anchor correction from fighting touch, wheel, pointer, or keyboard scrolling. All renderer modes now retain the file surface but suppress diff-row rendering for a file above 10,000 additions plus removals; the Reins-owned list gives those notices bounded initial geometry, measures their wrapping surface, and never binds Pierre for them. Rich previews, pooling, patch streaming, and aggregate payload safeguards remain follow-up work.
+The `virtualized` renderer now keeps all file changes in JavaScript while the generic `VirtualListController` and `VirtualListCoordinator` expose only a balanced viewport/overscan window for keyed mounting. Its Reins-owned headers include accessible collapse controls plus the shared view, copy-path, and download actions. A collapsed item records the hash of that exact reviewed diff in local storage under its project, branch, and stable item ID; both diff modes share that reviewed state. Matching content remains collapsed across reconciliation, project switches, and reloads; changed content expands and invalidates the marker so a later revert also stays expanded. File-tree navigation resolves coordinator geometry and therefore works before the target wrapper exists. Active-file tracking uses that same geometry. Stable measurements are retained by item/content/render-state key and committed in batches against a semantic item plus viewport-offset anchor. Absolutely positioned wrappers in a fixed-total-height container prevent asynchronous sizing from moving siblings before the post-render scroll reconciliation. Balanced overscan supports reverse scrolling, while explicit input cancellation prevents smooth navigation and anchor correction from fighting touch, wheel, pointer, or keyboard scrolling. All renderer modes now retain the file surface but suppress diff-row rendering for a file above 10,000 additions plus removals; the Reins-owned list gives those notices bounded initial geometry, measures their wrapping surface, and never binds Pierre for them. Markdown, image, and PDF previews deliberately remain file-browser responsibilities. Binary-change placeholders, pooling, patch streaming, and aggregate payload safeguards remain follow-up work.
 
 In particular:
 
@@ -111,10 +112,9 @@ GET /api/projects/:id/diff/patch as full text initially
   → store renderer-specific file changes outside DiffStore.fullData
   → render through a Reins-owned top-level virtual list
        ├─ code diff item: Pierre VirtualizedFileDiff/FileDiff pieces
-       ├─ markdown preview item/panel: Reins renderer
-       ├─ image/PDF/binary preview item/panel: Reins renderer
+       ├─ binary change item: Reins-owned no-text-diff placeholder
        ├─ file actions/header controls: Reins renderer
-       └─ future annotations/comments/actions: Reins renderer
+       └─ annotations/comments/actions: Reins renderer
 ```
 
 The key requirement for the eventual performance path is that the Reins-owned surface must be **CodeView-like**, not merely Pierre `Virtualizer` wrapped around thousands of mounted file containers. `CodeView` is fast because it keeps item records/heights for all files but only mounts DOM containers for the visible window plus overscan. The lower-level `Virtualizer` is more flexible but generally mounts every top-level file/diff container, which gives back a large part of the many-file performance win.
@@ -141,7 +141,7 @@ The Reins-owned path was first built non-virtually to validate behavior while Cl
 
 Measurement stability is explicit. Expanded items are measured only after Pierre's post-render has no placeholder and the expansion has settled. Collapsed geometry is deterministic—the inter-file gap plus fixed header estimate—so collapsed items are never measured; the previous expanded measurement remains cached and applies again after expansion. Unlike the previous forward-only/measurement-exception approach, valid measurements above the viewport are retained and corrected semantically, and equal overscan before and after supports reverse scrolling. File-tree navigation records its target, re-resolves that target when geometry changes during native smooth scrolling, and clears/stops the programmatic scroll on wheel, touch, pointer, or scrolling-key input. Native CSS anchoring remains disabled so there is only one owner of correction.
 
-The resulting seams are: parsing/reconciliation owns review records; the generic coordinator owns persistent geometry; the generic controller owns virtual-list DOM behavior; the panel owns review collapse policy, path resolution, active-file events, stores, and telemetry adaptation; Lit owns keyed mounting; and `ReviewFileDiff` owns a Pierre `FileDiff` only for its mounted lifetime. This remains deliberately top-level: pooling, rich previews, context expansion, and patch streaming are deferred.
+The resulting seams are: parsing/reconciliation owns review records; the generic coordinator owns persistent geometry; the generic controller owns virtual-list DOM behavior; the panel owns review collapse policy, path resolution, active-file events, stores, and telemetry adaptation; Lit owns keyed mounting; and `ReviewFileDiff` owns a Pierre `FileDiff` only for its mounted lifetime. This remains deliberately top-level: pooling and patch streaming are deferred, while rich file previews remain owned by the file browser.
 
 ### Fluid inline context expansion
 
@@ -171,9 +171,9 @@ raw patch stream
 | Diff modes | Preserved | Preserve |
 | File tree navigation | Basic integration | First-class scroll-to-item and active-file state |
 | Context expansion | Unsupported for partial raw patches | Fluid in-place reveal backed by invisible lazy content retrieval |
-| Markdown preview | Deferred | First-class mixed item/tab support |
-| Image/PDF previews | Deferred | First-class mixed item/tab support |
-| Binary files | Limited/metadata only | Reins-owned placeholders/previews |
+| Markdown preview | Available in Classic | Deliberately file-browser-only; the diff renders textual changes |
+| Image/PDF previews | Available in Classic | Deliberately file-browser-only; file actions lead to the asset |
+| Binary files | Limited/metadata only | Reins-owned no-text-diff placeholder plus file actions |
 | File actions | Re-added through CodeView header hooks | Reins-owned header/action UI |
 | Renames | Parser metadata available; verify UI | Preserve old/new path handling for expansion |
 | Untracked files | Raw patch support exists; verify | Preserve and support one-sided content fetch |
@@ -238,4 +238,4 @@ Metrics to capture:
 
 The generic virtual list remains the geometry owner. Context expansion runs through its generic `preserveScroll` transaction, which captures the selected semantic anchor, performs Pierre's mutation, waits for the resizing item's next changed measurement, and commits geometry plus scroll correction together. Pierre's visually upward/from-end control reports direction `down`, so the adapter preserves the item end and scrolls by measured growth; the visually downward/from-start control reports `up` and needs no transaction because context is inserted below reviewed code. Bidirectional expansion supplies a resolver for Pierre's internal separator point. This prevents bottom clamping against stale total height; intervening user scroll intent cancels the transaction.
 
-Context state remains in-memory for the current panel scope rather than persisted across reloads; failed acquisition is terminal until the diff scope/item changes; and the 1 MiB resulting-file limit is fixed. Prefetching, rich previews, patch streaming, and renderer polish remain deferred.
+Context state remains in-memory for the current panel scope rather than persisted across reloads; failed acquisition is terminal until the diff scope/item changes; and the 1 MiB resulting-file limit is fixed. Prefetching, patch streaming, and renderer polish remain deferred. Rich file previews are intentionally out of scope because the file browser owns them.
