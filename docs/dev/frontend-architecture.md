@@ -357,7 +357,6 @@ The diff/changes feature spans both `models/changes/` (pure logic) and `componen
 - `diff-renderer-shell.ts` — Chooses the active Changes renderer from the `diff_renderer` setting while keeping classic as the default path.
 - `diff-file-card.ts` — Per-file card: collapsible header with copy/download actions, delegates to `<diff-hunk>` and `<diff-markdown-preview>`.
 - `diff-hunk.ts` — Single hunk: separator/expand-up button, hunk header, diff lines, trailer/expand-down button.
-- `codeview-diff-panel.ts` — Prototype renderer that consumes `DiffStore`'s raw `/diff/patch` text, parses renderer-specific CodeView diff data with `@pierre/diffs`, converts it into `CodeView` items, adds Reins header actions/collapse toggles, and lets Pierre own diff row rendering/highlighting/virtualization.
 - `review-diff-panel.ts` — Reins-owned review adapter. It parses/reconciles review records, maps review collapse and measurements into `VirtualListController`, renders the controller's bounded keyed window, and adapts active IDs and generic observations to review events and telemetry.
 - `review-file-diff.ts` — One file diff's collapsible Reins-owned header, expansion integration, and virtual-layout contract.
 - `review-file-diff-renderer.ts` — Configures the shared `PierreRenderer` for `FileDiff`, including worker-render completion semantics and shared highlighting options.
@@ -365,7 +364,7 @@ The diff/changes feature spans both `models/changes/` (pure logic) and `componen
 - `diff-markdown-preview.ts` — Markdown Diff/Preview tab bar and rendered content area.
 - `diff-file-tree.ts` — Collapsible file tree with scroll spy integration
 
-`DiffStore` owns the diff lifecycle and exposes the classic JSON representation (`fullData`) and raw `/diff/patch` text (`patchData`) as `Loadable<T>` values. The CodeView prototype and Reins-owned `virtualized` renderer both consume `patchData`, but each owns its renderer-specific parsed records. Collapse markers are shared across patch-backed modes and keyed by project, branch, item, and reviewed content.
+`DiffStore` owns the diff lifecycle and exposes the classic JSON representation (`fullData`) and raw `/diff/patch` text (`patchData`) as `Loadable<T>` values. The Reins-owned `virtualized` renderer consumes `patchData` and owns its parsed records. Collapse markers are keyed by project, branch, item, and reviewed content.
 
 The Reins-owned renderer's geometry, mounting, navigation, anchoring, measurement, and cleanup contracts are defined in [review-virtualization.md](review-virtualization.md). Generic virtual behavior belongs to `VirtualListController` and `VirtualListCoordinator`; review policy remains in `ReviewDiffPanel`. Pierre-backed renderers share one `WorkerPoolManager` from `pierre-worker-pool.ts`, while the review `FileDiff` and standalone file source renderer also share `PierreRenderer` for ref mounting, input reconciliation, completion, and cleanup. Their theme variables live on `<diffs-container>` hosts in `app.css`; only selectors that target shadow-DOM internals remain renderer-local. Rich Markdown, HTML, image, PDF, and binary file-viewer renderers remain outside Pierre.
 

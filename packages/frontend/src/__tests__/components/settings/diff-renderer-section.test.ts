@@ -4,9 +4,9 @@ import { SettingsStore } from "../../../models/stores/settings-store.js";
 import { templateToString } from "../../helpers/lit-template.js";
 
 describe("SettingsDiffRendererSection", () => {
-  test("renders diff renderer options and experimental note", () => {
+  test("renders the Classic and Reins renderer options", () => {
     const store = new SettingsStore();
-    store.diffRenderer = "codeview";
+    store.diffRenderer = "virtualized";
 
     const el = new SettingsDiffRendererSection();
     el.store = store;
@@ -15,10 +15,8 @@ describe("SettingsDiffRendererSection", () => {
 
     expect(output).toContain("Diff renderer");
     expect(output).toContain("Classic");
-    expect(output).toContain("CodeView diff panel");
     expect(output).toContain("Reins virtualized diff");
-    expect(output).toContain("experimental");
-    expect(output).toContain("may not match every classic feature yet");
+    expect(output).not.toContain("CodeView");
     expect(output).not.toContain("?disabled=");
   });
 });

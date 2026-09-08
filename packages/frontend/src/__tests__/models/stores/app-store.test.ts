@@ -33,11 +33,11 @@ describe("AppStore activity event routing", () => {
       return Response.json({}, { status: 404 });
     });
 
-    const result = await store.settingsStore.selectDiffRenderer("codeview");
+    const result = await store.settingsStore.selectDiffRenderer("virtualized");
 
     unsubscribe();
     expect(result).toEqual({ ok: true });
-    expect(store.settingsStore.diffRenderer).toBe("codeview");
+    expect(store.settingsStore.diffRenderer).toBe("virtualized");
     expect(notifications).toBeGreaterThan(0);
   });
 

@@ -52,7 +52,7 @@ describe("SettingsStore", () => {
           },
           {
             key: "diff_renderer",
-            value: "codeview",
+            value: "virtualized",
           },
         ]);
       }
@@ -93,7 +93,7 @@ describe("SettingsStore", () => {
       runtimeType: "pi",
       thinkingLevel: "minimal",
     });
-    expect(store.diffRenderer).toBe("codeview");
+    expect(store.diffRenderer).toBe("virtualized");
     expect(store.oauthProviders.map((provider) => provider.id)).toEqual(["openrouter"]);
   });
 
@@ -147,9 +147,9 @@ describe("SettingsStore", () => {
       return jsonResponse({}, false);
     });
 
-    const pending = store.selectDiffRenderer("codeview");
+    const pending = store.selectDiffRenderer("classic");
 
-    expect(store.diffRenderer).toBe("codeview");
+    expect(store.diffRenderer).toBe("classic");
 
     if (!resolveSave) throw new Error("Expected diff renderer save request");
     resolveSave(new Response(null, { status: 200 }));

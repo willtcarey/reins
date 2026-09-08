@@ -381,7 +381,7 @@ index 1111111..3333333 100644
       expect(second.cacheKeyPrefix).not.toBe(first.cacheKeyPrefix);
     });
 
-    test("refresh refetches a loaded CodeView patch diff when file summaries are unchanged", async () => {
+    test("refresh refetches a loaded patch diff when file summaries are unchanged", async () => {
       const patches = [
         patch,
         `diff --git a/demo.txt b/demo.txt

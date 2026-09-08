@@ -12,7 +12,7 @@ describe("DiffRendererShell", () => {
     const output = templateToString(shell.render());
 
     expect(output).toContain("<diff-panel");
-    expect(output).not.toContain("<codeview-diff-panel");
+    expect(output).not.toContain("<review-diff-panel");
     shell.store.dispose();
   });
 
@@ -43,17 +43,13 @@ describe("DiffRendererShell", () => {
     expect(scrolledPaths).toEqual(["src/example.ts"]);
   });
 
-  test("selects each non-default renderer without changing the classic fallback", () => {
+  test("selects the Reins renderer without changing the classic default", () => {
     const shell = new DiffRendererShell();
     shell.store = new DiffStore();
-    shell.renderer = "codeview";
-
-    expect(templateToString(shell.render())).toContain("<codeview-diff-panel");
-
     shell.renderer = "virtualized";
+
     const output = templateToString(shell.render());
     expect(output).toContain("<review-diff-panel");
-    expect(output).not.toContain("<codeview-diff-panel");
     expect(output).not.toContain("<diff-panel");
     shell.store.dispose();
   });

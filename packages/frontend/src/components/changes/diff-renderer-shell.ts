@@ -5,7 +5,6 @@ import type { DiffRenderer } from "../../models/stores/settings-store.js";
 import type { CodeReviewStore } from "../../models/stores/code-review-store.js";
 import type { DiffRendererPanel } from "./diff-renderer-panel.js";
 import "./diff-panel.js";
-import "./codeview-diff-panel.js";
 import "./review-diff-panel.js";
 
 @customElement("diff-renderer-shell")
@@ -27,7 +26,6 @@ export class DiffRendererShell extends LitElement {
 
   private get _panel(): DiffRendererPanel | null {
     return this.querySelector("diff-panel")
-      ?? this.querySelector("codeview-diff-panel")
       ?? this.querySelector("review-diff-panel");
   }
 
@@ -48,14 +46,6 @@ export class DiffRendererShell extends LitElement {
     ) ?? { additions: 0, removals: 0 };
     const panel = (() => {
       switch (this.renderer) {
-        case "codeview":
-          return html`
-            <codeview-diff-panel
-              class="block h-full min-h-0 ${this.visible ? "" : "hidden"}"
-              .store=${store}
-              .visible=${this.visible}
-            ></codeview-diff-panel>
-          `;
         case "virtualized":
           return html`
             <review-diff-panel

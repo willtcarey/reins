@@ -20,7 +20,6 @@ export const ModelSettingSchema = Type.Object({
 
 export const DiffRendererSchema = Type.Union([
   Type.Literal("classic"),
-  Type.Literal("codeview"),
   Type.Literal("virtualized"),
 ]);
 

@@ -23,7 +23,7 @@ export interface ModelSetting {
 export type SettingsStoreResult = { ok: true } | { error: string };
 export type SettingsStoreListener = () => void;
 export type ModelSettingKey = "default_model" | "utility_model";
-export type DiffRenderer = "classic" | "codeview" | "virtualized";
+export type DiffRenderer = "classic" | "virtualized";
 export type SettingsKey = ModelSettingKey | "diff_renderer";
 export type SettingsChange = { key: string };
 export type SettingsChangeListener = (change: SettingsChange) => void;

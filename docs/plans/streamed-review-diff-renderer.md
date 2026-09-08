@@ -6,7 +6,7 @@ Build a future Changes renderer that keeps the performance benefits demonstrated
 
 ## Implementation plan
 
-This is the working implementation list. It is ordered from smallest functional scaffold to performance-critical architecture. Keep `classic` as the default throughout, and keep `codeview` available as the performance comparison baseline.
+This is the working implementation list. It is ordered from smallest functional scaffold to performance-critical architecture. Keep `classic` as the default while the Reins-owned `virtualized` renderer develops.
 
 ### Already done
 
@@ -14,6 +14,7 @@ This is the working implementation list. It is ordered from smallest functional 
 - [x] Add the raw patch endpoint and `DiffStore` raw patch loading path with active branch/session, diff mode, and context-line semantics.
 - [x] Add the direct Pierre `CodeView` proof point as `diff_renderer = "codeview"`.
 - [x] Verify the `codeview` proof point demonstrates the key performance lesson: top-level item virtualization matters more immediately than raw patch streaming.
+- [x] Remove the completed direct `CodeView` proof point, its setting option, renderer-specific UI/tests/styles, and selection path. Classic and the Reins-owned `virtualized` renderer remain selectable; `@pierre/diffs` remains because the Reins renderer uses its lower-level primitives. No persisted-setting data migration was added, per the follow-up decision for this removal.
 
 ### Next incremental steps
 
@@ -81,11 +82,11 @@ This is the working implementation list. It is ordered from smallest functional 
     - If full-patch fetch/parse is a bottleneck, frame complete file patches from the raw stream and append item records in batches.
     - Treat streaming as an optimization, not the foundation of the renderer architecture.
 
-The current CodeView renderer prototype proved an important point: **most of the immediate performance win comes from Pierre's `CodeView` top-level virtualization, not from streaming the raw patch.** That changes the next implementation direction.
+The former CodeView renderer prototype proved an important point: **most of the immediate performance win comes from Pierre's `CodeView` top-level virtualization, not from streaming the raw patch.** That changed the implementation direction.
 
 ## Current status and decision
 
-The `diff_renderer` setting supports `codeview` for the direct Pierre `CodeView` proof point and `virtualized` for the Reins-owned review surface. Both fetch `/diff/patch` as full text. The Reins-owned path parses renderer-specific file changes, owns the file headers and item-ID navigation contract, and delegates text rows and worker-backed highlighting to Pierre `FileDiff`. Classic remains the default, so non-default renderer access is controlled by the stored preference rather than frontend dev-mode gating.
+The `diff_renderer` setting supports `classic` and `virtualized`; the direct Pierre `CodeView` proof point is no longer selectable. The Reins-owned path fetches `/diff/patch` as full text, parses renderer-specific file changes, owns the file headers and item-ID navigation contract, and delegates text rows and worker-backed highlighting to Pierre `FileDiff`. Classic remains the default, so Reins renderer access is controlled by the stored preference rather than frontend dev-mode gating.
 
 The `virtualized` renderer now keeps all file changes in JavaScript while the generic `VirtualListController` and `VirtualListCoordinator` expose only a balanced viewport/overscan window for keyed mounting. Its Reins-owned headers include accessible collapse controls plus the shared view, copy-path, and download actions. A collapsed item records the hash of that exact reviewed diff in local storage under its project, branch, and stable item ID; both diff modes share that reviewed state. Matching content remains collapsed across reconciliation, project switches, and reloads; changed content expands and invalidates the marker so a later revert also stays expanded. File-tree navigation resolves coordinator geometry and therefore works before the target wrapper exists. Active-file tracking uses that same geometry. Stable measurements are retained by item/content/render-state key and committed in batches against a semantic item plus viewport-offset anchor. Absolutely positioned wrappers in a fixed-total-height container prevent asynchronous sizing from moving siblings before the post-render scroll reconciliation. Balanced overscan supports reverse scrolling, while explicit input cancellation prevents smooth navigation and anchor correction from fighting touch, wheel, pointer, or keyboard scrolling. All renderer modes now retain the file surface but suppress diff-row rendering for a file above 10,000 additions plus removals; the Reins-owned list gives those notices bounded initial geometry, measures their wrapping surface, and never binds Pierre for them. Rich previews, pooling, patch streaming, and aggregate payload safeguards remain follow-up work.
 
@@ -118,7 +119,7 @@ GET /api/projects/:id/diff/patch as full text initially
 
 The key requirement for the eventual performance path is that the Reins-owned surface must be **CodeView-like**, not merely Pierre `Virtualizer` wrapped around thousands of mounted file containers. `CodeView` is fast because it keeps item records/heights for all files but only mounts DOM containers for the visible window plus overscan. The lower-level `Virtualizer` is more flexible but generally mounts every top-level file/diff container, which gives back a large part of the many-file performance win.
 
-Because `classic` and `codeview` remain available fallbacks, the Reins-owned path was first built non-virtually to validate behavior. That scaffold has now been replaced: `ReviewDiffPanel` derives virtual geometry from stable renderer-owned file changes and mounts only a viewport/overscan slice. The panel retains navigation, active-item, and collapse coordination rather than introducing a second stateful virtualizer lifecycle. Performance evaluation can now use this bounded mounting path.
+The Reins-owned path was first built non-virtually to validate behavior while Classic and the direct CodeView proof point remained available. The proof point has since been removed and the scaffold replaced: `ReviewDiffPanel` derives virtual geometry from stable renderer-owned file changes and mounts only a viewport/overscan slice. The panel retains navigation, active-item, and collapse coordination rather than introducing a second stateful virtualizer lifecycle. Performance evaluation can now use this bounded mounting path.
 
 ## Prototype findings to preserve
 
@@ -196,7 +197,7 @@ Suggested tests:
 - first context expansion retrieves missing content and reveals lines without replacing the file surface
 - repeated context expansion joins adjacent regions while preserving the interaction point's viewport position
 - failed content retrieval leaves the partial diff stable and reports the error at the expansion control
-- renderer setting selects `classic`, `codeview`, and `virtualized` while classic remains default
+- renderer setting selects `classic` and `virtualized` while classic remains default
 
 Suggested manual/performance fixtures:
 
@@ -218,7 +219,7 @@ Metrics to capture:
 - scroll FPS/subjective responsiveness
 - first and subsequent inline expansion latency
 - memory growth for large diffs
-- comparison against classic renderer and the `codeview` prototype
+- comparison against the classic renderer
 
 ## Completed virtualization slice
 

@@ -26,7 +26,7 @@ Saved comments are synchronized to the open code review for the selected session
 
 A floating **Submit review** action appears in the lower-right corner once the open review has at least one saved comment; no submission action is shown for an empty review. It is enabled when the selected session is idle. Submission compiles saved comments into one ordinary user message. Each thread includes its path and the exact Git-native per-file patch that was displayed when the comment was saved, indented without reconstructing its lines. This retains `diff --git`, mode, index, file-marker, and hunk headers as well as the original addition/deletion markers. Comments on the same selection form one thread, with later comments marked as replies. Reins sends it to the session selected at click time and never steers an active turn. Once the message and review deletion commit atomically, the consumed review disappears; saving another comment starts a new review. Progress and submission errors appear with the floating action.
 
-Outdated-thread navigation, reanchoring, comment editing, and collaborative synchronization are not implemented yet. Classic and `codeview` renderers do not show this comment interface.
+Outdated-thread navigation, reanchoring, comment editing, and collaborative synchronization are not implemented yet. The Classic renderer does not show this comment interface.
 
 Cross-side ranges are rejected. Files blocked by the large-file safeguard do not offer line comments because their line rows are not rendered.
 
@@ -42,7 +42,7 @@ When expanding closes the gap between two adjacent hunks, they automatically mer
 
 ## Large file safeguards
 
-A single file with more than 10,000 changed lines (additions plus removals) keeps its file header and actions available, but its diff rows are not rendered. Reins shows the changed-line count and limit in place of the body. This applies to every diff renderer and prevents generated files or large data snapshots from monopolizing rendering and syntax-highlighting work; other files in the review remain available normally.
+A single file with more than 10,000 changed lines (additions plus removals) keeps its file header and actions available, but its diff rows are not rendered. Reins shows the changed-line count and limit in place of the body. This applies to both diff renderers and prevents generated files or large data snapshots from monopolizing rendering and syntax-highlighting work; other files in the review remain available normally.
 
 ## Markdown files
 

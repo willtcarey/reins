@@ -48,7 +48,6 @@ html, body {
 /* Pierre renderer theme variables live on the custom-element hosts so they
    inherit into Pierre's shadow roots. Internal shadow-DOM selectors remain in
    each renderer's unsafeCSS option. */
-[data-pierre-code-view] diffs-container,
 review-file-diff [data-pierre-file-diff],
 file-viewer-code [data-pierre-file] {
   --diffs-dark-bg: var(--reins-diff-background, #09090b);
@@ -57,7 +56,6 @@ file-viewer-code [data-pierre-file] {
   --diffs-bg-context-gutter-override: #0f1115;
 }
 
-[data-pierre-code-view] diffs-container,
 review-file-diff [data-pierre-file-diff] {
   --diffs-bg-buffer-override: #18181b;
   --diffs-bg-separator-override: #30363d;
