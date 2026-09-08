@@ -1,6 +1,6 @@
 # Tauri Desktop Wrapper
 
-`packages/tauri/` contains the Tauri v2 desktop wrapper for REINS. It is an optional entrypoint alongside the web app and the existing SwiftUI macOS shell in `packages/macos/`.
+`packages/tauri/` contains the Tauri v2 desktop wrapper for REINS. It is an optional entrypoint alongside the web app and is the repository's only native desktop shell.
 
 ## Architecture
 
@@ -46,7 +46,9 @@ Same-origin links stay inside the webview. External `http`/`https` navigations o
 
 Downloads open a native save dialog instead of silently saving to the default downloads folder. Canceling the dialog cancels the download.
 
-The Tauri window disables Tauri's native drag/drop handler so the loaded web app receives standard browser `DataTransfer.files` events when images are dropped onto the composer. This keeps chat image attachment drag/drop behavior consistent with the browser build.
+The Tauri window disables Tauri's native drag/drop handler so the loaded web app receives standard browser `DataTransfer.files` events when images are dropped onto the composer. This keeps chat image attachment drag/drop behavior consistent with the browser build. Normal file inputs use the system webview's native picker.
+
+The frontend does not call the legacy macOS shell's notification bridge. The Tauri wrapper therefore preserves current web notification behavior but does not add a native notification plugin or remote-page IPC access.
 
 ## Packaging
 
@@ -70,7 +72,9 @@ The Tauri config intentionally omits `beforeDevCommand`, `beforeBuildCommand`, a
 - Rust toolchain
 - Bun dependencies installed with `bun install`
 
-The macOS bundle currently allows arbitrary HTTP loads because the backend URL is runtime-configurable and often points at localhost, LAN, or Tailscale hosts. Release builds also enable Tauri's `devtools` feature so the View menu can expose Web Inspector; revisit both ATS policy and release devtools before broad distribution.
+The macOS bundle currently allows arbitrary HTTP loads because the backend URL is runtime-configurable and often points at localhost, LAN, or Tailscale hosts. Release builds also enable Tauri's `devtools` feature so the View menu can expose Web Inspector.
+
+The macOS CI workflow builds unsigned Tauri bundles and uploads the generated `.app` and `.dmg` artifacts. Signing and notarization are not configured.
 
 ### Windows (future)
 
@@ -84,3 +88,14 @@ PowerShell runtime URL example:
 $env:REINS_BACKEND_URL = 'http://host:3100'
 bun run tauri
 ```
+
+## Distribution and security gaps
+
+Before distributing the wrapper broadly:
+
+- configure macOS code signing and notarization;
+- narrow the permissive CSP and macOS ATS settings while retaining an explicit way to connect to approved HTTP development backends;
+- disable release devtools unless they are deliberately required;
+- add an updater and release-channel process if automatic desktop updates are desired;
+- add a Tauri notification plugin only if the frontend gains a concrete native-notification contract; and
+- validate and package Windows/Linux targets in platform-specific CI before claiming support.

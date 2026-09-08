@@ -11,8 +11,7 @@
 | [extension-architecture.md](extension-architecture.md) | all | Plugin-first capability contracts, built-in adapters, and interface maturity |
 | [review-virtualization.md](review-virtualization.md) | frontend | Ownership boundaries and invariants for the Reins-owned virtual review surface |
 | [ui-design.md](ui-design.md) | frontend | CSS architecture, z-index layers, color palette, syntax highlighting, responsive patterns |
-| [macos.md](macos.md) | macos | Native Mac app shell: setup, dev workflow, building |
-| [tauri.md](tauri.md) | tauri | Tauri desktop wrapper: setup, backend URL behavior, packaging |
+| [tauri.md](tauri.md) | tauri | Optional Tauri desktop wrapper: setup, backend URL behavior, packaging |
 | [docker.md](docker.md) | all | Building and running REINS in a Docker container |
 | [workflow.md](workflow.md) | all | Development workflow: RGR, testing reference, pre/post-implementation checklist |
 | [error-handling.md](error-handling.md) | all | Error handling posture: when to throw, bubble, catch, or surface failures |
