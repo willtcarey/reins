@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../../helpers/test-db.js";
-import { buildProviderList } from "../../../runtimes/pi/models-registry.js";
+import { buildProviderList } from "../../../runtimes/pi/model-catalog.js";
 import { clearRuntimeAdapters } from "../../../runtimes/registry.js";
 import { registerBuiltinRuntimeAdapters } from "../../../runtimes/register-builtins.js";
 
@@ -20,5 +20,11 @@ describe("buildProviderList", () => {
 
     const anthropic = result.find((p) => p.provider === "anthropic");
     expect(anthropic).toBeDefined();
+
+    const openaiCodex = result.find((provider) => provider.provider === "openai-codex");
+    expect(openaiCodex?.models).toContainEqual(expect.objectContaining({
+      id: "gpt-6-astra",
+      name: "GPT-6 Astra",
+    }));
   });
 });

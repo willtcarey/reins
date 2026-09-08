@@ -1,38 +1,44 @@
 import { describe, test, expect, afterEach, beforeEach } from "bun:test";
-import {
-  registerOAuthProvider,
-  unregisterOAuthProvider,
-  type OAuthProviderInterface,
-} from "@earendil-works/pi-ai/oauth";
+import { fauxProvider } from "@earendil-works/pi-ai/providers/faux";
+import type { Provider } from "@earendil-works/pi-ai";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { buildRouter } from "../../routes/index.js";
 import { clearPendingLogins } from "../../routes/oauth.js";
 import { getAuthCredential } from "../../auth-credentials-store.js";
+import { registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/factory.js";
 
 const TEST_PROVIDER_ID = "test-oauth";
 
-const testOAuthProvider: OAuthProviderInterface = {
+const testOAuthProvider: Provider = {
+  ...fauxProvider().provider,
   id: TEST_PROVIDER_ID,
   name: "Test OAuth",
-  async login(callbacks) {
-    callbacks.onAuth({
-      url: "https://example.test/oauth",
-      instructions: "Paste the callback URL",
-    });
-    const code = await callbacks.onManualCodeInput?.();
-    return {
-      refresh: `refresh:${code}`,
-      access: `access:${code}`,
-      expires: Date.now() + 60_000,
-    };
-  },
-  async refreshToken(credentials) {
-    return credentials;
-  },
-  getApiKey(credentials) {
-    return credentials.access;
+  auth: {
+    oauth: {
+      name: "Test OAuth",
+      async login(interaction) {
+        interaction.notify({
+          type: "auth_url",
+          url: "https://example.test/oauth",
+          instructions: "Paste the callback URL",
+        });
+        const code = await interaction.prompt({ type: "manual_code", message: "Paste code" });
+        return {
+          type: "oauth",
+          refresh: `refresh:${code}`,
+          access: `access:${code}`,
+          expires: Date.now() + 60_000,
+        };
+      },
+      async refresh(credentials) {
+        return credentials;
+      },
+      async toAuth(credentials) {
+        return { apiKey: credentials.access };
+      },
+    },
   },
 };
 
@@ -40,12 +46,12 @@ describe("oauth routes", () => {
   useTestDb();
 
   beforeEach(() => {
-    registerOAuthProvider(testOAuthProvider);
+    registerPiProvider(testOAuthProvider);
   });
 
   afterEach(() => {
     clearPendingLogins();
-    unregisterOAuthProvider(TEST_PROVIDER_ID);
+    unregisterPiProvider(TEST_PROVIDER_ID);
   });
 
   const setup = () => {

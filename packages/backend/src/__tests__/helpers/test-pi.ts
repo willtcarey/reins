@@ -10,11 +10,12 @@ import {
   type AgentSession,
   type ExtensionContext,
   createAgentSession,
-  AuthStorage,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { getModel } from "@earendil-works/pi-ai/compat";
+import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
 import type { ManagedSession } from "../../state.js";
 import { PiAgentRuntime } from "../../runtimes/pi/runtime.js";
 
@@ -25,12 +26,27 @@ const defaultModel = getModel("anthropic", "claude-sonnet-4-5");
  * No filesystem access, no network calls, no API key required.
  */
 export async function createTestAgentSession(): Promise<AgentSession> {
-  const authStorage = AuthStorage.inMemory({
-    anthropic: { type: "api_key", key: "fake-key-for-testing" },
+  const credentials = new Map<string, Credential>([
+    ["anthropic", { type: "api_key", key: "fake-key-for-testing" }],
+  ]);
+  const credentialStore: CredentialStore = {
+    read: async (providerId) => credentials.get(providerId),
+    list: async () => [...credentials].map(([providerId, credential]) => ({ providerId, type: credential.type })),
+    modify: async (providerId, fn) => {
+      const next = await fn(credentials.get(providerId));
+      if (next) credentials.set(providerId, next);
+      return next;
+    },
+    delete: async (providerId) => { credentials.delete(providerId); },
+  };
+  const modelRuntime = await ModelRuntime.create({
+    credentials: credentialStore,
+    modelsPath: null,
+    refreshOnCreate: false,
   });
 
   const { session } = await createAgentSession({
-    authStorage,
+    modelRuntime,
     model: defaultModel,
     sessionManager: SessionManager.inMemory(),
     settingsManager: SettingsManager.inMemory(),

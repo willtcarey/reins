@@ -1,5 +1,5 @@
 import { getModels, getProviders, type Api, type Model } from "@earendil-works/pi-ai/compat";
-import { type ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 import { getSetting, type ModelSettingsKey, type ModelSetting } from "../settings-store.js";
@@ -29,10 +29,10 @@ export function parseThinkingLevel(value: string): ThinkingLevel {
 export function resolveModel(
   providerName: string,
   modelId: string,
-  modelRegistry?: Pick<ModelRegistry, "find">,
+  modelRuntime?: Pick<ModelRuntime, "getModel">,
 ): Model<Api> | undefined {
-  if (modelRegistry) {
-    const model: Model<Api> | undefined = modelRegistry.find(providerName, modelId);
+  if (modelRuntime) {
+    const model: Model<Api> | undefined = modelRuntime.getModel(providerName, modelId);
     return model;
   }
 
@@ -47,8 +47,8 @@ export async function resolveModelFromPiRegistry(
   providerName: string,
   modelId: string,
 ): Promise<Model<Api> | undefined> {
-  const { modelRegistry } = await createPiContext({ cwd });
-  return resolveModel(providerName, modelId, modelRegistry);
+  const { modelRuntime } = await createPiContext({ cwd });
+  return resolveModel(providerName, modelId, modelRuntime);
 }
 
 export function resolveModelSettingWithConfig(key: ModelSettingsKey): {
@@ -68,9 +68,9 @@ export function resolveModelSettingWithConfig(key: ModelSettingsKey): {
   return { config, model };
 }
 
-export function resolveModelSettingWithConfigInRegistry(
+export function resolveModelSettingWithConfigInRuntime(
   key: ModelSettingsKey,
-  modelRegistry: Pick<ModelRegistry, "find">,
+  modelRuntime: Pick<ModelRuntime, "getModel">,
 ): {
   config: ModelSetting;
   model: Model<Api>;
@@ -78,7 +78,7 @@ export function resolveModelSettingWithConfigInRegistry(
   const config = getSetting(key);
   if (!config) return undefined;
 
-  const model = resolveModel(config.provider, config.modelId, modelRegistry);
+  const model = resolveModel(config.provider, config.modelId, modelRuntime);
   if (!model) {
     throw new Error(
       `Configured ${key} is invalid: ${config.provider}/${config.modelId}. Update it in Settings.`,
@@ -92,9 +92,9 @@ export async function resolveModelSettingWithConfigForCwd(cwd: string, key: Mode
   config: ModelSetting;
   model: Model<Api>;
 } | undefined> {
-  const { modelRegistry } = await createPiContext({ cwd });
+  const { modelRuntime } = await createPiContext({ cwd });
 
-  return resolveModelSettingWithConfigInRegistry(key, modelRegistry);
+  return resolveModelSettingWithConfigInRuntime(key, modelRuntime);
 }
 
 export function resolveModelSetting(key: ModelSettingsKey): Model<Api> | undefined {
@@ -114,8 +114,8 @@ export function resolveUtilityModel(): Model<Api> | undefined {
 }
 
 export async function resolveUtilityModelForCwd(cwd: string): Promise<Model<Api> | undefined> {
-  const { modelRegistry } = await createPiContext({ cwd });
+  const { modelRuntime } = await createPiContext({ cwd });
 
-  return resolveModelSettingWithConfigInRegistry("utility_model", modelRegistry)?.model
-    ?? resolveModelSettingWithConfigInRegistry("default_model", modelRegistry)?.model;
+  return resolveModelSettingWithConfigInRuntime("utility_model", modelRuntime)?.model
+    ?? resolveModelSettingWithConfigInRuntime("default_model", modelRuntime)?.model;
 }

@@ -1,49 +1,52 @@
+import type { AuthPrompt, OAuthCredential } from "@earendil-works/pi-ai";
 import type { RouterGroup, RouteContext } from "../router.js";
 import { badRequest, notFound } from "../errors.js";
 import {
-  getOAuthProviders,
-  getOAuthProvider,
-  type OAuthCredentials,
-} from "@earendil-works/pi-ai/oauth";
-import {
   deleteOAuthCredential,
   hasStoredAuthCredential,
-  setOAuthCredentialValue,
 } from "../models/auth-credentials.js";
+import { createPiModelRuntime } from "../runtimes/pi/factory.js";
 
 interface PendingLogin {
   resolveManualCode: (code: string) => void;
   rejectManualCode: (err: Error) => void;
-  loginPromise: Promise<OAuthCredentials>;
+  loginPromise: Promise<OAuthCredential>;
   createdAt: number;
 }
 
 const pendingLogins = new Map<string, PendingLogin>();
 
 export function clearPendingLogins(): void {
+  for (const pending of pendingLogins.values()) {
+    void pending.loginPromise.catch(() => undefined);
+    pending.rejectManualCode(new Error("Login cancelled"));
+  }
   pendingLogins.clear();
 }
 
 export function registerOAuthRoutes(router: RouterGroup) {
   router.get("/providers", async (_ctx: RouteContext) => {
+    const modelRuntime = await createPiModelRuntime();
     return Response.json(
-      getOAuthProviders().map((provider) => ({
-        id: provider.id,
-        name: provider.name,
-        configured: hasStoredAuthCredential(provider.id, "oauth"),
-      })),
+      modelRuntime.getProviders()
+        .filter((provider) => provider.auth.oauth)
+        .map((provider) => ({
+          id: provider.id,
+          name: provider.name,
+          configured: hasStoredAuthCredential(provider.id, "oauth"),
+        })),
     );
   });
 
   router.post("/start/:providerId", async (ctx: RouteContext) => {
     const { providerId } = ctx.params;
-    const provider = getOAuthProvider(providerId);
-    if (!provider) {
-      notFound(`Unknown OAuth provider: ${providerId}`);
-    }
+    const modelRuntime = await createPiModelRuntime();
+    const provider = modelRuntime.getProvider(providerId);
+    if (!provider?.auth.oauth) notFound(`Unknown OAuth provider: ${providerId}`);
 
     const existing = pendingLogins.get(providerId);
     if (existing) {
+      void existing.loginPromise.catch(() => undefined);
       existing.rejectManualCode(new Error("Login superseded by new attempt"));
       pendingLogins.delete(providerId);
     }
@@ -57,34 +60,41 @@ export function registerOAuthRoutes(router: RouterGroup) {
 
     let authUrl = "";
     let authInstructions = "";
+    let resolveAuthReady!: () => void;
+    const authReady = new Promise<void>((resolve) => { resolveAuthReady = resolve; });
 
-    const authUrlReady = new Promise<void>((resolve) => {
-      const loginPromise = provider.login({
-        onAuth: (info) => {
-          authUrl = info.url;
-          authInstructions = info.instructions ?? "";
-          resolve();
-        },
-        onDeviceCode: (info) => {
-          authUrl = info.verificationUri;
-          authInstructions = `Enter code ${info.userCode}`;
-          resolve();
-        },
-        onPrompt: async () => manualCodePromise,
-        onManualCodeInput: () => manualCodePromise,
-        onSelect: async (prompt) => prompt.options[0]?.id,
-      });
+    const prompt = async (request: AuthPrompt): Promise<string> => {
+      if (request.type === "select") return request.options[0]?.id ?? "";
+      return manualCodePromise;
+    };
 
-      pendingLogins.set(providerId, {
-        resolveManualCode,
-        rejectManualCode,
-        loginPromise,
-        createdAt: Date.now(),
-      });
+    const loginPromise = modelRuntime.login(providerId, "oauth", {
+      prompt,
+      notify(event) {
+        if (event.type === "auth_url") {
+          authUrl = event.url;
+          authInstructions = event.instructions ?? "";
+          resolveAuthReady();
+        } else if (event.type === "device_code") {
+          authUrl = event.verificationUri;
+          authInstructions = `Enter code ${event.userCode}`;
+          resolveAuthReady();
+        }
+      },
+    }).then((credential) => {
+      if (credential.type !== "oauth") throw new Error("Provider returned a non-OAuth credential");
+      return credential;
+    });
+
+    pendingLogins.set(providerId, {
+      resolveManualCode,
+      rejectManualCode,
+      loginPromise,
+      createdAt: Date.now(),
     });
 
     await Promise.race([
-      authUrlReady,
+      authReady,
       new Promise<void>((_, reject) =>
         setTimeout(() => reject(new Error("Timeout waiting for auth URL")), 10_000),
       ),
@@ -96,9 +106,7 @@ export function registerOAuthRoutes(router: RouterGroup) {
   router.post("/callback/:providerId", async (ctx: RouteContext) => {
     const { providerId } = ctx.params;
     const pending = pendingLogins.get(providerId);
-    if (!pending) {
-      badRequest(`No pending login for provider: ${providerId}`);
-    }
+    if (!pending) badRequest(`No pending login for provider: ${providerId}`);
 
     let body: { code: string };
     try {
@@ -107,24 +115,11 @@ export function registerOAuthRoutes(router: RouterGroup) {
       badRequest("Invalid JSON in request body");
     }
 
-    if (!body!.code || typeof body!.code !== "string") {
-      badRequest("Missing or invalid 'code' field");
-    }
-
+    if (!body!.code || typeof body!.code !== "string") badRequest("Missing or invalid 'code' field");
     pending.resolveManualCode(body!.code);
 
     try {
-      const credentials = await pending.loginPromise;
-      if (
-        !credentials ||
-        typeof credentials.access !== "string" ||
-        typeof credentials.refresh !== "string" ||
-        typeof credentials.expires !== "number"
-      ) {
-        badRequest("OAuth login failed: provider returned invalid credentials");
-      }
-
-      setOAuthCredentialValue(providerId, credentials, ctx.state.sessions);
+      await pending.loginPromise;
       return Response.json({ ok: true });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -136,8 +131,8 @@ export function registerOAuthRoutes(router: RouterGroup) {
 
   router.delete("/:providerId", async (ctx: RouteContext) => {
     const { providerId } = ctx.params;
-    const provider = getOAuthProvider(providerId);
-    if (!provider) {
+    const modelRuntime = await createPiModelRuntime();
+    if (!modelRuntime.getProvider(providerId)?.auth.oauth) {
       notFound(`Unknown OAuth provider: ${providerId}`);
     }
 
