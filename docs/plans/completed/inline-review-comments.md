@@ -2,7 +2,7 @@
 
 ## Status and recommendation
 
-**Investigation complete; inline UI and server-synchronized annotation creation implemented.** This document is based on the exact installed `@pierre/diffs` **1.2.11** (`bun.lock` integrity `sha512-lSkl…`) and Reins' current `FileDiff` integration.
+**Complete. Inline review comments are implemented and submitted with their captured diff context.** This document is based on the exact installed `@pierre/diffs` **1.2.11** (`bun.lock` integrity `sha512-lSkl…`) and Reins' current `FileDiff` integration.
 
 The implemented `virtualized` slice uses an unmanaged nested `<diffs-container>`, public line annotations, controlled selection, and the public gutter callback. `CodeReviewStore` keeps raw server state synchronized; the frontend only projects saved anchors and sends a small path/range/body/file-patch comment intent. The backend derives identities, timestamps, and canonical anchor evidence. One panel-owned `InlineReviewController` retains the selection and composer across collapse and virtual remounts and exposes one per-file interface to the UI. The Pierre adapter alone normalizes Pierre gestures into Reins ranges. Annotation elements receive only their current placement, with composer actions attached to the composer value. Whole-item resize observation feeds the top-level virtual list, one layout revision invalidates measurements, and the active composer item is pinned.
 
@@ -22,7 +22,7 @@ Do **not** put comments into `FileDiffMetadata`, add synthetic lines, fake `isPa
 
 One integration prerequisite mattered: Reins previously constructed `FileDiff` with its undocumented `isContainerManaged = true` constructor argument. In 1.2.11 that mode deliberately skips the vanilla `renderAnnotation` and `renderGutterUtility` mounting paths; React/CodeView supplies those slots externally. The MVP corrected this by letting an ordinary unmanaged `FileDiff` own a nested `<diffs-container>` under the Lit-owned mount. The Lit-owned node was not switched directly to unmanaged mode because `FileDiff.cleanUp()` removes an unmanaged file container.
 
-The implementation is production-adjacent rather than a throwaway prototype. Focused adapter and presentation tests cover the supported interfaces; a real-browser interaction test remains useful evidence for annotation sizing, gutter behavior, and cleanup across supported browsers.
+The implementation is production-ready for Reins' current pointer-driven review workflow. Focused adapter and presentation tests cover the supported interfaces, and dynamic annotation height has been validated in use. Browser automation, keyboard line selection, outdated-thread UI, and Git-time re-reconciliation remain possible enhancements rather than completion requirements: submitted comments already include the exact captured diff context for the agent.
 
 ## Scope
 
@@ -376,7 +376,7 @@ Comments and expansion share line-side coordinates, so they compose without meta
 
 ## Incremental implementation slices
 
-Each behavior slice starts with a failing contract test per `docs/dev/workflow.md`.
+Each behavior slice starts with a failing contract test per `docs/dev/workflow.md`. Unchecked items below are deferred possibilities retained as historical context, not blockers for the completed feature.
 
 ### 1. Public annotation adapter proof
 
@@ -438,7 +438,7 @@ Each behavior slice starts with a failing contract test per `docs/dev/workflow.m
 - Resolve/reopen/reanchor workflows.
 - Performance fixtures with many files, many threads on one line, tall threads, and rapid live updates.
 
-## Acceptance criteria for the first production milestone
+## Original acceptance criteria
 
 - No deprecated/private Pierre extension point is used for comment placement.
 - A comment can target one old/new line or a same-side range.

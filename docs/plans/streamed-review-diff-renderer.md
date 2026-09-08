@@ -47,8 +47,8 @@ This is the working implementation list. It is ordered from smallest functional 
    - [x] Copy path / download / open in browser actions.
    - Markdown diff/preview tabs.
    - Image previews, PDF previews, and binary placeholders.
-   - [x] Investigate inline comments and define the supported seam; see [Inline Review Comments on the Virtualized Diff](inline-review-comments.md).
-   - [x] Correct the managed-container adapter and add an in-memory inline-comment MVP through Pierre's public annotations, selection, and gutter hooks. Reins owns drafts/threads, remount restoration, and outer measurement; durable anchors, backend persistence, refresh reconciliation, and a keyboard line-selection interaction remain deferred. Do not put comments in diff metadata or use protected/deprecated row hooks.
+   - [x] Investigate inline comments and define the supported seam; see [Inline Review Comments on the Virtualized Diff](completed/inline-review-comments.md).
+   - [x] Implement inline comments through Pierre's public annotations, selection, and gutter hooks. Reins owns drafts, persisted threads, durable anchor evidence, remount restoration, outer measurement, deletion, and submission. Do not put comments in diff metadata or use protected/deprecated row hooks.
 
 6. [x] **Replace top-level mounting with a CodeView-like virtual list.**
    - [x] Swap all-item rendering for a bounded visible/overscan window.
@@ -91,7 +91,7 @@ The `virtualized` renderer now keeps all file changes in JavaScript while the ge
 
 In particular:
 
-- Follow [Inline Review Comments on the Virtualized Diff](inline-review-comments.md) for comment anchors, interaction, accessibility, virtual measurement, and the Reins/Pierre seam. The installed Pierre 1.2.11 supports public line annotations and pointer selection, while Reins now owns the in-memory thread/draft MVP. Durable identity and persistence are still unimplemented.
+- Follow the completed [Inline Review Comments on the Virtualized Diff](completed/inline-review-comments.md) plan for comment anchors, interaction, accessibility, virtual measurement, and the Reins/Pierre seam. The installed Pierre 1.2.11 supports public line annotations and pointer selection; Reins owns drafts, persisted threads, durable anchor evidence, synchronization, deletion, and review submission.
 - Do not continue polishing direct `CodeView` as if it were the final architecture.
 - Do not prioritize streaming/chunked patch loading before replacing the `CodeView`-owned surface.
 - Do not build core behavior on deprecated `hunkSeparators(hunkData, instance)` APIs.
