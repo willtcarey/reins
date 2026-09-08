@@ -10,12 +10,24 @@ class Host implements ReactiveControllerHost {
   updateComplete = Promise.resolve(true);
 }
 
-const FILE = { id: "file-a", contentKey: "one", path: "src/a.ts", oldPath: null, lineText: (_side: "old" | "new", line: number) => line <= 3 ? `line ${line}` : null };
+const FILE = {
+  id: "file-a", contentKey: "one", path: "src/a.ts", oldPath: null,
+  filePatch: "diff --git a/src/a.ts b/src/a.ts\n",
+  diffLines: (side: "old" | "new") => [1, 2, 3].map((line) => ({
+    kind: side === "old" ? "deletion" as const : "addition" as const,
+    line,
+    text: `line ${line}`,
+  })),
+};
 
 describe("InlineReviewController", () => {
   test("retains one draft across remount reconciliation and types without updating the host", () => {
     const host = new Host();
-    const controller = new InlineReviewController(host, async () => { throw new Error("unused"); });
+    const controller = new InlineReviewController(
+      host,
+      async () => { throw new Error("unused"); },
+      async () => { throw new Error("unused"); },
+    );
     controller.reconcile("scope", [FILE]);
     controller.file("file-a").openComposer({ side: "new", startLine: 2, endLine: 2 });
     const updates = host.updates;
@@ -34,7 +46,7 @@ describe("InlineReviewController", () => {
       saved.push(annotation);
       return { id: "review", projectId: 1, taskId: null, revision: 1,
         annotations: [{ id: annotation.id, anchor: annotation.anchor, entries: [annotation.entry] }], createdAt: "now", updatedAt: "now" };
-    });
+    }, async () => { throw new Error("unused"); });
     controller.reconcile("scope", [FILE]);
     controller.file("file-a").openComposer({ side: "new", startLine: 2, endLine: 2 });
     await controller.file("file-a").placements[0]?.composer?.save();
@@ -44,5 +56,34 @@ describe("InlineReviewController", () => {
     expect(saved).toHaveLength(1);
     expect(controller.file("file-a").placements[0]?.comments[0]?.body).toBe("A note");
     expect(controller.activeComposerFileId).toBeNull();
+  });
+
+  test("deletes a saved comment through its placement action", async () => {
+    const host = new Host();
+    const deleted: string[] = [];
+    const controller = new InlineReviewController(
+      host,
+      async () => { throw new Error("unused"); },
+      async (commentId) => { deleted.push(commentId); },
+    );
+    controller.reconcile("scope", [FILE]);
+    controller.setReview({
+      id: "review", projectId: 1, taskId: null, revision: 1,
+      annotations: [{
+        id: "annotation-1",
+        anchor: {
+          path: "src/a.ts", oldPath: null, side: "new", startLine: 2,
+          lines: [{ kind: "addition", text: "line 2" }],
+          fileFingerprint: "one", filePatch: FILE.filePatch,
+          baseRevision: null, headRevision: null,
+        },
+        entries: [{ id: "entry-1", author: "You", body: "A note", createdAt: "now" }],
+      }],
+      createdAt: "now", updatedAt: "now",
+    });
+
+    await controller.file("file-a").placements[0]?.deleteComment("entry-1");
+
+    expect(deleted).toEqual(["entry-1"]);
   });
 });

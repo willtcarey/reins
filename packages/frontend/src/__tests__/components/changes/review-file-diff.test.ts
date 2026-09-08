@@ -119,7 +119,7 @@ describe("ReviewFileDiff", () => {
 
     item.updated();
     const previous = item.inlineReview;
-    item.inlineReview = { placements: [{ id: "draft", range: { side: "new", startLine: 1, endLine: 1 }, comments: [], composer: {
+    item.inlineReview = { placements: [{ id: "draft", range: { side: "new", startLine: 1, endLine: 1 }, comments: [], deletingCommentId: null, deleteComment: async () => {}, composer: {
       body: "", error: null, saving: false, input: () => {}, save: async () => {}, cancel: () => {},
     } }], selection: { side: "new", startLine: 1, endLine: 1 }, error: null, threadCount: 0, layoutRevision: 1,
       select: () => {}, openComposer: () => {}, reportError: () => {} };
@@ -180,8 +180,8 @@ describe("ReviewFileDiff", () => {
     item.change = fileChange;
     item.inlineReview = {
       placements: [
-        { id: "old", range: { side: "old", startLine: 1, endLine: 1 }, comments: [{ id: "1", author: "You", body: "old note" }], composer: null },
-        { id: "new", range: { side: "new", startLine: 1, endLine: 1 }, comments: [{ id: "2", author: "You", body: "new note" }], composer: {
+        { id: "old", range: { side: "old", startLine: 1, endLine: 1 }, comments: [{ id: "1", author: "You", body: "old note" }], deletingCommentId: null, deleteComment: async () => {}, composer: null },
+        { id: "new", range: { side: "new", startLine: 1, endLine: 1 }, comments: [{ id: "2", author: "You", body: "new note" }], deletingCommentId: null, deleteComment: async () => {}, composer: {
           body: "", error: null, saving: false, input: () => {}, save: async () => {}, cancel: () => {},
         } },
       ],

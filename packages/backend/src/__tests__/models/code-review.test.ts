@@ -11,11 +11,13 @@ const originalAnchor: ReviewAnchorEvidence = {
   oldPath: null,
   side: "new",
   startLine: 12,
-  endLine: 14,
-  excerpt: "const answer = 41;\nreturn answer;",
-  contextBefore: "function calculate() {",
-  contextAfter: "}",
+  lines: [
+    { kind: "addition", text: "const answer = 41;" },
+    { kind: "addition", text: "return answer;" },
+    { kind: "addition", text: "}" },
+  ],
   fileFingerprint: "file-v1",
+  filePatch: "diff --git a/src/example.ts b/src/example.ts\n",
   baseRevision: "base-sha",
   headRevision: "head-sha",
 };
@@ -93,7 +95,7 @@ describe("CodeReview", () => {
     try {
       codeReview.addAnnotation(annotation({
         id: "annotation-2",
-        anchor: { ...originalAnchor, startLine: 15, endLine: 14 },
+        anchor: { ...originalAnchor, startLine: 0 },
         entry: { ...input.entry, id: "entry-2" },
       }));
     } catch (error) {
@@ -127,7 +129,9 @@ describe("CodeReview", () => {
 
     codeReview.upsertAnnotation(annotation({
       id: "unused-annotation-id",
-      anchor: { ...originalAnchor, startLine: 30, endLine: 30, excerpt: "new location" },
+      anchor: { ...originalAnchor, startLine: 30, lines: [
+        { kind: "addition", text: "new location" },
+      ] },
       entry: {
         id: "unused-entry-id",
         author: "Automated Reviewer",
@@ -150,6 +154,24 @@ describe("CodeReview", () => {
         sourceUrl: "https://example.test/comments/99?updated=1",
       }],
     }]);
+  });
+
+  test("deletes a saved comment and removes its empty annotation", () => {
+    const codeReview = review();
+    codeReview.addAnnotation(annotation());
+    codeReview.addReply("annotation-1", {
+      id: "entry-2",
+      author: "Grace Hopper",
+      body: "Agreed.",
+      createdAt: "2026-08-29T10:02:00.000Z",
+    });
+
+    codeReview.deleteComment("entry-1");
+    expect(codeReview.annotations[0]?.entries.map(({ id }) => id)).toEqual(["entry-2"]);
+
+    codeReview.deleteComment("entry-2");
+    expect(codeReview.annotations).toEqual([]);
+    expect(() => codeReview.deleteComment("missing-entry")).toThrow("not found");
   });
 
   test("requires a source key for idempotent annotation upsert", () => {

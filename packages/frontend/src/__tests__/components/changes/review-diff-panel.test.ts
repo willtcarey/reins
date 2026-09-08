@@ -78,7 +78,7 @@ describe("ReviewDiffPanel", () => {
     store.dispose();
   });
 
-  test("offers review submission only for an active review and an idle session", () => {
+  test("offers floating review submission only when comments exist and the session is idle", () => {
     const store = new DiffStore();
     store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
     const reviewStore = new CodeReviewStore();
@@ -94,11 +94,20 @@ describe("ReviewDiffPanel", () => {
       projectId: 7,
       taskId: 11,
       revision: 1,
+      annotations: [],
+      createdAt: "2026-08-30T10:00:00.000Z",
+      updatedAt: "2026-08-30T10:00:00.000Z",
+    };
+    expect(templateToString(panel.render())).not.toContain("Submit review");
+
+    reviewStore.review = {
+      ...reviewStore.review,
       annotations: [{
         id: "annotation-1",
         anchor: {
-          path: "src/example.ts", oldPath: null, side: "new", startLine: 1, endLine: 1,
-          excerpt: "new", contextBefore: null, contextAfter: null, fileFingerprint: null,
+          path: "src/example.ts", oldPath: null, side: "new", startLine: 1,
+          lines: [{ kind: "addition", text: "new" }], fileFingerprint: null,
+          filePatch: "diff --git a/src/example.ts b/src/example.ts\n",
           baseRevision: null, headRevision: null,
         },
         entries: [{ id: "entry-1", author: "You", body: "Fix this", createdAt: "now" }],

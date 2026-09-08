@@ -29,6 +29,12 @@ export interface AddCodeReviewAnnotationResult {
   created: boolean;
 }
 
+export interface DeleteCodeReviewCommentCommand {
+  scope: CodeReviewScope;
+  expectedReview: ExpectedCodeReview;
+  commentId: string;
+}
+
 /**
  * Project-scoped code-review operations shared by REST and agent adapters.
  * Owns scope validation, persistence orchestration, concurrency, and
@@ -96,6 +102,35 @@ export class ProjectCodeReviews {
         revision: result.review.revision,
       });
       return { review: result.review, created: result.created };
+    } catch (error) {
+      if (error instanceof CodeReviewRevisionConflictError) {
+        throw new CodeReviewError(error.message, "conflict");
+      }
+      throw error;
+    }
+  }
+
+  deleteComment(command: DeleteCodeReviewCommentCommand): CodeReview {
+    const mutation = getDb().transaction(() => {
+      const review = this.getExpected(command.scope, command.expectedReview);
+      review.deleteComment(command.commentId);
+      const saved = saveCodeReview(review);
+      if (!saved) {
+        throw new CodeReviewError(`Code review ${review.id} no longer exists`, "conflict");
+      }
+      return saved;
+    });
+
+    try {
+      const review = mutation.immediate();
+      this.broadcast({
+        type: "code_review_updated",
+        projectId: review.projectId,
+        taskId: review.taskId,
+        reviewId: review.id,
+        revision: review.revision,
+      });
+      return review;
     } catch (error) {
       if (error instanceof CodeReviewRevisionConflictError) {
         throw new CodeReviewError(error.message, "conflict");

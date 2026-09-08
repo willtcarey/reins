@@ -227,7 +227,7 @@ describe("PierreReviewFileDiff", () => {
             observed.selection = range;
             target.inlineReview = {
               placements: [{
-                id: "file-a:new:7", range, comments: [],
+                id: "file-a:new:7", range, comments: [], deletingCommentId: null, deleteComment: async () => {},
                 composer: { body: "", error: null, saving: false, input: () => {}, save: async () => {}, cancel: () => {} },
               }],
               selection: range, error: null, threadCount: 0, layoutRevision: 1,
@@ -285,24 +285,29 @@ describe("PierreReviewFileDiff", () => {
       expect(annotationElement.placement?.id).toBe("file-a:new:7");
 
       const metadata = annotation.metadata;
-      target.inlineReview = {
+      const currentInlineReview = target.inlineReview;
+      if (!currentInlineReview) throw new Error("Expected inline review");
+      const updatedInlineReview = {
         placements: [{
           id: "file-a:new:7",
-          range: { side: "new", startLine: 4, endLine: 7 },
+          range: { side: "new" as const, startLine: 4, endLine: 7 },
           comments: [{ id: "comment-1", author: "You", body: "Saved comment" }],
+          deletingCommentId: null,
+          deleteComment: async () => {},
           composer: null,
         }],
-        selection: { side: "new", startLine: 4, endLine: 7 },
+        selection: { side: "new" as const, startLine: 4, endLine: 7 },
         error: null,
         threadCount: 1,
         layoutRevision: 2,
-        select: target.inlineReview!.select,
-        openComposer: target.inlineReview!.openComposer,
-        reportError: target.inlineReview!.reportError,
+        select: currentInlineReview.select,
+        openComposer: currentInlineReview.openComposer,
+        reportError: currentInlineReview.reportError,
       };
+      target.inlineReview = updatedInlineReview;
       controller.refreshInlineComments();
       expect(annotations[0]?.metadata).toBe(metadata);
-      expect(annotationElement.placement).toEqual(target.inlineReview.placements[0]);
+      expect(annotationElement.placement).toEqual(updatedInlineReview.placements[0]);
     } finally {
       Reflect.set(PierreReviewFileDiff.prototype, "render", originalRender);
       if (htmlElementDescriptor) Object.defineProperty(globalThis, "HTMLElement", htmlElementDescriptor);

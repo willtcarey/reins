@@ -47,8 +47,9 @@ describe("DiffFileTree", () => {
       annotations: [{
         id: "annotation-1",
         anchor: {
-          path: "src/commented.ts", oldPath: null, side: "new", startLine: 1, endLine: 1,
-          excerpt: "new", contextBefore: null, contextAfter: null, fileFingerprint: null,
+          path: "src/commented.ts", oldPath: null, side: "new", startLine: 1,
+          lines: [{ kind: "addition", text: "new" }], fileFingerprint: null,
+          filePatch: "diff --git a/src/commented.ts b/src/commented.ts\n",
           baseRevision: null, headRevision: null,
         },
         entries: [

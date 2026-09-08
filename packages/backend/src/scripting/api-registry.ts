@@ -37,6 +37,14 @@ import {
 import { PROJECT_FUNCTIONS, ProjectSchema } from "./projects.js";
 import { UI_FUNCTIONS } from "./ui.js";
 import { MODEL_FUNCTIONS, ProviderInfoSchema, ModelInfoSchema } from "./models.js";
+import { REVIEW_FUNCTIONS } from "./reviews.js";
+import {
+  CodeReviewStateSchema,
+  ReviewAnchorEvidenceSchema,
+  ReviewAnnotationSchema,
+  ReviewDiffLineSchema,
+  ReviewEntrySchema,
+} from "../models/code-review.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -71,6 +79,11 @@ export const DOMAIN_TYPES: NamedType[] = [
   { name: "Project", schema: ProjectSchema },
   { name: "ProviderInfo", schema: ProviderInfoSchema },
   { name: "ModelInfo", schema: ModelInfoSchema },
+  { name: "CodeReview", schema: CodeReviewStateSchema },
+  { name: "ReviewAnnotation", schema: ReviewAnnotationSchema },
+  { name: "ReviewAnchor", schema: ReviewAnchorEvidenceSchema },
+  { name: "ReviewDiffLine", schema: ReviewDiffLineSchema },
+  { name: "ReviewEntry", schema: ReviewEntrySchema },
 ];
 
 // ---------------------------------------------------------------------------
@@ -83,6 +96,7 @@ export const API_FUNCTIONS: ApiFunctionDef[] = [
   ...PROJECT_FUNCTIONS,
   ...UI_FUNCTIONS,
   ...MODEL_FUNCTIONS,
+  ...REVIEW_FUNCTIONS,
 ];
 
 // ---------------------------------------------------------------------------

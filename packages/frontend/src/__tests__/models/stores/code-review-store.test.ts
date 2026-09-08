@@ -46,11 +46,9 @@ describe("CodeReviewStore", () => {
             oldPath: null,
             side: "new",
             startLine: 2,
-            endLine: 2,
-            excerpt: "const answer = 42;",
-            contextBefore: null,
-            contextAfter: null,
+            lines: [{ kind: "addition", text: "const answer = 42;" }],
             fileFingerprint: "content-1",
+            filePatch: "diff --git a/src/example.ts b/src/example.ts\n",
             baseRevision: null,
             headRevision: null,
           },
@@ -73,11 +71,9 @@ describe("CodeReviewStore", () => {
         oldPath: null,
         side: "new",
         startLine: 2,
-        endLine: 2,
-        excerpt: "const answer = 42;",
-        contextBefore: null,
-        contextAfter: null,
+        lines: [{ kind: "addition", text: "const answer = 42;" }],
         fileFingerprint: "content-1",
+        filePatch: "diff --git a/src/example.ts b/src/example.ts\n",
         baseRevision: null,
         headRevision: null,
       },
@@ -96,6 +92,26 @@ describe("CodeReviewStore", () => {
     });
     expect(store.review?.revision).toBe(1);
     expect(store.review?.annotations[0]?.entries[0]?.body).toBe("Please explain this.");
+  });
+
+  test("deletes a saved comment with the current optimistic review identity", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    mockFetch((url, init) => {
+      requests.push({ url, init });
+      if (!init) return Response.json(EMPTY_REVIEW);
+      return Response.json({ ...EMPTY_REVIEW, revision: 1 });
+    });
+    const store = new CodeReviewStore();
+    await store.setScope({ projectId: 7, taskId: 11 });
+
+    await store.deleteComment("entry-1");
+
+    expect(requests[1]?.url).toBe("/api/projects/7/code-review/comments/entry-1?taskId=11");
+    expect(requests[1]?.init?.method).toBe("DELETE");
+    expect(JSON.parse(String(requests[1]?.init?.body))).toEqual({
+      expectedReview: { id: "review-1", revision: 0 },
+    });
+    expect(store.review?.revision).toBe(1);
   });
 
   test("submits the current open review to a session and exposes progress", async () => {

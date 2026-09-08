@@ -30,12 +30,21 @@ const annotation = {
     path: "src/example.ts",
     oldPath: null,
     side: "new",
-    startLine: 4,
-    endLine: 4,
-    excerpt: "return value;",
-    contextBefore: null,
-    contextAfter: null,
+    startLine: 3,
+    lines: [
+      { kind: "context", text: "const value = calculate();" },
+      { kind: "addition", text: "return value;" },
+    ],
     fileFingerprint: "file-v1",
+    filePatch: `diff --git a/src/example.ts b/src/example.ts
+index 8d57f20..4e0618a 100644
+--- a/src/example.ts
++++ b/src/example.ts
+@@ -2,3 +2,4 @@
+ const value = calculate();
++return value;
+-return oldValue;
+`,
     baseRevision: "base-sha",
     headRevision: "head-sha",
   },
@@ -111,7 +120,10 @@ describe("code review routes", () => {
     const invalidAnnotation = await router.handle(makeRequest("POST", path, {
       annotation: {
         ...annotation,
-        anchor: { ...annotation.anchor, startLine: 5, endLine: 4 },
+        anchor: {
+          ...annotation.anchor,
+          startLine: 0,
+        },
       },
     }), state);
     expect(invalidAnnotation?.status).toBe(400);
@@ -130,6 +142,34 @@ describe("code review routes", () => {
     expect(stale?.status).toBe(409);
     expect((await stale!.json()).error).toContain("revision");
     expect(sent).toHaveLength(1);
+  });
+
+  test("deletes a saved comment before submission", async () => {
+    const created = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`,
+      { annotation },
+    ), state);
+    const review = await created!.json();
+
+    const response = await router.handle(makeRequest(
+      "DELETE",
+      `/api/projects/${projectId}/code-review/comments/${annotation.entry.id}?taskId=${taskId}`,
+      { expectedReview: { id: review.id, revision: review.revision } },
+    ), state);
+    const updated = await response!.json();
+
+    expect(response?.status).toBe(200);
+    expect(updated).toMatchObject({ id: review.id, revision: 2, annotations: [] });
+    expect(await (await router.handle(
+      makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`),
+      state,
+    ))!.json()).toEqual(updated);
+    expect(JSON.parse(sent[1])).toMatchObject({
+      type: "code_review_updated",
+      reviewId: review.id,
+      revision: 2,
+    });
   });
 
   test("submits saved comments as one durable prompt to the selected idle session", async () => {
@@ -160,7 +200,31 @@ describe("code review routes", () => {
         },
       },
     ), state);
-    const openReview = await replyResponse!.json();
+    const replyReview = await replyResponse!.json();
+    const deletedLineResponse = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`,
+      {
+        expectedReview: { id: replyReview.id, revision: replyReview.revision },
+        annotation: {
+          ...annotation,
+          id: "annotation-client-3",
+          anchor: {
+            ...annotation.anchor,
+            side: "old",
+            startLine: 4,
+            lines: [{ kind: "deletion", text: "return oldValue;" }],
+          },
+          entry: {
+            ...annotation.entry,
+            id: "entry-client-3",
+            body: "Remove this old path.",
+            createdAt: "2026-08-30T10:02:00.000Z",
+          },
+        },
+      },
+    ), state);
+    const openReview = await deletedLineResponse!.json();
 
     const response = await router.handle(makeRequest(
       "POST",
@@ -179,10 +243,36 @@ describe("code review routes", () => {
     expect(message?.role).toBe("user");
     const text = message?.content?.[0]?.type === "text" ? message.content[0].text : "";
     expect(text).toBe([
-      "src/example.ts:4",
+      "src/example.ts",
+      "",
+      "Diff:",
+      "    diff --git a/src/example.ts b/src/example.ts",
+      "    index 8d57f20..4e0618a 100644",
+      "    --- a/src/example.ts",
+      "    +++ b/src/example.ts",
+      "    @@ -2,3 +2,4 @@",
+      "     const value = calculate();",
+      "    +return value;",
+      "    -return oldValue;",
       "",
       "Reviewer: Please explain this.",
       "↳ Reviewer: This is a follow-up.",
+      "",
+      "---",
+      "",
+      "src/example.ts",
+      "",
+      "Diff:",
+      "    diff --git a/src/example.ts b/src/example.ts",
+      "    index 8d57f20..4e0618a 100644",
+      "    --- a/src/example.ts",
+      "    +++ b/src/example.ts",
+      "    @@ -2,3 +2,4 @@",
+      "     const value = calculate();",
+      "    +return value;",
+      "    -return oldValue;",
+      "",
+      "Reviewer: Remove this old path.",
     ].join("\n"));
     expect(prompts).toEqual([[{ type: "text", text }]]);
   });

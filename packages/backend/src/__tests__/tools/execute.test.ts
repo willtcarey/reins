@@ -219,6 +219,50 @@ describe("createExecuteTool", () => {
     });
   });
 
+  describe("reviews API", () => {
+    test("creates a pending review comment from the current Git diff", async () => {
+      await Bun.write(`${repo.dir}/README.md`, "# Reviewed\n");
+      const task = createTask(project.id, "Review task", "", "main", null);
+      const tool = makeTool("review-session", task.id);
+
+      const result = await tool.execute("c-review", {
+        code: `
+          const created = await api.reviews.addComment(
+            "README.md",
+            1,
+            "Use a more descriptive heading.",
+            { author: "Review Bot" },
+          );
+          return { created, current: await api.reviews.current() };
+        `,
+      }, undefined, undefined, strictCtx);
+
+      const parsed = JSON.parse(textOf(result));
+      expect(parsed.current).toEqual(parsed.created);
+      expect(parsed.created).toMatchObject({
+        projectId: project.id,
+        taskId: task.id,
+        revision: 1,
+        annotations: [{
+          anchor: {
+            path: "README.md",
+            oldPath: null,
+            side: "new",
+            startLine: 1,
+            lines: [{ kind: "addition", text: "# Reviewed" }],
+          },
+          entries: [{
+            author: "Review Bot",
+            body: "Use a more descriptive heading.",
+          }],
+        }],
+      });
+      expect(parsed.created.annotations[0].anchor.filePatch).toContain("diff --git a/README.md b/README.md");
+      expect(parsed.created.annotations[0].anchor.filePatch).toContain("+# Reviewed");
+      expect(broadcastSpy).toHaveBeenCalledWith(expect.objectContaining({ type: "code_review_updated" }));
+    });
+  });
+
   describe("sessions API", () => {
     test("sessions.list() returns all sessions for the current project", async () => {
       const task = createTask(project.id, "List Task", "desc", "task/list", null);

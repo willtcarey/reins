@@ -20,6 +20,8 @@ interface Draft {
 }
 
 export interface InlineReviewPlacement extends ReviewPlacement {
+  readonly deletingCommentId: string | null;
+  readonly deleteComment: (commentId: string) => Promise<void>;
   readonly composer: null | {
     readonly body: string;
     readonly error: string | null;
@@ -51,11 +53,13 @@ export class InlineReviewController implements ReactiveController {
   private draft: Draft | null = null;
   private selection: { fileId: string; range: ReviewLineRange } | null = null;
   private error: { fileId: string; message: string } | null = null;
+  private deletingCommentId: string | null = null;
   private layoutRevision = 0;
 
   constructor(
     private readonly host: ReactiveControllerHost,
     private readonly saveAnnotation: (annotation: NewReviewAnnotation) => Promise<CodeReviewState>,
+    private readonly removeComment: (commentId: string) => Promise<void>,
   ) {
     host.addController(this);
   }
@@ -91,6 +95,7 @@ export class InlineReviewController implements ReactiveController {
     this.draft = null;
     this.selection = null;
     this.error = null;
+    this.deletingCommentId = null;
     this.files.clear();
     if (hadDraft) this.update(true);
   }
@@ -103,6 +108,8 @@ export class InlineReviewController implements ReactiveController {
     }
     const projected = placements.map((placement): InlineReviewPlacement => ({
       ...placement,
+      deletingCommentId: this.deletingCommentId,
+      deleteComment: (commentId) => this.deleteComment(fileId, commentId),
       composer: this.draft?.fileId === fileId && this.draft.placementId === placement.id
         ? {
             body: this.draft.body,
@@ -179,6 +186,21 @@ export class InlineReviewController implements ReactiveController {
       draft.saving = false;
       draft.error = message(error);
       this.update(true);
+    }
+  }
+
+  private async deleteComment(fileId: string, commentId: string): Promise<void> {
+    if (this.deletingCommentId !== null) return;
+    this.deletingCommentId = commentId;
+    this.error = null;
+    this.update(false);
+    try {
+      await this.removeComment(commentId);
+      this.deletingCommentId = null;
+      this.update(true);
+    } catch (error) {
+      this.deletingCommentId = null;
+      this.reject(fileId, message(error));
     }
   }
 

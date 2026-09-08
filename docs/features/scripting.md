@@ -36,16 +36,34 @@ execute({
 | `api.sessions` | `list(options?)`, `get(sessionId)`, `current()`, `entries(sessionId, options?)` |
 | `api.projects` | `list()`, `get(projectId)`, `current()` |
 | `api.models` | `list()`, `listProviders()` |
+| `api.reviews` | `current()`, `addComment(path, line, body, options?)` |
 | `api.ui` | `openFile(path, startLine?, endLine?)` |
 
 ### Behavior
 
-- **Read-heavy** — most operations are reads. Writes go through the app's normal task/session flows.
+- **Read-heavy** — most operations are reads. Writes go through the app's normal task/session/review flows.
+- **Code review comments** — `reviews.addComment()` anchors a comment to the current branch diff and atomically creates the pending project/task review when needed. It defaults to one new-side line and author `Agent`; `options` can set `endLine`, `side`, or `author`. Reins derives the structured anchor and retains the exact Git-native per-file patch server-side rather than requiring scripts to construct either value.
 - **Scoped by default** — `tasks.list()`, `sessions.list()`, and `projects.current()` default to the session's project. `sessions.list({ projectId })` can target another project, and session reads by `sessionId` can inspect sessions across projects.
 - **Incremental session queries** — `sessions.list()` returns all sessions for the current project; `sessions.list(options?)` supports `projectId`, `taskId`, `since`, `limit`, `search`, and `minMessages`. Use `taskId: "current"` from a task session to list that task's sessions; `projectId: "current"` refers to the script's project.
 - **Session entry extraction** — `sessions.entries(sessionId, options?)` returns a mixed timeline of persisted message entries (`user`, `assistant`, `compactionSummary`) and derived `toolCall` entries. Tool call entries include joined result previews when available. It supports `types`, `toolName`, `isError`, `search`, sequence cursors, `since`, `limit`, and `order`; raw joined result `content` is only included when `includeContent: true` is passed.
 - **30-second timeout** — runaway scripts are killed after 30s.
 - **No imports** — only the `api` object is available. No `require`, `import`, or filesystem access.
+
+### Create a code review
+
+This `execute` script creates the review implicitly with its first comment and adds a same-side range comment:
+
+```javascript
+const review = await api.reviews.addComment(
+  "src/example.ts",
+  12,
+  "This branch can return the wrong value.",
+  { endLine: 14, side: "new", author: "Review Bot" },
+);
+return { reviewId: review.id, revision: review.revision };
+```
+
+The path and line range must exist in the current Git diff. Additional calls add comments to the same pending review in the current project/task scope.
 
 ### Typical workflow
 

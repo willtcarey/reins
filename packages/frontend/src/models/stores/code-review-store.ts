@@ -96,6 +96,43 @@ export class CodeReviewStore {
     }
   }
 
+  async deleteComment(commentId: string): Promise<CodeReviewState> {
+    const scope = this.scope;
+    const review = this.review;
+    if (!scope || !review) throw new Error("No open code review comment to delete");
+
+    try {
+      const response = await fetch(reviewCommentUrl(scope, commentId), {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expectedReview: { id: review.id, revision: review.revision },
+        }),
+      });
+      if (!response.ok) {
+        const message = await responseError(response, "Unable to delete code review comment");
+        if (response.status === 409) await this.refresh();
+        throw new Error(message);
+      }
+      const updated: CodeReviewState = await response.json();
+      if (sameScope(this.scope, scope)) {
+        const current = this.review;
+        if (!current || current.id !== updated.id || updated.revision >= current.revision) {
+          this.review = updated;
+        }
+        this.error = null;
+        this.notify();
+      }
+      return updated;
+    } catch (error) {
+      if (sameScope(this.scope, scope)) {
+        this.error = errorMessage(error);
+        this.notify();
+      }
+      throw error;
+    }
+  }
+
   async submit(sessionId: string): Promise<{ readonly messageId: string }> {
     const scope = this.scope;
     const review = this.review;
@@ -160,6 +197,10 @@ function reviewSubmissionsUrl(scope: CodeReviewScope): string {
 
 function reviewAnnotationsUrl(scope: CodeReviewScope): string {
   return scopedReviewUrl(scope, "/code-review/annotations");
+}
+
+function reviewCommentUrl(scope: CodeReviewScope, commentId: string): string {
+  return scopedReviewUrl(scope, `/code-review/comments/${encodeURIComponent(commentId)}`);
 }
 
 function scopedReviewUrl(scope: CodeReviewScope, path: string): string {

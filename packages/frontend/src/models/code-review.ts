@@ -1,15 +1,21 @@
 export type ReviewSide = "old" | "new";
+export type ReviewDiffLineKind = "context" | "addition" | "deletion";
+
+export interface ReviewDiffLine {
+  readonly kind: ReviewDiffLineKind;
+  readonly text: string;
+}
 
 export interface ReviewAnchorEvidence {
   readonly path: string;
   readonly oldPath: string | null;
   readonly side: ReviewSide;
   readonly startLine: number;
-  readonly endLine: number;
-  readonly excerpt: string;
-  readonly contextBefore: string | null;
-  readonly contextAfter: string | null;
+  /** Original row contents support exact matching and unambiguous relocation. */
+  readonly lines: readonly ReviewDiffLine[];
   readonly fileFingerprint: string | null;
+  /** Exact Git-native per-file patch shown when this anchor was created. */
+  readonly filePatch: string;
   readonly baseRevision: string | null;
   readonly headRevision: string | null;
 }
@@ -56,7 +62,8 @@ export interface ReviewedFile {
   readonly contentKey: string;
   readonly path: string;
   readonly oldPath: string | null;
-  readonly lineText: (side: ReviewSide, line: number) => string | null;
+  readonly filePatch: string;
+  readonly diffLines: (side: ReviewSide) => readonly (ReviewDiffLine & { readonly line: number })[];
 }
 
 export interface ReviewPlacement {
@@ -70,11 +77,14 @@ export function reviewPlacements(
   file: ReviewedFile,
 ): readonly ReviewPlacement[] {
   const grouped = new Map<string, ReviewPlacement>();
+  const lines = new Map<ReviewSide, ReturnType<ReviewedFile["diffLines"]>>();
   for (const annotation of review?.annotations ?? []) {
     const anchor = annotation.anchor;
     if (file.path !== anchor.path && file.oldPath !== anchor.path) continue;
-    const range = { side: anchor.side, startLine: anchor.startLine, endLine: anchor.endLine };
-    if (!rangeExists(file, range)) continue;
+    const current = lines.get(anchor.side) ?? file.diffLines(anchor.side);
+    lines.set(anchor.side, current);
+    const range = placementRange(anchor, current);
+    if (!range) continue;
     const id = reviewPlacementId(file.id, range);
     const comments = annotation.entries.map(({ id: entryId, author, body }) => ({ id: entryId, author, body }));
     const existing = grouped.get(id);
@@ -102,23 +112,26 @@ export function buildReviewAnnotation(
     readonly createdAt: string;
   },
 ): NewReviewAnnotation {
-  if (range.startLine < 1 || range.endLine < range.startLine || !rangeExists(file, range)) {
+  if (range.startLine < 1 || range.endLine < range.startLine) {
     throw new Error("The selected range is no longer available.");
   }
-  const lines: string[] = [];
+  const available = file.diffLines(range.side);
+  const lines: ReviewDiffLine[] = [];
   for (let line = range.startLine; line <= range.endLine; line += 1) {
-    lines.push(file.lineText(range.side, line)!);
+    const diffLine = available.find((candidate) => candidate.line === line);
+    if (!diffLine) throw new Error("The selected range is no longer available.");
+    lines.push({ kind: diffLine.kind, text: diffLine.text });
   }
   return {
     id: input.annotationId,
     anchor: {
       path: file.path,
       oldPath: file.oldPath,
-      ...range,
-      excerpt: lines.join("\n"),
-      contextBefore: file.lineText(range.side, range.startLine - 1),
-      contextAfter: file.lineText(range.side, range.endLine + 1),
+      side: range.side,
+      startLine: range.startLine,
+      lines,
       fileFingerprint: file.contentKey,
+      filePatch: file.filePatch,
       baseRevision: null,
       headRevision: null,
     },
@@ -126,9 +139,25 @@ export function buildReviewAnnotation(
   };
 }
 
-function rangeExists(file: ReviewedFile, range: ReviewLineRange): boolean {
-  for (let line = range.startLine; line <= range.endLine; line += 1) {
-    if (file.lineText(range.side, line) === null) return false;
+function placementRange(
+  anchor: ReviewAnchorEvidence,
+  current: ReturnType<ReviewedFile["diffLines"]>,
+): ReviewLineRange | null {
+  const ranges: ReviewLineRange[] = [];
+  for (let start = 0; start <= current.length - anchor.lines.length; start += 1) {
+    const candidate = current.slice(start, start + anchor.lines.length);
+    if (!candidate.every((line, index) => (
+      line.kind === anchor.lines[index]!.kind
+      && line.text === anchor.lines[index]!.text
+      && (index === 0 || line.line === candidate[index - 1]!.line + 1)
+    ))) continue;
+    ranges.push({
+      side: anchor.side,
+      startLine: candidate[0]!.line,
+      endLine: candidate[candidate.length - 1]!.line,
+    });
   }
-  return true;
+
+  const exact = ranges.find(({ startLine }) => startLine === anchor.startLine);
+  return exact ?? (ranges.length === 1 ? ranges[0]! : null);
 }

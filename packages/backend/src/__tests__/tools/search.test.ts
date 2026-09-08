@@ -181,6 +181,18 @@ describe("createSearchTool", () => {
     expectGeneratedTypeScriptToBeValid(text);
   });
 
+  test("execute documents the code review scripting interface", async () => {
+    const tool = createSearchTool();
+    const result = await tool.execute("call-reviews", { query: "reviews comments" }, undefined, undefined, strictCtx);
+
+    const text = result.content[0].type === "text" ? result.content[0].text : "";
+    expect(text).toContain("reviews: ReviewsApi;");
+    expect(text).toContain("current(): Promise<CodeReview | null>;");
+    expect(text).toContain("addComment(path: string, line: number, body: string, options?:");
+    expect(text).toContain("interface CodeReview {");
+    expectGeneratedTypeScriptToBeValid(text);
+  });
+
   test("execute documents the UI broadcast helper", async () => {
     const tool = createSearchTool();
     const result = await tool.execute("call-ui-broadcast", { query: "ui broadcast" }, undefined, undefined, strictCtx);

@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import {
   AddCodeReviewAnnotationInputSchema,
   CodeReviewError,
+  DeleteCodeReviewCommentInputSchema,
 } from "../models/code-review.js";
 import { CodeReviewSubmission } from "../models/code-review-submission.js";
 import { createBroadcast } from "../models/broadcast.js";
@@ -54,6 +55,21 @@ export function registerCodeReviewRoutes(router: RouterGroup<ProjectRouteContext
         annotation: body.annotation,
       });
       return Response.json(result.review, { status: result.created ? 201 : 200 });
+    } catch (error) {
+      return translateError(error);
+    }
+  });
+
+  router.delete("/code-review/comments/:commentId", async (ctx) => {
+    const scope = getReviewScope(ctx);
+    const body = await parseBody(DeleteCodeReviewCommentInputSchema, ctx.req);
+
+    try {
+      return Response.json(ctx.project.codeReviews().deleteComment({
+        scope,
+        expectedReview: body.expectedReview,
+        commentId: ctx.params.commentId!,
+      }));
     } catch (error) {
       return translateError(error);
     }

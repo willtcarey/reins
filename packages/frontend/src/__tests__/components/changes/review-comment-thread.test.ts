@@ -12,6 +12,8 @@ describe("ReviewCommentThread", () => {
       id: "file-a:new:4",
       range: { side: "new", startLine: 2, endLine: 4 },
       comments: [],
+      deletingCommentId: null,
+      deleteComment: async () => {},
       composer: {
         body: "", saving: false, error: "Enter a comment before saving.",
         input: (value) => { body = value; },
@@ -49,6 +51,25 @@ describe("ReviewCommentThread", () => {
     collectTemplateEventListeners(element.render(), "submit")[0]?.call(element, new Event("submit", { cancelable: true }));
     await Promise.resolve();
     expect(saves).toBe(1);
-    expect(output).not.toContain("Delete comment");
+  });
+
+  test("offers deletion for each saved comment", async () => {
+    const element = new ReviewCommentThread();
+    const deleted: string[] = [];
+    element.placement = {
+      id: "file-a:new:4",
+      range: { side: "new", startLine: 4, endLine: 4 },
+      comments: [{ id: "entry-1", author: "You", body: "Remove this note." }],
+      deletingCommentId: null,
+      deleteComment: async (id) => { deleted.push(id); },
+      composer: null,
+    };
+
+    const rendered = element.render();
+    expect(templateToString(rendered)).toContain("Delete comment");
+    collectTemplateEventListeners(rendered, "click")[0]?.call(element, new Event("click"));
+    await Promise.resolve();
+
+    expect(deleted).toEqual(["entry-1"]);
   });
 });

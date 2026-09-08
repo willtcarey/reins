@@ -101,7 +101,7 @@ export class CodeReviewSubmission {
 
     for (const annotation of annotations) {
       const { anchor } = annotation;
-      const key = JSON.stringify([anchor.path, anchor.side, anchor.startLine, anchor.endLine]);
+      const key = JSON.stringify([anchor.path, anchor.side, anchor.startLine, anchor.lines]);
       const location = locations.get(key);
       if (location) {
         location.entries.push(...annotation.entries);
@@ -111,14 +111,15 @@ export class CodeReviewSubmission {
     }
 
     return [...locations.values()].map(({ anchor, entries }) => {
-      const lines = anchor.startLine === anchor.endLine
-        ? `${anchor.startLine}`
-        : `${anchor.startLine}-${anchor.endLine}`;
-      const location = `${anchor.path}:${lines}${anchor.side === "old" ? " (deleted)" : ""}`;
+      const diff = anchor.filePatch
+        .replace(/\n$/, "")
+        .split("\n")
+        .map((line) => `    ${line}`)
+        .join("\n");
       const comments = entries.map((entry, index) =>
         `${index === 0 ? "" : "↳ "}${entry.author}: ${entry.body}`,
       ).join("\n");
-      return `${location}\n\n${comments}`;
+      return `${anchor.path}\n\nDiff:\n${diff}\n\n${comments}`;
     }).join("\n\n---\n\n");
   }
 }

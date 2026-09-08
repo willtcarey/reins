@@ -56,7 +56,12 @@ export class ReviewCommentThread extends LitElement {
         <p class="mb-2 text-xs font-medium text-zinc-400">${rangeLabel}</p>
         ${placement.comments.map((comment) => html`
           <article class="mb-3 rounded-md border border-zinc-700 bg-zinc-800/80 p-3">
-            <header class="mb-2"><strong class="text-xs text-zinc-300">${comment.author}</strong></header>
+            <header class="mb-2 flex items-center justify-between gap-3">
+              <strong class="text-xs text-zinc-300">${comment.author}</strong>
+              <button type="button" class="rounded px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-red-300 focus-visible:outline-2 focus-visible:outline-sky-400"
+                aria-label=${`Delete comment by ${comment.author}`} ?disabled=${placement.deletingCommentId !== null}
+                @click=${() => void placement.deleteComment(comment.id)}>${placement.deletingCommentId === comment.id ? "Deleting…" : "Delete"}</button>
+            </header>
             <p class="whitespace-pre-wrap break-words text-sm text-zinc-100">${comment.body}</p>
           </article>`)}
         ${placement.composer ? html`

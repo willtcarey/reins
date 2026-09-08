@@ -6,16 +6,28 @@ const NullableStringSchema = Type.Union([Type.String(), Type.Null()]);
 export const ReviewSideSchema = Type.Union([Type.Literal("old"), Type.Literal("new")]);
 export type ReviewSide = Static<typeof ReviewSideSchema>;
 
+export const ReviewDiffLineKindSchema = Type.Union([
+  Type.Literal("context"),
+  Type.Literal("addition"),
+  Type.Literal("deletion"),
+]);
+export type ReviewDiffLineKind = Static<typeof ReviewDiffLineKindSchema>;
+
+export const ReviewDiffLineSchema = Type.Object({
+  kind: ReviewDiffLineKindSchema,
+  text: Type.String({ pattern: "^[^\\r\\n]*$" }),
+});
+export type ReviewDiffLine = Static<typeof ReviewDiffLineSchema>;
+
 export const ReviewAnchorEvidenceSchema = Type.Object({
   path: NonEmptyStringSchema,
   oldPath: NullableStringSchema,
   side: ReviewSideSchema,
   startLine: Type.Integer({ minimum: 1 }),
-  endLine: Type.Integer({ minimum: 1 }),
-  excerpt: Type.String(),
-  contextBefore: NullableStringSchema,
-  contextAfter: NullableStringSchema,
+  lines: Type.Array(ReviewDiffLineSchema, { minItems: 1 }),
   fileFingerprint: NullableStringSchema,
+  /** Exact Git-native per-file patch shown when the annotation was created. */
+  filePatch: NonEmptyStringSchema,
   baseRevision: NullableStringSchema,
   headRevision: NullableStringSchema,
 });
@@ -56,6 +68,11 @@ export const AddCodeReviewAnnotationInputSchema = Type.Object({
   annotation: NewReviewAnnotationSchema,
 });
 export type AddCodeReviewAnnotationInput = Static<typeof AddCodeReviewAnnotationInputSchema>;
+
+export const DeleteCodeReviewCommentInputSchema = Type.Object({
+  expectedReview: ExpectedCodeReviewSchema,
+});
+export type DeleteCodeReviewCommentInput = Static<typeof DeleteCodeReviewCommentInputSchema>;
 
 export const CodeReviewStateSchema = Type.Object({
   id: NonEmptyStringSchema,
@@ -160,12 +177,28 @@ export class CodeReview {
     annotation.entries.push(entry);
   }
 
+  deleteComment(entryId: string): void {
+    const annotationIndex = this.annotations.findIndex((annotation) =>
+      annotation.entries.some((entry) => entry.id === entryId),
+    );
+    if (annotationIndex === -1) {
+      throw new CodeReviewError(`Review comment not found: ${entryId}`, "not-found");
+    }
+
+    const annotation = this.annotations[annotationIndex]!;
+    annotation.entries = annotation.entries.filter((entry) => entry.id !== entryId);
+    if (annotation.entries.length === 0) this.annotations.splice(annotationIndex, 1);
+  }
+
   private ensureValidAnchor(anchor: ReviewAnchorEvidence): void {
-    if (anchor.startLine < 1 || anchor.endLine < anchor.startLine) {
-      throw new CodeReviewError(
-        "Review annotation endLine must be greater than or equal to a positive startLine",
-        "invalid",
-      );
+    if (anchor.startLine < 1 || anchor.lines.length === 0) {
+      throw new CodeReviewError("Review annotation diff selection is invalid", "invalid");
+    }
+    if (anchor.lines.some(({ text }) => text.includes("\n") || text.includes("\r"))) {
+      throw new CodeReviewError("Review annotation diff line text is invalid", "invalid");
+    }
+    if (!anchor.filePatch.startsWith("diff --git ")) {
+      throw new CodeReviewError("Review annotation file patch is invalid", "invalid");
     }
   }
 

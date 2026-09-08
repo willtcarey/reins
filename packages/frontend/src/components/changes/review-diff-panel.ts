@@ -19,6 +19,7 @@ import {
   type FileChangesResult,
 } from "../../models/changes/file-changes.js";
 import type { ReviewSide } from "../../models/code-review.js";
+import { reviewDiffLines } from "../../models/changes/review-diff-anchor.js";
 import {
   estimateFileChangeHeight,
   fileChangeGap,
@@ -105,10 +106,17 @@ export class ReviewDiffPanel extends LitElement {
   private _contextScopeKey = "";
   private _transitionHeights = new Map<string, number>();
   private _unsubscribeReview: (() => void) | null = null;
-  private _inlineReview = new InlineReviewController(this, async (annotation) => {
-    if (!this.reviewStore) throw new Error("Code review comments are unavailable.");
-    return this.reviewStore.addAnnotation(annotation);
-  });
+  private _inlineReview = new InlineReviewController(
+    this,
+    async (annotation) => {
+      if (!this.reviewStore) throw new Error("Code review comments are unavailable.");
+      return this.reviewStore.addAnnotation(annotation);
+    },
+    async (commentId) => {
+      if (!this.reviewStore) throw new Error("Code review comments are unavailable.");
+      await this.reviewStore.deleteComment(commentId);
+    },
+  );
   private readonly _expandFileContext = (
     change: FileChange,
     interaction: ReviewFileExpansionInteraction,
@@ -300,7 +308,8 @@ export class ReviewDiffPanel extends LitElement {
         contentKey: change.contentKey,
         path: change.path,
         oldPath: change.oldPath,
-        lineText: (side: ReviewSide, line: number) => fileChangeLineText(change, side, line),
+        filePatch: change.filePatch,
+        diffLines: (side: ReviewSide) => reviewDiffLines(change.fileDiff, side),
       })),
     );
     this._syncVirtualItems();
@@ -526,9 +535,9 @@ export class ReviewDiffPanel extends LitElement {
       && this.sessionId.length > 0;
 
     return html`
-      <div class="flex h-full min-h-0 flex-col" data-rendered-payload-version=${data ? this.store.patchData.data?.version ?? 0 : 0}>
+      <div class="relative flex h-full min-h-0 flex-col" data-rendered-payload-version=${data ? this.store.patchData.data?.version ?? 0 : 0}>
         ${branch ? html`
-          <div class="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-700/50 px-4 py-2">
+          <div class="flex shrink-0 items-center gap-3 border-b border-zinc-700/50 px-4 py-2">
             <div class="flex min-w-0 flex-wrap items-center gap-2">
               ${baseBranch && baseBranch !== branch ? html`
                 <span class="text-xs font-mono text-zinc-500">${baseBranch}</span><span class="text-xs text-zinc-600">←</span>
@@ -537,20 +546,6 @@ export class ReviewDiffPanel extends LitElement {
                 ${branchIcon("shrink-0 text-zinc-500", 12)}${branch}
               </span>
             </div>
-            ${activeReview ? html`
-              <div class="flex shrink-0 items-center gap-2">
-                ${this.reviewStore?.submissionError ? html`
-                  <span role="alert" class="max-w-64 text-right text-xs text-red-400">${this.reviewStore.submissionError}</span>
-                ` : nothing}
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-1.5 rounded border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
-                  aria-disabled=${String(!canSubmit)}
-                  ?disabled=${!canSubmit}
-                  @click=${() => { void this._submitReview(); }}
-                >${conversationIcon("shrink-0", 13)}${this.reviewStore?.submitting ? "Submitting…" : "Submit review"}</button>
-              </div>
-            ` : nothing}
           </div>
         ` : nothing}
         <div class="min-h-0 flex-1 overflow-y-auto" data-review-scroll>
@@ -590,25 +585,23 @@ export class ReviewDiffPanel extends LitElement {
                   </div>`
                 : html`<div class="flex h-full items-center justify-center p-4 text-sm text-zinc-500">No changes yet</div>`}
         </div>
+        ${hasSavedComments ? html`
+          <div class="pointer-events-none absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-[var(--layer-content)] flex max-w-[calc(100%-2rem)] flex-col items-end gap-2">
+            ${this.reviewStore?.submissionError ? html`
+              <span role="alert" class="rounded-md border border-red-900/70 bg-zinc-900/95 px-3 py-2 text-right text-xs text-red-400 shadow-lg">${this.reviewStore.submissionError}</span>
+            ` : nothing}
+            <button
+              type="button"
+              class="pointer-events-auto inline-flex min-h-11 items-center gap-2 rounded-full bg-sky-600 px-4 py-2.5 text-sm font-medium text-white shadow-lg shadow-black/30 hover:bg-sky-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
+              aria-disabled=${String(!canSubmit)}
+              ?disabled=${!canSubmit}
+              @click=${() => { void this._submitReview(); }}
+            >${conversationIcon("shrink-0", 15)}${this.reviewStore?.submitting ? "Submitting…" : "Submit review"}</button>
+          </div>
+        ` : nothing}
       </div>
     `;
   }
-}
-
-function fileChangeLineText(change: FileChange, side: ReviewSide, line: number): string | null {
-  if (line < 1) return null;
-  const addition = side === "new";
-  const lines = addition ? change.fileDiff.additionLines : change.fileDiff.deletionLines;
-  if (!change.fileDiff.isPartial) return lines[line - 1] ?? null;
-
-  for (const hunk of change.fileDiff.hunks) {
-    const start = addition ? hunk.additionStart : hunk.deletionStart;
-    const count = addition ? hunk.additionCount : hunk.deletionCount;
-    if (line < start || line >= start + count) continue;
-    const index = (addition ? hunk.additionLineIndex : hunk.deletionLineIndex) + line - start;
-    return lines[index] ?? null;
-  }
-  return null;
 }
 
 declare global {
