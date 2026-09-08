@@ -1,8 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import { asyncIterableToText } from "../async-iterable.js";
 import { CodeReviewStateSchema } from "../models/code-review.js";
-import { reviewAnchorFromPatch } from "../models/review-diff-anchor.js";
 import { ProjectModel } from "../models/projects.js";
 import { getTask } from "../task-store.js";
 import { type ApiFunctionDef, defineFunction, type ApiContext } from "./define-function.js";
@@ -55,24 +53,16 @@ export const REVIEW_FUNCTIONS: ApiFunctionDef[] = [
       const patch = await asyncIterableToText(
         project.workspace.getDiffPatchStream(3, "branch", taskBranch(ctx)),
       );
-      const anchor = reviewAnchorFromPatch(patch, {
-        path: params.path,
-        side: params.options?.side ?? "new",
-        startLine: params.line,
-        endLine: params.options?.endLine ?? params.line,
-      });
-      const now = new Date().toISOString();
-      const review = project.codeReviews().addAnnotation({
+      const review = project.codeReviews().addComment({
         scope: { taskId: ctx.taskId },
-        annotation: {
-          id: randomUUID(),
-          anchor,
-          entry: {
-            id: randomUUID(),
-            author: params.options?.author?.trim() || "Agent",
-            body,
-            createdAt: now,
-          },
+        author: params.options?.author?.trim() || "Agent",
+        comment: {
+          path: params.path,
+          side: params.options?.side ?? "new",
+          startLine: params.line,
+          endLine: params.options?.endLine ?? params.line,
+          filePatch: patch,
+          body,
         },
       }).review;
       return review;

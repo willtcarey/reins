@@ -1,4 +1,4 @@
-import type { CodeReviewState, NewReviewAnnotation } from "../code-review.js";
+import type { CodeReviewState, NewReviewComment } from "../code-review.js";
 
 interface CodeReviewScope {
   readonly projectId: number;
@@ -59,7 +59,7 @@ export class CodeReviewStore {
     }
   }
 
-  async addAnnotation(annotation: NewReviewAnnotation): Promise<CodeReviewState> {
+  async addComment(comment: NewReviewComment): Promise<CodeReviewState> {
     const scope = this.scope;
     if (!scope) throw new Error("No active code review scope");
     const expectedReview = this.review
@@ -67,10 +67,10 @@ export class CodeReviewStore {
       : undefined;
 
     try {
-      const response = await fetch(reviewAnnotationsUrl(scope), {
+      const response = await fetch(reviewCommentsUrl(scope), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ expectedReview, annotation }),
+        body: JSON.stringify({ expectedReview, comment }),
       });
       if (!response.ok) {
         const message = await responseError(response, "Unable to save code review comment");
@@ -195,8 +195,8 @@ function reviewSubmissionsUrl(scope: CodeReviewScope): string {
   return scopedReviewUrl(scope, "/code-review/submissions");
 }
 
-function reviewAnnotationsUrl(scope: CodeReviewScope): string {
-  return scopedReviewUrl(scope, "/code-review/annotations");
+function reviewCommentsUrl(scope: CodeReviewScope): string {
+  return scopedReviewUrl(scope, "/code-review/comments");
 }
 
 function reviewCommentUrl(scope: CodeReviewScope, commentId: string): string {

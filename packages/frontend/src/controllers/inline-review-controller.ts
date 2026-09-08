@@ -1,10 +1,9 @@
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import {
-  buildReviewAnnotation,
   reviewPlacementId,
   reviewPlacements,
   type CodeReviewState,
-  type NewReviewAnnotation,
+  type NewReviewComment,
   type ReviewedFile,
   type ReviewLineRange,
   type ReviewPlacement,
@@ -59,7 +58,7 @@ export class InlineReviewController implements ReactiveController {
 
   constructor(
     private readonly host: ReactiveControllerHost,
-    private readonly saveAnnotation: (annotation: NewReviewAnnotation) => Promise<CodeReviewState>,
+    private readonly saveCommentIntent: (comment: NewReviewComment) => Promise<CodeReviewState>,
     private readonly removeComment: (commentId: string) => Promise<void>,
   ) {
     host.addController(this);
@@ -167,18 +166,16 @@ export class InlineReviewController implements ReactiveController {
     if (!body) return this.reject(draft.fileId, "Enter a comment before saving.");
     const file = this.files.get(draft.fileId);
     if (!file?.path) return this.reject(draft.fileId, "This file cannot be anchored for review.");
-    let annotation: NewReviewAnnotation;
-    try {
-      annotation = buildReviewAnnotation(file, draft.range, {
-        annotationId: newIdentity(), id: newIdentity(), author: "You", body, createdAt: new Date().toISOString(),
-      });
-    } catch (error) {
-      return this.reject(draft.fileId, message(error));
-    }
+    const comment: NewReviewComment = {
+      path: file.path,
+      filePatch: file.filePatch,
+      ...draft.range,
+      body,
+    };
     draft.saving = true;
     this.update(false);
     try {
-      const review = await this.saveAnnotation(annotation);
+      const review = await this.saveCommentIntent(comment);
       if (this.draft !== draft) return;
       this.review = review;
       this.draft = null;
@@ -232,7 +229,3 @@ function sameRange(left: ReviewLineRange, right: ReviewLineRange): boolean {
   return left.side === right.side && left.startLine === right.startLine && left.endLine === right.endLine;
 }
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-function newIdentity(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}

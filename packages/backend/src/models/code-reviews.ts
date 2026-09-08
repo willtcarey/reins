@@ -14,7 +14,9 @@ import {
   type AddCodeReviewAnnotationInput,
   type CodeReview,
   type ExpectedCodeReview,
+  type NewReviewComment,
 } from "./code-review.js";
+import { reviewAnchorFromPatch } from "./review-diff-anchor.js";
 
 export interface CodeReviewScope {
   taskId: number | null;
@@ -27,6 +29,13 @@ export type AddCodeReviewAnnotationCommand = AddCodeReviewAnnotationInput & {
 export interface AddCodeReviewAnnotationResult {
   review: CodeReview;
   created: boolean;
+}
+
+export interface AddCodeReviewCommentCommand {
+  scope: CodeReviewScope;
+  expectedReview?: ExpectedCodeReview;
+  comment: NewReviewComment;
+  author: string;
 }
 
 export interface DeleteCodeReviewCommentCommand {
@@ -108,6 +117,37 @@ export class ProjectCodeReviews {
       }
       throw error;
     }
+  }
+
+  /** Turn a small comment intent into authoritative persisted anchor evidence. */
+  addComment(command: AddCodeReviewCommentCommand): AddCodeReviewAnnotationResult {
+    const body = command.comment.body.trim();
+    if (!body) throw new CodeReviewError("Review comment body cannot be empty", "invalid");
+
+    let anchor;
+    try {
+      anchor = reviewAnchorFromPatch(command.comment.filePatch, command.comment);
+    } catch (error) {
+      throw new CodeReviewError(
+        error instanceof Error ? error.message : String(error),
+        "invalid",
+      );
+    }
+
+    return this.addAnnotation({
+      scope: command.scope,
+      expectedReview: command.expectedReview,
+      annotation: {
+        id: randomUUID(),
+        anchor,
+        entry: {
+          id: randomUUID(),
+          author: command.author,
+          body,
+          createdAt: new Date().toISOString(),
+        },
+      },
+    });
   }
 
   deleteComment(command: DeleteCodeReviewCommentCommand): CodeReview {

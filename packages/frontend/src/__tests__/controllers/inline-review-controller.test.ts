@@ -42,10 +42,18 @@ describe("InlineReviewController", () => {
   test("validates and saves through the file interface", async () => {
     const host = new Host();
     const saved: unknown[] = [];
-    const controller = new InlineReviewController(host, async (annotation) => {
-      saved.push(annotation);
+    const controller = new InlineReviewController(host, async (comment) => {
+      saved.push(comment);
       return { id: "review", projectId: 1, taskId: null, revision: 1,
-        annotations: [{ id: annotation.id, anchor: annotation.anchor, entries: [annotation.entry] }], createdAt: "now", updatedAt: "now" };
+        annotations: [{
+          id: "annotation-1",
+          anchor: {
+            path: comment.path, oldPath: null, side: comment.side, startLine: comment.startLine,
+            lines: [{ kind: "addition", text: "line 2" }], fileFingerprint: "one",
+            filePatch: comment.filePatch, baseRevision: null, headRevision: null,
+          },
+          entries: [{ id: "entry-1", author: "You", body: comment.body, createdAt: "now" }],
+        }], createdAt: "now", updatedAt: "now" };
     }, async () => { throw new Error("unused"); });
     controller.reconcile("scope", [FILE]);
     controller.file("file-a").openComposer({ side: "new", startLine: 2, endLine: 2 });
@@ -53,7 +61,10 @@ describe("InlineReviewController", () => {
     expect(controller.file("file-a").placements[0]?.composer?.error).toBe("Enter a comment before saving.");
     controller.file("file-a").placements[0]?.composer?.input("A note");
     await controller.file("file-a").placements[0]?.composer?.save();
-    expect(saved).toHaveLength(1);
+    expect(saved).toEqual([{
+      path: "src/a.ts", side: "new", startLine: 2, endLine: 2,
+      filePatch: FILE.filePatch, body: "A note",
+    }]);
     expect(controller.file("file-a").placements[0]?.comments[0]?.body).toBe("A note");
     expect(controller.activeComposerFileId).toBeNull();
   });

@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import {
-  AddCodeReviewAnnotationInputSchema,
   CodeReviewError,
+  CreateCodeReviewCommentInputSchema,
   DeleteCodeReviewCommentInputSchema,
 } from "../models/code-review.js";
 import { CodeReviewSubmission } from "../models/code-review-submission.js";
@@ -44,15 +44,16 @@ export function registerCodeReviewRoutes(router: RouterGroup<ProjectRouteContext
     }
   });
 
-  router.post("/code-review/annotations", async (ctx) => {
+  router.post("/code-review/comments", async (ctx) => {
     const scope = getReviewScope(ctx);
-    const body = await parseBody(AddCodeReviewAnnotationInputSchema, ctx.req);
+    const body = await parseBody(CreateCodeReviewCommentInputSchema, ctx.req);
 
     try {
-      const result = ctx.project.codeReviews().addAnnotation({
+      const result = ctx.project.codeReviews().addComment({
         scope,
         expectedReview: body.expectedReview,
-        annotation: body.annotation,
+        comment: body.comment,
+        author: "You",
       });
       return Response.json(result.review, { status: result.created ? 201 : 200 });
     } catch (error) {

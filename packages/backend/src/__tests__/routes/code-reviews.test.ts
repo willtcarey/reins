@@ -24,19 +24,7 @@ function reviewRuntime(prompts: unknown[]): AgentRuntime {
   };
 }
 
-const annotation = {
-  id: "annotation-client-1",
-  anchor: {
-    path: "src/example.ts",
-    oldPath: null,
-    side: "new",
-    startLine: 3,
-    lines: [
-      { kind: "context", text: "const value = calculate();" },
-      { kind: "addition", text: "return value;" },
-    ],
-    fileFingerprint: "file-v1",
-    filePatch: `diff --git a/src/example.ts b/src/example.ts
+const filePatch = `diff --git a/src/example.ts b/src/example.ts
 index 8d57f20..4e0618a 100644
 --- a/src/example.ts
 +++ b/src/example.ts
@@ -44,16 +32,15 @@ index 8d57f20..4e0618a 100644
  const value = calculate();
 +return value;
 -return oldValue;
-`,
-    baseRevision: "base-sha",
-    headRevision: "head-sha",
-  },
-  entry: {
-    id: "entry-client-1",
-    author: "Reviewer",
-    body: "Please explain this.",
-    createdAt: "2026-08-30T10:00:00.000Z",
-  },
+`;
+
+const comment = {
+  path: "src/example.ts",
+  side: "new" as const,
+  startLine: 2,
+  endLine: 3,
+  filePatch,
+  body: "Please explain this.",
 };
 
 describe("code review routes", () => {
@@ -80,11 +67,24 @@ describe("code review routes", () => {
     expect(empty?.status).toBe(200);
     expect(await empty!.json()).toBeNull();
 
-    const created = await router.handle(makeRequest("POST", `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`, { annotation }), state);
+    const created = await router.handle(makeRequest("POST", `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`, { comment }), state);
     expect(created?.status).toBe(201);
     const review = await created!.json();
     expect(review).toMatchObject({ projectId, taskId, revision: 1 });
-    expect(review.annotations[0]).toEqual({ id: annotation.id, anchor: annotation.anchor, entries: [annotation.entry] });
+    expect(review.annotations[0]).toMatchObject({
+      id: expect.any(String),
+      anchor: {
+        path: "src/example.ts",
+        side: "new",
+        startLine: 2,
+        lines: [
+          { kind: "context", text: "const value = calculate();" },
+          { kind: "addition", text: "return value;" },
+        ],
+        filePatch: comment.filePatch,
+      },
+      entries: [{ id: expect.any(String), author: "You", body: comment.body }],
+    });
 
     const loaded = await router.handle(makeRequest("GET", resource), state);
     expect(await loaded!.json()).toEqual(review);
@@ -95,14 +95,14 @@ describe("code review routes", () => {
       reviewId: review.id,
       revision: 1,
     });
-    expect(sent[0]).not.toContain(annotation.entry.body);
+    expect(sent[0]).not.toContain(comment.body);
   });
 
   test("omitting taskId uses the same resources in project scope", async () => {
     const resource = `/api/projects/${projectId}/code-review`;
     expect(await (await router.handle(makeRequest("GET", resource), state))!.json()).toBeNull();
 
-    const created = await router.handle(makeRequest("POST", `${resource}/annotations`, { annotation }), state);
+    const created = await router.handle(makeRequest("POST", `${resource}/comments`, { comment }), state);
     expect(created?.status).toBe(201);
     const review = await created!.json();
     expect(review).toMatchObject({ projectId, taskId: null, revision: 1 });
@@ -110,33 +110,23 @@ describe("code review routes", () => {
   });
 
   test("validates transport input and translates model conflicts", async () => {
-    const path = `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`;
+    const path = `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`;
     const malformedScope = await router.handle(
-      makeRequest("POST", `/api/projects/${projectId}/code-review/annotations?taskId=nope`, { annotation }),
+      makeRequest("POST", `/api/projects/${projectId}/code-review/comments?taskId=nope`, { comment }),
       state,
     );
     expect(malformedScope?.status).toBe(400);
 
-    const invalidAnnotation = await router.handle(makeRequest("POST", path, {
-      annotation: {
-        ...annotation,
-        anchor: {
-          ...annotation.anchor,
-          startLine: 0,
-        },
-      },
+    const invalidComment = await router.handle(makeRequest("POST", path, {
+      comment: { ...comment, startLine: 0 },
     }), state);
-    expect(invalidAnnotation?.status).toBe(400);
+    expect(invalidComment?.status).toBe(400);
 
-    const created = await router.handle(makeRequest("POST", path, { annotation }), state);
+    const created = await router.handle(makeRequest("POST", path, { comment }), state);
     const review = await created!.json();
     const stale = await router.handle(makeRequest("POST", path, {
       expectedReview: { id: review.id, revision: 0 },
-      annotation: {
-        ...annotation,
-        id: "annotation-client-2",
-        entry: { ...annotation.entry, id: "entry-client-2", body: "Another comment" },
-      },
+      comment: { ...comment, body: "Another comment" },
     }), state);
 
     expect(stale?.status).toBe(409);
@@ -147,14 +137,15 @@ describe("code review routes", () => {
   test("deletes a saved comment before submission", async () => {
     const created = await router.handle(makeRequest(
       "POST",
-      `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`,
-      { annotation },
+      `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
+      { comment },
     ), state);
     const review = await created!.json();
+    const commentId = review.annotations[0].entries[0].id;
 
     const response = await router.handle(makeRequest(
       "DELETE",
-      `/api/projects/${projectId}/code-review/comments/${annotation.entry.id}?taskId=${taskId}`,
+      `/api/projects/${projectId}/code-review/comments/${commentId}?taskId=${taskId}`,
       { expectedReview: { id: review.id, revision: review.revision } },
     ), state);
     const updated = await response!.json();
@@ -179,48 +170,30 @@ describe("code review routes", () => {
     state.sessions.set("session-1", { id: "session-1", runtime, lastActivity: Date.now() });
     const annotationResponse = await router.handle(makeRequest(
       "POST",
-      `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`,
-      { annotation },
+      `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
+      { comment },
     ), state);
     const createdReview = await annotationResponse!.json();
     const replyResponse = await router.handle(makeRequest(
       "POST",
-      `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`,
+      `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
       {
         expectedReview: { id: createdReview.id, revision: createdReview.revision },
-        annotation: {
-          ...annotation,
-          id: "annotation-client-2",
-          entry: {
-            ...annotation.entry,
-            id: "entry-client-2",
-            body: "This is a follow-up.",
-            createdAt: "2026-08-30T10:01:00.000Z",
-          },
-        },
+        comment: { ...comment, body: "This is a follow-up." },
       },
     ), state);
     const replyReview = await replyResponse!.json();
     const deletedLineResponse = await router.handle(makeRequest(
       "POST",
-      `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`,
+      `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
       {
         expectedReview: { id: replyReview.id, revision: replyReview.revision },
-        annotation: {
-          ...annotation,
-          id: "annotation-client-3",
-          anchor: {
-            ...annotation.anchor,
-            side: "old",
-            startLine: 4,
-            lines: [{ kind: "deletion", text: "return oldValue;" }],
-          },
-          entry: {
-            ...annotation.entry,
-            id: "entry-client-3",
-            body: "Remove this old path.",
-            createdAt: "2026-08-30T10:02:00.000Z",
-          },
+        comment: {
+          ...comment,
+          side: "old",
+          startLine: 3,
+          endLine: 3,
+          body: "Remove this old path.",
         },
       },
     ), state);
@@ -255,8 +228,8 @@ describe("code review routes", () => {
       "    +return value;",
       "    -return oldValue;",
       "",
-      "Reviewer: Please explain this.",
-      "↳ Reviewer: This is a follow-up.",
+      "You: Please explain this.",
+      "↳ You: This is a follow-up.",
       "",
       "---",
       "",
@@ -272,7 +245,7 @@ describe("code review routes", () => {
       "    +return value;",
       "    -return oldValue;",
       "",
-      "Reviewer: Remove this old path.",
+      "You: Remove this old path.",
     ].join("\n"));
     expect(prompts).toEqual([[{ type: "text", text }]]);
   });
@@ -284,8 +257,8 @@ describe("code review routes", () => {
     state.sessions.set("session-1", { id: "session-1", runtime, lastActivity: Date.now() });
     const created = await router.handle(makeRequest(
       "POST",
-      `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`,
-      { annotation },
+      `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
+      { comment },
     ), state);
     const openReview = await created!.json();
     const submissionPath = `/api/projects/${projectId}/code-review/submissions?taskId=${taskId}`;
@@ -305,8 +278,8 @@ describe("code review routes", () => {
     updateActivityState("running-session", "running");
     const created = await router.handle(makeRequest(
       "POST",
-      `/api/projects/${projectId}/code-review/annotations?taskId=${taskId}`,
-      { annotation },
+      `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
+      { comment },
     ), state);
     const review = await created!.json();
 

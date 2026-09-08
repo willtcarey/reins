@@ -63,11 +63,26 @@ export const ExpectedCodeReviewSchema = Type.Object({
 });
 export type ExpectedCodeReview = Static<typeof ExpectedCodeReviewSchema>;
 
-export const AddCodeReviewAnnotationInputSchema = Type.Object({
-  expectedReview: Type.Optional(ExpectedCodeReviewSchema),
-  annotation: NewReviewAnnotationSchema,
+export interface AddCodeReviewAnnotationInput {
+  expectedReview?: ExpectedCodeReview;
+  annotation: NewReviewAnnotation;
+}
+
+export const NewReviewCommentSchema = Type.Object({
+  path: NonEmptyStringSchema,
+  side: ReviewSideSchema,
+  startLine: Type.Integer({ minimum: 1 }),
+  endLine: Type.Integer({ minimum: 1 }),
+  filePatch: NonEmptyStringSchema,
+  body: NonEmptyStringSchema,
 });
-export type AddCodeReviewAnnotationInput = Static<typeof AddCodeReviewAnnotationInputSchema>;
+export type NewReviewComment = Static<typeof NewReviewCommentSchema>;
+
+export const CreateCodeReviewCommentInputSchema = Type.Object({
+  expectedReview: Type.Optional(ExpectedCodeReviewSchema),
+  comment: NewReviewCommentSchema,
+});
+export type CreateCodeReviewCommentInput = Static<typeof CreateCodeReviewCommentInputSchema>;
 
 export const DeleteCodeReviewCommentInputSchema = Type.Object({
   expectedReview: ExpectedCodeReviewSchema,

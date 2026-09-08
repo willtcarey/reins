@@ -31,7 +31,7 @@ describe("CodeReviewStore", () => {
     expect(store.error).toBeNull();
   });
 
-  test("saves an annotation with the current optimistic review identity", async () => {
+  test("saves a comment intent with the current optimistic review identity", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     mockFetch((url, init) => {
       requests.push({ url, init });
@@ -64,31 +64,26 @@ describe("CodeReviewStore", () => {
     const store = new CodeReviewStore();
     await store.setScope({ projectId: 7, taskId: 11 });
 
-    await store.addAnnotation({
-      id: "annotation-1",
-      anchor: {
-        path: "src/example.ts",
-        oldPath: null,
-        side: "new",
-        startLine: 2,
-        lines: [{ kind: "addition", text: "const answer = 42;" }],
-        fileFingerprint: "content-1",
-        filePatch: "diff --git a/src/example.ts b/src/example.ts\n",
-        baseRevision: null,
-        headRevision: null,
-      },
-      entry: {
-        id: "entry-1",
-        author: "You",
-        body: "Please explain this.",
-        createdAt: "2026-08-30T10:01:00.000Z",
-      },
+    await store.addComment({
+      path: "src/example.ts",
+      side: "new",
+      startLine: 2,
+      endLine: 2,
+      filePatch: "diff --git a/src/example.ts b/src/example.ts\n",
+      body: "Please explain this.",
     });
 
-    expect(requests[1]?.url).toBe("/api/projects/7/code-review/annotations?taskId=11");
+    expect(requests[1]?.url).toBe("/api/projects/7/code-review/comments?taskId=11");
     expect(JSON.parse(String(requests[1]?.init?.body))).toEqual({
       expectedReview: { id: "review-1", revision: 0 },
-      annotation: expect.objectContaining({ id: "annotation-1" }),
+      comment: {
+        path: "src/example.ts",
+        side: "new",
+        startLine: 2,
+        endLine: 2,
+        filePatch: "diff --git a/src/example.ts b/src/example.ts\n",
+        body: "Please explain this.",
+      },
     });
     expect(store.review?.revision).toBe(1);
     expect(store.review?.annotations[0]?.entries[0]?.body).toBe("Please explain this.");

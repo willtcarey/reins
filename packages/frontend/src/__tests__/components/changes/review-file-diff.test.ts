@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { PartType, type PartInfo } from "lit/directive.js";
+import { ReviewCommentThread } from "../../../components/changes/review-comment-thread.js";
 import { ReviewFileDiff } from "../../../components/changes/review-file-diff.js";
 import { SpringCollapseDirective } from "../../../directives/spring-collapse.js";
 import { FileDiffContextState } from "../../../models/changes/file-diff-context-state.js";
@@ -28,6 +29,8 @@ function testRect(height: number): DOMRect {
     toJSON: () => ({}),
   };
 }
+
+function noAnchor(): number | null { return null; }
 
 function renderOutput(item: ReviewFileDiff): string {
   const template = item.render();
@@ -130,6 +133,28 @@ describe("ReviewFileDiff", () => {
       { kind: "measurement", height: 137 },
       { kind: "measurement", height: 137 },
     ]);
+  });
+
+  test("preserves scroll from the active comment element when its layout changes", () => {
+    const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
+    const item = new ReviewFileDiff();
+    const thread = new ReviewCommentThread();
+    const placement = { id: "draft", range: { side: "new" as const, startLine: 1, endLine: 1 }, comments: [], deletingCommentId: null, deleteComment: async () => {}, addComment: () => {}, composer: {
+      body: "", error: null, saving: false, input: () => {}, save: async () => {}, cancel: () => {},
+    } };
+    thread.placement = placement;
+    thread.getBoundingClientRect = () => ({ ...testRect(100), top: 42 });
+    item.change = fileChange;
+    Object.defineProperty(item, "querySelectorAll", { value: () => [thread] });
+    let resolveAnchor: () => number | null = noAnchor;
+    item.onCommentLayoutChange = (_change, resolve) => { resolveAnchor = resolve; };
+    const previous = { placements: [], selection: null, error: null, threadCount: 0, layoutRevision: 0,
+      select: () => {}, openComposer: () => {}, reportError: () => {} };
+    item.inlineReview = { ...previous, placements: [placement], layoutRevision: 1 };
+
+    item.willUpdate(new Map([["inlineReview", previous]]));
+
+    expect(resolveAnchor()).toBe(42);
   });
 
   test("does not emit for stale completion after Lit removes the current structure", () => {

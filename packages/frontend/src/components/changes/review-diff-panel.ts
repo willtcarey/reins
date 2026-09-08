@@ -108,9 +108,9 @@ export class ReviewDiffPanel extends LitElement {
   private _unsubscribeReview: (() => void) | null = null;
   private _inlineReview = new InlineReviewController(
     this,
-    async (annotation) => {
+    async (comment) => {
       if (!this.reviewStore) throw new Error("Code review comments are unavailable.");
-      return this.reviewStore.addAnnotation(annotation);
+      return this.reviewStore.addComment(comment);
     },
     async (commentId) => {
       if (!this.reviewStore) throw new Error("Code review comments are unavailable.");

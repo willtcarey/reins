@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  buildReviewAnnotation,
   reviewPlacements,
   type CodeReviewState,
   type ReviewedFile,
@@ -73,27 +72,4 @@ describe("code review", () => {
     })).toEqual([]);
   });
 
-  test("builds original anchor evidence from a normalized valid range", () => {
-    const annotation = buildReviewAnnotation(FILE, { side: "new", startLine: 2, endLine: 3 }, {
-      id: "entry-2", annotationId: "annotation-2", author: "You", body: "Explain", createdAt: "2026-01-02",
-    });
-    expect(annotation).toMatchObject({
-      id: "annotation-2",
-      anchor: {
-        path: FILE.path,
-        side: "new",
-        startLine: 2,
-        lines: [
-          { kind: "addition", text: "second" },
-          { kind: "addition", text: "third" },
-        ],
-        fileFingerprint: "content-a",
-        filePatch: FILE.filePatch,
-      },
-      entry: { id: "entry-2", body: "Explain" },
-    });
-    expect(() => buildReviewAnnotation(FILE, { side: "new", startLine: 3, endLine: 4 }, {
-      id: "x", annotationId: "y", author: "You", body: "bad", createdAt: "now",
-    })).toThrow("range is no longer available");
-  });
 });

@@ -35,10 +35,10 @@ export interface ReviewAnnotation {
   readonly entries: readonly ReviewEntry[];
 }
 
-export interface NewReviewAnnotation {
-  readonly id: string;
-  readonly anchor: ReviewAnchorEvidence;
-  readonly entry: ReviewEntry;
+export interface NewReviewComment extends ReviewLineRange {
+  readonly path: string;
+  readonly filePatch: string;
+  readonly body: string;
 }
 
 export interface CodeReviewState {
@@ -99,44 +99,6 @@ export function reviewPlacements(
 
 export function reviewPlacementId(fileId: string, range: ReviewLineRange): string {
   return `${encodeURIComponent(fileId)}:${range.side}:${range.endLine}`;
-}
-
-export function buildReviewAnnotation(
-  file: ReviewedFile,
-  range: ReviewLineRange,
-  input: {
-    readonly annotationId: string;
-    readonly id: string;
-    readonly author: string;
-    readonly body: string;
-    readonly createdAt: string;
-  },
-): NewReviewAnnotation {
-  if (range.startLine < 1 || range.endLine < range.startLine) {
-    throw new Error("The selected range is no longer available.");
-  }
-  const available = file.diffLines(range.side);
-  const lines: ReviewDiffLine[] = [];
-  for (let line = range.startLine; line <= range.endLine; line += 1) {
-    const diffLine = available.find((candidate) => candidate.line === line);
-    if (!diffLine) throw new Error("The selected range is no longer available.");
-    lines.push({ kind: diffLine.kind, text: diffLine.text });
-  }
-  return {
-    id: input.annotationId,
-    anchor: {
-      path: file.path,
-      oldPath: file.oldPath,
-      side: range.side,
-      startLine: range.startLine,
-      lines,
-      fileFingerprint: file.contentKey,
-      filePatch: file.filePatch,
-      baseRevision: null,
-      headRevision: null,
-    },
-    entry: { id: input.id, author: input.author, body: input.body, createdAt: input.createdAt },
-  };
 }
 
 function placementRange(
