@@ -28,7 +28,7 @@ describe("SettingsStore", () => {
 
     mockFetch((url) => {
       requests.push(url);
-      if (url === "/api/settings?key=default_model&key=utility_model&key=diff_renderer") {
+      if (url === "/api/settings?key=default_model&key=utility_model") {
         return jsonResponse([
           {
             key: "default_model",
@@ -50,10 +50,6 @@ describe("SettingsStore", () => {
             },
             redacted: false,
           },
-          {
-            key: "diff_renderer",
-            value: "virtualized",
-          },
         ]);
       }
       if (url === "/api/oauth/providers") {
@@ -64,7 +60,7 @@ describe("SettingsStore", () => {
       return jsonResponse({}, false);
     });
 
-    const result = await store.loadSettings(["default_model", "utility_model", "diff_renderer"]);
+    const result = await store.loadSettings(["default_model", "utility_model"]);
 
     expect(result).toEqual({ ok: true });
     expect(store.loading).toBe(false);
@@ -93,69 +89,7 @@ describe("SettingsStore", () => {
       runtimeType: "pi",
       thinkingLevel: "minimal",
     });
-    expect(store.diffRenderer).toBe("virtualized");
     expect(store.oauthProviders.map((provider) => provider.id)).toEqual(["openrouter"]);
-  });
-
-  test("loadSettings defaults diffRenderer to classic when unset", async () => {
-    mockFetch((url) => {
-      if (url === "/api/settings?key=default_model&key=utility_model&key=diff_renderer") {
-        return jsonResponse([]);
-      }
-      if (url === "/api/oauth/providers") {
-        return jsonResponse([]);
-      }
-      return jsonResponse({}, false);
-    });
-
-    const result = await store.loadSettings(["default_model", "utility_model", "diff_renderer"]);
-
-    expect(result).toEqual({ ok: true });
-    expect(store.diffRenderer).toBe("classic");
-  });
-
-  test("selectDiffRenderer persists the renderer setting and notifies setting-change listeners", async () => {
-    const requests: Array<{ url: string; init?: RequestInit }> = [];
-    const changes: unknown[] = [];
-    store.subscribeSettingChanges((change) => changes.push(change));
-
-    mockFetch((url, init) => {
-      requests.push({ url, init });
-      if (url === "/api/settings/diff_renderer" && init?.method === "PUT") {
-        return new Response(null, { status: 200 });
-      }
-      return jsonResponse({}, false);
-    });
-
-    const result = await store.selectDiffRenderer("virtualized");
-
-    expect(result).toEqual({ ok: true });
-    expect(store.diffRenderer).toBe("virtualized");
-    expect(requests).toHaveLength(1);
-    expect(requests[0]?.init?.body).toBe(JSON.stringify("virtualized"));
-    expect(changes).toEqual([{ key: "diff_renderer" }]);
-  });
-
-  test("selectDiffRenderer updates local preference while persisting in the background", async () => {
-    let resolveSave: ((response: Response) => void) | undefined;
-    mockFetch((url, init) => {
-      if (url === "/api/settings/diff_renderer" && init?.method === "PUT") {
-        return new Promise<Response>((resolve) => {
-          resolveSave = resolve;
-        });
-      }
-      return jsonResponse({}, false);
-    });
-
-    const pending = store.selectDiffRenderer("classic");
-
-    expect(store.diffRenderer).toBe("classic");
-
-    if (!resolveSave) throw new Error("Expected diff renderer save request");
-    resolveSave(new Response(null, { status: 200 }));
-    const result = await pending;
-
-    expect(result).toEqual({ ok: true });
   });
 
   test("loadSettings can request a subset of setting keys", async () => {

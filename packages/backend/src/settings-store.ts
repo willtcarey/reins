@@ -18,15 +18,9 @@ export const ModelSettingSchema = Type.Object({
   thinkingLevel: ModelSettingThinkingLevelSchema,
 });
 
-export const DiffRendererSchema = Type.Union([
-  Type.Literal("classic"),
-  Type.Literal("virtualized"),
-]);
-
 export const SETTINGS_SCHEMA = {
   default_model: ModelSettingSchema,
   utility_model: ModelSettingSchema,
-  diff_renderer: DiffRendererSchema,
 } as const;
 
 type SettingsSchema = typeof SETTINGS_SCHEMA;
@@ -39,7 +33,6 @@ type KeysMatchingSchema<TTarget extends TSchema> = {
 export type SettingsKey = keyof SettingsSchema;
 export type SettingValue<K extends SettingsKey> = Static<SettingsSchema[K]>;
 export type ModelSetting = Static<typeof ModelSettingSchema>;
-export type DiffRenderer = Static<typeof DiffRendererSchema>;
 export type ModelSettingsKey = KeysMatchingSchema<typeof ModelSettingSchema>;
 
 export interface SettingEntry<K extends SettingsKey = SettingsKey> {
@@ -117,16 +110,7 @@ export function deleteSetting(key: SettingsKey): void {
 }
 
 function listAllSettings(): SettingEntry[] {
-  const rows = getDb()
-    .query<{ key: SettingsKey; value: string }, []>(
-      "SELECT key, value FROM settings ORDER BY key",
-    )
-    .all();
-
-  return rows.map((row) => ({
-    key: row.key,
-    value: parseStoredValue(row.key, row.value),
-  }));
+  return listSettingsForKeys(getSettingsKeys());
 }
 
 function listSettingsForKeys<K extends SettingsKey>(keys: readonly K[]): SettingEntry<K>[] {

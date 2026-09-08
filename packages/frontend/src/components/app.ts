@@ -15,13 +15,12 @@ import { LitElement, html, nothing } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { customElement, state, query } from "lit/decorators.js";
 import { AppClient } from "../models/ws-client.js";
-import type { DiffRendererShell } from "./changes/diff-renderer-shell.js";
+import type { ReviewDiffPanel } from "./changes/review-diff-panel.js";
 import { FileTreeState } from "../models/changes/file-tree-state.js";
 import { AppRouteController } from "../controllers/app-route-controller.js";
 import { PageSwipeController } from "../controllers/page-swipe-controller.js";
 import { ViewportController } from "../controllers/viewport-controller.js";
 import { AppStore } from "../models/stores/app-store.js";
-import type { DiffRenderer } from "../models/stores/settings-store.js";
 import { folderIcon } from "./icons.js";
 // Ensure sub-components are registered
 import type {
@@ -34,7 +33,7 @@ import type {
 import "./app-main-toolbar.js";
 import "./chat-panel.js";
 import "./changes/diff-file-tree.js";
-import "./changes/diff-renderer-shell.js";
+import "./changes/review-diff-panel.js";
 import "./session-sidebar.js";
 import "./quick-open.js";
 import type { QuickOpen } from "./quick-open.js";
@@ -166,8 +165,8 @@ export class AppShell extends LitElement {
     }
   }
 
-  private getDiffPanel(): DiffRendererShell | null {
-    return this.querySelector("diff-renderer-shell");
+  private getDiffPanel(): ReviewDiffPanel | null {
+    return this.querySelector("review-diff-panel");
   }
 
   /**
@@ -268,19 +267,18 @@ export class AppShell extends LitElement {
     `);
   }
 
-  private renderChangesPane(store: AppStore, diffRenderer: DiffRenderer, visible: boolean) {
-    return keyed(store.projectId, html`
-      <diff-renderer-shell
+  private renderChangesPane(store: AppStore, visible: boolean) {
+    return html`
+      <review-diff-panel
         class="block h-full min-h-0 min-w-0"
         .store=${store.diffStore}
         .reviewStore=${store.codeReviewStore}
         .sessionId=${store.sessionId}
         .sessionRunning=${store.activeSessionStore?.sessionData?.activityState === "running"}
-        .renderer=${diffRenderer}
         .visible=${visible}
         @active-file-change=${(e: CustomEvent<string | null>) => { this.activeDiffFile = e.detail; }}
-      ></diff-renderer-shell>
-    `);
+      ></review-diff-panel>
+    `;
   }
 
   private renderFileTree(store: AppStore) {
@@ -297,10 +295,7 @@ export class AppShell extends LitElement {
     `;
   }
 
-  private renderWorkspacePanes(
-    store: AppStore,
-    diffRenderer: DiffRenderer,
-  ): WorkspacePanes {
+  private renderWorkspacePanes(store: AppStore): WorkspacePanes {
     const activeMainPane = mainWorkspacePaneFor(this.activePane);
     const swipeActive = this.pageSwipe.dragging || this.pageSwipe.settling;
     const hasSession = store.activeSessionStore != null;
@@ -312,7 +307,10 @@ export class AppShell extends LitElement {
         ? this.renderChatPane(store, this.viewport.isMobileLayout || activeMainPane === "chat" || swipeActive)
         : this.renderEmptyState(),
       changes: hasProject
-        ? this.renderChangesPane(store, diffRenderer, this.viewport.isMobileLayout || activeMainPane === "changes" || swipeActive)
+        ? keyed(
+            store.projectId,
+            this.renderChangesPane(store, this.viewport.isMobileLayout || activeMainPane === "changes" || swipeActive),
+          )
         : nothing,
       files: hasProject ? this.renderFileTree(store) : nothing,
     };
@@ -390,8 +388,7 @@ export class AppShell extends LitElement {
     // Read from store (the _storeVersion state ensures re-renders on changes)
     void this._storeVersion;
     const store = this.appStore;
-    const diffRenderer: DiffRenderer = store.settingsStore.diffRenderer;
-    const panes = this.renderWorkspacePanes(store, diffRenderer);
+    const panes = this.renderWorkspacePanes(store);
 
     return html`
       <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"

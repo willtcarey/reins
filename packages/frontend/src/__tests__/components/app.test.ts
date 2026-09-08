@@ -55,7 +55,6 @@ function installRenderableStore(el: AppShell, options: {
     sessionId: options.sessionId ?? "s1",
     activeSessionStore: options.activeSessionStore === undefined ? {} : options.activeSessionStore,
     activeProjectStore: {},
-    settingsStore: { diffRenderer: "classic" },
     diffStore: { branch: "main" },
     projectsStore: { activityForSession() {} },
   });
@@ -181,6 +180,18 @@ describe("AppShell layout selection", () => {
     expect(output).toContain("<diff-file-tree");
     expect(output).not.toContain("<desktop-layout");
     expect(output).not.toContain("<mobile-layout");
+  });
+
+  test("renders the review surface directly as the Changes pane", () => {
+    installAppShellGlobals({ mobile: false });
+    const el = new AppShell();
+    installRenderableStore(el);
+    const store = Reflect.get(el, "appStore");
+
+    const output = fullTemplateOutput(Reflect.get(el, "renderChangesPane").call(el, store, true));
+
+    expect(output).toContain("<review-diff-panel");
+    expect(output).not.toContain("<diff-renderer-shell");
   });
 
   test("renders the mobile layout on mobile viewports", () => {

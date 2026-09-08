@@ -26,10 +26,6 @@ The **Utility Model** setting controls which model REINS uses for lightweight in
 
 You can configure it separately in the settings panel, alongside the default model.
 
-## Diff renderer
-
-The global **Diff renderer** preference controls the Changes surface. **Classic** remains the default, while **Reins virtualized diff** selects the Reins-owned `virtualized` renderer path. It keeps long reviews responsive by mounting only visible files plus a bounded overscan region, while file-tree navigation can still jump to files that are not yet mounted. It provides text diffs, Reins-owned file headers with color-coded change-type icons, and native inline expansion controls for leading, inter-hunk, and trailing collapsed context. Complete contents load only when the user first activates one of those controls with a click, Enter, or Space; that activation is retained and opens context as soon as loading finishes. Mounted and offscreen files are not prefetched. Richer previews, pooling, and patch streaming remain deferred. Collapsing a file marks that exact diff content as reviewed in local browser storage. The file remains collapsed across project switches and reloads, but expands and clears its reviewed marker when its content changes; this also keeps a later content revert expanded. File-tree navigation deliberately expands its target. If worker-backed syntax highlighting fails, the affected file keeps its readable plain-text diff and shows the worker error beneath its header.
-
 ## Auth credentials
 
 Provider auth credentials are stored separately from general settings.

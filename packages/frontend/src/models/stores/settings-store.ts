@@ -23,8 +23,7 @@ export interface ModelSetting {
 export type SettingsStoreResult = { ok: true } | { error: string };
 export type SettingsStoreListener = () => void;
 export type ModelSettingKey = "default_model" | "utility_model";
-export type DiffRenderer = "classic" | "virtualized";
-export type SettingsKey = ModelSettingKey | "diff_renderer";
+export type SettingsKey = "default_model" | "utility_model";
 export type SettingsChange = { key: string };
 export type SettingsChangeListener = (change: SettingsChange) => void;
 
@@ -40,9 +39,7 @@ type ModelSettingState = {
   selected: ModelSelection;
 };
 
-type LoadedSettingEntry =
-  | { key: ModelSettingKey; value: ModelSetting }
-  | { key: "diff_renderer"; value: DiffRenderer };
+type LoadedSettingEntry = { key: ModelSettingKey; value: ModelSetting };
 
 const MODEL_SETTING_KEYS: ModelSettingKey[] = ["default_model", "utility_model"];
 
@@ -71,7 +68,6 @@ export class SettingsStore {
   oauthAuthUrl = "";
   oauthInstructions = "";
 
-  diffRenderer: DiffRenderer = "classic";
   readonly registryStore = new ModelRegistryStore();
 
   private _modelSettings: Record<ModelSettingKey, ModelSettingState> = {
@@ -333,28 +329,6 @@ export class SettingsStore {
     return this._persistModelSetting(settingKey);
   }
 
-  async selectDiffRenderer(renderer: DiffRenderer): Promise<SettingsStoreResult> {
-    this.diffRenderer = renderer;
-    this.notify();
-
-    try {
-      const res = await fetch("/api/settings/diff_renderer", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(renderer),
-      });
-
-      if (!res.ok) {
-        return { error: await errorDetail(res) };
-      }
-
-      this.notifySettingChanged({ key: "diff_renderer" });
-      return { ok: true };
-    } catch (err: unknown) {
-      return { error: errorMessage(err) };
-    }
-  }
-
   async clearModelSetting(settingKey: ModelSettingKey): Promise<SettingsStoreResult> {
     try {
       const res = await fetch(`/api/settings/${settingKey}`, {
@@ -417,16 +391,7 @@ export class SettingsStore {
       }
     }
 
-    if (settingKeys.includes("diff_renderer") && !loadedKeys.has("diff_renderer")) {
-      this.diffRenderer = "classic";
-    }
-
     for (const entry of entries) {
-      if (entry.key === "diff_renderer") {
-        this.diffRenderer = entry.value;
-        continue;
-      }
-
       this._modelSettings[entry.key] = {
         ...this._modelSettings[entry.key],
         stored: entry.value,
@@ -436,7 +401,6 @@ export class SettingsStore {
 
   private _syncSelectionsFromSettings(settingKeys: readonly SettingsKey[]) {
     for (const settingKey of settingKeys) {
-      if (settingKey === "diff_renderer") continue;
       const model = this.getStoredModelSetting(settingKey);
       this._modelSettings[settingKey] = {
         stored: model,

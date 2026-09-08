@@ -20,27 +20,6 @@ describe("AppStore activity event routing", () => {
     restoreFetch();
   });
 
-  test("forwards shared settings store updates to app subscribers", async () => {
-    let notifications = 0;
-    const unsubscribe = store.subscribe(() => {
-      notifications += 1;
-    });
-
-    mockFetch((url, init) => {
-      if (url === "/api/settings/diff_renderer" && init?.method === "PUT") {
-        return Response.json({ ok: true });
-      }
-      return Response.json({}, { status: 404 });
-    });
-
-    const result = await store.settingsStore.selectDiffRenderer("virtualized");
-
-    unsubscribe();
-    expect(result).toEqual({ ok: true });
-    expect(store.settingsStore.diffRenderer).toBe("virtualized");
-    expect(notifications).toBeGreaterThan(0);
-  });
-
   test("raw agent events update conversation cache but do not mutate project activity", () => {
     const start = { role: "assistant" as const, content: [], timestamp: 100 };
     const message = { ...start, content: [{ type: "text" as const, text: "working" }] };

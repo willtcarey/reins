@@ -3,7 +3,6 @@
  *
  * Endpoints:
  *   GET /diff/files — lightweight file listing with +/− counts (for polling)
- *   GET /diff       — parsed diff hunks with raw text (highlighting done client-side)
  *   GET /diff/patch — raw unified patch text
  *
  * Both accept an optional `branch` query param. When provided, the diff is
@@ -41,24 +40,6 @@ export function registerDiffRoutes(router: RouterGroup<ProjectRouteContext>) {
 
     const [files, currentBranch] = await Promise.all([
       ctx.project.workspace.getChangedFiles(mode, branch),
-      getCurrentBranch(ctx.project.projectDir),
-    ]);
-    return Response.json({
-      files,
-      branch: branch ?? currentBranch,
-      baseBranch: ctx.project.baseBranch,
-    });
-  });
-
-  /**
-   * Full diff with parsed hunks — raw text, no syntax highlighting.
-   * Highlighting is performed client-side using Shiki in a web worker.
-   */
-  router.get("/diff", async (ctx) => {
-    const { contextLines, mode, branch } = parseDiffParams(ctx.url);
-
-    const [files, currentBranch] = await Promise.all([
-      ctx.project.workspace.getDiff(contextLines, mode, branch),
       getCurrentBranch(ctx.project.projectDir),
     ]);
     return Response.json({

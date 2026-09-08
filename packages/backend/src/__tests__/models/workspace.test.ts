@@ -266,21 +266,6 @@ describe("getDiffPatchStream", () => {
 // getDiff
 // ---------------------------------------------------------------------------
 
-describe("getDiff", () => {
-  const repo = useTestRepo();
-
-  test("returns empty array when branches are identical", async () => {
-    await createBranch(repo.dir, "feat", "main");
-    const diff = await new Workspace(repo.dir).getDiff(3, "branch", "feat");
-    expect(diff).toEqual([]);
-  });
-
-});
-
-// ---------------------------------------------------------------------------
-// getChangedFiles
-// ---------------------------------------------------------------------------
-
 describe("getChangedFiles", () => {
   const repo = useTestRepo();
 
@@ -307,54 +292,6 @@ describe("getChangedFiles", () => {
 // ---------------------------------------------------------------------------
 // getDiff / getChangedFiles — committed + uncommitted overlap
 // ---------------------------------------------------------------------------
-
-describe("getDiff — committed + uncommitted overlap", () => {
-  const repo = useTestRepo();
-
-  test("does not show intermediate state when a line is modified in both committed and uncommitted", async () => {
-    // Base has "line1\nline2\nline3", commit changes line2, uncommitted changes it again
-    await createBranch(repo.dir, "feat", "main");
-    await checkoutBranch(repo.dir, "feat");
-    // Overwrite README.md (base has "# Test Repo\n")
-    await commitFile(repo.dir, "README.md", "# Test Repo\ncommitted\n", "edit readme");
-
-    // Further uncommitted edit: replace committed line
-    writeFileSync(join(repo.dir, "README.md"), "# Test Repo\nfinal\n");
-
-    const diff = await new Workspace(repo.dir).getDiff(3, "branch");
-
-    const file = diff.find((f) => f.path === "README.md");
-    expect(file).toBeDefined();
-    // Should show working tree vs base: +final, not both +committed/-committed/+final
-    expect(file!.additions).toBe(1);
-    expect(file!.removals).toBe(0);
-
-    // Should have exactly 1 hunk, not 2 overlapping ones
-    expect(file!.hunks).toHaveLength(1);
-
-    // The intermediate "committed" value should not appear at all
-    const allLineTexts = file!.hunks.flatMap((h) => h.lines.map((l) => l.text));
-    expect(allLineTexts).not.toContain("committed");
-  });
-
-  test("shows correct counts when committed adds a file and uncommitted modifies it", async () => {
-    await createBranch(repo.dir, "feat", "main");
-    await checkoutBranch(repo.dir, "feat");
-    await commitFile(repo.dir, "file.txt", "line1\nline2\n", "add file");
-
-    // Uncommitted: modify line2
-    writeFileSync(join(repo.dir, "file.txt"), "line1\nchanged\n");
-
-    const diff = await new Workspace(repo.dir).getDiff(3, "branch");
-
-    const file = diff.find((f) => f.path === "file.txt");
-    expect(file).toBeDefined();
-    // Working tree vs base: new file with "line1\nchanged\n" → 2 additions, 0 removals
-    expect(file!.additions).toBe(2);
-    expect(file!.removals).toBe(0);
-  });
-
-});
 
 describe("getChangedFiles — committed + uncommitted overlap", () => {
   const repo = useTestRepo();
@@ -420,19 +357,6 @@ describe("workspace diff — untracked files through temporary intent-to-add ind
     expect(file!.removals).toBe(0);
   });
 
-  test("keeps Git-native binary entries instead of synthetic hunks", async () => {
-    const buf = Buffer.alloc(100);
-    buf[50] = 0;
-    writeFileSync(join(repo.dir, "image.bin"), buf);
-
-    const diff = await new Workspace(repo.dir).getDiff(3, "uncommitted");
-    const file = diff.find((f) => f.path === "image.bin");
-    expect(file).toBeDefined();
-    expect(file!.additions).toBe(0);
-    expect(file!.removals).toBe(0);
-    expect(file!.hunks).toEqual([]);
-  });
-
   test("skips unreadable untracked files without hiding readable changes", async () => {
     writeFileSync(join(repo.dir, "readable.txt"), "visible\n");
     writeFileSync(join(repo.dir, "unreadable.key"), "secret\n");
@@ -450,10 +374,11 @@ describe("workspace diff — untracked files through temporary intent-to-add ind
     await git(nestedRepo, ["init", "-b", "main"]);
     writeFileSync(join(nestedRepo, "README.md"), "nested repo\n");
 
-    const files = await new Workspace(repo.dir).getChangedFiles("uncommitted");
-    const diff = await new Workspace(repo.dir).getDiff(3, "uncommitted");
+    const workspace = new Workspace(repo.dir);
+    const files = await workspace.getChangedFiles("uncommitted");
+    const patch = await asyncIterableToText(workspace.getDiffPatchStream(3, "uncommitted"));
 
     expect(files.find((f) => f.path === "repo/")).toBeUndefined();
-    expect(diff.find((f) => f.path === "repo/")).toBeUndefined();
+    expect(patch).not.toContain("diff --git a/repo/");
   });
 });

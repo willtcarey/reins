@@ -14,10 +14,10 @@ describe("settings-store", () => {
   useTestDb();
 
   describe("keys", () => {
-    test("accepts static settings keys", () => {
+    test("accepts current static settings keys and rejects the retired renderer preference", () => {
       expect(isValidSettingsKey("default_model")).toBe(true);
       expect(isValidSettingsKey("utility_model")).toBe(true);
-      expect(isValidSettingsKey("diff_renderer")).toBe(true);
+      expect(isValidSettingsKey("diff_renderer")).toBe(false);
     });
 
     test("rejects legacy auth keys", () => {
@@ -29,12 +29,6 @@ describe("settings-store", () => {
   describe("getSetting", () => {
     test("returns null for missing key", () => {
       expect(getSetting("default_model")).toBeNull();
-    });
-
-    test("returns typed value for diff_renderer", () => {
-      setSetting("diff_renderer", "virtualized");
-
-      expect(getSetting("diff_renderer")).toBe("virtualized");
     });
 
     test("throws when a stored setting no longer matches its schema", () => {
@@ -69,10 +63,6 @@ describe("settings-store", () => {
       expect(() => validateSettingValue("default_model", { provider: "a" })).toThrow(/Invalid value/);
       expect(() => validateSettingValue("default_model", { provider: 123, modelId: "b", runtimeType: "pi", thinkingLevel: "medium" })).toThrow(/Invalid value/);
       expect(() => validateSettingValue("default_model", { provider: "a", modelId: "b", thinkingLevel: "off" })).toThrow(/Invalid value/);
-      expect(() => validateSettingValue("diff_renderer", "CodeView")).toThrow(/Invalid value/);
-      expect(() => validateSettingValue("diff_renderer", "classic")).not.toThrow();
-      expect(() => validateSettingValue("diff_renderer", "codeview")).toThrow(/Invalid value/);
-      expect(() => validateSettingValue("diff_renderer", "virtualized")).not.toThrow();
     });
   });
 
@@ -85,7 +75,10 @@ describe("settings-store", () => {
   });
 
   describe("listSettings", () => {
-    test("returns empty array when no settings stored", () => {
+    test("ignores persisted data for retired settings", () => {
+      getDb().query("INSERT INTO settings (key, value) VALUES (?, ?)")
+        .run("diff_renderer", JSON.stringify("classic"));
+
       expect(listSettings()).toEqual([]);
     });
 
