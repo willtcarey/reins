@@ -10,7 +10,7 @@ import { createPiContext } from "./factory.js";
 import type { ThinkingLevel as PiThinkingLevel } from "@earendil-works/pi-ai";
 import {
   resolveModel,
-  resolveModelSettingWithConfigInRegistry,
+  resolveModelSettingWithConfigInRuntime,
 } from "../../models/model-settings.js";
 
 const PI_THINKING_LEVELS: Record<string, PiThinkingLevel> = {
@@ -19,10 +19,10 @@ const PI_THINKING_LEVELS: Record<string, PiThinkingLevel> = {
   medium: "medium",
   high: "high",
   xhigh: "xhigh",
-  max: "xhigh", // PI's highest level
+  max: "max",
 };
 
-/** Map a Reins thinking level to one PI supports (PI's max is "xhigh"). */
+/** Map a Reins thinking level to Pi's native level. */
 export function toPiThinkingLevel(level: string): PiThinkingLevel {
   const mapped = PI_THINKING_LEVELS[level];
   if (!mapped) {
@@ -40,7 +40,7 @@ import {
   type RuntimeAskParams,
 } from "../registry.js";
 import { PiAgentRuntime } from "./runtime.js";
-import { buildProviderList } from "./models-registry.js";
+import { buildProviderList } from "./model-catalog.js";
 import { logger } from "../../logger.js";
 
 export function filterErrorMessages(messages: any[]): any[] {
@@ -99,7 +99,7 @@ async function buildSessionOpts(params: {
     ...customTools,
   ];
 
-  const { authStorage, resourceLoader, modelRegistry } = await createPiContext({
+  const { resourceLoader, modelRuntime } = await createPiContext({
     cwd: projectDir,
     resourceLoaderOptions: {
       systemPromptOverride: () => buildReinsSystemPrompt({
@@ -111,7 +111,7 @@ async function buildSessionOpts(params: {
   });
 
   const resolvedModel = model
-    ? resolveModel(model.provider, model.modelId, modelRegistry)
+    ? resolveModel(model.provider, model.modelId, modelRuntime)
     : undefined;
 
   if (model && !resolvedModel) {
@@ -128,10 +128,9 @@ async function buildSessionOpts(params: {
     customTools,
     sessionManager,
     resourceLoader,
-    modelRegistry,
+    modelRuntime,
     model: resolvedModel,
     configuredThinkingLevel,
-    authStorage,
   };
 }
 
@@ -237,7 +236,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       timeoutMs,
     } = params;
 
-    const { authStorage, modelRegistry, resourceLoader } = await createPiContext({
+    const { modelRuntime, resourceLoader } = await createPiContext({
       cwd,
       resourceLoaderOptions: {
         systemPrompt,
@@ -248,9 +247,9 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
     });
 
     const resolvedModel = model
-      ? resolveModel(model.provider, model.modelId, modelRegistry)
-      : resolveModelSettingWithConfigInRegistry("utility_model", modelRegistry)?.model
-        ?? resolveModelSettingWithConfigInRegistry("default_model", modelRegistry)?.model;
+      ? resolveModel(model.provider, model.modelId, modelRuntime)
+      : resolveModelSettingWithConfigInRuntime("utility_model", modelRuntime)?.model
+        ?? resolveModelSettingWithConfigInRuntime("default_model", modelRuntime)?.model;
 
     if (model && !resolvedModel) {
       throw new ModelNotFoundError(model.provider, model.modelId);
@@ -260,8 +259,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       cwd,
       tools: [],
       model: resolvedModel,
-      authStorage,
-      modelRegistry,
+      modelRuntime,
       sessionManager: SessionManager.inMemory(),
       resourceLoader,
     });

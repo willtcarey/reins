@@ -175,6 +175,10 @@ export function mapPiSessionEvent(event: AgentSessionEvent): AgentRuntimeEvent |
     case "entry_appended":
     case "session_info_changed":
     case "thinking_level_changed":
+    case "summarization_retry_scheduled":
+    case "summarization_retry_attempt_start":
+    case "summarization_retry_finished":
+    case "bash_execution_update":
       return null;
   }
 }
@@ -213,15 +217,15 @@ export class PiAgentRuntime implements AgentRuntime {
   }
 
   async setModel(params: SetRuntimeModelParams): Promise<void> {
-    const providers = Array.from(new Set(this.session.modelRegistry.getAll().map((candidate) => candidate.provider))).toSorted();
+    const providers = this.session.modelRuntime.getProviders().map((provider) => provider.id).toSorted();
     if (!providers.includes(params.provider)) {
       throw new Error(
         `Unknown provider '${params.provider}'. Available providers: ${providers.join(", ")}`,
       );
     }
 
-    const models = this.session.modelRegistry.getAll().filter((candidate) => candidate.provider === params.provider);
-    const model = models.find((candidate) => candidate.id === params.modelId);
+    const models = this.session.modelRuntime.getModels(params.provider);
+    const model = this.session.modelRuntime.getModel(params.provider, params.modelId);
     if (!model) {
       throw new Error(
         `Model '${params.modelId}' not found for provider '${params.provider}'. ` +

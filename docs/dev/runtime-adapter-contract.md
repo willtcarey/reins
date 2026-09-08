@@ -206,6 +206,8 @@ Reins stores runtime identity separately from provider/model identity:
 
 The adapter's `listModels()` defines what the frontend can select for that runtime. Existing session runtime switching is only allowed before any messages are persisted.
 
+The Pi adapter uses Pi's `ModelRuntime` as the canonical provider/model catalog and request-auth boundary. Model-list requests permit Pi's bounded remote catalog refresh and retain Pi's on-disk catalog cache, while session creation restores that cache without adding startup network latency. Reins supplies a `CredentialStore` backed directly by SQLite, so API keys, OAuth refreshes, and active sessions all share the same persisted credentials without an auth-reload compatibility layer. Reins model identities remain only provider/model references; no model declarations are maintained in Reins.
+
 ## Could acpx replace all current runtimes?
 
 No — see [ADR-006](../adr/006-acpx-as-runtime-replacement.md). We rejected acpx as a universal runtime replacement.

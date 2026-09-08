@@ -5,7 +5,7 @@ import { createTestAgentSession } from "../../helpers/test-pi.js";
 import { useTestDb } from "../../helpers/test-db.js";
 import { createServerState } from "../../helpers/server-state.js";
 import { getPiSession } from "../../../runtimes/pi/runtime.js";
-import { ephemeralPrompt, hydrateSessionManager, PiRuntimeAdapter } from "../../../runtimes/pi/session.js";
+import { ephemeralPrompt, hydrateSessionManager, PiRuntimeAdapter, toPiThinkingLevel } from "../../../runtimes/pi/session.js";
 import type { SessionEntry, SessionMessageEntry, CompactionEntry } from "@earendil-works/pi-coding-agent";
 
 /** Narrow a SessionEntry to SessionMessageEntry (throws if wrong type). */
@@ -26,6 +26,10 @@ function textContent(text: string) {
 
 describe("PiRuntimeAdapter", () => {
   useTestDb();
+
+  test("maps Reins max thinking to Pi's native max level", () => {
+    expect(toPiThinkingLevel("max")).toBe("max");
+  });
 
   test("enables custom tools in the pi SDK allowlist", async () => {
     const customTool = defineTool({

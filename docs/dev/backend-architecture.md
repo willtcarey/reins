@@ -66,15 +66,16 @@ Agent execution is routed through a runtime abstraction:
 `ManagedSession` holds a runtime handle (`managed.runtime`) instead of a raw pi session.
 Current behavior is still pi-only; this seam exists to add additional runtimes without rewriting WS/session orchestration.
 
-### Pi integration (`src/pi/`)
+### Pi integration (`src/runtimes/pi/`)
 
-Pi-specific runtime boot/reopen behavior now lives under `src/runtimes/pi/`.
-The remaining `src/pi/` modules focus on pi SDK setup and integrations.
+Pi-specific runtime boot/reopen behavior lives under `src/runtimes/pi/`.
 
 Key entry points:
 
-- `pi/runtime.ts` — centralized, cwd-scoped pi runtime builder (`resourceLoader` + `modelRegistry` + extension provider registrations)
-- `pi/models-registry.ts` — provider listing/auth-source metadata built on top of the runtime builder
+- `pi/factory.ts` — creates the cwd-scoped resource loader and Pi `ModelRuntime`, including bounded remote model-catalog refresh
+- `pi/credential-store.ts` — adapts Pi's credential-store contract to Reins SQLite API-key/OAuth records
+- `pi/model-catalog.ts` — provider listing/auth-source metadata built on top of Pi's model runtime
+- `pi/session.ts` and `pi/runtime.ts` — create, resume, and adapt Pi sessions to Reins' runtime contract
 
 ## Dependency rules
 

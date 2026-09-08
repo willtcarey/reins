@@ -13,7 +13,7 @@ The **Default Model** setting controls which model new sessions use.
 - If no default model is configured, REINS uses its built-in fallback.
 - If a default model is configured but no longer exists, new sessions fail with an error until you update the setting.
 
-You can change the default model from the settings panel in the sidebar using a single provider/model picker.
+You can change the default model from the settings panel in the sidebar using a single provider/model picker. The Direct runtime refreshes model catalogs from Pi, so newly published models can appear without a Reins release; when offline, it uses Pi's bundled and last cached catalogs.
 
 ## Utility model
 
