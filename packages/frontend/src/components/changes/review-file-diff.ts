@@ -202,7 +202,7 @@ export class ReviewFileDiff extends LitElement {
 
   private _emitMeasurement() {
     const change = this.change;
-    const renderComplete = change && (isDiffRenderBlocked(change) || this.diffRendered);
+    const renderComplete = change && (change.binary || isDiffRenderBlocked(change) || this.diffRendered);
     if (!change || this.collapsed || this._transitioning || !renderComplete) return;
     const height = this.getBoundingClientRect().height || this.offsetHeight;
     if (height <= 0) return;
@@ -350,10 +350,11 @@ export class ReviewFileDiff extends LitElement {
     if (!change) return nothing;
 
     const renderBlocked = isDiffRenderBlocked(change);
-    const comments = renderBlocked ? null : this.inlineReview;
-    const expansion = renderBlocked ? null : this._expansion();
-    const diffBinding = renderBlocked ? nothing : this._diff.bind(this._diffTarget(change));
-    const pendingHeight = !renderBlocked && !this.collapsed && !this.diffRendered && this.reservedHeight > 0
+    const renderDiff = !renderBlocked && !change.binary;
+    const comments = renderDiff ? this.inlineReview : null;
+    const expansion = renderDiff ? this._expansion() : null;
+    const diffBinding = renderDiff ? this._diff.bind(this._diffTarget(change)) : nothing;
+    const pendingHeight = renderDiff && !this.collapsed && !this.diffRendered && this.reservedHeight > 0
       ? `min-height:${this.reservedHeight}px;`
       : "";
 
@@ -415,7 +416,9 @@ export class ReviewFileDiff extends LitElement {
           this.collapsed,
           () => renderBlocked
             ? html`<div class="border-t border-zinc-800 px-3 py-4 text-sm text-zinc-400" data-diff-render-blocked>${diffRenderBlockedMessage(change)}</div>`
-            : html`
+            : change.binary
+              ? html`<div class="border-t border-zinc-800 px-3 py-4 text-sm text-zinc-400" data-binary-change>${binaryChangeMessage(change.status)}</div>`
+              : html`
                 <div data-pierre-file-diff ${diffBinding}></div>
                 ${expansionMessage(expansion) ? html`
                   <div
@@ -456,6 +459,17 @@ function selectionAnnouncement(range: ReviewLineRange): string {
   return range.startLine === range.endLine
     ? `${side} line ${range.startLine} selected`
     : `${side} lines ${range.startLine} through ${range.endLine} selected`;
+}
+
+function binaryChangeMessage(status: ChangeTypes): string {
+  const action = status === "new"
+    ? "added"
+    : status === "deleted"
+      ? "deleted"
+      : status === "rename-pure" || status === "rename-changed"
+        ? "renamed"
+        : "changed";
+  return `Binary file ${action} — no textual diff is available.`;
 }
 
 function expansionMessage(expansion: FileDiffContextSnapshot | null): string | null {

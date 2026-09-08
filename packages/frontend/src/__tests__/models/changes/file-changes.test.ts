@@ -42,6 +42,17 @@ describe("parseFileChanges", () => {
     expect(result.pathToChangeId.get("src/old.ts")).toBe(result.changes[0]?.id);
   });
 
+  test("classifies Git binary changes without treating text files as binary", () => {
+    const binaryPatch = `diff --git a/image.png b/image.png
+new file mode 100644
+index 0000000..1234567
+Binary files /dev/null and b/image.png differ
+`;
+
+    expect(parseFileChanges(binaryPatch, "snapshot").changes[0]?.binary).toBe(true);
+    expect(parseFileChanges(PATCH, "snapshot").changes.every((change) => !change.binary)).toBe(true);
+  });
+
   test("gives equal content a compact stable identity and changes it with reviewed content", () => {
     const first = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
     const sameContent = parseFileChanges(PATCH, "project-7-v2").changes[0]!;

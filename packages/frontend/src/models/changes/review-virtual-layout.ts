@@ -18,7 +18,9 @@ export function estimateFileChangeHeight(
   collapsed: boolean,
 ): number {
   if (collapsed) return REVIEW_HEADER_HEIGHT;
-  if (isDiffRenderBlocked(change)) return REVIEW_HEADER_HEIGHT + REVIEW_BLOCKED_BODY_HEIGHT;
+  if (change.binary || isDiffRenderBlocked(change)) {
+    return REVIEW_HEADER_HEIGHT + REVIEW_BLOCKED_BODY_HEIGHT;
+  }
 
   let bodyHeight = PIERRE_SPACING;
   for (const [hunkIndex, hunk] of change.fileDiff.hunks.entries()) {

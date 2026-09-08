@@ -25,6 +25,18 @@ describe("review virtual layout", () => {
     expect(fileChangeGap(1)).toBe(16);
   });
 
+  test("estimates a binary-change placeholder from its header and message", () => {
+    const patch = `diff --git a/image.png b/image.png
+new file mode 100644
+index 0000000..1234567
+Binary files /dev/null and b/image.png differ
+`;
+    const change = parseFileChanges(patch, "snapshot").changes[0]!;
+
+    expect(estimateFileChangeHeight(change, false)).toBe(90);
+    expect(estimateFileChangeHeight(change, true)).toBe(37);
+  });
+
   test("estimates an oversized-file notice from its header and message", () => {
     const patch = `diff --git a/generated.json b/generated.json
 --- a/generated.json

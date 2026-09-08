@@ -8,6 +8,7 @@ export interface FileChange {
   readonly status: ChangeTypes;
   readonly additions: number;
   readonly removals: number;
+  readonly binary: boolean;
   readonly occurrence: number;
   /** Compact fingerprint computed once while parsing; never raw serialized diff content. */
   readonly contentKey: string;
@@ -75,6 +76,7 @@ export function parseFileChanges(
         const fileDiff = { ...parsedFileDiff, cacheKey };
         const additions = fileDiff.hunks.reduce((total, hunk) => total + hunk.additionLines, 0);
         const removals = fileDiff.hunks.reduce((total, hunk) => total + hunk.deletionLines, 0);
+        const binary = /^Binary files .* differ$/m.test(filePatch) || /^GIT binary patch$/m.test(filePatch);
 
         changes.push({
           id: `review:${identity}`,
@@ -83,6 +85,7 @@ export function parseFileChanges(
           status,
           additions,
           removals,
+          binary,
           occurrence,
           contentKey,
           cacheKey,

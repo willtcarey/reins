@@ -57,8 +57,26 @@ index 1111111..2222222 100644
 `;
 
 const EXPANDABLE_PATCH = PATCH.replace("@@ -1 +1 @@", "@@ -33 +33 @@");
+const BINARY_PATCH = `diff --git a/image.png b/image.png
+new file mode 100644
+index 0000000..1234567
+Binary files /dev/null and b/image.png differ
+`;
 
 describe("ReviewFileDiff", () => {
+  test("presents a binary change without an empty diff body", () => {
+    const fileChange = parseFileChanges(BINARY_PATCH, "project-7-v1").changes[0]!;
+    const item = new ReviewFileDiff();
+    item.change = fileChange;
+
+    const output = renderOutput(item);
+
+    expect(output).toContain("image.png");
+    expect(output).toContain("Binary file added — no textual diff is available.");
+    expect(output).toContain("<diff-download-file-button");
+    expect(output).not.toContain("data-pierre-file-diff");
+  });
+
   test("presents an oversized file as a measured limit notice", () => {
     const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
     const item = new ReviewFileDiff();
