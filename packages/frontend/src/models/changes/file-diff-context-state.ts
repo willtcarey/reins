@@ -1,4 +1,9 @@
-import type { FileContents, FileDiffMetadata, HunkExpansionRegion } from "@pierre/diffs";
+import type {
+  ExpansionDirections,
+  FileContents,
+  FileDiffLoadedFiles,
+  FileDiffMetadata,
+} from "@pierre/diffs";
 import { buildFileDiff } from "./file-diff.js";
 import {
   loadFileContents,
@@ -11,14 +16,20 @@ import type { FileChange } from "./file-changes.js";
 
 export type FileDiffContextStatus = "idle" | "loading" | "available" | "unsupported" | "error";
 
+export interface FileDiffExpansionCommand {
+  readonly hunkIndex: number;
+  readonly direction: ExpansionDirections;
+  readonly lineCount?: number;
+}
+
 export interface FileDiffContextSnapshot {
   readonly outcome: FileDiffContextStatus;
-  /** The original partial metadata until complete contents are available. */
+  /** Stable metadata that Pierre upgrades in place after loading full contents. */
   readonly fileDiff: FileDiffMetadata;
   readonly oldFile: FileContents | null;
   readonly newFile: FileContents | null;
-  /** Opaque Pierre-owned regions retained only to restore a virtual remount. */
-  readonly nativeExpandedHunks: ReadonlyMap<number, HunkExpansionRegion>;
+  /** Public expansion commands retained to replay across virtual remounts. */
+  readonly expansionHistory: readonly FileDiffExpansionCommand[];
   readonly unsupported: ExpansionUnsupported | null;
   readonly error: string | null;
 }
@@ -27,7 +38,8 @@ type Listener = (changeId: string) => void;
 
 interface ItemEntry {
   snapshot: FileDiffContextSnapshot;
-  request: Promise<void> | null;
+  request: Promise<FileDiffLoadedFiles> | null;
+  failure: unknown | null;
 }
 
 /** Persistent lazy context state whose lifetime outlasts virtual item mounts. */
@@ -49,23 +61,24 @@ export class FileDiffContextState {
     return this.entryFor(change).snapshot;
   }
 
-  /** Concurrent first native interactions share one complete-content request. */
-  async acquire(change: FileChange): Promise<FileDiffContextSnapshot> {
+  /** Pierre's native async expansion loader; concurrent calls share one request. */
+  loadFiles(change: FileChange): Promise<FileDiffLoadedFiles> {
     const entry = this.entryFor(change);
-    if (entry.snapshot.outcome === "idle") {
+    if (entry.snapshot.outcome === "available") return Promise.resolve(loadedFiles(entry.snapshot));
+    if (entry.failure !== null) return Promise.reject(entry.failure);
+    if (!entry.request) {
       this.update(change.id, entry, { ...entry.snapshot, outcome: "loading" });
-      entry.request = this.load(change, entry);
+      entry.request = this.load(change, entry).finally(() => { entry.request = null; });
     }
-    if (entry.request) await entry.request;
-    return entry.snapshot;
+    return entry.request;
   }
 
-  /** Retain Pierre's own expansion state without deriving or mutating regions. */
-  retainNativeExpansion(change: FileChange, regions: ReadonlyMap<number, HunkExpansionRegion>): void {
+  retainExpansion(change: FileChange, command: FileDiffExpansionCommand): void {
     const entry = this.entryFor(change);
-    const nativeExpandedHunks = new Map<number, HunkExpansionRegion>();
-    for (const [index, region] of regions) nativeExpandedHunks.set(index, { ...region });
-    entry.snapshot = { ...entry.snapshot, nativeExpandedHunks };
+    entry.snapshot = {
+      ...entry.snapshot,
+      expansionHistory: [...entry.snapshot.expansionHistory, { ...command }],
+    };
   }
 
   private entryFor(change: FileChange): ItemEntry {
@@ -78,29 +91,33 @@ export class FileDiffContextState {
           fileDiff: change.fileDiff,
           oldFile: null,
           newFile: null,
-          nativeExpandedHunks: new Map(),
+          expansionHistory: [],
           unsupported: null,
           error: null,
         },
         request: null,
+        failure: null,
       };
       this.entries.set(key, entry);
     }
     return entry;
   }
 
-  private async load(change: FileChange, entry: ItemEntry): Promise<void> {
+  private async load(change: FileChange, entry: ItemEntry): Promise<FileDiffLoadedFiles> {
     try {
       const files = await loadFileContents(change, this.scope, this.fetchResponse);
-      const fileDiff = buildFileDiff(change, files);
+      // Pierre owns hydration, but Reins validates the fetched snapshot against
+      // the exact Git patch before allowing the native renderer to install it.
+      buildFileDiff(change, files);
       this.update(change.id, entry, {
         ...entry.snapshot,
         outcome: "available",
-        fileDiff,
         oldFile: files.oldFile,
         newFile: files.newFile,
       });
+      return files;
     } catch (error) {
+      entry.failure = error;
       if (error instanceof UnsupportedFileContents) {
         this.update(change.id, entry, {
           ...entry.snapshot,
@@ -114,8 +131,7 @@ export class FileDiffContextState {
           error: error instanceof Error ? error.message : String(error),
         });
       }
-    } finally {
-      entry.request = null;
+      throw error;
     }
   }
 
@@ -123,4 +139,11 @@ export class FileDiffContextState {
     entry.snapshot = snapshot;
     for (const listener of this.listeners) listener(changeId);
   }
+}
+
+function loadedFiles(snapshot: FileDiffContextSnapshot): FileDiffLoadedFiles {
+  if (snapshot.newFile === null) throw new Error("Complete new file contents are unavailable");
+  if (snapshot.fileDiff.type === "rename-pure") return { oldFile: null, newFile: snapshot.newFile };
+  if (snapshot.oldFile === null) throw new Error("Complete old file contents are unavailable");
+  return { oldFile: snapshot.oldFile, newFile: snapshot.newFile };
 }

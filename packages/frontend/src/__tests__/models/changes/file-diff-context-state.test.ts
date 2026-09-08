@@ -56,32 +56,30 @@ describe("FileDiffContextState", () => {
     );
     const change = fileChange();
 
-    const first = state.acquire(change);
-    const second = state.acquire(change);
+    const first = state.loadFiles(change);
+    const second = state.loadFiles(change);
     expect(state.forChange(change).outcome).toBe("loading");
     expect(requests).toEqual([
       "/api/projects/7/files/content?path=src%2Fnew.ts&ref=feature%2Freview",
     ]);
 
     resolveRequest(textResponse("before\nnew changed\nafter\n"));
-    await Promise.all([first, second]);
+    const loaded = await Promise.all([first, second]);
 
+    expect(loaded[0]).toMatchObject({
+      oldFile: { name: "src/old.ts", contents: "before\nold changed\nafter\n" },
+      newFile: { name: "src/new.ts", contents: "before\nnew changed\nafter\n" },
+    });
     const acquired = state.forChange(change);
     expect(acquired).toMatchObject({
       outcome: "available",
       oldFile: { name: "src/old.ts", contents: "before\nold changed\nafter\n" },
       newFile: { name: "src/new.ts", contents: "before\nnew changed\nafter\n" },
-      fileDiff: {
-        name: "src/new.ts",
-        prevName: "src/old.ts",
-        type: "rename-changed",
-        isPartial: false,
-      },
     });
-    expect(acquired.fileDiff).not.toBe(change.fileDiff);
-    expect(acquired.nativeExpandedHunks.size).toBe(0);
+    expect(acquired.fileDiff).toBe(change.fileDiff);
+    expect(acquired.expansionHistory).toEqual([]);
 
-    await state.acquire(fileChange());
+    await state.loadFiles(fileChange());
     expect(requests).toHaveLength(1);
   });
 
@@ -95,22 +93,23 @@ describe("FileDiffContextState", () => {
       },
     );
 
-    await state.acquire(fileChange());
+    await state.loadFiles(fileChange());
 
     expect(requests).toEqual(["/api/projects/7/files/content?path=src%2Fnew.ts"]);
     expect(state.forChange(fileChange()).outcome).toBe("available");
   });
 
-  test("retains only expansion state reported by Pierre for virtual remount restoration", () => {
+  test("retains public expansion commands for virtual remount restoration", () => {
     const state = new FileDiffContextState({ projectId: 7, mode: "branch" });
     const change = fileChange();
-    const pierreState = new Map([[0, { fromStart: 15, fromEnd: 5 }]]);
 
-    state.retainNativeExpansion(change, pierreState);
+    state.retainExpansion(change, { hunkIndex: 0, direction: "down", lineCount: 15 });
+    state.retainExpansion(change, { hunkIndex: 1, direction: "both" });
 
-    expect(state.forChange(change).nativeExpandedHunks).toEqual(pierreState);
-    pierreState.get(0)!.fromStart = 999;
-    expect(state.forChange(change).nativeExpandedHunks.get(0)).toEqual({ fromStart: 15, fromEnd: 5 });
+    expect(state.forChange(change).expansionHistory).toEqual([
+      { hunkIndex: 0, direction: "down", lineCount: 15 },
+      { hunkIndex: 1, direction: "both" },
+    ]);
   });
 
   test("keeps the partial diff stable for binary, too-large, stale, and retrieval failures", async () => {
@@ -130,11 +129,11 @@ describe("FileDiffContextState", () => {
           return result;
         },
       );
-      await state.acquire(change);
+      await expect(state.loadFiles(change)).rejects.toBeDefined();
       const snapshot = state.forChange(change);
 
       expect(snapshot.fileDiff).toBe(change.fileDiff);
-      expect(snapshot.nativeExpandedHunks.size).toBe(0);
+      expect(snapshot.expansionHistory).toEqual([]);
       expect(["unsupported", "error"]).toContain(snapshot.outcome);
     }
   });
@@ -157,52 +156,11 @@ describe("FileDiffContextState", () => {
         async () => response,
       );
       const change = fileChange();
-      await state.acquire(change);
+      await expect(state.loadFiles(change)).rejects.toBeDefined();
 
       expect(state.forChange(change)).toMatchObject({ outcome: "unsupported", unsupported: expected[index] });
       expect(state.forChange(change).fileDiff).toBe(change.fileDiff);
     }
   });
 
-  test("derives complete new and deleted files from their patches without fetching", async () => {
-    const newItem = fileChange(`diff --git a/new.txt b/new.txt
-new file mode 100644
---- /dev/null
-+++ b/new.txt
-@@ -0,0 +1 @@
-+hello
-`);
-    const deletedItem = fileChange(`diff --git a/gone.txt b/gone.txt
-deleted file mode 100644
---- a/gone.txt
-+++ /dev/null
-@@ -1 +0,0 @@
--goodbye
-`);
-    let requests = 0;
-    const state = new FileDiffContextState(
-      { projectId: 7, mode: "branch" },
-      async () => {
-        requests += 1;
-        throw new Error("unexpected request");
-      },
-    );
-
-    await state.acquire(newItem);
-    await state.acquire(deletedItem);
-
-    expect(requests).toBe(0);
-    expect(state.forChange(newItem)).toMatchObject({
-      outcome: "available",
-      oldFile: { name: "new.txt", contents: "" },
-      newFile: { name: "new.txt", contents: "hello\n" },
-      fileDiff: { name: "new.txt", type: "new", isPartial: false },
-    });
-    expect(state.forChange(deletedItem)).toMatchObject({
-      outcome: "available",
-      oldFile: { name: "gone.txt", contents: "goodbye\n" },
-      newFile: { name: "gone.txt", contents: "" },
-      fileDiff: { name: "gone.txt", type: "deleted", isPartial: false },
-    });
-  });
 });

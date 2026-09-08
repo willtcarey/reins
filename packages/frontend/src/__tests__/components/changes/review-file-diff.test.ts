@@ -259,7 +259,7 @@ describe("ReviewFileDiff", () => {
     let updates = 0;
     item.requestUpdate = () => { updates += 1; };
 
-    await state.acquire(fileChange);
+    await expect(state.loadFiles(fileChange)).rejects.toBeDefined();
 
     expect(updates).toBe(2);
   });
@@ -270,7 +270,7 @@ describe("ReviewFileDiff", () => {
       { projectId: 7, mode: "branch" },
       async () => { throw new Error("offline"); },
     );
-    await state.acquire(fileChange);
+    await expect(state.loadFiles(fileChange)).rejects.toBeDefined();
     const item = new ReviewFileDiff();
     item.change = fileChange;
     item.contextState = state;
@@ -279,9 +279,6 @@ describe("ReviewFileDiff", () => {
 
     expect(output).toContain("<div data-pierre-file-diff");
     expect(output).toContain("Unable to load complete file context.");
-    expect(output).not.toContain("Expand context");
-    expect(output).not.toContain("data-reins-context-control");
-    expect(output).not.toContain("Expand trailing unchanged context");
   });
 
   test("exposes accessible status labels for each changed-file status", () => {

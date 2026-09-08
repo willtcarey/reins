@@ -117,11 +117,9 @@ export class ReviewFileDiff extends LitElement {
   private readonly _diff = createReviewFileDiffRenderer(
     this,
     undefined,
-    (interaction) => this._requestAcquisition(interaction),
     (interaction, mutate, resolveAnchor) => this._expandContext(interaction, mutate, resolveAnchor),
-    (regions) => this._retainNativeExpansion(regions),
+    (interaction, resolveAnchor) => this._prepareHydrationAnchor(interaction, resolveAnchor),
   );
-  private _pendingExpansion: (ReviewFileExpansionInteraction & { operationId: string }) | null = null;
   private _activeExpansionOperationId: string | null = null;
   private _targetFileDiff: FileChange["fileDiff"] | null = null;
   private _target: ReviewFileDiffTarget | null = null;
@@ -246,25 +244,12 @@ export class ReviewFileDiff extends LitElement {
     if (settled && !this.collapsed) queueMicrotask(() => this._emitMeasurement());
   }
 
-  private _requestAcquisition(interaction: ReviewFileExpansionInteraction) {
-    if (!this.change) return;
-    const outcome = this._expansion()?.outcome;
-    if (outcome !== "idle" && outcome !== "loading") return;
-    this._beginExpansion(interaction, "acquisition");
-    this._recordExpansion("acquisition-state", {
-      outcome,
-      willRequest: outcome === "idle",
-    });
-    if (outcome === "idle" && this.contextState) void this.contextState.acquire(this.change);
-  }
-
   private _beginExpansion(
     interaction: ReviewFileExpansionInteraction,
     source: "native" | "acquisition" = "native",
   ) {
     const operation = clientTelemetry.startOperation("review-expansion");
     this._activeExpansionOperationId = operation.id;
-    this._pendingExpansion = { ...interaction, operationId: operation.id };
     operation.record("interaction-captured", {
       source,
       itemId: this.change?.id ?? null,
@@ -280,11 +265,6 @@ export class ReviewFileDiff extends LitElement {
     });
   }
 
-  private _retainNativeExpansion(regions: ReadonlyMap<number, { fromStart: number; fromEnd: number }>) {
-    if (!this.change || !this.contextState || regions.size === 0) return;
-    this.contextState.retainNativeExpansion(this.change, regions);
-  }
-
   private _expandContext(
     interaction: ReviewFileExpansionInteraction,
     mutate: () => void,
@@ -295,19 +275,38 @@ export class ReviewFileDiff extends LitElement {
       mutate();
       return;
     }
-    this._beginExpansion(interaction);
+    const acquiring = change.fileDiff.isPartial;
+    this._beginExpansion(interaction, acquiring ? "acquisition" : "native");
+    this.contextState?.retainExpansion(change, {
+      hunkIndex: interaction.hunkIndex,
+      direction: interaction.direction,
+      ...(interaction.lineCount === undefined ? {} : { lineCount: interaction.lineCount }),
+    });
+    if (acquiring) {
+      const outcome = this._expansion()?.outcome;
+      this._recordExpansion("acquisition-state", { outcome, willRequest: outcome === "idle" });
+      mutate();
+      return;
+    }
     if (this.onContextExpansion) {
       this.onContextExpansion(change, interaction, mutate, resolveAnchor);
     } else {
       mutate();
     }
-    this._pendingExpansion = null;
+  }
+
+  private _prepareHydrationAnchor(
+    interaction: ReviewFileExpansionInteraction,
+    resolveAnchor: () => number | null,
+  ) {
+    if (!this.change || !this.onContextExpansion) return;
+    this.onContextExpansion(this.change, interaction, () => {}, resolveAnchor);
   }
 
   private _recordExpansion(
     event: string,
     attributes: Record<string, unknown>,
-    operationId = this._pendingExpansion?.operationId ?? this._activeExpansionOperationId,
+    operationId = this._activeExpansionOperationId,
   ) {
     clientTelemetry.record("review-expansion", event, {
       ...attributes,
@@ -335,22 +334,12 @@ export class ReviewFileDiff extends LitElement {
       this._targetFileDiff = fileDiff;
       this._target = {
         fileDiff,
-        nativeExpandedHunks: expansion?.nativeExpandedHunks ?? new Map(),
+        loadDiffFiles: () => {
+          if (!this.contextState) return Promise.reject(new Error("Context state is unavailable"));
+          return this.contextState.loadFiles(change);
+        },
+        expansionHistory: expansion?.expansionHistory ?? [],
         inlineReview: this.inlineReview,
-        initialExpansion: fileDiff.isPartial || !this._pendingExpansion
-          ? null
-          : {
-              hunkIndex: this._pendingExpansion.hunkIndex,
-              direction: this._pendingExpansion.direction,
-              ...(this._pendingExpansion.lineCount === undefined
-                ? {}
-                : { lineCount: this._pendingExpansion.lineCount }),
-              anchorTop: this._pendingExpansion.anchorTop,
-              anchorLineNumber: this._pendingExpansion.anchorLineNumber,
-              ...(this._pendingExpansion.anchorLineTop === undefined
-                ? {}
-                : { anchorLineTop: this._pendingExpansion.anchorLineTop }),
-            },
       };
     }
     return this._target!;

@@ -85,7 +85,7 @@ export class FileViewerCode extends LitElement {
     this._renderer.instance?.setSelectedLines(null);
   }
 
-  private _options(): FileOptions<undefined> {
+  private _options(): FileOptions<undefined, undefined> {
     return {
       theme: PIERRE_SHIKI_THEME,
       themeType: "dark",

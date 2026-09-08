@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-  parseDiffFromFile,
+  FileDiff,
   processFile,
-  type ExpansionDirections,
   type FileDiffMetadata,
   type SelectedLineRange,
 } from "@pierre/diffs";
@@ -10,193 +9,15 @@ import type { ReactiveControllerHost } from "lit";
 import { ReviewCommentThread } from "../../../components/changes/review-comment-thread.js";
 import {
   createReviewFileDiffRenderer,
-  PierreReviewFileDiff,
   type ReviewFileDiffTarget,
 } from "../../../components/changes/review-file-diff-renderer.js";
 
-function interactionEvent(type: string, path: EventTarget[], properties: Record<string, unknown> = {}): Event {
-  const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.defineProperty(event, "composedPath", { value: () => path });
-  for (const [key, value] of Object.entries(properties)) {
-    Object.defineProperty(event, key, { value });
-  }
-  return event;
+function host(): ReactiveControllerHost {
+  return { addController() {}, removeController() {}, requestUpdate() {}, updateComplete: Promise.resolve(true) };
 }
 
-describe("PierreReviewFileDiff", () => {
-  test("renders a visible partial acquisition button without loading until activation", () => {
-    const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
-    const originalRender = PierreReviewFileDiff.prototype.render;
-    const listeners = new Map<string, EventListener>();
-    const queryResults = new Map<string, EventTarget[]>();
-    const root = {
-      addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
-        if (typeof listener === "function") listeners.set(type, listener);
-      },
-      removeEventListener(type: string) { listeners.delete(type); },
-      querySelector(selector: string) { return queryResults.get(selector)?.[0] ?? null; },
-      querySelectorAll(selector: string) { return queryResults.get(selector) ?? []; },
-      replaceChildren() {},
-    };
-    class TestHTMLElement extends EventTarget {
-      shadowRoot = root;
-      dataset: Record<string, string> = {};
-      nextElementSibling: TestHTMLElement | null = null;
-      insertedBefore: TestHTMLElement | null = null;
-      children: TestHTMLElement[] = [];
-      style = { borderTopLeftRadius: "", borderBottomLeftRadius: "" };
-      tabIndex = -1;
-      private readonly attributes = new Map<string, string>();
-      readonly ownerDocument = {
-        createElement: () => new TestHTMLElement(),
-        createElementNS: () => new TestHTMLElement(),
-      };
-      constructor(attributes: string[] = []) {
-        super();
-        for (const attribute of attributes) this.attributes.set(attribute, "");
-      }
-      hasAttribute(name: string) { return this.attributes.has(name); }
-      setAttribute(name: string, value: string) { this.attributes.set(name, value); }
-      getAttribute(name: string) { return this.attributes.get(name) ?? null; }
-      appendChild(child: TestHTMLElement) { this.children.push(child); return child; }
-      before(element: TestHTMLElement) { this.insertedBefore = element; }
-      closest: () => TestHTMLElement | null = () => null;
-      getBoundingClientRect() { return { top: 20 }; }
-    }
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: TestHTMLElement });
-
-    const partial = processFile(`diff --git a/file.txt b/file.txt
---- a/file.txt
-+++ b/file.txt
-@@ -33 +33 @@
--old
-+new
-`);
-    if (!partial) throw new Error("Expected parsed partial diff");
-    const separator = new TestHTMLElement(["data-separator"]);
-    const nextLine = new TestHTMLElement();
-    nextLine.dataset.lineIndex = `${partial.hunks[0]?.unifiedLineStart},${partial.hunks[0]?.splitLineStart}`;
-    separator.nextElementSibling = nextLine;
-    const control = new TestHTMLElement(["data-separator-content"]);
-    control.closest = () => separator;
-    const controlText = new TestHTMLElement(["data-unmodified-lines"]);
-    controlText.closest = () => separator;
-    queryResults.set("[data-separator-content]", [control]);
-    queryResults.set('[data-expand-index="0"]', [separator]);
-    const unchanged = Array.from({ length: 32 }, (_, index) => `line ${index + 1}`).join("\n");
-    const complete = parseDiffFromFile(
-      { name: "file.txt", contents: `${unchanged}\nold\n` },
-      { name: "file.txt", contents: `${unchanged}\nnew\n` },
-    );
-    const renderedMetadata: FileDiffMetadata[] = [];
-    const expanded: Array<[number, ExpansionDirections, number | undefined]> = [];
-    Reflect.set(PierreReviewFileDiff.prototype, "render", function render(
-      this: PierreReviewFileDiff,
-      props: { fileDiff: FileDiffMetadata; containerWrapper: HTMLElement },
-    ) {
-      renderedMetadata.push(props.fileDiff);
-      this.options.onPostRender?.(props.containerWrapper, this, "mount");
-      return true;
-    });
-    try {
-      const host: ReactiveControllerHost = {
-        addController() {}, removeController() {}, requestUpdate() {}, updateComplete: Promise.resolve(true),
-      };
-      const acquisitions: number[] = [];
-      const nativeInteractions: number[] = [];
-      const anchorResolvers: Array<() => number | null> = [];
-      const controller = createReviewFileDiffRenderer(
-        host,
-        undefined,
-        (interaction) => acquisitions.push(interaction.hunkIndex),
-        (interaction, mutate, anchor) => {
-          nativeInteractions.push(interaction.hunkIndex);
-          anchorResolvers.push(anchor);
-          mutate();
-        },
-        undefined,
-        null,
-      );
-      const bindingValues = Reflect.get(controller.bind({
-        fileDiff: partial,
-        nativeExpandedHunks: new Map(),
-        initialExpansion: null,
-      }), "values");
-      const attach = Array.isArray(bindingValues) ? bindingValues[0] : null;
-      if (typeof attach !== "function") throw new Error("Expected renderer ref binding");
-      attach(new TestHTMLElement());
-
-      expect(acquisitions).toEqual([]);
-
-      const acquisitionButton = control.insertedBefore;
-      if (!acquisitionButton) throw new Error("Expected visible acquisition button");
-      acquisitionButton.closest = () => separator;
-      const partialEvent = interactionEvent("click", [acquisitionButton, separator]);
-      listeners.get("click")?.(partialEvent);
-
-      expect(renderedMetadata[0]).toBe(partial);
-      expect(renderedMetadata[0]?.isPartial).toBe(true);
-      expect(control.getAttribute("role")).toBe("button");
-      expect(control.getAttribute("aria-label")).toBe("Expand unchanged lines");
-      expect(acquisitionButton.getAttribute("aria-label")).toBe("Expand unchanged lines above");
-      expect(acquisitions).toEqual([0]);
-      expect(expanded).toEqual([]);
-
-      controller.bind({ fileDiff: complete, nativeExpandedHunks: new Map(), initialExpansion: null });
-      controller.hostUpdated();
-      if (!controller.instance) throw new Error("Expected complete renderer");
-      controller.instance.expandHunk = (hunkIndex, direction, lineCount) => {
-        expanded.push([hunkIndex, direction, lineCount]);
-      };
-      const nativeControl = new TestHTMLElement(["data-expand-button", "data-expand-down"]);
-      nativeControl.closest = () => separator;
-      separator.dataset.expandIndex = "0";
-      const completeEvent = interactionEvent("keydown", [nativeControl, separator], { key: "Enter" });
-      listeners.get("keydown")?.(completeEvent);
-
-      expect(nativeInteractions).toEqual([0]);
-      expect(expanded).toEqual([[0, "down", undefined]]);
-      expect(anchorResolvers[0]?.()).toBe(20);
-      expect(completeEvent.defaultPrevented).toBe(true);
-
-      const nativeControlText = new TestHTMLElement(["data-unmodified-lines"]);
-      nativeControlText.closest = () => separator;
-      const firstHunkTextEvent = interactionEvent("click", [nativeControlText, separator]);
-      listeners.get("click")?.(firstHunkTextEvent);
-
-      expect(nativeInteractions).toEqual([0, 0]);
-      expect(expanded).toEqual([
-        [0, "down", undefined],
-        [0, "down", undefined],
-      ]);
-      expect(firstHunkTextEvent.defaultPrevented).toBe(true);
-    } finally {
-      Reflect.set(PierreReviewFileDiff.prototype, "render", originalRender);
-      if (htmlElementDescriptor) Object.defineProperty(globalThis, "HTMLElement", htmlElementDescriptor);
-      else Reflect.deleteProperty(globalThis, "HTMLElement");
-    }
-  });
-
-  test("nests an unmanaged diff and adapts public selection and annotation hooks", () => {
-    const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
-    const originalRender = PierreReviewFileDiff.prototype.render;
-    const gutterUtility = { hidden: false };
-    const root = {
-      replaceChildren() {},
-      addEventListener() {},
-      removeEventListener() {},
-      querySelector() { return null; },
-      querySelectorAll(selector: string) { return selector === "[data-gutter-utility-slot]" ? [gutterUtility] : []; },
-    };
-    class TestHTMLElement extends EventTarget {
-      shadowRoot = root;
-      dataset: Record<string, string> = {};
-      children: TestHTMLElement[] = [];
-      appendChild(child: TestHTMLElement) { this.children.push(child); return child; }
-      setAttribute() {}
-    }
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: TestHTMLElement });
-    const partial = processFile(`diff --git a/file.txt b/file.txt
+function partialDiff(): FileDiffMetadata {
+  const fileDiff = processFile(`diff --git a/file.txt b/file.txt
 --- a/file.txt
 +++ b/file.txt
 @@ -4,4 +4,4 @@
@@ -206,47 +27,147 @@ describe("PierreReviewFileDiff", () => {
 +new
  four
 `);
-    if (!partial) throw new Error("Expected parsed diff");
-    let renderProps: Record<string, unknown> | null = null;
-    Reflect.set(PierreReviewFileDiff.prototype, "render", function render(
-      this: PierreReviewFileDiff,
-      props: Record<string, unknown>,
+  if (!fileDiff) throw new Error("Expected parsed diff");
+  return fileDiff;
+}
+
+describe("ReviewFileDiffRenderer", () => {
+  test("wires lazy loading and expansion anchoring into Pierre", async () => {
+    const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+    const originalRender = FileDiff.prototype.render;
+    const root = {
+      replaceChildren() {},
+      addEventListener() {},
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+    };
+    class TestHTMLElement extends EventTarget {
+      shadowRoot = root;
+    }
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: TestHTMLElement });
+    const renderedMetadata: FileDiffMetadata[] = [];
+    Reflect.set(FileDiff.prototype, "render", function render(
+      this: FileDiff,
+      props?: { fileDiff?: FileDiffMetadata; containerWrapper?: HTMLElement },
     ) {
+      if (props?.fileDiff) {
+        this.fileDiff = props.fileDiff;
+        renderedMetadata.push(props.fileDiff);
+      }
+      if (props?.containerWrapper) {
+        this.options.onPostRender?.(props.containerWrapper, this, "mount");
+      }
+      return true;
+    });
+
+    try {
+      const fileDiff = partialDiff();
+      let loads = 0;
+      const interactions: Array<{ hunkIndex: number; direction: string }> = [];
+      const controller = createReviewFileDiffRenderer(
+        host(),
+        undefined,
+        (interaction, mutate) => {
+          interactions.push(interaction);
+          mutate();
+        },
+        undefined,
+        null,
+      );
+      const target: ReviewFileDiffTarget = {
+        fileDiff,
+        loadDiffFiles: async () => {
+          loads += 1;
+          return {
+            oldFile: { name: "file.txt", contents: "zero\none\ntwo\nold\nfour\n" },
+            newFile: { name: "file.txt", contents: "zero\none\ntwo\nnew\nfour\n" },
+          };
+        },
+        expansionHistory: [],
+      };
+      const bindingValues = Reflect.get(controller.bind(target), "values");
+      const attach = Array.isArray(bindingValues) ? bindingValues[0] : null;
+      if (typeof attach !== "function") throw new Error("Expected renderer ref binding");
+      attach(new TestHTMLElement());
+
+      const instance = controller.instance;
+      if (!instance) throw new Error("Expected FileDiff instance");
+      expect(instance.options.loadDiffFiles).toBeFunction();
+      expect(loads).toBe(0);
+
+      Reflect.set(instance, "primeHighlightCache", async () => {});
+      instance.handleExpandHunk(0, "down");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(interactions).toHaveLength(1);
+      expect(interactions[0]).toMatchObject({ hunkIndex: 0, direction: "down" });
+      expect(loads).toBe(1);
+      expect(renderedMetadata[0]).toBe(fileDiff);
+
+      const remountedDiff = partialDiff();
+      let remountLoads = 0;
+      const remounted = createReviewFileDiffRenderer(host(), undefined, undefined, undefined, null);
+      const remountBinding = Reflect.get(remounted.bind({
+        fileDiff: remountedDiff,
+        loadDiffFiles: async () => {
+          remountLoads += 1;
+          return {
+            oldFile: { name: "file.txt", contents: "zero\none\ntwo\nold\nfour\n" },
+            newFile: { name: "file.txt", contents: "zero\none\ntwo\nnew\nfour\n" },
+          };
+        },
+        expansionHistory: [{ hunkIndex: 0, direction: "down", lineCount: 15 }],
+      }), "values");
+      const attachRemount = Array.isArray(remountBinding) ? remountBinding[0] : null;
+      if (typeof attachRemount !== "function") throw new Error("Expected remount binding");
+      attachRemount(new TestHTMLElement());
+      if (!remounted.instance) throw new Error("Expected remounted FileDiff");
+      Reflect.set(remounted.instance, "primeHighlightCache", async () => {});
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(remountLoads).toBe(1);
+    } finally {
+      Reflect.set(FileDiff.prototype, "render", originalRender);
+      if (htmlElementDescriptor) Object.defineProperty(globalThis, "HTMLElement", htmlElementDescriptor);
+      else Reflect.deleteProperty(globalThis, "HTMLElement");
+    }
+  });
+
+  test("nests an unmanaged diff and adapts public selection and annotation hooks", () => {
+    const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+    const originalRender = FileDiff.prototype.render;
+    const gutterUtility = { hidden: false };
+    const root = {
+      replaceChildren() {}, addEventListener() {}, querySelector() { return null; },
+      querySelectorAll(selector: string) { return selector === "[data-gutter-utility-slot]" ? [gutterUtility] : []; },
+    };
+    class TestHTMLElement extends EventTarget {
+      shadowRoot = root;
+    }
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: TestHTMLElement });
+    let renderProps: Record<string, unknown> | null = null;
+    Reflect.set(FileDiff.prototype, "render", function render(props: Record<string, unknown>) {
       renderProps = props;
       return true;
     });
+
     try {
-      const host: ReactiveControllerHost = {
-        addController() {}, removeController() {}, requestUpdate() {}, updateComplete: Promise.resolve(true),
-      };
-      const controller = createReviewFileDiffRenderer(host, undefined, undefined, undefined, undefined, null);
       const observed: {
         selection: { side: "old" | "new"; startLine: number; endLine: number } | null;
         error: string | null;
       } = { selection: null, error: null };
       const target: ReviewFileDiffTarget = {
-        fileDiff: partial,
-        nativeExpandedHunks: new Map(),
-        initialExpansion: null,
+        fileDiff: partialDiff(),
+        loadDiffFiles: async () => { throw new Error("not requested"); },
+        expansionHistory: [],
         inlineReview: {
           placements: [], selection: null, error: null, threadCount: 0, layoutRevision: 0,
           select: (range) => { observed.selection = range; },
-          openComposer: (range) => {
-            observed.selection = range;
-            target.inlineReview = {
-              placements: [{
-                id: "file-a:new:7", range, comments: [], deletingCommentId: null, deleteComment: async () => {}, addComment: () => {},
-                composer: { body: "", error: null, saving: false, input: () => {}, save: async () => {}, cancel: () => {} },
-              }],
-              selection: range, error: null, threadCount: 0, layoutRevision: 1,
-              select: target.inlineReview!.select,
-              openComposer: target.inlineReview!.openComposer,
-              reportError: target.inlineReview!.reportError,
-            };
-          },
-          reportError: (message: string) => { observed.error = message; },
+          openComposer: (range) => { observed.selection = range; },
+          reportError: (message) => { observed.error = message; },
         },
       };
+      const controller = createReviewFileDiffRenderer(host(), undefined, undefined, undefined, null);
       const bindingValues = Reflect.get(controller.bind(target), "values");
       const attach = Array.isArray(bindingValues) ? bindingValues[0] : null;
       if (typeof attach !== "function") throw new Error("Expected renderer ref binding");
@@ -254,149 +175,37 @@ describe("PierreReviewFileDiff", () => {
       attach(mount);
       const instance = controller.instance;
       if (!instance) throw new Error("Expected renderer instance");
-      expect(instance.options.unsafeCSS).toContain("[data-line]:has(+ [data-line-annotation])");
-      expect(instance.options.unsafeCSS).toContain('[data-column-number]:has(+ [data-gutter-buffer="annotation"])');
 
       instance.options.onLineSelected?.({ start: 7, end: 4, side: "additions", endSide: "additions" });
       expect(observed.selection).toEqual({ side: "new", startLine: 4, endLine: 7 });
       instance.options.onGutterUtilityClick?.({ start: 4, end: 7, side: "deletions", endSide: "additions" });
       expect(observed.error).toBe("Inline comments must stay on one side of the diff.");
-      instance.options.onGutterUtilityClick?.({ start: 4, end: 7, side: "additions", endSide: "additions" });
-      if (instance.options.onPostRender) {
-        Reflect.apply(instance.options.onPostRender, undefined, [mount, instance, "update"]);
-      }
-      expect(gutterUtility.hidden).toBe(true);
 
+      target.inlineReview = {
+        ...target.inlineReview!,
+        placements: [{
+          id: "file-a:new:7",
+          range: { side: "new", startLine: 4, endLine: 7 },
+          comments: [], deletingCommentId: null, deleteComment: async () => {}, addComment: () => {},
+          composer: null,
+        }],
+        selection: { side: "new", startLine: 4, endLine: 7 },
+      };
       let annotations: Parameters<typeof instance.setLineAnnotations>[0] = [];
       const selections: Array<SelectedLineRange | null> = [];
-      let rerenders = 0;
       instance.setLineAnnotations = (value) => { annotations = value; };
       instance.setSelectedLines = (value) => { selections.push(value); };
-      instance.rerender = () => { rerenders += 1; };
+      instance.rerender = () => {};
       controller.refreshInlineComments();
 
       expect(renderProps).toMatchObject({ containerWrapper: mount });
-      expect(renderProps).not.toHaveProperty("fileContainer");
-      expect(annotations).toEqual([{
-        side: "additions",
-        lineNumber: 7,
-        metadata: "file-a:new:7",
-      }]);
-      expect(selections).toEqual([{
-        start: 4,
-        end: 7,
-        side: "additions",
-        endSide: "additions",
-      }]);
-      expect(rerenders).toBe(1);
-
+      expect(annotations).toEqual([{ side: "additions", lineNumber: 7, metadata: "file-a:new:7" }]);
+      expect(selections).toEqual([{ start: 4, end: 7, side: "additions", endSide: "additions" }]);
       const annotation = annotations[0];
       if (!annotation) throw new Error("Expected annotation");
-      const annotationElement = instance.options.renderAnnotation?.(annotation);
-      if (!(annotationElement instanceof ReviewCommentThread)) {
-        throw new Error("Expected Reins annotation element");
-      }
-      expect(annotationElement.placement?.id).toBe("file-a:new:7");
-
-      const metadata = annotation.metadata;
-      const currentInlineReview = target.inlineReview;
-      if (!currentInlineReview) throw new Error("Expected inline review");
-      const updatedInlineReview = {
-        placements: [{
-          id: "file-a:new:7",
-          range: { side: "new" as const, startLine: 4, endLine: 7 },
-          comments: [{ id: "comment-1", author: "You", body: "Saved comment", createdAt: "2026-09-08T14:30:00.000Z" }],
-          deletingCommentId: null,
-          deleteComment: async () => {},
-          addComment: () => {},
-          composer: null,
-        }],
-        selection: { side: "new" as const, startLine: 4, endLine: 7 },
-        error: null,
-        threadCount: 1,
-        layoutRevision: 2,
-        select: currentInlineReview.select,
-        openComposer: currentInlineReview.openComposer,
-        reportError: currentInlineReview.reportError,
-      };
-      target.inlineReview = updatedInlineReview;
-      controller.refreshInlineComments();
-      if (instance.options.onPostRender) {
-        Reflect.apply(instance.options.onPostRender, undefined, [mount, instance, "update"]);
-      }
-      expect(gutterUtility.hidden).toBe(false);
-      expect(annotations[0]?.metadata).toBe(metadata);
-      expect(annotationElement.placement).toEqual(updatedInlineReview.placements[0]);
+      expect(instance.options.renderAnnotation?.(annotation)).toBeInstanceOf(ReviewCommentThread);
     } finally {
-      Reflect.set(PierreReviewFileDiff.prototype, "render", originalRender);
-      if (htmlElementDescriptor) Object.defineProperty(globalThis, "HTMLElement", htmlElementDescriptor);
-      else Reflect.deleteProperty(globalThis, "HTMLElement");
-    }
-  });
-
-  test("does not offer context when patch metadata has no known collapsed region", () => {
-    const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
-    const originalRender = PierreReviewFileDiff.prototype.render;
-    const queryResults = new Map<string, EventTarget[]>();
-    const root = {
-      addEventListener() {}, removeEventListener() {}, querySelector() { return null; },
-      querySelectorAll(selector: string) { return queryResults.get(selector) ?? []; },
-      replaceChildren() {},
-    };
-    class TestHTMLElement extends EventTarget {
-      shadowRoot = root;
-      dataset: Record<string, string> = {};
-      nextElementSibling: TestHTMLElement | null = null;
-      tabIndex = -1;
-      private readonly attributes = new Map<string, string>();
-      constructor(attributes: string[] = []) {
-        super();
-        for (const attribute of attributes) this.attributes.set(attribute, "");
-      }
-      hasAttribute(name: string) { return this.attributes.has(name); }
-      setAttribute(name: string, value: string) { this.attributes.set(name, value); }
-      closest: () => TestHTMLElement | null = () => null;
-    }
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: TestHTMLElement });
-    const partial = processFile(`diff --git a/file.txt b/file.txt
---- a/file.txt
-+++ b/file.txt
-@@ -1 +1 @@
--old
-+new
-`);
-    if (!partial) throw new Error("Expected parsed partial diff");
-    const separator = new TestHTMLElement(["data-separator"]);
-    const nextLine = new TestHTMLElement();
-    nextLine.dataset.lineIndex = `${partial.hunks[0]?.unifiedLineStart},${partial.hunks[0]?.splitLineStart}`;
-    separator.nextElementSibling = nextLine;
-    const control = new TestHTMLElement(["data-separator-content"]);
-    control.closest = () => separator;
-    queryResults.set("[data-separator-content]", [control]);
-    Reflect.set(PierreReviewFileDiff.prototype, "render", function render(
-      this: PierreReviewFileDiff,
-      props: { containerWrapper: HTMLElement },
-    ) {
-      this.options.onPostRender?.(props.containerWrapper, this, "mount");
-      return true;
-    });
-    try {
-      const host: ReactiveControllerHost = {
-        addController() {}, removeController() {}, requestUpdate() {}, updateComplete: Promise.resolve(true),
-      };
-      const controller = createReviewFileDiffRenderer(
-        host, undefined, undefined, undefined, undefined, null,
-      );
-      const bindingValues = Reflect.get(controller.bind({
-        fileDiff: partial, nativeExpandedHunks: new Map(), initialExpansion: null,
-      }), "values");
-      const attach = Array.isArray(bindingValues) ? bindingValues[0] : null;
-      if (typeof attach !== "function") throw new Error("Expected renderer ref binding");
-      attach(new TestHTMLElement());
-
-      expect(control.dataset.reinsAcquireHunkIndex).toBeUndefined();
-    } finally {
-      Reflect.set(PierreReviewFileDiff.prototype, "render", originalRender);
+      Reflect.set(FileDiff.prototype, "render", originalRender);
       if (htmlElementDescriptor) Object.defineProperty(globalThis, "HTMLElement", htmlElementDescriptor);
       else Reflect.deleteProperty(globalThis, "HTMLElement");
     }
