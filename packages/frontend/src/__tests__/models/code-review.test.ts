@@ -44,7 +44,7 @@ describe("code review", () => {
     expect(reviewPlacements(STATE, FILE)).toEqual([{
       id: "file-a:new:2",
       range: { side: "new", startLine: 2, endLine: 2 },
-      comments: [{ id: "entry-1", author: "Reviewer", body: "Note" }],
+      comments: [{ id: "entry-1", author: "Reviewer", body: "Note", createdAt: "2026-01-01" }],
     }]);
     expect(reviewPlacements(STATE, { ...FILE, diffLines: () => [] })).toEqual([]);
     expect(reviewPlacements(STATE, {

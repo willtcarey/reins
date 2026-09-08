@@ -82,8 +82,12 @@ describe("InlineReviewController", () => {
       createdAt: "now", updatedAt: "now",
     });
 
-    await controller.file("file-a").placements[0]?.deleteComment("entry-1");
+    const placement = controller.file("file-a").placements[0];
+    placement?.addComment();
+    expect(controller.file("file-a").placements[0]?.composer?.body).toBe("");
+    expect(controller.file("file-a").placements[0]?.comments[0]?.body).toBe("A note");
 
+    await placement?.deleteComment("entry-1");
     expect(deleted).toEqual(["entry-1"]);
   });
 });

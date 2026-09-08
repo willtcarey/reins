@@ -14,6 +14,7 @@ describe("ReviewCommentThread", () => {
       comments: [],
       deletingCommentId: null,
       deleteComment: async () => {},
+      addComment: () => {},
       composer: {
         body: "", saving: false, error: "Enter a comment before saving.",
         input: (value) => { body = value; },
@@ -24,7 +25,10 @@ describe("ReviewCommentThread", () => {
 
     const rendered = element.render();
     const output = templateToString(rendered);
-    expect(output).toContain("Comment on new lines 2–4");
+    expect(output).toContain("Add a review comment");
+    expect(output).toContain("Share feedback about this code…");
+    expect(output).not.toContain("new lines 2–4");
+    expect(output).not.toContain("old line");
     expect(output).toContain("Enter a comment before saving.");
 
     const inputEvent = new Event("input");
@@ -56,20 +60,32 @@ describe("ReviewCommentThread", () => {
   test("offers deletion for each saved comment", async () => {
     const element = new ReviewCommentThread();
     const deleted: string[] = [];
+    let addedComments = 0;
     element.placement = {
       id: "file-a:new:4",
       range: { side: "new", startLine: 4, endLine: 4 },
-      comments: [{ id: "entry-1", author: "You", body: "Remove this note." }],
+      comments: [{ id: "entry-1", author: "You", body: "Remove this note.", createdAt: "2026-09-08T14:30:00.000Z" }],
       deletingCommentId: null,
       deleteComment: async (id) => { deleted.push(id); },
+      addComment: () => { addedComments += 1; },
       composer: null,
     };
 
     const rendered = element.render();
-    expect(templateToString(rendered)).toContain("Delete comment");
-    collectTemplateEventListeners(rendered, "click")[0]?.call(element, new Event("click"));
+    const output = templateToString(rendered);
+    expect(output).toContain("Delete comment");
+    expect(output).not.toContain(">Delete</button>");
+    expect(output).toContain('data-icon="trash"');
+    expect(output).toContain("Add comment");
+    expect(output).not.toContain("Reply");
+    expect(output).toContain('datetime=2026-09-08T14:30:00.000Z');
+    expect(output).toContain(new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date("2026-09-08T14:30:00.000Z")));
+    const clickListeners = collectTemplateEventListeners(rendered, "click");
+    clickListeners[0]?.call(element, new Event("click"));
+    clickListeners[1]?.call(element, new Event("click"));
     await Promise.resolve();
 
     expect(deleted).toEqual(["entry-1"]);
+    expect(addedComments).toBe(1);
   });
 });

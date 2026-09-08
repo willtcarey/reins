@@ -69,7 +69,7 @@ export interface ReviewedFile {
 export interface ReviewPlacement {
   readonly id: string;
   readonly range: ReviewLineRange;
-  readonly comments: readonly Pick<ReviewEntry, "id" | "author" | "body">[];
+  readonly comments: readonly Pick<ReviewEntry, "id" | "author" | "body" | "createdAt">[];
 }
 
 export function reviewPlacements(
@@ -86,7 +86,7 @@ export function reviewPlacements(
     const range = placementRange(anchor, current);
     if (!range) continue;
     const id = reviewPlacementId(file.id, range);
-    const comments = annotation.entries.map(({ id: entryId, author, body }) => ({ id: entryId, author, body }));
+    const comments = annotation.entries.map(({ id: entryId, author, body, createdAt }) => ({ id: entryId, author, body, createdAt }));
     const existing = grouped.get(id);
     grouped.set(id, existing
       ? { ...existing, comments: [...existing.comments, ...comments] }

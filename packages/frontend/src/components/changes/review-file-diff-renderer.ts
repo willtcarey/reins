@@ -16,9 +16,17 @@ import { ReviewCommentThread } from "./review-comment-thread.js";
 
 type PierreCommentPlacementMetadata = string;
 
+const REVIEW_COMMENT_HIGHLIGHT_CSS = `
+[data-line]:has(+ [data-line-annotation]),
+[data-column-number]:has(+ [data-gutter-buffer="annotation"]) {
+  --diffs-line-bg: color-mix(in lab, var(--diffs-computed-diff-line-bg) 75%, var(--diffs-modified-base));
+}
+`;
+
 const REINS_DIFF_OPTIONS: FileDiffOptions<PierreCommentPlacementMetadata> = {
   theme: PIERRE_SHIKI_THEME,
   themeType: "dark",
+  unsafeCSS: REVIEW_COMMENT_HIGHLIGHT_CSS,
   diffStyle: "unified",
   diffIndicators: "classic",
   overflow: "scroll",
@@ -193,6 +201,7 @@ export function createReviewFileDiffRenderer(
             root.addEventListener("keydown", handleKeydown, true);
           }
           prepareNativeControls(root, target.fileDiff);
+          syncCommentGutterUtility(root, target);
           if (instance instanceof PierreReviewFileDiff) {
             onNativeState?.(instance.nativeExpansionState());
           }
@@ -233,6 +242,14 @@ export function createReviewFileDiffRenderer(
     onRendered,
   });
   return controller;
+}
+
+function syncCommentGutterUtility(root: ShadowRoot | null, target: ReviewFileDiffTarget): void {
+  if (!root) return;
+  const composerOpen = target.inlineReview?.placements.some((placement) => placement.composer !== null) ?? false;
+  for (const utility of root.querySelectorAll<HTMLElement>("[data-gutter-utility-slot]")) {
+    utility.hidden = composerOpen;
+  }
 }
 
 function commentAnnotations(

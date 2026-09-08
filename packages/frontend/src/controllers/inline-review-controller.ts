@@ -22,6 +22,7 @@ interface Draft {
 export interface InlineReviewPlacement extends ReviewPlacement {
   readonly deletingCommentId: string | null;
   readonly deleteComment: (commentId: string) => Promise<void>;
+  readonly addComment: () => void;
   readonly composer: null | {
     readonly body: string;
     readonly error: string | null;
@@ -110,6 +111,7 @@ export class InlineReviewController implements ReactiveController {
       ...placement,
       deletingCommentId: this.deletingCommentId,
       deleteComment: (commentId) => this.deleteComment(fileId, commentId),
+      addComment: () => this.openComposer(fileId, placement.range),
       composer: this.draft?.fileId === fileId && this.draft.placementId === placement.id
         ? {
             body: this.draft.body,

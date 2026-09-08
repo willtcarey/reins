@@ -180,8 +180,16 @@ describe("PierreReviewFileDiff", () => {
   test("nests an unmanaged diff and adapts public selection and annotation hooks", () => {
     const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
     const originalRender = PierreReviewFileDiff.prototype.render;
+    const gutterUtility = { hidden: false };
+    const root = {
+      replaceChildren() {},
+      addEventListener() {},
+      removeEventListener() {},
+      querySelector() { return null; },
+      querySelectorAll(selector: string) { return selector === "[data-gutter-utility-slot]" ? [gutterUtility] : []; },
+    };
     class TestHTMLElement extends EventTarget {
-      shadowRoot = { replaceChildren() {} };
+      shadowRoot = root;
       dataset: Record<string, string> = {};
       children: TestHTMLElement[] = [];
       appendChild(child: TestHTMLElement) { this.children.push(child); return child; }
@@ -227,7 +235,7 @@ describe("PierreReviewFileDiff", () => {
             observed.selection = range;
             target.inlineReview = {
               placements: [{
-                id: "file-a:new:7", range, comments: [], deletingCommentId: null, deleteComment: async () => {},
+                id: "file-a:new:7", range, comments: [], deletingCommentId: null, deleteComment: async () => {}, addComment: () => {},
                 composer: { body: "", error: null, saving: false, input: () => {}, save: async () => {}, cancel: () => {} },
               }],
               selection: range, error: null, threadCount: 0, layoutRevision: 1,
@@ -246,12 +254,18 @@ describe("PierreReviewFileDiff", () => {
       attach(mount);
       const instance = controller.instance;
       if (!instance) throw new Error("Expected renderer instance");
+      expect(instance.options.unsafeCSS).toContain("[data-line]:has(+ [data-line-annotation])");
+      expect(instance.options.unsafeCSS).toContain('[data-column-number]:has(+ [data-gutter-buffer="annotation"])');
 
       instance.options.onLineSelected?.({ start: 7, end: 4, side: "additions", endSide: "additions" });
       expect(observed.selection).toEqual({ side: "new", startLine: 4, endLine: 7 });
       instance.options.onGutterUtilityClick?.({ start: 4, end: 7, side: "deletions", endSide: "additions" });
       expect(observed.error).toBe("Inline comments must stay on one side of the diff.");
       instance.options.onGutterUtilityClick?.({ start: 4, end: 7, side: "additions", endSide: "additions" });
+      if (instance.options.onPostRender) {
+        Reflect.apply(instance.options.onPostRender, undefined, [mount, instance, "update"]);
+      }
+      expect(gutterUtility.hidden).toBe(true);
 
       let annotations: Parameters<typeof instance.setLineAnnotations>[0] = [];
       const selections: Array<SelectedLineRange | null> = [];
@@ -291,9 +305,10 @@ describe("PierreReviewFileDiff", () => {
         placements: [{
           id: "file-a:new:7",
           range: { side: "new" as const, startLine: 4, endLine: 7 },
-          comments: [{ id: "comment-1", author: "You", body: "Saved comment" }],
+          comments: [{ id: "comment-1", author: "You", body: "Saved comment", createdAt: "2026-09-08T14:30:00.000Z" }],
           deletingCommentId: null,
           deleteComment: async () => {},
+          addComment: () => {},
           composer: null,
         }],
         selection: { side: "new" as const, startLine: 4, endLine: 7 },
@@ -306,6 +321,10 @@ describe("PierreReviewFileDiff", () => {
       };
       target.inlineReview = updatedInlineReview;
       controller.refreshInlineComments();
+      if (instance.options.onPostRender) {
+        Reflect.apply(instance.options.onPostRender, undefined, [mount, instance, "update"]);
+      }
+      expect(gutterUtility.hidden).toBe(false);
       expect(annotations[0]?.metadata).toBe(metadata);
       expect(annotationElement.placement).toEqual(updatedInlineReview.placements[0]);
     } finally {
