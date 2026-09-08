@@ -119,7 +119,9 @@ export class MessageActionsController implements ReactiveController {
         aria-label="Copy as Markdown"
         @click=${(event: Event) => this.copyDirect(event, message)}
       >
-        ${this.copied ? checkIcon() : copyIcon()}
+        ${this.copied
+          ? checkIcon("h-3.5 w-3.5 text-green-400")
+          : copyIcon("h-3.5 w-3.5")}
       </button>
     `;
   }

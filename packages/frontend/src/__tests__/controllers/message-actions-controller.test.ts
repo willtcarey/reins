@@ -24,7 +24,9 @@ describe("MessageActionsController", () => {
       expect(templateToString(controller.for(message).render())).not.toContain("Copy as Markdown");
 
       const template = controller.for(message).render({ directCopy: true });
-      expect(templateToString(template)).toContain("Copy as Markdown");
+      const output = templateToString(template);
+      expect(output).toContain("Copy as Markdown");
+      expect(output).toContain("h-3.5 w-3.5");
       await collectTemplateEventListeners(template, "click")[0]?.call(controller, new Event("click"));
 
       expect(writeText).toHaveBeenCalledWith("**raw markdown**");
