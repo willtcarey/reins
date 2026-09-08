@@ -5,8 +5,3 @@ node_modules/
 dist/
 tmp/
 .env
-
-# Xcode
-xcuserdata/
-DerivedData/
-*.xcworkspace

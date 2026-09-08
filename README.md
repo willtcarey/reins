@@ -2,7 +2,7 @@
 
 **Remote Editing Interface for Nurturing Software** — a web-based workspace for managing your repos from anywhere.
 
-Run the server alongside your projects, then connect from any browser, the Tauri desktop wrapper, or the native macOS app. Work happens through conversations with AI coding agents that can read, write, and execute code in your repos.
+Run the server alongside your projects, then connect from any browser or the optional Tauri desktop wrapper. Work happens through conversations with AI coding agents that can read, write, and execute code in your repos.
 
 ## How It Works
 
@@ -41,7 +41,7 @@ To keep the server running in the background:
 tmux new-session -d -s reins 'bun run start'
 ```
 
-For the Tauri desktop wrapper, see [docs/dev/tauri.md](docs/dev/tauri.md). For the native macOS app, see [docs/dev/macos.md](docs/dev/macos.md).
+For the optional Tauri desktop wrapper, see [docs/dev/tauri.md](docs/dev/tauri.md).
 
 ### Then
 
@@ -53,8 +53,7 @@ Open [http://localhost:3100](http://localhost:3100), add a project, and create a
 |---|---|---|
 | `packages/backend` | HTTP + WebSocket server, SQLite storage, git operations, coding agent sessions | [architecture](docs/dev/backend-architecture.md) |
 | `packages/frontend` | Lit + Tailwind CSS v4 SPA | [architecture](docs/dev/frontend-architecture.md) |
-| `packages/tauri` | Tauri v2 desktop wrapper that loads the backend URL without bundling frontend files | [setup](docs/dev/tauri.md) |
-| `packages/macos` | Native macOS app (SwiftUI + WKWebView) | [setup](docs/dev/macos.md) |
+| `packages/tauri` | Optional Tauri v2 desktop wrapper that loads the backend URL without bundling frontend files | [setup](docs/dev/tauri.md) |
 
 ## Configuration
 

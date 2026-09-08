@@ -28,7 +28,9 @@ REINS_BACKEND_URL=http://localhost:3100 bun run --filter '@reins/tauri' dev
 
 The native View menu exposes Reload (Cmd+R on macOS, Ctrl+R on Windows/Linux) and Toggle Developer Tools (Cmd+Option+I on macOS, Ctrl+Alt+I elsewhere). Standard app, edit, and window menu items are also provided.
 
-Downloads open a native save dialog. Canceling the dialog cancels the download.
+Downloads open a native save dialog. Canceling the dialog cancels the download. File inputs use the system webview's native picker, and external HTTP(S) links open in the default browser.
+
+The frontend does not depend on the removed macOS shell's notification bridge. This wrapper keeps normal web notification behavior and does not expose native notification IPC.
 
 ## Build
 
@@ -44,5 +46,7 @@ REINS_BACKEND_URL=http://myhost:3100 bun run tauri:build
 
 ## Platform setup
 
-- macOS: install Xcode Command Line Tools, Rust, Bun, and the Tauri CLI dependency with `bun install`. The bundle currently allows arbitrary HTTP loads so runtime-configured localhost/LAN/Tailscale backend URLs work. Release builds currently include Tauri's devtools support for the View menu's Web Inspector item.
+- macOS: install Xcode Command Line Tools, Rust, Bun, and the Tauri CLI dependency with `bun install`. CI builds unsigned `.app` and `.dmg` artifacts. The bundle currently allows arbitrary HTTP loads so runtime-configured localhost/LAN/Tailscale backend URLs work. Release builds currently include Tauri's devtools support for the View menu's Web Inspector item.
 - Windows (future): use the Rust MSVC toolchain, Visual Studio Build Tools, and WebView2 Runtime. Set a runtime URL in PowerShell with `$env:REINS_BACKEND_URL = 'http://host:3100'` before launching.
+
+Signing/notarization, an updater, stricter release CSP/ATS policy, release-devtools removal, and platform-specific Windows/Linux packaging validation remain distribution work. See [`docs/dev/tauri.md`](../../docs/dev/tauri.md).
