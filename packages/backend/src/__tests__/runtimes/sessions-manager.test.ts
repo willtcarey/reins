@@ -20,6 +20,7 @@ import {
 } from "../../runtimes/registry.js";
 import { setSetting } from "../../settings-store.js";
 import type { WsClient } from "../../state.js";
+import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 
 function createCapturingWsClient() {
   const sent: any[] = [];
@@ -55,6 +56,7 @@ describe("runtime sessions manager", () => {
     clearRuntimeAdapters();
 
     const runtime = {
+      ...createRuntimeStub().runtime,
       prompt: async () => {},
       steer: async () => {},
       abort: async () => {},
@@ -109,6 +111,8 @@ describe("runtime sessions manager", () => {
         prompt: async (content) => {
           capturedPrompt = content;
         },
+        queue: async () => {},
+        waitForIdle: async () => {},
         steer: async () => {},
         abort: async () => {},
         setModel: async () => {},
@@ -171,6 +175,7 @@ describe("runtime sessions manager", () => {
       listModels: async () => [],
       ask: async () => "",
       createRuntime: async () => ({
+        ...createRuntimeStub().runtime,
         prompt: async () => {},
         steer: async () => {},
         abort: async () => {},
@@ -219,6 +224,7 @@ describe("runtime sessions manager", () => {
       id: "sess-live",
       lastActivity: now,
       runtime: {
+        ...createRuntimeStub().runtime,
         prompt: async () => {},
         steer: async () => {},
         abort: async () => {},
@@ -242,6 +248,7 @@ describe("runtime sessions manager", () => {
     clearRuntimeAdapters();
 
     const createRuntime = mock<AgentRuntimeAdapter["createRuntime"]>(async () => ({
+        ...createRuntimeStub().runtime,
         prompt: async () => {},
         steer: async () => {},
         abort: async () => {},
@@ -282,6 +289,7 @@ describe("runtime sessions manager", () => {
     clearRuntimeAdapters();
 
     const createRuntime = mock<AgentRuntimeAdapter["createRuntime"]>(async () => ({
+      ...createRuntimeStub().runtime,
       prompt: async () => {},
       steer: async () => {},
       abort: async () => {},
@@ -332,6 +340,7 @@ describe("runtime sessions manager", () => {
         expect(params).not.toHaveProperty("persistenceHooks");
 
         return {
+          ...createRuntimeStub().runtime,
           prompt: async () => {},
           steer: async () => {},
           abort: async () => {},
@@ -421,6 +430,8 @@ describe("runtime sessions manager", () => {
             listeners.delete(candidate);
           };
         },
+        queue: async () => {},
+        waitForIdle: async () => {},
         getMessages: async () => [{ role: "assistant", content: [{ type: "text", text: "should not persist" }] }],
         isStreaming: () => false,
         close: async () => {},
@@ -455,6 +466,7 @@ describe("runtime sessions manager", () => {
       listModels: async () => [],
       ask: async () => "",
       createRuntime: async () => ({
+        ...createRuntimeStub().runtime,
         prompt: async () => {},
         steer: async () => {},
         abort: async () => {},
@@ -543,6 +555,8 @@ describe("runtime sessions manager", () => {
           };
         },
         getMessages: async () => [],
+        queue: async () => {},
+        waitForIdle: async () => {},
         isStreaming: () => false,
         close: async () => {},
       }),
@@ -565,6 +579,7 @@ describe("runtime sessions manager", () => {
     clearRuntimeAdapters();
 
     const createRuntime = mock<AgentRuntimeAdapter["createRuntime"]>(async () => ({
+        ...createRuntimeStub().runtime,
         prompt: async () => {},
         steer: async () => {},
         abort: async () => {},
@@ -598,14 +613,14 @@ describe("runtime sessions manager", () => {
     const customToolNames = createRuntimeParams?.sessionTools?.customTools?.map((tool: { name: string }) => tool.name);
 
     expect(builtins).toEqual(["read", "write", "edit", "bash"]);
-    expect(customToolNames).toContain("create_task");
-    expect(customToolNames).toContain("delegate");
+    expect(customToolNames).toEqual(["create_task", "search", "execute"]);
   });
 
-  test("ensureSessionOpen omits delegate custom tool for scratch sessions", async () => {
+  test("ensureSessionOpen exposes scripting tools for scratch sessions", async () => {
     clearRuntimeAdapters();
 
     const createRuntime = mock<AgentRuntimeAdapter["createRuntime"]>(async () => ({
+        ...createRuntimeStub().runtime,
         prompt: async () => {},
         steer: async () => {},
         abort: async () => {},
@@ -631,7 +646,7 @@ describe("runtime sessions manager", () => {
 
     const createRuntimeParams = createRuntime.mock.calls[0]?.[0];
     const customToolNames = createRuntimeParams?.sessionTools?.customTools?.map((tool: { name: string }) => tool.name);
-    expect(customToolNames).not.toContain("delegate");
+    expect(customToolNames).toEqual(["create_task", "search", "execute"]);
   });
 
   test("ensureSessionOpen maps runtime ModelNotFoundError to configured default model guidance", async () => {

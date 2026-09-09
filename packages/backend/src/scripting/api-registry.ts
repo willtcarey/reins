@@ -29,6 +29,8 @@ import { TASK_FUNCTIONS, TaskSchema } from "./tasks.js";
 import {
   SESSION_FUNCTIONS,
   SessionSchema,
+  SessionWaitResultSchema,
+  SessionHandleSchema,
   SessionEntrySchema,
   MessageEntrySchema,
   ToolCallEntrySchema,
@@ -72,6 +74,8 @@ export interface NamedType {
 export const DOMAIN_TYPES: NamedType[] = [
   { name: "Task", schema: TaskSchema },
   { name: "Session", schema: SessionSchema },
+  { name: "SessionWaitResult", schema: SessionWaitResultSchema },
+  { name: "SessionHandle", schema: SessionHandleSchema },
   { name: "SessionEntry", schema: SessionEntrySchema },
   { name: "MessageEntry", schema: MessageEntrySchema },
   { name: "ToolCallEntry", schema: ToolCallEntrySchema },

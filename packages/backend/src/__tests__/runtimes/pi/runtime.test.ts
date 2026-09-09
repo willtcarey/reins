@@ -29,11 +29,16 @@ describe("PiAgentRuntime", () => {
       configurable: true,
     });
 
+    let streaming = false;
+    Object.defineProperty(session, "isStreaming", { get: () => streaming });
+    Object.defineProperty(session, "isIdle", { get: () => !streaming });
     const runtime = new PiAgentRuntime(session, "sess-pi-runtime");
 
     await runtime.prompt([{ type: "text", text: "hi" }]);
+    streaming = true;
     await runtime.steer([{ type: "text", text: "course-correct" }]);
     await runtime.abort();
+    streaming = false;
 
     const listener = mock<(event: any) => void>(() => {});
     const unsubscribeFn = runtime.subscribe(listener);
@@ -48,6 +53,99 @@ describe("PiAgentRuntime", () => {
     expect(subscribe).toHaveBeenCalledTimes(1);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  test("uses native activity, follow-ups and idle waiting independently of the prompt promise", async () => {
+    const session = await createTestAgentSession();
+    let finish!: () => void;
+    let streaming = false;
+    Object.defineProperty(session, "isIdle", { get: () => !streaming });
+    Object.defineProperty(session, "isStreaming", { get: () => streaming });
+    session.prompt = async () => new Promise<void>((resolve) => { finish = resolve; });
+    const followUp = mock(async (_text: string) => {});
+    session.followUp = followUp;
+    const nativeIdle = Promise.withResolvers<void>();
+    session.waitForIdle = () => streaming ? nativeIdle.promise : Promise.resolve();
+    const runtime = new PiAgentRuntime(session, "native-queue");
+
+    const prompt = runtime.prompt([{ type: "text", text: "first" }]);
+    // Pi reports idle during preflight; the adapter deliberately reports the same state.
+    expect(runtime.isStreaming()).toBe(false);
+    await runtime.waitForIdle();
+    streaming = true;
+    await runtime.queue([{ type: "text", text: "next" }]);
+    expect(followUp.mock.calls).toEqual([["next"]]);
+    let settled = false;
+    const waiting = runtime.waitForIdle().then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    streaming = false;
+    nativeIdle.resolve();
+    await waiting;
+    expect(runtime.isStreaming()).toBe(false);
+    finish();
+    await prompt;
+  });
+
+  test.each(["queue", "steer"] as const)("starts %s when Pi reports idle", async (mode) => {
+    const session = await createTestAgentSession();
+    let idle = true;
+    Object.defineProperty(session, "isIdle", { get: () => idle });
+    const turns: (() => void)[] = [];
+    session.prompt = async (_text, options) => {
+      idle = false;
+      options?.preflightResult?.(true);
+      await new Promise<void>((resolve) => turns.push(resolve));
+    };
+    const followUp = mock(async () => {});
+    session.followUp = followUp;
+    const steer = mock(async () => {});
+    session.steer = steer;
+    const runtime = new PiAgentRuntime(session, "settlement-gap");
+    await runtime.queue([{ type: "text", text: "first" }]);
+    // Pi's native idleness, not the previous prompt promise, controls admission.
+    idle = true;
+    await runtime.waitForIdle();
+    await runtime[mode]([{ type: "text", text: "second" }]);
+    expect(followUp).toHaveBeenCalledTimes(0);
+    expect(steer).toHaveBeenCalledTimes(0);
+    expect(turns).toHaveLength(2);
+    idle = true;
+    for (const finish of turns) finish();
+    await runtime.waitForIdle();
+  });
+
+  test.each(["queue", "steer"] as const)("delivers %s after native standalone compaction finishes", async (mode) => {
+    const session = await createTestAgentSession();
+    let idle = false;
+    Object.defineProperty(session, "isIdle", { get: () => idle });
+    Object.defineProperty(session, "isStreaming", { get: () => false });
+    const compacted = Promise.withResolvers<void>();
+    session.waitForIdle = () => compacted.promise;
+    const prompt = mock(async (_text: string) => {});
+    const abort = mock(async () => {});
+    session.prompt = prompt;
+    session.abort = abort;
+    const runtime = new PiAgentRuntime(session, "compacting");
+
+    const delivery = runtime[mode]([{ type: "text", text: "after compaction" }]);
+    expect(prompt).toHaveBeenCalledTimes(0);
+    idle = true;
+    compacted.resolve();
+    await delivery;
+    expect(prompt.mock.calls).toEqual([["after compaction"]]);
+    expect(abort).toHaveBeenCalledTimes(0);
+  });
+
+  test("reports prompt failure to its caller without replaying it through idle waits", async () => {
+    const session = await createTestAgentSession();
+    session.prompt = async () => { throw new Error("provider failed"); };
+    const runtime = new PiAgentRuntime(session, "native-failure");
+    await expect(runtime.prompt([{ type: "text", text: "first" }])).rejects.toThrow("provider failed");
+    await expect(runtime.waitForIdle()).resolves.toBeUndefined();
+    session.prompt = async () => {};
+    await runtime.queue([{ type: "text", text: "retry" }]);
+    await expect(runtime.waitForIdle()).resolves.toBeUndefined();
   });
 
   test("normalizes pi string messages to Reins block-only messages", async () => {

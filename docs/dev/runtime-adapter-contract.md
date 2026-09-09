@@ -44,7 +44,7 @@ A runtime adapter must implement `AgentRuntimeAdapter` from `runtimes/registry.t
 - `thinkingLevel` — Reins thinking level (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`) or `null`.
 - `sessionTools`
   - `builtins`: currently `read`, `write`, `edit`, `bash`.
-  - `customTools`: Reins tools (`create_task`, `delegate`, `search`, `execute`; `delegate` only for task sessions).
+  - `customTools`: Reins tools (`create_task`, `search`, `execute`). Session orchestration is exposed through `api.sessions` in execute.
 - `resume`
   - `true` when SQLite already has persisted messages for the session.
   - Runtime must hydrate or otherwise continue from Reins persisted history.
@@ -60,11 +60,20 @@ A runtime returned from `createRuntime()` must implement:
   - Text-only prompts are represented as `[{ type: "text", text }]`; prompt images are attachment refs that the runtime hydrates at the provider boundary.
   - Must reject on fatal prompt failures so the initiating WS client sees an error.
   - Must update `isStreaming()` while running.
+- `queue(content): Promise<void>`
+  - Admits a follow-up without waiting for response completion; starts an idle runtime.
+  - While busy, delivers only after the current work finishes, not at a steering point. Runtimes without supported busy queueing must reject explicitly.
+  - Prefer native queues; do not emulate missing queue/settlement capabilities with a Reins scheduler.
+- `waitForIdle(): Promise<void>`
+  - Observes runtime-native idleness, including native follow-ups, steering, retry and compaction—not `agent_end` alone.
+  - Pi delegates directly to native `waitForIdle()`. Its async preflight can still report idle; this limitation is not masked by retaining prompt promises or adding busy-state guards.
+  - Outcomes come from the latest transcript and any native wait error. Prompt failures are reported to the initiating caller (or logged for background starts), not necessarily replayed by later waits. Adapters with cancellation signals may reject with `AbortError`.
+  - Waiting never aborts work. The model/API layer bounds individual waits and handles waiter cancellation separately.
 - `steer(content): Promise<void>`
   - Called when the user submits validated `RuntimePromptContent` while streaming.
   - If unsupported, reject with a clear error. Claude SDK currently does this.
 - `abort(): Promise<void>`
-  - Cancels the active prompt and aborts active tool execution where possible.
+  - Cancels the active prompt and aborts active tool execution where possible; discard pending queued follow-ups.
 - `setModel({ provider, modelId, thinkingLevel }): Promise<void>`
   - Applies live model changes for an already-open runtime.
   - If runtime-native live switching is unsupported, store for next turn or reject clearly.
@@ -79,7 +88,7 @@ A runtime returned from `createRuntime()` must implement:
   - Returns the full current Reins-normalized transcript for persistence/LLM resume.
   - This is the source of truth used by `runtime-persistence-observer.ts`.
 - `isStreaming(): boolean`
-  - Used by routes, health checks, idle eviction, task deletion guards, and frontend session state.
+  - Used by routes, health checks, idle eviction, task deletion guards, and frontend session state. Reflect native runtime activity, including compaction and queued work, not only active token streaming. Pi uses `!session.isIdle`; it does not add synthetic activity for preflight.
 - `close(): Promise<void>`
   - Releases subprocesses, SDK handles, streams, MCP servers, and listeners.
 - Optional `getSessionMetadata()`
@@ -166,14 +175,31 @@ Persistence filters empty assistant error messages (`role="assistant"`, `stopRea
 A replacement runtime must expose Reins tools to the model somehow:
 
 - Built-in coding tools: `read`, `write`, `edit`, `bash`.
-- Custom tools: `create_task`, `delegate`, `search`, `execute`.
+- Custom tools: `create_task`, `search`, `execute`.
 
 The adapter is responsible for converting Reins `ToolDefinition`s into the runtime-native tool format. Examples today:
 
 - Pi consumes the Pi `customTools` directly.
 - Claude SDK exposes custom tools through an SDK MCP server.
 
-If a runtime cannot expose custom tools, task creation/delegation/search/execute will not be available to agents running through it.
+If a runtime cannot expose custom tools, task creation/session orchestration/search/execute will not be available to agents running through it.
+
+## Asynchronous session orchestration
+
+`api.sessions.start(prompt, options)` materializes a normal session and calls `runtime.queue()`, returning `{ sessionId }` after admission rather than after the response. `options.parentSessionId` is explicitly `"current"` (child) or `null` (independent); creation stays in the caller's project/task. Optional titles reuse `sessions.name`; omitted titles leave normal naming unchanged. Children retain the depth limit of three. Prompts are not prefixed with an artificial delegation preamble.
+
+`api.sessions.send(sessionId, message, mode)` reopens the existing session if needed. Busy `steer` calls native `steer()` and propagates unsupported-steering errors; all `queue` requests and idle requests of either mode use `queue()`. There is no cancellation/restart fallback.
+
+`api.sessions.wait(sessionId, timeoutMs?)` observes the entire session until settled, then returns its latest response/outcome. It waits through the runtime's native settlement and the persistence observer's checkpoint queue, rechecking runtime activity before returning. Waits are bounded to 0–30,000 ms (default 10,000); timeout or execute-tool abort stops only the observation. Self-waits are rejected. Closed sessions are read directly from persisted history without opening an LLM runtime.
+
+There are no receipts, run IDs, new tables, or managed-session execution state machines. Adapters own live work:
+
+- Pi uses native `followUp`, `steer`, `waitForIdle`, and busy/idle flags directly. `prompt()` is an ordinary async SDK call; no completion promise, payload queue, or startup/settlement guard is retained. Idle sends start work without waiting for the response; background prompt rejections are logged. During standalone compaction, sends await native `waitForIdle()` and recheck streaming before choosing prompt versus native queue/steer delivery. No compaction rejection, interruption, or additional execution queue is introduced. Pi can report idle during async preflight or before the outer prompt promise finishes; immediate waits may return before new work begins, and concurrent startup sends are not serialized by Reins. This is an explicit native limitation, not a stronger admission/settlement guarantee.
+- Claude accepts one outstanding prompt. Busy queue and steer requests reject explicitly; idle requests still start work. The existing SDK input stream remains transport plumbing, not a response-gated execution queue. Existing prompt completion and tool abort state provide settlement/error/cancellation information. Native Claude can merge inputs, and its SDK lacks a verified all-inputs settlement barrier, so Reins does not emulate busy queueing.
+- Explicit abort clears Pi's native queue. Native retry/error handling otherwise stays with the SDK. No queued work is replayed after process restart. Once a runtime is evicted, waits can inspect persisted transcript outcomes but cannot reconstruct transient execution errors.
+- The session manager coalesces concurrent opens using `ServerState.sessionOpenings`, avoiding duplicate runtimes for simultaneous sends. This and the runtime map survive handler hot reloads. Creating sibling sessions on the active task branch skips redundant Git checkouts, so session creation does not contend for the checkout/index lock.
+
+Sessions share the existing checkout. No project-wide lock is held across execution or nested waits; agents must coordinate file edits. Parent links do not propagate cancellation or automatically inject results/wake parents. Historical delegate transcripts and frontend renderers remain readable.
 
 ## Resume and persistence expectations
 

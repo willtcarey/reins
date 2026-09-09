@@ -127,11 +127,11 @@ export function attachRuntimePersistenceObserver(params: {
   sessionId: string;
   runtime: AgentRuntime;
   sessions: Sessions;
-}): () => void {
+}): (() => void) & { flush: () => Promise<void> } {
   const { sessionId, runtime, sessions } = params;
   let checkpointQueue = Promise.resolve();
 
-  return runtime.subscribe((event) => {
+  const detach = runtime.subscribe((event) => {
     const persist = () => persistRuntimeStateFromRuntime({ sessionId, runtime, event, sessions });
     const finishesActivity = getActivityStateForEvent(event, runtime.activityCompletionBoundary) === "finished";
     const operation = shouldPersistForRuntimeEvent(event) || finishesActivity
@@ -142,4 +142,5 @@ export function attachRuntimePersistenceObserver(params: {
       logger.error(`  Failed to persist runtime state for ${sessionId}:`, err);
     });
   });
+  return Object.assign(detach, { flush: () => checkpointQueue });
 }

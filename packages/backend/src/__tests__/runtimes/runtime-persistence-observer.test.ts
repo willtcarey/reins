@@ -67,6 +67,8 @@ describe("runtime persistence observer", () => {
         return getMessagesCalls === 1 ? first : Promise.resolve(secondSnapshot);
       },
       async prompt() {},
+      async queue() {},
+      async waitForIdle() {},
       async steer() {},
       async abort() {},
       async setModel() {},

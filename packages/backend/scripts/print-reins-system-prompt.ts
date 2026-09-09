@@ -44,12 +44,9 @@ async function main() {
     createSession: async () => {
       throw new Error("createSession is not available in prompt debug script");
     },
-    delegate: task
-      ? {
-          sessionId: "prompt-debug",
-          deleteSession: () => {},
-        }
-      : undefined,
+    openSession: async () => {
+      throw new Error("openSession is not available in prompt debug script");
+    },
   });
 
   const allTools = [...codingTools, ...customTools];

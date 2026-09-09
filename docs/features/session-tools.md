@@ -20,13 +20,14 @@ These tools let the agent interact with Reins itself:
 | Tool | What it does | Availability |
 |------|-------------|-------------|
 | **create_task** | Create a new task with a title, description, and git branch. Can optionally kick off an initial session on the task immediately — the task is created and work begins in the background. | All sessions |
-| **delegate** | Spawn a sub-session on the current task with a fresh context window. The agent can break large work into focused sub-sessions, keeping each one's context lean. By default the sub-session inherits the parent session's current model and thinking level, and delegation can override them when needed. The sub-session runs to completion and returns its result. | Task sessions only |
 | **search** | Discover Reins internal API functions for `execute` scripts against Reins-managed data or UI state. Returns documentation-only TypeScript interfaces filtered by query. | All sessions |
 | **execute** | Run async JavaScript against Reins internals. The agent writes a function body with access to the existing `api` object. See [Scripting](scripting.md) for details. | All sessions |
 
+Session orchestration uses `api.sessions.start`, `send`, and `wait` through **execute**. Starting returns a session ID without waiting for the response. Agents can create child or independent sessions, supply an optional title, and explicitly queue or steer follow-ups. See [Scripting](scripting.md#start-message-and-wait-for-sessions).
+
 ## How They Appear in Chat
 
-When the agent uses a tool, you'll see a compact inline block in the conversation. Each tool has its own visual style — file paths for read/edit/write, a terminal prompt for bash, colored cards for create_task and delegate.
+When the agent uses a tool, you'll see a compact inline block in the conversation. Each tool has its own visual style — file paths for read/edit/write, a terminal prompt for bash, colored cards for create_task and historical delegate calls.
 
 Click on a tool block to expand it and see full details (file contents, command output, diff, etc.). Click again to collapse. Image results from the read tool show a compact preview inline without needing to expand the block.
 
@@ -35,6 +36,6 @@ Click on a tool block to expand it and see full details (file contents, command 
 The same set of tools is available regardless of which [runtime](runtimes.md) powers the session. How they're executed differs:
 
 - **Direct runtime**: Reins executes all tools directly.
-- **Claude Code runtime**: The SDK executes coding tools (read, write, edit, bash) natively. App tools (create_task, delegate, search, execute) are provided to the SDK via an MCP server.
+- **Claude Code runtime**: The SDK executes coding tools (read, write, edit, bash) natively. App tools (create_task, search, execute) are provided to the SDK via an MCP server.
 
 Tool names and UI presentation are consistent across runtimes.

@@ -20,6 +20,9 @@ import { resolveClaudeBinary } from "./resolve-binary.js";
 
 const BUILTIN_TOOLS = ["Read", "Write", "Edit", "Bash"] as const;
 
+type ClaudeQuery = Pick<Query, typeof Symbol.asyncIterator | "interrupt" | "close" | "setModel">;
+type StartQuery = (params: Parameters<typeof query>[0]) => ClaudeQuery;
+
 type PromptDeferred = {
   resolve: () => void;
   reject: (error: Error) => void;
@@ -112,7 +115,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
   private currentToolAbortController = new AbortController();
   private readonly processor = new ClaudeStreamProcessor();
 
-  private queryHandle: Query | null = null;
+  private queryHandle: ClaudeQuery | null = null;
   private inputStream: SdkInputStream | null = null;
   private consumePromise: Promise<void> | null = null;
   private closed = false;
@@ -124,6 +127,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
   private nextPromptId = 1;
   private activePromptId: number | null = null;
   private promptDeferreds = new Map<number, PromptDeferred>();
+  private lastPrompt: Promise<void> = Promise.resolve();
 
   private modelProvider: string | null;
   private modelId: string | null;
@@ -137,7 +141,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     model?: { provider: string; modelId: string } | null;
     thinkingLevel?: string | null;
     customTools: import("@earendil-works/pi-coding-agent").ToolDefinition[];
-  }) {
+  }, private readonly startQuery: StartQuery = query) {
     this.modelProvider = params.model?.provider ?? null;
     this.modelId = params.model?.modelId ?? null;
     this.thinkingLevel = params.thinkingLevel ?? null;
@@ -162,9 +166,10 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
   }
 
   private createPromptCompletion(promptId: number): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
+    this.lastPrompt = new Promise<void>((resolve, reject) => {
       this.promptDeferreds.set(promptId, { resolve, reject });
     });
+    return this.lastPrompt;
   }
 
   private resolvePrompt(promptId: number): void {
@@ -297,7 +302,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
 
     try {
       this.inputStream = inputStream;
-      this.queryHandle = query({ prompt: inputStream, options });
+      this.queryHandle = this.startQuery({ prompt: inputStream, options });
       this.hasStartedQuery = true;
       this.consumePromise = this.consumeSdkMessages();
     } catch (error) {
@@ -320,7 +325,12 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
           if (event.type === "agent_end" && this.activePromptId !== null) {
             const finishedPromptId = this.activePromptId;
             this.activePromptId = null;
-            this.resolvePrompt(finishedPromptId);
+            if (sdkMessage.type === "result" && sdkMessage.is_error) {
+              const detail = sdkMessage.subtype === "success" ? sdkMessage.result : sdkMessage.errors.join("\n");
+              this.rejectPrompt(finishedPromptId, new Error(detail || "Claude turn failed"));
+            } else {
+              this.resolvePrompt(finishedPromptId);
+            }
           }
         }
       }
@@ -335,6 +345,9 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
 
   async prompt(content: ClientPromptContent): Promise<void> {
     if (this.closed) throw new Error("Runtime closed");
+    if (this.activePromptId !== null) {
+      throw new Error("Prompt already running. Wait for completion or abort and send a new prompt.");
+    }
 
     const promptId = this.nextPromptId++;
     const completion = this.createPromptCompletion(promptId);
@@ -354,11 +367,6 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
       return completion;
     }
 
-    if (this.activePromptId !== null) {
-      this.rejectPrompt(promptId, new Error("Prompt already running. Wait for completion or abort and send a new prompt."));
-      return completion;
-    }
-
     this.activePromptId = promptId;
     this.startToolAbortScope();
     try {
@@ -371,6 +379,26 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     }
 
     return completion;
+  }
+
+  async queue(content: ClientPromptContent): Promise<void> {
+    if (this.closed) throw new Error("Runtime closed");
+    if (this.isStreaming()) {
+      throw new Error("Queueing while busy is not supported on Claude runtime. Wait for settlement before sending another message.");
+    }
+    void this.prompt(content).catch(() => {}); // waitForIdle retrieves failures.
+  }
+
+  async waitForIdle(): Promise<void> {
+    try {
+      do {
+        await this.lastPrompt;
+      } while (this.isStreaming());
+    } catch (error) {
+      if (this.currentToolAbortController.signal.aborted) throw new DOMException("Aborted", "AbortError");
+      throw error;
+    }
+    if (this.currentToolAbortController.signal.aborted) throw new DOMException("Aborted", "AbortError");
   }
 
   async steer(_content: ClientPromptContent): Promise<void> {
@@ -414,7 +442,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
   }
 
   isStreaming(): boolean {
-    return this.streaming;
+    return this.streaming || this.activePromptId !== null;
   }
 
   async close(): Promise<void> {

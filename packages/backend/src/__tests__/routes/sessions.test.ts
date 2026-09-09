@@ -187,6 +187,8 @@ describe("session routes (top-level)", () => {
         id: sessionId,
         lastActivity: Date.now(),
         runtime: {
+          queue: async () => {},
+          waitForIdle: async () => {},
           prompt: async () => {},
           steer: async () => {},
           abort: async () => {},

@@ -60,11 +60,11 @@ A task cannot be deleted while any of its sessions are actively running. Stop th
 
 ## Delegation
 
-Task sessions can **delegate** work to sub-sessions. When an agent calls the `delegate` tool, a new session is spawned on the same task with a fresh context window. The sub-session does a focused piece of work and returns a summary to the parent. This enables work decomposition — an orchestrating session can break a large task into steps, delegating each one to keep context windows lean.
+Task sessions can **delegate** work using `api.sessions.start` through `execute`. A new session starts on the same task with a fresh context window and returns its session ID without waiting for its response. The parent can continue working, send follow-up messages with explicit queue or steer delivery, and call `api.sessions.wait(sessionId)` to retrieve the latest result once all work in that session has settled. See [Scripting](scripting.md#start-message-and-wait-for-sessions).
 
 Sub-sessions are hidden from the top-level task session list. Instead, parent sessions that spawned sub-sessions show a **+N** badge. Clicking the badge expands an inline list of the sub-sessions, each marked with a "sub" tag. Clicking a sub-session navigates to it.
 
-Delegation is depth-limited (max 3 levels) to prevent runaway nesting, and serialized per project to avoid branch conflicts.
+Creating a session requires an explicit parent choice: `parentSessionId: "current"` for a child, or `null` for an independent session. Optional titles use normal session names. Children are depth-limited (max 3 levels). Sessions run independently in the same checkout, so agents must coordinate file edits. Cancelling a parent or its wait does not cancel a child; results are not automatically injected into parents.
 
 ## Starting work on creation
 

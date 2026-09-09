@@ -74,8 +74,8 @@ export async function createTestManagedSession(
   const session = await createTestAgentSession();
 
   if (overrides?.isStreaming !== undefined) {
-    Object.defineProperty(session, "isStreaming", {
-      get: () => overrides.isStreaming,
+    Object.defineProperty(session, "isIdle", {
+      get: () => !overrides.isStreaming,
       configurable: true,
     });
   }

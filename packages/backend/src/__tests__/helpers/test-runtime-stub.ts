@@ -48,6 +48,8 @@ export function createRuntimeStub(options: RuntimeStubOptions = {}): RuntimeStub
     async prompt(content: ClientPromptContent) {
       promptCalls.push(content);
     },
+    async queue(content: ClientPromptContent) { await runtime.prompt(content); },
+    async waitForIdle() {},
     async steer(content: ClientPromptContent) {
       steerCalls.push(content);
     },

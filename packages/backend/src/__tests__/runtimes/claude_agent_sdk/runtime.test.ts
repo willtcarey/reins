@@ -1,12 +1,109 @@
 import { describe, expect, test } from "bun:test";
+import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeSdkAgentRuntime } from "../../../runtimes/claude_agent_sdk/runtime.js";
 import { createProject } from "../../../project-store.js";
 import { createSession } from "../../../session-store.js";
 import { storeSessionAttachment } from "../../../session-attachments-store.js";
 import { useTestDb } from "../../helpers/test-db.js";
 
+// Stub only the subprocess boundary; exercise the real runtime and SDK event mapping.
+function controlledSdk() {
+  let input: AsyncIterator<SDKUserMessage>;
+  let next = Promise.withResolvers<IteratorResult<SDKMessage>>();
+  const finish = (error?: string) => {
+    const waiting = next;
+    next = Promise.withResolvers<IteratorResult<SDKMessage>>();
+    waiting.resolve({ done: false, value: {
+      type: "result", subtype: "success", stop_reason: "end_turn", is_error: !!error,
+      duration_ms: 0, duration_api_ms: 0, num_turns: 1, result: error ?? "done", total_cost_usd: 0,
+      modelUsage: {}, permission_denials: [], uuid: crypto.randomUUID(), session_id: "test",
+      usage: {
+        input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+        server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 }, service_tier: "standard",
+        cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 },
+        inference_geo: "", iterations: [], speed: "standard",
+      },
+    } });
+  };
+  const start: NonNullable<ConstructorParameters<typeof ClaudeSdkAgentRuntime>[1]> = ({ prompt }) => {
+    if (typeof prompt === "string") throw new Error("Expected streaming input");
+    input = prompt[Symbol.asyncIterator]();
+    return {
+      async *[Symbol.asyncIterator]() {
+        let item = await next.promise;
+        while (!item.done) {
+          yield item.value;
+          item = await next.promise;
+        }
+      },
+      interrupt: async () => { finish(); },
+      setModel: async () => {},
+      close: () => { next.resolve({ done: true, value: undefined }); },
+    };
+  };
+  return {
+    query: start,
+    input: async () => (await input.next()).value,
+    finish,
+    fail: (error: Error) => { const waiting = next; next = Promise.withResolvers<IteratorResult<SDKMessage>>(); waiting.reject(error); },
+  };
+}
+
 describe("ClaudeSdkAgentRuntime", () => {
   useTestDb();
+
+  test("starts idle work, rejects busy delivery, and accepts another message after settlement", async () => {
+    const sdk = controlledSdk();
+    const runtime = new ClaudeSdkAgentRuntime({
+      sessionId: "queued-session", projectDir: "/tmp", systemPrompt: "Help", resumeOnFirstPrompt: false, customTools: [],
+    }, sdk.query);
+    await runtime.queue([{ type: "text", text: "one" }]);
+    await expect(runtime.queue([{ type: "text", text: "not accepted" }])).rejects.toThrow("Queueing while busy is not supported");
+    let settled = false;
+    const waiting = runtime.waitForIdle().then(() => { settled = true; });
+    expect(await sdk.input()).toMatchObject({ message: { content: [{ type: "text", text: "one" }] } });
+    expect(runtime.isStreaming()).toBe(true);
+    expect(settled).toBe(false);
+    await expect(runtime.steer([{ type: "text", text: "adjust" }])).rejects.toThrow("Steering is not supported");
+    sdk.finish();
+    await waiting;
+    expect(runtime.isStreaming()).toBe(false);
+    await runtime.queue([{ type: "text", text: "two" }]);
+    expect(await sdk.input()).toMatchObject({ message: { content: [{ type: "text", text: "two" }] } });
+    sdk.finish();
+    await runtime.waitForIdle();
+    await runtime.close();
+  });
+
+  test("error results fail waits", async () => {
+    const sdk = controlledSdk();
+    const runtime = new ClaudeSdkAgentRuntime({
+      sessionId: "error-result", projectDir: "/tmp", systemPrompt: "Help", resumeOnFirstPrompt: false, customTools: [],
+    }, sdk.query);
+    await runtime.queue([{ type: "text", text: "one" }]);
+    await sdk.input();
+    sdk.finish("Turn failed");
+    await expect(runtime.waitForIdle()).rejects.toThrow("Turn failed");
+    expect(runtime.isStreaming()).toBe(false);
+    await runtime.close();
+  });
+
+  test("wait reports SDK failure and cancellation", async () => {
+    const sdk = controlledSdk();
+    const runtime = new ClaudeSdkAgentRuntime({
+      sessionId: "failed-session", projectDir: "/tmp", systemPrompt: "Help", resumeOnFirstPrompt: false, customTools: [],
+    }, sdk.query);
+    await runtime.queue([{ type: "text", text: "one" }]);
+    await sdk.input();
+    sdk.fail(new Error("SDK failed"));
+    await expect(runtime.waitForIdle()).rejects.toThrow("SDK failed");
+    await runtime.queue([{ type: "text", text: "retry" }]);
+    await sdk.input();
+    await runtime.abort();
+    await expect(runtime.waitForIdle()).rejects.toThrow("Aborted");
+    expect(runtime.isStreaming()).toBe(false);
+    await runtime.close();
+  });
 
   test("rejects steer with a clear unsupported message", async () => {
     const runtime = new ClaudeSdkAgentRuntime({

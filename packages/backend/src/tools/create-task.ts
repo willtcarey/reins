@@ -15,7 +15,7 @@ import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { TaskRow } from "../task-store.js";
 import type { Broadcast } from "../models/broadcast.js";
-import type { CreateSessionFn } from "./delegate.js";
+import type { CreateSessionFn } from "../runtimes/sessions-manager.js";
 import { ProjectModel } from "../models/projects.js";
 import type { ManagedSession } from "../state.js";
 import { logger } from "../logger.js";

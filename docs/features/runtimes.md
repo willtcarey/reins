@@ -14,9 +14,9 @@ The Direct runtime uses [pi](https://github.com/nickarino/pi-coding-agent) as it
 
 **Authentication**: Requires an API key per provider. You can set these as environment variables (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) or configure them in the Reins settings panel. Database-managed keys take precedence over environment variables.
 
-**Tool execution**: Reins executes all tools directly — both coding tools (read, write, edit, bash) and app tools (create_task, delegate, search, execute). Tool calls and results are visible in chat with full detail.
+**Tool execution**: Reins executes all tools directly — both coding tools (read, write, edit, bash) and app tools (create_task, search, execute). Tool calls and results are visible in chat with full detail.
 
-**Steering**: Supported. You can send a follow-up message while the agent is mid-turn, and it will be injected into the current turn as guidance.
+**Steering**: Supported through Pi's native steering point. Queue delivery also uses Pi's native follow-up queue. During standalone compaction, sends await Pi's native idle signal before delivering; they do not interrupt compaction. Waiting uses Pi's native idle state, which may still report idle during startup; Reins does not add promise tracking or startup guards to mask that limitation.
 
 **Context management**: Reins manages compaction automatically. When the conversation grows too long, it compacts the history and shows a summary of what was condensed.
 
@@ -34,13 +34,15 @@ The Claude Code runtime uses the [Claude Agent SDK](https://docs.anthropic.com/e
 
 No API key configuration is needed in the Reins settings panel — the runtime shows a `local` auth badge to indicate it relies on host-level auth. If Reins runs on a different machine from your browser, the auth must exist on the Reins host.
 
-**Tool execution**: The SDK executes its own built-in tools (Read, Write, Edit, Bash, Grep, Glob) natively. Reins app tools (create_task, delegate, search, execute) are registered as an MCP server that the SDK calls into. Tool names are normalized in the UI — you see `read`, `edit`, etc. regardless of runtime.
+**Tool execution**: The SDK executes its own built-in tools (Read, Write, Edit, Bash, Grep, Glob) natively. Reins app tools (create_task, search, execute) are registered as an MCP server that the SDK calls into. Tool names are normalized in the UI — you see `read`, `edit`, etc. regardless of runtime.
 
-**Steering**: Not currently supported. If you need to redirect the agent mid-turn, abort the current response and send a new prompt.
+**Steering**: Not currently supported. A scripted `steer` request to a busy session reports an error; it does not cancel/restart or silently queue the message. Busy `queue` requests are also unsupported. Wait for the session to settle, then send another message; idle sends start work normally.
 
 **Context management**: The SDK manages compaction internally. When compaction occurs, Reins shows an informational notice in chat. Unlike the Direct runtime, the compaction summary is not visible — the SDK handles it opaquely.
 
-**Session storage**: The SDK persists session history in its own JSONL files under `~/.claude/projects/`. Reins also snapshots messages into its SQLite database at turn boundaries for display and metadata queries. The SDK files are the source of truth for session resume; the SQLite copy is used for the Reins UI.
+**Session storage**: Reins supplies a database-backed SDK session store. SQLite is the canonical transcript and resume source; runtime-private files are not required to reopen a session.
+
+Both runtimes support [asynchronous session orchestration](scripting.md#start-message-and-wait-for-sessions) through `api.sessions`. Pi supports native queue delivery; Claude accepts sends only when idle. Session waiting includes all accepted work and native settlement. Aborting a session discards pending queued work. Cancelling only a waiter leaves work running.
 
 ## Choosing a runtime
 
@@ -50,7 +52,7 @@ Both runtimes use the same system prompt, the same project/task context, and the
 |---|---|---|
 | Providers | Anthropic, OpenAI, Google, others | Anthropic only |
 | Auth | API key per provider | Claude Code login or ANTHROPIC_API_KEY |
-| Steering mid-turn | Yes | No (abort and re-prompt) |
+| Steering mid-turn | Yes | No (explicit error) |
 | Compaction visibility | Summary shown | Notice only |
 | Tool execution | Reins-managed | SDK-managed (built-ins) + MCP (app tools) |
 

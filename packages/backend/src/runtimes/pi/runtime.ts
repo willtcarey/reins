@@ -1,5 +1,6 @@
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { hydratePromptContent } from "../../session-attachments-store.js";
+import { logger } from "../../logger.js";
 import { toPiThinkingLevel } from "./session.js";
 import type {
   ClientPromptContent,
@@ -195,24 +196,40 @@ export class PiAgentRuntime implements AgentRuntime {
   async prompt(content: ClientPromptContent): Promise<void> {
     const hydrated = hydratePromptContent(this.sessionId, content);
     const { text, images } = runtimePromptToTextAndImages(hydrated);
-    if (images.length > 0) {
-      await this.session.prompt(text, { images });
-    } else {
-      await this.session.prompt(text);
-    }
+    if (images.length > 0) await this.session.prompt(text, { images });
+    else await this.session.prompt(text);
   }
 
-  async steer(content: ClientPromptContent): Promise<void> {
+  queue(content: ClientPromptContent): Promise<void> {
+    return this.send(content, "followUp");
+  }
+
+  steer(content: ClientPromptContent): Promise<void> {
+    return this.send(content, "steer");
+  }
+
+  private async send(content: ClientPromptContent, mode: "followUp" | "steer"): Promise<void> {
+    if (!this.session.isStreaming && !this.session.isIdle) {
+      await this.session.waitForIdle();
+    }
+    if (!this.session.isStreaming) {
+      void this.prompt(content).catch((error: unknown) => {
+        logger.error(`Failed to prompt Pi session ${this.sessionId}:`, error);
+      });
+      return;
+    }
     const hydrated = hydratePromptContent(this.sessionId, content);
     const { text, images } = runtimePromptToTextAndImages(hydrated);
-    if (images.length > 0) {
-      await this.session.steer(text, images);
-    } else {
-      await this.session.steer(text);
-    }
+    if (images.length > 0) await this.session[mode](text, images);
+    else await this.session[mode](text);
+  }
+
+  async waitForIdle(): Promise<void> {
+    await this.session.waitForIdle();
   }
 
   async abort(): Promise<void> {
+    this.session.clearQueue();
     await this.session.abort();
   }
 
@@ -263,10 +280,11 @@ export class PiAgentRuntime implements AgentRuntime {
   }
 
   isStreaming(): boolean {
-    return this.session.isStreaming;
+    return !this.session.isIdle;
   }
 
   async close(): Promise<void> {
+    if (this.isStreaming()) await this.abort();
     this.session.dispose();
   }
 }

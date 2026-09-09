@@ -8,6 +8,8 @@ The runtime persistence observer serializes checkpoint handling in event order. 
 
 Non-checkpoint activity events remain immediate. All sessions, including parented sessions with or without a task, persist and broadcast their own running/finished activity. Parent links do not suppress lifecycle updates; active child-session views need terminal metadata for reconciliation.
 
+The observer exposes `flush()` on its detach handle to await the current checkpoint queue. Session-ID waits call it after runtime settlement and recheck runtime activity before returning a result. Runtime close flushes checkpoints before detaching observers. Neither operation adds synthetic transcript entries or a separate execution-result store.
+
 ## Active transcript projection
 
 `persistMessages(sessionId, messages)` treats its input as the authoritative runtime snapshot. The rows in the active transcript window are a mutable projection of that snapshot:

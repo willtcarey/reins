@@ -21,6 +21,7 @@ import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
+import type { CreateSessionFn } from "../runtimes/sessions-manager.js";
 import { buildApiObject } from "../scripting/api-registry.js";
 
 // ---------------------------------------------------------------------------
@@ -33,6 +34,8 @@ export interface ExecuteToolOpts {
   taskId: number | null;
   broadcast: Broadcast;
   sessions: Map<string, ManagedSession>;
+  createSession?: CreateSessionFn;
+  openSession?: (sessionId: string) => Promise<ManagedSession>;
 }
 
 // ---------------------------------------------------------------------------
@@ -71,7 +74,7 @@ export function createExecuteTool(opts: ExecuteToolOpts): ToolDefinition<typeof 
       "Use the `search` tool first to discover available API functions and documentation interfaces.",
     parameters,
 
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
       try {
         const api = buildApiObject({
           projectId: opts.projectId,
@@ -79,6 +82,9 @@ export function createExecuteTool(opts: ExecuteToolOpts): ToolDefinition<typeof 
           taskId: opts.taskId,
           broadcast: opts.broadcast,
           sessions: opts.sessions,
+          createSession: opts.createSession,
+          openSession: opts.openSession,
+          signal,
         });
 
         // Build a vm context with only the api object and safe JS builtins.

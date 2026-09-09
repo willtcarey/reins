@@ -3,6 +3,7 @@ import {
   createSession as dbCreateSession,
   deleteSession as dbDeleteSession,
   getSession as dbGetSession,
+  updateSessionMeta,
 } from "../session-store.js";
 import { loadMessages as dbLoadMessages, type ClientPromptContent } from "../messages-store.js";
 import { getProject } from "../project-store.js";
@@ -10,7 +11,6 @@ import { touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { Sessions } from "../models/sessions.js";
 import { createCustomTools } from "../tools/index.js";
-import type { CreateSessionOpts } from "../tools/delegate.js";
 import {
   createAgentRuntime,
   ModelNotFoundError,
@@ -24,6 +24,16 @@ import { attachRuntimePersistenceObserver } from "./runtime-persistence-observer
 import { expandPrompt } from "./prompt.js";
 import type { AgentRuntime } from "./registry.js";
 
+export interface CreateSessionOpts {
+  taskId?: number;
+  parentSessionId?: string;
+  title?: string;
+  model?: { provider: string; modelId: string };
+  thinkingLevel?: string;
+}
+
+export type CreateSessionFn = (projectId: number, projectDir: string, opts?: CreateSessionOpts) => Promise<ManagedSession>;
+
 function createSessionFactory(state: ServerState) {
   return (projectId: number, projectDir: string, opts?: CreateSessionOpts) =>
     createNewSession(state, projectId, projectDir, opts);
@@ -36,6 +46,7 @@ function attachPromptExpansion(params: {
   const { runtime, sessionId } = params;
   const originalPrompt = runtime.prompt.bind(runtime);
   const originalSteer = runtime.steer.bind(runtime);
+  const originalQueue = runtime.queue.bind(runtime);
 
   const expand = (content: ClientPromptContent): ClientPromptContent => {
     const { expanded } = expandPrompt(content, sessionId);
@@ -44,6 +55,7 @@ function attachPromptExpansion(params: {
 
   runtime.prompt = (content) => originalPrompt(expand(content));
   runtime.steer = (content) => originalSteer(expand(content));
+  runtime.queue = (content) => originalQueue(expand(content));
 }
 
 function resolveSessionTools(params: {
@@ -56,8 +68,6 @@ function resolveSessionTools(params: {
   const createSession = createSessionFactory(state);
 
   const broadcast = createBroadcast(state.clients);
-  const includeDelegateTool = !!taskId;
-
   const customTools = createCustomTools({
     projectId,
     sessionId,
@@ -65,12 +75,7 @@ function resolveSessionTools(params: {
     broadcast,
     sessions: state.sessions,
     createSession,
-    delegate: includeDelegateTool
-      ? {
-          sessionId,
-          deleteSession: (id) => state.sessions.delete(id),
-        }
-      : undefined,
+    openSession: (id) => ensureSessionOpen(state, id),
   });
 
   return {
@@ -171,14 +176,19 @@ async function createManagedSessionRuntime(params: {
 
   const originalClose = runtime.close.bind(runtime);
   runtime.close = async () => {
-    detachRuntimeObservers();
-    return originalClose();
+    try {
+      await originalClose();
+      await detachRuntimePersistenceObserver.flush();
+    } finally {
+      detachRuntimeObservers();
+    }
   };
 
   const managed: ManagedSession = {
     id: sessionId,
     runtime,
     lastActivity: Date.now(),
+    flushPersistence: detachRuntimePersistenceObserver.flush,
   };
 
   state.sessions.set(sessionId, managed);
@@ -229,6 +239,8 @@ export async function createNewSession(
     parentSessionId: opts?.parentSessionId,
   });
 
+  if (opts?.title !== undefined) updateSessionMeta(sessionId, { name: opts.title });
+
   let managed: ManagedSession;
   try {
     managed = await createManagedSessionRuntime({
@@ -276,6 +288,19 @@ export async function ensureSessionOpen(
     return existing;
   }
 
+  const openings = state.sessionOpenings ??= new Map();
+  const opening = openings.get(sessionId);
+  if (opening) return opening;
+  const pending = reopenSession(state, sessionId);
+  openings.set(sessionId, pending);
+  try {
+    return await pending;
+  } finally {
+    openings.delete(sessionId);
+  }
+}
+
+async function reopenSession(state: ServerState, sessionId: string): Promise<ManagedSession> {
   const row = dbGetSession(sessionId);
   if (!row) {
     throw new Error(`Session not found: ${sessionId}`);

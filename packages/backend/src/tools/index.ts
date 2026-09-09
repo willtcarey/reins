@@ -9,7 +9,7 @@ import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent
 import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { createTaskTool } from "./create-task.js";
-import { createDelegateTool, type CreateSessionFn } from "./delegate.js";
+import type { CreateSessionFn } from "../runtimes/sessions-manager.js";
 import { createSearchTool } from "./search.js";
 import { createExecuteTool } from "./execute.js";
 
@@ -19,13 +19,8 @@ export interface CustomToolsOpts {
   taskId: number | null;
   broadcast: Broadcast;
   sessions: Map<string, ManagedSession>;
-  /** Session creation function — used by create_task (prompt) and delegate. */
   createSession: CreateSessionFn;
-  /** When set, delegation is available for this session. */
-  delegate?: {
-    sessionId: string;
-    deleteSession: (id: string) => void;
-  };
+  openSession: (sessionId: string) => Promise<ManagedSession>;
 }
 
 export function createCustomTools(opts: CustomToolsOpts): ToolDefinition[] {
@@ -43,13 +38,10 @@ export function createCustomTools(opts: CustomToolsOpts): ToolDefinition[] {
       taskId: opts.taskId,
       broadcast: opts.broadcast,
       sessions: opts.sessions,
+      createSession: opts.createSession,
+      openSession: opts.openSession,
     })),
   ];
-
-  // Delegate tool is only available in task sessions
-  if (opts.delegate) {
-    tools.push(defineTool(createDelegateTool(opts.delegate.sessionId, opts.createSession, opts.delegate.deleteSession)));
-  }
 
   return tools;
 }

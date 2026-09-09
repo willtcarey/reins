@@ -9,6 +9,7 @@
 import type { TSchema, TObject, TProperties, Static } from "@sinclair/typebox";
 import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
+import type { CreateSessionFn } from "../runtimes/sessions-manager.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -24,6 +25,9 @@ export interface ApiContext {
   taskId: number | null;
   broadcast: Broadcast;
   sessions: Map<string, ManagedSession>;
+  createSession?: CreateSessionFn;
+  openSession?: (sessionId: string) => Promise<ManagedSession>;
+  signal?: AbortSignal;
 }
 
 /**

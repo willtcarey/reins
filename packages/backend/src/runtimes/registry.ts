@@ -6,7 +6,7 @@ import type {
   RuntimeContentBlock,
   RuntimeMessage,
 } from "../messages-store.js";
-import { checkoutBranch } from "../git.js";
+import { checkoutBranch, getCurrentBranch } from "../git.js";
 import { TaskNotFoundError } from "../models/tasks.js";
 
 export class ModelNotFoundError extends Error {
@@ -127,6 +127,10 @@ export interface AgentRuntime {
   /** Lifecycle event that marks outer runtime activity finished. Defaults to agent_end. */
   readonly activityCompletionBoundary?: RuntimeActivityCompletionBoundary;
   prompt(content: ClientPromptContent): Promise<void>;
+  /** Admit a follow-up without waiting for completion; start when idle. Reject unsupported busy queueing. */
+  queue(content: ClientPromptContent): Promise<void>;
+  /** Observe native idleness, including native queues, retries and compaction; preflight coverage is runtime-specific. */
+  waitForIdle(): Promise<void>;
   steer(content: ClientPromptContent): Promise<void>;
   abort(): Promise<void>;
   setModel(params: SetRuntimeModelParams): Promise<void>;
@@ -176,7 +180,9 @@ export async function createAgentRuntime(
   if (taskId) {
     task = storeGetTask(taskId);
     if (!task) throw new TaskNotFoundError(`Task not found: ${taskId}`);
-    await checkoutBranch(params.projectDir, task.branch_name);
+    if (await getCurrentBranch(params.projectDir) !== task.branch_name) {
+      await checkoutBranch(params.projectDir, task.branch_name);
+    }
   }
 
   const adapter = getRuntimeAdapter(runtimeType);

@@ -175,6 +175,8 @@ describe("Sessions.setModel", () => {
       id: "sess-runtime",
       lastActivity: Date.now(),
       runtime: {
+        queue: async () => {},
+        waitForIdle: async () => {},
         prompt: async () => {},
         steer: async () => {},
         abort: async () => {},

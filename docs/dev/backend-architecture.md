@@ -18,16 +18,17 @@ Thin HTTP adapters. Parse requests, call model functions, format responses. Erro
 
 ### Tools (`src/tools/`)
 
-Agent tool definitions using the pi SDK `customTools` mechanism. Each tool file exports a factory that returns a `ToolDefinition`. Session materialization (`runtimes/sessions-manager.ts`) resolves canonical custom tools (including task/delegate gating) once per session; runtimes consume that shared set and only map built-ins to their native wiring.
+Agent tool definitions using the pi SDK `customTools` mechanism. Each tool file exports a factory that returns a `ToolDefinition`. Session materialization (`runtimes/sessions-manager.ts`) resolves canonical custom tools once per session; runtimes consume that shared set and only map built-ins to their native wiring.
 
 Tool factories receive stable references (server state, session ID) at factory time and look up project context from the DB at execution time.
 
 **Current tools:**
 
 - **`create_task`** — creates a task with a git branch. Available in all sessions. Optional `prompt` parameter kicks off a fire-and-forget session on the new task.
-- **`delegate`** — spawns a sub-session on the same task with a fresh context window, awaits completion, returns a summary. Only available in task sessions. Depth-limited (max 3), serialized per project via an in-memory mutex. See [ADR-005](../adr/005-orchestrator-loop-not-relay-chain.md) for the orchestrator-loop design choice.
 - **`search`** — discovers the curated `execute` API surface by returning documentation-only TypeScript interfaces from `src/scripting/api-registry.ts`.
 - **`execute`** — runs an async JavaScript function body in a VM with only the curated `api` object in scope. Scripting functions live under `src/scripting/`; session-analysis helpers should extend `api.sessions` rather than introducing a separate analytics namespace. Keep `src/scripting/*` as execute/search glue: TypeBox schemas, descriptions/tags, project/task access checks, and delegation to stores/models. DB-backed filtering/extraction logic (for example session entry/message/tool-call extraction) belongs in `src/*-store.ts` so scripting is not the source of truth.
+
+Session orchestration is exposed as `api.sessions.start/send/wait` through search/execute, not specialized delegation tools. `models/session-orchestration.ts` owns lifecycle/scope policy, explicit parent choices, and bounded observation; adapters remain the sole execution/queue authority. Creation/open capabilities and the tool abort signal are injected into execute context. Wait cancellation never invokes the target runtime's abort. See [runtime-adapter-contract.md](runtime-adapter-contract.md#asynchronous-session-orchestration).
 
 ### WebSocket handlers (`src/ws.ts`)
 
@@ -64,7 +65,7 @@ Agent execution is routed through a runtime abstraction:
 - `runtimes/pi/` — pi runtime adapter + runtime wrapper (`PiRuntimeAdapter`, `PiAgentRuntime`) and pi runtime materialization/wiring
 
 `ManagedSession` holds a runtime handle (`managed.runtime`) instead of a raw pi session.
-Current behavior is still pi-only; this seam exists to add additional runtimes without rewriting WS/session orchestration.
+Pi and Claude SDK implement this seam without requiring separate WS/session orchestration.
 
 ### Pi integration (`src/runtimes/pi/`)
 

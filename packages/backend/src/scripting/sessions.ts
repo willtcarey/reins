@@ -3,6 +3,8 @@
  */
 
 import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
+import { SessionOrchestration } from "../models/session-orchestration.js";
 import {
   getSession,
   listSessions,
@@ -18,6 +20,10 @@ import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-f
 
 function sessionModel(ctx: ApiContext) {
   return new Sessions(ctx.sessions, ctx.broadcast);
+}
+
+function withUnread<T extends { activity_state: string | null }>(session: T) {
+  return { ...session, unread: session.activity_state === "finished" };
 }
 
 function assertSessionExists(sessionId: string) {
@@ -42,6 +48,10 @@ export const SessionSchema = Type.Object({
   model_id: Type.Union([Type.String(), Type.Null()]),
   thinking_level: Type.String(),
   agent_runtime_type: Type.String(),
+  unread: Type.Boolean({ description: "Whether the session has an unread completion. API reads do not mark it read." }),
+  activity_state: Type.Union([Type.Literal("running"), Type.Literal("finished"), Type.Null()], {
+    description: "Persisted activity: finished means unread completion, running means active work, null means no pending activity. Reading via this API does not mark sessions read.",
+  }),
   task_id: Type.Union([Type.Number(), Type.Null()]),
   parent_session_id: Type.Union([Type.String(), Type.Null()]),
   message_count: Type.Optional(Type.Number()),
@@ -120,7 +130,8 @@ const sessionsListFunction = defineFunction({
   description:
     "List sessions for a project. Call without options for all sessions in the current project. " +
     "Pass projectId to inspect another project, taskId for one task's sessions, or taskId: null " +
-    "for scratch sessions only. Use taskId: \"current\" from a task session to list that task's sessions.",
+    "for scratch sessions only. Use taskId: \"current\" from a task session to list that task's sessions. " +
+    "Session results include unread: true for unread completions, false otherwise. Reads do not mark sessions read.",
   parameters: Type.Object({ options: Type.Optional(SessionListOptionsSchema) }),
   returns: Type.Array(SessionSchema),
   tags: ["sessions", "list", "query", "read", "scratch", "filter", "search", "messages"],
@@ -139,30 +150,30 @@ const sessionsListFunction = defineFunction({
       limit: options?.limit,
       search: options?.search,
       minMessages: options?.minMessages,
-    });
+    }).map(withUnread);
   },
 });
 
 const sessionsCurrentFunction = defineFunction({
   name: "sessions.current",
-  description: "Get the current session (the one running this script). No ID needed.",
+  description: "Get the current session (the one running this script), including unread status. No ID needed. Does not mark it read.",
   parameters: Type.Object({}),
   returns: SessionSchema,
   tags: ["sessions", "current", "read", "self", "context"],
   execute: (_params, ctx) => {
     const session = getSession(ctx.sessionId);
     if (!session) throw new Error(`Session ${ctx.sessionId} not found`);
-    return session;
+    return withUnread(session);
   },
 });
 
 const sessionsGetFunction = defineFunction({
   name: "sessions.get",
-  description: "Get a single session by ID. Throws if not found.",
+  description: "Get a single session by ID, including unread status. Throws if not found. Does not mark it read.",
   parameters: Type.Object({ sessionId: Type.String() }),
   returns: SessionSchema,
   tags: ["sessions", "get", "read", "lookup"],
-  execute: (params, _ctx) => assertSessionExists(params.sessionId),
+  execute: (params, _ctx) => withUnread(assertSessionExists(params.sessionId)),
 });
 
 const sessionsEntriesFunction = defineFunction({
@@ -199,11 +210,93 @@ export const sessionsSetModelFunction = defineFunction({
   async: true,
   tags: ["sessions", "model", "set", "write", "switch", "provider"],
   execute: async (params, ctx) => {
-    return sessionModel(ctx).setModel({ ...params, projectId: ctx.projectId });
+    return withUnread(await sessionModel(ctx).setModel({ ...params, projectId: ctx.projectId }));
+  },
+});
+
+const StartParameters = Type.Object({
+  prompt: Type.String({ minLength: 1 }),
+  options: Type.Object({
+    parentSessionId: Type.Union([Type.Literal("current"), Type.Null()], { description: '"current" creates a child of the caller; null creates an independent session.' }),
+    title: Type.Optional(Type.String({ minLength: 1 })),
+    modelProvider: Type.Optional(Type.String({ minLength: 1 })),
+    modelId: Type.Optional(Type.String({ minLength: 1 })),
+    thinkingLevel: Type.Optional(ThinkingLevelSchema),
+  }),
+});
+const SendParameters = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  message: Type.String({ minLength: 1 }),
+  mode: Type.Union([Type.Literal("queue"), Type.Literal("steer")]),
+});
+const WaitParameters = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 30000 })),
+});
+export const SessionHandleSchema = Type.Object({ sessionId: Type.String() });
+export const SessionWaitResultSchema = Type.Object({
+  sessionId: Type.String(),
+  status: Type.Union(["idle", "completed", "failed", "cancelled", "timeout"].map((status) => Type.Literal(status))),
+  result: Type.Union([Type.String(), Type.Null()]),
+  error: Type.Union([Type.String(), Type.Null()]),
+});
+
+function orchestration(ctx: ApiContext): SessionOrchestration {
+  return new SessionOrchestration(ctx.sessionId, ctx.sessions, ctx.broadcast, ctx.createSession, ctx.openSession);
+}
+
+const sessionsStartFunction = defineFunction({
+  name: "sessions.start",
+  description: "Start a fresh session in the caller's project/task and return its sessionId without waiting for completion. " +
+    'options.parentSessionId is required: "current" for a child, null for an independent session. ' +
+    "Optional title uses the session name; omitted title preserves normal naming. Model/thinking default to the caller. " +
+    "Sessions share the checkout: coordinate file edits. Only start other agents when the user explicitly asks for delegation or parallel sessions. Use sessions.wait to retrieve results.",
+  parameters: StartParameters,
+  returns: SessionHandleSchema,
+  async: true,
+  tags: ["sessions", "start", "create", "delegate", "async", "parent", "title"],
+  execute: async (params, ctx) => {
+    if (!Value.Check(StartParameters, params)) throw new Error("Invalid session start parameters; options.parentSessionId must be current or null");
+    if (ctx.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    return orchestration(ctx).start(params.prompt, params.options);
+  },
+});
+const sessionsSendFunction = defineFunction({
+  name: "sessions.send",
+  description: "Send a message to a session in the caller's project/task. Reopens it if necessary. " +
+    "Idle sessions start work for either mode. Busy queue waits until current work finishes; steer uses native steering without cancellation/restart. " +
+    "Unsupported steering rejects, never silently queues. Claude also rejects busy queue requests; wait for settlement and send again. " +
+    "During standalone compaction, Pi sends wait for native idleness before delivering. Pi uses native idle state and does not serialize concurrent startup sends. Returns without waiting for response completion.",
+  parameters: SendParameters,
+  returns: SessionHandleSchema,
+  async: true,
+  tags: ["sessions", "send", "message", "queue", "steer", "followup", "async"],
+  execute: async (params, ctx) => {
+    if (!Value.Check(SendParameters, params)) throw new Error("Invalid send parameters; mode must be queue or steer");
+    if (ctx.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    return orchestration(ctx).send(params.sessionId, params.message, params.mode);
+  },
+});
+const sessionsWaitFunction = defineFunction({
+  name: "sessions.wait",
+  description: "Wait until a session in the caller's project/task is fully settled, including all queued follow-ups and steering, then return its latest response/outcome. " +
+    "timeoutMs defaults to 10000, maximum 30000; 0 checks immediately. Timeout or cancelling this script never cancels the target. " +
+    "Already-settled sessions return immediately. Pi uses native idleness, which may report idle during startup; an immediate wait can return before work begins. " +
+    "Pi returns the latest transcript outcome, not a retained prompt failure. Closed sessions read persisted history; transient execution failures are not recovered after restart. No automatic parent wakeup. Cannot wait for yourself.",
+  parameters: WaitParameters,
+  returns: SessionWaitResultSchema,
+  async: true,
+  tags: ["sessions", "wait", "settled", "result", "async", "timeout"],
+  execute: async (params, ctx) => {
+    if (!Value.Check(WaitParameters, params)) throw new Error("Invalid wait parameters; timeoutMs must be between 0 and 30000");
+    return orchestration(ctx).wait(params.sessionId, params.timeoutMs, ctx.signal);
   },
 });
 
 export const SESSION_FUNCTIONS: ApiFunctionDef[] = [
+  sessionsStartFunction,
+  sessionsSendFunction,
+  sessionsWaitFunction,
   sessionsListFunction,
   sessionsCurrentFunction,
   sessionsGetFunction,

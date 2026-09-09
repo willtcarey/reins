@@ -17,6 +17,7 @@ export interface ManagedSession {
   runtime: AgentRuntime;
   id: string;
   lastActivity: number;
+  flushPersistence?: () => Promise<void>;
 }
 
 /** Minimal interface for WebSocket objects — matches Bun's ServerWebSocket. */
@@ -30,6 +31,8 @@ export interface WsClient {
 
 export interface ServerState {
   sessions: Map<string, ManagedSession>;
+  /** Shared across hot-reloaded handlers to coalesce concurrent reopen requests. */
+  sessionOpenings?: Map<string, Promise<ManagedSession>>;
   clients: Set<WsClient>;
   frontendDir: string;
 }
