@@ -11,6 +11,28 @@ interface Renderer {
 }
 
 describe("PierreRenderer", () => {
+  test("diagnostics cannot swallow or replace a renderer exception", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+    class TestHTMLElement { readonly tagName = "DIV"; }
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: TestHTMLElement });
+    try {
+      const failure = new Error("renderer failure");
+      const controller = new PierreRenderer<Input, Renderer>({
+        addController() {}, removeController() {}, requestUpdate() {}, updateComplete: Promise.resolve(true),
+      }, {
+        create: () => ({ cleanUp() {} }),
+        render: () => { throw failure; },
+        observe: () => { throw new Error("diagnostics failed"); },
+      });
+      const values = Reflect.get(controller.bind({ version: 1 }), "values");
+      const attach = values[0];
+      expect(() => attach(new TestHTMLElement())).toThrow(failure);
+      expect(controller.rendered).toBe(false);
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis, "HTMLElement", descriptor);
+      else Reflect.deleteProperty(globalThis, "HTMLElement");
+    }
+  });
   test("invalidates stale completion callbacks when a renderer generation is replaced", () => {
     const htmlElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
     class TestHTMLElement { readonly tagName = "DIV"; }

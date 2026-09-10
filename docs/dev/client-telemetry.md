@@ -59,6 +59,18 @@ Events follow a small OpenTelemetry-inspired shape:
 
 `runId` groups one page lifetime, while `sequence` preserves browser emission order. `operationId` correlates events belonging to one interaction without requiring a page reload; the review virtualizer starts a new operation for every file-tree navigation. `receivedAt` is added by the backend. The review virtualizer records navigation, scrolling, measurement batches, geometry corrections, cancellation, and mounted-window changes.
 
+## Diff renderer failure capture
+
+After installing instrumentation, refresh the browser once, then reproduce repeated Changes updates. Existing tabs cannot report failures retroactively. Filter the current and rotated logs with:
+
+```bash
+jq -c 'select(.scope == "review-renderer")' /tmp/reins-client-telemetry.jsonl*
+```
+
+`review-renderer` records `started`, the first accepted `completed` per renderer generation, and synchronous `failed` events at the Pierre create/render boundary (including Lit ref attachment). Failures trigger an immediate flush attempt through the existing bounded queue. Correlate by page `runId`, renderer `operationId`, and `generation`; numeric `inputId` tracks metadata object identity across remounts without retaining the object or exposing a path. Snapshots include partial/full state, line-array lengths, expansion count, and counts/coordinates for at most four hunks. Compare start and completion snapshots to detect in-place hydration changes.
+
+The known `DiffHunksRenderer.processDiffResult` null-line assertion is classified as `null-diff-lines`; other errors are classified as `other`. Raw error messages, stacks, paths, cache keys, and source contents are not exported. Errors are rethrown unchanged: this diagnostic-only pass does not retry or recover. It does not intercept later asynchronous worker errors, hydration rejections, or interaction-triggered rerenders. Save the browser console stack for those failures.
+
 ## Adding instrumentation
 
 Use the shared bounded recorder:

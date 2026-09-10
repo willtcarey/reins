@@ -5,7 +5,10 @@ export interface PierreRendererInstance {
   cleanUp(): void;
 }
 
+export type PierreRenderEvent = "started" | "completed" | "failed";
+
 export interface PierreRendererAdapter<Input extends object, Renderer extends PierreRendererInstance> {
+  observe?: (event: PierreRenderEvent, input: Input, generation: number, error?: unknown) => void;
   create(input: Input, rendered: () => void): Renderer;
   render(renderer: Renderer, input: Input, container: HTMLElement): void;
   sameInput?: (left: Input, right: Input) => boolean;
@@ -95,18 +98,33 @@ export class PierreRenderer<Input extends object, Renderer extends PierreRendere
     this.cleanUp();
     this.submitted = input;
     const generation = this.generation;
-    this.instance = this.adapter.create(input, () => {
-      if (
-        generation !== this.generation
-        || container !== this.containerValue
-        || !this.requested
-        || !this.sameInput(input, this.requested)
-      ) return;
-      this.completed = input;
-      this.host.requestUpdate();
-      this.adapter.onRendered?.(input);
-    });
-    this.adapter.render(this.instance, input, container);
+    this.observe("started", input, generation);
+    try {
+      this.instance = this.adapter.create(input, () => {
+        if (
+          generation !== this.generation
+          || container !== this.containerValue
+          || !this.requested
+          || !this.sameInput(input, this.requested)
+        ) return;
+        if (this.completed === null) this.observe("completed", input, generation);
+        this.completed = input;
+        this.host.requestUpdate();
+        this.adapter.onRendered?.(input);
+      });
+      this.adapter.render(this.instance, input, container);
+    } catch (error) {
+      this.observe("failed", input, generation, error);
+      throw error;
+    }
+  }
+
+  private observe(event: PierreRenderEvent, input: Input, generation: number, error?: unknown) {
+    try {
+      this.adapter.observe?.(event, input, generation, error);
+    } catch {
+      // Diagnostics must never change renderer behavior or mask its exception.
+    }
   }
 
   private sameInput(left: Input, right: Input): boolean {

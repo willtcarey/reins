@@ -13,6 +13,7 @@ import type { InlineReviewFile } from "../../controllers/inline-review-controlle
 import type { ReviewLineRange } from "../../models/code-review.js";
 import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
 import { ReviewCommentThread } from "./review-comment-thread.js";
+import { createReviewDiffObserver } from "../../models/changes/review-diff-diagnostics.js";
 
 type PierreCommentPlacementMetadata = string;
 
@@ -116,6 +117,7 @@ export function createReviewFileDiffRenderer(
 ) {
   let controller: ReviewFileDiffRenderer;
   controller = new ReviewFileDiffRenderer(host, {
+    observe: createReviewDiffObserver(),
     create: (target, rendered) => {
       controller.resetInlineCommentElements();
       let listeningRoot: ShadowRoot | null = null;
