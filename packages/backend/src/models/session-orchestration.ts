@@ -4,6 +4,7 @@ import { loadMessages, type RuntimeMessage } from "../messages-store.js";
 import type { ManagedSession } from "../state.js";
 import type { CreateSessionFn } from "../runtimes/sessions-manager.js";
 import type { Broadcast } from "./broadcast.js";
+import { logger } from "../logger.js";
 
 export interface SessionStartOptions {
   parentSessionId: "current" | null;
@@ -32,7 +33,7 @@ function transcriptResult(sessionId: string, messages: RuntimeMessage[]): Sessio
   };
 }
 
-/** Session lifecycle operations only; runtime adapters own execution and queues. */
+/** Session lifecycle operations only; runtime adapters own execution and native steering. */
 export class SessionOrchestration {
   constructor(
     private callerId: string,
@@ -81,24 +82,26 @@ export class SessionOrchestration {
       model: provider && modelId ? { provider, modelId } : undefined,
       thinkingLevel: options.thinkingLevel ?? (caller.thinking_level === "off" ? undefined : caller.thinking_level),
     });
-    await this.deliver(managed, prompt, "queue");
+    await this.deliver(managed, prompt);
     return { sessionId: managed.id };
   }
 
-  async send(sessionId: string, message: string, mode: "queue" | "steer"): Promise<{ sessionId: string }> {
+  async send(sessionId: string, message: string): Promise<{ sessionId: string }> {
     this.scopedSession(sessionId);
     if (!this.openSession) throw new Error("Session reopening is unavailable");
     const managed = await this.openSession(sessionId);
-    await this.deliver(managed, message, mode);
+    await this.deliver(managed, message);
     return { sessionId };
   }
 
-  private async deliver(managed: ManagedSession, message: string, mode: "queue" | "steer"): Promise<void> {
+  private async deliver(managed: ManagedSession, message: string): Promise<void> {
     const row = this.session(managed.id);
     const content = [{ type: "text" as const, text: message }];
     managed.lastActivity = Date.now();
-    if (mode === "steer" && managed.runtime.isStreaming()) await managed.runtime.steer(content);
-    else await managed.runtime.queue(content);
+    if (managed.runtime.isStreaming()) await managed.runtime.steer(content);
+    else void managed.runtime.prompt(content).catch((error: unknown) => {
+      logger.error(`Failed to prompt session ${managed.id}:`, error);
+    });
     this.broadcast({ type: "user_message", sessionId: managed.id, projectId: row.project_id, message: content });
   }
 

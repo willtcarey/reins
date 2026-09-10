@@ -60,7 +60,7 @@ A task cannot be deleted while any of its sessions are actively running. Stop th
 
 ## Delegation
 
-Task sessions can **delegate** work using `api.sessions.start` through `execute`. A new session starts on the same task with a fresh context window and returns its session ID without waiting for its response. The parent can continue working, send follow-up messages with explicit queue or steer delivery, and call `api.sessions.wait(sessionId)` to retrieve the latest result once all work in that session has settled. See [Scripting](scripting.md#start-message-and-wait-for-sessions).
+Task sessions can **delegate** work using `api.sessions.start` through `execute`. A new session starts on the same task with a fresh context window and returns its session ID without waiting for its response. The parent can continue working, send messages that resume idle sessions or steer busy ones, and call `api.sessions.wait(sessionId)` to retrieve the latest result once all work in that session has settled. See [Scripting](scripting.md#start-message-and-wait-for-sessions).
 
 Sub-sessions are hidden from the top-level task session list. Instead, parent sessions that spawned sub-sessions show a **+N** badge. Clicking the badge expands an inline list of the sub-sessions, each marked with a "sub" tag. Clicking a sub-session navigates to it.
 

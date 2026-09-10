@@ -33,7 +33,7 @@ execute({
 | Namespace | Functions |
 |---|---|
 | `api.tasks` | `list(status?)`, `get(taskId)`, `current()`, `create(title, description, branchName?)`, `update(taskId, updates)`, `close(taskId)`, `reopen(taskId)` |
-| `api.sessions` | `list(options?)`, `get(sessionId)`, `current()`, `entries(sessionId, options?)`, `setModel(sessionId, provider, modelId, thinkingLevel?)`, `start(prompt, options)`, `send(sessionId, message, mode)`, `wait(sessionId, timeoutMs?)` |
+| `api.sessions` | `list(options?)`, `get(sessionId)`, `current()`, `entries(sessionId, options?)`, `setModel(sessionId, provider, modelId, thinkingLevel?)`, `start(prompt, options)`, `send(sessionId, message)`, `wait(sessionId, timeoutMs?)` |
 | `api.projects` | `list()`, `get(projectId)`, `current()` |
 | `api.models` | `list()`, `listProviders()` |
 | `api.reviews` | `current()`, `addComment(path, line, body, options?)` |
@@ -67,16 +67,17 @@ return child; // { sessionId }; does not wait for the response
 Follow up in a later script using only the session ID:
 
 ```javascript
-await api.sessions.send(sessionId, "Also check the cancellation case.", "queue");
+await api.sessions.send(sessionId, "Also check the cancellation case.");
 return await api.sessions.wait(sessionId, 10000);
 ```
 
-- **queue** waits until current work finishes before delivering the follow-up. **steer** delivers at the runtime's supported steering point, without cancellation/restart. Unsupported steering is an error, never a silent queue fallback. Claude also rejects queue requests while busy: wait for settlement and send again. Reins does not maintain a Claude execution queue.
-- Pi delivers through its native queue/steering APIs. During standalone compaction, sending waits on Pi's native idle signal and then delivers normally, without interrupting compaction or adding a Reins queue. Activity and waiting use Pi's native idle state directly. Pi may report idle during startup, so an immediate wait can return before work begins; Reins does not serialize concurrent startup sends or mask this window with extra state.
-- Either mode starts work when idle and reopens a persisted session when needed. Sending and starting return after runtime materialization/admission, not response completion.
-- **wait** observes native session idleness, including native queued follow-ups, steering, retries and compaction—not one particular message. Pi returns its latest transcript outcome rather than replaying a retained prompt error; background startup failures are logged. It returns `{ sessionId, status, result, error }`. Status is `completed`, `failed`, `cancelled`, `idle` (no assistant response), or `timeout`.
+- **send** reopens a persisted session if needed. When idle, it starts a normal prompt. When busy, it uses native steering—there is no delivery mode parameter or queued follow-up operation. Sending and starting return without waiting for a response.
+- Busy Claude sessions reject steering: wait for idleness and send again. Pi forwards steering directly to its SDK, including during compaction, and propagates native errors. Pi controls when accepted steering is consumed; without an active loop, it may remain pending until later native work.
+- No hidden waiting, automatic retry, unsent-message table, or cancellation/restart fallback. Explicit abort remains separate; if you want to interrupt work, abort it deliberately before sending again.
+- Pi may report idle during startup, so an immediate wait can return before work begins; Reins does not serialize concurrent startup sends or mask this native limitation with extra state.
+- **wait** observes native session idleness, including native steering, retries and compaction—not one particular message. Pi returns its latest transcript outcome rather than replaying a retained prompt error; background startup failures are logged. It returns `{ sessionId, status, result, error }`. Status is `completed`, `failed`, `cancelled`, `idle` (no assistant response), or `timeout`.
 - Wait defaults to 10 seconds, accepts 0–30,000 milliseconds, and can be repeated after timeout. Already-settled sessions return immediately. Cancelling the waiting script does not cancel the other session; a session cannot wait for itself.
-- There are **no run IDs or receipts**. Runtimes own live execution; transcripts remain in SQLite. Waiting on a closed session reads its saved transcript without launching a runtime. Queued work is not replayed after a server restart, and transient execution failures are not recoverable from runtime state after restart/eviction.
+- There are **no run IDs or receipts**. Runtimes own live execution; transcripts remain in SQLite. Waiting on a closed session reads its saved transcript without launching a runtime. There is no delivery queue to replay after a server restart, and transient execution failures are not recoverable from runtime state after restart/eviction.
 - Execution operations are limited to the caller's project/task. Sessions share the checkout, so agents must coordinate edits. Parent relationships do not isolate files, propagate cancellation, or automatically inject results/wake up parents. Results are retrieved explicitly with `wait` or transcript reads.
 
 ### Create a code review

@@ -111,7 +111,6 @@ describe("runtime sessions manager", () => {
         prompt: async (content) => {
           capturedPrompt = content;
         },
-        queue: async () => {},
         waitForIdle: async () => {},
         steer: async () => {},
         abort: async () => {},
@@ -430,7 +429,6 @@ describe("runtime sessions manager", () => {
             listeners.delete(candidate);
           };
         },
-        queue: async () => {},
         waitForIdle: async () => {},
         getMessages: async () => [{ role: "assistant", content: [{ type: "text", text: "should not persist" }] }],
         isStreaming: () => false,
@@ -555,7 +553,6 @@ describe("runtime sessions manager", () => {
           };
         },
         getMessages: async () => [],
-        queue: async () => {},
         waitForIdle: async () => {},
         isStreaming: () => false,
         close: async () => {},

@@ -227,7 +227,6 @@ const StartParameters = Type.Object({
 const SendParameters = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
   message: Type.String({ minLength: 1 }),
-  mode: Type.Union([Type.Literal("queue"), Type.Literal("steer")]),
 });
 const WaitParameters = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
@@ -264,22 +263,22 @@ const sessionsStartFunction = defineFunction({
 const sessionsSendFunction = defineFunction({
   name: "sessions.send",
   description: "Send a message to a session in the caller's project/task. Reopens it if necessary. " +
-    "Idle sessions start work for either mode. Busy queue waits until current work finishes; steer uses native steering without cancellation/restart. " +
-    "Unsupported steering rejects, never silently queues. Claude also rejects busy queue requests; wait for settlement and send again. " +
-    "During standalone compaction, Pi sends wait for native idleness before delivering. Pi uses native idle state and does not serialize concurrent startup sends. Returns without waiting for response completion.",
+    "Idle sessions start a prompt; busy sessions receive native steering without cancellation/restart. " +
+    "Busy Claude sessions reject steering; wait for idleness and send again. Pi forwards directly to native steering, including during compaction; its SDK controls acceptance and consumption timing. " +
+    "No Reins-managed queued follow-ups, deferred delivery, or automatic restart. Pi uses native idle state and does not serialize concurrent startup sends. Returns without waiting for response completion.",
   parameters: SendParameters,
   returns: SessionHandleSchema,
   async: true,
-  tags: ["sessions", "send", "message", "queue", "steer", "followup", "async"],
+  tags: ["sessions", "send", "message", "steer", "resume", "async"],
   execute: async (params, ctx) => {
-    if (!Value.Check(SendParameters, params)) throw new Error("Invalid send parameters; mode must be queue or steer");
+    if (!Value.Check(SendParameters, params)) throw new Error("Invalid send parameters; sessionId and message must be non-empty strings");
     if (ctx.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    return orchestration(ctx).send(params.sessionId, params.message, params.mode);
+    return orchestration(ctx).send(params.sessionId, params.message);
   },
 });
 const sessionsWaitFunction = defineFunction({
   name: "sessions.wait",
-  description: "Wait until a session in the caller's project/task is fully settled, including all queued follow-ups and steering, then return its latest response/outcome. " +
+  description: "Observe native idleness for a session in the caller's project/task, including native steering and compaction, then return its latest response/outcome. " +
     "timeoutMs defaults to 10000, maximum 30000; 0 checks immediately. Timeout or cancelling this script never cancels the target. " +
     "Already-settled sessions return immediately. Pi uses native idleness, which may report idle during startup; an immediate wait can return before work begins. " +
     "Pi returns the latest transcript outcome, not a retained prompt failure. Closed sessions read persisted history; transient execution failures are not recovered after restart. No automatic parent wakeup. Cannot wait for yourself.",

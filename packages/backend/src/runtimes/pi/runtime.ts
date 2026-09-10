@@ -1,6 +1,5 @@
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { hydratePromptContent } from "../../session-attachments-store.js";
-import { logger } from "../../logger.js";
 import { toPiThinkingLevel } from "./session.js";
 import type {
   ClientPromptContent,
@@ -200,28 +199,11 @@ export class PiAgentRuntime implements AgentRuntime {
     else await this.session.prompt(text);
   }
 
-  queue(content: ClientPromptContent): Promise<void> {
-    return this.send(content, "followUp");
-  }
-
-  steer(content: ClientPromptContent): Promise<void> {
-    return this.send(content, "steer");
-  }
-
-  private async send(content: ClientPromptContent, mode: "followUp" | "steer"): Promise<void> {
-    if (!this.session.isStreaming && !this.session.isIdle) {
-      await this.session.waitForIdle();
-    }
-    if (!this.session.isStreaming) {
-      void this.prompt(content).catch((error: unknown) => {
-        logger.error(`Failed to prompt Pi session ${this.sessionId}:`, error);
-      });
-      return;
-    }
+  async steer(content: ClientPromptContent): Promise<void> {
     const hydrated = hydratePromptContent(this.sessionId, content);
     const { text, images } = runtimePromptToTextAndImages(hydrated);
-    if (images.length > 0) await this.session[mode](text, images);
-    else await this.session[mode](text);
+    if (images.length > 0) await this.session.steer(text, images);
+    else await this.session.steer(text);
   }
 
   async waitForIdle(): Promise<void> {

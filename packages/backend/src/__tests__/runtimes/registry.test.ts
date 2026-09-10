@@ -15,7 +15,6 @@ describe("runtime registry", () => {
     clearRuntimeAdapters();
 
     const runtime: AgentRuntime = {
-      queue: async () => {},
       waitForIdle: async () => {},
       prompt: async () => {},
       steer: async () => {},
@@ -47,7 +46,6 @@ describe("runtime registry", () => {
     clearRuntimeAdapters();
 
     const runtime: AgentRuntime = {
-      queue: async () => {},
       waitForIdle: async () => {},
       prompt: async () => {},
       steer: async () => {},
@@ -119,7 +117,6 @@ describe("runtime registry", () => {
       listModels: aListModels,
       ask: async () => "",
       createRuntime: async () => ({
-        queue: async () => {},
         waitForIdle: async () => {},
         prompt: async () => {},
         steer: async () => {},
@@ -137,7 +134,6 @@ describe("runtime registry", () => {
       listModels: bListModels,
       ask: async () => "",
       createRuntime: async () => ({
-        queue: async () => {},
         waitForIdle: async () => {},
         prompt: async () => {},
         steer: async () => {},

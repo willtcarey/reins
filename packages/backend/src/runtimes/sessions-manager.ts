@@ -46,7 +46,6 @@ function attachPromptExpansion(params: {
   const { runtime, sessionId } = params;
   const originalPrompt = runtime.prompt.bind(runtime);
   const originalSteer = runtime.steer.bind(runtime);
-  const originalQueue = runtime.queue.bind(runtime);
 
   const expand = (content: ClientPromptContent): ClientPromptContent => {
     const { expanded } = expandPrompt(content, sessionId);
@@ -55,7 +54,6 @@ function attachPromptExpansion(params: {
 
   runtime.prompt = (content) => originalPrompt(expand(content));
   runtime.steer = (content) => originalSteer(expand(content));
-  runtime.queue = (content) => originalQueue(expand(content));
 }
 
 function resolveSessionTools(params: {

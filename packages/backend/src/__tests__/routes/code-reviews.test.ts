@@ -14,7 +14,6 @@ import type { WsClient } from "../../state.js";
 function reviewRuntime(prompts: unknown[]): AgentRuntime {
   return {
     prompt(message) { prompts.push(message); return Promise.resolve(); },
-    async queue() {},
     async waitForIdle() {},
     async steer() {},
     async abort() {},

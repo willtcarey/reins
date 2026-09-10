@@ -381,14 +381,6 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
     return completion;
   }
 
-  async queue(content: ClientPromptContent): Promise<void> {
-    if (this.closed) throw new Error("Runtime closed");
-    if (this.isStreaming()) {
-      throw new Error("Queueing while busy is not supported on Claude runtime. Wait for settlement before sending another message.");
-    }
-    void this.prompt(content).catch(() => {}); // waitForIdle retrieves failures.
-  }
-
   async waitForIdle(): Promise<void> {
     try {
       do {

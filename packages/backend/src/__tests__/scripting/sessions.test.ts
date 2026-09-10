@@ -38,21 +38,24 @@ describe("api.sessions orchestration", () => {
         const stub = createRuntimeStub();
         const messages: RuntimeMessage[] = loadMessages(sessionId);
         stub.runtime.getMessages = async () => messages;
-        stub.runtime.prompt = async (content) => {
-          messages.push({ role: "user", content: content.filter((block) => block.type === "text"), timestamp: messages.length + 1 });
-          await new Promise<void>((resolve) => turns.push({ finish: resolve, input: content, sessionId }));
-          const response: RuntimeMessage = { role: "assistant", content: text(`response ${messages.length}`), timestamp: messages.length + 1 };
-          messages.push(response);
-          stub.emit({ type: "agent_end", messages });
-        };
         let completion = Promise.resolve();
-        let busy = 0;
-        stub.runtime.queue = async (content) => {
-          busy++;
-          completion = completion.then(() => stub.runtime.prompt(content)).finally(() => { busy--; });
+        let busy = false;
+        stub.runtime.prompt = (content) => {
+          busy = true;
+          completion = (async () => {
+            messages.push({ role: "user", content: content.filter((block) => block.type === "text"), timestamp: messages.length + 1 });
+            await new Promise<void>((resolve) => turns.push({ finish: resolve, input: content, sessionId }));
+            const response: RuntimeMessage = { role: "assistant", content: text(`response ${messages.length}`), timestamp: messages.length + 1 };
+            messages.push(response);
+            stub.emit({ type: "agent_end", messages });
+          })().finally(() => { busy = false; });
+          return completion;
         };
-        stub.runtime.waitForIdle = async () => { do { await completion; } while (stub.runtime.isStreaming()); };
-        stub.runtime.isStreaming = () => busy > 0;
+        stub.runtime.steer = async (content) => {
+          messages.push({ role: "user", content: content.filter((block) => block.type === "text"), timestamp: messages.length + 1 });
+        };
+        stub.runtime.waitForIdle = async () => { await completion; };
+        stub.runtime.isStreaming = () => busy;
         return stub.runtime;
       },
     });
@@ -110,33 +113,52 @@ describe("api.sessions orchestration", () => {
     expect(listSessions({ projectId: project.id }).find((row) => row.id === session.sessionId)?.first_message).toBe("Independent");
   });
 
-  test("reopens a persisted session once for concurrent sends and waits for the entire queue", async () => {
+  test("reopens once, steers concurrent follow-ups, and resumes after settlement", async () => {
     const fixture = setup();
     const { api, project, turns } = fixture;
     createSession("existing", project.id, { agentRuntimeType: "pi", modelProvider: "test", modelId: "model" });
     persistMessages("existing", [{ role: "assistant", content: text("earlier"), timestamp: 1 }]);
-    await Promise.all([api.sessions.send("existing", "one", "steer"), api.sessions.send("existing", "two", "queue")]);
+    await Promise.all([api.sessions.send("existing", "one"), api.sessions.send("existing", "two")]);
     expect(fixture.created).toBe(1);
-    const waiting = api.sessions.wait("existing", 1000);
-    turns[0].finish();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(turns).toHaveLength(1);
     expect(await api.sessions.wait("existing", 0)).toMatchObject({ status: "timeout" });
+    turns[0].finish();
+    expect(await api.sessions.wait("existing", 1000)).toMatchObject({ status: "completed", result: "response 3" });
+    expect(loadMessages("existing").filter((message) => message.role === "user").map((message) => message.content)).toEqual([text("one"), text("two")]);
+    await api.sessions.send("existing", "resume");
+    expect(turns).toHaveLength(2);
     turns[1].finish();
-    expect(await waiting).toMatchObject({ status: "completed", result: "response 4" });
+    expect(await api.sessions.wait("existing", 1000)).toMatchObject({ status: "completed", result: "response 5" });
   });
 
-  test("validates parent, model, delivery mode, scope and self-wait before side effects", async () => {
+  test("validates parent, model, message, scope and self-wait before side effects", async () => {
     const { api, project, turns } = setup();
     const before = listSessions({ projectId: project.id });
     await expect(Promise.resolve().then(() => api.sessions.start("bad", {}))).rejects.toThrow();
     await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, modelId: "alone" }))).rejects.toThrow();
-    await expect(Promise.resolve().then(() => api.sessions.send("parent", "bad", "other"))).rejects.toThrow();
+    await expect(Promise.resolve().then(() => api.sessions.send("parent", ""))).rejects.toThrow();
     await expect(Promise.resolve().then(() => api.sessions.wait("parent", 0))).rejects.toThrow("itself");
     const other = createProject("Other", `${repo.dir}/other`, "main");
     createSession("foreign", other.id, { agentRuntimeType: "pi" });
-    await expect(Promise.resolve().then(() => api.sessions.send("foreign", "bad", "queue"))).rejects.toThrow("scope");
+    await expect(Promise.resolve().then(() => api.sessions.send("foreign", "bad"))).rejects.toThrow("scope");
     expect(listSessions({ projectId: project.id })).toEqual(before);
     expect(turns).toEqual([]);
+  });
+
+  test("unsupported busy steering reports failure without restarting or deferring the message", async () => {
+    const { api, turns, state } = setup();
+    const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: null }));
+    const runtime = state.sessions.get(child.sessionId)!.runtime;
+    let aborted = false;
+    runtime.abort = async () => { aborted = true; };
+    runtime.steer = async () => { throw new Error("Steering unsupported"); };
+    await expect(api.sessions.send(child.sessionId, "not accepted")).rejects.toThrow("Steering unsupported");
+    expect(runtime.isStreaming()).toBe(true);
+    expect(aborted).toBe(false);
+    turns[0].finish();
+    await api.sessions.wait(child.sessionId, 1000);
+    expect(turns).toHaveLength(1);
+    expect(loadMessages(child.sessionId).filter((message) => message.role === "user").map((message) => message.content)).toEqual([text("Work")]);
   });
 
   test("inherits task scope and enforces child depth while independent sessions have no parent", async () => {

@@ -16,7 +16,7 @@ The Direct runtime uses [pi](https://github.com/nickarino/pi-coding-agent) as it
 
 **Tool execution**: Reins executes all tools directly — both coding tools (read, write, edit, bash) and app tools (create_task, search, execute). Tool calls and results are visible in chat with full detail.
 
-**Steering**: Supported through Pi's native steering point. Queue delivery also uses Pi's native follow-up queue. During standalone compaction, sends await Pi's native idle signal before delivering; they do not interrupt compaction. Waiting uses Pi's native idle state, which may still report idle during startup; Reins does not add promise tracking or startup guards to mask that limitation.
+**Steering**: Forwarded directly to Pi's native steering method, including during compaction. Pi controls acceptance and when steering is consumed; Reins adds no activity guard or delivery wait. Acceptance does not guarantee immediate consumption, particularly without an active agent loop. Waiting uses Pi's native idle state, which may still report idle during startup; Reins does not add promise tracking or startup guards to mask that limitation.
 
 **Context management**: Reins manages compaction automatically. When the conversation grows too long, it compacts the history and shows a summary of what was condensed.
 
@@ -36,13 +36,13 @@ No API key configuration is needed in the Reins settings panel — the runtime s
 
 **Tool execution**: The SDK executes its own built-in tools (Read, Write, Edit, Bash, Grep, Glob) natively. Reins app tools (create_task, search, execute) are registered as an MCP server that the SDK calls into. Tool names are normalized in the UI — you see `read`, `edit`, etc. regardless of runtime.
 
-**Steering**: Not currently supported. A scripted `steer` request to a busy session reports an error; it does not cancel/restart or silently queue the message. Busy `queue` requests are also unsupported. Wait for the session to settle, then send another message; idle sends start work normally.
+**Steering**: Not currently supported. Sending to a busy session reports an error; it does not cancel/restart or defer the message. Wait for the session to settle, then send again; idle sends start work normally.
 
 **Context management**: The SDK manages compaction internally. When compaction occurs, Reins shows an informational notice in chat. Unlike the Direct runtime, the compaction summary is not visible — the SDK handles it opaquely.
 
 **Session storage**: Reins supplies a database-backed SDK session store. SQLite is the canonical transcript and resume source; runtime-private files are not required to reopen a session.
 
-Both runtimes support [asynchronous session orchestration](scripting.md#start-message-and-wait-for-sessions) through `api.sessions`. Pi supports native queue delivery; Claude accepts sends only when idle. Session waiting includes all accepted work and native settlement. Aborting a session discards pending queued work. Cancelling only a waiter leaves work running.
+Both runtimes support [asynchronous session orchestration](scripting.md#start-message-and-wait-for-sessions) through `api.sessions`. Sending starts/resumes idle sessions or attempts native steering for busy ones. Queued follow-ups and automatic restart are not supported. Waiting observes native idleness and retrieves the latest transcript/outcome. Explicit abort remains separate; cancelling only a waiter leaves work running.
 
 ## Choosing a runtime
 
