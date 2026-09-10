@@ -84,6 +84,8 @@ clientTelemetry.record("my-scope", "operation-completed", {
 });
 ```
 
+The recorder owns error isolation: `record()` (including operation recording and lazy attribute callbacks) never throws, and `flush()` never rejects. Failed attribute/timestamp evaluation drops that event; failed enablement behaves as disabled; transport failures retain the bounded queue for a later flush. Callers should not wrap telemetry in defensive `try/catch` or attach rejection handlers. Use lazy attribute callbacks for diagnostic computations that might throw, since ordinary argument evaluation happens before the recorder is called.
+
 Prefer stable event names and scalar diagnostic attributes. Record requested and observed values separately when investigating synchronization problems.
 
 Never record source text, diff contents, prompts, credentials, cookies, authorization headers, full file paths, or unrestricted console arguments. Use indexes, counts, booleans, durations, and geometry instead. Telemetry is a diagnostic aid, not application state or an audit log.

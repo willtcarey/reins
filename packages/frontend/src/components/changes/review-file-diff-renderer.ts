@@ -226,22 +226,18 @@ export function createReviewFileDiffRenderer(
           lineAnnotations: commentAnnotations(target),
         });
       } catch (error) {
-        try {
-          clientTelemetry.record("review-renderer", "failed", () => ({
-            // Do not export arbitrary errors, paths, or source contents.
-            failure: error instanceof Error && error.message ===
-              "DiffHunksRenderer.processDiffResult: deletionLine and additionLine are null, something is wrong"
-              ? "null-diff-lines" : "other",
-            partial: target.fileDiff.isPartial === true,
-            additionLineCount: target.fileDiff.additionLines.length,
-            deletionLineCount: target.fileDiff.deletionLines.length,
-            hunkCount: target.fileDiff.hunks.length,
-            expansionCount: target.expansionHistory.length,
-          }));
-          void clientTelemetry.flush().catch(() => {});
-        } catch {
-          // Reporting must not replace the original renderer exception.
-        }
+        clientTelemetry.record("review-renderer", "failed", () => ({
+          // Do not export arbitrary errors, paths, or source contents.
+          failure: error instanceof Error && error.message ===
+            "DiffHunksRenderer.processDiffResult: deletionLine and additionLine are null, something is wrong"
+            ? "null-diff-lines" : "other",
+          partial: target.fileDiff.isPartial === true,
+          additionLineCount: target.fileDiff.additionLines.length,
+          deletionLineCount: target.fileDiff.deletionLines.length,
+          hunkCount: target.fileDiff.hunks.length,
+          expansionCount: target.expansionHistory.length,
+        }));
+        void clientTelemetry.flush();
         throw error;
       }
     },
