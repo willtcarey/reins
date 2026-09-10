@@ -120,6 +120,6 @@ When diagnosing a failure, correlate one navigation by `operationId` and compare
 
 `ReviewFileDiff` records accepted host measurements without inspecting Pierre's child structure. The generic controller emits an optional generic observation stream for batch geometry, navigation, anchoring, and window changes; `ReviewDiffPanel` alone adapts those observations to review/client telemetry.
 
-The Pierre controller also exposes an optional, exception-isolated observation hook. The review adapter uses it for bounded `review-renderer` input snapshots and synchronous create/render failure classification; see the telemetry guide for capture scope and limitations. This instrumentation leaves exceptions and recovery behavior unchanged.
+The review adapter reports synchronous `renderer.render` failures through the existing bounded telemetry recorder, then rethrows unchanged. See the telemetry guide for capture scope and limitations.
 
 Telemetry is evidence, not an alternative contract. Fix the violated invariant rather than adding compensating scroll behavior around unstable geometry.

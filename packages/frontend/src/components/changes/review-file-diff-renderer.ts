@@ -13,7 +13,7 @@ import type { InlineReviewFile } from "../../controllers/inline-review-controlle
 import type { ReviewLineRange } from "../../models/code-review.js";
 import { getPierreWorkerPool, PIERRE_SHIKI_THEME } from "../../models/changes/pierre-worker-pool.js";
 import { ReviewCommentThread } from "./review-comment-thread.js";
-import { createReviewDiffObserver } from "../../models/changes/review-diff-diagnostics.js";
+import { clientTelemetry } from "../../models/client-telemetry.js";
 
 type PierreCommentPlacementMetadata = string;
 
@@ -117,7 +117,6 @@ export function createReviewFileDiffRenderer(
 ) {
   let controller: ReviewFileDiffRenderer;
   controller = new ReviewFileDiffRenderer(host, {
-    observe: createReviewDiffObserver(),
     create: (target, rendered) => {
       controller.resetInlineCommentElements();
       let listeningRoot: ShadowRoot | null = null;
@@ -215,15 +214,37 @@ export function createReviewFileDiffRenderer(
       }
       return renderer;
     },
-    render: (renderer, target, container) => renderer.render({
-      // Never mark patch-only arrays complete: Pierre and Shiki use complete
-      // hunk positions to index lines whenever isPartial is false. The normal
-      // unmanaged FileDiff owns a nested <diffs-container>; Lit owns only this
-      // stable wrapper, so cleanup cannot remove Lit's mount.
-      fileDiff: target.fileDiff,
-      containerWrapper: container,
-      lineAnnotations: commentAnnotations(target),
-    }),
+    render: (renderer, target, container) => {
+      try {
+        renderer.render({
+          // Never mark patch-only arrays complete: Pierre and Shiki use complete
+          // hunk positions to index lines whenever isPartial is false. The normal
+          // unmanaged FileDiff owns a nested <diffs-container>; Lit owns only this
+          // stable wrapper, so cleanup cannot remove Lit's mount.
+          fileDiff: target.fileDiff,
+          containerWrapper: container,
+          lineAnnotations: commentAnnotations(target),
+        });
+      } catch (error) {
+        try {
+          clientTelemetry.record("review-renderer", "failed", () => ({
+            // Do not export arbitrary errors, paths, or source contents.
+            failure: error instanceof Error && error.message ===
+              "DiffHunksRenderer.processDiffResult: deletionLine and additionLine are null, something is wrong"
+              ? "null-diff-lines" : "other",
+            partial: target.fileDiff.isPartial === true,
+            additionLineCount: target.fileDiff.additionLines.length,
+            deletionLineCount: target.fileDiff.deletionLines.length,
+            hunkCount: target.fileDiff.hunks.length,
+            expansionCount: target.expansionHistory.length,
+          }));
+          void clientTelemetry.flush().catch(() => {});
+        } catch {
+          // Reporting must not replace the original renderer exception.
+        }
+        throw error;
+      }
+    },
     sameInput: (left, right) => left === right,
     onRendered,
   });
