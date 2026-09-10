@@ -8,11 +8,52 @@ function isExportedTypeAliasRealias(node) {
   return annotation?.type === "TSTypeReference" && !annotation.typeArguments;
 }
 
+function isTelemetryCall(node) {
+  if (node?.type === "AwaitExpression" || (node?.type === "UnaryExpression" && node.operator === "void")) {
+    return isTelemetryCall(node.argument);
+  }
+  const callee = node?.type === "CallExpression" ? node.callee : null;
+  return callee?.type === "MemberExpression"
+    && callee.object?.type === "Identifier"
+    && ["clientTelemetry", "telemetry"].includes(callee.object.name)
+    && !callee.computed
+    && ["record", "flush", "startOperation"].includes(callee.property?.name);
+}
+
 module.exports = {
   meta: {
     name: "reins",
   },
   rules: {
+    "no-telemetry-error-guards": {
+      meta: {
+        type: "problem",
+        docs: { description: "Let client telemetry handle its own errors." },
+        messages: {
+          noGuard: "Telemetry handles its own errors; remove this telemetry-only error guard.",
+        },
+      },
+      create(context) {
+        return {
+          TryStatement(node) {
+            const statements = node.block.body;
+            if (node.handler && statements.length > 0 && statements.every((statement) => (
+              statement.type === "ExpressionStatement" && isTelemetryCall(statement.expression)
+            ))) {
+              context.report({ node, messageId: "noGuard" });
+            }
+          },
+          CallExpression(node) {
+            const callee = node.callee;
+            if (callee?.type === "MemberExpression" && !callee.computed
+              && callee.property?.name === "catch" && isTelemetryCall(callee.object)) {
+              context.report({ node, messageId: "noGuard" });
+            }
+          },
+        };
+      },
+    },
+
     "no-reexports": {
       meta: {
         type: "problem",
