@@ -412,19 +412,6 @@ describe("session-store", () => {
         expect(getSession("sess-1")!.activity_state).toBeNull();
       });
 
-      test("does not assign activity state to delegate sessions", () => {
-        createSession("sess-parent", projectId, { agentRuntimeType: "pi" });
-        createSession("sess-child", projectId, {
-          agentRuntimeType: "pi",
-          parentSessionId: "sess-parent",
-        });
-
-        updateActivityState("sess-child", "running");
-        expect(getSession("sess-child")!.activity_state).toBeNull();
-
-        updateActivityState("sess-child", "finished");
-        expect(getSession("sess-child")!.activity_state).toBeNull();
-      });
     });
 
   });

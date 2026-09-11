@@ -6,7 +6,7 @@ Runtime checkpoints are **complete snapshots**, not append-only message events. 
 
 The runtime persistence observer serializes checkpoint handling in event order. It does not start `getMessages()` for a later checkpoint until the preceding checkpoint has been stored. Terminal non-checkpoint boundaries such as settlement-aware `agent_settled` also wait behind that queue before broadcasting finished activity. This is the concurrency boundary: the messages store does not infer whether one valid snapshot is newer than another from message contents.
 
-Non-checkpoint activity events remain immediate.
+Non-checkpoint activity events remain immediate. All sessions, including parented sessions with or without a task, persist and broadcast their own running/finished activity. Parent links do not suppress lifecycle updates; active child-session views need terminal metadata for reconciliation.
 
 ## Active transcript projection
 
