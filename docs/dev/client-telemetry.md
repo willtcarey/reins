@@ -59,6 +59,18 @@ Events follow a small OpenTelemetry-inspired shape:
 
 `runId` groups one page lifetime, while `sequence` preserves browser emission order. `operationId` correlates events belonging to one interaction without requiring a page reload; the review virtualizer starts a new operation for every file-tree navigation. `receivedAt` is added by the backend. The review virtualizer records navigation, scrolling, measurement batches, geometry corrections, cancellation, and mounted-window changes.
 
+## Diff renderer failure capture
+
+After installing instrumentation, refresh the browser once, then reproduce repeated Changes updates. Existing tabs cannot report failures retroactively. Filter the current and rotated logs with:
+
+```bash
+jq -c 'select(.scope == "review-renderer")' /tmp/reins-client-telemetry.jsonl*
+```
+
+A catch around the review adapter's `renderer.render` call records `review-renderer` / `failed` with partial/full state, line-array lengths, hunk count, and expansion count, then attempts an immediate flush through the existing bounded queue. Use `runId` and `sequence` to locate the failure among other page events.
+
+The known `DiffHunksRenderer.processDiffResult` null-line assertion is classified as `null-diff-lines`; other errors are classified as `other`. Raw error messages, stacks, paths, cache keys, and source contents are not exported. Errors are rethrown unchanged: this diagnostic-only pass does not retry or recover. It does not intercept later asynchronous worker errors, hydration rejections, or interaction-triggered rerenders. Save the browser console stack for those failures.
+
 ## Adding instrumentation
 
 Use the shared bounded recorder:
@@ -71,6 +83,8 @@ clientTelemetry.record("my-scope", "operation-completed", {
   itemCount,
 });
 ```
+
+The recorder owns error isolation: `record()` (including operation recording and lazy attribute callbacks) never throws, and `flush()` never rejects. Failed attribute/timestamp evaluation drops that event; failed enablement behaves as disabled; transport failures retain the bounded queue for a later flush. Callers should not wrap telemetry in defensive `try/catch` or attach rejection handlers. Use lazy attribute callbacks for diagnostic computations that might throw, since ordinary argument evaluation happens before the recorder is called.
 
 Prefer stable event names and scalar diagnostic attributes. Record requested and observed values separately when investigating synchronization problems.
 

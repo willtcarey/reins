@@ -20,7 +20,7 @@ interface ClientTelemetryOptions {
   now?: () => string;
 }
 
-/** Bounded browser diagnostic queue. Production builds never enable it. */
+/** Best-effort bounded diagnostics: record never throws and flush never rejects. */
 export class ClientTelemetry {
   private readonly queue: ClientTelemetryEvent[] = [];
   private readonly maxQueue: number;
@@ -44,7 +44,11 @@ export class ClientTelemetry {
   }
 
   public get enabled(): boolean {
-    return this.options.enabled();
+    try {
+      return this.options.enabled();
+    } catch {
+      return false;
+    }
   }
 
   public startOperation(scope: string): ClientTelemetryOperation {
@@ -57,34 +61,41 @@ export class ClientTelemetry {
     event: string,
     attributes?: TelemetryAttributes,
   ) {
-    if (!this.enabled) return;
-    const resolvedAttributes = typeof attributes === "function" ? attributes() : attributes;
-    this.sequence += 1;
-    if (this.queue.length === this.maxQueue) this.queue.shift();
-    this.queue.push({
-      timestamp: this.now(),
-      runId: this.runId,
-      sequence: this.sequence,
-      scope,
-      event,
-      ...(resolvedAttributes ? { attributes: resolvedAttributes } : {}),
-    });
-    if (this.autoFlush && this.timer === null) {
-      this.timer = setTimeout(() => {
-        this.timer = null;
-        void this.flush();
-      }, this.flushIntervalMs);
+    try {
+      if (!this.enabled) return;
+      const resolvedAttributes = typeof attributes === "function" ? attributes() : attributes;
+      const timestamp = this.now();
+      this.sequence += 1;
+      if (this.queue.length === this.maxQueue) this.queue.shift();
+      this.queue.push({
+        timestamp,
+        runId: this.runId,
+        sequence: this.sequence,
+        scope,
+        event,
+        ...(resolvedAttributes ? { attributes: resolvedAttributes } : {}),
+      });
+      if (this.autoFlush && this.timer === null) {
+        this.timer = setTimeout(() => {
+          this.timer = null;
+          void this.flush();
+        }, this.flushIntervalMs);
+      }
+    } catch {
+      // Drop failed diagnostics rather than interrupting application behavior.
     }
   }
 
   public flush(): Promise<void> {
     if (this.flushing) return this.flushing;
-    this.flushing = this.flushQueued().finally(() => { this.flushing = null; });
+    this.flushing = this.flushQueued()
+      .catch(() => {})
+      .finally(() => { this.flushing = null; });
     return this.flushing;
   }
 
   private async flushQueued() {
-    while (this.queue.length > 0 && this.options.enabled()) {
+    while (this.queue.length > 0 && this.enabled) {
       const batch = this.queue.splice(0, this.maxBatch);
       try {
         await this.options.transport(batch);

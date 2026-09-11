@@ -10,6 +10,7 @@
     "unicorn/prefer-add-event-listener": "off",
     "unicorn/require-post-message-target-origin": "off",
     "typescript/consistent-type-assertions": ["error", { "assertionStyle": "never" }],
+    "reins/no-telemetry-error-guards": "error",
     "reins/no-reexports": "error",
     "reins/no-exported-type-realiases": "error"
   },

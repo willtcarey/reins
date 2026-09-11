@@ -14,6 +14,63 @@ function runRule(ruleName: keyof typeof plugin.rules, visitorName: string, node:
   return reports;
 }
 
+function catchCall(object: object) {
+  return {
+    type: "CallExpression",
+    callee: {
+      type: "MemberExpression", object,
+      property: { type: "Identifier", name: "catch" }, computed: false,
+    },
+  };
+}
+
+describe("reins/no-telemetry-error-guards", () => {
+  const record = {
+    type: "CallExpression",
+    callee: {
+      type: "MemberExpression",
+      object: { type: "Identifier", name: "clientTelemetry" },
+      property: { type: "Identifier", name: "record" },
+      computed: false,
+    },
+  };
+  const statement = { type: "ExpressionStatement", expression: record };
+
+  test("rejects a catch protecting only telemetry calls", () => {
+    const reports = runRule("no-telemetry-error-guards", "TryStatement", {
+      block: { body: [statement, {
+        type: "ExpressionStatement",
+        expression: { type: "UnaryExpression", operator: "void", argument: {
+          type: "AwaitExpression", argument: record,
+        } },
+      }] }, handler: { type: "CatchClause" },
+    });
+    expect(reports).toHaveLength(1);
+  });
+
+  test("allows application error handling, including reporting inside its catch", () => {
+    const applicationCall = {
+      type: "ExpressionStatement",
+      expression: { type: "CallExpression", callee: { type: "Identifier", name: "render" } },
+    };
+    expect(runRule("no-telemetry-error-guards", "TryStatement", {
+      block: { body: [applicationCall, statement] },
+      handler: { type: "CatchClause", body: { body: [statement] } },
+    })).toHaveLength(0);
+    expect(runRule("no-telemetry-error-guards", "TryStatement", {
+      block: { body: [statement] }, handler: null, finalizer: { body: [] },
+    })).toHaveLength(0);
+  });
+
+  test("rejects telemetry promise catch handlers but allows other promise catches", () => {
+    const flush = { ...record, callee: { ...record.callee, property: { type: "Identifier", name: "flush" } } };
+    expect(runRule("no-telemetry-error-guards", "CallExpression", catchCall(flush))).toHaveLength(1);
+    expect(runRule("no-telemetry-error-guards", "CallExpression", catchCall({
+      type: "CallExpression", callee: { type: "Identifier", name: "fetch" },
+    }))).toHaveLength(0);
+  });
+});
+
 describe("reins/no-reexports", () => {
   test("reports named re-exports from another module", () => {
     const reports = runRule("no-reexports", "ExportNamedDeclaration", {
