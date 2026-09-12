@@ -1,4 +1,7 @@
-import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import {
+  type AgentSession,
+  type AgentSessionEvent,
+} from "@earendil-works/pi-coding-agent";
 import { hydratePromptContent } from "../../session-attachments-store.js";
 import { toPiThinkingLevel } from "./session.js";
 import type {
@@ -247,9 +250,33 @@ export class PiAgentRuntime implements AgentRuntime {
   }
 
   async getMessages(): Promise<RuntimeMessage[]> {
-    const messages = this.session.messages;
+    const messages: unknown = this.session.messages;
     assertPiRuntimeMessages(messages);
-    return messages.map(normalizePiRuntimeMessage);
+
+    // Pi keeps failed retry entries in append-only history after removing their
+    // message objects from active state. Map by object identity, never position,
+    // role, timestamp, or content, so those entries cannot donate identity.
+    const entryIds = new Map<object, string>();
+    let compactionId: string | undefined;
+    for (const entry of this.session.sessionManager.buildContextEntries()) {
+      if (entry.type === "message" && typeof entry.message === "object") {
+        entryIds.set(entry.message, entry.id);
+      } else if (entry.type === "compaction") {
+        compactionId = entry.id;
+      }
+    }
+
+    return messages.map((message) => {
+      const normalized = normalizePiRuntimeMessage(message);
+      const logicalId = typeof message === "object"
+        ? entryIds.get(message)
+        : undefined;
+      if (logicalId) return { ...normalized, logicalId };
+      if (message.role === "compactionSummary" && compactionId) {
+        return { ...normalized, logicalId: compactionId };
+      }
+      return normalized;
+    });
   }
 
   getSessionMetadata(): { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null } {

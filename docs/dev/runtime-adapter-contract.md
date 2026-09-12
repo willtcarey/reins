@@ -164,6 +164,10 @@ Tool names should be normalized to Reins names where possible (`read`, `write`, 
   - `role: "compactionSummary"`
   - `summary` contains the compacted context; do not also set `content`.
 
+Stored annotations use the application-owned `metadata?: Record<string, unknown>` field, with feature keys directly inside it. Full persisted UI reads retain metadata; runtime snapshots cannot write it. `loadMessagesForLLM()` excludes metadata while retaining the optional runtime-continuity field `logicalId` for adapter hydration. Pi removes both fields from model messages and reconstructs `logicalId` from native `SessionEntry.id` in finalized snapshots; Claude's explicit SDK-entry projection omits both application and continuity fields.
+
+Metadata continuity requires an exact stable `logicalId`. Pi preserves native entry IDs across Reins reopen and compaction. Runtimes without stable identity do not transfer metadata across rewritten snapshots; timestamps, provider response IDs, tool-call IDs, content, and position are not treated as identity. Streaming Pi events may lack `logicalId` until the native entry is appended; finalized persistence snapshots include it.
+
 Persistence filters empty assistant error messages (`role="assistant"`, `stopReason="error"`, empty `content`) so runtimes may emit those only as transient UI error carriers.
 
 ## Tool integration expectations

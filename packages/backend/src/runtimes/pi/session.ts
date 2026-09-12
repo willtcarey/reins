@@ -2,6 +2,8 @@ import {
   createAgentSession,
   SessionManager,
   type AgentSession,
+  type FileEntry,
+  type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import { loadMessagesForLLM } from "../../messages-store.js";
 import type { TaskRow } from "../../task-store.js";
@@ -57,18 +59,63 @@ export function filterErrorMessages(messages: any[]): any[] {
   });
 }
 
+function withoutContinuityFields(message: any): any {
+  const { logicalId: _logicalId, metadata: _metadata, ...nativeMessage } = message;
+  return nativeMessage;
+}
+
+/** Reconstruct Pi's active entry chain, retaining stable IDs where available. */
+export function createHydratedSessionManager(
+  messages: any[],
+  cwd = process.cwd(),
+  sessionId?: string,
+): SessionManager {
+  const idSource = SessionManager.inMemory(cwd);
+  const entries: SessionEntry[] = [];
+  let parentId: string | null = null;
+
+  for (const message of messages) {
+    const nativeMessage = withoutContinuityFields(message);
+    const generatedId = message.role === "compactionSummary"
+      ? idSource.appendCompaction(message.summary ?? "", idSource.getLeafId() ?? "", 0)
+      : idSource.appendMessage(nativeMessage);
+    const id = typeof message.logicalId === "string" && message.logicalId.length > 0
+      ? message.logicalId
+      : generatedId;
+    const timestamp = new Date(
+      typeof message.timestamp === "number" ? message.timestamp : Date.now(),
+    ).toISOString();
+
+    entries.push(message.role === "compactionSummary"
+      ? {
+        type: "compaction", id, parentId, timestamp,
+        summary: message.summary ?? "", firstKeptEntryId: "", tokensBefore: 0,
+      }
+      : { type: "message", id, parentId, timestamp, message: nativeMessage });
+    parentId = id;
+  }
+
+  const header: FileEntry = {
+    type: "session", version: 3, id: sessionId ?? idSource.getSessionId(),
+    timestamp: new Date().toISOString(), cwd,
+  };
+  return SessionManager.inMemory(cwd, { id: header.id }, [header, ...entries]);
+}
+
 export function hydrateSessionManager(sm: SessionManager, messages: any[]): void {
-  for (const msg of messages) {
-    if (msg.role === "compactionSummary") {
-      sm.appendCompaction(msg.summary ?? "", sm.getLeafId() ?? "", 0);
+  for (const message of messages) {
+    const nativeMessage = withoutContinuityFields(message);
+    if (message.role === "compactionSummary") {
+      sm.appendCompaction(message.summary ?? "", sm.getLeafId() ?? "", 0);
     } else {
-      sm.appendMessage(msg);
+      sm.appendMessage(nativeMessage);
     }
   }
 }
 
 async function buildSessionOpts(params: {
   projectDir: string;
+  sessionManager?: SessionManager;
   task: TaskRow | null;
   model: CreateAgentRuntimeParams["model"];
   thinkingLevel: CreateAgentRuntimeParams["thinkingLevel"];
@@ -80,9 +127,8 @@ async function buildSessionOpts(params: {
     model,
     thinkingLevel,
     sessionTools,
+    sessionManager = SessionManager.inMemory(),
   } = params;
-
-  const sessionManager = SessionManager.inMemory();
   const builtinNames = sessionTools?.builtins ?? ["read", "write", "edit", "bash"];
 
   const customTools = sessionTools?.customTools ?? [];
@@ -178,12 +224,17 @@ async function createPiSessionRuntime(params: CreateAgentRuntimeParams): Promise
     sessionTools,
   } = params;
 
+  const messages = loadMessagesForLLM(sessionId);
+  const sessionManager = messages.length > 0
+    ? createHydratedSessionManager(messages, projectDir, sessionId)
+    : SessionManager.inMemory(projectDir, { id: sessionId });
   const sessionOpts = await buildSessionOpts({
     projectDir,
     task,
     model,
     thinkingLevel,
     sessionTools,
+    sessionManager,
   });
 
   const result = await createAgentSession(sessionOpts);
@@ -209,10 +260,8 @@ async function createPiSessionRuntime(params: CreateAgentRuntimeParams): Promise
     }
   }
 
-  const messages = loadMessagesForLLM(sessionId);
   if (messages.length > 0) {
-    hydrateSessionManager(agentSession.sessionManager, messages);
-    agentSession.agent.state.messages = messages;
+    agentSession.agent.state.messages = agentSession.sessionManager.buildSessionContext().messages;
     logger.info(`  Session hydrated: ${sessionId} (${messages.length} messages for LLM)`);
   }
 

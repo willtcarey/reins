@@ -65,6 +65,9 @@ export type RuntimeContentBlock = TextContentBlock | ThinkingContentBlock | Tool
 
 export interface RuntimeMessage {
   role: string;
+  /** Stable runtime-owned logical identity. Not a provider response or SQLite row ID. */
+  logicalId?: string;
+  metadata?: Record<string, unknown>;
   content?: RuntimeContentBlock[];
   stopReason?: string;
   summary?: string;
@@ -106,6 +109,8 @@ type SessionMessageEntryMetadata<Role extends Exclude<SessionEntryType, "toolCal
 };
 
 type PersistedMessageBase = {
+  logicalId?: string;
+  metadata?: Record<string, unknown>;
   summary?: string;
   [key: string]: unknown;
 };
@@ -255,15 +260,70 @@ function parsePersistedMessage(messageJson: string): PersistedMessage {
   return parsed;
 }
 
+function messageIdentity(message: { logicalId?: unknown }): string | null {
+  return typeof message.logicalId === "string" && message.logicalId.length > 0
+    ? message.logicalId
+    : null;
+}
+
+interface ActiveTailRow {
+  id: number;
+  seq: number;
+  message_json: string;
+}
+
+function preservePositionMetadata(
+  activeRows: ActiveTailRow[],
+  incoming: PersistableRuntimeMessage[],
+): PersistableRuntimeMessage[] {
+  return incoming.map((message, index) => {
+    const row = activeRows[index];
+    if (!row) return message;
+    const persisted = parsePersistedMessage(row.message_json);
+    const identity = messageIdentity(message);
+    return identity && identity === messageIdentity(persisted) && persisted.metadata
+      ? { ...message, metadata: persisted.metadata }
+      : message;
+  });
+}
+
+function preserveRetainedCompactionMetadata(
+  activeRows: ActiveTailRow[],
+  incoming: PersistableRuntimeMessage[],
+): PersistableRuntimeMessage[] {
+  const candidates = new Map<string, PersistedMessage | null>();
+  for (const row of activeRows) {
+    const message = parsePersistedMessage(row.message_json);
+    const identity = messageIdentity(message);
+    if (identity) candidates.set(identity, candidates.has(identity) ? null : message);
+  }
+  const seen = new Set<string>();
+  for (const message of incoming) {
+    const identity = messageIdentity(message);
+    if (!identity) continue;
+    if (seen.has(identity)) candidates.delete(identity);
+    seen.add(identity);
+  }
+  return incoming.map((message) => {
+    const metadata = candidates.get(messageIdentity(message) ?? "")?.metadata;
+    return metadata ? { ...message, metadata } : message;
+  });
+}
+
 function compactionSummaryMatches(summaryJson: string, incoming: RuntimeMessage): boolean {
   const parsed = parsePersistedMessage(summaryJson);
-  return parsed.role === "compactionSummary"
-    && incoming.role === "compactionSummary"
-    && parsed.summary === incoming.summary;
+  if (parsed.role !== "compactionSummary" || incoming.role !== "compactionSummary") return false;
+  const persistedId = messageIdentity(parsed);
+  const incomingId = messageIdentity(incoming);
+  if (persistedId || incomingId) return persistedId === incomingId;
+  // Legacy/runtime-without-identity boundary detection only; metadata is never transferred without IDs.
+  return parsed.summary === incoming.summary;
 }
 
 interface PersistableRuntimeMessage {
   role: string;
+  logicalId?: string;
+  metadata?: Record<string, unknown>;
   content?: PersistedContentBlock[];
   stopReason?: string;
   summary?: string;
@@ -271,21 +331,16 @@ interface PersistableRuntimeMessage {
 }
 
 function toPersistableMessage(sessionId: string, message: RuntimeMessage): PersistableRuntimeMessage {
-  if (!message.content) return { ...message, content: undefined };
+  const { metadata: _metadata, ...sanitized } = message;
+  if (!sanitized.content) return { ...sanitized, content: undefined };
   return {
-    ...message,
-    content: message.content.map((block) => externalizeRuntimeContentBlock(sessionId, block)),
+    ...sanitized,
+    content: sanitized.content.map((block) => externalizeRuntimeContentBlock(sessionId, block)),
   };
 }
 
 function messagesMatch(persistedJson: string, incoming: PersistableRuntimeMessage): boolean {
   return persistedJson === JSON.stringify(incoming);
-}
-
-interface ActiveTailRow {
-  id: number;
-  seq: number;
-  message_json: string;
 }
 
 /**
@@ -343,12 +398,20 @@ export function persistMessages(sessionId: string, runtimeMessages: RuntimeMessa
       return;
     }
 
-    const incomingWindow = runtimeMessages.slice(compactionIdx < 0 ? 0 : compactionIdx)
+    const projectedWindow = runtimeMessages.slice(compactionIdx < 0 ? 0 : compactionIdx)
       .map((message) => toPersistableMessage(sessionId, message));
     const latestBoundaryMatches = compactionIdx >= 0
       && lastSummaryRow !== null
       && lastSummaryRow !== undefined
       && compactionSummaryMatches(lastSummaryRow.message_json, runtimeMessages[compactionIdx]);
+    const activeStartSeq = lastSummaryRow?.last_seq ?? 0;
+    const activeRows = db.query<ActiveTailRow, [string, number]>(
+      `SELECT id, seq, message_json FROM session_messages
+       WHERE session_id = ? AND seq >= ? ORDER BY seq`,
+    ).all(sessionId, activeStartSeq);
+    const incomingWindow = compactionIdx >= 0 && !latestBoundaryMatches
+      ? preserveRetainedCompactionMetadata(activeRows, projectedWindow)
+      : preservePositionMetadata(activeRows, projectedWindow);
 
     if (compactionIdx >= 0 && !latestBoundaryMatches) {
       const maxRow = db.query<{ max_seq: number }, [string]>(
@@ -358,12 +421,6 @@ export function persistMessages(sessionId: string, runtimeMessages: RuntimeMessa
       changed = incomingWindow.length > 0;
       return;
     }
-
-    const activeStartSeq = latestBoundaryMatches ? lastSummaryRow!.last_seq : 0;
-    const activeRows = db.query<ActiveTailRow, [string, number]>(
-      `SELECT id, seq, message_json FROM session_messages
-       WHERE session_id = ? AND seq >= ? ORDER BY seq`,
-    ).all(sessionId, activeStartSeq);
 
     let mismatchIdx = 0;
     while (
@@ -414,6 +471,34 @@ export function persistMessages(sessionId: string, runtimeMessages: RuntimeMessa
   if (changed) {
     db.query("UPDATE sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(sessionId);
   }
+}
+
+/** Attach one application-owned namespace to a message with stable runtime identity. */
+export function attachStoredMessageMetadata(
+  sessionId: string,
+  messageId: string,
+  namespace: string,
+  value: unknown,
+): void {
+  if (namespace.trim().length === 0) throw new Error("Message metadata namespace cannot be empty");
+  if (JSON.stringify(value) === undefined) throw new Error("Message metadata must be JSON-serializable");
+
+  const db = getDb();
+  const tx = db.transaction(() => {
+    const row = db.query<{ message_json: string }, [string, string]>(
+      "SELECT message_json FROM session_messages WHERE session_id = ? AND id = ?",
+    ).get(sessionId, messageId);
+    if (!row) throw new Error("Stored message not found");
+
+    const message = parsePersistedMessage(row.message_json);
+    if (!messageIdentity(message)) throw new Error("Stored message has no stable logical identity");
+    message.metadata = { ...message.metadata, [namespace]: value };
+    db.query("UPDATE session_messages SET message_json = ? WHERE session_id = ? AND id = ?")
+      .run(JSON.stringify(message), sessionId, messageId);
+    db.query("UPDATE sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?")
+      .run(sessionId);
+  });
+  tx();
 }
 
 /** Load all messages for replay/counting callers that need the complete transcript. */
@@ -770,5 +855,8 @@ export function loadMessagesForLLM(sessionId: string): any[] {
     )
     .all(sessionId, minSeq);
 
-  return rows.map((r) => hydratePersistedMessageImages(sessionId, parsePersistedMessage(r.message_json)));
+  return rows.map((row) => {
+    const { metadata: _metadata, ...projected } = parsePersistedMessage(row.message_json);
+    return hydratePersistedMessageImages(sessionId, projected);
+  });
 }

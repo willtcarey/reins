@@ -4,12 +4,14 @@ import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "../project-store.js";
 import { createSession } from "../session-store.js";
 import {
+  attachStoredMessageMetadata,
   loadMessagePage,
   loadMessages,
   loadMessagesForLLM,
   listSessionEntries,
   parseDisplayCursor,
   persistMessages,
+  type PersistedMessage,
   type RuntimeMessage,
 } from "../messages-store.js";
 
@@ -156,6 +158,166 @@ describe("messages-store", () => {
       );
     });
 
+  });
+
+  describe("stored message metadata", () => {
+    test("survives same-message snapshot updates and reopen projection without leaking to the model", () => {
+      createSession("sess-metadata", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-metadata", [
+        { role: "user", content: textContent("question"), timestamp: 1000, logicalId: "question-id" },
+        { role: "assistant", content: textContent("draft"), stopReason: "toolUse", timestamp: 2000, logicalId: "answer-id" },
+      ]);
+      const assistantId = loadMessagePage("sess-metadata", 10).items[1].id;
+      const notification = { sourceSessionId: "child-1", outcome: "completed" };
+      attachStoredMessageMetadata("sess-metadata", assistantId, "session-orchestration", notification);
+      attachStoredMessageMetadata("sess-metadata", assistantId, "audit", { reviewed: true });
+
+      const reopenProjection = loadMessagesForLLM("sess-metadata");
+      expect(reopenProjection).toEqual([
+        { role: "user", content: textContent("question"), timestamp: 1000, logicalId: "question-id" },
+        { role: "assistant", content: textContent("draft"), stopReason: "toolUse", timestamp: 2000, logicalId: "answer-id" },
+      ]);
+      persistMessages("sess-metadata", reopenProjection);
+      persistMessages("sess-metadata", [
+        { role: "user", content: textContent("question"), timestamp: 1000 },
+        {
+          role: "assistant",
+          content: textContent("final"),
+          stopReason: "stop",
+          timestamp: 2000,
+          logicalId: "answer-id",
+          metadata: { marker: "runtime snapshots cannot overwrite application metadata" },
+        },
+      ]);
+
+      const storedAssistant: PersistedMessage = {
+        role: "assistant",
+        content: textContent("final"),
+        stopReason: "stop",
+        timestamp: 2000,
+        logicalId: "answer-id",
+        metadata: {
+          "session-orchestration": notification,
+          audit: { reviewed: true },
+        },
+      };
+      expect(loadMessages("sess-metadata")[1]).toEqual(storedAssistant);
+      expect(loadMessagePage("sess-metadata", 10).items[1].message).toEqual(storedAssistant);
+      expect(loadMessagesForLLM("sess-metadata")[1]).not.toHaveProperty("metadata");
+    });
+
+    test("requires stable logical identity for metadata attachment", () => {
+      createSession("sess-metadata-unidentified", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-metadata-unidentified", [
+        { role: "user", content: textContent("message without a normalized timestamp"), id: "vendor-id" },
+      ]);
+      const messageId = loadMessagePage("sess-metadata-unidentified", 10).items[0].id;
+
+      expect(() => attachStoredMessageMetadata(
+        "sess-metadata-unidentified",
+        messageId,
+        "marker",
+        { value: true },
+      )).toThrow();
+      expect(loadMessages("sess-metadata-unidentified")[0]).not.toHaveProperty("metadata");
+    });
+
+    test("does not transfer metadata to a replacement or resurrect it after truncation", () => {
+      createSession("sess-metadata-replace", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-metadata-replace", [
+        { role: "user", content: textContent("question"), timestamp: 1000, logicalId: "question-id" },
+        { role: "assistant", content: textContent("old answer"), timestamp: 2000, logicalId: "old-answer-id" },
+        { role: "user", content: textContent("remove me"), timestamp: 3000, logicalId: "removed-id" },
+      ]);
+      const originalPage = loadMessagePage("sess-metadata-replace", 10);
+      attachStoredMessageMetadata("sess-metadata-replace", originalPage.items[1].id, "marker", { value: "answer" });
+      attachStoredMessageMetadata("sess-metadata-replace", originalPage.items[2].id, "marker", { value: "removed" });
+
+      const replacement = [
+        { role: "user", content: textContent("question"), timestamp: 1000, logicalId: "question-id" },
+        { role: "assistant", content: textContent("replacement"), timestamp: 4000, logicalId: "replacement-id" },
+      ];
+      persistMessages("sess-metadata-replace", replacement);
+
+      expect(loadMessages("sess-metadata-replace")).toEqual(replacement);
+
+      persistMessages("sess-metadata-replace", [
+        ...replacement,
+        { role: "user", content: textContent("new use of old timestamp"), timestamp: 3000, logicalId: "new-id" },
+      ]);
+      const appendedId = loadMessagePage("sess-metadata-replace", 10).items[2].id;
+      expect(appendedId).not.toBe(originalPage.items[2].id);
+      expect(loadMessagePage("sess-metadata-replace", 10).items[2].message).not.toHaveProperty("metadata");
+    });
+
+    test("copies metadata only for retained messages at a new compaction boundary", () => {
+      createSession("sess-metadata-compact", projectId, { agentRuntimeType: "pi" });
+      const retained = { role: "assistant", content: textContent("retained answer"), timestamp: 2000, logicalId: "retained-id" };
+      persistMessages("sess-metadata-compact", [
+        { role: "user", content: textContent("archived question"), timestamp: 1000, logicalId: "archived-id" },
+        retained,
+        { role: "user", content: textContent("omitted tail"), timestamp: 3000, logicalId: "omitted-id" },
+      ]);
+      const beforeCompaction = loadMessagePage("sess-metadata-compact", 10);
+      attachStoredMessageMetadata("sess-metadata-compact", beforeCompaction.items[0].id, "marker", { value: "archived" });
+      attachStoredMessageMetadata("sess-metadata-compact", beforeCompaction.items[1].id, "marker", { value: "retained" });
+      attachStoredMessageMetadata("sess-metadata-compact", beforeCompaction.items[2].id, "marker", { value: "omitted" });
+
+      persistMessages("sess-metadata-compact", [
+        { role: "compactionSummary", summary: "summary", timestamp: 4000, logicalId: "summary-id" },
+        retained,
+      ]);
+
+      const fullPage = loadMessagePage("sess-metadata-compact", 10);
+      expect(fullPage.items.at(-1)!.message.metadata).toEqual({ marker: { value: "retained" } });
+      expect(fullPage.items[0].message.metadata).toEqual({ marker: { value: "archived" } });
+      expect(fullPage.items[2].message.metadata).toEqual({ marker: { value: "omitted" } });
+      expect(loadMessagesForLLM("sess-metadata-compact")).toEqual([
+        { role: "compactionSummary", summary: "summary", timestamp: 4000, logicalId: "summary-id" },
+        retained,
+      ]);
+    });
+  });
+
+  describe("metadata identity", () => {
+    test("distinguishes tool results sharing a timestamp by tool call ID", () => {
+      createSession("sess-tool-metadata", projectId, { agentRuntimeType: "pi" });
+      const result: RuntimeMessage = {
+        role: "toolResult", toolCallId: "call-a", toolName: "read", logicalId: "result-id",
+        content: textContent("old result"), isError: false, timestamp: 1000,
+      };
+      persistMessages("sess-tool-metadata", [result]);
+      const id = loadMessagePage("sess-tool-metadata", 10).items[0].id;
+      attachStoredMessageMetadata("sess-tool-metadata", id, "audit", true);
+      persistMessages("sess-tool-metadata", [{ ...result, content: textContent("updated result") }]);
+      expect(loadMessagePage("sess-tool-metadata", 10).items[0].message.metadata).toEqual({ audit: true });
+
+      persistMessages("sess-tool-metadata", [{ ...result, toolCallId: "call-b", logicalId: "replacement-id" }]);
+      expect(loadMessagePage("sess-tool-metadata", 10).items[0].message).not.toHaveProperty("metadata");
+    });
+
+    test("uses logical IDs despite duplicate timestamps across compaction", () => {
+      createSession("sess-ambiguous", projectId, { agentRuntimeType: "pi" });
+      const first = { role: "assistant", content: textContent("first"), timestamp: 1000, logicalId: "first-id" };
+      const second = { role: "assistant", content: textContent("second"), timestamp: 1000, logicalId: "second-id" };
+      const unique = { role: "user", content: textContent("unique before compaction"), timestamp: 2000, logicalId: "unique-id" };
+      persistMessages("sess-ambiguous", [first, second, unique]);
+      const page = loadMessagePage("sess-ambiguous", 10);
+      attachStoredMessageMetadata("sess-ambiguous", page.items[0].id, "audit", "first");
+      attachStoredMessageMetadata("sess-ambiguous", page.items[2].id, "audit", "unique");
+
+      persistMessages("sess-ambiguous", [
+        { role: "compactionSummary", summary: "summary", timestamp: 3000 },
+        first, unique, { ...unique, logicalId: "duplicate-id", content: textContent("duplicate after compaction") },
+      ]);
+
+      const stored = loadMessages("sess-ambiguous");
+      expect(stored.slice(3).map((message) => message.metadata)).toEqual([
+        undefined, { audit: "first" }, { audit: "unique" }, undefined,
+      ]);
+      expect(stored[0].metadata).toEqual({ audit: "first" });
+      expect(stored[2].metadata).toEqual({ audit: "unique" });
+    });
   });
 
   describe("loadMessages", () => {

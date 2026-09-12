@@ -61,6 +61,28 @@ describe("toSessionStoreEntries", () => {
     expectUuidChain(result);
   });
 
+  test("excludes stored message metadata from Claude SDK entries", () => {
+    const result = toSessionStoreEntries(
+      [msg({
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+        timestamp: 1000,
+        metadata: {
+          "session-orchestration": { sourceSessionId: "child-1" },
+        },
+      })],
+      testContext,
+    );
+
+    expect(stripMeta(result[0])).toEqual({
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      },
+    });
+  });
+
   test("user image blocks are translated to SDK image content", () => {
     const result = toSessionStoreEntries(
       [

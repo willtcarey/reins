@@ -1,11 +1,14 @@
 import { describe, expect, mock, test } from "bun:test";
 import { Type } from "@sinclair/typebox";
 import { defineTool, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createProject } from "../../../project-store.js";
+import { createSession } from "../../../session-store.js";
+import { attachStoredMessageMetadata, loadMessagePage, persistMessages } from "../../../messages-store.js";
 import { createTestAgentSession } from "../../helpers/test-pi.js";
 import { useTestDb } from "../../helpers/test-db.js";
 import { createServerState } from "../../helpers/server-state.js";
 import { getPiSession } from "../../../runtimes/pi/runtime.js";
-import { ephemeralPrompt, hydrateSessionManager, PiRuntimeAdapter, toPiThinkingLevel } from "../../../runtimes/pi/session.js";
+import { createHydratedSessionManager, ephemeralPrompt, hydrateSessionManager, PiRuntimeAdapter, toPiThinkingLevel } from "../../../runtimes/pi/session.js";
 import type { SessionEntry, SessionMessageEntry, CompactionEntry } from "@earendil-works/pi-coding-agent";
 
 /** Narrow a SessionEntry to SessionMessageEntry (throws if wrong type). */
@@ -26,6 +29,35 @@ function textContent(text: string) {
 
 describe("PiRuntimeAdapter", () => {
   useTestDb();
+
+  test("preserves stored metadata across Pi resume without hydrating it into native messages", async () => {
+    const project = createProject("Resume", "/tmp");
+    createSession("sess-pi-metadata", project.id, { agentRuntimeType: "pi" });
+    const messages = [{ role: "user" as const, content: textContent("hello"), timestamp: 1000, logicalId: "pi-user-1" }];
+    persistMessages("sess-pi-metadata", messages);
+    const id = loadMessagePage("sess-pi-metadata", 10).items[0].id;
+    attachStoredMessageMetadata("sess-pi-metadata", id, "audit", { reviewed: true });
+
+    const runtime = await new PiRuntimeAdapter().createRuntime({
+      state: createServerState(), projectId: project.id, projectDir: "/tmp",
+      sessionId: "sess-pi-metadata", task: null, resume: true,
+      sessionTools: { builtins: [], customTools: [] },
+    });
+    try {
+      expect(getPiSession(runtime).messages).toEqual([
+        { role: "user", content: textContent("hello"), timestamp: 1000 },
+      ]);
+      expect(getPiSession(runtime).sessionManager.getEntries()[0].id).toBe("pi-user-1");
+      const snapshot = await runtime.getMessages();
+      expect(snapshot).toEqual(messages);
+      persistMessages("sess-pi-metadata", snapshot);
+      expect(loadMessagePage("sess-pi-metadata", 10).items[0]).toEqual({
+        id, parentId: null, message: { ...messages[0], metadata: { audit: { reviewed: true } } },
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
 
   test("maps Reins max thinking to Pi's native max level", () => {
     expect(toPiThinkingLevel("max")).toBe("max");
@@ -106,6 +138,49 @@ describe("ephemeralPrompt", () => {
 
     expect(result).toBe("done");
     expect(abort).not.toHaveBeenCalled();
+  });
+});
+
+describe("Pi stable message identity", () => {
+  test("assigns native IDs to legacy messages and exposes them without putting them in model messages", async () => {
+    const sm = createHydratedSessionManager([
+      { role: "user", content: textContent("legacy"), timestamp: 1000 },
+    ], "/tmp", "legacy-session");
+    const session = await createTestAgentSession({ sessionManager: sm });
+    session.agent.state.messages = sm.buildSessionContext().messages;
+    const runtime = new (await import("../../../runtimes/pi/runtime.js")).PiAgentRuntime(session, "legacy-session");
+
+    expect(session.messages[0]).not.toHaveProperty("logicalId");
+    expect((await runtime.getMessages())[0].logicalId).toBe(sm.getEntries()[0].id);
+  });
+
+  test("maps duplicate timestamps and retry replacements by active message object", async () => {
+    const sm = createHydratedSessionManager([
+      { role: "assistant", content: textContent("failed"), timestamp: 1000, logicalId: "failed-id" },
+      { role: "assistant", content: textContent("replacement"), timestamp: 1000, logicalId: "replacement-id" },
+    ]);
+    const session = await createTestAgentSession({ sessionManager: sm });
+    const replacement = sm.buildSessionContext().messages[1];
+    session.agent.state.messages = [replacement];
+    const runtime = new (await import("../../../runtimes/pi/runtime.js")).PiAgentRuntime(session, "retry");
+
+    expect(await runtime.getMessages()).toEqual([
+      { role: "assistant", content: textContent("replacement"), timestamp: 1000, logicalId: "replacement-id" },
+    ]);
+  });
+
+  test("retains compaction summary and retained-tail identities", async () => {
+    const sm = createHydratedSessionManager([
+      { role: "compactionSummary", summary: "summary", timestamp: 1000, logicalId: "summary-id" },
+      { role: "assistant", content: textContent("retained"), timestamp: 1000, logicalId: "retained-id" },
+    ]);
+    const session = await createTestAgentSession({ sessionManager: sm });
+    session.agent.state.messages = sm.buildSessionContext().messages;
+    const runtime = new (await import("../../../runtimes/pi/runtime.js")).PiAgentRuntime(session, "compact");
+
+    expect((await runtime.getMessages()).map((message) => message.logicalId)).toEqual([
+      "summary-id", "retained-id",
+    ]);
   });
 });
 
