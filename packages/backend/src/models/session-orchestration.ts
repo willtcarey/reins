@@ -4,7 +4,7 @@ import { loadMessages, type RuntimeMessage } from "../messages-store.js";
 import type { ManagedSession } from "../state.js";
 import type { CreateSessionFn } from "../runtimes/sessions-manager.js";
 import type { Broadcast } from "./broadcast.js";
-import { logger } from "../logger.js";
+import { SessionMessages } from "./session-messages.js";
 
 export interface SessionStartOptions {
   parentSessionId: "current" | null;
@@ -21,7 +21,7 @@ export interface SessionWaitResult {
   error: string | null;
 }
 
-function transcriptResult(sessionId: string, messages: RuntimeMessage[]): SessionWaitResult {
+export function transcriptResult(sessionId: string, messages: RuntimeMessage[]): SessionWaitResult {
   const last = messages.findLast((message) => message.role === "assistant");
   return {
     sessionId,
@@ -82,27 +82,13 @@ export class SessionOrchestration {
       model: provider && modelId ? { provider, modelId } : undefined,
       thinkingLevel: options.thinkingLevel ?? (caller.thinking_level === "off" ? undefined : caller.thinking_level),
     });
-    await this.deliver(managed, prompt);
+    await new SessionMessages(this.sessions, this.broadcast, async () => managed).send(managed.id, prompt);
     return { sessionId: managed.id };
   }
 
   async send(sessionId: string, message: string): Promise<{ sessionId: string }> {
     this.scopedSession(sessionId);
-    if (!this.openSession) throw new Error("Session reopening is unavailable");
-    const managed = await this.openSession(sessionId);
-    await this.deliver(managed, message);
-    return { sessionId };
-  }
-
-  private async deliver(managed: ManagedSession, message: string): Promise<void> {
-    const row = this.session(managed.id);
-    const content = [{ type: "text" as const, text: message }];
-    managed.lastActivity = Date.now();
-    if (managed.runtime.isStreaming()) await managed.runtime.steer(content);
-    else void managed.runtime.prompt(content).catch((error: unknown) => {
-      logger.error(`Failed to prompt session ${managed.id}:`, error);
-    });
-    this.broadcast({ type: "user_message", sessionId: managed.id, projectId: row.project_id, message: content });
+    return new SessionMessages(this.sessions, this.broadcast, this.openSession).send(sessionId, message);
   }
 
   async wait(sessionId: string, timeoutMs = 10_000, signal?: AbortSignal): Promise<SessionWaitResult> {

@@ -249,7 +249,7 @@ const sessionsStartFunction = defineFunction({
   description: "Start a fresh session in the caller's project/task and return its sessionId without waiting for completion. " +
     'options.parentSessionId is required: "current" for a child, null for an independent session. ' +
     "Optional title uses the session name; omitted title preserves normal naming. Model/thinking default to the caller. " +
-    "Sessions share the checkout: coordinate file edits. Only start other agents when the user explicitly asks for delegation or parallel sessions. Use sessions.wait to retrieve results.",
+    "Sessions share the checkout: coordinate file edits. Only start other agents when the user explicitly asks for delegation or parallel sessions. Children report their latest outcome on runtime settlement, prompting idle parents or steering busy ones (unsupported on busy Claude). Reports are not queued or retried. Continue other work or end your turn rather than polling. Independent sessions require explicit result retrieval.",
   parameters: StartParameters,
   returns: SessionHandleSchema,
   async: true,
@@ -281,7 +281,7 @@ const sessionsWaitFunction = defineFunction({
   description: "Observe native idleness for a session in the caller's project/task, including native steering and compaction, then return its latest response/outcome. " +
     "timeoutMs defaults to 10000, maximum 30000; 0 checks immediately. Timeout or cancelling this script never cancels the target. " +
     "Already-settled sessions return immediately. Pi uses native idleness, which may report idle during startup; an immediate wait can return before work begins. " +
-    "Pi returns the latest transcript outcome, not a retained prompt failure. Closed sessions read persisted history; transient execution failures are not recovered after restart. No automatic parent wakeup. Cannot wait for yourself.",
+    "Pi returns the latest transcript outcome, not a retained prompt failure. Closed sessions read persisted history; transient execution failures are not recovered after restart. Children automatically report to their parent when new work settles, so explicit waiting is optional. Cannot wait for yourself.",
   parameters: WaitParameters,
   returns: SessionWaitResultSchema,
   async: true,

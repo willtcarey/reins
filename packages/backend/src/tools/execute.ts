@@ -13,7 +13,7 @@
  * security boundary against a determined attacker. See docs/tech-debt.md
  * for notes on upgrading to a child-process sandbox if needed.
  *
- * Use the `search` tool first to discover the available API surface.
+ * Use `search` for functions not already documented in the system prompt.
  */
 
 import { createContext, runInContext } from "node:vm";
@@ -49,7 +49,7 @@ const parameters = Type.Object({
     description:
       "Async JavaScript function body. Has access to the existing `api` object " +
       "for Reins-managed data or UI state. Use `return` to produce a result. " +
-      "Use the `search` tool first to discover available API functions.",
+      "Use the `search` tool for functions not already documented in the system prompt.",
   }),
 });
 
@@ -71,7 +71,7 @@ export function createExecuteTool(opts: ExecuteToolOpts): ToolDefinition<typeof 
     description:
       "Run async JavaScript against Reins internals. " +
       "Write a function body using the existing `api` object. " +
-      "Use the `search` tool first to discover available API functions and documentation interfaces.",
+      "Use the `search` tool to discover functions not already documented in the system prompt.",
     parameters,
 
     async execute(_toolCallId, params, signal, _onUpdate, _ctx) {

@@ -41,6 +41,43 @@ describe("runtime sessions manager", () => {
   useTestDb();
   const repo = useTestRepo();
 
+  test("child settlement reports directly to idle or busy parents, not on open or inner turn end", async () => {
+    const state = createServerState();
+    const project = createProject("Reports", repo.dir);
+    createSession("parent", project.id, { agentRuntimeType: "pi" });
+    createSession("child", project.id, { agentRuntimeType: "report-test", parentSessionId: "parent" });
+    const parent = createRuntimeStub();
+    const prompted = Promise.withResolvers<void>();
+    const steered = Promise.withResolvers<void>();
+    const prompt = parent.runtime.prompt.bind(parent.runtime);
+    const steer = parent.runtime.steer.bind(parent.runtime);
+    parent.runtime.prompt = async (content) => { await prompt(content); prompted.resolve(); };
+    parent.runtime.steer = async (content) => { await steer(content); steered.resolve(); };
+    let busy = false;
+    parent.runtime.isStreaming = () => busy;
+    state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: Date.now() });
+    const messages = [{ role: "assistant", content: [{ type: "text" as const, text: "First result" }], timestamp: 1 }];
+    const child = createRuntimeStub({ messages, activityCompletionBoundary: "agent_settled" });
+    registerRuntimeAdapter({ runtimeType: "report-test", listModels: async () => [], ask: async () => "", createRuntime: async () => child.runtime });
+    const managed = await ensureSessionOpen(state, "child");
+    expect(parent.promptCalls).toEqual([]);
+    child.emit({ type: "agent_end", messages });
+    await managed.flushPersistence?.();
+    expect(parent.promptCalls).toEqual([]);
+    child.emit({ type: "agent_settled" });
+    await prompted.promise;
+    expect(parent.promptCalls).toHaveLength(1);
+    expect(JSON.stringify(parent.promptCalls)).toContain("First result");
+    busy = true;
+    messages.push({ role: "assistant", content: [{ type: "text", text: "Follow-up result" }], timestamp: 2 });
+    child.emit({ type: "agent_end", messages });
+    child.emit({ type: "agent_settled" });
+    await steered.promise;
+    expect(parent.promptCalls).toHaveLength(1);
+    expect(parent.steerCalls).toHaveLength(1);
+    expect(JSON.stringify(parent.steerCalls)).toContain("Follow-up result");
+  });
+
   test("createNewSession persists runtime metadata via sessions manager orchestration", async () => {
     const state = createServerState();
     const project = createProject("Reins", repo.dir);
@@ -564,12 +601,12 @@ describe("runtime sessions manager", () => {
     createSession("sess-observer-cleanup", project.id, { agentRuntimeType: "test_runtime" });
 
     const managed = await ensureSessionOpen(state, "sess-observer-cleanup");
-    expect(listeners.size).toBe(2);
+    expect(listeners.size).toBe(3);
 
     await managed.runtime.close();
 
     expect(listeners.size).toBe(0);
-    expect(unsubscribeCount).toBe(2);
+    expect(unsubscribeCount).toBe(3);
   });
 
   test("ensureSessionOpen resolves session tools during runtime creation", async () => {

@@ -10,6 +10,8 @@ import { getProject } from "../project-store.js";
 import { touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { Sessions } from "../models/sessions.js";
+import { SessionMessages } from "../models/session-messages.js";
+import { attachRuntimeParentReportObserver } from "./runtime-parent-report-observer.js";
 import { createCustomTools } from "../tools/index.js";
 import {
   createAgentRuntime,
@@ -162,6 +164,13 @@ async function createManagedSessionRuntime(params: {
     sessionId,
     runtime,
     sessions,
+
+  });
+
+  const detachRuntimeParentReportObserver = attachRuntimeParentReportObserver({
+    sessionId, runtime,
+    flushPersistence: detachRuntimePersistenceObserver.flush,
+    messages: new SessionMessages(state.sessions, broadcast, (id) => ensureSessionOpen(state, id)),
   });
 
   let observersDetached = false;
@@ -170,6 +179,7 @@ async function createManagedSessionRuntime(params: {
     observersDetached = true;
     detachRuntimeBroadcastObserver();
     detachRuntimePersistenceObserver();
+    detachRuntimeParentReportObserver();
   };
 
   const originalClose = runtime.close.bind(runtime);

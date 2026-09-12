@@ -195,7 +195,15 @@ There are no receipts, run IDs, unsent-message tables, dispatchers, or managed-s
 - Explicit abort clears Pi's pending native steering. Native retry/error handling otherwise stays with the SDK. There is no delivery queue to replay after process restart. Once a runtime is evicted, waits can inspect persisted transcript outcomes but cannot reconstruct transient execution errors.
 - The session manager coalesces concurrent opens using `ServerState.sessionOpenings`, avoiding duplicate runtimes for simultaneous sends. This and the runtime map survive handler hot reloads. Creating sibling sessions on the active task branch skips redundant Git checkouts, so session creation does not contend for the checkout/index lock.
 
-Sessions share the existing checkout. No project-wide lock is held across execution or nested waits; agents must coordinate file edits. Parent links do not propagate cancellation or automatically inject results/wake parents. Historical delegate transcripts and frontend renderers remain readable.
+Sessions share the existing checkout. No project-wide lock is held across execution or nested waits; agents must coordinate file edits. Parent links do not propagate cancellation. Historical delegate transcripts and frontend renderers remain readable.
+
+### Child settlement reports
+
+The separate `runtime-parent-report-observer.ts` subscriber reacts to the declared runtime completion event (`agent_settled` for Pi, `agent_end` by default). It is attached after the persistence observer and awaits its existing checkpoint flush before reading the child's latest outcome. Persistence does not invoke or await reporting. The subscriber calls `SessionMessages.send` for the parent, checking the same project/task scope. Reports are labelled structured JSON carried as normal text input—not new user authorization.
+
+`models/session-messages.ts` owns addressed delivery: opening the target, idle prompting versus busy native steering, activity touch and broadcast. Scripting's scoped orchestration facade and the parent reporter share this module; a future HTTP caller can use it without duplicating delivery logic. Authorization belongs to callers. No HTTP route is added.
+
+There is no prompt-promise wrapper, extra busy tracking, inbox, dispatcher, receipt, or schema change. Reports prompt idle parents and steer busy parents immediately; busy Claude delivery is unsupported. Delivery errors are logged by the reporting subscriber and are not retried; they do not fail persistence flushes. Reopening alone emits no settlement and produces no report; follow-up settlement reports again. Only outcomes represented by the transcript at settlement are reported; startup failures without a settlement event do not produce a report. Pending callbacks are not recovered after restart.
 
 ## Resume and persistence expectations
 

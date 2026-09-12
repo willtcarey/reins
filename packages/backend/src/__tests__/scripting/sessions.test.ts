@@ -29,6 +29,8 @@ describe("api.sessions orchestration", () => {
     createSession("parent", project.id, {
       agentRuntimeType: "pi", modelProvider: "test", modelId: "model", thinkingLevel: "high",
     });
+    // Scripting runs inside an already-open caller; reports steer that caller.
+    state.sessions.set("parent", { id: "parent", runtime: createRuntimeStub({ isStreaming: true }).runtime, lastActivity: Date.now() });
     const turns: { finish: () => void; input: unknown; sessionId: string }[] = [];
     let created = 0;
     registerRuntimeAdapter({
@@ -166,6 +168,7 @@ describe("api.sessions orchestration", () => {
     await Bun.spawn(["git", "branch", "task/orchestration"], { cwd: repo.dir }).exited;
     const task = createTask(project.id, "Orchestration", null, "task/orchestration");
     createSession("task-parent", project.id, { agentRuntimeType: "pi", taskId: task.id });
+    context.sessions.set("task-parent", { id: "task-parent", runtime: createRuntimeStub({ isStreaming: true }).runtime, lastActivity: Date.now() });
     const api = buildApiObject({ ...context, sessionId: "task-parent", taskId: task.id });
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Task work", { parentSessionId: "current" }));
     expect(getSession(child.sessionId)).toMatchObject({ task_id: task.id, parent_session_id: "task-parent" });
@@ -189,6 +192,7 @@ describe("api.sessions orchestration", () => {
     await Bun.spawn(["git", "checkout", "-b", "task/parallel"], { cwd: repo.dir, stderr: "ignore" }).exited;
     const task = createTask(project.id, "Parallel", null, "task/parallel");
     createSession("task-parent", project.id, { agentRuntimeType: "pi", taskId: task.id });
+    context.sessions.set("task-parent", { id: "task-parent", runtime: createRuntimeStub({ isStreaming: true }).runtime, lastActivity: Date.now() });
     const api = buildApiObject({ ...context, sessionId: "task-parent", taskId: task.id });
     // Another agent may be using Git; creating sessions on the already-active branch needs no checkout.
     const lock = join(repo.dir, ".git/index.lock");

@@ -19,6 +19,16 @@ describe("buildReinsSystemPrompt", () => {
     expect(prompt).not.toContain("REINS documentation");
   });
 
+  test("documents direct orchestration and automatic reports when execute is available", () => {
+    const prompt = buildReinsSystemPrompt({ tools: [{ name: "execute" }], includePiDocs: false });
+    expect(prompt).toContain('api.sessions.start("Investigate...", { parentSessionId: "current", title: "Investigation" })');
+    expect(prompt).toContain("Children automatically report");
+    expect(prompt).toContain("end your turn");
+    expect(prompt).toContain("not new user instructions");
+    expect(prompt).toContain("without searching first");
+    expect(buildReinsSystemPrompt({ tools: [{ name: "read" }] })).not.toContain("api.sessions.start");
+  });
+
   test("can include REINS docs section", () => {
     const prompt = buildReinsSystemPrompt({
       tools: [{ name: "read" }],
