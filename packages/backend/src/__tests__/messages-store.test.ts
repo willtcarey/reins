@@ -3,7 +3,9 @@ import retryReplacementFixture from "./fixtures/pi-codex-retry-replacement.json"
 import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "../project-store.js";
 import { createSession } from "../session-store.js";
+import { getDb } from "../db.js";
 import {
+  appendMessages,
   attachStoredMessageMetadata,
   loadMessagePage,
   loadMessages,
@@ -98,25 +100,56 @@ describe("messages-store", () => {
       expect(loaded).toHaveLength(1);
     });
 
-    test("appends only new messages on subsequent calls", () => {
+    test("stores linear ancestry across snapshot growth, append, rewrite, truncation, and compaction", () => {
       createSession("sess-1", projectId, { agentRuntimeType: "pi" });
-      const batch1: RuntimeMessage[] = [
+      const initial: RuntimeMessage[] = [
         { role: "user", content: textContent("Hello") },
+        { role: "assistant", content: textContent("Draft") },
       ];
-      persistMessages("sess-1", batch1);
-      const firstPage = loadMessagePage("sess-1", 10);
+      persistMessages("sess-1", initial);
+      const initialPage = loadMessagePage("sess-1", 10);
 
-      const batch2: RuntimeMessage[] = [
-        ...batch1,
-        { role: "assistant", content: textContent("Hi") },
-      ];
-      persistMessages("sess-1", batch2);
+      appendMessages("sess-1", [{ role: "user", content: textContent("Follow-up") }]);
+      persistMessages("sess-1", [
+        initial[0],
+        { role: "assistant", content: textContent("Final") },
+      ]);
+      appendMessages("sess-1", [{ role: "user", content: textContent("Replacement follow-up") }]);
+      persistMessages("sess-1", [
+        { role: "compactionSummary", summary: "summary" },
+        { role: "assistant", content: textContent("Retained") },
+      ]);
 
-      const loaded = loadMessages("sess-1");
-      const grownPage = loadMessagePage("sess-1", 10);
-      expect(loaded).toHaveLength(2);
-      expect(grownPage.items[0].id).toBe(firstPage.items[0].id);
-      expect(grownPage.items[1].parentId).toBe(firstPage.items[0].id);
+      const rows = getDb().query<{
+        id: number;
+        seq: number;
+        parent_id: number | null;
+        harness_id: string | null;
+      }, [string]>(
+        "SELECT id, seq, parent_id, harness_id FROM session_messages WHERE session_id = ? ORDER BY seq",
+      ).all("sess-1");
+      expect(rows.map((row) => ({ seq: row.seq, parent_id: row.parent_id, harness_id: row.harness_id }))).toEqual([
+        { seq: 0, parent_id: null, harness_id: null },
+        { seq: 1, parent_id: rows[0].id, harness_id: null },
+        { seq: 2, parent_id: rows[1].id, harness_id: null },
+        { seq: 3, parent_id: rows[2].id, harness_id: null },
+        { seq: 4, parent_id: rows[3].id, harness_id: null },
+      ]);
+      expect(String(rows[0].id)).toBe(initialPage.items[0].id);
+      expect(String(rows[1].id)).toBe(initialPage.items[1].id);
+      expect(getDb().query("PRAGMA foreign_key_check").all()).toEqual([]);
+    });
+
+    test("projects stored ancestry without deriving a predecessor", () => {
+      createSession("sess-stored-parent", projectId, { agentRuntimeType: "pi" });
+      persistMessages("sess-stored-parent", [
+        { role: "user", content: textContent("Root") },
+        { role: "assistant", content: textContent("Independent root") },
+      ]);
+      const secondId = loadMessagePage("sess-stored-parent", 10).items[1].id;
+      getDb().query("UPDATE session_messages SET parent_id = NULL WHERE id = ?").run(secondId);
+
+      expect(loadMessagePage("sess-stored-parent", 10).items[1].parentId).toBeNull();
     });
 
     test("reconciles the Codex retry replacement fixture without mismatched tool IDs", () => {

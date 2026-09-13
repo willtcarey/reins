@@ -2,13 +2,16 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { createProject } from "../project-store.js";
 import {
   CodeReviewRevisionConflictError,
+  acceptCodeReviewSubmission,
   createCodeReview,
   deleteCodeReview,
   getCodeReview,
   getOpenCodeReview,
   saveCodeReview,
 } from "../code-review-store.js";
+import { loadMessagePage, persistMessages } from "../messages-store.js";
 import type { CodeReview } from "../models/code-review.js";
+import { createSession } from "../session-store.js";
 import { createTask } from "../task-store.js";
 import { useTestDb } from "./helpers/test-db.js";
 
@@ -97,5 +100,19 @@ describe("code review store", () => {
     expect(deleteCodeReview(review.id)).toBe(true);
     expect(deleteCodeReview(review.id)).toBe(false);
     expect(getCodeReview(review.id)).toBeNull();
+  });
+
+  test("links an accepted review message to the session tail", () => {
+    createSession("review-session", projectId, { agentRuntimeType: "pi", taskId });
+    persistMessages("review-session", [
+      { role: "assistant", content: [{ type: "text", text: "Ready for review" }] },
+    ]);
+    const review = createCodeReview({ id: "review-1", projectId, taskId });
+
+    const accepted = acceptCodeReviewSubmission(review, "review-session", "Please adjust this");
+    const page = loadMessagePage("review-session", 10);
+
+    expect(accepted.messageId).toBe(page.items[1].id);
+    expect(page.items[1].parentId).toBe(page.items[0].id);
   });
 });

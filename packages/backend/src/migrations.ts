@@ -236,6 +236,24 @@ const MIGRATIONS: Migration[] = [
        WHERE task_id IS NULL;
      PRAGMA foreign_keys = ON`,
   ],
+  [
+    "026_add_session_message_ancestry",
+    `ALTER TABLE session_messages
+       ADD COLUMN parent_id INTEGER REFERENCES session_messages(id) ON DELETE SET NULL;
+     ALTER TABLE session_messages ADD COLUMN harness_id TEXT;
+     UPDATE session_messages AS child
+     SET parent_id = (
+       SELECT parent.id
+       FROM session_messages AS parent
+       WHERE parent.session_id = child.session_id
+         AND parent.seq < child.seq
+       ORDER BY parent.seq DESC
+       LIMIT 1
+     );
+     CREATE UNIQUE INDEX idx_session_messages_session_harness_id
+       ON session_messages(session_id, harness_id)
+       WHERE harness_id IS NOT NULL`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

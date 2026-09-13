@@ -94,14 +94,15 @@ export function acceptCodeReviewSubmission(
   const db = getDb();
   const message = [{ type: "text" as const, text }];
   const accept = db.transaction(() => {
-    const max = db.query<{ seq: number }, [string]>(
-      "SELECT COALESCE(MAX(seq), -1) AS seq FROM session_messages WHERE session_id = ?",
-    ).get(sessionId)!;
-    const inserted = db.query<{ id: number }, [string, number, string]>(
-      `INSERT INTO session_messages (session_id, seq, role, message_json, created_at)
-       VALUES (?, ?, 'user', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    const parent = db.query<{ id: number; seq: number }, [string]>(
+      `SELECT id, seq FROM session_messages
+       WHERE session_id = ? ORDER BY seq DESC LIMIT 1`,
+    ).get(sessionId);
+    const inserted = db.query<{ id: number }, [string, number, number | null, string]>(
+      `INSERT INTO session_messages (session_id, seq, parent_id, role, message_json, created_at)
+       VALUES (?, ?, ?, 'user', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING id`,
-    ).get(sessionId, max.seq + 1, JSON.stringify({ role: "user", content: message }));
+    ).get(sessionId, (parent?.seq ?? -1) + 1, parent?.id ?? null, JSON.stringify({ role: "user", content: message }));
     if (!inserted) throw new Error("Failed to persist review submission message");
 
     const deleted = db.query<{ id: string }, [string, number]>(

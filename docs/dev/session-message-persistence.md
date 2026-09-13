@@ -10,16 +10,27 @@ Non-checkpoint activity events remain immediate. All sessions, including parente
 
 The observer exposes `flush()` on its detach handle to await the current checkpoint queue. Session-ID waits call it after runtime settlement and recheck runtime activity before returning a result. Runtime close flushes checkpoints before detaching observers. Neither operation adds synthetic transcript entries or a separate execution-result store.
 
+## Stored ancestry and identity
+
+`session_messages.id` remains the SQLite integer row identity used by message pages and pagination. Each row also has:
+
+- nullable `parent_id`, a self-referencing foreign key with `ON DELETE SET NULL`;
+- nullable `harness_id`, protected by a partial unique index within its session when present.
+
+Existing rows are migrated into a linear chain per session in `seq` order. New persistence writes explicitly link each row to the preceding row in that session. Reins does not currently populate `harness_id`: existing and newly persisted messages leave it null rather than deriving an identity from runtime fields. Message pages project the stored parent relationship while continuing to expose integer row IDs as strings, so public UI identity is unchanged.
+
+The foreign key prevents dangling parent references. Deleting an individual parent makes its direct children parentless rather than recursively deleting their subtree. Current production transcript deletion remains limited to active-window suffix truncation and whole-session/task cleanup; this change does not add arbitrary message or branch deletion behavior.
+
 ## Active transcript projection
 
 `persistMessages(sessionId, messages)` treats its input as the authoritative runtime snapshot. The rows in the active transcript window are a mutable projection of that snapshot:
 
 - matching prefix rows remain unchanged;
-- changed positions are updated in place;
-- additional positions are inserted;
-- positions removed from the snapshot are deleted.
+- changed positions are updated in place without changing stored ancestry;
+- additional positions are inserted and linked from the existing tail;
+- positions removed from the snapshot are deleted as one suffix.
 
-The synchronization occurs in one SQLite transaction. Updating by position retains row IDs and sequence values where possible, preserving display parent links and pagination cursors. Attachment references removed by a rewrite are pruned after the projection is updated.
+The synchronization occurs in one SQLite transaction. Updating by position retains row IDs, parent IDs, and sequence values where possible, preserving display relationships and pagination cursors. Suffix deletion removes descendants in the stored linear active window; the foreign-key policy prevents dangling ancestry if other direct children ever exist. Attachment references removed by a rewrite are pruned after the projection is updated.
 
 Persistence deliberately does not inspect `stopReason` or tool-call IDs to decide which snapshot should win. Those are message-domain details and cannot reliably establish checkpoint ordering.
 

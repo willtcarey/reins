@@ -545,10 +545,7 @@ interface MessagePagePosition {
   afterSeq?: number;
 }
 
-const DISPLAY_ROW_SELECT = `SELECT sm.id, sm.session_id, sm.seq, sm.role, sm.message_json, sm.created_at,
-  (SELECT parent.id FROM session_messages AS parent
-   WHERE parent.session_id = sm.session_id AND parent.seq < sm.seq
-   ORDER BY parent.seq DESC LIMIT 1) AS parent_id
+const DISPLAY_ROW_SELECT = `SELECT sm.id, sm.parent_id, sm.session_id, sm.seq, sm.role, sm.message_json, sm.created_at
  FROM session_messages AS sm`;
 
 function queryDisplayRows(
@@ -793,14 +790,22 @@ function insertMessages(
   startSeq: number,
 ): void {
   const db = getDb();
-  const insert = db.query(
-    `INSERT INTO session_messages (session_id, seq, role, message_json, created_at)
-     VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+  const insert = db.query<{ id: number }, [string, number, number | null, string, string]>(
+    `INSERT INTO session_messages (session_id, seq, parent_id, role, message_json, created_at)
+     VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+     RETURNING id`,
   );
+  let parentId = db.query<{ id: number }, [string, number]>(
+    `SELECT id FROM session_messages
+     WHERE session_id = ? AND seq < ?
+     ORDER BY seq DESC LIMIT 1`,
+  ).get(sessionId, startSeq)?.id ?? null;
 
   let seq = startSeq;
   for (const message of messages) {
-    insert.run(sessionId, seq, message.role, JSON.stringify(message));
+    const inserted = insert.get(sessionId, seq, parentId, message.role, JSON.stringify(message));
+    if (!inserted) throw new Error("Failed to persist session message");
+    parentId = inserted.id;
     if (message.role === "compactionSummary") pruneToolResultsBeforeSeq(sessionId, seq);
     seq++;
   }
