@@ -2,10 +2,10 @@
  * Custom Tools
  *
  * Barrel export for all custom agent tools.
- * Returns a ToolDefinition[] array for use in createAgentSession().
+ * Returns runtime-neutral AgentTool values.
  */
 
-import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { createTaskTool } from "./create-task.js";
@@ -23,16 +23,16 @@ export interface CustomToolsOpts {
   openSession: (sessionId: string) => Promise<ManagedSession>;
 }
 
-export function createCustomTools(opts: CustomToolsOpts): ToolDefinition[] {
-  const tools: ToolDefinition[] = [
-    defineTool(createTaskTool({
+export function createCustomTools(opts: CustomToolsOpts): AgentTool[] {
+  const tools: AgentTool[] = [
+    createTaskTool({
       projectId: opts.projectId,
       broadcast: opts.broadcast,
       sessions: opts.sessions,
       createSession: opts.createSession,
-    })),
-    defineTool(createSearchTool()),
-    defineTool(createExecuteTool({
+    }),
+    createSearchTool(),
+    createExecuteTool({
       projectId: opts.projectId,
       sessionId: opts.sessionId,
       taskId: opts.taskId,
@@ -40,7 +40,7 @@ export function createCustomTools(opts: CustomToolsOpts): ToolDefinition[] {
       sessions: opts.sessions,
       createSession: opts.createSession,
       openSession: opts.openSession,
-    })),
+    }),
   ];
 
   return tools;

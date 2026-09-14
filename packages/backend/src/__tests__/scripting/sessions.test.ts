@@ -15,7 +15,6 @@ import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createServerState } from "../helpers/server-state.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
-import { createStrictExtensionContext } from "../helpers/test-pi.js";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
 
@@ -231,7 +230,7 @@ describe("api.sessions orchestration", () => {
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: "current" }));
     const controller = new AbortController();
     const tool = createExecuteTool(context);
-    const waiting = tool.execute("wait", { code: `return await api.sessions.wait(${JSON.stringify(child.sessionId)}, 1000)` }, controller.signal, undefined, createStrictExtensionContext());
+    const waiting = tool.execute("wait", { code: `return await api.sessions.wait(${JSON.stringify(child.sessionId)}, 1000)` }, controller.signal, undefined);
     controller.abort();
     expect((await waiting).details).toMatchObject({ success: false });
     expect(state.sessions.get(child.sessionId)!.runtime.isStreaming()).toBe(true);

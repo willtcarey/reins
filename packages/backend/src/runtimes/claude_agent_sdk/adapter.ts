@@ -13,7 +13,7 @@ import {
 import { ClaudeSdkAgentRuntime, isThinkingDisabled, mapThinkingEffort } from "./runtime.js";
 import CLAUDE_SDK_MODELS from "./models.json";
 
-function resolvePromptTools(projectDir: string, params: CreateAgentRuntimeParams): import("@earendil-works/pi-coding-agent").ToolDefinition[] {
+function resolvePromptTools(projectDir: string, params: CreateAgentRuntimeParams): import("@earendil-works/pi-agent-core").AgentTool[] {
   const builtinNames = new Set(params.sessionTools?.builtins ?? ["read", "write", "edit", "bash"]);
   const builtins = createCodingTools(projectDir).filter((tool) => builtinNames.has(tool.name));
   return [...builtins, ...(params.sessionTools?.customTools ?? [])];

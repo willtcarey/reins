@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { getTask as storeGetTask, type TaskRow } from "../task-store.js";
 import type { ServerState } from "../state.js";
 import type {
@@ -47,7 +47,7 @@ type RuntimeBuiltinToolName = "read" | "write" | "edit" | "bash";
 
 export interface RuntimeSessionTools {
   builtins: RuntimeBuiltinToolName[];
-  customTools: ToolDefinition[];
+  customTools: AgentTool[];
 }
 
 type RuntimeCompactionEvent =

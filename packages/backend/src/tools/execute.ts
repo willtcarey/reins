@@ -18,7 +18,7 @@
 
 import { createContext, runInContext } from "node:vm";
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
 import type { CreateSessionFn } from "../runtimes/sessions-manager.js";
@@ -64,7 +64,7 @@ function formatResult(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
-export function createExecuteTool(opts: ExecuteToolOpts): ToolDefinition<typeof parameters> {
+export function createExecuteTool(opts: ExecuteToolOpts): AgentTool<typeof parameters> {
   return {
     name: "execute",
     label: "Execute",
@@ -74,7 +74,7 @@ export function createExecuteTool(opts: ExecuteToolOpts): ToolDefinition<typeof 
       "Use the `search` tool to discover functions not already documented in the system prompt.",
     parameters,
 
-    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, signal, _onUpdate) {
       try {
         const api = buildApiObject({
           projectId: opts.projectId,

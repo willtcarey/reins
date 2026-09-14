@@ -8,7 +8,6 @@ import { createTaskTool } from "../../tools/create-task.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
-import { createStrictExtensionContext } from "../helpers/test-pi.js";
 
 /** Extract text from a TextContent | ImageContent, throwing if not text. */
 function textOf(item: TextContent | ImageContent): string {
@@ -16,7 +15,6 @@ function textOf(item: TextContent | ImageContent): string {
   return item.text;
 }
 
-const strictCtx = createStrictExtensionContext();
 
 describe("createTaskTool", () => {
   let projectId: number;
@@ -59,7 +57,7 @@ describe("createTaskTool", () => {
       const result = await tool.execute("call-1", {
         title: "Implement dark mode",
         description: "Add dark mode toggle to the settings page",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       // Result has the expected shape
       expect(result.content).toBeArray();
@@ -94,7 +92,7 @@ describe("createTaskTool", () => {
         title: "Custom branch",
         description: "Test custom branch name",
         branch_name: "task/my-custom-branch",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const taskData = JSON.parse(textOf(result.content[0]));
       expect(taskData.branch_name).toBe("task/my-custom-branch");
@@ -107,7 +105,7 @@ describe("createTaskTool", () => {
         title: "With prompt",
         description: "Test prompt without session",
         prompt: "Start working on this",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const taskData = JSON.parse(textOf(result.content[0]));
       expect(taskData._note).toContain("not available");
@@ -121,7 +119,7 @@ describe("createTaskTool", () => {
       const result = await tool.execute("call-err-1", {
         title: "Should fail",
         description: "No project",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       expect(textOf(result.content[0])).toStartWith("Error:");
       expect(textOf(result.content[0])).toContain("not found");
@@ -136,7 +134,7 @@ describe("createTaskTool", () => {
       const result = await tool.execute("call-err-2", {
         title: "Should fail",
         description: "Bad git path",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       expect(textOf(result.content[0])).toStartWith("Error:");
       expect(result.details).toBeNull();

@@ -9,11 +9,9 @@ import { getDb } from "../../db.js";
 import { createExecuteTool } from "../../tools/execute.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
-import { createStrictExtensionContext } from "../helpers/test-pi.js";
 import { randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
 
-const strictCtx = createStrictExtensionContext();
 
 // Initialize encryption secret for tests
 initEncryptionSecret(randomBytes(32));
@@ -72,7 +70,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c1", {
         code: "return api.projects.current()",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.id).toBe(project.id);
@@ -83,7 +81,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c2", {
         code: "return api.projects.list()",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed).toBeArray();
@@ -94,7 +92,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c3", {
         code: `return api.projects.get(${project.id})`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.id).toBe(project.id);
@@ -104,7 +102,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c4", {
         code: "return api.projects.get(99999)",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       expect(textOf(result)).toContain("Error:");
     });
@@ -115,7 +113,7 @@ describe("createExecuteTool", () => {
         const tool = makeTool();
         const result = await tool.execute("c-create", {
           code: `return await api.projects.create("New Project", ${JSON.stringify(secondRepo.dir)})`,
-        }, undefined, undefined, strictCtx);
+        }, undefined, undefined);
 
         const parsed = JSON.parse(textOf(result));
         expect(parsed.name).toBe("New Project");
@@ -132,7 +130,7 @@ describe("createExecuteTool", () => {
       // repo.dir is already used by the project created in beforeEach
       const result = await tool.execute("c-dup", {
         code: `return await api.projects.create("Dupe", ${JSON.stringify(repo.dir)})`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       expect(textOf(result)).toContain("Error:");
       expect(textOf(result)).toContain("already exists");
@@ -147,7 +145,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c5", {
         code: "return api.tasks.list()",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed).toBeArray();
@@ -161,7 +159,7 @@ describe("createExecuteTool", () => {
 
       const result = await tool.execute("c-tc", {
         code: "return api.tasks.current()",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.id).toBe(task.id);
@@ -172,7 +170,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool("scratch-sess", null);
       const result = await tool.execute("c-tc2", {
         code: "return api.tasks.current()",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       expect(textOf(result)).toBe("null");
     });
@@ -183,7 +181,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c6", {
         code: `return api.tasks.get(${task.id})`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.id).toBe(task.id);
@@ -194,7 +192,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c7", {
         code: `return await api.tasks.create("New Task", "A new task")`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.title).toBe("New Task");
@@ -212,7 +210,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c8", {
         code: `return api.tasks.update(${task.id}, { title: "Updated" })`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.title).toBe("Updated");
@@ -235,7 +233,7 @@ describe("createExecuteTool", () => {
           );
           return { created, current: await api.reviews.current() };
         `,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.current).toEqual(parsed.created);
@@ -273,7 +271,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c9", {
         code: "return api.sessions.list()",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed).toBeArray();
@@ -286,7 +284,7 @@ describe("createExecuteTool", () => {
 
       const result = await tool.execute("c-sc", {
         code: "return api.sessions.current()",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.id).toBe("current-sess");
@@ -298,7 +296,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c11", {
         code: `return api.sessions.get("sess-x")`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.id).toBe("sess-x");
@@ -314,7 +312,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c12", {
         code: `return api.sessions.entries("sess-m")`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed).toBeArray();
@@ -347,7 +345,7 @@ describe("createExecuteTool", () => {
           messages: api.sessions.entries("other-read", { types: ["user", "assistant"], limit: 1 }),
           trace: api.sessions.entries("other-read", { types: ["toolCall"] }),
         }`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.session.project_id).toBe(otherProject.id);
@@ -386,7 +384,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c-list-filter", {
         code: `return api.sessions.list({ search: "needle", minMessages: 2, since: "2024-02-01T00:00:00.000Z", limit: 1 })`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.map((s: any) => s.id)).toEqual(["new-match"]);
@@ -402,7 +400,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c-list-task", {
         code: `return api.sessions.list({ taskId: ${task.id} })`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.map((s: any) => s.id)).toEqual(["task-only"]);
@@ -416,7 +414,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c-list-scratch", {
         code: "return api.sessions.list({ taskId: null })",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.map((s: any) => s.id)).toEqual(["scratch-only"]);
@@ -431,7 +429,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool("task-context", task.id);
       const result = await tool.execute("c-list-current-identifiers", {
         code: `return api.sessions.list({ projectId: "current", taskId: "current" })`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.map((s: any) => s.id).toSorted()).toEqual(["task-context", "task-current"]);
@@ -451,7 +449,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c-list-other-project", {
         code: `return api.sessions.list({ projectId: ${otherProject.id}, search: "scope needle" })`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.map((s: any) => s.id)).toEqual(["other-project"]);
@@ -469,7 +467,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c-msg-filter", {
         code: `return api.sessions.entries("sess-filter", { types: ["user"], search: "needle", limit: 1 })`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed).toHaveLength(1);
@@ -489,7 +487,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("c-msg-limit", {
         code: `return api.sessions.entries("sess-latest", { types: ["user", "assistant"], limit: 2 }).map((m) => ({ seq: m.seq, type: m.type }))`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       expect(JSON.parse(textOf(result))).toEqual([
         { seq: 1, type: "assistant" },
@@ -530,10 +528,10 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const traceResult = await tool.execute("c-tool-trace", {
         code: `return api.sessions.entries("sess-tools", { types: ["toolCall"], toolName: "bash" })`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
       const errorResult = await tool.execute("c-tool-error-trace", {
         code: `return api.sessions.entries("sess-tools", { isError: true })`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const trace = JSON.parse(textOf(traceResult));
       expect(trace).toHaveLength(1);
@@ -567,7 +565,7 @@ describe("createExecuteTool", () => {
 
       const result = await tool.execute("c-ui-broadcast", {
         code: `return api.ui.broadcast(${JSON.stringify(message)})`,
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       expect(textOf(result)).toBe("Broadcast sent");
       expect(broadcastSpy).toHaveBeenCalledTimes(1);
@@ -580,7 +578,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("err-1", {
         code: "return {{{",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const text = textOf(result);
       expect(text).toContain("Error:");
@@ -590,7 +588,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("err-2", {
         code: "throw new Error('boom')",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const text = textOf(result);
       expect(text).toContain("Error:");
@@ -602,7 +600,7 @@ describe("createExecuteTool", () => {
       // The function body runs in a scoped context — require isn't available
       const result = await tool.execute("err-3", {
         code: "const fs = require('fs'); return fs.readFileSync('/etc/passwd', 'utf8')",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const text = textOf(result);
       expect(text).toContain("Error:");
@@ -612,7 +610,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("err-4", {
         code: "return process.env",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       expect(textOf(result)).toContain("Error:");
     });
@@ -621,7 +619,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("err-5", {
         code: "return globalThis.process",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       // globalThis in vm context is the sandbox — process isn't on it
       expect(textOf(result)).toBe("undefined");
@@ -631,7 +629,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("err-6", {
         code: "const fs = await import('fs'); return fs.readdirSync('.')",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       expect(textOf(result)).toContain("Error:");
     });
@@ -640,7 +638,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("err-7", {
         code: "return typeof fetch",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       expect(textOf(result)).toBe("undefined");
     });
@@ -651,7 +649,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("f1", {
         code: "return { a: 1, b: 'two' }",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed).toEqual({ a: 1, b: "two" });
@@ -661,7 +659,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("f2", {
         code: "// no return",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       expect(textOf(result)).toBe("undefined");
     });
@@ -670,7 +668,7 @@ describe("createExecuteTool", () => {
       const tool = makeTool();
       const result = await tool.execute("f3", {
         code: "return 42",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       expect(textOf(result)).toBe("42");
     });

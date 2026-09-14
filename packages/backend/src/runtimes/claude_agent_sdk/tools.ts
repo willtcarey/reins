@@ -1,5 +1,5 @@
 import { createSdkMcpServer, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { z } from "zod/v4";
 import { isRecord, toRecord } from "./type-guards.js";
 
@@ -11,7 +11,7 @@ import { isRecord, toRecord } from "./type-guards.js";
  * JSON Schema properties to equivalent Zod types so the SDK's internal
  * validation (via `safeParseAsync`) works correctly.
  */
-export function typeboxToZodShape(schema: ToolDefinition["parameters"]): z.core.$ZodShape {
+export function typeboxToZodShape(schema: AgentTool["parameters"]): z.core.$ZodShape {
   const schemaObj = toRecord(schema);
   const properties = toRecord(schemaObj.properties);
   const rawRequired = schemaObj.required;
@@ -80,7 +80,7 @@ function resolveToolSignal(runtimeSignal: AbortSignal, extra: unknown): AbortSig
 }
 
 export function createClaudeCustomToolsServer(params: {
-  customTools: ToolDefinition[];
+  customTools: AgentTool[];
   getSignal: () => AbortSignal;
 }): McpSdkServerConfigWithInstance | null {
   const { customTools, getSignal } = params;
@@ -95,7 +95,7 @@ export function createClaudeCustomToolsServer(params: {
       inputSchema: typeboxToZodShape(tool.parameters),
       handler: async (args: Record<string, unknown>, extra: unknown) => {
         const toolCallId = crypto.randomUUID();
-        const result = await tool.execute(toolCallId, args, resolveToolSignal(getSignal(), extra), undefined, Object.create(null));
+        const result = await tool.execute(toolCallId, args, resolveToolSignal(getSignal(), extra), undefined);
         return {
           content: [{ type: "text", text: formatToolResult(result) }],
           isError: false,

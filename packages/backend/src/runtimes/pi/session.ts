@@ -1,5 +1,6 @@
 import {
   createAgentSession,
+  defineTool,
   SessionManager,
   type AgentSession,
   type FileEntry,
@@ -131,7 +132,8 @@ async function buildSessionOpts(params: {
   } = params;
   const builtinNames = sessionTools?.builtins ?? ["read", "write", "edit", "bash"];
 
-  const customTools = sessionTools?.customTools ?? [];
+  const customAgentTools = sessionTools?.customTools ?? [];
+  const customTools = customAgentTools.map((tool) => defineTool(tool));
   // Pi's `tools` option is an allowlist across built-in, extension, and custom tools.
   // Include custom tool names here or they are described in the prompt but filtered out at runtime.
   const enabledToolNames = [

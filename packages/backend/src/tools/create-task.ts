@@ -12,7 +12,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TaskRow } from "../task-store.js";
 import type { Broadcast } from "../models/broadcast.js";
 import type { CreateSessionFn } from "../runtimes/sessions-manager.js";
@@ -49,7 +49,7 @@ export interface CreateTaskToolOpts {
  * Loads the project record at execution time so that changes to the
  * project path or base branch are picked up mid-conversation.
  */
-export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition<typeof parameters> {
+export function createTaskTool(opts: CreateTaskToolOpts): AgentTool<typeof parameters> {
   const { projectId, broadcast, sessions, createSession } = opts;
 
   return {
@@ -60,7 +60,7 @@ export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition<typeof 
       "Only use this when the user explicitly asks you to create a task — do not proactively create tasks.",
     parameters,
 
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, _signal, _onUpdate) {
       try {
         const projectModel = new ProjectModel(projectId, sessions, broadcast);
         const task: TaskRow = await projectModel.tasks().create({

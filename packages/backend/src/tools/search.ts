@@ -10,7 +10,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { searchFunctions, referencedTypes, DOMAIN_TYPES } from "../scripting/api-registry.js";
 import type { ApiFunctionDef } from "../scripting/define-function.js";
 import { formatApiInterfaces, formatTypeDeclaration, type SchemaNameMap } from "../scripting/api-schema-formatter.js";
@@ -62,7 +62,7 @@ function formatResults(fns: ApiFunctionDef[]): string {
   ].join("\n");
 }
 
-export function createSearchTool(): ToolDefinition<typeof parameters> {
+export function createSearchTool(): AgentTool<typeof parameters> {
   return {
     name: "search",
     label: "Search API",
@@ -76,7 +76,7 @@ export function createSearchTool(): ToolDefinition<typeof parameters> {
       "these interfaces are documentation only.",
     parameters,
 
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, _signal, _onUpdate) {
       const results = searchFunctions(params.query);
       const text = formatResults(results);
 

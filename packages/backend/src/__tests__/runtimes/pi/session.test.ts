@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { Type } from "@sinclair/typebox";
-import { defineTool, SessionManager } from "@earendil-works/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { createProject } from "../../../project-store.js";
 import { createSession } from "../../../session-store.js";
 import { attachStoredMessageMetadata, loadMessagePage, persistMessages } from "../../../messages-store.js";
@@ -64,7 +64,7 @@ describe("PiRuntimeAdapter", () => {
   });
 
   test("enables custom tools in the pi SDK allowlist", async () => {
-    const customTool = defineTool({
+    const customTool = {
       name: "create_task",
       label: "Create Task",
       description: "Create a task",
@@ -73,7 +73,7 @@ describe("PiRuntimeAdapter", () => {
         content: [{ type: "text" as const, text: "ok" }],
         details: {},
       }),
-    });
+    };
 
     const adapter = new PiRuntimeAdapter();
     const runtime = await adapter.createRuntime({
