@@ -111,6 +111,11 @@ describe("migrations", () => {
 
       runMigrations(db);
 
+      const piTables = db.query<{ name: string }, []>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'pi_%' ORDER BY name",
+      ).all().map((row) => row.name);
+      expect(piTables).toEqual(["pi_lists", "pi_usage", "pi_values"]);
+
       const rows = db.query<{
         id: number;
         session_id: string;

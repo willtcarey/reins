@@ -21,6 +21,8 @@ Existing rows are migrated into a linear chain per session in `seq` order. New p
 
 The foreign key prevents dangling parent references. Deleting an individual parent makes its direct children parentless rather than recursively deleting their subtree. Current production transcript deletion remains limited to active-window suffix truncation and whole-session/task cleanup; this change does not add arbitrary message or branch deletion behavior.
 
+The disconnected `PiStorageAdapter` also uses this table as its sole entry store. Reins retains ownership of session lifecycle; future activation constructs the public `StorageBackedSession` directly from Reins metadata and this adapter rather than adding a parallel session repository. Canonical rows map exact entry identity through `harness_id`, actual ancestry through `parent_id`, and the global harness entry sequence through existing `seq`; gaps represent non-entry writes. `message_json` stores the typed entry envelope, including exact commit timestamp, entry/custom type, and complete payload. Contract state that is not an entry lives in narrowly scoped `pi_values`, `pi_lists`, and `pi_usage` tables, with `sessions.harness_next_seq` allocating one transaction-wide sequence even across deletes. The adapter has no legacy fallback: before future activation, every existing session must be migrated so every entry has a harness ID and `harness_next_seq` is beyond all imported writes.
+
 ## Active transcript projection
 
 `persistMessages(sessionId, messages)` treats its input as the authoritative runtime snapshot. The rows in the active transcript window are a mutable projection of that snapshot:
@@ -40,7 +42,7 @@ Persistence deliberately does not inspect `stopReason` or tool-call IDs to decid
 
 Ordinary reconciliation restores metadata only at the same position with an exact matching `logicalId`. Changed content or stop reason does not break continuity. Different or absent identities do not inherit metadata, despite retaining SQLite row IDs; truncation deletes metadata with its row. Attachment requires a non-empty `logicalId`.
 
-Pi supplies `logicalId` from its native `SessionEntry.id`. On reopen, Reins reconstructs Pi's active entry chain with those IDs and strips `logicalId` before messages enter model context. Legacy Pi messages receive fresh native IDs during hydration and gain stable identity at the next finalized snapshot; no timestamp/content bridge transfers existing metadata. Other runtimes currently lack a proven stable identity and therefore conservatively do not preserve metadata through snapshot rewrites.
+In the current pre-cutover runtime, Pi supplies `logicalId` from its native `SessionEntry.id`. On reopen, Reins reconstructs Pi's active entry chain with those IDs and strips `logicalId` before messages enter model context. Legacy Pi messages receive fresh native IDs during hydration and gain stable identity at the next finalized snapshot; no timestamp/content bridge transfers existing metadata. Other runtimes currently lack a proven stable identity and therefore conservatively do not preserve metadata through snapshot rewrites. This remains current behavior until the unified migration and adapter activation.
 
 ## Compaction
 
