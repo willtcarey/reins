@@ -12,7 +12,8 @@
     "capture:claude-sdk-trace": "bun scripts/capture-claude-sdk-trace.ts",
     "capture:pi-runtime-trace": "bun scripts/capture-pi-runtime-trace.ts",
     "capture:pi-compaction-trace": "bun scripts/capture-pi-compaction-trace.ts",
-    "capture:pi-manual-compaction-trace": "bun scripts/capture-pi-manual-compaction-trace.ts"
+    "capture:pi-manual-compaction-trace": "bun scripts/capture-pi-manual-compaction-trace.ts",
+    "manual:agent-harness-pi": "bun scripts/manual-agent-harness-pi.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.2.114",

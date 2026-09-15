@@ -24,5 +24,6 @@
 | [runtime-event-compatibility.md](runtime-event-compatibility.md) | backend | Runtime adapter event compatibility contract for persistence, WS broadcast, and normalization |
 | [pi-runtime-event-order.md](pi-runtime-event-order.md) | backend | Pi lifecycle event ordering notes, especially compaction before `agent_start` |
 | [runtime-adapter-contract.md](runtime-adapter-contract.md) | backend | Minimum viable runtime adapter contract: adapter methods, runtime methods, events, messages, tools, and resume expectations |
+| [manual-agent-harness-pi.md](manual-agent-harness-pi.md) | backend | Isolated fake-provider launcher for the unregistered AgentHarness Pi runtime |
 | [session-message-persistence.md](session-message-persistence.md) | backend | Ordered runtime snapshots, active transcript projection, compaction, and pagination stability |
 
