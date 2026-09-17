@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import * as ts from "typescript";
 import { searchFunctions, API_FUNCTIONS, referencedTypes } from "../../scripting/api-registry.js";
 import { createSearchTool } from "../../tools/search.js";
+import { executeTool } from "../helpers/execute-tool.js";
 
 
 // ---------------------------------------------------------------------------
@@ -119,7 +120,7 @@ describe("createSearchTool", () => {
 
   test("execute returns TypeScript documentation interfaces for a query", async () => {
     const tool = createSearchTool();
-    const result = await tool.execute("call-1", { query: "tasks.list" }, undefined, undefined);
+    const result = await executeTool(tool, "call-1", { query: "tasks.list" }, undefined, undefined);
 
     expect(result.content).toBeArray();
     expect(result.content.length).toBe(1);
@@ -140,7 +141,7 @@ describe("createSearchTool", () => {
 
   test("execute includes TypeScript interfaces for referenced types", async () => {
     const tool = createSearchTool();
-    const result = await tool.execute("call-types", { query: "tasks.get" }, undefined, undefined);
+    const result = await executeTool(tool, "call-types", { query: "tasks.get" }, undefined, undefined);
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
     expect(text).toContain("interface Task {");
@@ -150,7 +151,7 @@ describe("createSearchTool", () => {
 
   test("execute returns all entries for empty query", async () => {
     const tool = createSearchTool();
-    const result = await tool.execute("call-2", { query: "" }, undefined, undefined);
+    const result = await executeTool(tool, "call-2", { query: "" }, undefined, undefined);
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
     expect(text).toContain("tasks: TasksApi;");
@@ -161,7 +162,7 @@ describe("createSearchTool", () => {
 
   test("execute documents session filtering and entry APIs", async () => {
     const tool = createSearchTool();
-    const result = await tool.execute("call-session-entries", { query: "sessions" }, undefined, undefined);
+    const result = await executeTool(tool, "call-session-entries", { query: "sessions" }, undefined, undefined);
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
     expect(text).toContain("list(options?:");
@@ -181,7 +182,7 @@ describe("createSearchTool", () => {
 
   test("execute documents the code review scripting interface", async () => {
     const tool = createSearchTool();
-    const result = await tool.execute("call-reviews", { query: "reviews comments" }, undefined, undefined);
+    const result = await executeTool(tool, "call-reviews", { query: "reviews comments" }, undefined, undefined);
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
     expect(text).toContain("reviews: ReviewsApi;");
@@ -193,7 +194,7 @@ describe("createSearchTool", () => {
 
   test("execute documents the UI broadcast helper", async () => {
     const tool = createSearchTool();
-    const result = await tool.execute("call-ui-broadcast", { query: "ui broadcast" }, undefined, undefined);
+    const result = await executeTool(tool, "call-ui-broadcast", { query: "ui broadcast" }, undefined, undefined);
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
     expect(text).toContain("ui: UiApi;");
@@ -203,7 +204,7 @@ describe("createSearchTool", () => {
 
   test("execute returns no-results message for unmatched query", async () => {
     const tool = createSearchTool();
-    const result = await tool.execute("call-3", { query: "xyznonexistent" }, undefined, undefined);
+    const result = await executeTool(tool, "call-3", { query: "xyznonexistent" }, undefined, undefined);
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
     expect(text).toContain("No matching");

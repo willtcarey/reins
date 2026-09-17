@@ -10,10 +10,11 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import { searchFunctions, referencedTypes, DOMAIN_TYPES } from "../scripting/api-registry.js";
 import type { ApiFunctionDef } from "../scripting/define-function.js";
 import { formatApiInterfaces, formatTypeDeclaration, type SchemaNameMap } from "../scripting/api-schema-formatter.js";
+import type { ReinsToolContext } from "./types.js";
 
 const parameters = Type.Object({
   query: Type.String({
@@ -62,7 +63,7 @@ function formatResults(fns: ApiFunctionDef[]): string {
   ].join("\n");
 }
 
-export function createSearchTool(): AgentTool<typeof parameters> {
+export function createSearchTool(): AgentHarnessTool<ReinsToolContext | undefined, typeof parameters> {
   return {
     name: "search",
     label: "Search API",
@@ -75,8 +76,9 @@ export function createSearchTool(): AgentTool<typeof parameters> {
       "In `execute` scripts, call methods on the provided `api` object; " +
       "these interfaces are documentation only.",
     parameters,
+    replay: "never",
 
-    async execute(_toolCallId, params, _signal, _onUpdate) {
+    async execute(_toolCallId, params, _onUpdate, _toolContext, _invocation, _context) {
       const results = searchFunctions(params.query);
       const text = formatResults(results);
 

@@ -4,13 +4,14 @@ import { useTestRepo, createTestRepo } from "../helpers/test-repo.js";
 import { createProject, type Project } from "../../project-store.js";
 import { createTask, getTask } from "../../task-store.js";
 import { createSession as storeCreateSession } from "../../session-store.js";
-import { persistMessages } from "../../messages-store.js";
 import { getDb } from "../../db.js";
 import { createExecuteTool } from "../../tools/execute.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 import { randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
+import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
+import { executeTool } from "../helpers/execute-tool.js";
 
 
 // Initialize encryption secret for tests
@@ -68,7 +69,7 @@ describe("createExecuteTool", () => {
   describe("projects API", () => {
     test("projects.current() returns the current project", async () => {
       const tool = makeTool();
-      const result = await tool.execute("c1", {
+      const result = await executeTool(tool, "c1", {
         code: "return api.projects.current()",
       }, undefined, undefined);
 
@@ -79,7 +80,7 @@ describe("createExecuteTool", () => {
 
     test("projects.list() returns all projects", async () => {
       const tool = makeTool();
-      const result = await tool.execute("c2", {
+      const result = await executeTool(tool, "c2", {
         code: "return api.projects.list()",
       }, undefined, undefined);
 
@@ -90,7 +91,7 @@ describe("createExecuteTool", () => {
 
     test("projects.get() returns a project by ID", async () => {
       const tool = makeTool();
-      const result = await tool.execute("c3", {
+      const result = await executeTool(tool, "c3", {
         code: `return api.projects.get(${project.id})`,
       }, undefined, undefined);
 
@@ -100,7 +101,7 @@ describe("createExecuteTool", () => {
 
     test("projects.get() throws for nonexistent ID", async () => {
       const tool = makeTool();
-      const result = await tool.execute("c4", {
+      const result = await executeTool(tool, "c4", {
         code: "return api.projects.get(99999)",
       }, undefined, undefined);
 
@@ -111,7 +112,7 @@ describe("createExecuteTool", () => {
       const secondRepo = await createTestRepo();
       try {
         const tool = makeTool();
-        const result = await tool.execute("c-create", {
+        const result = await executeTool(tool, "c-create", {
           code: `return await api.projects.create("New Project", ${JSON.stringify(secondRepo.dir)})`,
         }, undefined, undefined);
 
@@ -128,7 +129,7 @@ describe("createExecuteTool", () => {
     test("projects.create() throws on duplicate path", async () => {
       const tool = makeTool();
       // repo.dir is already used by the project created in beforeEach
-      const result = await tool.execute("c-dup", {
+      const result = await executeTool(tool, "c-dup", {
         code: `return await api.projects.create("Dupe", ${JSON.stringify(repo.dir)})`,
       }, undefined, undefined);
 
@@ -143,7 +144,7 @@ describe("createExecuteTool", () => {
       createTask(project.id, "Task 2", "desc", "task/two", null);
 
       const tool = makeTool();
-      const result = await tool.execute("c5", {
+      const result = await executeTool(tool, "c5", {
         code: "return api.tasks.list()",
       }, undefined, undefined);
 
@@ -157,7 +158,7 @@ describe("createExecuteTool", () => {
       storeCreateSession("task-sess", project.id, { agentRuntimeType: "pi", taskId: task.id });
       const tool = makeTool("task-sess", task.id);
 
-      const result = await tool.execute("c-tc", {
+      const result = await executeTool(tool, "c-tc", {
         code: "return api.tasks.current()",
       }, undefined, undefined);
 
@@ -168,7 +169,7 @@ describe("createExecuteTool", () => {
 
     test("tasks.current() returns null for scratch sessions", async () => {
       const tool = makeTool("scratch-sess", null);
-      const result = await tool.execute("c-tc2", {
+      const result = await executeTool(tool, "c-tc2", {
         code: "return api.tasks.current()",
       }, undefined, undefined);
 
@@ -179,7 +180,7 @@ describe("createExecuteTool", () => {
       const task = createTask(project.id, "My Task", "description", "task/my-task", null);
 
       const tool = makeTool();
-      const result = await tool.execute("c6", {
+      const result = await executeTool(tool, "c6", {
         code: `return api.tasks.get(${task.id})`,
       }, undefined, undefined);
 
@@ -190,7 +191,7 @@ describe("createExecuteTool", () => {
 
     test("tasks.create() creates a task with a git branch", async () => {
       const tool = makeTool();
-      const result = await tool.execute("c7", {
+      const result = await executeTool(tool, "c7", {
         code: `return await api.tasks.create("New Task", "A new task")`,
       }, undefined, undefined);
 
@@ -208,7 +209,7 @@ describe("createExecuteTool", () => {
       const task = createTask(project.id, "Original", "desc", "task/orig", null);
 
       const tool = makeTool();
-      const result = await tool.execute("c8", {
+      const result = await executeTool(tool, "c8", {
         code: `return api.tasks.update(${task.id}, { title: "Updated" })`,
       }, undefined, undefined);
 
@@ -223,7 +224,7 @@ describe("createExecuteTool", () => {
       const task = createTask(project.id, "Review task", "", "main", null);
       const tool = makeTool("review-session", task.id);
 
-      const result = await tool.execute("c-review", {
+      const result = await executeTool(tool, "c-review", {
         code: `
           const created = await api.reviews.addComment(
             "README.md",
@@ -269,7 +270,7 @@ describe("createExecuteTool", () => {
       storeCreateSession("task-sess", project.id, { agentRuntimeType: "pi", taskId: task.id });
 
       const tool = makeTool();
-      const result = await tool.execute("c9", {
+      const result = await executeTool(tool, "c9", {
         code: "return api.sessions.list()",
       }, undefined, undefined);
 
@@ -282,7 +283,7 @@ describe("createExecuteTool", () => {
       storeCreateSession("current-sess", project.id, { agentRuntimeType: "pi" });
       const tool = makeTool("current-sess");
 
-      const result = await tool.execute("c-sc", {
+      const result = await executeTool(tool, "c-sc", {
         code: "return api.sessions.current()",
       }, undefined, undefined);
 
@@ -294,7 +295,7 @@ describe("createExecuteTool", () => {
       storeCreateSession("sess-x", project.id, { agentRuntimeType: "pi" });
 
       const tool = makeTool();
-      const result = await tool.execute("c11", {
+      const result = await executeTool(tool, "c11", {
         code: `return api.sessions.get("sess-x")`,
       }, undefined, undefined);
 
@@ -304,13 +305,13 @@ describe("createExecuteTool", () => {
 
     test("sessions.entries() returns persisted message entries", async () => {
       storeCreateSession("sess-m", project.id, { agentRuntimeType: "pi" });
-      persistMessages("sess-m", [
+      persistCanonicalMessages("sess-m", [
         { role: "user", content: [{ type: "text", text: "Hello" }] },
         { role: "assistant", content: [{ type: "text", text: "Hi there" }] },
       ]);
 
       const tool = makeTool();
-      const result = await tool.execute("c12", {
+      const result = await executeTool(tool, "c12", {
         code: `return api.sessions.entries("sess-m")`,
       }, undefined, undefined);
 
@@ -323,7 +324,7 @@ describe("createExecuteTool", () => {
     test("session read methods can inspect sessions from another project", async () => {
       const otherProject = createProject("Other Project", `${repo.dir}-other-read`, "main");
       storeCreateSession("other-read", otherProject.id, { agentRuntimeType: "pi" });
-      persistMessages("other-read", [
+      persistCanonicalMessages("other-read", [
         { role: "user", content: [{ type: "text", text: "Hello from another project" }] },
         {
           role: "assistant",
@@ -339,7 +340,7 @@ describe("createExecuteTool", () => {
       ]);
 
       const tool = makeTool();
-      const result = await tool.execute("c-cross-project-session-reads", {
+      const result = await executeTool(tool, "c-cross-project-session-reads", {
         code: `return {
           session: api.sessions.get("other-read"),
           messages: api.sessions.entries("other-read", { types: ["user", "assistant"], limit: 1 }),
@@ -361,18 +362,18 @@ describe("createExecuteTool", () => {
 
     test("sessions.list(options) filters by search, minMessages, since, and limit", async () => {
       storeCreateSession("old-match", project.id, { agentRuntimeType: "pi" });
-      persistMessages("old-match", [
+      persistCanonicalMessages("old-match", [
         { role: "user", content: [{ type: "text", text: "needle old prompt" }] },
         { role: "assistant", content: [{ type: "text", text: "old answer" }] },
       ]);
 
       storeCreateSession("new-low-count", project.id, { agentRuntimeType: "pi" });
-      persistMessages("new-low-count", [
+      persistCanonicalMessages("new-low-count", [
         { role: "user", content: [{ type: "text", text: "needle but only one message" }] },
       ]);
 
       storeCreateSession("new-match", project.id, { agentRuntimeType: "pi" });
-      persistMessages("new-match", [
+      persistCanonicalMessages("new-match", [
         { role: "user", content: [{ type: "text", text: "needle new prompt" }] },
         { role: "assistant", content: [{ type: "text", text: "new answer" }] },
       ]);
@@ -382,7 +383,7 @@ describe("createExecuteTool", () => {
       getDb().query("UPDATE sessions SET updated_at = ? WHERE id = ?").run("2024-03-02T00:00:00.000Z", "new-match");
 
       const tool = makeTool();
-      const result = await tool.execute("c-list-filter", {
+      const result = await executeTool(tool, "c-list-filter", {
         code: `return api.sessions.list({ search: "needle", minMessages: 2, since: "2024-02-01T00:00:00.000Z", limit: 1 })`,
       }, undefined, undefined);
 
@@ -398,7 +399,7 @@ describe("createExecuteTool", () => {
       storeCreateSession("task-only", project.id, { agentRuntimeType: "pi", taskId: task.id });
 
       const tool = makeTool();
-      const result = await tool.execute("c-list-task", {
+      const result = await executeTool(tool, "c-list-task", {
         code: `return api.sessions.list({ taskId: ${task.id} })`,
       }, undefined, undefined);
 
@@ -412,7 +413,7 @@ describe("createExecuteTool", () => {
       storeCreateSession("task-only", project.id, { agentRuntimeType: "pi", taskId: task.id });
 
       const tool = makeTool();
-      const result = await tool.execute("c-list-scratch", {
+      const result = await executeTool(tool, "c-list-scratch", {
         code: "return api.sessions.list({ taskId: null })",
       }, undefined, undefined);
 
@@ -427,7 +428,7 @@ describe("createExecuteTool", () => {
       storeCreateSession("task-context", project.id, { agentRuntimeType: "pi", taskId: task.id });
 
       const tool = makeTool("task-context", task.id);
-      const result = await tool.execute("c-list-current-identifiers", {
+      const result = await executeTool(tool, "c-list-current-identifiers", {
         code: `return api.sessions.list({ projectId: "current", taskId: "current" })`,
       }, undefined, undefined);
 
@@ -438,16 +439,16 @@ describe("createExecuteTool", () => {
     test("sessions.list(options) can target another project", async () => {
       const otherProject = createProject("Other Project", `${repo.dir}-other`, "main");
       storeCreateSession("current-project", project.id, { agentRuntimeType: "pi" });
-      persistMessages("current-project", [
+      persistCanonicalMessages("current-project", [
         { role: "user", content: [{ type: "text", text: "scope needle current" }] },
       ]);
       storeCreateSession("other-project", otherProject.id, { agentRuntimeType: "pi" });
-      persistMessages("other-project", [
+      persistCanonicalMessages("other-project", [
         { role: "user", content: [{ type: "text", text: "scope needle other" }] },
       ]);
 
       const tool = makeTool();
-      const result = await tool.execute("c-list-other-project", {
+      const result = await executeTool(tool, "c-list-other-project", {
         code: `return api.sessions.list({ projectId: ${otherProject.id}, search: "scope needle" })`,
       }, undefined, undefined);
 
@@ -457,7 +458,7 @@ describe("createExecuteTool", () => {
 
     test("sessions.entries(sessionId, options) filters and pages entries with metadata", async () => {
       storeCreateSession("sess-filter", project.id, { agentRuntimeType: "pi" });
-      persistMessages("sess-filter", [
+      persistCanonicalMessages("sess-filter", [
         { role: "user", content: [{ type: "text", text: "first prompt" }] },
         { role: "assistant", content: [{ type: "text", text: "first answer" }] },
         { role: "user", content: [{ type: "text", text: "second prompt needle" }] },
@@ -465,7 +466,7 @@ describe("createExecuteTool", () => {
       ]);
 
       const tool = makeTool();
-      const result = await tool.execute("c-msg-filter", {
+      const result = await executeTool(tool, "c-msg-filter", {
         code: `return api.sessions.entries("sess-filter", { types: ["user"], search: "needle", limit: 1 })`,
       }, undefined, undefined);
 
@@ -478,14 +479,14 @@ describe("createExecuteTool", () => {
 
     test("sessions.entries(sessionId, { limit }) returns the latest entries in chronological order", async () => {
       storeCreateSession("sess-latest", project.id, { agentRuntimeType: "pi" });
-      persistMessages("sess-latest", [
+      persistCanonicalMessages("sess-latest", [
         { role: "user", content: [{ type: "text", text: "one" }] },
         { role: "assistant", content: [{ type: "text", text: "two" }] },
         { role: "user", content: [{ type: "text", text: "three" }] },
       ]);
 
       const tool = makeTool();
-      const result = await tool.execute("c-msg-limit", {
+      const result = await executeTool(tool, "c-msg-limit", {
         code: `return api.sessions.entries("sess-latest", { types: ["user", "assistant"], limit: 2 }).map((m) => ({ seq: m.seq, type: m.type }))`,
       }, undefined, undefined);
 
@@ -497,7 +498,7 @@ describe("createExecuteTool", () => {
 
     test("sessions.entries() exposes compact tool entries", async () => {
       storeCreateSession("sess-tools", project.id, { agentRuntimeType: "pi" });
-      persistMessages("sess-tools", [
+      persistCanonicalMessages("sess-tools", [
         {
           role: "assistant",
           content: [
@@ -526,10 +527,10 @@ describe("createExecuteTool", () => {
       ]);
 
       const tool = makeTool();
-      const traceResult = await tool.execute("c-tool-trace", {
+      const traceResult = await executeTool(tool, "c-tool-trace", {
         code: `return api.sessions.entries("sess-tools", { types: ["toolCall"], toolName: "bash" })`,
       }, undefined, undefined);
-      const errorResult = await tool.execute("c-tool-error-trace", {
+      const errorResult = await executeTool(tool, "c-tool-error-trace", {
         code: `return api.sessions.entries("sess-tools", { isError: true })`,
       }, undefined, undefined);
 
@@ -563,7 +564,7 @@ describe("createExecuteTool", () => {
         event: { type: "compaction_start", reason: "debug" },
       };
 
-      const result = await tool.execute("c-ui-broadcast", {
+      const result = await executeTool(tool, "c-ui-broadcast", {
         code: `return api.ui.broadcast(${JSON.stringify(message)})`,
       }, undefined, undefined);
 
@@ -576,7 +577,7 @@ describe("createExecuteTool", () => {
   describe("error handling", () => {
     test("returns error for syntax errors", async () => {
       const tool = makeTool();
-      const result = await tool.execute("err-1", {
+      const result = await executeTool(tool, "err-1", {
         code: "return {{{",
       }, undefined, undefined);
 
@@ -586,7 +587,7 @@ describe("createExecuteTool", () => {
 
     test("returns error for runtime exceptions", async () => {
       const tool = makeTool();
-      const result = await tool.execute("err-2", {
+      const result = await executeTool(tool, "err-2", {
         code: "throw new Error('boom')",
       }, undefined, undefined);
 
@@ -598,7 +599,7 @@ describe("createExecuteTool", () => {
     test("cannot access require or import", async () => {
       const tool = makeTool();
       // The function body runs in a scoped context — require isn't available
-      const result = await tool.execute("err-3", {
+      const result = await executeTool(tool, "err-3", {
         code: "const fs = require('fs'); return fs.readFileSync('/etc/passwd', 'utf8')",
       }, undefined, undefined);
 
@@ -608,7 +609,7 @@ describe("createExecuteTool", () => {
 
     test("cannot access process", async () => {
       const tool = makeTool();
-      const result = await tool.execute("err-4", {
+      const result = await executeTool(tool, "err-4", {
         code: "return process.env",
       }, undefined, undefined);
 
@@ -617,7 +618,7 @@ describe("createExecuteTool", () => {
 
     test("cannot access globalThis.process", async () => {
       const tool = makeTool();
-      const result = await tool.execute("err-5", {
+      const result = await executeTool(tool, "err-5", {
         code: "return globalThis.process",
       }, undefined, undefined);
 
@@ -627,7 +628,7 @@ describe("createExecuteTool", () => {
 
     test("cannot use dynamic import", async () => {
       const tool = makeTool();
-      const result = await tool.execute("err-6", {
+      const result = await executeTool(tool, "err-6", {
         code: "const fs = await import('fs'); return fs.readdirSync('.')",
       }, undefined, undefined);
 
@@ -636,7 +637,7 @@ describe("createExecuteTool", () => {
 
     test("cannot access fetch", async () => {
       const tool = makeTool();
-      const result = await tool.execute("err-7", {
+      const result = await executeTool(tool, "err-7", {
         code: "return typeof fetch",
       }, undefined, undefined);
 
@@ -647,7 +648,7 @@ describe("createExecuteTool", () => {
   describe("return value formatting", () => {
     test("serializes objects as JSON", async () => {
       const tool = makeTool();
-      const result = await tool.execute("f1", {
+      const result = await executeTool(tool, "f1", {
         code: "return { a: 1, b: 'two' }",
       }, undefined, undefined);
 
@@ -657,7 +658,7 @@ describe("createExecuteTool", () => {
 
     test("returns undefined as 'undefined'", async () => {
       const tool = makeTool();
-      const result = await tool.execute("f2", {
+      const result = await executeTool(tool, "f2", {
         code: "// no return",
       }, undefined, undefined);
 
@@ -666,7 +667,7 @@ describe("createExecuteTool", () => {
 
     test("returns primitives directly", async () => {
       const tool = makeTool();
-      const result = await tool.execute("f3", {
+      const result = await executeTool(tool, "f3", {
         code: "return 42",
       }, undefined, undefined);
 

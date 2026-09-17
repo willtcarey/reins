@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { Type } from "@sinclair/typebox";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { setApiKeyCredential } from "../../../auth-credentials-store.js";
 import { createProject } from "../../../project-store.js";
@@ -34,7 +35,11 @@ describe("unselected AgentHarness Pi builder", () => {
       } } },
     };
     provider.setResponses([
-      (context) => { requests.push(structuredClone(context)); return fauxAssistantMessage(fauxToolCall("read", { path: "input.txt" }, { id: "read-1" }), { stopReason: "toolUse" }); },
+      (context) => {
+        requests.push(structuredClone(context));
+        setApiKeyCredential("builder-faux", "refreshed-key");
+        return fauxAssistantMessage(fauxToolCall("read", { path: "input.txt" }, { id: "read-1" }), { stopReason: "toolUse" });
+      },
       (context) => { requests.push(structuredClone(context)); return fauxAssistantMessage(fauxToolCall("custom_effect", {}, { id: "custom-1" }), { stopReason: "toolUse" }); },
       (context) => { requests.push(structuredClone(context)); return fauxAssistantMessage("built"); },
     ]);
@@ -51,9 +56,10 @@ describe("unselected AgentHarness Pi builder", () => {
         state: createServerState(), projectId: project.id, projectDir: "/tmp/harness-builder",
         sessionId: "harness-builder", task: null,
         model: { provider: "builder-faux", modelId: "fake" }, thinkingLevel: "minimal",
-        sessionTools: { builtins: ["read"], customTools: [customTool] }, resume: false,
+        sessionTools: { builtins: ["read"], harnessTools: [customTool] }, resume: false,
       });
       await runtime.prompt([{ type: "text", text: "build" }]);
+      await runtime.waitForIdle();
 
       const prompt = requests[0]!.systemPrompt ?? "";
       expect(prompt).toContain("You are REINS");
@@ -64,9 +70,16 @@ describe("unselected AgentHarness Pi builder", () => {
       expect(JSON.stringify(requests)).toContain("builder input");
       expect(customExecutions).toBe(1);
       expect(credentials).toHaveLength(5);
-      expect(credentials.every((credential) => JSON.stringify(credential) === JSON.stringify({ type: "api_key", key: "fake-key" }))).toBe(true);
+      expect(credentials).toContainEqual({ type: "api_key", key: "fake-key" });
+      expect(credentials).toContainEqual({ type: "api_key", key: "refreshed-key" });
+      expect(credentials.at(-1)).toEqual({ type: "api_key", key: "refreshed-key" });
       expect(runtime.getSessionMetadata()).toEqual({ model: { provider: "builder-faux", modelId: "fake" }, thinkingLevel: "minimal" });
+      expect(runtime.executionEnv).toBeInstanceOf(NodeExecutionEnv);
+      let cleanups = 0;
+      Object.defineProperty(runtime.executionEnv, "cleanup", { value: async () => { cleanups++; } });
       await runtime.close();
+      await runtime.close();
+      expect(cleanups).toBe(1);
     } finally {
       unregisterPiProvider("builder-faux");
     }
@@ -98,11 +111,13 @@ describe("unselected AgentHarness Pi builder", () => {
         state: createServerState(), projectId: project.id, projectDir: "/tmp/harness-bash",
         sessionId: "harness-bash", task: null,
         model: { provider: "bash-faux", modelId: "one" }, thinkingLevel: "minimal",
-        sessionTools: { builtins: ["bash"], customTools: [] }, resume: false,
+        sessionTools: { builtins: ["bash"], harnessTools: [] }, resume: false,
       });
       await runtime.prompt([{ type: "text", text: "inspect environment" }]);
+      await runtime.waitForIdle();
       await runtime.setModel({ provider: "bash-faux", modelId: "two", thinkingLevel: "high" });
       await runtime.prompt([{ type: "text", text: "inspect changed environment" }]);
+      await runtime.waitForIdle();
 
       expect(JSON.stringify(contexts[0])).toContain("/tmp/harness-bash|harness-bash|bash-faux|one|minimal|unset");
       expect(JSON.stringify(contexts[1])).toContain("/tmp/harness-bash|harness-bash|bash-faux|two|high|unset");

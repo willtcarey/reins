@@ -6,8 +6,8 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createSession, updateActivityState } from "../../session-store.js";
-import { persistMessages } from "../../messages-store.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
+import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
 function textContent(text: string) {
   return [{ type: "text" as const, text }];
@@ -73,7 +73,7 @@ describe("session routes (top-level)", () => {
     test("returns metadata-only session from DB with projectId", async () => {
       const sessionId = "lookup-db";
       createSession(sessionId, projectId, { agentRuntimeType: "pi",});
-      persistMessages(sessionId, [
+      persistCanonicalMessages(sessionId, [
         { role: "user", content: textContent("test") },
       ]);
 
@@ -118,7 +118,7 @@ describe("session routes (top-level)", () => {
     test("returns persisted messages for an existing session", async () => {
       const sessionId = "messages-existing";
       createSession(sessionId, projectId, { agentRuntimeType: "pi",});
-      persistMessages(sessionId, [
+      persistCanonicalMessages(sessionId, [
         { role: "user", content: textContent("hello"), timestamp: 1000 },
         {
           role: "assistant",
@@ -176,10 +176,10 @@ describe("session routes (top-level)", () => {
       });
     });
 
-    test("returns persisted messages for non-pi sessions", async () => {
+    test("returns canonical persisted messages instead of warm runtime snapshots", async () => {
       const sessionId = "messages-runtime";
-      createSession(sessionId, projectId, { agentRuntimeType: "claude_agent_sdk" });
-      persistMessages(sessionId, [
+      createSession(sessionId, projectId, { agentRuntimeType: "pi" });
+      persistCanonicalMessages(sessionId, [
         { role: "assistant", content: [{ type: "text", text: "from db" }] },
       ]);
 
@@ -188,7 +188,7 @@ describe("session routes (top-level)", () => {
         lastActivity: Date.now(),
         runtime: {
           waitForIdle: async () => {},
-          prompt: async () => {},
+          prompt: async () => ({ messageId: "test-message" }),
           steer: async () => {},
           abort: async () => {},
           setModel: async () => {},
@@ -209,7 +209,7 @@ describe("session routes (top-level)", () => {
         items: [{
           id: expect.any(String),
           parentId: null,
-          message: { role: "assistant", content: [{ type: "text", text: "from db" }] },
+          message: { role: "assistant", content: [{ type: "text", text: "from db" }], timestamp: 0 },
         }],
         pageInfo: {
           hasPreviousPage: false,
@@ -223,7 +223,7 @@ describe("session routes (top-level)", () => {
     test("paginates backward without splitting tool calls from their results", async () => {
       const sessionId = "messages-pages";
       createSession(sessionId, projectId, { agentRuntimeType: "pi" });
-      persistMessages(sessionId, [
+      persistCanonicalMessages(sessionId, [
         { role: "user", content: textContent("first") },
         { role: "assistant", content: [{ type: "text", text: "reply" }] },
         { role: "assistant", content: [{ type: "toolCall", id: "call-1", name: "read", arguments: {} }] },
@@ -257,7 +257,7 @@ describe("session routes (top-level)", () => {
     test("paginates forward from an opaque end cursor without splitting tool results", async () => {
       const sessionId = "messages-forward-pages";
       createSession(sessionId, projectId, { agentRuntimeType: "pi" });
-      persistMessages(sessionId, [
+      persistCanonicalMessages(sessionId, [
         { role: "user", content: textContent("initial") },
         { role: "assistant", content: [{ type: "text", text: "initial reply" }] },
       ]);
@@ -267,9 +267,7 @@ describe("session routes (top-level)", () => {
       );
       const initialBody = await initial!.json();
 
-      persistMessages(sessionId, [
-        { role: "user", content: textContent("initial") },
-        { role: "assistant", content: [{ type: "text", text: "initial reply" }] },
+      persistCanonicalMessages(sessionId, [
         { role: "assistant", content: [{ type: "toolCall", id: "call-forward", name: "read", arguments: {} }] },
         { role: "toolResult", toolCallId: "call-forward", isError: false, content: textContent("result") },
         { role: "user", content: textContent("later") },

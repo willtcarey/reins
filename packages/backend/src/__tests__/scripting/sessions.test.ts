@@ -6,7 +6,7 @@ import { SessionHandleSchema } from "../../scripting/sessions.js";
 import { createProject } from "../../project-store.js";
 import { createTask } from "../../task-store.js";
 import { createSession, getSession, listSessions, updateActivityState } from "../../session-store.js";
-import { loadMessages, persistMessages, type RuntimeMessage } from "../../messages-store.js";
+import { loadMessages, type RuntimeMessage } from "../../messages-store.js";
 import { createNewSession, ensureSessionOpen } from "../../runtimes/sessions-manager.js";
 import { registerRuntimeAdapter } from "../../runtimes/registry.js";
 import { buildApiObject, searchFunctions, referencedTypes } from "../../scripting/api-registry.js";
@@ -15,6 +15,8 @@ import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createServerState } from "../helpers/server-state.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
+import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
+import { executeTool } from "../helpers/execute-tool.js";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
 
@@ -41,16 +43,17 @@ describe("api.sessions orchestration", () => {
         stub.runtime.getMessages = async () => messages;
         let completion = Promise.resolve();
         let busy = false;
-        stub.runtime.prompt = (content) => {
+        stub.runtime.prompt = async (content) => {
           busy = true;
+          messages.push({ role: "user", content: content.filter((block) => block.type === "text"), timestamp: messages.length + 1 });
+          const messageId = `entry-${messages.length}`;
           completion = (async () => {
-            messages.push({ role: "user", content: content.filter((block) => block.type === "text"), timestamp: messages.length + 1 });
             await new Promise<void>((resolve) => turns.push({ finish: resolve, input: content, sessionId }));
             const response: RuntimeMessage = { role: "assistant", content: text(`response ${messages.length}`), timestamp: messages.length + 1 };
             messages.push(response);
             stub.emit({ type: "agent_end", messages });
           })().finally(() => { busy = false; });
-          return completion;
+          return { messageId };
         };
         stub.runtime.steer = async (content) => {
           messages.push({ role: "user", content: content.filter((block) => block.type === "text"), timestamp: messages.length + 1 });
@@ -83,7 +86,7 @@ describe("api.sessions orchestration", () => {
     }
   });
 
-  test("starts immediately with explicit child/title semantics and persists raw messages before settlement", async () => {
+  test("starts immediately with explicit child/title semantics and waits for native settlement", async () => {
     const { api, turns, state, project } = setup();
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Investigate", { parentSessionId: "current", title: "Investigation" }));
     expect(getSession(child.sessionId)).toMatchObject({
@@ -94,13 +97,8 @@ describe("api.sessions orchestration", () => {
     expect(await api.sessions.wait(child.sessionId, 0)).toMatchObject({ status: "timeout" });
     turns[0].finish();
     expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed", result: "response 1" });
-    expect(loadMessages(child.sessionId).map((message) => message.content)).toEqual([text("Investigate"), text("response 1")]);
+    expect((await state.sessions.get(child.sessionId)!.runtime.getMessages()).map((message) => message.content)).toEqual([text("Investigate"), text("response 1")]);
     expect(state.sessions.has(child.sessionId)).toBe(true);
-    await state.sessions.get(child.sessionId)!.runtime.close();
-    state.sessions.delete(child.sessionId);
-    // Waiting on a closed session reads history without materializing an LLM runtime.
-    expect(await api.sessions.wait(child.sessionId, 0)).toMatchObject({ status: "completed", result: "response 1" });
-    expect(state.sessions.has(child.sessionId)).toBe(false);
   });
 
   test("independent sessions preserve unnamed display defaults and allow model overrides", async () => {
@@ -111,21 +109,21 @@ describe("api.sessions orchestration", () => {
     expect(getSession(session.sessionId)).toMatchObject({ name: null, parent_session_id: null, model_id: "other", thinking_level: "minimal" });
     turns[0].finish();
     await api.sessions.wait(session.sessionId, 1000);
-    expect(listSessions({ projectId: project.id }).find((row) => row.id === session.sessionId)?.first_message).toBe("Independent");
+    expect(listSessions({ projectId: project.id }).find((row) => row.id === session.sessionId)?.first_message).toBeNull();
   });
 
   test("reopens once, steers concurrent follow-ups, and resumes after settlement", async () => {
     const fixture = setup();
     const { api, project, turns } = fixture;
     createSession("existing", project.id, { agentRuntimeType: "pi", modelProvider: "test", modelId: "model" });
-    persistMessages("existing", [{ role: "assistant", content: text("earlier"), timestamp: 1 }]);
+    persistCanonicalMessages("existing", [{ role: "assistant", content: text("earlier"), timestamp: 1 }]);
     await Promise.all([api.sessions.send("existing", "one"), api.sessions.send("existing", "two")]);
     expect(fixture.created).toBe(1);
     expect(turns).toHaveLength(1);
     expect(await api.sessions.wait("existing", 0)).toMatchObject({ status: "timeout" });
     turns[0].finish();
     expect(await api.sessions.wait("existing", 1000)).toMatchObject({ status: "completed", result: "response 3" });
-    expect(loadMessages("existing").filter((message) => message.role === "user").map((message) => message.content)).toEqual([text("one"), text("two")]);
+    expect((await fixture.state.sessions.get("existing")!.runtime.getMessages()).filter((message) => message.role === "user").map((message) => message.content)).toEqual([text("one"), text("two")]);
     await api.sessions.send("existing", "resume");
     expect(turns).toHaveLength(2);
     turns[1].finish();
@@ -159,7 +157,7 @@ describe("api.sessions orchestration", () => {
     turns[0].finish();
     await api.sessions.wait(child.sessionId, 1000);
     expect(turns).toHaveLength(1);
-    expect(loadMessages(child.sessionId).filter((message) => message.role === "user").map((message) => message.content)).toEqual([text("Work")]);
+    expect((await state.sessions.get(child.sessionId)!.runtime.getMessages()).filter((message) => message.role === "user").map((message) => message.content)).toEqual([text("Work")]);
   });
 
   test("inherits task scope and enforces child depth while independent sessions have no parent", async () => {
@@ -211,6 +209,7 @@ describe("api.sessions orchestration", () => {
   test("returns bounded timeout and already-settled idle, failure and cancellation outcomes", async () => {
     const { api, turns, state, project } = setup();
     createSession("empty", project.id, { agentRuntimeType: "pi" });
+    persistCanonicalMessages("empty", []);
     expect(await api.sessions.wait("empty", 0)).toEqual({ sessionId: "empty", status: "idle", result: null, error: null });
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: null }));
     expect(await api.sessions.wait(child.sessionId, 5)).toMatchObject({ status: "timeout" });
@@ -218,6 +217,14 @@ describe("api.sessions orchestration", () => {
     turns[0].finish();
     await api.sessions.wait(child.sessionId, 1000);
     const runtime = state.sessions.get(child.sessionId)!.runtime;
+    runtime.getLastRunOutcome = async () => ({
+      runId: "run-failed",
+      status: "failed",
+      error: { code: "provider_error", message: "Authoritative provider failure" },
+    });
+    expect(await api.sessions.wait(child.sessionId, 0)).toMatchObject({
+      status: "failed", result: null, error: "Authoritative provider failure",
+    });
     runtime.waitForIdle = async () => { throw new Error("Provider failed"); };
     expect(await api.sessions.wait(child.sessionId, 0)).toMatchObject({ status: "failed", result: null, error: "Provider failed" });
     runtime.waitForIdle = async () => { throw new DOMException("Aborted", "AbortError"); };
@@ -230,7 +237,7 @@ describe("api.sessions orchestration", () => {
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: "current" }));
     const controller = new AbortController();
     const tool = createExecuteTool(context);
-    const waiting = tool.execute("wait", { code: `return await api.sessions.wait(${JSON.stringify(child.sessionId)}, 1000)` }, controller.signal, undefined);
+    const waiting = executeTool(tool, "wait", { code: `return await api.sessions.wait(${JSON.stringify(child.sessionId)}, 1000)` }, controller.signal, undefined);
     controller.abort();
     expect((await waiting).details).toMatchObject({ success: false });
     expect(state.sessions.get(child.sessionId)!.runtime.isStreaming()).toBe(true);

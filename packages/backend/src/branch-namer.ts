@@ -21,9 +21,11 @@ const SYSTEM_PROMPT =
  * Generate a git branch name from a task title via runtime adapter ask().
  */
 export async function generateBranchName(title: string): Promise<string> {
+  // Invalid/inert persisted settings require an explicit user fix; only provider
+  // execution and response-shape failures use the deterministic fallback.
+  const configuredModel = resolveUtilityModelConfig();
+  const runtimeType = configuredModel?.runtimeType ?? "pi";
   try {
-    const configuredModel = resolveUtilityModelConfig();
-    const runtimeType = configuredModel?.runtimeType ?? "pi";
 
     const text = (await getRuntimeAdapter(runtimeType).ask({
       cwd: process.cwd(),

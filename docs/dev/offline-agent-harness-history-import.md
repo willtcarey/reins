@@ -5,7 +5,7 @@
 ## Preconditions
 
 - Stop before using real data until a separate copied-database dry run is authorized.
-- The source must record schema migration `027_add_agent_harness_storage` and have the required session/message/attachment columns. Validation checks actual schema objects rather than treating the marker alone as proof.
+- The connection must have the required session/message/attachment columns, prepared by ordinary schema migrations before conversion. Validation checks actual schema objects and does not trust or require a historical migration marker.
 - Legacy `harness_values`, `harness_list_values`, or `harness_usage` tables may remain only when empty. Any rows reject import rather than being ignored.
 - Source and output must be distinct. The output and optional report must not exist.
 - Every session requires a structurally valid explicit model mapping. The configuration includes exact identities exported from the installed Pi catalog; absent identities are retained and reported as runtime-unavailable rather than blocking structural migration.
@@ -51,7 +51,7 @@ The importer first uses SQLite `VACUUM INTO` through a read-only source connecti
 
 All stored rows remain archived UI history. For the explicitly legacy-linear source, the importer verifies that every non-null parent already equals the preceding `(seq, id)` row, rejects alternative non-null ancestry, and reconnects only detached null roots. The validated copy repairs 348 links across four sessions while preserving integer IDs and payloads. Resumed context then exactly matches the legacy latest-compaction sequence window. Fixture validation treats archive and active-context invariants separately.
 
-The inspected source contains 25 session-wide unmatched tool-result rows, 24 in legacy active sequence windows. The importer neither deletes nor synthesizes records. The cutover applies one universal provider-only omission for tool results lacking a preceding matching call in the supplied context; archive rows remain unchanged and no compatibility metadata is added.
+The inspected source contains 25 session-wide genuinely orphaned tool-result rows, 24 in legacy active sequence windows. The importer deterministically deletes only a `toolResult` whose `toolCallId` is absent from every assistant tool call in the same session. It does not delete a result merely because its valid call lies outside the active compaction projection, and it preserves matched/reused IDs. Parent links are reconnected across deleted rows, sequence gaps remain, and the report lists exact deleted integer row IDs and reconnection count. No call rows are synthesized and no compatibility metadata is added.
 
 The source also contains 844 unsigned thinking blocks (795 in Claude SDK sessions and 49 in Pi sessions). Archive data remains unchanged. The approved future-facing behavior is native Pi provider handling: `transformMessages` and the selected provider serializer decide whether an unsigned block is omitted, downgraded to text, or otherwise represented. There is no Claude-specific filter or importer flag.
 
@@ -64,6 +64,18 @@ sqlite3 /absolute/path/to/.reins/reins.db ".timeout 30000" ".backup '/isolated/r
 ```
 
 Then close the CLI, verify that the standalone snapshot has no WAL/SHM sidecars, hash `/isolated/reins-source.db`, run `PRAGMA integrity_check` and `PRAGMA foreign_key_check`, and use that isolated file as `--source`. The importer additionally exercises read-only `VACUUM INTO` against disposable WAL fixtures, but the CLI `.backup` command is preferred for acquiring the first real isolated source because Bun exposes no documented online-backup API.
+
+## Shared in-place upgrade API
+
+Startup and the offline CLI share one connection-level flow. Neither function owns a transaction or imports application database startup:
+
+```ts
+const baseline = captureLegacyHistoryBaseline(db);
+const conversion = convertLegacyAgentHarnessHistoryInPlace(db, config, baseline);
+const validation = validateConvertedAgentHarnessHistory(db, baseline);
+```
+
+The converter rejects calls outside `db.inTransaction`. Startup owns one transaction containing baseline capture, conversion, and independent validation after its durable backup and ordinary schema migrations. Validation failure rolls back message conversion while earlier committed schema migrations remain. The baseline retains compact global/per-session hashes and expected IDs, not full transcripts or attachment payloads.
 
 ## Independent validation
 

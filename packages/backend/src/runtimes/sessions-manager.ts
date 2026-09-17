@@ -22,7 +22,7 @@ import {
 import { getSetting } from "../settings-store.js";
 import { parseThinkingLevel } from "../models/model-settings.js";
 import { attachRuntimeBroadcastObserver } from "./runtime-broadcast-observer.js";
-import { attachRuntimePersistenceObserver } from "./runtime-persistence-observer.js";
+import { attachRuntimeLifecycleObserver } from "./runtime-lifecycle-observer.js";
 import { expandPrompt } from "./prompt.js";
 import type { AgentRuntime } from "./registry.js";
 
@@ -54,7 +54,7 @@ function attachPromptExpansion(params: {
     return expanded;
   };
 
-  runtime.prompt = (content) => originalPrompt(expand(content));
+  runtime.prompt = (content, options) => originalPrompt(expand(content), options);
   runtime.steer = (content) => originalSteer(expand(content));
 }
 
@@ -68,7 +68,7 @@ function resolveSessionTools(params: {
   const createSession = createSessionFactory(state);
 
   const broadcast = createBroadcast(state.clients);
-  const customTools = createCustomTools({
+  const harnessTools = createCustomTools({
     projectId,
     sessionId,
     taskId,
@@ -80,7 +80,7 @@ function resolveSessionTools(params: {
 
   return {
     builtins: ["read", "write", "edit", "bash"],
-    customTools,
+    harnessTools,
   };
 }
 
@@ -160,16 +160,15 @@ async function createManagedSessionRuntime(params: {
   });
   const broadcast = createBroadcast(state.clients);
   const sessions = new Sessions(state.sessions, broadcast);
-  const detachRuntimePersistenceObserver = attachRuntimePersistenceObserver({
+  const detachRuntimeLifecycleObserver = attachRuntimeLifecycleObserver({
     sessionId,
     runtime,
     sessions,
-
   });
 
   const detachRuntimeParentReportObserver = attachRuntimeParentReportObserver({
-    sessionId, runtime,
-    flushPersistence: detachRuntimePersistenceObserver.flush,
+    sessionId,
+    runtime,
     messages: new SessionMessages(state.sessions, broadcast, (id) => ensureSessionOpen(state, id)),
   });
 
@@ -178,7 +177,7 @@ async function createManagedSessionRuntime(params: {
     if (observersDetached) return;
     observersDetached = true;
     detachRuntimeBroadcastObserver();
-    detachRuntimePersistenceObserver();
+    detachRuntimeLifecycleObserver();
     detachRuntimeParentReportObserver();
   };
 
@@ -186,7 +185,6 @@ async function createManagedSessionRuntime(params: {
   runtime.close = async () => {
     try {
       await originalClose();
-      await detachRuntimePersistenceObserver.flush();
     } finally {
       detachRuntimeObservers();
     }
@@ -196,7 +194,6 @@ async function createManagedSessionRuntime(params: {
     id: sessionId,
     runtime,
     lastActivity: Date.now(),
-    flushPersistence: detachRuntimePersistenceObserver.flush,
   };
 
   state.sessions.set(sessionId, managed);
@@ -207,11 +204,6 @@ async function createManagedSessionRuntime(params: {
 /**
  * Create a brand-new session with runtime-agnostic persistence orchestration.
  */
-function resolveRuntimeTypeForModel(model: { provider: string; modelId: string } | null | undefined): string {
-  if (model?.provider === "claude_agent_sdk") return "claude_agent_sdk";
-  return "pi";
-}
-
 export async function createNewSession(
   state: ServerState,
   projectId: number,
@@ -226,14 +218,17 @@ export async function createNewSession(
   const sessionId = crypto.randomUUID();
 
   const defaultModel = getSetting("default_model");
+  if (!opts?.model && defaultModel && defaultModel.runtimeType !== "pi") {
+    throw new Error(
+      `Configured default_model uses unavailable runtime '${defaultModel.runtimeType}'. Update it in Settings.`,
+    );
+  }
   const selectedCreateModel = opts?.model
     ?? (defaultModel && {
       provider: defaultModel.provider,
       modelId: defaultModel.modelId,
     });
-  const runtimeType = opts?.model
-    ? resolveRuntimeTypeForModel(opts.model)
-    : (defaultModel?.runtimeType ?? "pi");
+  const runtimeType = "pi";
   const selectedCreateThinkingLevel = opts?.thinkingLevel
     ? parseThinkingLevel(opts.thinkingLevel)
     : defaultModel?.thinkingLevel ?? null;

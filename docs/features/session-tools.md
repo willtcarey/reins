@@ -31,11 +31,6 @@ When the agent uses a tool, you'll see a compact inline block in the conversatio
 
 Click on a tool block to expand it and see full details (file contents, command output, diff, etc.). Click again to collapse. Image results from the read tool show a compact preview inline without needing to expand the block.
 
-## Tool Execution by Runtime
+## Tool execution
 
-The same set of tools is available regardless of which [runtime](runtimes.md) powers the session. How they're executed differs:
-
-- **Direct runtime**: Reins executes all tools directly.
-- **Claude Code runtime**: The SDK executes coding tools (read, write, edit, bash) natively. App tools (create_task, search, execute) are provided to the SDK via an MCP server.
-
-Tool names and UI presentation are consistent across runtimes.
+The registered [AgentHarness Pi runtime](runtimes.md) adapts coding tools (`read`, `write`, `edit`, and `bash`) and Reins application tools (`create_task`, `search`, and `execute`) into one harness tool set. Tool names and UI presentation remain consistent.

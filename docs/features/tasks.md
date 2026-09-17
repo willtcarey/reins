@@ -64,7 +64,7 @@ Task sessions can **delegate** work using `api.sessions.start` through `execute`
 
 Sub-sessions are hidden from the top-level task session list. Instead, parent sessions that spawned sub-sessions show a **+N** badge. Clicking the badge expands an inline list of the sub-sessions, each marked with a "sub" tag. Clicking a sub-session navigates to it.
 
-Creating a session requires an explicit parent choice: `parentSessionId: "current"` for a child, or `null` for an independent session. Optional titles use normal session names. Children are depth-limited (max 3 levels). Sessions run independently in the same checkout, so agents must coordinate file edits. Cancelling a parent or its wait does not cancel a child; children report their latest outcome on runtime settlement. Reports prompt idle parents or steer busy ones; there is no notification queue, retry, or restart recovery. Reopening alone does not report, while subsequent work reports again. Busy Claude delivery remains unsupported.
+Creating a session requires an explicit parent choice: `parentSessionId: "current"` for a child, or `null` for an independent session. Optional titles use normal session names. Children are depth-limited (max 3 levels). Sessions run independently in the same checkout, so agents must coordinate file edits. Cancelling a parent or its wait does not cancel a child; children report their latest outcome on runtime settlement. Reports durably prompt idle parents or steer busy ones; there is no notification queue, retry, or restart recovery. Reopening alone does not report, while subsequent work reports again.
 
 ## Starting work on creation
 

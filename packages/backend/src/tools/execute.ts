@@ -18,11 +18,12 @@
 
 import { createContext, runInContext } from "node:vm";
 import { Type } from "@sinclair/typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
 import type { CreateSessionFn } from "../runtimes/sessions-manager.js";
 import { buildApiObject } from "../scripting/api-registry.js";
+import type { ReinsToolContext } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -64,7 +65,7 @@ function formatResult(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
-export function createExecuteTool(opts: ExecuteToolOpts): AgentTool<typeof parameters> {
+export function createExecuteTool(opts: ExecuteToolOpts): AgentHarnessTool<ReinsToolContext | undefined, typeof parameters> {
   return {
     name: "execute",
     label: "Execute",
@@ -73,8 +74,9 @@ export function createExecuteTool(opts: ExecuteToolOpts): AgentTool<typeof param
       "Write a function body using the existing `api` object. " +
       "Use the `search` tool to discover functions not already documented in the system prompt.",
     parameters,
+    replay: "never",
 
-    async execute(_toolCallId, params, signal, _onUpdate) {
+    async execute(_toolCallId, params, _onUpdate, _toolContext, _invocation, context) {
       try {
         const api = buildApiObject({
           projectId: opts.projectId,
@@ -84,7 +86,7 @@ export function createExecuteTool(opts: ExecuteToolOpts): AgentTool<typeof param
           sessions: opts.sessions,
           createSession: opts.createSession,
           openSession: opts.openSession,
-          signal,
+          signal: context.abortSignal,
         });
 
         // Build a vm context with only the api object and safe JS builtins.

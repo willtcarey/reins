@@ -4,7 +4,12 @@
 
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { SessionOrchestration } from "../models/session-orchestration.js";
+import {
+  sendSessionMessage,
+  startSession,
+  waitForSession,
+  type SessionOperationContext,
+} from "../models/session-operations.js";
 import {
   getSession,
   listSessions,
@@ -240,8 +245,14 @@ export const SessionWaitResultSchema = Type.Object({
   error: Type.Union([Type.String(), Type.Null()]),
 });
 
-function orchestration(ctx: ApiContext): SessionOrchestration {
-  return new SessionOrchestration(ctx.sessionId, ctx.sessions, ctx.broadcast, ctx.createSession, ctx.openSession);
+function sessionOperations(ctx: ApiContext): SessionOperationContext {
+  return {
+    callerId: ctx.sessionId,
+    sessions: ctx.sessions,
+    broadcast: ctx.broadcast,
+    createSession: ctx.createSession,
+    openSession: ctx.openSession,
+  };
 }
 
 const sessionsStartFunction = defineFunction({
@@ -249,7 +260,7 @@ const sessionsStartFunction = defineFunction({
   description: "Start a fresh session in the caller's project/task and return its sessionId without waiting for completion. " +
     'options.parentSessionId is required: "current" for a child, null for an independent session. ' +
     "Optional title uses the session name; omitted title preserves normal naming. Model/thinking default to the caller. " +
-    "Sessions share the checkout: coordinate file edits. Only start other agents when the user explicitly asks for delegation or parallel sessions. Children report their latest outcome on runtime settlement, prompting idle parents or steering busy ones (unsupported on busy Claude). Reports are not queued or retried. Continue other work or end your turn rather than polling. Independent sessions require explicit result retrieval.",
+    "Sessions share the checkout: coordinate file edits. Only start other agents when the user explicitly asks for delegation or parallel sessions. Children report their latest outcome on runtime settlement, durably prompting idle parents or steering busy ones. Reports are not queued or retried. Continue other work or end your turn rather than polling. Independent sessions require explicit result retrieval.",
   parameters: StartParameters,
   returns: SessionHandleSchema,
   async: true,
@@ -257,14 +268,14 @@ const sessionsStartFunction = defineFunction({
   execute: async (params, ctx) => {
     if (!Value.Check(StartParameters, params)) throw new Error("Invalid session start parameters; options.parentSessionId must be current or null");
     if (ctx.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    return orchestration(ctx).start(params.prompt, params.options);
+    return startSession(sessionOperations(ctx), params.prompt, params.options);
   },
 });
 const sessionsSendFunction = defineFunction({
   name: "sessions.send",
   description: "Send a message to a session in the caller's project/task. Reopens it if necessary. " +
     "Idle sessions start a prompt; busy sessions receive native steering without cancellation/restart. " +
-    "Busy Claude sessions reject steering; wait for idleness and send again. Pi forwards directly to native steering, including during compaction; its SDK controls acceptance and consumption timing. " +
+    "Idle delivery is durably accepted before execution; busy delivery forwards directly to AgentHarness steering. " +
     "No Reins-managed queued follow-ups, deferred delivery, or automatic restart. Pi uses native idle state and does not serialize concurrent startup sends. Returns without waiting for response completion.",
   parameters: SendParameters,
   returns: SessionHandleSchema,
@@ -273,7 +284,7 @@ const sessionsSendFunction = defineFunction({
   execute: async (params, ctx) => {
     if (!Value.Check(SendParameters, params)) throw new Error("Invalid send parameters; sessionId and message must be non-empty strings");
     if (ctx.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    return orchestration(ctx).send(params.sessionId, params.message);
+    return sendSessionMessage(sessionOperations(ctx), params.sessionId, params.message);
   },
 });
 const sessionsWaitFunction = defineFunction({
@@ -288,7 +299,7 @@ const sessionsWaitFunction = defineFunction({
   tags: ["sessions", "wait", "settled", "result", "async", "timeout"],
   execute: async (params, ctx) => {
     if (!Value.Check(WaitParameters, params)) throw new Error("Invalid wait parameters; timeoutMs must be between 0 and 30000");
-    return orchestration(ctx).wait(params.sessionId, params.timeoutMs, ctx.signal);
+    return waitForSession(sessionOperations(ctx), params.sessionId, params.timeoutMs, ctx.signal);
   },
 });
 

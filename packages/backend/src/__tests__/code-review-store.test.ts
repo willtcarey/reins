@@ -9,11 +9,12 @@ import {
   getOpenCodeReview,
   saveCodeReview,
 } from "../code-review-store.js";
-import { loadMessagePage, persistMessages } from "../messages-store.js";
+import { loadMessagePage } from "../messages-store.js";
 import type { CodeReview } from "../models/code-review.js";
 import { createSession } from "../session-store.js";
 import { createTask } from "../task-store.js";
 import { useTestDb } from "./helpers/test-db.js";
+import { persistCanonicalMessages } from "./helpers/canonical-messages.js";
 
 let projectId: number;
 let taskId: number;
@@ -102,9 +103,9 @@ describe("code review store", () => {
     expect(getCodeReview(review.id)).toBeNull();
   });
 
-  test("links an accepted review message to the session tail", () => {
+  test("consumes an accepted review without writing outside AgentHarness storage", () => {
     createSession("review-session", projectId, { agentRuntimeType: "pi", taskId });
-    persistMessages("review-session", [
+    persistCanonicalMessages("review-session", [
       { role: "assistant", content: [{ type: "text", text: "Ready for review" }] },
     ]);
     const review = createCodeReview({ id: "review-1", projectId, taskId });
@@ -112,7 +113,8 @@ describe("code review store", () => {
     const accepted = acceptCodeReviewSubmission(review, "review-session", "Please adjust this");
     const page = loadMessagePage("review-session", 10);
 
-    expect(accepted.messageId).toBe(page.items[1].id);
-    expect(page.items[1].parentId).toBe(page.items[0].id);
+    expect(accepted.message).toEqual([{ type: "text", text: "Please adjust this" }]);
+    expect(page.items).toHaveLength(1);
+    expect(getCodeReview(review.id)).toBeNull();
   });
 });

@@ -1,17 +1,12 @@
-/**
- * Custom Tools
- *
- * Barrel export for all custom agent tools.
- * Returns runtime-neutral AgentTool values.
- */
+/** Reins application tools for the native AgentHarness runtime. */
 
-import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { createTaskTool } from "./create-task.js";
 import type { CreateSessionFn } from "../runtimes/sessions-manager.js";
 import { createSearchTool } from "./search.js";
 import { createExecuteTool } from "./execute.js";
+import type { ReinsApplicationTool } from "./types.js";
 
 export interface CustomToolsOpts {
   projectId: number;
@@ -23,8 +18,8 @@ export interface CustomToolsOpts {
   openSession: (sessionId: string) => Promise<ManagedSession>;
 }
 
-export function createCustomTools(opts: CustomToolsOpts): AgentTool[] {
-  const tools: AgentTool[] = [
+export function createCustomTools(opts: CustomToolsOpts): ReinsApplicationTool[] {
+  return [
     createTaskTool({
       projectId: opts.projectId,
       broadcast: opts.broadcast,
@@ -42,6 +37,4 @@ export function createCustomTools(opts: CustomToolsOpts): AgentTool[] {
       openSession: opts.openSession,
     }),
   ];
-
-  return tools;
 }

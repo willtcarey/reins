@@ -17,8 +17,6 @@ export interface RuntimeStubOptions {
   messages?: RuntimeMessage[];
   /** Whether isStreaming() returns true */
   isStreaming?: boolean;
-  /** Runtime lifecycle boundary that marks activity finished. */
-  activityCompletionBoundary?: AgentRuntime["activityCompletionBoundary"];
 }
 
 export interface RuntimeStub {
@@ -36,7 +34,7 @@ export interface RuntimeStub {
 }
 
 export function createRuntimeStub(options: RuntimeStubOptions = {}): RuntimeStub {
-  const { messages = [], isStreaming = false, activityCompletionBoundary } = options;
+  const { messages = [], isStreaming = false } = options;
   const listeners = new Set<(event: AgentRuntimeEvent) => void>();
   let getMessagesCalls = 0;
   const promptCalls: ClientPromptContent[] = [];
@@ -44,9 +42,9 @@ export function createRuntimeStub(options: RuntimeStubOptions = {}): RuntimeStub
   let abortCalled = false;
 
   const runtime: AgentRuntime = {
-    activityCompletionBoundary,
     async prompt(content: ClientPromptContent) {
       promptCalls.push(content);
+      return { messageId: `message-${promptCalls.length}` };
     },
     async waitForIdle() {},
     async steer(content: ClientPromptContent) {

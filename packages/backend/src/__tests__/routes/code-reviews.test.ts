@@ -11,9 +11,16 @@ import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import type { WsClient } from "../../state.js";
 
-function reviewRuntime(prompts: unknown[]): AgentRuntime {
+function reviewRuntime(
+  prompts: unknown[],
+  options: { rejectSubmission?: boolean } = {},
+): AgentRuntime {
   return {
-    prompt(message) { prompts.push(message); return Promise.resolve(); },
+    async prompt(message) {
+      if (options.rejectSubmission) throw new Error("admission failed");
+      prompts.push(message);
+      return { messageId: "canonical-entry-1" };
+    },
     async waitForIdle() {},
     async steer() {},
     async abort() {},
@@ -164,7 +171,7 @@ describe("code review routes", () => {
     });
   });
 
-  test("submits saved comments as one durable prompt to the selected idle session", async () => {
+  test("submits saved comments once to the selected idle session", async () => {
     createSession("session-1", projectId, { agentRuntimeType: "pi", taskId });
     const prompts: unknown[] = [];
     const runtime = reviewRuntime(prompts);
@@ -208,14 +215,16 @@ describe("code review routes", () => {
     const submitted = await response!.json();
 
     expect(response?.status).toBe(200);
-    expect(submitted).toEqual({ messageId: expect.any(String) });
+    expect(submitted).toEqual({ messageId: "canonical-entry-1" });
     expect(await (await router.handle(
       makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`),
       state,
     ))!.json()).toBeNull();
-    const [message] = loadMessages("session-1");
-    expect(message?.role).toBe("user");
-    const text = message?.content?.[0]?.type === "text" ? message.content[0].text : "";
+    expect(loadMessages("session-1")).toEqual([]);
+    const submittedPrompt: unknown = prompts[0];
+    const text = Array.isArray(submittedPrompt) && submittedPrompt[0]?.type === "text"
+      ? String(submittedPrompt[0].text)
+      : "";
     expect(text).toBe([
       "src/example.ts",
       "",
@@ -270,8 +279,60 @@ describe("code review routes", () => {
 
     expect(first?.status).toBe(200);
     expect(retry?.status).toBe(409);
-    expect(loadMessages("session-1")).toHaveLength(1);
+    expect(loadMessages("session-1")).toEqual([]);
     expect(prompts).toHaveLength(1);
+  });
+
+  test("keeps the review when durable prompt acceptance fails", async () => {
+    createSession("session-1", projectId, { agentRuntimeType: "pi", taskId });
+    state.sessions.set("session-1", {
+      id: "session-1",
+      runtime: reviewRuntime([], { rejectSubmission: true }),
+      lastActivity: Date.now(),
+    });
+    const created = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
+      { comment },
+    ), state);
+    const review = await created!.json();
+
+    const response = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/submissions?taskId=${taskId}`,
+      { reviewId: review.id, expectedRevision: review.revision, sessionId: "session-1" },
+    ), state);
+
+    expect(response?.status).toBe(500);
+    expect(await (await router.handle(
+      makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`), state,
+    ))!.json()).toMatchObject({ id: review.id, revision: review.revision });
+  });
+
+  test("consumes the review after durable prompt submission", async () => {
+    createSession("session-1", projectId, { agentRuntimeType: "pi", taskId });
+    state.sessions.set("session-1", {
+      id: "session-1",
+      runtime: reviewRuntime([]),
+      lastActivity: Date.now(),
+    });
+    const created = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
+      { comment },
+    ), state);
+    const review = await created!.json();
+    const response = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/submissions?taskId=${taskId}`,
+      { reviewId: review.id, expectedRevision: review.revision, sessionId: "session-1" },
+    ), state);
+
+    expect(response?.status).toBe(200);
+    await Bun.sleep(0);
+    expect(await (await router.handle(
+      makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`), state,
+    ))!.json()).toBeNull();
   });
 
   test("rejects submission to an active or differently scoped session and keeps the review open", async () => {

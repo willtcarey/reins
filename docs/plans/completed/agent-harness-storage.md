@@ -1,13 +1,14 @@
 # AgentHarness storage migration
 
-Status: **active — storage complete; unselected runtime integration in progress; migration and activation not started**
+Status: **completed — canonical AgentHarness storage and runtime activated**
 
 ## Direction
 
 1. Add the public Pi `Storage` adapter against Reins SQLite. **Implemented in `runtimes/pi/storage-adapter.ts`.**
-2. Implement the next-generation AgentHarness runtime without selecting or registering it. **In progress in `runtimes/pi/agent-harness-runtime.ts`; current scaffold is intentionally unselected and is not yet a completed integration.**
-3. At a later unified cutover, migrate every existing Pi and Claude history into the harness representation and switch the active writers/readers together. **Not started or authorized.**
-4. Remove superseded snapshot persistence only after migration validation. **Not started.**
+2. Implement the AgentHarness runtime and builder. **Implemented with fake-provider and SQLite coverage.**
+3. Prepare canonical readers, lifecycle-only observers, sole Pi registration, and unregistered Claude SDK code in an isolated worktree. **Implemented and activated.**
+4. Import every existing Pi and Claude history and validate the combined importer/cutover. **Completed.**
+5. Activate after explicit authorization and deployment validation. **Completed.**
 
 ## Step 1 boundaries
 
@@ -19,7 +20,7 @@ Only contract-required non-entry state is separate in `pi_values`, `pi_lists`, a
 
 Reins continues to own session creation, open coalescing, parent relationships, deletion, and lifecycle. At cutover it can construct the supported public session directly with `new StorageBackedSession(metadata, new PiStorageAdapter(db, sessionId))`; closing the harness closes that session and adapter. This step does not add a parallel `SessionRepo` or session factory. The adapter reuses public commit validation/preparation and list option resolution from `@earendil-works/pi-agent-core`.
 
-## Unselected runtime boundaries
+## Runtime boundaries prepared before activation
 
 The runtime constructs public `StorageBackedSession` directly, attaches `AgentHarness`, acquires its `main` lane, and adapts public lane operations and events to Reins' existing runtime contract. A declaration-merged custom input message carries exact Reins identity and metadata; provider projection strips those fields. Construction returns open operations without executing them; callers resume one explicitly through `resumeOpenOperation()`.
 
@@ -39,8 +40,8 @@ The bash spawn hook reads mutable runtime configuration rather than captured ini
 
 The bounded correctness suite covers an in-process `effect_pending` interruption surrogate: a replay-never tool performs its side effect and remains intentionally blocked before result staging while a second runtime attaches to the same stored operation. Explicit resumption records the interrupted result without invoking the replacement tool or duplicating the side effect. This is not subprocess crash or fencing proof. Separate cases prove wait/close behavior while `lane.accept` is gated before execution tracking, and prove an injected nonterminal `lane.drive` rejection emits no ordinary settlement or stale assistant outcome.
 
-Still incomplete outside these bounded acceptance items: a subprocess/SIGKILL variant of the now-covered effect-pending recovery; injected lane/model/watch constructor failures; watch resnapshot failure behavior; and richer additive failed/aborted terminal diagnostics beyond the existing prompt rejection and durable transcript outcome. The runtime remains unregistered and unselected.
+Still incomplete outside these bounded acceptance items: a subprocess/SIGKILL variant of the now-covered effect-pending recovery; injected lane/model/watch constructor failures; watch resnapshot failure behavior; and richer additive failed/aborted terminal diagnostics beyond the existing prompt rejection and durable transcript outcome. At this implementation milestone the runtime remained unregistered and unselected; it was activated after migration validation.
 
-## Deferred
+## Completion
 
-No registration, manager wiring, migration, legacy import, reader cutover, persistence-observer bypass, UI/API change, Claude disablement, or production-data operation has been performed. The future cutover must migrate all existing sessions and update Reins entry-envelope projections before changing runtime writers and readers.
+Canonical registration, reader projection, manager wiring, and lifecycle-only observation were validated before activation. The retired snapshot APIs and legacy Pi runtime wrapper were removed rather than retained as throwing compatibility shims. The Claude SDK implementation remains in-tree but unregistered and no longer installs its retired Reins session-store adapter. Existing history was migrated to the canonical database, and the AgentHarness-backed Pi runtime is now selected in production.

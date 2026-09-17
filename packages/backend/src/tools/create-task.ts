@@ -12,13 +12,14 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import type { TaskRow } from "../task-store.js";
 import type { Broadcast } from "../models/broadcast.js";
 import type { CreateSessionFn } from "../runtimes/sessions-manager.js";
 import { ProjectModel } from "../models/projects.js";
 import type { ManagedSession } from "../state.js";
 import { logger } from "../logger.js";
+import type { ReinsToolContext } from "./types.js";
 
 const parameters = Type.Object({
   title: Type.String({ description: "Concise task title (imperative mood, e.g. \"Add dark mode support\")" }),
@@ -49,7 +50,7 @@ export interface CreateTaskToolOpts {
  * Loads the project record at execution time so that changes to the
  * project path or base branch are picked up mid-conversation.
  */
-export function createTaskTool(opts: CreateTaskToolOpts): AgentTool<typeof parameters> {
+export function createTaskTool(opts: CreateTaskToolOpts): AgentHarnessTool<ReinsToolContext | undefined, typeof parameters> {
   const { projectId, broadcast, sessions, createSession } = opts;
 
   return {
@@ -59,8 +60,9 @@ export function createTaskTool(opts: CreateTaskToolOpts): AgentTool<typeof param
       "Create a new task for the current project with a dedicated git branch. " +
       "Only use this when the user explicitly asks you to create a task — do not proactively create tasks.",
     parameters,
+    replay: "never",
 
-    async execute(_toolCallId, params, _signal, _onUpdate) {
+    async execute(_toolCallId, params, _onUpdate, _toolContext, _invocation, _context) {
       try {
         const projectModel = new ProjectModel(projectId, sessions, broadcast);
         const task: TaskRow = await projectModel.tasks().create({

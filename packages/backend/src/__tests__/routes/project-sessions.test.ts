@@ -6,7 +6,7 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createSession, updateActivityState } from "../../session-store.js";
-import { persistMessages } from "../../messages-store.js";
+import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
 function textContent(text: string) {
   return [{ type: "text" as const, text }];
@@ -39,7 +39,7 @@ describe("project session routes", () => {
 
     test("returns scratch sessions with camelCase list shape", async () => {
       createSession("scratch-1", projectId, { agentRuntimeType: "pi",});
-      persistMessages("scratch-1", [{ role: "user", content: textContent("hello") }]);
+      persistCanonicalMessages("scratch-1", [{ role: "user", content: textContent("hello") }]);
       updateActivityState("scratch-1", "running");
 
       const res = await router.handle(

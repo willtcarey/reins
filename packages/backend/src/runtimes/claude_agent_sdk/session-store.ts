@@ -1,8 +1,7 @@
-import type { SessionStore, SessionKey, SessionStoreEntry } from "@anthropic-ai/claude-agent-sdk";
+import type { SessionStoreEntry } from "@anthropic-ai/claude-agent-sdk";
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
-import { loadMessagesForLLM, appendMessages, type RuntimeContentBlock, type RuntimeMessage } from "../../messages-store.js";
+import type { RuntimeContentBlock, RuntimeMessage } from "../../messages-store.js";
 import { toSDKToolName, toSDKToolArgs, toSDKStopReason } from "./mappings.js";
-import { transformClaudeSessionMessages } from "./events.js";
 import { toClaudeSdkImageBlock, toClaudeSdkUserContentBlock } from "./sdk-content-blocks.js";
 
 // ---------------------------------------------------------------------------
@@ -14,7 +13,6 @@ export type SessionEntryContext = {
   cwd: string;
 };
 
-type MessageType = "user" | "assistant" | "system";
 type UserMessageContent = string | Array<ContentBlockParam | RuntimeContentBlock | Record<string, unknown>> | undefined;
 
 /** Narrowed entry type so we can access message.id without `as` casts. */
@@ -224,56 +222,4 @@ function extractToolResultContent(content: RuntimeMessage["content"]): string | 
   if (block.type !== "text") return content;
 
   return block.text;
-}
-
-// ---------------------------------------------------------------------------
-// SessionStore factory
-// ---------------------------------------------------------------------------
-
-/**
- * Create a SessionStore backed by our SQLite database.
- *
- * - load() translates persisted messages into SessionStoreEntry[] for resume.
- * - append() filters message entries, transforms them, and writes to SQLite.
- * - listSubkeys() returns [] — we don't use subagent transcripts.
- */
-export function createSessionStore(sessionId: string, cwd: string): SessionStore {
-  return {
-    async load(key: SessionKey): Promise<SessionStoreEntry[] | null> {
-      const messages = loadMessagesForLLM(key.sessionId);
-      if (messages.length === 0) return null;
-      return toSessionStoreEntries(messages, { sessionId: key.sessionId, cwd });
-    },
-
-    async append(key: SessionKey, entries: SessionStoreEntry[]): Promise<void> {
-      // Ignore subagent transcripts
-      if (key.subpath) return;
-
-      // Filter to message types that carry conversation content
-      const messageTypes = new Set<string>(["user", "assistant", "system"]);
-      const messageEntries = entries.filter(
-        (e): e is SessionStoreEntry & { type: MessageType } => messageTypes.has(e.type),
-      );
-      if (messageEntries.length === 0) return;
-
-      // Transform SDK entries to RuntimeMessages via the same path
-      // used when reading session history from JSONL
-      const runtimeMessages = transformClaudeSessionMessages(
-        messageEntries.map((e) => ({
-          type: e.type,
-          uuid: e.uuid ?? "",
-          session_id: sessionId,
-          message: e.message,
-          parent_tool_use_id: null,
-        })),
-      );
-      if (runtimeMessages.length === 0) return;
-
-      appendMessages(sessionId, runtimeMessages);
-    },
-
-    async listSubkeys(_key: { projectKey: string; sessionId: string }): Promise<string[]> {
-      return [];
-    },
-  };
 }

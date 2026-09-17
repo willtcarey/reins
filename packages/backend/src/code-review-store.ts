@@ -81,44 +81,27 @@ export function saveCodeReview(review: CodeReview): CodeReview | null {
 }
 
 export interface AcceptedCodeReviewSubmission {
-  messageId: string;
   message: { type: "text"; text: string }[];
 }
 
-/** Atomically persist one ordinary user message and consume its pending review. */
+/** Consume a review only after AgentHarness has durably admitted its prompt. */
 export function acceptCodeReviewSubmission(
   review: CodeReview,
-  sessionId: string,
+  _sessionId: string,
   text: string,
 ): AcceptedCodeReviewSubmission {
   const db = getDb();
-  const message = [{ type: "text" as const, text }];
-  const accept = db.transaction(() => {
-    const parent = db.query<{ id: number; seq: number }, [string]>(
-      `SELECT id, seq FROM session_messages
-       WHERE session_id = ? ORDER BY seq DESC LIMIT 1`,
-    ).get(sessionId);
-    const inserted = db.query<{ id: number }, [string, number, number | null, string]>(
-      `INSERT INTO session_messages (session_id, seq, parent_id, role, message_json, created_at)
-       VALUES (?, ?, ?, 'user', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-       RETURNING id`,
-    ).get(sessionId, (parent?.seq ?? -1) + 1, parent?.id ?? null, JSON.stringify({ role: "user", content: message }));
-    if (!inserted) throw new Error("Failed to persist review submission message");
-
-    const deleted = db.query<{ id: string }, [string, number]>(
-      "DELETE FROM code_reviews WHERE id = ? AND revision = ? RETURNING id",
-    ).get(review.id, review.revision);
-    if (!deleted) {
-      const current = db.query<{ revision: number }, [string]>(
-        "SELECT revision FROM code_reviews WHERE id = ?",
-      ).get(review.id);
-      if (!current) throw new Error(`Code review ${review.id} no longer exists`);
-      throw new CodeReviewRevisionConflictError(review.id, review.revision, current.revision);
-    }
-    return String(inserted.id);
-  });
-
-  return { messageId: accept.immediate(), message };
+  const deleted = db.query<{ id: string }, [string, number]>(
+    "DELETE FROM code_reviews WHERE id = ? AND revision = ? RETURNING id",
+  ).get(review.id, review.revision);
+  if (!deleted) {
+    const current = db.query<{ revision: number }, [string]>(
+      "SELECT revision FROM code_reviews WHERE id = ?",
+    ).get(review.id);
+    if (!current) throw new Error(`Code review ${review.id} no longer exists`);
+    throw new CodeReviewRevisionConflictError(review.id, review.revision, current.revision);
+  }
+  return { message: [{ type: "text" as const, text }] };
 }
 
 export function deleteCodeReview(id: string): boolean {

@@ -29,9 +29,11 @@ Return ONLY valid JSON. No markdown fences, no explanation, no extra text.`;
  * Generate a structured task from freeform user input.
  */
 export async function generateTask(prompt: string): Promise<GeneratedTask> {
+  // Invalid/inert persisted settings require an explicit user fix; only provider
+  // execution and response-shape failures use the deterministic fallback.
+  const configuredModel = resolveUtilityModelConfig();
+  const runtimeType = configuredModel?.runtimeType ?? "pi";
   try {
-    const configuredModel = resolveUtilityModelConfig();
-    const runtimeType = configuredModel?.runtimeType ?? "pi";
 
     const text = await getRuntimeAdapter(runtimeType).ask({
       cwd: process.cwd(),

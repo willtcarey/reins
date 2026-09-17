@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { generateTask } from "../task-generator.js";
 import { clearRuntimeAdapters, registerRuntimeAdapter } from "../runtimes/registry.js";
 import { deleteSetting, setSetting } from "../settings-store.js";
@@ -13,103 +13,27 @@ describe("generateTask", () => {
     deleteSetting("default_model");
   });
 
-  test("uses the configured utility model runtime for task generation", async () => {
-    const piAsk = mock(async () => JSON.stringify({
-      title: "Wrong runtime",
-      description: "Should not be used.",
-      branch_name: "task/wrong-runtime",
-    }));
-    const claudeAsk = mock(async () => JSON.stringify({
-      title: "Add dark mode support",
-      description: "Implement theme toggling in settings and UI.",
-      branch_name: "task/add-dark-mode-support",
-    }));
-
-    registerRuntimeAdapter({
-      runtimeType: "pi",
-      listModels: async () => [],
-      ask: piAsk,
-      createRuntime: async () => {
-        throw new Error("not used");
-      },
-    });
-
-    registerRuntimeAdapter({
-      runtimeType: "claude_agent_sdk",
-      listModels: async () => [],
-      ask: claudeAsk,
-      createRuntime: async () => {
-        throw new Error("not used");
-      },
-    });
-
-    setSetting("default_model", {
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
-      runtimeType: "pi",
-      thinkingLevel: "medium",
-    });
+  test("rejects an inert utility runtime instead of falling back", async () => {
     setSetting("utility_model", {
-      provider: "anthropic",
-      modelId: "claude-haiku-4-5",
-      runtimeType: "claude_agent_sdk",
-      thinkingLevel: "minimal",
+      provider: "anthropic", modelId: "claude-haiku-4-5",
+      runtimeType: "claude_agent_sdk", thinkingLevel: "minimal",
     });
-
-    await expect(generateTask("add dark mode")).resolves.toEqual({
-      title: "Add dark mode support",
-      description: "Implement theme toggling in settings and UI.",
-      branch_name: "task/add-dark-mode-support",
-    });
-
-    expect(claudeAsk).toHaveBeenCalledTimes(1);
-    expect(claudeAsk).toHaveBeenCalledWith(expect.objectContaining({
-      prompt: "add dark mode",
-      cwd: process.cwd(),
-      model: {
-        provider: "anthropic",
-        modelId: "claude-haiku-4-5",
-      },
-      thinkingLevel: "minimal",
-    }));
-    expect(piAsk).not.toHaveBeenCalled();
+    await expect(generateTask("add dark mode"))
+      .rejects.toThrow("Configured utility model uses unavailable runtime 'claude_agent_sdk'");
   });
 
-  test("falls back to default model runtime when utility model is unset", async () => {
-    const ask = mock(async () => JSON.stringify({
-      title: "Add dark mode support",
-      description: "Implement theme toggling in settings and UI.",
-      branch_name: "task/add-dark-mode-support",
-    }));
-
-    registerRuntimeAdapter({
-      runtimeType: "claude_agent_sdk",
-      listModels: async () => [],
-      ask,
-      createRuntime: async () => {
-        throw new Error("not used");
-      },
-    });
-
+  test("rejects an inert default utility runtime when no utility override exists", async () => {
     setSetting("default_model", {
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
-      runtimeType: "claude_agent_sdk",
-      thinkingLevel: "medium",
+      provider: "anthropic", modelId: "claude-sonnet-4-5",
+      runtimeType: "claude_agent_sdk", thinkingLevel: "medium",
     });
-
-    await expect(generateTask("add dark mode")).resolves.toEqual({
-      title: "Add dark mode support",
-      description: "Implement theme toggling in settings and UI.",
-      branch_name: "task/add-dark-mode-support",
-    });
-
-    expect(ask).toHaveBeenCalledTimes(1);
+    await expect(generateTask("add dark mode"))
+      .rejects.toThrow("Configured utility model uses unavailable runtime 'claude_agent_sdk'");
   });
 
   test("falls back when the configured adapter.ask throws", async () => {
     registerRuntimeAdapter({
-      runtimeType: "claude_agent_sdk",
+      runtimeType: "pi",
       listModels: async () => [],
       ask: async () => {
         throw new Error("boom");
@@ -122,7 +46,7 @@ describe("generateTask", () => {
     setSetting("utility_model", {
       provider: "anthropic",
       modelId: "claude-haiku-4-5",
-      runtimeType: "claude_agent_sdk",
+      runtimeType: "pi",
       thinkingLevel: "minimal",
     });
 

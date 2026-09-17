@@ -9,7 +9,6 @@ import {
   hydrateImageAttachmentBlock,
   storeSessionAttachment,
 } from "../session-attachments-store.js";
-import { appendMessages, loadMessages, loadMessagesForLLM, persistMessages } from "../messages-store.js";
 
 let projectId: number;
 
@@ -87,101 +86,4 @@ describe("session attachments", () => {
     expect(imageBlock).not.toHaveProperty("data");
   });
 
-  test("appendMessages persists refs while loadMessagesForLLM hydrates inline images", () => {
-    const imageData = Buffer.from("runtime image").toString("base64");
-    appendMessages("sess-attachments", [
-      {
-        role: "toolResult",
-        toolCallId: "tc1",
-        toolName: "read",
-        isError: false,
-        content: [{ type: "image", data: imageData, mimeType: "image/png" }],
-      },
-    ]);
-
-    const visible = loadMessages("sess-attachments");
-    expect(visible[0].content[0].attachmentId).toStartWith("att_");
-    expect(visible[0].content[0].data).toBeUndefined();
-
-    const runtime = loadMessagesForLLM("sess-attachments");
-    expect(runtime[0].content[0]).toMatchObject({
-      type: "image",
-      data: imageData,
-      mimeType: "image/png",
-    });
-  });
-
-  test("retry replacement clears attachment bytes no longer referenced by the active tail", () => {
-    const discardedImageData = Buffer.from("discarded partial image").toString("base64");
-    const user = { role: "user", content: [{ type: "text" as const, text: "retry this" }] };
-    const failedSnapshot = [
-      user,
-      {
-        role: "assistant",
-        stopReason: "error",
-        content: [
-          { type: "image" as const, data: discardedImageData, mimeType: "image/png" },
-          { type: "toolCall" as const, id: "failed-call", name: "read", arguments: {} },
-        ],
-      },
-    ];
-    persistMessages("sess-attachments", failedSnapshot);
-    const failedImage = loadMessages("sess-attachments")[1].content[0];
-    if (!("attachmentId" in failedImage) || typeof failedImage.attachmentId !== "string") {
-      throw new Error("Expected failed assistant attachment ref");
-    }
-
-    persistMessages("sess-attachments", [
-      user,
-      {
-        role: "assistant",
-        stopReason: "toolUse",
-        content: [{ type: "toolCall", id: "retry-call", name: "read", arguments: {} }],
-      },
-      { role: "toolResult", toolCallId: "retry-call", isError: false, content: [{ type: "text", text: "done" }] },
-    ]);
-
-    expect(getSessionAttachment("sess-attachments", failedImage.attachmentId)?.data).toBeNull();
-    expect(loadMessages("sess-attachments")).toHaveLength(3);
-  });
-
-  test("compaction pruning clears unreferenced tool-result attachment bytes and preserves non-tool attachments", () => {
-    const toolImageData = Buffer.from("prune me").toString("base64");
-    const userImageData = Buffer.from("keep me").toString("base64");
-    appendMessages("sess-attachments", [
-      {
-        role: "toolResult",
-        toolCallId: "tc1",
-        toolName: "read",
-        isError: false,
-        content: [{ type: "image", data: toolImageData, mimeType: "image/png" }],
-      },
-      {
-        role: "user",
-        content: [{ type: "image", data: userImageData, mimeType: "image/png" }],
-      },
-    ]);
-
-    const visible = loadMessages("sess-attachments");
-    const toolImage = visible[0].content[0];
-    const userImage = visible[1].content[0];
-    if (!("attachmentId" in toolImage) || typeof toolImage.attachmentId !== "string") {
-      throw new Error("Expected tool-result attachment ref before pruning");
-    }
-    if (!("attachmentId" in userImage) || typeof userImage.attachmentId !== "string") {
-      throw new Error("Expected user attachment ref before pruning");
-    }
-
-    appendMessages("sess-attachments", [
-      { role: "compactionSummary", summary: "summary" },
-    ]);
-
-    const pruned = getSessionAttachment("sess-attachments", toolImage.attachmentId);
-    expect(pruned?.data).toBeNull();
-    expect(pruned?.pruned_at).toEqual(expect.any(String));
-
-    const retained = getSessionAttachment("sess-attachments", userImage.attachmentId);
-    expect(retained?.data?.toString("base64")).toBe(userImageData);
-    expect(retained?.pruned_at).toBeNull();
-  });
 });

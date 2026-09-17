@@ -8,7 +8,8 @@ import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-work
 import fixture from "./fixtures/agent-harness-legacy-history.json";
 import { createAgentHarnessPiRuntime } from "../../src/runtimes/pi/agent-harness-runtime.js";
 import { PiStorageAdapter } from "../../src/runtimes/pi/storage-adapter.js";
-import { copyDatabaseWithVacuum, importAgentHarnessHistory } from "../lib/agent-harness-history-import.js";
+import { convertLegacyAgentHarnessHistoryInPlace, copyDatabaseWithVacuum, importAgentHarnessHistory } from "../lib/agent-harness-history-import.js";
+import { captureLegacyHistoryBaseline, validateConvertedAgentHarnessHistory } from "../lib/agent-harness-history-validation.js";
 import { validate } from "../validate-agent-harness-history.js";
 
 const roots: string[] = [];
@@ -124,6 +125,7 @@ describe("offline AgentHarness history import", () => {
       options: { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
     });
     await runtime.prompt([{ type: "text", text: "validation prompt" }]);
+    await runtime.waitForIdle();
     expect(calls).toHaveLength(1);
     expect(calls[0]!.map((message: any) => message.role)).toEqual(["user", "user", "assistant", "user"]);
     expect(calls[0]!.filter((message: any) => message.role === "user"
@@ -183,6 +185,26 @@ describe("offline AgentHarness history import", () => {
     const rejected = join(alternativeSource.root, "alternative.db");
     await expect(importAgentHarnessHistory({ source: alternativeSource.source, output: rejected, config })).rejects.toThrow("refusing to flatten possible branches");
     await expect(stat(rejected)).rejects.toThrow();
+  });
+
+  test("deletes only results whose call id is absent session-wide and preserves matched reused ids across compaction", async () => {
+    const { root, source } = await makeFixture();
+    const db = new Database(source);
+    db.query("UPDATE session_messages SET message_json=json_set(message_json, '$.toolCallId', 'missing-before') WHERE id=3").run();
+    const parent = db.query<{ id: number }, []>("SELECT id FROM session_messages WHERE session_id='pi' ORDER BY seq DESC LIMIT 1").get()!.id;
+    const orphan = db.query("INSERT INTO session_messages(session_id,seq,role,message_json,created_at,parent_id) VALUES('pi',7,'toolResult',json(?),'2026-01-01T00:00:07.000Z',?)")
+      .run(JSON.stringify({ role: "toolResult", toolCallId: "missing-after", content: [{ type: "text", text: "orphan" }], isError: false, timestamp: Date.parse("2026-01-01T00:00:07.000Z") }), parent);
+    db.query("INSERT INTO session_messages(session_id,seq,role,message_json,created_at,parent_id) VALUES('pi',8,'toolResult',json(?),'2026-01-01T00:00:08.000Z',?)")
+      .run(JSON.stringify({ role: "toolResult", toolCallId: "call-1", content: [{ type: "text", text: "reused" }], isError: false, timestamp: Date.parse("2026-01-01T00:00:08.000Z") }), Number(orphan.lastInsertRowid));
+    db.close();
+    const output = join(root, "orphan-cleanup.db");
+    const report = await importAgentHarnessHistory({ source, output, config });
+    expect(report.orphanCleanup.deletedRows).toEqual([3, Number(orphan.lastInsertRowid)]);
+    expect(report.orphanCleanup.count).toBe(2);
+    const migrated = new Database(output, { readonly: true });
+    expect(migrated.query<{ count: number }, []>("SELECT COUNT(*) count FROM session_messages WHERE session_id='pi' AND role='toolResult'").get()!.count).toBe(1);
+    migrated.close();
+    expect((await validate(source, output)).orphanCleanup).toEqual({ deletedRows: [3, Number(orphan.lastInsertRowid)], count: 2 });
   });
 
   test("assigns deterministic row identities when archived and active rows repeat a logical ID", async () => {
@@ -248,23 +270,39 @@ describe("offline AgentHarness history import", () => {
     await importAgentHarnessHistory({ source: changed.source, output: changedOutput, config });
     const changedDb = new Database(changedOutput);
     changedDb.query("UPDATE session_messages SET message_json=json_set(message_json, '$.tokensBefore', 0) WHERE role='compaction'").run(); changedDb.close();
-    await expect(validate(changed.source, changedOutput)).rejects.toThrow("Archive projection mismatch");
+    await expect(validate(changed.source, changedOutput)).rejects.toThrow("Converted archive hash differs");
 
     const tipped = await makeFixture(); const tippedOutput = join(tipped.root, "tipped.db");
     await importAgentHarnessHistory({ source: tipped.source, output: tippedOutput, config });
     const tipDb = new Database(tippedOutput);
     tipDb.query("UPDATE pi_values SET value_json='null' WHERE session_id='pi' AND namespace='pi.branch.tip'").run(); tipDb.close();
-    await expect(validate(tipped.source, tippedOutput)).rejects.toThrow("Main tip is not the final entry");
+    await expect(validate(tipped.source, tippedOutput)).rejects.toThrow("Invalid main tip");
   });
 
   test("standalone validator reproduces archive, attachment, ancestry, lane, and active-context hashes", async () => {
     const { root, source } = await makeFixture(); const output = join(root, "validated.db");
     await importAgentHarnessHistory({ source, output, config });
     const report = await validate(source, output);
-    expect(report).toMatchObject({ messages: 10, sessions: 2, ancestryRepair: { changedLinks: 0, affectedSessions: 0 }, quickCheck: "ok", foreignKeyRows: 0 });
+    expect(report).toMatchObject({ sourceMessages: 10, outputMessages: 10, sessions: 2, ancestryRepair: { changedLinks: 0, affectedSessions: 0 }, orphanCleanup: { deletedRows: [], count: 0 }, quickCheck: "ok", foreignKeyRows: 0 });
     expect(report.archiveExpectedHash).toBe(report.archiveActualHash);
     expect(report.activeExpectedHash).toBe(report.activeActualHash);
     expect(report.attachmentSourceHash).toBe(report.attachmentOutputHash);
+  });
+
+  test("connection conversion requires a transaction and validation failure rolls back only data changes", async () => {
+    const { source } = await makeFixture();
+    const db = new Database(source); db.exec("PRAGMA foreign_keys=ON");
+    const baseline = captureLegacyHistoryBaseline(db);
+    expect(() => convertLegacyAgentHarnessHistoryInPlace(db, config, baseline)).toThrow("requires an active transaction");
+    expect(() => db.transaction(() => {
+      convertLegacyAgentHarnessHistoryInPlace(db, config, baseline);
+      db.query("UPDATE session_messages SET message_json=json_set(message_json, '$.tokensBefore', 0) WHERE role='compaction'").run();
+      validateConvertedAgentHarnessHistory(db, baseline);
+    })()).toThrow("Converted archive hash differs");
+    expect(db.query<{ role: string; harness_id: string | null }, []>("SELECT role,harness_id FROM session_messages WHERE id=1").get())
+      .toEqual({ role: "user", harness_id: null });
+    expect(db.query("SELECT 1 FROM pi_values LIMIT 1").get()).toBeNull();
+    db.close();
   });
 
   test("VACUUM INTO captures committed WAL rows without modifying the source", async () => {

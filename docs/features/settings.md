@@ -9,11 +9,11 @@ The **Default Model** setting controls which model new sessions use.
 - It is global to the server, not per-project.
 - It applies to newly created sessions only.
 - Existing sessions keep their current model unless changed explicitly.
-- Choosing a model also selects its [runtime](runtimes.md) — the engine that powers the agent loop.
-- If no default model is configured, REINS uses its built-in fallback.
+- Models run through the registered [AgentHarness Pi runtime](runtimes.md).
+- A default model must be configured before creating a session without an explicit model override.
 - If a default model is configured but no longer exists, new sessions fail with an error until you update the setting.
 
-You can change the default model from the settings panel in the sidebar using a single provider/model picker. The Direct runtime refreshes model catalogs from Pi, so newly published models can appear without a Reins release; when offline, it uses Pi's bundled and last cached catalogs.
+You can change the default model from the settings panel in the sidebar using a single provider/model picker. The runtime refreshes model catalogs from Pi, so newly published models can appear without a Reins release; when offline, it uses Pi's bundled and last cached catalogs.
 
 ## Utility model
 
@@ -22,7 +22,7 @@ The **Utility Model** setting controls which model REINS uses for lightweight in
 - It is global to the server, not per-project.
 - It is intended for cheaper and faster one-shot calls.
 - If no utility model is configured, REINS falls back to the default model.
-- If neither utility nor default model is configured, REINS uses its built-in fallback.
+- If neither utility nor default model is configured, REINS uses Pi's built-in fallback for utility operations.
 
 You can configure it separately in the settings panel, alongside the default model.
 
@@ -36,10 +36,6 @@ Provider auth credentials are stored separately from general settings.
 - Database-managed API keys take precedence over environment variables.
 
 API keys and OAuth sign-in are managed from the app's authentication flows.
-
-### Claude Code runtime
-
-The Claude Code runtime uses host-level authentication rather than Reins-managed API keys. It appears in model lists with a `local` auth badge. See [Runtimes](runtimes.md) for authentication details and how it differs from the Direct runtime.
 
 ## Per-session model changes
 

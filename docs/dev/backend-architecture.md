@@ -18,7 +18,7 @@ Thin HTTP adapters. Parse requests, call model functions, format responses. Erro
 
 ### Tools (`src/tools/`)
 
-Agent tool definitions using the pi SDK `customTools` mechanism. Each tool file exports a factory that returns a `ToolDefinition`. Session materialization (`runtimes/sessions-manager.ts`) resolves canonical custom tools once per session; runtimes consume that shared set and only map built-ins to their native wiring.
+Application tools are native `AgentHarnessTool` definitions. Each tool file exports a factory using the harness execution signature, including the harness `Context`; `execute` forwards `context.abortSignal` into the scripting API. Session materialization (`runtimes/sessions-manager.ts`) resolves these tools once per session. A separate legacy projection exists only to keep the dormant Claude SDK implementation compiling and is not used by the registered runtime.
 
 Tool factories receive stable references (server state, session ID) at factory time and look up project context from the DB at execution time.
 
@@ -28,7 +28,7 @@ Tool factories receive stable references (server state, session ID) at factory t
 - **`search`** — discovers the curated `execute` API surface by returning documentation-only TypeScript interfaces from `src/scripting/api-registry.ts`.
 - **`execute`** — runs an async JavaScript function body in a VM with only the curated `api` object in scope. Scripting functions live under `src/scripting/`; session-analysis helpers should extend `api.sessions` rather than introducing a separate analytics namespace. Keep `src/scripting/*` as execute/search glue: TypeBox schemas, descriptions/tags, project/task access checks, and delegation to stores/models. DB-backed filtering/extraction logic (for example session entry/message/tool-call extraction) belongs in `src/*-store.ts` so scripting is not the source of truth.
 
-Session orchestration is exposed as `api.sessions.start/send/wait` through search/execute, not specialized delegation tools. `models/session-orchestration.ts` owns lifecycle/scope policy, explicit parent choices, and bounded observation; adapters own execution and native steering. Sending starts/resumes idle sessions or steers busy ones, with explicit unsupported errors and no queued follow-ups. Addressed delivery lives in `models/session-messages.ts`: its `send(sessionId, message)` opens the recipient, prompts or steers, and broadcasts. The scripting facade applies caller scope before using it. A separate runtime parent-report subscriber awaits persistence flush and uses the same messaging module; persistence does not call reporting. Creation/open capabilities and the tool abort signal are injected into execute context. Wait cancellation never invokes the target runtime's abort. See [runtime-adapter-contract.md](runtime-adapter-contract.md#asynchronous-session-orchestration).
+Session orchestration is exposed as `api.sessions.start/send/wait` through search/execute, not specialized delegation tools. Focused functions in `models/session-operations.ts` own scope policy, explicit parent choices, and bounded observation; adapters own execution and native steering. Sending starts/resumes idle sessions or steers busy ones, with explicit unsupported errors and no queued follow-ups. Addressed delivery lives in `models/session-messages.ts`: its `send(sessionId, message)` opens the recipient, prompts or steers, and broadcasts. The scripting facade supplies caller scope to the model functions. A separate runtime parent-report subscriber uses the same messaging module after synchronous lifecycle observation; lifecycle updates do not call reporting. Creation/open capabilities and the tool abort signal are injected into execute context. Wait cancellation never invokes the target runtime's abort. See [runtime-adapter-contract.md](runtime-adapter-contract.md#asynchronous-session-orchestration).
 
 ### WebSocket handlers (`src/ws.ts`)
 
@@ -62,10 +62,9 @@ Agent execution is routed through a runtime abstraction:
 
 - `runtimes/sessions-manager.ts` — runtime-agnostic session open/create orchestration
 - `runtimes/registry.ts` — runtime contracts (`AgentRuntime`, `AgentRuntimeAdapter`) and adapter registration/lookup
-- `runtimes/pi/` — pi runtime adapter + runtime wrapper (`PiRuntimeAdapter`, `PiAgentRuntime`) and pi runtime materialization/wiring
+- `runtimes/pi/` — the registered AgentHarness Pi adapter, canonical SQLite storage adapter, provider integration, and ephemeral utility calls
 
-`ManagedSession` holds a runtime handle (`managed.runtime`) instead of a raw pi session.
-Pi and Claude SDK implement this seam without requiring separate WS/session orchestration.
+`ManagedSession` holds a runtime handle (`managed.runtime`) instead of exposing Pi internals. AgentHarness Pi is the only registered session runtime; the Claude SDK implementation remains in-tree but unregistered.
 
 ### Pi integration (`src/runtimes/pi/`)
 
@@ -76,7 +75,9 @@ Key entry points:
 - `pi/factory.ts` — creates the cwd-scoped resource loader and Pi `ModelRuntime`, including bounded remote model-catalog refresh
 - `pi/credential-store.ts` — adapts Pi's credential-store contract to Reins SQLite API-key/OAuth records
 - `pi/model-catalog.ts` — provider listing/auth-source metadata built on top of Pi's model runtime
-- `pi/session.ts` and `pi/runtime.ts` — create, resume, and adapt Pi sessions to Reins' runtime contract
+- `pi/agent-harness-adapter.ts`, `pi/agent-harness-builder.ts`, and `pi/agent-harness-runtime.ts` — create and reopen canonical AgentHarness sessions; the builder wires native read/write/edit/bash tools to one cwd-scoped `NodeExecutionEnv`, and runtime close owns its exactly-once cleanup
+- `pi/storage-adapter.ts` — implements AgentHarness storage directly against Reins SQLite
+- `pi/utility.ts` — runs non-persisted utility prompts for task generation and branch naming
 
 ## Dependency rules
 

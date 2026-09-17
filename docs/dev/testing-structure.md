@@ -6,8 +6,8 @@ Tests should be organized to mirror the app/source folder structure and should d
 
 When you add or move code under `src/`, place tests in a matching path under `src/__tests__/`.
 
-- Source: `src/runtimes/pi/runtime.ts`
-- Test: `src/__tests__/runtimes/pi/runtime.test.ts`
+- Source: `src/runtimes/pi/agent-harness-runtime.ts`
+- Test: `src/__tests__/runtimes/pi/agent-harness-runtime.test.ts`
 
 - Source: `src/routes/models.ts`
 - Test: `src/__tests__/routes/models.test.ts`

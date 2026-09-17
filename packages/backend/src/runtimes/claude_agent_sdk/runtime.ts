@@ -6,15 +6,13 @@ import {
   type HookJSONOutput,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
-  AgentRuntime,
   AgentRuntimeEvent,
   SetRuntimeModelParams,
 } from "../registry.js";
 import { ClaudeStreamProcessor } from "./stream-processor.js";
 import { toClaudeSdkUserContent } from "./sdk-content-blocks.js";
 import { createClaudeCustomToolsServer } from "./tools.js";
-import { createSessionStore } from "./session-store.js";
-import { loadMessagesForLLM, type ClientPromptContent, type HydratedPromptContent, type RuntimeMessage } from "../../messages-store.js";
+import { loadActiveMessages, type ClientPromptContent, type HydratedPromptContent, type RuntimeMessage } from "../../messages-store.js";
 import { hydratePromptContent } from "../../session-attachments-store.js";
 import { resolveClaudeBinary } from "./resolve-binary.js";
 
@@ -107,7 +105,8 @@ function toError(error: unknown, fallback = "Claude query failed"): Error {
   return error instanceof Error ? error : new Error(String(error ?? fallback));
 }
 
-export class ClaudeSdkAgentRuntime implements AgentRuntime {
+/** Dormant legacy runtime retained outside the active AgentRuntime contract. */
+export class ClaudeSdkAgentRuntime {
   readonly runtimeType = "claude_agent_sdk" as const;
 
   private readonly listeners = new Set<(event: AgentRuntimeEvent) => void>();
@@ -265,7 +264,6 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
       settingSources: [],
       strictMcpConfig: true,
       systemPrompt: this.params.systemPrompt,
-      sessionStore: createSessionStore(this.params.sessionId, this.params.projectDir),
       thinking: isThinkingDisabled(this.thinkingLevel) ? { type: "disabled" } : { type: "enabled" },
       ...(isThinkingDisabled(this.thinkingLevel) ? {} : { effort: mapThinkingEffort(this.thinkingLevel) }),
       env: {
@@ -421,7 +419,7 @@ export class ClaudeSdkAgentRuntime implements AgentRuntime {
   }
 
   async getMessages(): Promise<RuntimeMessage[]> {
-    return loadMessagesForLLM(this.params.sessionId);
+    return loadActiveMessages(this.params.sessionId);
   }
 
   getSessionMetadata(): { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null } {

@@ -1,6 +1,6 @@
 # Manual AgentHarness Pi sandbox
 
-Use this launcher to exercise the unregistered AgentHarness-based Pi runtime without opening the production server or database.
+Use this launcher to exercise the registered AgentHarness-based Pi runtime implementation without opening the production server or database.
 
 ## Safety boundaries
 
@@ -10,7 +10,7 @@ The launcher creates a fresh disposable directory under `/tmp` and prints it. In
 - `project/` — the only project cwd;
 - `home/` — isolated `HOME`, `USERPROFILE`, and XDG configuration/data roots.
 
-It sets `REINS_DATA_DIR` and all home/config roots before dynamically importing Reins or Pi modules, enables `PI_OFFLINE=1`, clears common provider-key environment variables, registers only a fake provider, and supplies no credentials. It does not register the runtime with production session creation, run the old snapshot observer, migrate history, or start an HTTP/UI server.
+It sets `REINS_DATA_DIR` and all home/config roots before dynamically importing Reins or Pi modules, enables `PI_OFFLINE=1`, clears common provider-key environment variables, registers only a fake provider, and supplies no credentials. It constructs the runtime directly rather than registering production session creation, migrating history, or starting an HTTP/UI server.
 
 Only the `read` tool is enabled and it is rooted in the disposable project. Bash, write, edit, execute, create_task, and cross-session tools are unavailable.
 

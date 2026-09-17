@@ -9,6 +9,7 @@ import {
   StorageBackedSession,
   type AgentMessage,
   type Entry,
+  type ExecutionEnv,
   type HarnessEvent,
   type LaneSnapshot,
   type WatchHandle,
@@ -17,7 +18,8 @@ import type { Database } from "bun:sqlite";
 import type { Message, Models } from "@earendil-works/pi-ai";
 import { hydratePromptContent } from "../../session-attachments-store.js";
 import type { ClientPromptContent, RuntimeMessage } from "../../messages-store.js";
-import type { AgentRuntime, AgentRuntimeEvent, SetRuntimeModelParams } from "../registry.js";
+import { logger } from "../../logger.js";
+import type { AgentRuntime, AgentRuntimeEvent, RuntimePromptOptions, RuntimePromptSubmission, RuntimeRunOutcome, SetRuntimeModelParams } from "../registry.js";
 import { PiStorageAdapter } from "./storage-adapter.js";
 
 export interface ReinsInputMessage {
@@ -96,13 +98,11 @@ function mapHarnessEvent(event: HarnessEvent): AgentRuntimeEvent | undefined {
   }
 }
 
-/** Unselected next-generation Pi runtime backed directly by AgentHarness. */
+/** Registered Pi runtime backed directly by AgentHarness. */
 export class AgentHarnessPiRuntime implements AgentRuntime {
   readonly runtimeType = "pi-agent-harness" as const;
-  readonly activityCompletionBoundary = "agent_settled" as const;
   private readonly activeOperations = new Map<string, PromiseWithResolvers<void>>();
   private readonly pendingSubmissions = new Set<PromiseWithResolvers<void>>();
-  private readonly runtimeListeners = new Set<(event: AgentRuntimeEvent) => void>();
   private closePromise?: Promise<void>;
   private metadata: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
 
@@ -115,6 +115,7 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     private readonly models?: Models,
     private readonly transcriptWatch?: WatchHandle<LaneSnapshot>,
     private readonly sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null },
+    readonly executionEnv?: ExecutionEnv,
   ) {
     this.metadata = metadata;
     this.transcriptWatch?.start(() => undefined);
@@ -132,25 +133,55 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
       : convertToLlm([message]));
   }
 
-  async prompt(content: ClientPromptContent): Promise<void> {
+  async prompt(
+    content: ClientPromptContent,
+    options: RuntimePromptOptions = {},
+  ): Promise<RuntimePromptSubmission> {
     if (!this.sessionId && content.some((block) => block.type === "image")) {
       throw new Error("Cannot hydrate prompt attachments without a Reins session id");
     }
-    return this.promptMessage(createReinsInputMessage(content));
-  }
+    const message = createReinsInputMessage(content, options.reinsId, options.metadata, options.timestamp);
+    const existing = (await this.lane.findEntries(undefined, BACKGROUND_CONTEXT)).find((entry) =>
+      entry.type === "message" && entry.message.role === "reinsInput" && entry.message.reinsId === message.reinsId
+    );
+    if (existing) {
+      const recoverable = this.openOperations.filter((operation) => operation.lane === this.lane.name && operation.kind === "prompt");
+      if (recoverable.length > 1) {
+        throw new Error(`Accepted prompt ${message.reinsId} has no unique recoverable operation`);
+      }
+      if (recoverable[0]) this.driveInBackground(recoverable[0].operationId);
+      return { messageId: existing.id };
+    }
 
-  async promptMessage(message: ReinsInputMessage): Promise<void> {
     const submission = Promise.withResolvers<void>();
     this.pendingSubmissions.add(submission);
-    let acceptResult;
     try {
-      acceptResult = await this.lane.accept({ kind: "prompt", prompt: message }, BACKGROUND_CONTEXT);
+      const accepted = assertOk(await this.lane.accept({ kind: "prompt", prompt: message }, BACKGROUND_CONTEXT));
+      const entry = (await this.lane.findEntries(undefined, BACKGROUND_CONTEXT)).find((candidate) =>
+        candidate.type === "message" && candidate.message.role === "reinsInput" && candidate.message.reinsId === message.reinsId
+      );
+      if (!entry) throw new Error(`AgentHarness accepted prompt ${message.reinsId} without a durable entry`);
+      this.driveInBackground(accepted.operationId);
+      return { messageId: entry.id };
     } finally {
       this.pendingSubmissions.delete(submission);
       submission.resolve();
     }
-    const accepted = assertOk(acceptResult);
-    await this.driveOperationToCompletion(accepted.operationId);
+  }
+
+  async promptMessage(message: ReinsInputMessage): Promise<RuntimePromptSubmission> {
+    return this.prompt(message.content, {
+      reinsId: message.reinsId,
+      metadata: message.metadata,
+      timestamp: message.timestamp,
+    });
+  }
+
+  private driveInBackground(operationId: string): void {
+    void this.driveOperationToCompletion(operationId).catch((error: unknown) => {
+      if (error instanceof Error && error.name === "AbortError") return;
+      logger.error(`AgentHarness prompt operation ${operationId} failed:`, error);
+    });
   }
 
   /** Resume one returned open operation explicitly; construction does not execute open operations. */
@@ -167,22 +198,19 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     }
     const completion = Promise.withResolvers<void>();
     this.activeOperations.set(operationId, completion);
-    let terminal = false;
     try {
       let result = assertOk(await this.lane.drive({ operationId, waitForRetry: true, pollDeferred: true }, BACKGROUND_CONTEXT));
       while (result.kind === "waiting") {
         result = assertOk(await this.lane.drive({ operationId, waitForRetry: true, pollDeferred: true }, BACKGROUND_CONTEXT));
       }
-      terminal = true;
       if (result.outcome.status !== "completed") {
-        throw new Error(result.outcome.error?.message ?? `AgentHarness operation ${result.outcome.status}`);
+        const error = new Error(result.outcome.error?.message ?? `AgentHarness operation ${result.outcome.status}`);
+        if (result.outcome.status === "aborted") error.name = "AbortError";
+        throw error;
       }
     } finally {
       this.activeOperations.delete(operationId);
       completion.resolve();
-      if (terminal) {
-        for (const listener of this.runtimeListeners) listener({ type: "agent_settled" });
-      }
     }
   }
 
@@ -232,7 +260,6 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
   }
 
   subscribe(listener: (event: AgentRuntimeEvent) => void): () => void {
-    this.runtimeListeners.add(listener);
     const runMessages = new Map<string, RuntimeMessage[]>();
     const disposers = (["run_start", "turn_start", "turn_end", "message_start", "message_update", "message_end", "tool_start", "tool_update", "tool_end", "retry_scheduled", "retry_end", "compaction_start", "compaction_end"] as const)
       .map((type) => this.harness.events.on(type, (event) => {
@@ -245,11 +272,16 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
         if (mapped) listener(mapped);
       }));
     disposers.push(this.harness.events.on("run_end", (event) => {
-      listener({ type: "agent_end", messages: runMessages.get(event.runId) ?? [] });
+      listener({
+        type: "agent_end",
+        messages: runMessages.get(event.runId) ?? [],
+        runId: event.runId,
+        status: event.status,
+        ...(event.status === "failed" ? { error: event.error } : {}),
+      });
       runMessages.delete(event.runId);
     }));
     return () => {
-      this.runtimeListeners.delete(listener);
       for (const dispose of disposers) dispose();
     };
   }
@@ -269,6 +301,18 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     }
   }
 
+  async getLastRunOutcome(): Promise<RuntimeRunOutcome | null> {
+    const execution = await this.lane.inspectExecution(BACKGROUND_CONTEXT);
+    if (!execution.lastOperationId) return null;
+    const outcome = await this.lane.getResult(execution.lastOperationId, BACKGROUND_CONTEXT);
+    if (!outcome) return null;
+    return {
+      runId: outcome.operationId,
+      status: outcome.status === "declined" ? "failed" : outcome.status,
+      ...(outcome.error ? { error: outcome.error } : {}),
+    };
+  }
+
   getSessionMetadata() { return this.metadata; }
 
   isStreaming(): boolean { return this.pendingSubmissions.size > 0 || this.activeOperations.size > 0; }
@@ -280,7 +324,8 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
       try { await this.abort(); }
       finally {
         this.transcriptWatch?.unsubscribe();
-        await this.harness.close(BACKGROUND_CONTEXT);
+        try { await this.harness.close(BACKGROUND_CONTEXT); }
+        finally { await this.executionEnv?.cleanup(BACKGROUND_CONTEXT); }
       }
     })();
     return this.closePromise;
@@ -295,13 +340,10 @@ export interface CreateAgentHarnessPiRuntimeParams {
   parentSessionId?: string;
   options: Omit<AgentHarnessOptions, "session" | "toProviderMessages">;
   sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null };
+  executionEnv?: ExecutionEnv;
 }
 
-/**
- * Attach AgentHarness to a fresh canonical Reins session. This constructor is
- * intentionally not registered: legacy sessions require the separately
- * authorized migration before this storage format can be activated.
- */
+/** Attach AgentHarness to a canonical Reins session backed by PiStorageAdapter. */
 export async function createAgentHarnessPiRuntime(
   params: CreateAgentHarnessPiRuntimeParams,
 ): Promise<AgentHarnessPiRuntime> {
@@ -333,10 +375,14 @@ export async function createAgentHarnessPiRuntime(
     return new AgentHarnessPiRuntime(made.harness, lane, {
       model: restoredModel ? { provider: restoredModel.provider, modelId: restoredModel.id } : null,
       thinkingLevel: restoredThinking,
-    }, params.sessionId, made.open.filter((operation) => operation.lane === lane.name), params.options.models, transcriptWatch, params.sessionEnvironment);
+    }, params.sessionId, made.open.filter((operation) => operation.lane === lane.name), params.options.models, transcriptWatch, params.sessionEnvironment, params.executionEnv);
   } catch (error) {
-    if (harness) await harness.close(BACKGROUND_CONTEXT).catch(() => undefined);
-    else await session.close(BACKGROUND_CONTEXT).catch(() => undefined);
+    try {
+      if (harness) await harness.close(BACKGROUND_CONTEXT).catch(() => undefined);
+      else await session.close(BACKGROUND_CONTEXT).catch(() => undefined);
+    } finally {
+      await params.executionEnv?.cleanup(BACKGROUND_CONTEXT);
+    }
     throw error;
   }
 }

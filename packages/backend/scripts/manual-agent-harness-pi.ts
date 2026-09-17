@@ -49,7 +49,7 @@ async function openRuntime() {
     task: null,
     model: { provider: "manual-faux", modelId: "manual" },
     thinkingLevel: "minimal",
-    sessionTools: { builtins: ["read"], customTools: [] },
+    sessionTools: { builtins: ["read"], harnessTools: [] },
     resume: true,
   });
 }
@@ -57,10 +57,12 @@ async function openRuntime() {
 let runtime = await openRuntime();
 provider.setResponses([fauxAssistantMessage("fake response one")]);
 await runtime.prompt([{ type: "text", text: "first isolated fake prompt" }]);
+await runtime.waitForIdle();
 await runtime.close();
 runtime = await openRuntime();
 provider.setResponses([fauxAssistantMessage("fake response after reopen")]);
 await runtime.prompt([{ type: "text", text: "continue after reopen" }]);
+await runtime.waitForIdle();
 console.log(`SANDBOX_ROOT=${root}`);
 console.log(`DATABASE=${join(dataDir, "reins.db")}`);
 console.log(`PROJECT=${projectDir}`);
@@ -75,6 +77,7 @@ if (interactive) {
     if (command === "prompt") {
       provider.setResponses([fauxAssistantMessage(`fake: ${rest.join(" ")}`)]);
       await runtime.prompt([{ type: "text", text: rest.join(" ") }]);
+      await runtime.waitForIdle();
       console.log("PROMPT_OK");
     } else if (command === "messages") {
       console.log(JSON.stringify(await runtime.getMessages(), null, 2));

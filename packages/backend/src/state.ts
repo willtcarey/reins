@@ -17,7 +17,6 @@ export interface ManagedSession {
   runtime: AgentRuntime;
   id: string;
   lastActivity: number;
-  flushPersistence?: () => Promise<void>;
 }
 
 /** Minimal interface for WebSocket objects — matches Bun's ServerWebSocket. */

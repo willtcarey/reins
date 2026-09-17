@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { captureLegacyHistoryBaseline, validateConvertedAgentHarnessHistory, type LegacyHistoryBaseline } from "./agent-harness-history-validation.js";
 
 export const IMPORT_FORMAT_VERSION = 1;
 export const DEFAULT_ACTIVE_TOOL_NAMES = ["read", "write", "edit", "bash"] as const;
@@ -28,6 +29,7 @@ export type ImportReport = {
   unresolvedModels: { provider: string; modelId: string; sessions: number }[];
   unresolvedSettings: { key: string; provider: string; modelId: string }[];
   ancestryRepair: { changedLinks: number; affectedSessions: number };
+  orphanCleanup: { deletedRows: number[]; count: number; reconnectedLinks: number };
 };
 
 type SessionRow = {
@@ -131,14 +133,14 @@ function validateCanonicalPiTables(db: Database): void {
 }
 
 function validateSchema(db: Database): void {
-  const migration = db.query<{ ok: number }, []>(
-    "SELECT EXISTS(SELECT 1 FROM migrations WHERE name='027_add_agent_harness_storage') AS ok",
-  ).get();
-  if (migration?.ok !== 1) throw new Error("Source schema must include 027_add_agent_harness_storage");
   for (const table of ["sessions", "session_messages", "session_attachments"]) {
     const row = db.query<{ ok: number }, [string]>("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?) AS ok").get(table);
     if (row?.ok !== 1) throw new Error(`Source is missing required table: ${table}`);
   }
+  const sessionColumns = new Set(db.query<{ name: string }, []>("PRAGMA table_info(sessions)").all().map((row) => row.name));
+  const messageColumns = new Set(db.query<{ name: string }, []>("PRAGMA table_info(session_messages)").all().map((row) => row.name));
+  for (const column of ["agent_runtime_type", "model_provider", "model_id", "thinking_level", "harness_next_seq"]) if (!sessionColumns.has(column)) throw new Error(`Source sessions table is missing required column: ${column}`);
+  for (const column of ["parent_id", "harness_id", "seq", "role", "message_json", "created_at"]) if (!messageColumns.has(column)) throw new Error(`Source session_messages table is missing required column: ${column}`);
 }
 
 function validateSessionMapping(session: SessionRow, config: ImportConfig): SessionImportConfig {
@@ -183,7 +185,8 @@ function preflightSource(db: Database, config: ImportConfig): void {
   }
 }
 
-function migrateOutput(db: Database, config: ImportConfig): Omit<ImportReport, "sourceSha256" | "sourceSidecars" | "outputSha256"> {
+export function convertLegacyAgentHarnessHistoryInPlace(db: Database, config: ImportConfig, baseline: LegacyHistoryBaseline): Omit<ImportReport, "sourceSha256" | "sourceSidecars" | "outputSha256"> {
+  if (!db.inTransaction) throw new Error("AgentHarness history conversion requires an active transaction");
   validateSchema(db);
   const targetTableCount = (table: string): number => {
     const exists = db.query<{ ok: number }, [string]>("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?) AS ok").get(table)?.ok === 1;
@@ -212,7 +215,22 @@ function migrateOutput(db: Database, config: ImportConfig): Omit<ImportReport, "
       logicalIdCounts.set(key, (logicalIdCounts.get(key) ?? 0) + 1);
     }
   }
-  const harnessIdByRow = new Map(messages.map((row) => {
+  const callIdsBySession = new Map<string, Set<string>>();
+  for (const row of messages) {
+    const parsed = parsedByRow.get(row.id)!;
+    if (row.role !== "assistant" || !Array.isArray(parsed.content)) continue;
+    const calls = callIdsBySession.get(row.session_id) ?? new Set<string>();
+    for (const block of parsed.content) {
+      if (typeof block === "object" && block !== null && "type" in block && block.type === "toolCall" && "id" in block && typeof block.id === "string") calls.add(block.id);
+    }
+    callIdsBySession.set(row.session_id, calls);
+  }
+  const orphanRowIds = new Set(messages.filter((row) => {
+    if (row.role !== "toolResult") return false;
+    const toolCallId = parsedByRow.get(row.id)!.toolCallId;
+    return typeof toolCallId === "string" && !(callIdsBySession.get(row.session_id)?.has(toolCallId) ?? false);
+  }).map((row) => row.id));
+  const harnessIdByRow = new Map(messages.filter((row) => !orphanRowIds.has(row.id)).map((row) => {
     const logicalId = parsedByRow.get(row.id)!.logicalId;
     const uniqueLogicalId = typeof logicalId === "string" && logicalId.length > 0
       && logicalIdCounts.get(`${row.session_id}\0${logicalId}`) === 1 ? logicalId : undefined;
@@ -220,6 +238,7 @@ function migrateOutput(db: Database, config: ImportConfig): Omit<ImportReport, "
   }));
   const messagesBySession = new Map<string, MessageRow[]>();
   for (const message of messages) {
+    if (orphanRowIds.has(message.id)) continue;
     const rows = messagesBySession.get(message.session_id) ?? [];
     rows.push(message);
     messagesBySession.set(message.session_id, rows);
@@ -227,9 +246,12 @@ function migrateOutput(db: Database, config: ImportConfig): Omit<ImportReport, "
   const harnessIds = new Set<string>();
   const roles: Record<string, number> = {};
   let changedLinks = 0;
+  let orphanReconnectedLinks = 0;
   const repairedSessions = new Set<string>();
 
-  db.transaction(() => {
+  if (JSON.stringify([...orphanRowIds].toSorted((a,b)=>a-b)) !== JSON.stringify(baseline.deletedRows)) throw new Error("Conversion orphan analysis differs from captured baseline");
+  {
+    for (const rowId of orphanRowIds) db.query("DELETE FROM session_messages WHERE id=?").run(rowId);
     // Empty provisional tables carry no state. Recreate them so similarly named but
     // under-constrained tables cannot masquerade as the canonical adapter schema.
     db.exec(`DROP TABLE IF EXISTS pi_usage;
@@ -278,10 +300,16 @@ function migrateOutput(db: Database, config: ImportConfig): Omit<ImportReport, "
       const sessionRows = messagesBySession.get(session.id) ?? [];
       let expectedParent: number | null = null;
       for (const row of sessionRows) {
-        if (row.parent_id === null && expectedParent !== null) {
+        if (row.parent_id !== expectedParent) {
           db.query("UPDATE session_messages SET parent_id=? WHERE id=?").run(expectedParent, row.id);
-          changedLinks++;
-          repairedSessions.add(session.id);
+          if (row.parent_id === null) {
+            changedLinks++;
+            repairedSessions.add(session.id);
+          } else if (orphanRowIds.has(row.parent_id)) {
+            orphanReconnectedLinks++;
+          } else {
+            throw new Error(`Message ${row.id} has unexpected non-linear ancestry after orphan cleanup`);
+          }
         }
         expectedParent = row.id;
         if (row.parent_id !== null) {
@@ -314,7 +342,7 @@ function migrateOutput(db: Database, config: ImportConfig): Omit<ImportReport, "
       db.query("UPDATE sessions SET harness_next_seq=?, agent_runtime_type='pi', model_provider=?, model_id=? WHERE id=?")
         .run(seq, selected.model.provider, selected.model.modelId, session.id);
     }
-  })();
+  }
 
   const integrity = db.query<{ integrity_check: string }, []>("PRAGMA integrity_check").get()!.integrity_check;
   const foreignKeys = db.query("PRAGMA foreign_key_check").all().length;
@@ -326,6 +354,7 @@ function migrateOutput(db: Database, config: ImportConfig): Omit<ImportReport, "
     unresolvedModels: [...unresolvedCounts.values()].toSorted((a, b) => a.provider.localeCompare(b.provider) || a.modelId.localeCompare(b.modelId)),
     unresolvedSettings,
     ancestryRepair: { changedLinks, affectedSessions: repairedSessions.size },
+    orphanCleanup: { deletedRows: [...orphanRowIds].toSorted((a, b) => a - b), count: orphanRowIds.size, reconnectedLinks: orphanReconnectedLinks },
   };
 }
 
@@ -340,8 +369,15 @@ export async function importAgentHarnessHistory(options: { source: string; outpu
     copyDatabaseWithVacuum(options.source, options.output);
     const db = new Database(options.output);
     let partial;
-    try { db.exec("PRAGMA foreign_keys=ON"); partial = migrateOutput(db, options.config); }
-    finally { db.close(); }
+    try {
+      db.exec("PRAGMA foreign_keys=ON");
+      partial = db.transaction(() => {
+        const baseline = captureLegacyHistoryBaseline(db);
+        const conversion = convertLegacyAgentHarnessHistoryInPlace(db, options.config, baseline);
+        validateConvertedAgentHarnessHistory(db, baseline);
+        return conversion;
+      })();
+    } finally { db.close(); }
     const sourceAfter = await sha256File(options.source);
     if (sourceBefore !== sourceAfter) throw new Error("Source database changed during import");
     const report = {

@@ -1,17 +1,28 @@
 import { describe, expect, test } from "bun:test";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { getDb } from "../../../db.js";
 import { createProject } from "../../../project-store.js";
 import { createSession } from "../../../session-store.js";
 import { storeSessionAttachment } from "../../../session-attachments-store.js";
-import { createAgentHarnessPiRuntime, createReinsInputMessage } from "../../../runtimes/pi/agent-harness-runtime.js";
-import { adaptAgentTool } from "../../../runtimes/pi/agent-harness-tools.js";
+import { AgentHarnessPiRuntime, createAgentHarnessPiRuntime, createReinsInputMessage } from "../../../runtimes/pi/agent-harness-runtime.js";
 import { useTestDb } from "../../helpers/test-db.js";
 
 describe("AgentHarnessPiRuntime", () => {
   useTestDb();
+
+  test("projects new custom input and native thinking directly to provider messages", () => {
+    const thinking = fauxAssistantMessage([{ type: "thinking", thinking: "native", thinkingSignature: "signature" }]);
+    const projected = AgentHarnessPiRuntime.toProviderMessages([
+      createReinsInputMessage([{ type: "text", text: "hello" }], "reins-only-id", { source: "test" }, 10),
+      thinking,
+    ]);
+    expect(projected[0]).toEqual({ role: "user", content: [{ type: "text", text: "hello" }], timestamp: 10 });
+    expect(projected[1]).toEqual(thinking);
+    expect(JSON.stringify(projected)).not.toContain("reins-only-id");
+  });
 
   test("persists projected input identity and continues after reopen", async () => {
     const project = createProject("Harness", "/tmp/harness");
@@ -38,9 +49,10 @@ describe("AgentHarnessPiRuntime", () => {
     runtime.subscribe((event) => events.push(event.type));
     const input = createReinsInputMessage([{ type: "text", text: "hello" }], "input-1", { source: "test" }, 10);
     await runtime.promptMessage(input);
+    await runtime.waitForIdle();
     expect(events).toContain("agent_start");
     expect(events).toContain("message_update");
-    expect(events.slice(-2)).toEqual(["agent_end", "agent_settled"]);
+    expect(events.at(-1)).toBe("agent_end");
     expect(await runtime.getMessages()).toEqual([
       { role: "user", content: [{ type: "text", text: "hello" }], timestamp: 10, logicalId: expect.any(String) },
       expect.objectContaining({ role: "assistant", content: [{ type: "text", text: "first" }], logicalId: expect.any(String) }),
@@ -51,6 +63,9 @@ describe("AgentHarnessPiRuntime", () => {
 
     const reopenedRuntime = await open();
     expect(reopenedRuntime.openOperations).toEqual([]);
+    expect(await reopenedRuntime.getLastRunOutcome()).toMatchObject({
+      runId: expect.any(String), status: "completed",
+    });
     expect(calls).toHaveLength(1);
     const secondRunMessages: unknown[][] = [];
     reopenedRuntime.subscribe((event) => {
@@ -63,12 +78,46 @@ describe("AgentHarnessPiRuntime", () => {
       thinkingLevel: "off",
     });
     await reopenedRuntime.prompt([{ type: "text", text: "again" }]);
+    await reopenedRuntime.waitForIdle();
     expect(calls).toHaveLength(2);
     expect(JSON.stringify(calls[1])).not.toContain("input-1");
     expect(secondRunMessages).toHaveLength(1);
     expect(secondRunMessages[0]).toHaveLength(1);
     expect(JSON.stringify(secondRunMessages[0])).not.toContain("hello");
     await reopenedRuntime.close();
+  });
+
+  test("returns the durable message identity before provider execution settles", async () => {
+    const project = createProject("Prompt Submission", "/tmp/prompt-submission");
+    createSession("prompt-submission", project.id, { agentRuntimeType: "pi" });
+    const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    provider.setResponses([async () => {
+      entered.resolve();
+      await release.promise;
+      return fauxAssistantMessage("done");
+    }]);
+    const models = createModels();
+    models.setProvider(provider.provider);
+    const runtime = await createAgentHarnessPiRuntime({
+      db: getDb(), sessionId: "prompt-submission", createdAt: 1, cwd: "/tmp/prompt-submission",
+      options: { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
+    });
+
+    const submitted = await runtime.prompt(
+      [{ type: "text", text: "review" }],
+      { reinsId: "review-1:0", metadata: { source: "test" } },
+    );
+    const row = getDb().query<{ harness_id: string }, []>("SELECT harness_id FROM session_messages WHERE role = 'reinsInput'").get();
+    expect(row).not.toBeNull();
+    expect(submitted.messageId).toBe(row!.harness_id);
+    expect(runtime.isStreaming()).toBe(true);
+    await entered.promise;
+    release.resolve();
+    await runtime.waitForIdle();
+    expect((await runtime.getMessages()).at(-1)).toMatchObject({ role: "assistant" });
+    await runtime.close();
   });
 
   test("consumes busy steering, rejects concurrent prompts, and waits for the owned run", async () => {
@@ -139,12 +188,46 @@ describe("AgentHarnessPiRuntime", () => {
     runtime.subscribe((event) => events.push(event.type));
 
     await runtime.promptMessage(createReinsInputMessage([{ type: "text", text: "retry" }], "retry-input", { exact: true }, 5));
+    await runtime.waitForIdle();
 
     expect(provider.state.callCount).toBe(2);
     expect(events).toContain("auto_retry_start");
     expect(events).toContain("auto_retry_end");
     const storedInputs = getDb().query<{ count: number }, []>("SELECT COUNT(*) AS count FROM session_messages WHERE role = 'reinsInput'").get();
     expect(storedInputs?.count).toBe(1);
+    await runtime.close();
+  });
+
+  test("preserves failed native run outcome details", async () => {
+    const project = createProject("Failed Harness", "/tmp/failed-harness");
+    createSession("failed-harness", project.id, { agentRuntimeType: "pi" });
+    const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+    provider.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider exploded" })]);
+    const models = createModels();
+    models.setProvider(provider.provider);
+    const runtime = await createAgentHarnessPiRuntime({
+      db: getDb(), sessionId: "failed-harness", createdAt: 1, cwd: "/tmp/failed-harness",
+      options: {
+        models, model: provider.getModel(), tools: [],
+        retry: { enabled: false, maxRetries: 0, baseDelayMs: 0 },
+        compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 },
+      },
+    });
+    let completion: unknown;
+    runtime.subscribe((event) => { if (event.type === "agent_end") completion = event; });
+
+    await runtime.prompt([{ type: "text", text: "fail" }]);
+    await runtime.waitForIdle();
+
+    expect(completion).toMatchObject({
+      type: "agent_end",
+      runId: expect.any(String),
+      status: "failed",
+      error: { message: "provider exploded" },
+    });
+    expect(await runtime.getLastRunOutcome()).toMatchObject({
+      runId: expect.any(String), status: "failed", error: { message: "provider exploded" },
+    });
     await runtime.close();
   });
 
@@ -170,15 +253,16 @@ describe("AgentHarnessPiRuntime", () => {
     runtime.subscribe((event) => events.push(event.type));
 
     await runtime.prompt([{ type: "text", text: "defer" }]);
+    await runtime.waitForIdle();
 
     expect(provider.state.callCount).toBe(1);
     expect(provider.state.deferredFetchCount).toBe(2);
-    expect(events.slice(-2)).toEqual(["agent_end", "agent_settled"]);
+    expect(events.at(-1)).toBe("agent_end");
     expect((await runtime.getMessages()).filter((message) => message.role === "user")).toHaveLength(1);
     await runtime.close();
   });
 
-  test("settles only after automatic compaction and keeps run-local agent output", async () => {
+  test("ends only after automatic compaction and keeps run-local agent output", async () => {
     const project = createProject("Compact Harness", "/tmp/compact-harness");
     createSession("compact-harness", project.id, { agentRuntimeType: "pi" });
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 100, maxTokens: 20 }] });
@@ -192,21 +276,27 @@ describe("AgentHarnessPiRuntime", () => {
     runtime.harness.hooks.on("before_compaction", ({ preparation }) => ({
       compaction: { summary: "compact summary", tokensBefore: preparation.tokensBefore, retainedTail: preparation.retainedTail },
     }));
-    const events: { type: string; messages?: unknown[] }[] = [];
-    let streamingAtSettlement: boolean | undefined;
+    const events: { type: string; messages?: unknown[]; runId?: string; status?: string; error?: unknown }[] = [];
+    let streamingAtRunEnd: boolean | undefined;
     runtime.subscribe((event) => {
       events.push(event);
-      if (event.type === "agent_settled") streamingAtSettlement = runtime.isStreaming();
+      if (event.type === "agent_end") streamingAtRunEnd = runtime.isStreaming();
     });
 
     await runtime.prompt([{ type: "text", text: "a long enough prompt to compact" }]);
+    await runtime.waitForIdle();
 
     const types = events.map((event) => event.type);
     expect(types).toContain("compaction_start");
     expect(types.indexOf("compaction_end")).toBeLessThan(types.indexOf("agent_end"));
-    expect(types.slice(-2)).toEqual(["agent_end", "agent_settled"]);
-    expect(streamingAtSettlement).toBe(false);
-    expect(events.find((event) => event.type === "agent_end")?.messages).toHaveLength(1);
+    expect(types.at(-1)).toBe("agent_end");
+    expect(streamingAtRunEnd).toBe(true);
+    expect(events.find((event) => event.type === "agent_end")).toMatchObject({
+      messages: [expect.any(Object)],
+      runId: expect.any(String),
+      status: "completed",
+    });
+    expect(await runtime.getLastRunOutcome()).toMatchObject({ runId: expect.any(String), status: "completed" });
     expect((await runtime.getMessages())[0]).toMatchObject({ role: "compactionSummary", summary: "compact summary" });
     await runtime.close();
   });
@@ -231,6 +321,7 @@ describe("AgentHarnessPiRuntime", () => {
       { type: "text", text: "inspect" },
       { type: "image", attachmentId: attachment.id, mimeType: attachment.mimeType, filename: attachment.filename, byteSize: attachment.byteSize, sha256: attachment.sha256 },
     ]);
+    await runtime.waitForIdle();
 
     expect(JSON.stringify(providerContext)).toContain(Buffer.from("image bytes").toString("base64"));
     expect(JSON.stringify(providerContext)).not.toContain(attachment.id);
@@ -238,30 +329,21 @@ describe("AgentHarnessPiRuntime", () => {
     await runtime.close();
   });
 
-  test("adapts coding tools with progress, cancellation signal, and replay-never mutation policy", async () => {
+  test("runs a native tool with progress and the harness cancellation context", async () => {
     const project = createProject("Tool Harness", "/tmp/tool-harness");
     createSession("tool-harness", project.id, { agentRuntimeType: "pi" });
     const signals: (AbortSignal | undefined)[] = [];
-    const codingTool = {
-      name: "write", label: "write", description: "write a value", parameters: Type.Object({ value: Type.String() }),
+    const tool = {
+      name: "write", label: "write", description: "write a value", parameters: Type.Object({ value: Type.String() }), replay: "never" as const,
       prepareArguments: (args: unknown) => ({
         value: typeof args === "object" && args !== null && "text" in args && typeof args.text === "string" ? args.text : "",
       }),
-      async execute(_id: string, params: unknown, signal: AbortSignal | undefined, onUpdate?: (result: { content: { type: "text"; text: string }[]; details: { phase: string } }) => void) {
-        signals.push(signal);
-        onUpdate?.({ content: [{ type: "text", text: "working" }], details: { phase: "working" } });
-        const value = typeof params === "object" && params !== null && "value" in params ? params.value : "";
-        return { content: [{ type: "text" as const, text: `wrote ${value}` }], details: { phase: "done" } };
+      async execute(_id: string, params: { value: string }, onUpdate: (result: { content: { type: "text"; text: string }[]; details: { phase: string } }) => void, _toolContext: undefined, _invocation: unknown, context: typeof BACKGROUND_CONTEXT) {
+        signals.push(context.abortSignal);
+        onUpdate({ content: [{ type: "text", text: "working" }], details: { phase: "working" } });
+        return { content: [{ type: "text" as const, text: `wrote ${params.value}` }], details: { phase: "done" } };
       },
     };
-    const tool = adaptAgentTool(codingTool);
-    const unknownEffectTool = adaptAgentTool({ ...codingTool, name: "plugin_effect" });
-    const explicitlySafe = adaptAgentTool({ ...codingTool, name: "pure", replay: "safe" });
-    const explicitlyNever = adaptAgentTool({ ...codingTool, name: "effect", replay: "never" });
-    expect(tool.replay).toBe("never");
-    expect(unknownEffectTool.replay).toBe("never");
-    expect(explicitlySafe.replay).toBe("safe");
-    expect(explicitlyNever.replay).toBe("never");
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     provider.setResponses([
       fauxAssistantMessage(fauxToolCall("write", { text: "one" }, { id: "call-1" }), { stopReason: "toolUse" }),
@@ -277,6 +359,7 @@ describe("AgentHarnessPiRuntime", () => {
     runtime.subscribe((event) => { if (event.type === "tool_execution_update") updates.push(event.partialResult); });
 
     await runtime.prompt([{ type: "text", text: "use write" }]);
+    await runtime.waitForIdle();
 
     expect(signals).toHaveLength(1);
     expect(signals[0]).toBeInstanceOf(AbortSignal);
@@ -290,15 +373,15 @@ describe("AgentHarnessPiRuntime", () => {
     createSession("effect-recovery", project.id, { agentRuntimeType: "pi" });
     let sideEffects = 0;
     const effectReached = Promise.withResolvers<void>();
-    const originalTool = adaptAgentTool({
-      name: "effect", label: "effect", description: "mutates once", parameters: Type.Object({}),
+    const originalTool = {
+      name: "effect", label: "effect", description: "mutates once", parameters: Type.Object({}), replay: "never" as const,
       async execute() {
         sideEffects++;
         effectReached.resolve();
         await new Promise<void>(() => undefined);
         return { content: [{ type: "text" as const, text: "unreachable" }], details: undefined };
       },
-    });
+    };
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     provider.setResponses([fauxAssistantMessage(fauxToolCall("effect", {}, { id: "effect-call" }), { stopReason: "toolUse" })]);
     const models = createModels();
@@ -312,13 +395,13 @@ describe("AgentHarnessPiRuntime", () => {
     await effectReached.promise;
     expect(sideEffects).toBe(1);
 
-    const replacementTool = adaptAgentTool({
-      name: "effect", label: "effect", description: "must not replay", parameters: Type.Object({}),
+    const replacementTool = {
+      name: "effect", label: "effect", description: "must not replay", parameters: Type.Object({}), replay: "never" as const,
       async execute() {
         sideEffects++;
         throw new Error("duplicate side effect");
       },
-    });
+    };
     provider.setResponses([fauxAssistantMessage("recovered without replay")]);
     const reopened = await createAgentHarnessPiRuntime({
       db: getDb(), sessionId: "effect-recovery", createdAt: 1, cwd: "/tmp/effect-recovery",
@@ -362,13 +445,13 @@ describe("AgentHarnessPiRuntime", () => {
     await Promise.resolve();
     expect(waited).toBe(false);
     release.resolve();
-    await expect(prompt).rejects.toThrow("aborted");
+    await prompt;
     await waiting;
     await closing;
     expect(runtime.isStreaming()).toBe(false);
   });
 
-  test("nonterminal drive rejection emits no ordinary settlement or stale outcome", async () => {
+  test("nonterminal drive rejection emits no terminal event or stale outcome", async () => {
     const project = createProject("Drive Failure", "/tmp/drive-failure");
     createSession("drive-failure", project.id, { agentRuntimeType: "pi" });
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
@@ -382,9 +465,10 @@ describe("AgentHarnessPiRuntime", () => {
     const events: string[] = [];
     runtime.subscribe((event) => events.push(event.type));
 
-    await expect(runtime.prompt([{ type: "text", text: "fail drive" }])).rejects.toThrow("injected nonterminal drive failure");
+    await runtime.prompt([{ type: "text", text: "fail drive" }]);
+    await Bun.sleep(0);
 
-    expect(events).not.toContain("agent_settled");
+    expect(events).not.toContain("agent_end");
     expect(runtime.isStreaming()).toBe(false);
     expect((await runtime.getMessages()).filter((message) => message.role === "assistant")).toEqual([]);
     await runtime.harness.close(BACKGROUND_CONTEXT);
@@ -417,8 +501,8 @@ describe("AgentHarnessPiRuntime", () => {
     expect(reopened.openOperations.map((operation) => operation.operationId)).toEqual([accepted.operationId]);
     expect(reopened.isStreaming()).toBe(false);
     expect(provider.state.callCount).toBe(0);
-    let settlements = 0;
-    reopened.subscribe((event) => { if (event.type === "agent_settled") settlements++; });
+    let completions = 0;
+    reopened.subscribe((event) => { if (event.type === "agent_end") completions++; });
 
     const recovery = reopened.resumeOpenOperation(accepted.operationId);
     await recoveryStarted.promise;
@@ -430,28 +514,28 @@ describe("AgentHarnessPiRuntime", () => {
     await recovery;
 
     expect(provider.state.callCount).toBe(1);
-    expect(settlements).toBe(1);
+    expect(completions).toBe(1);
     expect((await reopened.getMessages()).at(-1)).toMatchObject({ role: "assistant", content: [{ type: "text", text: "recovered" }] });
     await reopened.close();
     await originalRuntime.harness.close(BACKGROUND_CONTEXT);
   });
 
-  test("cancels a blocked wrapped coding tool through the Chord context", async () => {
+  test("cancels a blocked native tool through the harness context", async () => {
     const project = createProject("Cancel Tool Harness", "/tmp/cancel-tool-harness");
     createSession("cancel-tool-harness", project.id, { agentRuntimeType: "pi" });
     const executing = Promise.withResolvers<void>();
     let observedAbort = false;
-    const tool = adaptAgentTool({
-      name: "plugin_effect", label: "effect", description: "blocks", parameters: Type.Object({}),
-      async execute(_id, _params, signal) {
+    const tool = {
+      name: "plugin_effect", label: "effect", description: "blocks", parameters: Type.Object({}), replay: "never" as const,
+      async execute(_id: string, _params: unknown, _onUpdate: unknown, _toolContext: unknown, _invocation: unknown, context: typeof BACKGROUND_CONTEXT) {
         executing.resolve();
-        await new Promise<void>((_resolve, reject) => signal?.addEventListener("abort", () => {
+        await new Promise<void>((_resolve, reject) => context.abortSignal?.addEventListener("abort", () => {
           observedAbort = true;
-          reject(signal.reason);
+          reject(context.abortSignal?.reason);
         }, { once: true }));
         return { content: [{ type: "text" as const, text: "unreachable" }], details: undefined };
       },
-    });
+    };
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     provider.setResponses([fauxAssistantMessage(fauxToolCall("plugin_effect", {}, { id: "blocked-call" }), { stopReason: "toolUse" })]);
     const models = createModels();
@@ -461,10 +545,10 @@ describe("AgentHarnessPiRuntime", () => {
       options: { models, model: provider.getModel(), tools: [tool], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
     });
 
-    const prompt = runtime.prompt([{ type: "text", text: "run effect" }]);
+    await runtime.prompt([{ type: "text", text: "run effect" }]);
     await executing.promise;
     await runtime.abort();
-    await expect(prompt).rejects.toThrow("AgentHarness operation aborted");
+    await runtime.waitForIdle();
 
     expect(observedAbort).toBe(true);
     expect(runtime.isStreaming()).toBe(false);
@@ -477,9 +561,13 @@ describe("AgentHarnessPiRuntime", () => {
     const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
     const models = createModels();
     models.setProvider(provider.provider);
+    let executionEnvCleanups = 0;
+    const executionEnv = new NodeExecutionEnv({ cwd: "/tmp/close-harness" });
+    executionEnv.cleanup = async () => { executionEnvCleanups++; };
     const runtime = await createAgentHarnessPiRuntime({
       db: getDb(), sessionId: "close-harness", createdAt: 1, cwd: "/tmp/close-harness",
       options: { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
+      executionEnv,
     });
     let harnessCloses = 0;
     const nativeClose = runtime.harness.close.bind(runtime.harness);
@@ -490,6 +578,7 @@ describe("AgentHarnessPiRuntime", () => {
     await expect(closing).rejects.toThrow("abort cleanup failed");
     await expect(runtime.close()).rejects.toThrow("abort cleanup failed");
     expect(harnessCloses).toBe(1);
+    expect(executionEnvCleanups).toBe(1);
   });
 
   test("aborts owned streaming work, clears steering, and lets wait observe settlement", async () => {
@@ -508,17 +597,26 @@ describe("AgentHarnessPiRuntime", () => {
       options: { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
     });
     const started = Promise.withResolvers<void>();
-    runtime.subscribe((event) => { if (event.type === "message_update") started.resolve(); });
+    let completion: unknown;
+    runtime.subscribe((event) => {
+      if (event.type === "message_update") started.resolve();
+      if (event.type === "agent_end") completion = event;
+    });
 
-    const prompt = runtime.prompt([{ type: "text", text: "begin" }]);
+    await runtime.prompt([{ type: "text", text: "begin" }]);
     await started.promise;
     await runtime.steer([{ type: "text", text: "discard me" }]);
     const waiting = runtime.waitForIdle();
     await runtime.abort();
-    await expect(prompt).rejects.toThrow("AgentHarness operation aborted");
     await waiting;
 
     expect(runtime.isStreaming()).toBe(false);
+    expect(completion).toMatchObject({
+      type: "agent_end",
+      runId: expect.any(String),
+      status: "aborted",
+    });
+    expect(await runtime.getLastRunOutcome()).toMatchObject({ runId: expect.any(String), status: "aborted" });
     const watch = await runtime.lane.watch(BACKGROUND_CONTEXT);
     expect(watch.snapshot.queues).toEqual([]);
     watch.unsubscribe();

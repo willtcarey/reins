@@ -340,6 +340,9 @@ export class Sessions {
 
     const managed = this.sessions.get(params.sessionId);
     const nextRuntimeType = params.runtimeType ?? sessionRow.agent_runtime_type;
+    if (nextRuntimeType !== "pi") {
+      throw new Error("Canonical sessions use the pi runtime");
+    }
     const isRuntimeSwitch = nextRuntimeType !== sessionRow.agent_runtime_type;
     const messageCount = loadMessages(params.sessionId).length;
 

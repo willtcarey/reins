@@ -156,7 +156,7 @@ describe("GET /api/models", () => {
     }
   });
 
-  test("marks Claude SDK provider as locally available without configured keys", async () => {
+  test("does not advertise the inert Claude SDK runtime", async () => {
     const { router, state } = setup();
 
     const res = await router.handle(
@@ -168,11 +168,7 @@ describe("GET /api/models", () => {
     const claudeProvider = body.find((p: any) =>
       p.runtimeType === "claude_agent_sdk" && p.provider === "claude_agent_sdk");
 
-    expect(claudeProvider).toBeDefined();
-    expect(claudeProvider.isAvailable).toBe(true);
-    expect(claudeProvider.availabilitySource).toBe("local");
-    expect(claudeProvider.availabilitySources).toEqual(["local"]);
-    expect(claudeProvider.models.some((model: any) => model.id === "claude-sonnet-4-6")).toBe(true);
+    expect(claudeProvider).toBeUndefined();
   });
 
   test("returns providers sorted by provider name", async () => {
@@ -187,7 +183,7 @@ describe("GET /api/models", () => {
     expect(providerNames).toEqual(sorted);
   });
 
-  test("does not expose local availability sources outside Claude SDK runtime", async () => {
+  test("does not expose local availability from the inert Claude SDK runtime", async () => {
     const { router, state } = setup();
 
     const res = await router.handle(
@@ -199,7 +195,6 @@ describe("GET /api/models", () => {
     const localEntries = body.filter((p: any) =>
       p.availabilitySource === "local" || p.availabilitySources.includes("local"));
 
-    expect(localEntries.length).toBeGreaterThan(0);
-    expect(localEntries.every((p: any) => p.runtimeType === "claude_agent_sdk" && p.provider === "claude_agent_sdk")).toBe(true);
+    expect(localEntries).toEqual([]);
   });
 });

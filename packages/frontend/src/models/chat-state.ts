@@ -37,13 +37,18 @@ type RuntimeLifecycleMessage = AgentMessage;
 /** Runtime, compaction, retry, and synthetic user events handled by the reducer. */
 export type ChatEvent =
   | { type: "agent_start" }
-  | { type: "agent_settled" }
   | { type: "message_start"; message: RuntimeLifecycleMessage }
   | { type: "message_update"; message: RuntimeLifecycleMessage; assistantMessageEvent?: { type: string; delta?: string } }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
   | { type: "tool_execution_update"; toolCallId: string; toolName: string; args: Record<string, unknown>; partialResult?: Record<string, unknown> }
   | { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: ToolExecution["result"]; isError?: boolean }
-  | { type: "agent_end"; messages?: AgentMessage[] }
+  | {
+    type: "agent_end";
+    messages?: AgentMessage[];
+    runId?: string;
+    status?: "completed" | "failed" | "aborted";
+    error?: { code?: string; message: string; details?: unknown };
+  }
   | { type: "message_end"; message: RuntimeLifecycleMessage }
   | { type: "compaction_start"; reason?: string }
   | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean }
@@ -136,7 +141,6 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
     // not alter conversation presentation; agent_end below is the separate
     // presentation-finalization boundary.
     case "agent_start":
-    case "agent_settled":
       return state;
 
     case "message_start":
@@ -176,9 +180,9 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
     case "agent_end": {
       // agent_end promotes canonical final messages into presentation state,
       // then clears all streaming assistants for the completed run.
-      let errorMessage = state.errorMessage;
+      let errorMessage = event.error?.message ?? state.errorMessage;
       const eventMessages = event.messages;
-      if (eventMessages) {
+      if (!event.error && eventMessages) {
         // The last failed assistant carries the user-facing runtime error.
         for (let i = eventMessages.length - 1; i >= 0; i--) {
           const message = eventMessages[i];

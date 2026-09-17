@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, test, expect, mock } from "bun:test";
 import { createProject } from "../../project-store.js";
 import { createSession, getSession } from "../../session-store.js";
-import { loadMessages, persistMessages } from "../../messages-store.js";
+import { loadMessages } from "../../messages-store.js";
 import { createTask } from "../../task-store.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
@@ -21,6 +21,7 @@ import {
 import { setSetting } from "../../settings-store.js";
 import type { WsClient } from "../../state.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
+import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
 function createCapturingWsClient() {
   const sent: any[] = [];
@@ -41,7 +42,7 @@ describe("runtime sessions manager", () => {
   useTestDb();
   const repo = useTestRepo();
 
-  test("child settlement reports directly to idle or busy parents, not on open or inner turn end", async () => {
+  test("child completion reports directly to idle or busy parents, not on open", async () => {
     const state = createServerState();
     const project = createProject("Reports", repo.dir);
     createSession("parent", project.id, { agentRuntimeType: "pi" });
@@ -51,27 +52,27 @@ describe("runtime sessions manager", () => {
     const steered = Promise.withResolvers<void>();
     const prompt = parent.runtime.prompt.bind(parent.runtime);
     const steer = parent.runtime.steer.bind(parent.runtime);
-    parent.runtime.prompt = async (content) => { await prompt(content); prompted.resolve(); };
+    parent.runtime.prompt = async (content, options) => {
+      const submitted = await prompt(content, options);
+      prompted.resolve();
+      return submitted;
+    };
     parent.runtime.steer = async (content) => { await steer(content); steered.resolve(); };
     let busy = false;
     parent.runtime.isStreaming = () => busy;
     state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: Date.now() });
     const messages = [{ role: "assistant", content: [{ type: "text" as const, text: "First result" }], timestamp: 1 }];
-    const child = createRuntimeStub({ messages, activityCompletionBoundary: "agent_settled" });
+    const child = createRuntimeStub({ messages });
     registerRuntimeAdapter({ runtimeType: "report-test", listModels: async () => [], ask: async () => "", createRuntime: async () => child.runtime });
-    const managed = await ensureSessionOpen(state, "child");
+    await ensureSessionOpen(state, "child");
     expect(parent.promptCalls).toEqual([]);
-    child.emit({ type: "agent_end", messages });
-    await managed.flushPersistence?.();
-    expect(parent.promptCalls).toEqual([]);
-    child.emit({ type: "agent_settled" });
+    child.emit({ type: "agent_end", messages, runId: "run-1", status: "completed" });
     await prompted.promise;
     expect(parent.promptCalls).toHaveLength(1);
     expect(JSON.stringify(parent.promptCalls)).toContain("First result");
     busy = true;
     messages.push({ role: "assistant", content: [{ type: "text", text: "Follow-up result" }], timestamp: 2 });
-    child.emit({ type: "agent_end", messages });
-    child.emit({ type: "agent_settled" });
+    child.emit({ type: "agent_end", messages, runId: "run-2", status: "completed" });
     await steered.promise;
     expect(parent.promptCalls).toHaveLength(1);
     expect(parent.steerCalls).toHaveLength(1);
@@ -82,7 +83,7 @@ describe("runtime sessions manager", () => {
     const state = createServerState();
     const project = createProject("Reins", repo.dir);
 
-    const managed = await createNewSession(state, project.id, repo.dir);
+    const managed = await createNewSession(state, project.id, repo.dir, { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } });
     const row = getSession(managed.id);
 
     expect(row?.agent_runtime_type).toBe("pi");
@@ -94,7 +95,7 @@ describe("runtime sessions manager", () => {
 
     const runtime = {
       ...createRuntimeStub().runtime,
-      prompt: async () => {},
+      prompt: async () => ({ messageId: "test-message" }),
       steer: async () => {},
       abort: async () => {},
       setModel: async () => {},
@@ -147,6 +148,7 @@ describe("runtime sessions manager", () => {
       createRuntime: async () => ({
         prompt: async (content) => {
           capturedPrompt = content;
+          return { messageId: "test-message" };
         },
         waitForIdle: async () => {},
         steer: async () => {},
@@ -173,79 +175,11 @@ describe("runtime sessions manager", () => {
     expect(capturedPrompt[0].text.endsWith("/fixture-skill please")).toBe(true);
   });
 
-  test("createNewSession selects claude_agent_sdk runtime when selected model provider is claude_agent_sdk", async () => {
-    const state = createServerState();
-    const project = createProject("Reins", repo.dir);
-
-    const managed = await createNewSession(state, project.id, repo.dir, {
-      model: { provider: "claude_agent_sdk", modelId: "claude-sonnet-4-6" },
-    });
-
-    const row = getSession(managed.id);
-    expect(row?.model_provider).toBe("claude_agent_sdk");
-    expect(row?.model_id).toBe("claude-sonnet-4-6");
-    expect(row?.agent_runtime_type).toBe("claude_agent_sdk");
-  });
-
-  test("createNewSession uses default_model.runtimeType for runtime routing", async () => {
-    setSetting("default_model", {
-      provider: "claude_agent_sdk",
-      modelId: "claude-sonnet-4-6",
-      runtimeType: "claude_agent_sdk",
-      thinkingLevel: "high",
-    });
-
-    const state = createServerState();
-    const project = createProject("Reins", repo.dir);
-    const managed = await createNewSession(state, project.id, repo.dir);
-
-    const row = getSession(managed.id);
-    expect(row?.agent_runtime_type).toBe("claude_agent_sdk");
-    expect(row?.model_provider).toBe("claude_agent_sdk");
-  });
-
-  test("createNewSession does not infer runtime from default_model provider", async () => {
-    clearRuntimeAdapters();
-    registerRuntimeAdapter({
-      runtimeType: "test_runtime",
-      listModels: async () => [],
-      ask: async () => "",
-      createRuntime: async () => ({
-        ...createRuntimeStub().runtime,
-        prompt: async () => {},
-        steer: async () => {},
-        abort: async () => {},
-        setModel: async () => {},
-        subscribe: () => () => {},
-        getMessages: async () => [],
-        isStreaming: () => false,
-        close: async () => {},
-      }),
-    });
-
-    setSetting("default_model", {
-      provider: "claude_agent_sdk",
-      modelId: "claude-sonnet-4-6",
-      runtimeType: "test_runtime",
-      thinkingLevel: "high",
-    });
-
-    const state = createServerState();
-    const project = createProject("Reins", repo.dir);
-    const managed = await createNewSession(state, project.id, repo.dir);
-
-    const row = getSession(managed.id);
-    expect(row?.agent_runtime_type).toBe("test_runtime");
-    expect(row?.model_provider).toBe("claude_agent_sdk");
-
-    clearRuntimeAdapters();
-  });
-
   test("ensureSessionOpen reopens persisted sessions and registers them in-memory", async () => {
     const state = createServerState();
     const project = createProject("Reins", repo.dir);
 
-    const managed = await createNewSession(state, project.id, repo.dir);
+    const managed = await createNewSession(state, project.id, repo.dir, { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } });
     state.sessions.delete(managed.id);
 
     const reopened = await ensureSessionOpen(state, managed.id);
@@ -261,7 +195,7 @@ describe("runtime sessions manager", () => {
       lastActivity: now,
       runtime: {
         ...createRuntimeStub().runtime,
-        prompt: async () => {},
+        prompt: async () => ({ messageId: "test-message" }),
         steer: async () => {},
         abort: async () => {},
         setModel: async () => {},
@@ -285,7 +219,7 @@ describe("runtime sessions manager", () => {
 
     const createRuntime = mock<AgentRuntimeAdapter["createRuntime"]>(async () => ({
         ...createRuntimeStub().runtime,
-        prompt: async () => {},
+        prompt: async () => ({ messageId: "test-message" }),
         steer: async () => {},
         abort: async () => {},
         setModel: async () => {},
@@ -326,7 +260,7 @@ describe("runtime sessions manager", () => {
 
     const createRuntime = mock<AgentRuntimeAdapter["createRuntime"]>(async () => ({
       ...createRuntimeStub().runtime,
-      prompt: async () => {},
+      prompt: async () => ({ messageId: "test-message" }),
       steer: async () => {},
       abort: async () => {},
       setModel: async () => {},
@@ -350,7 +284,7 @@ describe("runtime sessions manager", () => {
       modelProvider: "claude_agent_sdk",
       modelId: "claude-sonnet-4-5",
     });
-    persistMessages("sess-runtime-resume", [{ role: "user", content: [{ type: "text", text: "hello" }] }]);
+    persistCanonicalMessages("sess-runtime-resume", [{ role: "user", content: [{ type: "text", text: "hello" }] }]);
 
     await ensureSessionOpen(state, "sess-runtime-resume");
 
@@ -360,90 +294,6 @@ describe("runtime sessions manager", () => {
       sessionId: "sess-runtime-resume",
       resume: true,
     });
-  });
-
-  test("ensureSessionOpen persists by observing runtime events", async () => {
-    clearRuntimeAdapters();
-
-    const listeners = new Set<(event: any) => void>();
-    let messages: any[] = [];
-
-    registerRuntimeAdapter({
-      runtimeType: "test_runtime",
-      listModels: async () => [],
-      ask: async () => "",
-      createRuntime: async (params) => {
-        expect(params).not.toHaveProperty("persistenceHooks");
-
-        return {
-          ...createRuntimeStub().runtime,
-          prompt: async () => {},
-          steer: async () => {},
-          abort: async () => {},
-          setModel: async () => {},
-          subscribe: (candidate) => {
-            listeners.add(candidate);
-            return () => {
-              listeners.delete(candidate);
-            };
-          },
-          getMessages: async () => messages,
-          getSessionMetadata: () => ({
-            model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
-            thinkingLevel: "high",
-          }),
-          isStreaming: () => false,
-          close: async () => {},
-        };
-      },
-    });
-
-    const state = createServerState();
-    const project = createProject("Reins", repo.dir);
-    createSession("sess-checkpoints", project.id, { agentRuntimeType: "test_runtime" });
-
-    await ensureSessionOpen(state, "sess-checkpoints");
-
-    const emit = (event: any) => {
-      for (const listener of listeners) {
-        listener(event);
-      }
-    };
-
-    messages = [
-      { role: "assistant", stopReason: "error", content: [] },
-      { role: "assistant", content: [{ type: "text", text: "turn output" }] },
-    ];
-    emit({ type: "turn_end", message: { role: "assistant", content: [{ type: "text", text: "turn output" }] }, toolResults: [] });
-    await Bun.sleep(0);
-
-    messages = [
-      { role: "assistant", content: [{ type: "text", text: "turn output" }] },
-      { role: "assistant", content: [{ type: "text", text: "post compaction" }] },
-    ];
-    emit({ type: "compaction_end", aborted: false });
-    await Bun.sleep(0);
-
-    messages = [
-      { role: "assistant", content: [{ type: "text", text: "turn output" }] },
-      { role: "assistant", stopReason: "error", content: [] },
-      { role: "assistant", content: [{ type: "text", text: "post compaction" }] },
-      { role: "assistant", content: [{ type: "text", text: "done" }] },
-    ];
-    emit({ type: "agent_end", messages: [] });
-    await Bun.sleep(0);
-
-    const persisted = loadMessages("sess-checkpoints");
-    expect(persisted).toEqual([
-      { role: "assistant", content: [{ type: "text", text: "turn output" }] },
-      { role: "assistant", content: [{ type: "text", text: "post compaction" }] },
-      { role: "assistant", content: [{ type: "text", text: "done" }] },
-    ]);
-
-    const row = getSession("sess-checkpoints");
-    expect(row?.model_provider).toBe("anthropic");
-    expect(row?.model_id).toBe("claude-sonnet-4-5");
-    expect(row?.thinking_level).toBe("high");
   });
 
   test("ensureSessionOpen skips persistence on aborted compaction_end", async () => {
@@ -456,7 +306,7 @@ describe("runtime sessions manager", () => {
       listModels: async () => [],
       ask: async () => "",
       createRuntime: async () => ({
-        prompt: async () => {},
+        prompt: async () => ({ messageId: "test-message" }),
         steer: async () => {},
         abort: async () => {},
         setModel: async () => {},
@@ -502,7 +352,7 @@ describe("runtime sessions manager", () => {
       ask: async () => "",
       createRuntime: async () => ({
         ...createRuntimeStub().runtime,
-        prompt: async () => {},
+        prompt: async () => ({ messageId: "test-message" }),
         steer: async () => {},
         abort: async () => {},
         setModel: async () => {},
@@ -578,7 +428,7 @@ describe("runtime sessions manager", () => {
       listModels: async () => [],
       ask: async () => "",
       createRuntime: async () => ({
-        prompt: async () => {},
+        prompt: async () => ({ messageId: "test-message" }),
         steer: async () => {},
         abort: async () => {},
         setModel: async () => {},
@@ -614,7 +464,7 @@ describe("runtime sessions manager", () => {
 
     const createRuntime = mock<AgentRuntimeAdapter["createRuntime"]>(async () => ({
         ...createRuntimeStub().runtime,
-        prompt: async () => {},
+        prompt: async () => ({ messageId: "test-message" }),
         steer: async () => {},
         abort: async () => {},
         setModel: async () => {},
@@ -644,10 +494,10 @@ describe("runtime sessions manager", () => {
 
     const createRuntimeParams = createRuntime.mock.calls[0]?.[0];
     const builtins = createRuntimeParams?.sessionTools?.builtins;
-    const customToolNames = createRuntimeParams?.sessionTools?.customTools?.map((tool: { name: string }) => tool.name);
+    const harnessToolNames = createRuntimeParams?.sessionTools?.harnessTools?.map((tool: { name: string }) => tool.name);
 
     expect(builtins).toEqual(["read", "write", "edit", "bash"]);
-    expect(customToolNames).toEqual(["create_task", "search", "execute"]);
+    expect(harnessToolNames).toEqual(["create_task", "search", "execute"]);
   });
 
   test("ensureSessionOpen exposes scripting tools for scratch sessions", async () => {
@@ -655,7 +505,7 @@ describe("runtime sessions manager", () => {
 
     const createRuntime = mock<AgentRuntimeAdapter["createRuntime"]>(async () => ({
         ...createRuntimeStub().runtime,
-        prompt: async () => {},
+        prompt: async () => ({ messageId: "test-message" }),
         steer: async () => {},
         abort: async () => {},
         setModel: async () => {},
@@ -679,8 +529,8 @@ describe("runtime sessions manager", () => {
     await ensureSessionOpen(state, "sess-scratch-tools");
 
     const createRuntimeParams = createRuntime.mock.calls[0]?.[0];
-    const customToolNames = createRuntimeParams?.sessionTools?.customTools?.map((tool: { name: string }) => tool.name);
-    expect(customToolNames).toEqual(["create_task", "search", "execute"]);
+    const harnessToolNames = createRuntimeParams?.sessionTools?.harnessTools?.map((tool: { name: string }) => tool.name);
+    expect(harnessToolNames).toEqual(["create_task", "search", "execute"]);
   });
 
   test("ensureSessionOpen maps runtime ModelNotFoundError to configured default model guidance", async () => {

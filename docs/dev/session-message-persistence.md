@@ -1,53 +1,42 @@
-# Session Message Persistence
+# Session message persistence
 
-Runtime checkpoints are **complete snapshots**, not append-only message events. A runtime may rewrite or shorten its array—for example, Pi removes a failed partial assistant response before inserting a successful retry at the same position.
+## Canonical ownership
 
-## Ordering
+AgentHarness is the only transcript writer. `PiStorageAdapter` stores each public harness `Entry` in `session_messages`; Reins does not persist runtime snapshots or maintain a second replay transcript.
 
-The runtime persistence observer serializes checkpoint handling in event order. It does not start `getMessages()` for a later checkpoint until the preceding checkpoint has been stored. Terminal non-checkpoint boundaries such as settlement-aware `agent_settled` also wait behind that queue before broadcasting finished activity. This is the concurrency boundary: the messages store does not infer whether one valid snapshot is newer than another from message contents.
+- `session_messages.id` is the stable UI row identity.
+- `harness_id` is the exact AgentHarness entry identity.
+- `parent_id` stores actual ancestry.
+- `seq` is the global harness write sequence; gaps are expected.
+- `message_json` is the canonical PiStorageAdapter entry envelope.
+- `pi_values`, `pi_lists`, and `pi_usage` store the remaining harness contract state.
 
-Non-checkpoint activity events remain immediate. All sessions, including parented sessions with or without a task, persist and broadcast their own running/finished activity. Parent links do not suppress lifecycle updates; active child-session views need terminal metadata for reconciliation.
+Canonical readers do not accept legacy `RuntimeMessage` JSON. Process bootstrap inspects the database before importing application handlers or calling `getDb()`. After the operator stops the old server and all database users, startup creates an immutable WAL-consistent backup of the original schema, runs ordinary schema migrations, then converts and validates legacy history in one transaction on the live database. Fresh installs continue normally and canonical databases are not reconverted. Conversion failure rolls history back, though completed backward-compatible schema migrations may remain; migration failure requires explicit backup restoration. The cooperative lock and open-handle check do not fence arbitrary old binaries. See the cutover runbook for recovery details.
 
-The observer exposes `flush()` on its detach handle to await the current checkpoint queue. Session-ID waits call it after runtime settlement and recheck runtime activity before returning a result. Runtime close flushes checkpoints before detaching observers. Neither operation adds synthetic transcript entries or a separate execution-result store.
+## Archive and active history
 
-## Stored ancestry and identity
+Archive display and active execution are deliberately separate projections.
 
-`session_messages.id` remains the SQLite integer row identity used by message pages and pagination. Each row also has:
+`loadMessages()`, message pages, session search, and timeline entries project every message or compaction entry in sequence order. Message pages retain SQLite row IDs and stored parent row IDs. Custom and branch-summary entries are not chat records.
 
-- nullable `parent_id`, a self-referencing foreign key with `ON DELETE SET NULL`;
-- nullable `harness_id`, protected by a partial unique index within its session when present.
+Closed-session results follow `pi.branch.tip/main` ancestry through `loadActiveMessages()`. They do not select a newer archived branch merely because it has a greater sequence. Open runtimes obtain context through AgentHarness branch traversal. After compaction, context is the latest summary, its retained tail, and descendants; archive readers still show older rows.
 
-Existing rows are migrated into a linear chain per session in `seq` order. New persistence writes explicitly link each row to the preceding row in that session. Reins does not currently populate `harness_id`: existing and newly persisted messages leave it null rather than deriving an identity from runtime fields. Message pages project the stored parent relationship while continuing to expose integer row IDs as strings, so public UI identity is unchanged.
+The one-time offline importer removes the specifically validated legacy tool-result rows that have no genuine matching call from canonical output. Runtime provider projection has no orphan compatibility filter: it projects clean canonical history directly, without fabricating calls, migration flags, or runtime codecs. Historical thinking blocks, including unsigned blocks imported from Claude history, are passed unchanged to Pi's native provider serialization; provider-specific serializers may handle them differently.
 
-The foreign key prevents dangling parent references. Deleting an individual parent makes its direct children parentless rather than recursively deleting their subtree. Current production transcript deletion remains limited to active-window suffix truncation and whole-session/task cleanup; this change does not add arbitrary message or branch deletion behavior.
+## Lifecycle observers
 
-The disconnected `PiStorageAdapter` also uses this table as its sole entry store. Reins retains ownership of session lifecycle; future activation constructs the public `StorageBackedSession` directly from Reins metadata and this adapter rather than adding a parallel session repository. Canonical rows map exact entry identity through `harness_id`, actual ancestry through `parent_id`, and the global harness entry sequence through existing `seq`; gaps represent non-entry writes. `message_json` stores the typed entry envelope, including exact commit timestamp, entry/custom type, and complete payload. Contract state that is not an entry lives in narrowly scoped `pi_values`, `pi_lists`, and `pi_usage` tables, with `sessions.harness_next_seq` allocating one transaction-wide sequence even across deletes. The adapter has no legacy fallback: before future activation, every existing session must be migrated so every entry has a harness ID and `harness_next_seq` is beyond all imported writes.
+The runtime observer stores activity and final model/thinking metadata only. Running activity remains immediate. Terminal activity and parent settlement reporting are ordered through the observer's `flush()` handle. The observer never calls `getMessages()` to write a checkpoint.
 
-## Active transcript projection
+Parent reports wait for lifecycle handling, then derive their result from the child's live canonical runtime branch. Passive reopened operations are returned by AgentHarness but are not driven automatically.
 
-`persistMessages(sessionId, messages)` treats its input as the authoritative runtime snapshot. The rows in the active transcript window are a mutable projection of that snapshot:
+## Attachments and metadata
 
-- matching prefix rows remain unchanged;
-- changed positions are updated in place without changing stored ancestry;
-- additional positions are inserted and linked from the existing tail;
-- positions removed from the snapshot are deleted as one suffix.
+Entries retain Reins attachment references. Bytes remain in `session_attachments` and are hydrated only at the provider boundary.
 
-The synchronization occurs in one SQLite transaction. Updating by position retains row IDs, parent IDs, and sequence values where possible, preserving display relationships and pagination cursors. Suffix deletion removes descendants in the stored linear active window; the foreign-key policy prevents dangling ancestry if other direct children ever exist. Attachment references removed by a rewrite are pruned after the projection is updated.
+Reins-owned input entries carry their stable `reinsId` and application metadata inside the supported `reinsInput` custom message. Metadata is supplied when AgentHarness durably accepts the prompt; there is no post-hoc transcript mutation API or compatibility side table. The approved legacy import has no application metadata, so imported input metadata starts empty.
 
-Persistence deliberately does not inspect `stopReason` or tool-call IDs to decide which snapshot should win. Those are message-domain details and cannot reliably establish checkpoint ordering.
+Some historical model IDs and the imported utility-model ID may not exist in the installed catalog. They remain visible as historical identity and must be replaced explicitly in Settings or through the inactive-session model picker; no fallback is selected.
 
-## Stored message metadata
+## Retired models
 
-`metadata?: Record<string, unknown>` is application-owned stored JSON, with feature keys directly inside it. `attachStoredMessageMetadata(sessionId, messageId, namespace, value)` attaches a JSON-serializable value by current SQLite row ID; existing full-message/display reads expose it. There is no registry, separate table, or metadata reader. Runtime snapshots cannot write this field, and `loadMessagesForLLM()` removes it before provider hydration. Pi uses that shared projection; Claude additionally constructs SDK entries from explicit provider fields.
-
-Ordinary reconciliation restores metadata only at the same position with an exact matching `logicalId`. Changed content or stop reason does not break continuity. Different or absent identities do not inherit metadata, despite retaining SQLite row IDs; truncation deletes metadata with its row. Attachment requires a non-empty `logicalId`.
-
-In the current pre-cutover runtime, Pi supplies `logicalId` from its native `SessionEntry.id`. On reopen, Reins reconstructs Pi's active entry chain with those IDs and strips `logicalId` before messages enter model context. Legacy Pi messages receive fresh native IDs during hydration and gain stable identity at the next finalized snapshot; no timestamp/content bridge transfers existing metadata. Other runtimes currently lack a proven stable identity and therefore conservatively do not preserve metadata through snapshot rewrites. This remains current behavior until the unified migration and adapter activation.
-
-## Compaction
-
-Rows before the latest compaction summary are archived history and remain append-only. A new compaction summary and its retained tail are appended as a new active window. Later snapshots with that same summary synchronize only that active window.
-
-When a new summary is appended, metadata follows retained messages by exact `logicalId`. Omitted messages keep metadata on their archived display rows. Messages without IDs never receive transferred metadata. Archived JSON otherwise remains unchanged, apart from the existing pre-boundary tool-result pruning.
-
-As before, storing a compaction boundary replaces pre-boundary tool-result content with `[pruned]`, and `loadMessagesForLLM()` returns only the latest summary and its tail. Paginated display APIs continue to include archived rows.
+Archive reads do not open a runtime. An inactive session with an unavailable stored model can be updated through the existing session model route before it is opened. Selection validates the exact provider/model against the registered Pi catalog; runtime construction never silently substitutes a model.

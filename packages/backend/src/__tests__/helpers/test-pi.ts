@@ -17,7 +17,7 @@ import {
 import { getModel } from "@earendil-works/pi-ai/compat";
 import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
 import type { ManagedSession } from "../../state.js";
-import { PiAgentRuntime } from "../../runtimes/pi/runtime.js";
+import { createRuntimeStub } from "./test-runtime-stub.js";
 
 const defaultModel = getModel("anthropic", "claude-sonnet-4-5");
 
@@ -71,17 +71,8 @@ export async function createTestManagedSession(
   id: string,
   overrides?: TestManagedSessionOverrides,
 ): Promise<ManagedSession> {
-  const session = await createTestAgentSession();
-
-  if (overrides?.isStreaming !== undefined) {
-    Object.defineProperty(session, "isIdle", {
-      get: () => !overrides.isStreaming,
-      configurable: true,
-    });
-  }
-
   return {
-    runtime: new PiAgentRuntime(session, id),
+    runtime: createRuntimeStub({ isStreaming: overrides?.isStreaming }).runtime,
     id,
     lastActivity: Date.now(),
   };

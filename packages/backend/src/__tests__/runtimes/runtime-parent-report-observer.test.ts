@@ -8,28 +8,33 @@ import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 
 describe("runtime parent reporter", () => {
   useTestDb();
-  test("waits for persistence before delivery and detaches without changing persistence", async () => {
+
+  test("reports the authoritative terminal outcome and detaches cleanly", async () => {
     const project = createProject("Reporter", "/tmp/reporter-test");
     createSession("parent", project.id, { agentRuntimeType: "pi" });
     createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
     const parent = createRuntimeStub();
-    const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "Done" }] }] });
-    const persisted = Promise.withResolvers<void>();
+    const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "stale success" }] }] });
     const delivered = Promise.withResolvers<void>();
     const messages = new SessionMessages(new Map([
       ["parent", { id: "parent", runtime: parent.runtime, lastActivity: 0 }],
     ]), () => delivered.resolve());
-    const detach = attachRuntimeParentReportObserver({ sessionId: "child", runtime: child.runtime,
-      messages, flushPersistence: () => persisted.promise });
-    child.emit({ type: "agent_end", messages: [] });
-    await Promise.resolve();
-    expect(parent.promptCalls).toEqual([]);
-    persisted.resolve();
+    const detach = attachRuntimeParentReportObserver({ sessionId: "child", runtime: child.runtime, messages });
+    child.emit({
+      type: "agent_end",
+      messages: [],
+      runId: "run-1",
+      status: "failed",
+      error: { code: "provider_error", message: "Provider unavailable" },
+    });
     await delivered.promise;
     expect(parent.promptCalls).toHaveLength(1);
-    expect(JSON.stringify(parent.promptCalls)).toContain("Done");
+    const notification = parent.promptCalls[0]?.find((block) => block.type === "text")?.text;
+    expect(notification).toContain('"status":"failed"');
+    expect(notification).toContain("Provider unavailable");
+    expect(notification).not.toContain("stale success");
     detach();
-    child.emit({ type: "agent_end", messages: [] });
+    child.emit({ type: "agent_end", messages: [], runId: "run-2", status: "completed" });
     await Promise.resolve();
     expect(parent.promptCalls).toHaveLength(1);
   });

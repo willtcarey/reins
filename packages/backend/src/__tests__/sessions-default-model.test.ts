@@ -6,8 +6,7 @@ import { createProject } from "../project-store.js";
 import { createSession, getSession } from "../session-store.js";
 import { setSetting, deleteSetting } from "../settings-store.js";
 import { createNewSession, ensureSessionOpen } from "../runtimes/sessions-manager.js";
-import { resolveModelSetting } from "../models/model-settings.js";
-import { getPiSession } from "../runtimes/pi/runtime.js";
+import { resolveModelSetting, resolveUtilityModel } from "../models/model-settings.js";
 
 describe("resolveModelSetting(default_model)", () => {
   useTestDb();
@@ -43,6 +42,24 @@ describe("resolveModelSetting(default_model)", () => {
     expect(() => resolveModelSetting("default_model")).toThrow(/Configured default_model is invalid/);
   });
 
+  test("rejects model settings for an inert legacy runtime", () => {
+    setSetting("default_model", {
+      provider: "claude_agent_sdk",
+      modelId: "claude-sonnet-4-6",
+      runtimeType: "claude_agent_sdk",
+      thinkingLevel: "medium",
+    });
+    expect(() => resolveModelSetting("default_model")).toThrow("unavailable runtime 'claude_agent_sdk'");
+
+    setSetting("utility_model", {
+      provider: "openai-codex",
+      modelId: "missing-utility",
+      runtimeType: "pi",
+      thinkingLevel: "minimal",
+    });
+    expect(() => resolveUtilityModel()).toThrow("Configured utility_model is invalid");
+  });
+
   test("ignores REINS_PROVIDER/REINS_MODEL env vars when no default model is configured", () => {
     deleteSetting("default_model");
 
@@ -64,163 +81,57 @@ describe("resolveModelSetting(default_model)", () => {
   });
 });
 
-describe("createNewSession", () => {
+describe("canonical session model selection", () => {
   useTestDb();
   const repo = useTestRepo();
 
-  test("applies the configured default thinking level to new sessions", async () => {
+  test("requires an explicit configured model for a new session", async () => {
     deleteSetting("default_model");
-
     const state = createServerState();
     const project = createProject("Test Project", repo.dir, "main");
-
-    const baseline = await createNewSession(state, project.id, repo.dir);
-    const baselineSession = getPiSession(baseline.runtime);
-    expect(baselineSession.model).not.toBeNull();
-
-    const configuredThinkingLevel = baselineSession.thinkingLevel === "low" ? "high" : "low";
-
-    setSetting("default_model", {
-      provider: baselineSession.model!.provider,
-      modelId: baselineSession.model!.id,
-      runtimeType: "pi",
-      thinkingLevel: configuredThinkingLevel,
-    });
-
-    const managed = await createNewSession(state, project.id, repo.dir);
-
-    expect(getPiSession(managed.runtime).thinkingLevel).toBe(configuredThinkingLevel);
-    expect(getSession(managed.id)?.thinking_level).toBe(configuredThinkingLevel);
+    await expect(createNewSession(state, project.id, repo.dir)).rejects.toThrow("requires an explicit model");
   });
 
-  test("throws when the configured default model cannot be resolved", async () => {
-    const state = createServerState();
-    const project = createProject("Test Project", repo.dir, "main");
-
+  test("rejects a Claude-runtime default instead of routing it through Pi", async () => {
     setSetting("default_model", {
-      provider: "anthropic",
-      modelId: "does-not-exist",
-      runtimeType: "pi",
+      provider: "claude_agent_sdk",
+      modelId: "claude-sonnet-4-6",
+      runtimeType: "claude_agent_sdk",
       thinkingLevel: "high",
     });
-
+    const state = createServerState();
+    const project = createProject("Test Project", repo.dir, "main");
     await expect(createNewSession(state, project.id, repo.dir)).rejects.toThrow(
-      /Configured default_model is invalid/,
+      "Configured default_model uses unavailable runtime 'claude_agent_sdk'",
     );
   });
 
-  test("applies explicit model and thinking overrides when creating a session", async () => {
+  test("applies configured model and thinking to a new session", async () => {
+    setSetting("default_model", { provider: "anthropic", modelId: "claude-sonnet-4-5", runtimeType: "pi", thinkingLevel: "high" });
     const state = createServerState();
     const project = createProject("Test Project", repo.dir, "main");
-
-    const managed = await createNewSession(state, project.id, repo.dir, {
-      model: {
-        provider: "anthropic",
-        modelId: "claude-haiku-4-5",
-      },
-      thinkingLevel: "minimal",
-    });
-
-    expect(getPiSession(managed.runtime).model?.provider).toBe("anthropic");
-    expect(getPiSession(managed.runtime).model?.id).toBe("claude-haiku-4-5");
-    expect(getPiSession(managed.runtime).thinkingLevel).toBe("minimal");
-    expect(getSession(managed.id)?.model_provider).toBe("anthropic");
-    expect(getSession(managed.id)?.model_id).toBe("claude-haiku-4-5");
-    expect(getSession(managed.id)?.thinking_level).toBe("minimal");
+    const managed = await createNewSession(state, project.id, repo.dir);
+    expect(managed.runtime.getSessionMetadata?.()).toEqual({ model: { provider: "anthropic", modelId: "claude-sonnet-4-5" }, thinkingLevel: "high" });
+    expect(getSession(managed.id)).toMatchObject({ agent_runtime_type: "pi", model_provider: "anthropic", model_id: "claude-sonnet-4-5", thinking_level: "high" });
+    await managed.runtime.close();
   });
 
-});
-
-describe("resumeSession", () => {
-  useTestDb();
-  const repo = useTestRepo();
-
-  test("uses the persisted session model and thinking level instead of the current default", async () => {
+  test("reports an invalid configured model without fallback", async () => {
+    setSetting("default_model", { provider: "anthropic", modelId: "does-not-exist", runtimeType: "pi", thinkingLevel: "high" });
     const state = createServerState();
     const project = createProject("Test Project", repo.dir, "main");
-
-    createSession("resume-model-test", project.id, {
-      agentRuntimeType: "pi",
-      modelProvider: "anthropic",
-      modelId: "claude-haiku-4-5",
-      thinkingLevel: "minimal",
-    });
-
-    setSetting("default_model", {
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
-      runtimeType: "pi",
-      thinkingLevel: "high",
-    });
-
-    const managed = await ensureSessionOpen(state, "resume-model-test");
-
-    expect(getPiSession(managed.runtime).model?.provider).toBe("anthropic");
-    expect(getPiSession(managed.runtime).model?.id).toBe("claude-haiku-4-5");
-    expect(getPiSession(managed.runtime).thinkingLevel).toBe("minimal");
+    await expect(createNewSession(state, project.id, repo.dir)).rejects.toThrow("Configured default_model is invalid");
   });
 
-  test("throws when a resumed session needs an invalid configured default model", async () => {
+  test("resumes with persisted model identity and rejects unavailable identities", async () => {
     const state = createServerState();
     const project = createProject("Test Project", repo.dir, "main");
+    createSession("valid", project.id, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "minimal" });
+    const managed = await ensureSessionOpen(state, "valid");
+    expect(managed.runtime.getSessionMetadata?.()).toEqual({ model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, thinkingLevel: "minimal" });
+    await managed.runtime.close();
 
-    createSession("resume-invalid-default", project.id, {
-       agentRuntimeType: "pi",thinkingLevel: "off",
-    });
-
-    setSetting("default_model", {
-      provider: "anthropic",
-      modelId: "does-not-exist",
-      runtimeType: "pi",
-      thinkingLevel: "high",
-    });
-
-    await expect(
-      ensureSessionOpen(state, "resume-invalid-default"),
-    ).rejects.toThrow(
-      /Configured default_model is invalid/,
-    );
-  });
-
-  test("throws a generic invalid model error when a resumed session has an invalid persisted model", async () => {
-    const state = createServerState();
-    const project = createProject("Test Project", repo.dir, "main");
-
-    createSession("resume-invalid-persisted-model", project.id, {
-      agentRuntimeType: "pi",
-      modelProvider: "claude-agent-sdk",
-      modelId: "does-not-exist",
-      thinkingLevel: "high",
-    });
-
-    await expect(
-      ensureSessionOpen(state, "resume-invalid-persisted-model"),
-    ).rejects.toThrow(
-      /Selected session model is invalid/,
-    );
-  });
-
-  test("preserves a persisted non-minimal thinking level when resuming even when the global default is also high", async () => {
-    const state = createServerState();
-    const project = createProject("Test Project", repo.dir, "main");
-
-    createSession("resume-thinking-test", project.id, {
-       agentRuntimeType: "pi",modelProvider: "anthropic",
-      modelId: "claude-sonnet-4-5",
-      thinkingLevel: "high",
-    });
-
-    setSetting("default_model", {
-      provider: "anthropic",
-      modelId: "claude-haiku-4-5",
-      runtimeType: "pi",
-      thinkingLevel: "high",
-    });
-
-    const managed = await ensureSessionOpen(state, "resume-thinking-test");
-
-    expect(getPiSession(managed.runtime).model?.provider).toBe("anthropic");
-    expect(getPiSession(managed.runtime).model?.id).toBe("claude-sonnet-4-5");
-    expect(getPiSession(managed.runtime).thinkingLevel).toBe("high");
+    createSession("invalid", project.id, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "retired", thinkingLevel: "high" });
+    await expect(ensureSessionOpen(state, "invalid")).rejects.toThrow("Selected session model is invalid: anthropic/retired");
   });
 });
