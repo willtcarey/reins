@@ -129,7 +129,7 @@ export class ChatMessage extends LitElement {
         class="mb-3 max-w-[90%] overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-800/40 text-sm text-zinc-300"
       >
         <summary class="cursor-pointer select-none px-3 py-2 text-zinc-400 hover:text-zinc-200">
-          Session update from
+          Message from
           <a
             href=${sessionHash(sourceId)}
             class="font-medium text-zinc-200 underline decoration-zinc-600 underline-offset-2 hover:decoration-zinc-300"

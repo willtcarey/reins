@@ -113,7 +113,7 @@ describe("ChatMessage", () => {
 
     const output = templateToString(element.render());
     expect(output).toContain('data-role="session-update"');
-    expect(output).toContain("Session update from");
+    expect(output).toContain("Message from");
     expect(output).toContain("Investigation");
     expect(output).toContain("#/session/child-1");
     expect(output).toContain("The investigation is complete.");

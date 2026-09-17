@@ -101,7 +101,7 @@ export async function startSession(
     thinkingLevel: options.thinkingLevel ?? (caller.thinking_level === "off" ? undefined : caller.thinking_level),
   });
   await new SessionMessages(context.sessions, context.broadcast, async () => managed)
-    .start(managed.id, prompt, { sourceSessionId: context.callerId });
+    .start(managed.id, prompt);
   return { sessionId: managed.id };
 }
 

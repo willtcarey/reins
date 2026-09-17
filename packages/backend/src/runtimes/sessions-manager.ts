@@ -55,7 +55,7 @@ function attachPromptExpansion(params: {
   };
 
   runtime.prompt = (content, options) => originalPrompt(expand(content), options);
-  runtime.steer = (content) => originalSteer(expand(content));
+  runtime.steer = (content, options) => originalSteer(expand(content), options);
 }
 
 function resolveSessionTools(params: {

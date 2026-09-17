@@ -1,6 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, test, expect, mock } from "bun:test";
+import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { getDb } from "../../db.js";
 import { createProject } from "../../project-store.js";
 import { createSession, getSession } from "../../session-store.js";
 import { loadMessages } from "../../messages-store.js";
@@ -22,6 +24,8 @@ import { setSetting } from "../../settings-store.js";
 import type { WsClient } from "../../state.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
+import { Sessions } from "../../models/sessions.js";
+import { registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/factory.js";
 
 function createCapturingWsClient() {
   const sent: any[] = [];
@@ -74,6 +78,73 @@ describe("runtime sessions manager", () => {
     expect(parent.steerCalls).toHaveLength(2);
     expect(JSON.stringify(parent.steerCalls)).toContain("Follow-up result");
   });
+
+  test("automatic child settlement retains its source in canonical parent history after reopening", async () => {
+    const state = createServerState();
+    const project = createProject("Canonical reports", repo.dir);
+    const provider = fauxProvider({
+      models: [{ id: "settlement-report-model", contextWindow: 200_000, maxTokens: 100 }],
+    });
+    const parentResponded = Promise.withResolvers<void>();
+    provider.setResponses([() => {
+      parentResponded.resolve();
+      return fauxAssistantMessage("Report received");
+    }]);
+    registerPiProvider(provider.provider);
+
+    const child = createRuntimeStub({
+      messages: [{ role: "assistant", content: [{ type: "text", text: "Canonical result" }], timestamp: 1 }],
+    });
+    registerRuntimeAdapter({
+      runtimeType: "settlement-child-test",
+      listModels: async () => [],
+      ask: async () => "",
+      createRuntime: async () => child.runtime,
+    });
+    createSession("parent", project.id, {
+      agentRuntimeType: "pi",
+      modelProvider: provider.provider.id,
+      modelId: "settlement-report-model",
+    });
+    createSession("child", project.id, {
+      agentRuntimeType: "settlement-child-test",
+      parentSessionId: "parent",
+    });
+
+    try {
+      await ensureSessionOpen(state, "child");
+      expect(state.sessions.has("parent")).toBe(false);
+
+      child.emit({
+        type: "agent_end",
+        messages: [],
+        runId: "settled-run",
+        status: "completed",
+      });
+      await parentResponded.promise;
+      const parent = state.sessions.get("parent");
+      if (!parent) throw new Error("Expected the settlement report to reopen the parent");
+      await parent.runtime.waitForIdle();
+
+      const stored = getDb().query<{ message_json: string }, [string]>(
+        "SELECT message_json FROM session_messages WHERE session_id = ? AND role = 'reinsInput'",
+      ).get("parent");
+      expect(JSON.parse(stored!.message_json).message).toMatchObject({
+        role: "reinsInput",
+        content: [{ type: "text", text: "Canonical result" }],
+        metadata: { sourceSessionId: "child" },
+      });
+      expect(new Sessions(state.sessions).getMessagePage("parent", 10)?.items[0]?.message).toMatchObject({
+        role: "user",
+        content: [{ type: "text", text: "Canonical result" }],
+        metadata: { sourceSessionId: "child" },
+      });
+    } finally {
+      await state.sessions.get("parent")?.runtime.close();
+      await state.sessions.get("child")?.runtime.close();
+      unregisterPiProvider(provider.provider.id);
+    }
+  }, 15_000);
 
   test("createNewSession persists runtime metadata via sessions manager orchestration", async () => {
     const state = createServerState();

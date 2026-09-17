@@ -16,8 +16,8 @@ export class SessionMessages {
     private openSession?: (sessionId: string) => Promise<ManagedSession>,
   ) {}
 
-  async start(sessionId: string, message: string, source?: SessionMessageSource): Promise<{ sessionId: string }> {
-    return this.deliver(sessionId, message, "prompt", source);
+  async start(sessionId: string, message: string): Promise<{ sessionId: string }> {
+    return this.deliver(sessionId, message, "prompt");
   }
 
   async send(sessionId: string, message: string, source?: SessionMessageSource): Promise<{ sessionId: string }> {

@@ -41,7 +41,7 @@ describe("SessionMessages", () => {
     }]);
   });
 
-  test("stamps the source on initial prompt admission and live delivery", async () => {
+  test("keeps initial prompt admission distinct from cross-session updates", async () => {
     const project = createProject("Messages", "/tmp/messages-test");
     createSession("target", project.id, { agentRuntimeType: "pi" });
     const stub = createRuntimeStub();
@@ -51,14 +51,16 @@ describe("SessionMessages", () => {
       (event) => { broadcasts.push(event); },
     );
 
-    await messages.start("target", "Initial work", { sourceSessionId: "parent-1" });
+    await messages.start("target", "Initial work");
 
     expect(stub.promptCalls).toEqual([[{ type: "text", text: "Initial work" }]]);
-    expect(stub.promptOptions).toEqual([{ metadata: { sourceSessionId: "parent-1" } }]);
-    expect(broadcasts).toEqual([expect.objectContaining({
+    expect(stub.promptOptions).toEqual([undefined]);
+    expect(broadcasts).toEqual([{
       type: "user_message",
-      metadata: { sourceSessionId: "parent-1" },
-    })]);
+      sessionId: "target",
+      projectId: project.id,
+      message: [{ type: "text", text: "Initial work" }],
+    }]);
   });
 
   test("broadcasts idle sends only after durable steering submission", async () => {
