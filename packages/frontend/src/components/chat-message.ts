@@ -5,6 +5,7 @@ import type {
   AssistantToolCallBlock,
   CompactionMessage,
   Message,
+  SessionUpdateMessage,
   UserMessage,
 } from "../models/message.js";
 import {
@@ -16,6 +17,7 @@ import {
   type ChatImageBlock,
 } from "../models/chat-content.js";
 import { MessageActionsController } from "../controllers/message-actions-controller.js";
+import { sessionHash } from "../models/router.js";
 import { longPress } from "../directives/long-press.js";
 import { getToolRenderer } from "./tools/index.js";
 import { openImageViewerEvent } from "./events.js";
@@ -25,6 +27,7 @@ import "./markdown-content.js";
 export class ChatMessage extends LitElement {
   @property({ attribute: false }) message: Message | null = null;
   @property() sessionId = "";
+  @property() sourceSessionTitle = "";
 
   @state() private summaryExpanded = false;
 
@@ -115,6 +118,29 @@ export class ChatMessage extends LitElement {
     `;
   }
 
+  private renderSessionUpdate(message: SessionUpdateMessage) {
+    const sourceId = message.sourceSessionId;
+    const label = this.sourceSessionTitle || sourceId;
+    const text = message.toMarkdown();
+
+    return html`
+      <details
+        data-role="session-update"
+        class="mb-3 max-w-[90%] overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-800/40 text-sm text-zinc-300"
+      >
+        <summary class="cursor-pointer select-none px-3 py-2 text-zinc-400 hover:text-zinc-200">
+          Session update from
+          <a
+            href=${sessionHash(sourceId)}
+            class="font-medium text-zinc-200 underline decoration-zinc-600 underline-offset-2 hover:decoration-zinc-300"
+            @click=${(event: Event) => event.stopPropagation()}
+          >${label}</a>
+        </summary>
+        ${text ? html`<div class="border-t border-zinc-700/70 px-3 py-2 whitespace-pre-wrap">${text}</div>` : nothing}
+      </details>
+    `;
+  }
+
   private renderAssistant(message: AssistantMessage) {
     const parts: unknown[] = [];
     const textBuffer: string[] = [];
@@ -202,6 +228,8 @@ export class ChatMessage extends LitElement {
     switch (message.role) {
       case "user":
         return this.renderUser(message);
+      case "sessionUpdate":
+        return this.renderSessionUpdate(message);
       case "assistant":
         return this.renderAssistant(message);
       case "compactionSummary":

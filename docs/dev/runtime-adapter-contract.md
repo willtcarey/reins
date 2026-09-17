@@ -61,13 +61,15 @@ A runtime returned from `createRuntime()` must implement:
   - Durably records a canonical AgentHarness prompt operation, starts execution in the background, and returns its exact message identity without waiting for the response.
   - Text-only prompts are represented as `[{ type: "text", text }]`; prompt images are attachment refs that the runtime hydrates at the provider boundary.
   - Optional `reinsId`, metadata, and timestamp are stored with the admitted input. Admission failures reject; later execution failures are reported through terminal events and logging.
-  - Must update `isStreaming()` while running.
+  - Must update `isStreaming()` while running. If AgentHarness reopened an interrupted operation passively, the next ordinary prompt is durably queued as steering and resumes that operation instead of failing with `LaneBusy`; genuinely concurrent prompts still reject.
 - `waitForIdle(): Promise<void>`
   - Observes AgentHarness lane operation settlement, including steering, retry, and compaction.
   - Waiting never aborts work. The model/API layer bounds individual waits and handles waiter cancellation separately.
 - `steer(content): Promise<void>`
   - Submits validated `RuntimePromptContent` through the runtime's native steering path.
   - AgentHarness durably queues the input, lets active work consume it, or starts idle work from it. A passively reopened operation is resumed when steered. Never add a Reins-managed follow-up queue or abort/restart fallback.
+- Optional `resumePendingOperation(): Promise<void>`
+  - Starts a durable operation that was reopened passively after process interruption, without adding a prompt. The session detail REST response exposes this state and `POST /api/sessions/:sessionId/resume` invokes it; no pending-state WebSocket payload is added.
 - `abort(): Promise<void>`
   - Cancels the active prompt and aborts active tool execution where possible; discard pending native steering messages.
 - `setModel({ provider, modelId, thinkingLevel }): Promise<void>`
@@ -182,7 +184,7 @@ There are no receipts, unsent-message tables, dispatchers, or parallel Reins exe
 
 - Prompt acceptance commits the `reinsInput` metadata and harness operation before provider execution begins.
 - Steering uses the AgentHarness inbox as the atomic delivery boundary. Reins tracks native idle-start handoff so waits cannot pass between steering admission and operation startup.
-- Explicit abort and retry behavior remain owned by AgentHarness. Reopened operations remain passive until explicitly driven or steered. Once a runtime is evicted, waits inspect canonical active-branch outcomes but cannot reconstruct transient execution errors.
+- Explicit abort and retry behavior remain owned by AgentHarness. Reopened operations remain passive until explicitly driven, steered, or continued by the next ordinary user prompt. Once a runtime is evicted, waits inspect canonical active-branch outcomes but cannot reconstruct transient execution errors.
 - The unregistered Claude implementation is not part of current orchestration guarantees.
 - The session manager coalesces concurrent opens using `ServerState.sessionOpenings`, avoiding duplicate runtimes for simultaneous sends. This and the runtime map survive handler hot reloads. Creating sibling sessions on the active task branch skips redundant Git checkouts, so session creation does not contend for the checkout/index lock.
 
@@ -190,7 +192,7 @@ Sessions share the existing checkout. No project-wide lock is held across execut
 
 ### Child settlement reports
 
-The separate `runtime-parent-report-observer.ts` subscriber reacts to terminal `agent_end`. It is attached after the synchronous lifecycle observer, then reads the child's latest output. The report uses the authoritative normalized terminal status/error when AgentHarness provides it, rather than inferring those fields from the transcript. Lifecycle observation does not invoke or await reporting. The subscriber calls `SessionMessages.send` for the parent, checking the same project/task scope. Reports are labelled structured JSON carried as normal text input—not new user authorization.
+The separate `runtime-parent-report-observer.ts` subscriber reacts to terminal `agent_end`. It is attached after the synchronous lifecycle observer, then reads the child's latest output. The report uses the authoritative normalized terminal status/error when AgentHarness provides it, rather than inferring those fields from the transcript. Lifecycle observation does not invoke or await reporting. The subscriber calls `SessionMessages.send` for the parent, checking the same project/task scope. Reports carry clean result or error text and `metadata.sourceSessionId`; provider projection supplies the explicit session-update/not-user-authorization boundary without polluting stored or UI content.
 
 `models/session-messages.ts` owns addressed delivery: opening the target, native steering submission, activity touch and broadcast. The scoped functions in `models/session-operations.ts` and the parent reporter share this module; a future HTTP caller can use it without duplicating delivery logic. Authorization belongs to callers. No HTTP route is added.
 

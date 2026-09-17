@@ -21,8 +21,10 @@ export function attachRuntimeParentReportObserver(params: {
         throw new Error("Parent is outside the child's project/task scope");
       }
       const outcome = transcriptResult(sessionId, await runtime.getMessages(), event);
-      await messages.send(parent.id,
-        `REINS session notification (not a user request)\n${JSON.stringify({ type: "session.settled", ...outcome })}`);
+      const content = outcome.status === "completed"
+        ? outcome.result ?? "Session completed."
+        : outcome.error ? `Session ${outcome.status}: ${outcome.error}` : `Session ${outcome.status}.`;
+      await messages.send(parent.id, content, { sourceSessionId: sessionId });
     };
     void report().catch((error: unknown) => logger.error(`Failed to report session ${sessionId} settlement:`, error));
   });

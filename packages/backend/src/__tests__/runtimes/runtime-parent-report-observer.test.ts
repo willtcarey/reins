@@ -30,9 +30,9 @@ describe("runtime parent reporter", () => {
     await delivered.promise;
     expect(parent.steerCalls).toHaveLength(1);
     const notification = parent.steerCalls[0]?.find((block) => block.type === "text")?.text;
-    expect(notification).toContain('"status":"failed"');
-    expect(notification).toContain("Provider unavailable");
+    expect(notification).toBe("Session failed: Provider unavailable");
     expect(notification).not.toContain("stale success");
+    expect(parent.steerOptions).toEqual([{ metadata: { sourceSessionId: "child" } }]);
     detach();
     child.emit({ type: "agent_end", messages: [], runId: "run-2", status: "completed" });
     await Promise.resolve();

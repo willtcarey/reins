@@ -13,16 +13,17 @@ describe("SessionMessages", () => {
     createSession("target", project.id, { agentRuntimeType: "pi" });
     const stub = createRuntimeStub();
     const admission = Promise.withResolvers<void>();
-    stub.runtime.steer = async (content) => {
+    stub.runtime.steer = async (content, options) => {
       await admission.promise;
       stub.steerCalls.push(content);
+      stub.steerOptions.push(options);
     };
     stub.runtime.isStreaming = () => { throw new Error("activity must not choose delivery"); };
     const broadcasts: unknown[] = [];
     const messages = new SessionMessages(new Map(), (event) => { broadcasts.push(event); },
       async () => ({ id: "target", runtime: stub.runtime, lastActivity: 0 }));
 
-    const sending = messages.send("target", "First");
+    const sending = messages.send("target", "First", { sourceSessionId: "source-1" });
     await Bun.sleep(0);
     expect(broadcasts).toEqual([]);
     admission.resolve();
@@ -30,7 +31,34 @@ describe("SessionMessages", () => {
 
     expect(stub.promptCalls).toEqual([]);
     expect(stub.steerCalls).toEqual([[{ type: "text", text: "First" }]]);
-    expect(broadcasts).toHaveLength(1);
+    expect(stub.steerOptions).toEqual([{ metadata: { sourceSessionId: "source-1" } }]);
+    expect(broadcasts).toEqual([{
+      type: "user_message",
+      sessionId: "target",
+      projectId: project.id,
+      message: [{ type: "text", text: "First" }],
+      metadata: { sourceSessionId: "source-1" },
+    }]);
+  });
+
+  test("stamps the source on initial prompt admission and live delivery", async () => {
+    const project = createProject("Messages", "/tmp/messages-test");
+    createSession("target", project.id, { agentRuntimeType: "pi" });
+    const stub = createRuntimeStub();
+    const broadcasts: unknown[] = [];
+    const messages = new SessionMessages(
+      new Map([["target", { id: "target", runtime: stub.runtime, lastActivity: 0 }]]),
+      (event) => { broadcasts.push(event); },
+    );
+
+    await messages.start("target", "Initial work", { sourceSessionId: "parent-1" });
+
+    expect(stub.promptCalls).toEqual([[{ type: "text", text: "Initial work" }]]);
+    expect(stub.promptOptions).toEqual([{ metadata: { sourceSessionId: "parent-1" } }]);
+    expect(broadcasts).toEqual([expect.objectContaining({
+      type: "user_message",
+      metadata: { sourceSessionId: "parent-1" },
+    })]);
   });
 
   test("broadcasts idle sends only after durable steering submission", async () => {

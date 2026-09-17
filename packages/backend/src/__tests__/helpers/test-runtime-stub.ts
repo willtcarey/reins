@@ -9,7 +9,7 @@
  *   emit({ type: "agent_start" });
  */
 
-import type { AgentRuntime, AgentRuntimeEvent } from "../../runtimes/registry.js";
+import type { AgentRuntime, AgentRuntimeEvent, RuntimePromptOptions } from "../../runtimes/registry.js";
 import type { ClientPromptContent, RuntimeMessage } from "../../messages-store.js";
 
 export interface RuntimeStubOptions {
@@ -27,8 +27,10 @@ export interface RuntimeStub {
   getMessagesCalls: number;
   /** Arguments passed to prompt() calls, in order */
   promptCalls: ClientPromptContent[];
+  promptOptions: (RuntimePromptOptions | undefined)[];
   /** Arguments passed to steer() calls, in order */
   steerCalls: ClientPromptContent[];
+  steerOptions: (RuntimePromptOptions | undefined)[];
   /** Whether abort() was called */
   abortCalled: boolean;
 }
@@ -38,17 +40,21 @@ export function createRuntimeStub(options: RuntimeStubOptions = {}): RuntimeStub
   const listeners = new Set<(event: AgentRuntimeEvent) => void>();
   let getMessagesCalls = 0;
   const promptCalls: ClientPromptContent[] = [];
+  const promptOptions: (RuntimePromptOptions | undefined)[] = [];
   const steerCalls: ClientPromptContent[] = [];
+  const steerOptions: (RuntimePromptOptions | undefined)[] = [];
   let abortCalled = false;
 
   const runtime: AgentRuntime = {
-    async prompt(content: ClientPromptContent) {
+    async prompt(content: ClientPromptContent, submissionOptions?: RuntimePromptOptions) {
       promptCalls.push(content);
+      promptOptions.push(submissionOptions);
       return { messageId: `message-${promptCalls.length}` };
     },
     async waitForIdle() {},
-    async steer(content: ClientPromptContent) {
+    async steer(content: ClientPromptContent, submissionOptions?: RuntimePromptOptions) {
       steerCalls.push(content);
+      steerOptions.push(submissionOptions);
     },
     async abort() {
       abortCalled = true;
@@ -70,7 +76,9 @@ export function createRuntimeStub(options: RuntimeStubOptions = {}): RuntimeStub
     runtime,
     get getMessagesCalls() { return getMessagesCalls; },
     get promptCalls() { return promptCalls; },
+    get promptOptions() { return promptOptions; },
     get steerCalls() { return steerCalls; },
+    get steerOptions() { return steerOptions; },
     get abortCalled() { return abortCalled; },
     emit(event: AgentRuntimeEvent) {
       for (const listener of listeners) listener(event);

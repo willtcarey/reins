@@ -45,6 +45,7 @@ function blankSessionData(sessionId = ""): SessionData {
     updatedAt: "",
     runtimeType: undefined,
     activityState: null,
+    pendingOperation: null,
     messageCount: 0,
     state: {
       model: null,
@@ -159,6 +160,17 @@ export class ActiveSessionStore {
     if (this._disposed || !this._client) return null;
     this._client.steer(this.sessionId, message);
     return this._conversationsStore.addOptimisticUserMessage(this.sessionId, message);
+  }
+
+  async resumePendingOperation(): Promise<boolean> {
+    if (this._disposed) return false;
+    const response = await fetch(`/api/sessions/${encodeURIComponent(this.sessionId)}/resume`, { method: "POST" });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || "Failed to resume interrupted session");
+    }
+    await this._sessionCache.fetchDetail(this.sessionId);
+    return true;
   }
 
   clearConversationError(): void {

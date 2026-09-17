@@ -100,7 +100,8 @@ export async function startSession(
     model: provider && modelId ? { provider, modelId } : undefined,
     thinkingLevel: options.thinkingLevel ?? (caller.thinking_level === "off" ? undefined : caller.thinking_level),
   });
-  await new SessionMessages(context.sessions, context.broadcast, async () => managed).start(managed.id, prompt);
+  await new SessionMessages(context.sessions, context.broadcast, async () => managed)
+    .start(managed.id, prompt, { sourceSessionId: context.callerId });
   return { sessionId: managed.id };
 }
 
@@ -110,7 +111,8 @@ export async function sendSessionMessage(
   message: string,
 ): Promise<{ sessionId: string }> {
   scopedSession(context, sessionId);
-  return new SessionMessages(context.sessions, context.broadcast, context.openSession).send(sessionId, message);
+  return new SessionMessages(context.sessions, context.broadcast, context.openSession)
+    .send(sessionId, message, { sourceSessionId: context.callerId });
 }
 
 export async function waitForSession(

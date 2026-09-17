@@ -32,6 +32,7 @@ type UserMessageContent = string | (TextContent | ChatImageBlock)[];
 export interface UserMessage {
   role: "user";
   content: UserMessageContent;
+  metadata?: Record<string, unknown>;
   timestamp: number;
 }
 

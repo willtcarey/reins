@@ -154,7 +154,9 @@ export interface AgentRuntime {
   prompt(content: ClientPromptContent, options?: RuntimePromptOptions): Promise<RuntimePromptSubmission>;
   /** Observe native idleness, including native steering, retries and compaction; preflight coverage is runtime-specific. */
   waitForIdle(): Promise<void>;
-  steer(content: ClientPromptContent): Promise<void>;
+  steer(content: ClientPromptContent, options?: RuntimePromptOptions): Promise<void>;
+  /** Start a durable operation that was reopened passively after interruption. */
+  resumePendingOperation?(): Promise<void>;
   abort(): Promise<void>;
   setModel(params: SetRuntimeModelParams): Promise<void>;
   subscribe(listener: (event: AgentRuntimeEvent) => void): () => void;

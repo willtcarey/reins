@@ -54,7 +54,7 @@ export type ChatEvent =
   | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean }
   | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
   | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
-  | { type: "user_message"; message: ClientPromptContent };
+  | { type: "user_message"; message: ClientPromptContent; metadata?: Record<string, unknown> };
 
 export interface ChatState {
   messages: AgentMessage[];
@@ -251,7 +251,12 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
     case "user_message":
       return {
         ...state,
-        messages: [...state.messages, { role: "user", content: event.message, timestamp: Date.now() }],
+        messages: [...state.messages, {
+          role: "user",
+          content: event.message,
+          ...(event.metadata ? { metadata: event.metadata } : {}),
+          timestamp: Date.now(),
+        }],
       };
 
     default:

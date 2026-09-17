@@ -255,6 +255,7 @@ function parsePersistedMessage(messageJson: string): PersistedMessage | null {
       return {
         role: "user",
         content: message.content,
+        ...(Object.keys(message.metadata).length > 0 ? { metadata: message.metadata } : {}),
         timestamp: typeof message.timestamp === "number" ? message.timestamp : entry.timestamp,
       };
     }

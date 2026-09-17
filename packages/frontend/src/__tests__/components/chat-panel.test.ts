@@ -19,6 +19,7 @@ function cacheSessionData(
   cache: SessionCache,
   activityState: "running" | "finished" | null = null,
   parentSessionId: string | null = null,
+  pendingOperation: { kind: "run" } | null = null,
 ) {
   cache.set("sess-1", {
     projectId: 42,
@@ -28,6 +29,7 @@ function cacheSessionData(
     createdAt: "",
     updatedAt: "",
     activityState,
+    pendingOperation,
     messageCount: 0,
     state: { model: null, thinkingLevel: "off" },
   });
@@ -63,6 +65,23 @@ describe("ChatPanel conversation orchestration", () => {
     expect(output).toContain(".sessionId=sess-1");
   });
 
+  test("passes the source session's current display title to session updates", () => {
+    const conversations = new ConversationsStore();
+    setPersistedMessages(conversations, "sess-1", [{
+      role: "user",
+      content: "Investigation complete",
+      metadata: { sourceSessionId: "child-1" },
+      timestamp: 1,
+    }]);
+    const panel = new ChatPanel();
+    panel.store = new ActiveSessionStore("sess-1", null, undefined, conversations);
+    Reflect.set(panel, "projectStore", {
+      getSession: () => ({ name: null, firstMessage: "Investigate the cache" }),
+    });
+
+    expect(templateToString(firstRepeatTemplate(panel))).toContain(".sourceSessionTitle=Investigate the cache");
+  });
+
   test("renders previous-history loading at the conversation boundary", async () => {
     const panel = new ChatPanel();
     let finishLoad!: (loaded: boolean) => void;
@@ -90,6 +109,22 @@ describe("ChatPanel conversation orchestration", () => {
     expect(templateToString(panel.render())).toContain("Loading previous messages…");
     finishLoad(false);
     await loading;
+  });
+
+  test("offers to resume a pending inactive operation", async () => {
+    const sessionCache = new SessionCache();
+    cacheSessionData(sessionCache, null, null, { kind: "run" });
+    const store = new ActiveSessionStore("sess-1", null, sessionCache, new ConversationsStore());
+    const resume = mock(async () => true);
+    Object.defineProperty(store, "resumePendingOperation", { value: resume });
+    const panel = new ChatPanel();
+    panel.store = store;
+
+    const pending = callPrivate(panel, "renderPendingOperation");
+    expect(templateToString(pending)).toContain("Resume interrupted session");
+    const [click] = collectTemplateEventListeners(pending, "click");
+    await click?.call(panel, new Event("click"));
+    expect(resume).toHaveBeenCalledTimes(1);
   });
 
   test("keeps streaming aggregate indicators in the panel", () => {
@@ -130,6 +165,7 @@ describe("ChatPanel conversation orchestration", () => {
       firstMessage: "Investigate the bug",
       messageCount: 1,
       activityState: null,
+      pendingOperation: null,
       runtimeType: null,
       state: null,
     };
@@ -163,6 +199,7 @@ describe("ChatPanel conversation orchestration", () => {
       firstMessage: "Start with the API",
       messageCount: null,
       activityState: null,
+      pendingOperation: null,
       runtimeType: null,
       state: null,
     };

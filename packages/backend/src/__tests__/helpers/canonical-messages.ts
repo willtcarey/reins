@@ -15,7 +15,7 @@ export function persistCanonicalMessages(sessionId: string, messages: RuntimeMes
   );
 
   for (const [index, source] of messages.entries()) {
-    const { logicalId, metadata: _metadata, ...message } = source;
+    const { logicalId, metadata, ...message } = source;
     const harnessId = logicalId ?? `fixture-${sessionId}-${seq}-${index}`;
     const timestamp = typeof message.timestamp === "number" ? message.timestamp : seq;
     const entry = message.role === "compactionSummary"
@@ -24,7 +24,7 @@ export function persistCanonicalMessages(sessionId: string, messages: RuntimeMes
           type: "message",
           timestamp,
           message: message.role === "user"
-            ? { role: "reinsInput", content: message.content ?? [], reinsId: harnessId, metadata: {}, timestamp }
+            ? { role: "reinsInput", content: message.content ?? [], reinsId: harnessId, metadata: metadata ?? {}, timestamp }
             : { ...message, timestamp },
         };
     const role = entry.type === "message" && entry.message ? entry.message.role : entry.type;

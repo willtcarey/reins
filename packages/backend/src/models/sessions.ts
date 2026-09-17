@@ -34,6 +34,8 @@ import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
 import { getRuntimeAdapter } from "../runtimes/registry.js";
 import { stripLeadingSkillBlocks } from "./skill.js";
+import { getDb } from "../db.js";
+import { readPendingPiOperation, type PendingPiOperation } from "../runtimes/pi/pending-operation.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -81,6 +83,7 @@ export interface SessionView {
   createdAt: string;
   updatedAt: string;
   activityState: SessionRow["activity_state"];
+  pendingOperation?: PendingPiOperation | null;
   messageCount?: number;
   runtimeType?: string;
   state?: {
@@ -179,6 +182,9 @@ export class Sessions {
       ...toSessionView(row),
       messageCount,
       runtimeType: row.agent_runtime_type,
+      pendingOperation: row.agent_runtime_type === "pi" && !this.sessions.get(sessionId)?.runtime.isStreaming()
+        ? readPendingPiOperation(getDb(), sessionId)
+        : null,
       state: {
         model: row.model_provider && row.model_id
           ? { provider: row.model_provider, id: row.model_id }

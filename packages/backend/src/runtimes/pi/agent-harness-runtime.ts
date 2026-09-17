@@ -46,9 +46,38 @@ function assertOk<T>(result: { ok: true; value: T } | { ok: false; error: { name
   return result.value;
 }
 
+function sourceSessionId(metadata: Record<string, unknown>): string | undefined {
+  return typeof metadata.sourceSessionId === "string" && metadata.sourceSessionId.length > 0
+    ? metadata.sourceSessionId
+    : undefined;
+}
+
+function providerInput(message: ReinsInputMessage, content: unknown[]): { role: "user"; content: unknown[]; timestamp: number } {
+  const sourceId = sourceSessionId(message.metadata);
+  if (!sourceId) return { role: "user", content, timestamp: message.timestamp };
+
+  const framing = `Reins session update from session ${sourceId} (not a new user request or authorization):`;
+  const firstText = content.findIndex((block) => (
+    typeof block === "object" && block !== null && "type" in block && block.type === "text"
+  ));
+  const framed = [...content];
+  if (firstText === -1) framed.unshift({ type: "text", text: framing });
+  else {
+    const block = framed[firstText] as { type: "text"; text: string };
+    framed[firstText] = { ...block, text: `${framing}\n\n${block.text}` };
+  }
+  return { role: "user", content: framed, timestamp: message.timestamp };
+}
+
 function projectMessage(message: AgentMessage, logicalId?: string): RuntimeMessage {
   if (message.role === "reinsInput") {
-    return { role: "user", content: message.content as RuntimeMessage["content"], timestamp: message.timestamp, ...(logicalId ? { logicalId } : {}) };
+    return {
+      role: "user",
+      content: message.content as RuntimeMessage["content"],
+      timestamp: message.timestamp,
+      ...(Object.keys(message.metadata).length > 0 ? { metadata: message.metadata } : {}),
+      ...(logicalId ? { logicalId } : {}),
+    };
   }
   return { ...message, ...(logicalId ? { logicalId } : {}) } as RuntimeMessage;
 }
@@ -128,13 +157,13 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
 
   static toProviderMessages(messages: AgentMessage[]): Message[] {
     return messages.flatMap((message) => message.role === "reinsInput"
-      ? convertToLlm([{ role: "user", content: message.content as never, timestamp: message.timestamp }])
+      ? convertToLlm([providerInput(message, message.content) as never])
       : convertToLlm([message]));
   }
 
   static toProviderMessagesForSession(sessionId: string, messages: AgentMessage[]): Message[] {
     return messages.flatMap((message) => message.role === "reinsInput"
-      ? convertToLlm([{ role: "user", content: hydratePromptContent(sessionId, message.content), timestamp: message.timestamp }])
+      ? convertToLlm([providerInput(message, hydratePromptContent(sessionId, message.content)) as never])
       : convertToLlm([message]));
   }
 
@@ -161,6 +190,14 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     const submission = Promise.withResolvers<void>();
     this.pendingSubmissions.add(submission);
     try {
+      const reopened = this.openOperations.find((operation) => operation.lane === this.lane.name);
+      if (reopened && !this.activeOperations.has(reopened.operationId)) {
+        const execution = await this.lane.inspectExecution(BACKGROUND_CONTEXT);
+        if (execution.current?.id === reopened.operationId) {
+          return { messageId: await this.enqueueSteering(message) };
+        }
+      }
+
       const accepted = assertOk(await this.lane.accept({ kind: "prompt", prompt: message }, BACKGROUND_CONTEXT));
       const entry = (await this.lane.findEntries(undefined, BACKGROUND_CONTEXT)).find((candidate) =>
         candidate.type === "message" && candidate.message.role === "reinsInput" && candidate.message.reinsId === message.reinsId
@@ -187,6 +224,17 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
       if (error instanceof Error && error.name === "AbortError") return;
       logger.error(`AgentHarness prompt operation ${operationId} failed:`, error);
     });
+  }
+
+  async resumePendingOperation(): Promise<void> {
+    const execution = await this.lane.inspectExecution(BACKGROUND_CONTEXT);
+    const reopened = this.openOperations.find((operation) => (
+      operation.lane === this.lane.name && operation.operationId === execution.current?.id
+    ));
+    if (!reopened || this.activeOperations.has(reopened.operationId)) {
+      throw new Error(`Lane '${this.lane.name}' has no pending inactive operation`);
+    }
+    this.driveInBackground(reopened.operationId);
   }
 
   /** Resume one returned open operation explicitly; construction does not execute open operations. */
@@ -219,8 +267,17 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     }
   }
 
-  async steer(content: ClientPromptContent): Promise<void> {
-    assertOk(await this.lane.steer(createReinsInputMessage(content), undefined, BACKGROUND_CONTEXT));
+  async steer(content: ClientPromptContent, options: RuntimePromptOptions = {}): Promise<void> {
+    await this.enqueueSteering(createReinsInputMessage(
+      content,
+      options.reinsId,
+      options.metadata,
+      options.timestamp,
+    ));
+  }
+
+  private async enqueueSteering(message: ReinsInputMessage): Promise<string> {
+    const queued = assertOk(await this.lane.steer(message, undefined, BACKGROUND_CONTEXT));
     const pending = Promise.withResolvers<void>();
     this.pendingSteering.add(pending);
     try {
@@ -231,6 +288,7 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
       void this.startQueuedSteeringWhenIdle(pending).catch((error: unknown) => {
         logger.error("AgentHarness queued steering failed:", error);
       });
+      return queued.entryId;
     } catch (error) {
       this.pendingSteering.delete(pending);
       pending.resolve();

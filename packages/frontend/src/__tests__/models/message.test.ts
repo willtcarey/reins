@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildMessages } from "../../models/message.js";
+import { buildMessages, SessionUpdateMessage } from "../../models/message.js";
 import type { AgentMessage } from "../../models/agent-message.js";
 
 function domainMessage(message: AgentMessage) {
@@ -30,6 +30,21 @@ describe("Message copy Markdown", () => {
       ],
       timestamp: 2,
     }).toMarkdown()).toBe("first\nsecond");
+  });
+
+  test("projects sourced user input as a session update with clean copy content", () => {
+    const message = domainMessage({
+      role: "user",
+      content: [{ type: "text", text: "clean result" }],
+      metadata: { sourceSessionId: "child-1" },
+      timestamp: 2,
+    });
+
+    expect(message).toBeInstanceOf(SessionUpdateMessage);
+    if (!(message instanceof SessionUpdateMessage)) throw new Error("Expected session update");
+    expect(message.role).toBe("sessionUpdate");
+    expect(message.toMarkdown()).toBe("clean result");
+    expect(message.sourceSessionId).toBe("child-1");
   });
 
   test("joins assistant Markdown blocks and omits thinking and tools", () => {

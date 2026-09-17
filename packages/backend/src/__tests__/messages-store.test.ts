@@ -23,6 +23,25 @@ describe("canonical messages store", () => {
     expect(loadMessagePage("session", 10).items).toHaveLength(3);
   });
 
+  test("preserves sourced input metadata in archive and page projections", () => {
+    const project = createProject("Messages", "/tmp/messages");
+    createSession("session", project.id, { agentRuntimeType: "pi" });
+    persistCanonicalMessages("session", [{
+      role: "user",
+      content: [{ type: "text", text: "clean update" }],
+      metadata: { sourceSessionId: "source-1" },
+    }]);
+
+    expect(loadMessages("session")[0]).toMatchObject({
+      role: "user",
+      content: [{ type: "text", text: "clean update" }],
+      metadata: { sourceSessionId: "source-1" },
+    });
+    expect(loadMessagePage("session", 10).items[0]?.message).toMatchObject({
+      metadata: { sourceSessionId: "source-1" },
+    });
+  });
+
   test("keeps tool calls paired with results across entry windows and result-only search", () => {
     const project = createProject("Messages", "/tmp/messages");
     createSession("session", project.id, { agentRuntimeType: "pi" });

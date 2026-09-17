@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
@@ -8,6 +8,7 @@ import { createProject } from "../../project-store.js";
 import { createSession, updateActivityState } from "../../session-store.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
+import { getDb } from "../../db.js";
 
 function textContent(text: string) {
   return [{ type: "text" as const, text }];
@@ -90,6 +91,22 @@ describe("session routes (top-level)", () => {
       expect(body).not.toHaveProperty("messages");
     });
 
+    test("returns a durable operation only when it is pending without an active driver", async () => {
+      const sessionId = "pending-operation";
+      createSession(sessionId, projectId, { agentRuntimeType: "pi" });
+      getDb().query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES (?, ?, ?, ?, ?)")
+        .run(sessionId, "pi.lane.state", "main", 1, JSON.stringify({ currentOperationId: "op-1", lastOperationId: null, inbox: [] }));
+      getDb().query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES (?, ?, ?, ?, ?)")
+        .run(sessionId, "pi.op.meta", "op-1", 2, JSON.stringify({ operationId: "op-1", intent: { kind: "run" } }));
+
+      const pending = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state);
+      expect((await pending!.json()).pendingOperation).toEqual({ kind: "run" });
+
+      state.sessions.set(sessionId, await createTestManagedSession(sessionId, { isStreaming: true }));
+      const active = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state);
+      expect((await active!.json()).pendingOperation).toBeNull();
+    });
+
     test("returns server-side activityState", async () => {
       const sessionId = "activity-state";
       createSession(sessionId, projectId, { agentRuntimeType: "pi",});
@@ -112,6 +129,23 @@ describe("session routes (top-level)", () => {
       expect(res!.status).toBe(404);
     });
 
+  });
+
+  describe("POST /api/sessions/:sessionId/resume", () => {
+    test("resumes a pending operation without adding a prompt", async () => {
+      const sessionId = "resume-operation";
+      createSession(sessionId, projectId, { agentRuntimeType: "pi" });
+      const managed = await createTestManagedSession(sessionId);
+      const resumePendingOperation = mock(async () => {});
+      managed.runtime.resumePendingOperation = resumePendingOperation;
+      state.sessions.set(sessionId, managed);
+
+      const res = await router.handle(makeRequest("POST", `/api/sessions/${sessionId}/resume`), state);
+
+      expect(res!.status).toBe(200);
+      expect(await res!.json()).toEqual({ ok: true });
+      expect(resumePendingOperation).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("GET /api/sessions/:sessionId/messages", () => {

@@ -33,7 +33,7 @@ Parent reports wait for lifecycle handling, then derive their result from the ch
 
 Entries retain Reins attachment references. Bytes remain in `session_attachments` and are hydrated only at the provider boundary.
 
-Reins-owned input entries carry their stable `reinsId` and application metadata inside the supported `reinsInput` custom message. Metadata is supplied when AgentHarness durably accepts the prompt; there is no post-hoc transcript mutation API or compatibility side table. The approved legacy import has no application metadata, so imported input metadata starts empty.
+Reins-owned input entries carry their stable `reinsId` and application metadata inside the supported `reinsInput` custom message. Metadata is supplied when AgentHarness durably accepts the prompt; there is no post-hoc transcript mutation API or compatibility side table. Cross-session inputs use only `metadata.sourceSessionId`, while their content remains clean. Archive, active-runtime, and live-delivery projections preserve that metadata for recipient rendering. The provider projection alone frames sourced content as a Reins session update that is not new user authorization. The approved legacy import has no application metadata, so imported input metadata starts empty.
 
 Some historical model IDs and the imported utility-model ID may not exist in the installed catalog. They remain visible as historical identity and must be replaced explicitly in Settings or through the inactive-session model picker; no fallback is selected.
 

@@ -14,6 +14,7 @@ import { SessionNotFoundError, Sessions } from "../models/sessions.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { parseDisplayCursor } from "../messages-store.js";
 import { parseBody } from "./validate.js";
+import { ensureSessionOpen } from "../runtimes/sessions-manager.js";
 
 const DEFAULT_MESSAGE_PAGE_LIMIT = 50;
 const MAX_MESSAGE_PAGE_LIMIT = 200;
@@ -91,6 +92,21 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     }
 
     return Response.json(data);
+  });
+
+  router.post("/:sessionId/resume", async (ctx) => {
+    const sessionId = ctx.params.sessionId;
+    if (!new Sessions(ctx.state.sessions).get(sessionId)) notFound("Session not found");
+    try {
+      const managed = await ensureSessionOpen(ctx.state, sessionId);
+      if (!managed.runtime.resumePendingOperation) {
+        badRequest("This session runtime does not support resuming pending operations");
+      }
+      await managed.runtime.resumePendingOperation();
+      return Response.json({ ok: true });
+    } catch (err: unknown) {
+      badRequest(err instanceof Error ? err.message : "Failed to resume pending operation");
+    }
   });
 
   // Explicitly mark an idle session's completion read or unread.

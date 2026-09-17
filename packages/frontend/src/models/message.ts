@@ -23,8 +23,8 @@ export interface MessageSource extends MessageIdentity {
   message: AgentMessage;
 }
 
-abstract class MessageBase<T extends AgentMessage> {
-  abstract readonly role: T["role"];
+abstract class MessageBase<T extends AgentMessage, Role extends string = T["role"]> {
+  abstract readonly role: Role;
 
   constructor(
     readonly raw: T,
@@ -36,14 +36,32 @@ abstract class MessageBase<T extends AgentMessage> {
   abstract toMarkdown(): string | null;
 }
 
+function userMessageMarkdown(message: AgentUserMessage): string | null {
+  const text = typeof message.content === "string"
+    ? message.content
+    : textFromClientContent(message.content);
+  return text.length > 0 ? text : null;
+}
+
 export class UserMessage extends MessageBase<AgentUserMessage> {
   readonly role = "user" as const;
 
   toMarkdown(): string | null {
-    const text = typeof this.raw.content === "string"
-      ? this.raw.content
-      : textFromClientContent(this.raw.content);
-    return text.length > 0 ? text : null;
+    return userMessageMarkdown(this.raw);
+  }
+}
+
+export class SessionUpdateMessage extends MessageBase<AgentUserMessage, "sessionUpdate"> {
+  readonly role = "sessionUpdate" as const;
+
+  get sourceSessionId(): string {
+    const value = this.raw.metadata?.sourceSessionId;
+    if (typeof value !== "string") throw new Error("Session update is missing its source session");
+    return value;
+  }
+
+  toMarkdown(): string | null {
+    return userMessageMarkdown(this.raw);
   }
 }
 
@@ -129,6 +147,7 @@ export class CompactionMessage extends MessageBase<CompactionSummaryMessage> {
 
 export type Message =
   | UserMessage
+  | SessionUpdateMessage
   | AssistantMessage
   | CompactionMessage;
 
@@ -148,7 +167,9 @@ export function buildMessages(
     const { message, entryId, parentEntryId, renderKey } = source;
     switch (message.role) {
       case "user":
-        return [new UserMessage(message, entryId, parentEntryId, renderKey)];
+        return [typeof message.metadata?.sourceSessionId === "string" && message.metadata.sourceSessionId.length > 0
+          ? new SessionUpdateMessage(message, entryId, parentEntryId, renderKey)
+          : new UserMessage(message, entryId, parentEntryId, renderKey)];
       case "assistant":
         return [new AssistantMessage(
           message,

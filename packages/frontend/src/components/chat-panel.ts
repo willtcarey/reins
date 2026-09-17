@@ -37,6 +37,8 @@ export class ChatPanel extends LitElement {
   @property({ type: Boolean }) visible = false;
 
   @state() private animatingUserMessageKeys = new Set<string>();
+  @state() private resumingPendingOperation = false;
+  @state() private pendingOperationError = "";
   @query("chat-composer") private composer?: ChatComposer;
 
   private sendAnimator = new ChatSendAnimator(this);
@@ -70,6 +72,8 @@ export class ChatPanel extends LitElement {
     this.sendAnimator.cancel();
     this.closeMessageActions();
     this.animatingUserMessageKeys = new Set();
+    this.resumingPendingOperation = false;
+    this.pendingOperationError = "";
     this.shouldAutoScroll = true;
     this.history.reset();
   }
@@ -181,6 +185,11 @@ export class ChatPanel extends LitElement {
   }
 
   private renderMessage(message: Message) {
+    const sourceSession = message.role === "sessionUpdate"
+      ? this.projectStore?.getSession(message.sourceSessionId)
+      : undefined;
+    const sourceSessionTitle = sourceSession?.name || sourceSession?.firstMessage || "";
+
     return html`
       <chat-message
         class="block ${message.role === 'user' && this.animatingUserMessageKeys.has(message.renderKey) ? 'sent-message-target-hidden' : ''}"
@@ -188,6 +197,7 @@ export class ChatPanel extends LitElement {
         data-message-key=${message.renderKey}
         .message=${message}
         .sessionId=${this.store?.sessionId ?? ""}
+        .sourceSessionTitle=${sourceSessionTitle}
       ></chat-message>
     `;
   }
@@ -252,6 +262,45 @@ export class ChatPanel extends LitElement {
           </span>
         </a>
       </nav>
+    `;
+  }
+
+  private async handleResumePendingOperation() {
+    if (!this.store || this.resumingPendingOperation) return;
+    this.resumingPendingOperation = true;
+    this.pendingOperationError = "";
+    try {
+      await this.store.resumePendingOperation();
+    } catch (error) {
+      this.pendingOperationError = error instanceof Error ? error.message : "Failed to resume interrupted session";
+    } finally {
+      this.resumingPendingOperation = false;
+    }
+  }
+
+  private renderPendingOperation() {
+    if (!this.store?.sessionData.pendingOperation || this.isStreaming) return nothing;
+
+    return html`
+      <section
+        data-role="pending-operation"
+        aria-label="Interrupted session"
+        class="my-4 flex items-center justify-between gap-4 rounded-lg border border-amber-700/50 bg-amber-950/20 px-3 py-2.5"
+      >
+        <div class="min-w-0 text-sm">
+          <div class="font-medium text-amber-200">This session was interrupted</div>
+          <div class="text-xs text-amber-200/60">Its unfinished operation is saved and inactive.</div>
+          ${this.pendingOperationError ? html`<div class="mt-1 text-xs text-red-300">${this.pendingOperationError}</div>` : nothing}
+        </div>
+        <button
+          type="button"
+          class="shrink-0 rounded-md border border-amber-600/60 bg-amber-900/40 px-3 py-1.5 text-xs font-medium text-amber-100 transition-colors hover:bg-amber-900/70 disabled:cursor-wait disabled:opacity-60"
+          ?disabled=${this.resumingPendingOperation}
+          @click=${this.handleResumePendingOperation}
+        >
+          ${this.resumingPendingOperation ? "Resuming…" : "Resume interrupted session"}
+        </button>
+      </section>
     `;
   }
 
@@ -330,6 +379,7 @@ export class ChatPanel extends LitElement {
             (message) => this.renderMessage(message),
           )}
           ${this.renderStreamingContent()}
+          ${this.renderPendingOperation()}
           ${this.renderRunningChildSessions()}
         </div>
 
