@@ -1,13 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 import { SessionListItem } from "../../components/session-list-item.js";
+import type { InfoCardAction } from "../../ui/info-card.js";
 import type { SessionListItem as SessionListItemData } from "../../models/ws-client.js";
-import { templateToString } from "../helpers/lit-template.js";
-
-function renderActivityActions(item: SessionListItem): string {
-  const render: unknown = Reflect.get(item, "renderActivityActions");
-  if (typeof render !== "function") throw new Error("Expected activity action renderer");
-  return templateToString(Reflect.apply(render, item, []));
-}
+import { isTemplateResult } from "../helpers/lit-template.js";
 
 function session(activityState: SessionListItemData["activityState"]): SessionListItemData {
   return {
@@ -24,47 +19,48 @@ function session(activityState: SessionListItemData["activityState"]): SessionLi
   };
 }
 
-describe("SessionListItem", () => {
-  test("offers read and unread controls from an overflow menu", () => {
-    const item = new SessionListItem();
-    item.onSetSessionUnread = mock(async () => ({ ok: true }));
-    item.session = session("finished");
-    item.activityState = "finished";
+function infoCardActions(item: SessionListItem): readonly InfoCardAction[] {
+  const rendered = item.render();
+  if (!isTemplateResult(rendered)) throw new Error("Expected session list item template");
+  const index = rendered.strings.findIndex((part) => part.includes(".actions="));
+  if (index < 0) throw new Error("Expected info-card actions binding");
+  const actions = rendered.values[index];
+  if (!Array.isArray(actions)) throw new Error("Expected info-card action list");
+  return actions;
+}
 
-    expect(templateToString(item.render())).not.toContain("Mark as read");
-    expect(renderActivityActions(item)).toContain("Mark as read");
+describe("SessionListItem", () => {
+  test("provides read and unread info-card actions", async () => {
+    const item = new SessionListItem();
+    const setSessionUnread = mock(async () => ({ ok: true }));
+    item.onSetSessionUnread = setSessionUnread;
+    item.session = session("finished");
+
+    const finishedActions = infoCardActions(item);
+    expect(finishedActions.map((action) => action.label)).toEqual([
+      "Copy session ID",
+      "Mark as read",
+    ]);
+    const markRead = finishedActions.find((action) => action.label === "Mark as read");
+    await markRead?.run();
+    expect(setSessionUnread).toHaveBeenCalledWith("session-1", false);
 
     item.session = session(null);
-    item.activityState = null;
-
-    expect(renderActivityActions(item)).toContain("Mark as unread");
+    const idleActions = infoCardActions(item);
+    expect(idleActions.map((action) => action.label)).toEqual([
+      "Copy session ID",
+      "Mark as unread",
+    ]);
+    const markUnread = idleActions.find((action) => action.label === "Mark as unread");
+    await markUnread?.run();
+    expect(setSessionUnread).toHaveBeenCalledWith("session-1", true);
   });
 
-  test("opens activity actions from the session context menu without an overflow trigger", () => {
-    const item = new SessionListItem();
-    item.onSetSessionUnread = mock(async () => ({ ok: true }));
-    item.session = session("finished");
-    item.activityState = "finished";
-    const preventDefault = mock(() => {});
-    const openContextMenu: unknown = Reflect.get(item, "openContextMenu");
-
-    if (typeof openContextMenu !== "function") throw new Error("Expected context-menu handler");
-    Reflect.apply(openContextMenu, item, [{ preventDefault, clientX: 50, clientY: 60 }]);
-
-    const output = templateToString(item.render());
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(output).toContain("Mark as read");
-    expect(output).not.toContain("<popover-menu");
-  });
-
-  test("does not offer a read control while a session is running", () => {
+  test("only provides copy while a session is running", () => {
     const item = new SessionListItem();
     item.onSetSessionUnread = mock(async () => ({ ok: true }));
     item.session = session("running");
-    item.activityState = "running";
 
-    const output = templateToString(item.render());
-    expect(output).not.toContain("Mark as read");
-    expect(output).not.toContain("Mark as unread");
+    expect(infoCardActions(item).map((action) => action.label)).toEqual(["Copy session ID"]);
   });
 });

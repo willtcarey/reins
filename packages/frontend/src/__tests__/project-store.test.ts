@@ -105,6 +105,22 @@ describe("ProjectStore", () => {
     expect(store.activityForSession("s-task")).toBe("finished");
   });
 
+  test("selects only running immediate children of a session", () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+    sessionCache.setMany([
+      session({ id: "running-child", parentSessionId: "parent", activityState: "running" }),
+      session({ id: "finished-child", parentSessionId: "parent", activityState: "finished" }),
+      session({ id: "grandchild", parentSessionId: "running-child", activityState: "running" }),
+      session({ id: "other-parent-child", parentSessionId: "other", activityState: "running" }),
+      session({ id: "other-project-child", projectId: 99, parentSessionId: "parent", activityState: "running" }),
+    ]);
+
+    expect(store.runningChildSessionsFor("parent").map((child) => child.id)).toEqual([
+      "running-child",
+    ]);
+  });
+
   test("marks session activity read and unread", async () => {
     const sessionCache = new SessionCache();
     store = new ProjectStore(42, sessionCache);

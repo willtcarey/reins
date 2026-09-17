@@ -41,12 +41,17 @@ export function saveHash(hash: string): void {
   } catch { /* ignore */ }
 }
 
+/** Build the canonical hash route for a session. */
+export function sessionHash(sessionId: string): string {
+  return `#/session/${encodeURIComponent(sessionId)}`;
+}
+
 /**
  * Navigate to a session URL.
  * Uses replaceState when `replace` is true (e.g. redirecting).
  */
 export function navigateToSession(sessionId: string, replace = false): void {
-  const hash = `#/session/${encodeURIComponent(sessionId)}`;
+  const hash = sessionHash(sessionId);
   if (location.hash === hash) return;
   if (replace) {
     history.replaceState(null, "", hash);

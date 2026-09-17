@@ -149,18 +149,17 @@ export class TaskListItemElement extends LitElement {
         </div>
 
         ${springCollapse(!isExpanded, () => sessions.length > 0 ? html`
-          <div class="mx-2 mt-1 mb-1 rounded-md border border-zinc-800/80 bg-zinc-950/30 overflow-hidden">
+          <div class="mx-2 mt-1 mb-1 divide-y divide-zinc-800/80 rounded-md border border-zinc-800/80 bg-zinc-950/30 overflow-hidden">
             ${(() => {
               const descendantMap = buildDescendantMap(sessions);
               const topLevel = sessions.filter(s => !s.parentSessionId);
               return topLevel.map(s => html`
                 <session-list-item
+                  class="block"
                   .session=${s}
                   .active=${s.id === this.activeSessionId}
-                  .activityState=${s.activityState}
                   .childSessions=${descendantMap.get(s.id) ?? []}
                   .activeSessionId=${this.activeSessionId}
-                  .projectId=${this.projectId}
                   .onSetSessionUnread=${this.onSetSessionUnread}
                 ></session-list-item>
               `);

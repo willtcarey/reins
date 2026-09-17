@@ -11,19 +11,21 @@ Frontend dev-only code uses the compile-time `REINS_DEV` Bun define so productio
 ```
 src/
 ├── models/          Pure logic — no LitElement, no html``
-├── components/      Lit components — rendering + interaction
+├── ui/              Domain-agnostic Lit presentation primitives
+├── components/      Feature and domain Lit components
 ├── controllers/     Lit reactive controllers (glue between models + components)
 ├── directives/      Reusable element-local Lit behavior
 ├── __tests__/       Tests mirroring app structure
 └── index.ts         Entry point
 ```
 
-**Dependency rule:** `models/` never imports from `components/` or `controllers/`. Everything else can import from `models/`.
+**Dependency rules:** `models/` never imports Lit layers. `ui/` contains domain-agnostic presentation primitives and does not import from `models/`, `components/`, or `controllers/`. Feature components and controllers may import from `models/` and `ui/`.
 
 ```
   components/  ──→  models/  ←──  controllers/
-       │                               │
-       └──────→  controllers/  ←───────┘
+       │              ↑                │
+       ├────────→ controllers/         │
+       └────────→ ui/ ←────────────────┘
 ```
 
 ### models/
@@ -62,9 +64,13 @@ models/
 └── ws-client.ts         WebSocket client
 ```
 
+### ui/
+
+Domain-agnostic Lit presentation primitives shared across features. UI primitives own reusable visual and interaction contracts without importing feature stores or domain models. Current primitives include `info-card.ts` for linked/actionable information rows and `action-menu-presenter.ts` for context-menu and mobile-sheet presentation.
+
 ### components/
 
-Lit custom elements that own rendering and user interaction. Import from `models/` for data, from `controllers/` for lifecycle-managed behavior.
+Feature and domain Lit custom elements that own rendering and user interaction. Import from `models/` for data, from `controllers/` for lifecycle-managed behavior, and from `ui/` for shared presentation primitives.
 
 ```
 components/

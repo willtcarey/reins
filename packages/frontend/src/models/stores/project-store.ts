@@ -112,6 +112,18 @@ export class ProjectStore {
       .toSorted(compareSessionListItems);
   }
 
+  /** Running direct children already present in the loaded project/task session data. */
+  runningChildSessionsFor(parentSessionId: string): SessionListItem[] {
+    return (this._sessionCache?.entries() ?? [])
+      .filter((session) => (
+        session.projectId === this.projectId &&
+        session.parentSessionId === parentSessionId &&
+        session.activityState === "running"
+      ))
+      .filter(isSessionListItem)
+      .toSorted(compareSessionListItems);
+  }
+
   // ---- Activity selectors ---------------------------------------------------
 
   activityForSession(sessionId: string): ActivityState {

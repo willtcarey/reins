@@ -62,7 +62,7 @@ A task cannot be deleted while any of its sessions are actively running. Stop th
 
 Task sessions can **delegate** work using `api.sessions.start` through `execute`. A new session starts on the same task with a fresh context window and returns its session ID without waiting for its response. The parent can continue working, send messages that resume idle sessions or steer busy ones, and call `api.sessions.wait(sessionId)` to retrieve the latest result once all work in that session has settled. See [Scripting](scripting.md#start-message-and-wait-for-sessions).
 
-Sub-sessions are hidden from the top-level task session list. Instead, top-level sessions that spawned sub-sessions show a **+N** badge. Clicking the badge opens a list of all their delegate descendants, including nested sub-sessions; clicking one navigates to it.
+Sub-sessions are hidden from the top-level task session list. Instead, top-level sessions that spawned sub-sessions show a **+N** badge. Clicking the badge opens a list of all their delegate descendants, including nested sub-sessions; clicking one navigates to it. A child conversation also shows a muted link to its immediate parent at the top of the conversation.
 
 Finished sessions retain an amber unread indicator until they are opened or explicitly marked read. Idle task sessions and sub-sessions can be marked read or unread from their three-dot menus, and the active session has the same action in the main header menu. The sub-session popover also provides **Mark all as read** when one or more children have unread activity. Running sessions keep their running state and cannot be manually marked unread.
 

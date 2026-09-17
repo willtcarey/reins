@@ -8,13 +8,18 @@ import { customElement, property, query, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import type { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
+import type { CachedSession } from "../models/stores/session-cache.js";
 import type { Message } from "../models/message.js";
+import { sessionHash } from "../models/router.js";
+import type { SessionListItem } from "../models/ws-client.js";
 import type { ChatComposer } from "./chat-composer.js";
 import type { ChatComposerSubmitDetail } from "./events.js";
 import type { ChatMessage } from "./chat-message.js";
 import { ChatSendAnimator } from "../helpers/chat-send-animation.js";
 import { ChatHistoryController } from "../controllers/chat-history-controller.js";
 import { ringSpinnerIcon } from "./icons.js";
+import "./activity-dot.js";
+import "../ui/info-card.js";
 import "./chat-message.js";
 import "./session-model-picker.js";
 import "./chat-composer.js";
@@ -27,6 +32,8 @@ export class ChatPanel extends LitElement {
 
   @property({ attribute: false }) store: ActiveSessionStore | null = null;
   @property({ attribute: false }) projectStore: ProjectStore | null = null;
+  @property({ attribute: false }) parentSession: CachedSession | null = null;
+  @property({ attribute: false }) runningChildSessions: SessionListItem[] = [];
   @property({ type: Boolean }) visible = false;
 
   @state() private animatingUserMessageKeys = new Set<string>();
@@ -221,15 +228,79 @@ export class ChatPanel extends LitElement {
     `;
   }
 
+  private renderParentNavigation() {
+    const parentSessionId = this.store?.sessionData.parentSessionId;
+    if (!parentSessionId) return nothing;
+
+    const parent = this.parentSession?.id === parentSessionId ? this.parentSession : null;
+    const label = parent?.name || parent?.firstMessage || "Parent session";
+
+    return html`
+      <nav
+        data-role="parent-session-rail"
+        aria-label="Parent session"
+        class="absolute inset-x-0 top-0 z-[var(--layer-content)] border-b border-zinc-700/80 bg-zinc-900/95 px-3 py-1.5 shadow-sm backdrop-blur"
+      >
+        <a
+          href="${sessionHash(parentSessionId)}"
+          class="group flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-zinc-800/80 focus-visible:bg-zinc-800/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-500/70"
+        >
+          <span aria-hidden="true" class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-500/15 text-sm text-blue-300 transition-colors group-hover:bg-blue-500/25">←</span>
+          <span class="flex min-w-0 flex-1 items-baseline gap-1.5 text-sm">
+            <span class="shrink-0 font-medium text-zinc-400">Parent:</span>
+            <span class="truncate font-medium text-zinc-200">${label}</span>
+          </span>
+        </a>
+      </nav>
+    `;
+  }
+
+  private renderRunningChildSessions() {
+    if (this.runningChildSessions.length === 0) return nothing;
+
+    return html`
+      <section
+        data-role="running-child-sessions"
+        aria-label="Running child sessions"
+        class="mt-4 border-t border-zinc-800/80 pt-3"
+      >
+        <div class="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+          Running sub-sessions
+        </div>
+        <div class="divide-y divide-zinc-800/80 overflow-hidden rounded-md border border-zinc-800/80 bg-zinc-950/30">
+          ${this.runningChildSessions.map((child) => {
+            const label = child.name || child.firstMessage || "Sub-session";
+            return html`
+              <info-card
+                class="block"
+                .title=${label}
+                href="${sessionHash(child.id)}"
+                .primaryLabel=${`Open child session: ${label}`}
+                .leading=${html`
+                  <activity-dot class="shrink-0" .state=${child.activityState}></activity-dot>
+                `}
+                .trailing=${html`
+                  <span class="text-[10px] text-zinc-500">Running</span>
+                `}
+              ></info-card>
+            `;
+          })}
+        </div>
+      </section>
+    `;
+  }
+
   override render() {
     const sessionId = this.store?.sessionId ?? "";
     const sessionData = this.store?.sessionData;
+    const hasParentSession = Boolean(sessionData?.parentSessionId);
 
     return html`
       <div class="relative flex flex-col h-full">
+        ${this.renderParentNavigation()}
         <div
           id="chat-scroll"
-          class="flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none] p-4 space-y-1"
+          class="flex-1 space-y-1 overflow-y-auto overflow-x-hidden px-4 pb-4 [overflow-anchor:none] ${hasParentSession ? "pt-14" : "pt-4"}"
           @scroll=${this.handleScroll}
           @touchstart=${this.handleHistoryTouchStart}
           @touchmove=${this.handleMessageTouchMove}
@@ -248,7 +319,7 @@ export class ChatPanel extends LitElement {
               </button>
             </div>
           ` : nothing}
-          ${this.messages.length === 0 && !this.isStreaming && !this.isCompacting ? html`
+          ${this.messages.length === 0 && !this.isStreaming && !this.isCompacting && this.runningChildSessions.length === 0 ? html`
             <div class="flex items-center justify-center h-full text-zinc-500 text-sm">
               Send a message to start a conversation
             </div>
@@ -259,6 +330,7 @@ export class ChatPanel extends LitElement {
             (message) => this.renderMessage(message),
           )}
           ${this.renderStreamingContent()}
+          ${this.renderRunningChildSessions()}
         </div>
 
         <div class="border-t border-zinc-700 px-3 pt-2 pb-[var(--input-bottom)]">

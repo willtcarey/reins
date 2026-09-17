@@ -53,8 +53,10 @@ function installRenderableStore(el: AppShell, options: {
     connected: true,
     projectId: options.projectId === undefined ? 42 : options.projectId,
     sessionId: options.sessionId ?? "s1",
-    activeSessionStore: options.activeSessionStore === undefined ? {} : options.activeSessionStore,
-    activeProjectStore: {},
+    activeSessionStore: options.activeSessionStore === undefined
+      ? { sessionData: { parentSessionId: null } }
+      : options.activeSessionStore,
+    activeProjectStore: { getSession: () => undefined, runningChildSessionsFor: () => [] },
     diffStore: { branch: "main" },
     projectsStore: { activityForSession() {} },
   });

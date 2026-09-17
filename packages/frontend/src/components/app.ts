@@ -262,11 +262,18 @@ export class AppShell extends LitElement {
   private renderChatPane(store: AppStore, visible: boolean) {
     if (!store.activeSessionStore) return nothing;
 
+    const parentSessionId = store.activeSessionStore.sessionData.parentSessionId;
+    const parentSession = parentSessionId
+      ? store.activeProjectStore?.getSession(parentSessionId) ?? null
+      : null;
+
     return keyed(store.sessionId, html`
       <chat-panel
         class="block h-full min-h-0 min-w-0"
         .store=${store.activeSessionStore}
         .projectStore=${store.activeProjectStore}
+        .parentSession=${parentSession}
+        .runningChildSessions=${store.activeProjectStore?.runningChildSessionsFor(store.sessionId) ?? []}
         ?visible=${visible}
       ></chat-panel>
     `);
