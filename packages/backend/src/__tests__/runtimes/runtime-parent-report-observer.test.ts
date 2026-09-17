@@ -28,14 +28,14 @@ describe("runtime parent reporter", () => {
       error: { code: "provider_error", message: "Provider unavailable" },
     });
     await delivered.promise;
-    expect(parent.promptCalls).toHaveLength(1);
-    const notification = parent.promptCalls[0]?.find((block) => block.type === "text")?.text;
+    expect(parent.steerCalls).toHaveLength(1);
+    const notification = parent.steerCalls[0]?.find((block) => block.type === "text")?.text;
     expect(notification).toContain('"status":"failed"');
     expect(notification).toContain("Provider unavailable");
     expect(notification).not.toContain("stale success");
     detach();
     child.emit({ type: "agent_end", messages: [], runId: "run-2", status: "completed" });
     await Promise.resolve();
-    expect(parent.promptCalls).toHaveLength(1);
+    expect(parent.steerCalls).toHaveLength(1);
   });
 });

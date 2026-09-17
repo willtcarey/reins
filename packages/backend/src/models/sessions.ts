@@ -15,6 +15,7 @@ import {
   type SessionRow,
 } from "../session-store.js";
 import {
+  countMessages,
   loadMessagePage,
   loadMessages,
   type PersistedMessage,
@@ -172,7 +173,7 @@ export class Sessions {
     const row = getSession(sessionId);
     if (!row) return null;
 
-    const messageCount = loadMessages(sessionId).length;
+    const messageCount = countMessages(sessionId);
 
     return {
       ...toSessionView(row),
@@ -313,17 +314,19 @@ export class Sessions {
     });
   }
 
-  /**
-   * Mark completed activity as viewed. Only finished activity is cleared;
-   * running or absent activity is left unchanged.
-   */
-  markActivityViewed(sessionId: string): void {
+  /** Set an idle session's unread state without disturbing active work. */
+  setUnread(sessionId: string, unread: boolean): void {
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();
-    if (row.activity_state !== "finished") return;
+    if (unread && row.activity_state === "running") {
+      throw new Error("Running sessions cannot be marked unread");
+    }
 
-    this.updateActivityState(sessionId, null);
+    const activityState = unread ? "finished" : null;
+    if (row.activity_state === activityState || (!unread && row.activity_state === "running")) return;
+    this.updateActivityState(sessionId, activityState);
   }
+
 
   /**
    * Change the AI model for a session.
@@ -344,7 +347,7 @@ export class Sessions {
       throw new Error("Canonical sessions use the pi runtime");
     }
     const isRuntimeSwitch = nextRuntimeType !== sessionRow.agent_runtime_type;
-    const messageCount = loadMessages(params.sessionId).length;
+    const messageCount = countMessages(params.sessionId);
 
     if (isRuntimeSwitch) {
       if (messageCount > 0) {

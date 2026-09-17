@@ -100,7 +100,7 @@ export async function startSession(
     model: provider && modelId ? { provider, modelId } : undefined,
     thinkingLevel: options.thinkingLevel ?? (caller.thinking_level === "off" ? undefined : caller.thinking_level),
   });
-  await new SessionMessages(context.sessions, context.broadcast, async () => managed).send(managed.id, prompt);
+  await new SessionMessages(context.sessions, context.broadcast, async () => managed).start(managed.id, prompt);
   return { sessionId: managed.id };
 }
 

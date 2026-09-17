@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { Type } from "@sinclair/typebox";
+import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { setApiKeyCredential } from "../../../auth-credentials-store.js";
@@ -74,6 +75,12 @@ describe("unselected AgentHarness Pi builder", () => {
       expect(credentials).toContainEqual({ type: "api_key", key: "refreshed-key" });
       expect(credentials.at(-1)).toEqual({ type: "api_key", key: "refreshed-key" });
       expect(runtime.getSessionMetadata()).toEqual({ model: { provider: "builder-faux", modelId: "fake" }, thinkingLevel: "minimal" });
+
+      const skillAdmission = await runtime.lane.accept({ kind: "skill", name: "local-builder" }, BACKGROUND_CONTEXT);
+      expect(skillAdmission.ok).toBe(true);
+      const entries = await runtime.lane.findEntries(undefined, BACKGROUND_CONTEXT);
+      expect(JSON.stringify(entries).match(/UNIQUE_SKILL_MARKER/g)).toHaveLength(1);
+
       expect(runtime.executionEnv).toBeInstanceOf(NodeExecutionEnv);
       let cleanups = 0;
       Object.defineProperty(runtime.executionEnv, "cleanup", { value: async () => { cleanups++; } });

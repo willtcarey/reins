@@ -120,6 +120,29 @@ describe("AgentHarnessPiRuntime", () => {
     await runtime.close();
   });
 
+  test("starts an idle run from native steering", async () => {
+    const project = createProject("Idle Steering", "/tmp/idle-steering");
+    createSession("idle-steering", project.id, { agentRuntimeType: "pi" });
+    const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+    provider.setResponses([fauxAssistantMessage("handled")]);
+    const models = createModels();
+    models.setProvider(provider.provider);
+    const runtime = await createAgentHarnessPiRuntime({
+      db: getDb(), sessionId: "idle-steering", createdAt: 1, cwd: "/tmp/idle-steering",
+      options: { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
+    });
+
+    await runtime.steer([{ type: "text", text: "start from idle" }]);
+    await runtime.waitForIdle();
+
+    expect(provider.state.callCount).toBe(1);
+    expect(await runtime.getMessages()).toEqual([
+      expect.objectContaining({ role: "user", content: [{ type: "text", text: "start from idle" }] }),
+      expect.objectContaining({ role: "assistant", content: [{ type: "text", text: "handled" }] }),
+    ]);
+    await runtime.close();
+  });
+
   test("consumes busy steering, rejects concurrent prompts, and waits for the owned run", async () => {
     const project = createProject("Busy Harness", "/tmp/busy-harness");
     createSession("busy-harness", project.id, { agentRuntimeType: "pi" });
@@ -414,6 +437,40 @@ describe("AgentHarnessPiRuntime", () => {
     expect(sideEffects).toBe(1);
     expect((await reopened.getMessages()).some((message) => message.role === "toolResult" && message.isError && JSON.stringify(message.content).includes("interrupted"))).toBe(true);
     await reopened.close();
+  });
+
+  test("steering resumes a passively reopened operation", async () => {
+    const project = createProject("Steering Recovery", "/tmp/steering-recovery");
+    createSession("steering-recovery", project.id, { agentRuntimeType: "pi" });
+    const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+    provider.setResponses([
+      fauxAssistantMessage("before steering"),
+      fauxAssistantMessage("after steering"),
+    ]);
+    const models = createModels();
+    models.setProvider(provider.provider);
+    const options = { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } };
+    const original = await createAgentHarnessPiRuntime({
+      db: getDb(), sessionId: "steering-recovery", createdAt: 1, cwd: "/tmp/steering-recovery", options,
+    });
+    const accepted = await original.lane.accept(
+      { kind: "prompt", prompt: createReinsInputMessage([{ type: "text", text: "original" }]) },
+      BACKGROUND_CONTEXT,
+    );
+    if (!accepted.ok) throw accepted.error;
+
+    const reopened = await createAgentHarnessPiRuntime({
+      db: getDb(), sessionId: "steering-recovery", createdAt: 1, cwd: "/tmp/steering-recovery", options,
+    });
+    expect(reopened.isStreaming()).toBe(false);
+
+    await reopened.steer([{ type: "text", text: "continue" }]);
+    await reopened.waitForIdle();
+
+    expect(provider.state.callCount).toBe(1);
+    expect((await reopened.getMessages()).filter((message) => message.role === "user")).toHaveLength(2);
+    await reopened.close();
+    await original.harness.close(BACKGROUND_CONTEXT);
   });
 
   test("wait and close include a submission blocked before execution tracking", async () => {

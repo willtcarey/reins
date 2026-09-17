@@ -66,8 +66,8 @@ A runtime returned from `createRuntime()` must implement:
   - Observes AgentHarness lane operation settlement, including steering, retry, and compaction.
   - Waiting never aborts work. The model/API layer bounds individual waits and handles waiter cancellation separately.
 - `steer(content): Promise<void>`
-  - Called when the user submits validated `RuntimePromptContent` while streaming.
-  - AgentHarness forwards to its active operation. Never add a Reins delivery wait, follow-up queue, or abort/restart fallback.
+  - Submits validated `RuntimePromptContent` through the runtime's native steering path.
+  - AgentHarness durably queues the input, lets active work consume it, or starts idle work from it. A passively reopened operation is resumed when steered. Never add a Reins-managed follow-up queue or abort/restart fallback.
 - `abort(): Promise<void>`
   - Cancels the active prompt and aborts active tool execution where possible; discard pending native steering messages.
 - `setModel({ provider, modelId, thinkingLevel }): Promise<void>`
@@ -174,15 +174,15 @@ If a runtime cannot expose custom tools, task creation/session orchestration/sea
 
 `api.sessions.start(prompt, options)` materializes a normal session and starts `runtime.prompt()` without waiting for its response, returning `{ sessionId }`. Background prompt failures are logged. `options.parentSessionId` is explicitly `"current"` (child) or `null` (independent); creation stays in the caller's project/task. Optional titles reuse `sessions.name`; omitted titles leave normal naming unchanged. Children retain the depth limit of three. Prompts are not prefixed with an artificial delegation preamble.
 
-`api.sessions.send(sessionId, message)` reopens the existing session if needed. Idle sessions start a normal prompt; busy sessions receive native `steer()`. Unsupported steering rejects immediately. There is no mode parameter, queued follow-up operation, hidden waiting/retry, or cancellation/restart fallback. Explicit abort remains separate.
+`api.sessions.send(sessionId, message)` reopens the existing session if needed and always calls native `steer()`, without consulting `isStreaming()`. AgentHarness durably queues the input, joins active work, starts an idle run, or resumes a passively reopened operation. There is no mode parameter, Reins-managed follow-up operation, hidden waiting/retry, or cancellation/restart fallback. Explicit abort remains separate.
 
 `api.sessions.wait(sessionId, timeoutMs?)` observes the entire session until settled, then returns its latest response/outcome. It waits through native idleness, reads the durable native run outcome when available, and rechecks runtime activity before returning. Waits are bounded to 0–30,000 ms (default 10,000); timeout or execute-tool abort stops only the observation. Self-waits are rejected. Closed sessions are read directly from persisted history without opening an LLM runtime.
 
 There are no receipts, unsent-message tables, dispatchers, or parallel Reins execution state machines. AgentHarness operations are the durable work identity:
 
 - Prompt acceptance commits the `reinsInput` metadata and harness operation before provider execution begins.
-- Steering targets the active AgentHarness operation directly; native errors propagate.
-- Explicit abort and retry behavior remain owned by AgentHarness. Reopened operations remain passive until explicitly driven. Once a runtime is evicted, waits inspect canonical active-branch outcomes but cannot reconstruct transient execution errors.
+- Steering uses the AgentHarness inbox as the atomic delivery boundary. Reins tracks native idle-start handoff so waits cannot pass between steering admission and operation startup.
+- Explicit abort and retry behavior remain owned by AgentHarness. Reopened operations remain passive until explicitly driven or steered. Once a runtime is evicted, waits inspect canonical active-branch outcomes but cannot reconstruct transient execution errors.
 - The unregistered Claude implementation is not part of current orchestration guarantees.
 - The session manager coalesces concurrent opens using `ServerState.sessionOpenings`, avoiding duplicate runtimes for simultaneous sends. This and the runtime map survive handler hot reloads. Creating sibling sessions on the active task branch skips redundant Git checkouts, so session creation does not contend for the checkout/index lock.
 
@@ -192,9 +192,9 @@ Sessions share the existing checkout. No project-wide lock is held across execut
 
 The separate `runtime-parent-report-observer.ts` subscriber reacts to terminal `agent_end`. It is attached after the synchronous lifecycle observer, then reads the child's latest output. The report uses the authoritative normalized terminal status/error when AgentHarness provides it, rather than inferring those fields from the transcript. Lifecycle observation does not invoke or await reporting. The subscriber calls `SessionMessages.send` for the parent, checking the same project/task scope. Reports are labelled structured JSON carried as normal text input—not new user authorization.
 
-`models/session-messages.ts` owns addressed delivery: opening the target, idle prompting versus busy native steering, activity touch and broadcast. The scoped functions in `models/session-operations.ts` and the parent reporter share this module; a future HTTP caller can use it without duplicating delivery logic. Authorization belongs to callers. No HTTP route is added.
+`models/session-messages.ts` owns addressed delivery: opening the target, native steering submission, activity touch and broadcast. The scoped functions in `models/session-operations.ts` and the parent reporter share this module; a future HTTP caller can use it without duplicating delivery logic. Authorization belongs to callers. No HTTP route is added.
 
-There is no prompt-promise wrapper, extra busy tracking, inbox, dispatcher, or receipt layer. Reports durably accept an idle-parent prompt or steer a busy parent immediately. Delivery errors are logged by the reporting subscriber and are not retried; they do not affect lifecycle updates. Reopening alone emits no settlement and produces no report; follow-up settlement reports again. Only outcomes represented by the active branch at settlement are reported; startup failures without a settlement event do not produce a report. Pending callbacks are not recovered after restart.
+There is no prompt-promise wrapper, Reins inbox, dispatcher, or receipt layer. Reports enter the parent's native AgentHarness steering inbox, which handles active versus idle delivery. Delivery errors are logged by the reporting subscriber and are not retried; they do not affect lifecycle updates. Reopening alone emits no settlement and produces no report; follow-up settlement reports again. Only outcomes represented by the active branch at settlement are reported; startup failures without a settlement event do not produce a report. Pending callbacks are not recovered after restart.
 
 ## Resume and persistence expectations
 

@@ -42,40 +42,36 @@ describe("runtime sessions manager", () => {
   useTestDb();
   const repo = useTestRepo();
 
-  test("child completion reports directly to idle or busy parents, not on open", async () => {
+  test("child completion reports through native steering regardless of parent activity, not on open", async () => {
     const state = createServerState();
     const project = createProject("Reports", repo.dir);
     createSession("parent", project.id, { agentRuntimeType: "pi" });
     createSession("child", project.id, { agentRuntimeType: "report-test", parentSessionId: "parent" });
     const parent = createRuntimeStub();
-    const prompted = Promise.withResolvers<void>();
-    const steered = Promise.withResolvers<void>();
-    const prompt = parent.runtime.prompt.bind(parent.runtime);
+    const firstSteered = Promise.withResolvers<void>();
+    const secondSteered = Promise.withResolvers<void>();
     const steer = parent.runtime.steer.bind(parent.runtime);
-    parent.runtime.prompt = async (content, options) => {
-      const submitted = await prompt(content, options);
-      prompted.resolve();
-      return submitted;
+    parent.runtime.steer = async (content) => {
+      await steer(content);
+      if (parent.steerCalls.length === 1) firstSteered.resolve();
+      if (parent.steerCalls.length === 2) secondSteered.resolve();
     };
-    parent.runtime.steer = async (content) => { await steer(content); steered.resolve(); };
-    let busy = false;
-    parent.runtime.isStreaming = () => busy;
+    parent.runtime.isStreaming = () => { throw new Error("activity must not choose report delivery"); };
     state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: Date.now() });
     const messages = [{ role: "assistant", content: [{ type: "text" as const, text: "First result" }], timestamp: 1 }];
     const child = createRuntimeStub({ messages });
     registerRuntimeAdapter({ runtimeType: "report-test", listModels: async () => [], ask: async () => "", createRuntime: async () => child.runtime });
     await ensureSessionOpen(state, "child");
-    expect(parent.promptCalls).toEqual([]);
+    expect(parent.steerCalls).toEqual([]);
     child.emit({ type: "agent_end", messages, runId: "run-1", status: "completed" });
-    await prompted.promise;
-    expect(parent.promptCalls).toHaveLength(1);
-    expect(JSON.stringify(parent.promptCalls)).toContain("First result");
-    busy = true;
+    await firstSteered.promise;
+    expect(parent.promptCalls).toEqual([]);
+    expect(parent.steerCalls).toHaveLength(1);
+    expect(JSON.stringify(parent.steerCalls)).toContain("First result");
     messages.push({ role: "assistant", content: [{ type: "text", text: "Follow-up result" }], timestamp: 2 });
     child.emit({ type: "agent_end", messages, runId: "run-2", status: "completed" });
-    await steered.promise;
-    expect(parent.promptCalls).toHaveLength(1);
-    expect(parent.steerCalls).toHaveLength(1);
+    await secondSteered.promise;
+    expect(parent.steerCalls).toHaveLength(2);
     expect(JSON.stringify(parent.steerCalls)).toContain("Follow-up result");
   });
 

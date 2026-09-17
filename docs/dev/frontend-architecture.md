@@ -225,7 +225,7 @@ Thin WebSocket wrapper for receiving server events and sending session-scoped co
 
 Session activity is server-authoritative and enters the frontend through `SessionCache`. Project/session views derive activity indicators from cached session metadata rather than raw runtime events or duplicated component state.
 
-Running indicators remain visible while the agent loop is active. Finished indicators represent unread completed work and are cleared when the session is viewed. Reconnect/resume flows reconcile from the server snapshot instead of trusting missed client events.
+Running indicators remain visible while the agent loop is active. Finished indicators represent unread completed work and are cleared when the session is viewed or explicitly marked read; idle sessions can also be marked unread. Reconnect/resume flows reconcile from the server snapshot instead of trusting missed client events.
 
 ## Routing (`models/router.ts`)
 

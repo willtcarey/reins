@@ -119,6 +119,11 @@ export class TaskList extends LitElement {
     this.dispatchEvent(newTaskEvent(this.projectId));
   }
 
+  private setSessionUnread(sessionId: string, unread: boolean): Promise<unknown> {
+    return this.projectStore?.setSessionUnread(sessionId, unread)
+      ?? Promise.resolve({ error: "Project is unavailable" });
+  }
+
   private renderTask(task: TaskListItem) {
     return html`
       <task-list-item
@@ -128,6 +133,7 @@ export class TaskList extends LitElement {
         .activeSessionId=${this.activeSessionId}
         .activityState=${this.projectStore?.activityForTask(task.id)}
         .projectId=${this.projectId}
+        .onSetSessionUnread=${(sessionId: string, unread: boolean) => this.setSessionUnread(sessionId, unread)}
         @toggle-expand=${this.handleToggleExpand}
         @delete-task=${this.handleDeleteTask}
       ></task-list-item>

@@ -268,6 +268,16 @@ function parsePersistedMessage(messageJson: string): PersistedMessage | null {
 
 // ---- Message projections --------------------------------------------------
 
+/** Count canonical entries that participate in transcript display. */
+export function countMessages(sessionId: string): number {
+  const row = getDb().query<{ count: number }, [string]>(
+    `SELECT COUNT(*) AS count
+     FROM session_messages
+     WHERE session_id = ? AND role NOT IN ('branch_summary', 'custom')`,
+  ).get(sessionId);
+  return row?.count ?? 0;
+}
+
 /** Load every canonical transcript entry for archive display. */
 export function loadMessages(sessionId: string): any[] {
   const rows = getDb()

@@ -141,6 +141,42 @@ export class ProjectStore {
 
   // ---- Actions --------------------------------------------------------------
 
+  /** Optimistically mark an idle session read or unread. */
+  async setSessionUnread(
+    sessionId: string,
+    unread: boolean,
+  ): Promise<{ ok: true } | { error: string }> {
+    const session = this.getSession(sessionId);
+    if (!session) return { error: "Session not found" };
+    if (session.activityState === "running") {
+      return unread ? { error: "Running sessions cannot be marked unread" } : { ok: true };
+    }
+
+    const previousState = session.activityState;
+    const nextState = unread ? "finished" : null;
+    if (previousState === nextState) return { ok: true };
+    this._sessionCache?.set(sessionId, { activityState: nextState });
+
+    try {
+      const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/activity`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unread }),
+      });
+      if (resp.ok) return { ok: true };
+
+      if (this.activityForSession(sessionId) === nextState) {
+        this._sessionCache?.set(sessionId, { activityState: previousState });
+      }
+      return { error: `HTTP ${resp.status}` };
+    } catch {
+      if (this.activityForSession(sessionId) === nextState) {
+        this._sessionCache?.set(sessionId, { activityState: previousState });
+      }
+      return { error: "Network error" };
+    }
+  }
+
   /**
    * Fetch tasks and sessions for this project in parallel.
    */

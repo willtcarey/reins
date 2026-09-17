@@ -13,7 +13,7 @@ import type { SessionListItem } from "../models/ws-client.js";
 import type { TaskListItem } from "../models/tasks.js";
 import type { ActivityState } from "../models/stores/session-cache.js";
 import { formatRelativeDate } from "../models/format.js";
-import { buildChildMap } from "./delegate-popover.js";
+import { buildDescendantMap } from "./delegate-popover.js";
 import {
   editTaskEvent,
   newTaskSessionEvent,
@@ -48,6 +48,9 @@ export class TaskListItemElement extends LitElement {
 
   @property({ type: Number })
   projectId: number | null = null;
+
+  @property({ attribute: false })
+  onSetSessionUnread: ((sessionId: string, unread: boolean) => Promise<unknown>) | null = null;
 
   private handleExpand() {
     this.dispatchEvent(toggleTaskExpandEvent(this.task.id));
@@ -148,16 +151,17 @@ export class TaskListItemElement extends LitElement {
         ${springCollapse(!isExpanded, () => sessions.length > 0 ? html`
           <div class="mx-2 mt-1 mb-1 rounded-md border border-zinc-800/80 bg-zinc-950/30 overflow-hidden">
             ${(() => {
-              const childMap = buildChildMap(sessions);
+              const descendantMap = buildDescendantMap(sessions);
               const topLevel = sessions.filter(s => !s.parentSessionId);
               return topLevel.map(s => html`
                 <session-list-item
                   .session=${s}
                   .active=${s.id === this.activeSessionId}
                   .activityState=${s.activityState}
-                  .childSessions=${childMap.get(s.id) ?? []}
+                  .childSessions=${descendantMap.get(s.id) ?? []}
                   .activeSessionId=${this.activeSessionId}
                   .projectId=${this.projectId}
+                  .onSetSessionUnread=${this.onSetSessionUnread}
                 ></session-list-item>
               `);
             })()}

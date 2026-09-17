@@ -154,8 +154,7 @@ export function listSessions(options: SessionListOptions): SessionRow[] {
            SELECT COUNT(*)
            FROM session_messages sm
            WHERE sm.session_id = s.id
-             AND json_valid(sm.message_json)
-             AND json_extract(sm.message_json, '$.type') IN ('message', 'compaction')
+             AND sm.role NOT IN ('branch_summary', 'custom')
          ) AS message_count,
          (
            SELECT json_extract(sm.message_json, '$.message.content[0].text')

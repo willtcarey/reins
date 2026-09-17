@@ -25,6 +25,10 @@ const SessionModelBody = Type.Object({
   thinkingLevel: Type.Optional(Type.String()),
 });
 
+const SessionActivityBody = Type.Object({
+  unread: Type.Boolean(),
+});
+
 export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   // List all sessions with non-null activity_state — for initial page-load
   // reconciliation without needing to expand every project first.
@@ -89,18 +93,20 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     return Response.json(data);
   });
 
-  // Mark a session's activity as viewed (finished → null)
+  // Explicitly mark an idle session's completion read or unread.
   router.patch("/:sessionId/activity", async (ctx) => {
     const sessionId = ctx.params.sessionId;
+    const body = await parseBody(SessionActivityBody, ctx.req);
     const broadcast = createBroadcast(ctx.state.clients);
     const sessions = new Sessions(ctx.state.sessions, broadcast);
     try {
-      sessions.markActivityViewed(sessionId);
+      sessions.setUnread(sessionId, body.unread);
     } catch (err) {
       if (err instanceof SessionNotFoundError) {
         return new Response("Session not found", { status: 404 });
       }
-      throw err;
+      const message = err instanceof Error ? err.message : "Failed to update session activity";
+      badRequest(message);
     }
     return Response.json({ ok: true });
   });

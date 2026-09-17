@@ -11,8 +11,6 @@ import {
   type Entry,
   type ExecutionEnv,
   type HarnessEvent,
-  type LaneSnapshot,
-  type WatchHandle,
 } from "@earendil-works/pi-agent-core";
 import type { Database } from "bun:sqlite";
 import type { Message, Models } from "@earendil-works/pi-ai";
@@ -45,14 +43,7 @@ export function createReinsInputMessage(
 
 function assertOk<T>(result: { ok: true; value: T } | { ok: false; error: { name: string; message?: string } }): T {
   if (!result.ok) throw new Error(result.error.message ?? result.error.name);
-  const value = result.value;
-  if (value && typeof value === "object" && "status" in value) {
-    const outcome = value as { status: string; error?: { message?: string } };
-    if (outcome.status !== "completed" && outcome.status !== "suspended") {
-      throw new Error(outcome.error?.message ?? `AgentHarness operation ${outcome.status}`);
-    }
-  }
-  return value;
+  return result.value;
 }
 
 function projectMessage(message: AgentMessage, logicalId?: string): RuntimeMessage {
@@ -98,27 +89,41 @@ function mapHarnessEvent(event: HarnessEvent): AgentRuntimeEvent | undefined {
   }
 }
 
+export interface AgentHarnessPiRuntimeParams {
+  harness: AgentHarnessInstance;
+  lane: AgentLane;
+  metadata?: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
+  sessionId?: string;
+  openOperations?: readonly { lane: string; operationId: string; kind: string; startedAt: number }[];
+  models?: Models;
+  sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null };
+  executionEnv?: ExecutionEnv;
+}
+
 /** Registered Pi runtime backed directly by AgentHarness. */
 export class AgentHarnessPiRuntime implements AgentRuntime {
-  readonly runtimeType = "pi-agent-harness" as const;
+  readonly harness: AgentHarnessInstance;
+  readonly lane: AgentLane;
+  readonly openOperations: readonly { lane: string; operationId: string; kind: string; startedAt: number }[];
+  readonly executionEnv?: ExecutionEnv;
+  private readonly sessionId?: string;
+  private readonly models?: Models;
+  private readonly sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null };
   private readonly activeOperations = new Map<string, PromiseWithResolvers<void>>();
   private readonly pendingSubmissions = new Set<PromiseWithResolvers<void>>();
+  private readonly pendingSteering = new Set<PromiseWithResolvers<void>>();
   private closePromise?: Promise<void>;
   private metadata: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
 
-  constructor(
-    readonly harness: AgentHarnessInstance,
-    readonly lane: AgentLane,
-    metadata: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null } = {},
-    private readonly sessionId?: string,
-    readonly openOperations: readonly { lane: string; operationId: string; kind: string; startedAt: number }[] = [],
-    private readonly models?: Models,
-    private readonly transcriptWatch?: WatchHandle<LaneSnapshot>,
-    private readonly sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null },
-    readonly executionEnv?: ExecutionEnv,
-  ) {
-    this.metadata = metadata;
-    this.transcriptWatch?.start(() => undefined);
+  constructor(params: AgentHarnessPiRuntimeParams) {
+    this.harness = params.harness;
+    this.lane = params.lane;
+    this.metadata = params.metadata ?? {};
+    this.sessionId = params.sessionId;
+    this.openOperations = params.openOperations ?? [];
+    this.models = params.models;
+    this.sessionEnvironment = params.sessionEnvironment;
+    this.executionEnv = params.executionEnv;
   }
 
   static toProviderMessages(messages: AgentMessage[]): Message[] {
@@ -215,23 +220,53 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
   }
 
   async steer(content: ClientPromptContent): Promise<void> {
-    const execution = await this.lane.inspectExecution(BACKGROUND_CONTEXT);
-    if (!execution.current || !this.activeOperations.has(execution.current.id)) {
-      throw new Error("Cannot steer an idle or passively reopened AgentHarness operation");
-    }
     assertOk(await this.lane.steer(createReinsInputMessage(content), undefined, BACKGROUND_CONTEXT));
+    const pending = Promise.withResolvers<void>();
+    this.pendingSteering.add(pending);
+    try {
+      const execution = await this.lane.inspectExecution(BACKGROUND_CONTEXT);
+      if (execution.current && !this.activeOperations.has(execution.current.id)) {
+        this.driveInBackground(execution.current.id);
+      }
+      void this.startQueuedSteeringWhenIdle(pending).catch((error: unknown) => {
+        logger.error("AgentHarness queued steering failed:", error);
+      });
+    } catch (error) {
+      this.pendingSteering.delete(pending);
+      pending.resolve();
+      throw error;
+    }
+  }
+
+  private async startQueuedSteeringWhenIdle(pending: PromiseWithResolvers<void>): Promise<void> {
+    try {
+      for (;;) {
+        await this.lane.waitForIdle(BACKGROUND_CONTEXT);
+        const accepted = await this.lane.accept({ kind: "prompt", prompt: [] }, BACKGROUND_CONTEXT);
+        if (accepted.ok) {
+          this.driveInBackground(accepted.value.operationId);
+          return;
+        }
+        if (accepted.error._tag === "InvalidMessage") return;
+        if (accepted.error._tag !== "LaneBusy") throw accepted.error;
+      }
+    } finally {
+      this.pendingSteering.delete(pending);
+      pending.resolve();
+    }
   }
 
   async waitForIdle(): Promise<void> {
-    while (this.pendingSubmissions.size > 0 || this.activeOperations.size > 0) {
-      await Promise.all([
+    while (true) {
+      const trackedWork = [
         ...[...this.pendingSubmissions.values()].map((submission) => submission.promise),
+        ...[...this.pendingSteering.values()].map((pending) => pending.promise),
         ...[...this.activeOperations.values()].map((completion) => completion.promise),
-      ]);
+      ];
+      if (trackedWork.length > 0) await Promise.all(trackedWork);
       await this.lane.waitForIdle(BACKGROUND_CONTEXT);
+      if (this.pendingSubmissions.size === 0 && this.pendingSteering.size === 0 && this.activeOperations.size === 0) return;
     }
-    await this.lane.waitForIdle(BACKGROUND_CONTEXT);
-    if (this.pendingSubmissions.size > 0 || this.activeOperations.size > 0) return this.waitForIdle();
   }
 
   async abort(): Promise<void> {
@@ -287,17 +322,14 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
   }
 
   async getMessages(): Promise<RuntimeMessage[]> {
-    const temporary = this.transcriptWatch ? undefined : await this.lane.watch(BACKGROUND_CONTEXT);
-    const transcriptWatch = this.transcriptWatch ?? temporary!;
+    const watch = await this.lane.watch(BACKGROUND_CONTEXT);
     try {
-      // The retained watch is not treated as a reducer cache; every read resnapshots asynchronously.
-      const snapshot = await transcriptWatch.resnapshot(BACKGROUND_CONTEXT);
-      return snapshot.transcript.flatMap((entry) => {
+      return watch.snapshot.transcript.flatMap((entry) => {
         const projected = projectEntry(entry);
         return projected ? [projected] : [];
       });
     } finally {
-      temporary?.unsubscribe();
+      watch.unsubscribe();
     }
   }
 
@@ -315,15 +347,20 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
 
   getSessionMetadata() { return this.metadata; }
 
-  isStreaming(): boolean { return this.pendingSubmissions.size > 0 || this.activeOperations.size > 0; }
+  isStreaming(): boolean {
+    return this.pendingSubmissions.size > 0 || this.pendingSteering.size > 0 || this.activeOperations.size > 0;
+  }
 
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closePromise = (async () => {
       await Promise.all([...this.pendingSubmissions].map((submission) => submission.promise));
-      try { await this.abort(); }
+      try {
+        await this.abort();
+        await Promise.all([...this.pendingSteering].map((pending) => pending.promise));
+        await this.abort();
+      }
       finally {
-        this.transcriptWatch?.unsubscribe();
         try { await this.harness.close(BACKGROUND_CONTEXT); }
         finally { await this.executionEnv?.cleanup(BACKGROUND_CONTEXT); }
       }
@@ -371,11 +408,19 @@ export async function createAgentHarnessPiRuntime(
       params.sessionEnvironment.modelId = restoredModel.id;
       params.sessionEnvironment.thinkingLevel = restoredThinking;
     }
-    const transcriptWatch = await lane.watch(BACKGROUND_CONTEXT);
-    return new AgentHarnessPiRuntime(made.harness, lane, {
-      model: restoredModel ? { provider: restoredModel.provider, modelId: restoredModel.id } : null,
-      thinkingLevel: restoredThinking,
-    }, params.sessionId, made.open.filter((operation) => operation.lane === lane.name), params.options.models, transcriptWatch, params.sessionEnvironment, params.executionEnv);
+    return new AgentHarnessPiRuntime({
+      harness: made.harness,
+      lane,
+      metadata: {
+        model: restoredModel ? { provider: restoredModel.provider, modelId: restoredModel.id } : null,
+        thinkingLevel: restoredThinking,
+      },
+      sessionId: params.sessionId,
+      openOperations: made.open.filter((operation) => operation.lane === lane.name),
+      models: params.options.models,
+      sessionEnvironment: params.sessionEnvironment,
+      executionEnv: params.executionEnv,
+    });
   } catch (error) {
     try {
       if (harness) await harness.close(BACKGROUND_CONTEXT).catch(() => undefined);

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createProject } from "../project-store.js";
 import { createSession } from "../session-store.js";
-import { listSessionEntries, loadMessagePage, loadMessages, parseDisplayCursor } from "../messages-store.js";
+import { countMessages, listSessionEntries, loadMessagePage, loadMessages, parseDisplayCursor } from "../messages-store.js";
 import { useTestDb } from "./helpers/test-db.js";
 import { persistCanonicalMessages } from "./helpers/canonical-messages.js";
 
@@ -18,6 +18,7 @@ describe("canonical messages store", () => {
     ]);
 
     expect(loadMessages("session").map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
+    expect(countMessages("session")).toBe(3);
     expect(listSessionEntries("session", { types: ["toolCall"], search: "answer" })).toHaveLength(1);
     expect(loadMessagePage("session", 10).items).toHaveLength(3);
   });

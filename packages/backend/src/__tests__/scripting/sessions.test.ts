@@ -56,6 +56,10 @@ describe("api.sessions orchestration", () => {
           return { messageId };
         };
         stub.runtime.steer = async (content) => {
+          if (!busy) {
+            await stub.runtime.prompt(content);
+            return;
+          }
           messages.push({ role: "user", content: content.filter((block) => block.type === "text"), timestamp: messages.length + 1 });
         };
         stub.runtime.waitForIdle = async () => { await completion; };

@@ -249,6 +249,8 @@ export class ActiveSessionStore {
     try {
       const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/activity`, {
         method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unread: false }),
       });
       if (this._disposed) return;
       if (!resp.ok) {

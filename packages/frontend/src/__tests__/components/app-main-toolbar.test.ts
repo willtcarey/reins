@@ -2,6 +2,12 @@ import { describe, expect, mock, test } from "bun:test";
 import { AppMainToolbar } from "../../components/app-main-toolbar.js";
 import { collectTemplateEventListeners, templateToString } from "../helpers/lit-template.js";
 
+function renderSessionActions(toolbar: AppMainToolbar): string {
+  const render: unknown = Reflect.get(toolbar, "renderSessionActions");
+  if (typeof render !== "function") throw new Error("Expected session action renderer");
+  return templateToString(Reflect.apply(render, toolbar, []));
+}
+
 describe("AppMainToolbar", () => {
   test("places active-session actions at the far right while preserving responsive status", () => {
     const el = new AppMainToolbar();
@@ -20,6 +26,19 @@ describe("AppMainToolbar", () => {
     expect(output).toContain("Disconnected");
     expect(output).toContain("<popover-menu");
     expect(output.indexOf("Disconnected")).toBeLessThan(output.indexOf("<popover-menu"));
+  });
+
+  test("offers read and unread controls for the active idle session", () => {
+    const el = new AppMainToolbar();
+    el.sessionId = "session-123";
+    el.onSetSessionUnread = mock(async () => ({ ok: true }));
+    el.activityState = "finished";
+
+    expect(renderSessionActions(el)).toContain("Mark as read");
+
+    el.activityState = null;
+
+    expect(renderSessionActions(el)).toContain("Mark as unread");
   });
 
   test("emits navigation events from toolbar controls", () => {

@@ -244,6 +244,11 @@ export class AppShell extends LitElement {
         .activePane=${activePane}
         .currentBranch=${store.diffStore.branch}
         .sessionId=${store.sessionId}
+        .activityState=${store.activeSessionStore?.sessionData?.activityState}
+        .onSetSessionUnread=${(unread: boolean) => (
+          store.activeProjectStore?.setSessionUnread(store.sessionId, unread)
+            ?? Promise.resolve({ error: "Project is unavailable" })
+        )}
         .isStandalone=${this.viewport.isStandalone}
         .connected=${store.connected}
         show-sidebar-button
