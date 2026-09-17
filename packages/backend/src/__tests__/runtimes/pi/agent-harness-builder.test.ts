@@ -92,6 +92,59 @@ describe("unselected AgentHarness Pi builder", () => {
     }
   });
 
+  test("reconciles persisted active tools with the tools registered when a session reopens", async () => {
+    await mkdir("/tmp/harness-reopen-tools", { recursive: true });
+    const project = createProject("Reopened tools", "/tmp/harness-reopen-tools");
+    createSession("harness-reopen-tools", project.id, { agentRuntimeType: "pi" });
+    const provider = fauxProvider({
+      provider: "reopen-tools-faux",
+      models: [{ id: "fake", contextWindow: 20_000, maxTokens: 1_000 }],
+    });
+    const requestToolNames: string[][] = [];
+    provider.setResponses([
+      (context) => {
+        requestToolNames.push(context.tools?.map((tool) => tool.name) ?? []);
+        return fauxAssistantMessage("first");
+      },
+      (context) => {
+        requestToolNames.push(context.tools?.map((tool) => tool.name) ?? []);
+        return fauxAssistantMessage("second");
+      },
+    ]);
+    registerPiProvider(provider.provider);
+    setApiKeyCredential("reopen-tools-faux", "fake-key");
+    const customTool = {
+      name: "custom_effect", label: "effect", description: "custom effect", parameters: Type.Object({}), replay: "never" as const,
+      async execute() { return { content: [{ type: "text" as const, text: "ok" }], details: undefined }; },
+    };
+
+    try {
+      const initialRuntime = await buildAgentHarnessPiRuntime({
+        state: createServerState(), projectId: project.id, projectDir: "/tmp/harness-reopen-tools",
+        sessionId: "harness-reopen-tools", task: null,
+        model: { provider: "reopen-tools-faux", modelId: "fake" }, thinkingLevel: "minimal",
+        sessionTools: { builtins: ["read"], harnessTools: [] }, resume: false,
+      });
+      await initialRuntime.prompt([{ type: "text", text: "first" }]);
+      await initialRuntime.waitForIdle();
+      await initialRuntime.close();
+
+      const reopenedRuntime = await buildAgentHarnessPiRuntime({
+        state: createServerState(), projectId: project.id, projectDir: "/tmp/harness-reopen-tools",
+        sessionId: "harness-reopen-tools", task: null,
+        model: { provider: "reopen-tools-faux", modelId: "fake" }, thinkingLevel: "minimal",
+        sessionTools: { builtins: ["read"], harnessTools: [customTool] }, resume: true,
+      });
+      await reopenedRuntime.prompt([{ type: "text", text: "second" }]);
+      await reopenedRuntime.waitForIdle();
+
+      expect(requestToolNames).toEqual([["read"], ["read", "custom_effect"]]);
+      await reopenedRuntime.close();
+    } finally {
+      unregisterPiProvider("reopen-tools-faux");
+    }
+  });
+
   test("bash reads dynamic lane model and thinking environment without a session file", async () => {
     await mkdir("/tmp/harness-bash", { recursive: true });
     const project = createProject("Builder Bash", "/tmp/harness-bash");

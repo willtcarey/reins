@@ -401,6 +401,14 @@ export async function createAgentHarnessPiRuntime(
     }, BACKGROUND_CONTEXT);
     harness = made.harness;
     const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+    const registeredToolNames = params.options.activeToolNames
+      ?? params.options.tools?.map((tool) => tool.name)
+      ?? [];
+    const activeToolNames = await lane.getActiveTools(BACKGROUND_CONTEXT);
+    if (activeToolNames.length !== registeredToolNames.length
+      || activeToolNames.some((name, index) => name !== registeredToolNames[index])) {
+      await lane.setActiveTools(registeredToolNames, BACKGROUND_CONTEXT);
+    }
     const restoredModel = await lane.getModel(BACKGROUND_CONTEXT);
     const restoredThinking = await lane.getThinkingLevel(BACKGROUND_CONTEXT);
     if (params.sessionEnvironment && restoredModel) {

@@ -46,7 +46,7 @@ A runtime adapter must implement `AgentRuntimeAdapter` from `runtimes/registry.t
 - `thinkingLevel` — Reins thinking level (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`) or `null`.
 - `sessionTools`
   - `builtins`: currently `read`, `write`, `edit`, `bash`.
-  - `customTools`: Reins tools (`create_task`, `search`, `execute`). Session orchestration is exposed through `api.sessions` in execute.
+  - `harnessTools`: Reins tools (`create_task`, `search`, `execute`). Session orchestration is exposed through `api.sessions` in execute.
 - `resume`
   - Legacy adapter input retained only by the unregistered Claude implementation.
   - AgentHarness reopens its lane and active branch directly from canonical storage.
@@ -166,7 +166,7 @@ A replacement runtime must expose Reins tools to the model somehow:
 - Built-in coding tools: `read`, `write`, `edit`, `bash`.
 - Custom tools: `create_task`, `search`, `execute`.
 
-The registered AgentHarness Pi runtime uses AgentHarness-native built-ins and Reins application tools directly. Its read/write/edit/bash tools share a cwd-scoped `NodeExecutionEnv`; bash adds live session/model/reasoning environment values in its native prepare hook, and runtime shutdown cleans up the environment. Reins application tools use the native harness execution signature and cancellation context without custom durable checkpoints. The unregistered Claude SDK implementation retains isolated legacy tool conversion for later cleanup or reintegration.
+The registered AgentHarness Pi runtime uses AgentHarness-native built-ins and Reins application tools directly. Its read/write/edit/bash tools share a cwd-scoped `NodeExecutionEnv`; bash adds live session/model/reasoning environment values in its native prepare hook, and runtime shutdown cleans up the environment. Reins application tools use the native harness execution signature and cancellation context without custom durable checkpoints. When a persisted lane reopens, Reins synchronizes its active tool names with the currently registered tool set so long-lived sessions gain newly added application tools and drop removed ones. The unregistered Claude SDK implementation retains isolated legacy tool conversion for later cleanup or reintegration.
 
 If a runtime cannot expose custom tools, task creation/session orchestration/search/execute will not be available to agents running through it.
 
