@@ -6,6 +6,7 @@ Roadmap and open items. Remove items when they're done — don't check them off.
 - *(2026-09-16)* Improve code review range comments — allow selections to span both sides of a diff, send only the selected diff portion as review context instead of the whole file diff, and highlight the prospective selection continuously while dragging.
 - *(2026-02-12)* Better conversation design — [inspiration](https://x.com/benjitaylor/status/2027902450049708385)
 - *(2026-02-12)* Conversation naming — auto-generate a short name/topic for each session. Replaces the current first-message display with a proper name field. May unify `SessionRow` and session list item types since the name would be available directly on the session.
+- *(2026-09-16)* Session organization — allow important sessions to be pinned for persistent prominence and inactive sessions to be archived without deleting their history.
 - *(2026-02-17)* Support non-`origin` remotes in git operations (fetch, branch creation, diff base resolution) — currently hardcoded to `origin`
 - *(2026-02-19)* Stash uncommitted changes on branch switch — when switching between task branches, uncommitted changes carry over and muddy the other branch's working tree. Stash before switching and pop after switching back. The diff view should treat stashed changes as "uncommitted" so they still appear in the UI.
 - *(2026-02-19)* Project dashboard — a landing view for a project with pinned files, new session/new task buttons, and an overview of recent activity
