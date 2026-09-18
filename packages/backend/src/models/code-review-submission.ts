@@ -1,7 +1,7 @@
 import { acceptCodeReviewSubmission } from "../code-review-store.js";
 import { getSession } from "../session-store.js";
 import type { ServerState } from "../state.js";
-import { ensureSessionOpen } from "../runtimes/sessions-manager.js";
+import { ensureSessionOpen } from "../runtimes/session-manager.js";
 import type { Broadcast } from "./broadcast.js";
 import {
   CodeReviewError,

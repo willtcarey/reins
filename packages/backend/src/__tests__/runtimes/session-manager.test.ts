@@ -13,7 +13,7 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import {
   createNewSession,
   ensureSessionOpen,
-} from "../../runtimes/sessions-manager.js";
+} from "../../runtimes/session-manager.js";
 import {
   clearRuntimeAdapters,
   registerRuntimeAdapter,

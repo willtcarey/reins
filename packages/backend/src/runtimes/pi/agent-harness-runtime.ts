@@ -134,14 +134,14 @@ export interface AgentHarnessPiRuntimeParams {
 export class AgentHarnessPiRuntime implements AgentRuntime {
   readonly harness: AgentHarnessInstance;
   readonly lane: AgentLane;
-  readonly openOperations: readonly { lane: string; operationId: string; kind: string; startedAt: number }[];
-  readonly executionEnv?: ExecutionEnv;
+  private readonly openOperations: readonly { lane: string; operationId: string; kind: string; startedAt: number }[];
+  private readonly executionEnv?: ExecutionEnv;
   private readonly sessionId?: string;
   private readonly models?: Models;
   private readonly sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null };
-  private readonly activeOperations = new Map<string, PromiseWithResolvers<void>>();
-  private readonly pendingSubmissions = new Set<PromiseWithResolvers<void>>();
-  private readonly pendingSteering = new Set<PromiseWithResolvers<void>>();
+  private readonly activeOperations = new Map<string, Promise<void>>();
+  private readonly pendingAdmissions = new Set<Promise<void>>();
+  private readonly pendingIdleStarts = new Set<Promise<void>>();
   private closePromise?: Promise<void>;
   private readonly lifecycleDisposers: (() => void)[];
   private metadata: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
@@ -166,12 +166,6 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
         ...(event.status === "failed" ? { error: event.error } : {}),
       })),
     ] : [];
-  }
-
-  static toProviderMessages(messages: AgentMessage[]): Message[] {
-    return messages.flatMap((message) => message.role === "reinsInput"
-      ? convertToLlm([providerInput(message, message.content) as never])
-      : convertToLlm([message]));
   }
 
   static toProviderMessagesForSession(sessionId: string, messages: AgentMessage[]): Message[] {
@@ -200,9 +194,7 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
       return { messageId: existing.id };
     }
 
-    const submission = Promise.withResolvers<void>();
-    this.pendingSubmissions.add(submission);
-    try {
+    return this.trackAdmission(async () => {
       const reopened = this.openOperations.find((operation) => operation.lane === this.lane.name);
       if (reopened && !this.activeOperations.has(reopened.operationId)) {
         const execution = await this.lane.inspectExecution(BACKGROUND_CONTEXT);
@@ -218,25 +210,28 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
       if (!entry) throw new Error(`AgentHarness accepted prompt ${message.reinsId} without a durable entry`);
       this.driveInBackground(accepted.operationId);
       return { messageId: entry.id };
+    });
+  }
+
+  private async trackAdmission<T>(admit: () => Promise<T>): Promise<T> {
+    const admission = admit();
+    const settled = admission.then(() => undefined, () => undefined);
+    this.pendingAdmissions.add(settled);
+    try {
+      return await admission;
     } finally {
-      this.pendingSubmissions.delete(submission);
-      submission.resolve();
+      this.pendingAdmissions.delete(settled);
     }
   }
 
-  async promptMessage(message: ReinsInputMessage): Promise<RuntimePromptSubmission> {
-    return this.prompt(message.content, {
-      reinsId: message.reinsId,
-      metadata: message.metadata,
-      timestamp: message.timestamp,
-    });
-  }
-
   private driveInBackground(operationId: string): void {
-    void this.driveOperationToCompletion(operationId).catch((error: unknown) => {
+    const operation = this.driveOperationToCompletion(operationId);
+    const settled = operation.catch((error: unknown) => {
       if (error instanceof Error && error.name === "AbortError") return;
       logger.error(`AgentHarness prompt operation ${operationId} failed:`, error);
     });
+    this.activeOperations.set(operationId, settled);
+    void settled.finally(() => this.activeOperations.delete(operationId));
   }
 
   async resumePendingOperation(): Promise<void> {
@@ -250,33 +245,18 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     this.driveInBackground(reopened.operationId);
   }
 
-  /** Resume one returned open operation explicitly; construction does not execute open operations. */
-  async resumeOpenOperation(operationId: string): Promise<void> {
-    if (!this.openOperations.some((operation) => operation.lane === this.lane.name && operation.operationId === operationId)) {
-      throw new Error(`Operation was not reopened on lane '${this.lane.name}': ${operationId}`);
-    }
-    await this.driveOperationToCompletion(operationId);
-  }
-
   private async driveOperationToCompletion(operationId: string): Promise<void> {
     if (this.activeOperations.has(operationId)) {
       throw new Error(`AgentHarness operation is already being driven: ${operationId}`);
     }
-    const completion = Promise.withResolvers<void>();
-    this.activeOperations.set(operationId, completion);
-    try {
-      let result = assertOk(await this.lane.drive({ operationId, waitForRetry: true, pollDeferred: true }, BACKGROUND_CONTEXT));
-      while (result.kind === "waiting") {
-        result = assertOk(await this.lane.drive({ operationId, waitForRetry: true, pollDeferred: true }, BACKGROUND_CONTEXT));
-      }
-      if (result.outcome.status !== "completed") {
-        const error = new Error(result.outcome.error?.message ?? `AgentHarness operation ${result.outcome.status}`);
-        if (result.outcome.status === "aborted") error.name = "AbortError";
-        throw error;
-      }
-    } finally {
-      this.activeOperations.delete(operationId);
-      completion.resolve();
+    let result = assertOk(await this.lane.drive({ operationId, waitForRetry: true, pollDeferred: true }, BACKGROUND_CONTEXT));
+    while (result.kind === "waiting") {
+      result = assertOk(await this.lane.drive({ operationId, waitForRetry: true, pollDeferred: true }, BACKGROUND_CONTEXT));
+    }
+    if (result.outcome.status !== "completed") {
+      const error = new Error(result.outcome.error?.message ?? `AgentHarness operation ${result.outcome.status}`);
+      if (result.outcome.status === "aborted") error.name = "AbortError";
+      throw error;
     }
   }
 
@@ -289,28 +269,20 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     ));
   }
 
-  private async enqueueSteering(message: ReinsInputMessage): Promise<string> {
-    const queued = assertOk(await this.lane.steer(message, undefined, BACKGROUND_CONTEXT));
-    const pending = Promise.withResolvers<void>();
-    this.pendingSteering.add(pending);
-    try {
+  private enqueueSteering(message: ReinsInputMessage): Promise<string> {
+    return this.trackAdmission(async () => {
+      const queued = assertOk(await this.lane.steer(message, undefined, BACKGROUND_CONTEXT));
       const execution = await this.lane.inspectExecution(BACKGROUND_CONTEXT);
       if (execution.current && !this.activeOperations.has(execution.current.id)) {
         this.driveInBackground(execution.current.id);
       }
-      void this.startQueuedSteeringWhenIdle(pending).catch((error: unknown) => {
-        logger.error("AgentHarness queued steering failed:", error);
-      });
+      this.startQueuedSteeringWhenIdle();
       return queued.entryId;
-    } catch (error) {
-      this.pendingSteering.delete(pending);
-      pending.resolve();
-      throw error;
-    }
+    });
   }
 
-  private async startQueuedSteeringWhenIdle(pending: PromiseWithResolvers<void>): Promise<void> {
-    try {
+  private startQueuedSteeringWhenIdle(): void {
+    const start = (async () => {
       for (;;) {
         await this.lane.waitForIdle(BACKGROUND_CONTEXT);
         const accepted = await this.lane.accept({ kind: "prompt", prompt: [] }, BACKGROUND_CONTEXT);
@@ -321,22 +293,24 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
         if (accepted.error._tag === "InvalidMessage") return;
         if (accepted.error._tag !== "LaneBusy") throw accepted.error;
       }
-    } finally {
-      this.pendingSteering.delete(pending);
-      pending.resolve();
-    }
+    })();
+    const settled = start.catch((error: unknown) => {
+      logger.error("AgentHarness queued steering failed:", error);
+    });
+    this.pendingIdleStarts.add(settled);
+    void settled.finally(() => this.pendingIdleStarts.delete(settled));
   }
 
   async waitForIdle(): Promise<void> {
     while (true) {
       const trackedWork = [
-        ...[...this.pendingSubmissions.values()].map((submission) => submission.promise),
-        ...[...this.pendingSteering.values()].map((pending) => pending.promise),
-        ...[...this.activeOperations.values()].map((completion) => completion.promise),
+        ...this.pendingAdmissions,
+        ...this.pendingIdleStarts,
+        ...this.activeOperations.values(),
       ];
       if (trackedWork.length > 0) await Promise.all(trackedWork);
       await this.lane.waitForIdle(BACKGROUND_CONTEXT);
-      if (this.pendingSubmissions.size === 0 && this.pendingSteering.size === 0 && this.activeOperations.size === 0) return;
+      if (this.pendingAdmissions.size === 0 && this.pendingIdleStarts.size === 0 && this.activeOperations.size === 0) return;
     }
   }
 
@@ -419,16 +393,16 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
   getSessionMetadata() { return this.metadata; }
 
   isStreaming(): boolean {
-    return this.pendingSubmissions.size > 0 || this.pendingSteering.size > 0 || this.activeOperations.size > 0;
+    return this.pendingAdmissions.size > 0 || this.pendingIdleStarts.size > 0 || this.activeOperations.size > 0;
   }
 
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closePromise = (async () => {
-      await Promise.all([...this.pendingSubmissions].map((submission) => submission.promise));
+      await Promise.all(this.pendingAdmissions);
       try {
         await this.abort();
-        await Promise.all([...this.pendingSteering].map((pending) => pending.promise));
+        await Promise.all(this.pendingIdleStarts);
         await this.abort();
       }
       finally {

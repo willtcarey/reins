@@ -3,7 +3,7 @@
 import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { createTaskTool } from "./create-task.js";
-import type { CreateSessionFn } from "../runtimes/sessions-manager.js";
+import type { SessionInstance } from "../runtimes/session-instance.js";
 import { createSearchTool } from "./search.js";
 import { createExecuteTool } from "./execute.js";
 import type { ReinsApplicationTool } from "./types.js";
@@ -14,8 +14,7 @@ export interface CustomToolsOpts {
   taskId: number | null;
   broadcast: Broadcast;
   sessions: Map<string, ManagedSession>;
-  createSession: CreateSessionFn;
-  openSession: (sessionId: string) => Promise<ManagedSession>;
+  instance: SessionInstance;
 }
 
 export function createCustomTools(opts: CustomToolsOpts): ReinsApplicationTool[] {
@@ -24,7 +23,7 @@ export function createCustomTools(opts: CustomToolsOpts): ReinsApplicationTool[]
       projectId: opts.projectId,
       broadcast: opts.broadcast,
       sessions: opts.sessions,
-      createSession: opts.createSession,
+      instance: opts.instance,
     }),
     createSearchTool(),
     createExecuteTool({
@@ -33,8 +32,7 @@ export function createCustomTools(opts: CustomToolsOpts): ReinsApplicationTool[]
       taskId: opts.taskId,
       broadcast: opts.broadcast,
       sessions: opts.sessions,
-      createSession: opts.createSession,
-      openSession: opts.openSession,
+      instance: opts.instance,
     }),
   ];
 }

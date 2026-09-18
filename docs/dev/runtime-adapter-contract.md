@@ -9,7 +9,7 @@ Runtime adapters are registered with `registerRuntimeAdapter()` and selected by 
 
 The orchestration path is:
 
-1. `runtimes/sessions-manager.ts` creates or reopens a Reins session.
+1. `runtimes/session-manager.ts` creates or reopens a Reins session.
 2. `createAgentRuntime(runtimeType, ...)` finds the adapter.
 3. The adapter builds an `AgentRuntime` for the project/session/task.
 4. Rich runtime events are broadcast to the frontend; the runtime reports native operation transitions to its injected lifecycle sink.
@@ -194,11 +194,11 @@ Sessions share the existing checkout. No project-wide lock is held across execut
 
 ### Child settlement reports
 
-The injected `SessionRuntimeLifecycle` receives `settled()` from the runtime, persists metadata and finished activity first, then asynchronously reads the child's latest output and reports it to the parent. The report uses the authoritative lifecycle outcome rather than inferring status/error from the transcript. It calls `SessionMessages.send` for the parent after checking the same project/task scope. Reports carry clean result or error text and `metadata.sourceSessionId`; provider projection supplies the explicit session-update/not-user-authorization boundary without polluting stored or UI content.
+The caller-scoped `SessionInstance` is injected as the runtime lifecycle sink. Its `settled()` method persists metadata and finished activity first, then asynchronously reads the child's latest output and reports it to the parent. The report uses the authoritative lifecycle outcome rather than inferring status/error from the transcript. Reports carry clean result or error text and `metadata.sourceSessionId`; provider projection supplies the explicit session-update/not-user-authorization boundary without polluting stored or UI content.
 
-`models/session-messages.ts` owns addressed delivery: opening the target, native steering submission, activity touch and broadcast. The scoped functions in `models/session-operations.ts` and the parent reporter share this module; a future HTTP caller can use it without duplicating delivery logic. Authorization belongs to callers. No HTTP route is added.
+`SessionManager` owns creation, reopening, and live runtime materialization; `SessionManager.forSession()` returns the instance used by scripting and lifecycle callbacks. `runtimes/session-instance.ts` owns caller-scoped start/send/wait policy and addressed delivery: native prompt or steering submission, activity touch, and broadcast. No creation/open adapter or callback plumbing sits between the two. No HTTP route is added.
 
-There is no prompt-promise wrapper, Reins inbox, dispatcher, or receipt layer. Reports enter the parent's native AgentHarness steering inbox, which handles active versus idle delivery. Delivery errors are logged by `SessionRuntimeLifecycle` and are not retried; they do not affect lifecycle updates. Reopening alone emits no settlement and produces no report; follow-up settlement reports again. Only outcomes represented by the active branch at settlement are reported; startup failures without a settlement event do not produce a report. Pending callbacks are not recovered after restart.
+There is no Reins inbox, dispatcher, or receipt layer. Reports enter the parent's native AgentHarness steering inbox, which handles active versus idle delivery. Delivery errors are logged by `SessionInstance` and are not retried; they do not affect lifecycle updates. Reopening alone emits no settlement and produces no report; follow-up settlement reports again. Only outcomes represented by the active branch at settlement are reported; startup failures without a settlement event do not produce a report. Pending callbacks are not recovered after restart.
 
 ## Resume and persistence expectations
 

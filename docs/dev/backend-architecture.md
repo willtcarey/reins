@@ -18,7 +18,7 @@ Thin HTTP adapters. Parse requests, call model functions, format responses. Erro
 
 ### Tools (`src/tools/`)
 
-Application tools are native `AgentHarnessTool` definitions. Each tool file exports a factory using the harness execution signature, including the harness `Context`; `execute` forwards `context.abortSignal` into the scripting API. Session materialization (`runtimes/sessions-manager.ts`) resolves these tools once per session. A separate legacy projection exists only to keep the dormant Claude SDK implementation compiling and is not used by the registered runtime.
+Application tools are native `AgentHarnessTool` definitions. Each tool file exports a factory using the harness execution signature, including the harness `Context`; `execute` forwards `context.abortSignal` into the scripting API. Session materialization (`runtimes/session-manager.ts`) resolves these tools once per session. A separate legacy projection exists only to keep the dormant Claude SDK implementation compiling and is not used by the registered runtime.
 
 Tool factories receive stable references (server state, session ID) at factory time and look up project context from the DB at execution time.
 
@@ -28,7 +28,7 @@ Tool factories receive stable references (server state, session ID) at factory t
 - **`search`** — discovers the curated `execute` API surface by returning documentation-only TypeScript interfaces from `src/scripting/api-registry.ts`.
 - **`execute`** — runs an async JavaScript function body in a VM with only the curated `api` object in scope. Scripting functions live under `src/scripting/`; session-analysis helpers should extend `api.sessions` rather than introducing a separate analytics namespace. Keep `src/scripting/*` as execute/search glue: TypeBox schemas, descriptions/tags, project/task access checks, and delegation to stores/models. DB-backed filtering/extraction logic (for example session entry/message/tool-call extraction) belongs in `src/*-store.ts` so scripting is not the source of truth.
 
-Session orchestration is exposed as `api.sessions.start/send/wait` through search/execute, not specialized delegation tools. Focused functions in `models/session-operations.ts` own scope policy, explicit parent choices, and bounded observation; adapters own execution and native steering. Addressed sends always enter through native steering so AgentHarness atomically joins active work or starts/resumes idle work without consulting a potentially stale streaming flag; there is no Reins-managed follow-up queue. Addressed delivery lives in `models/session-messages.ts`: its `send(sessionId, message)` opens the recipient, submits steering, and broadcasts. The scripting facade supplies caller scope to the model functions. The AgentHarness runtime consumes native lifecycle events internally and invokes an injected `SessionRuntimeLifecycle`, which uses the same messaging module after synchronously persisting terminal metadata and activity. Creation/open capabilities and the tool abort signal are injected into execute context. Wait cancellation never invokes the target runtime's abort. See [runtime-adapter-contract.md](runtime-adapter-contract.md#asynchronous-session-orchestration).
+Session orchestration is exposed as `api.sessions.start/send/wait` through search/execute, not specialized delegation tools. `runtimes/session-manager.ts` owns process-wide creation, reopening, and live runtime materialization. `SessionManager.forSession()` returns a caller-scoped `SessionInstance` from `runtimes/session-instance.ts`; that instance owns scope and child-depth policy, addressed prompt or steering admission, bounded waits, lifecycle persistence, and child settlement reports. Addressed sends always enter through native steering so AgentHarness joins active work or starts/resumes idle work without consulting a potentially stale streaming flag; there is no Reins-managed follow-up queue. The scripting facade and runtime lifecycle sink use the same instance. The tool abort signal is passed only to bounded observation; cancelling a wait never invokes the target runtime's abort. See [runtime-adapter-contract.md](runtime-adapter-contract.md#asynchronous-session-orchestration).
 
 ### WebSocket handlers (`src/ws.ts`)
 
@@ -60,7 +60,7 @@ Stateless helpers that don't depend on other layers.
 
 Agent execution is routed through a runtime abstraction:
 
-- `runtimes/sessions-manager.ts` — runtime-agnostic session open/create orchestration
+- `runtimes/session-manager.ts` — runtime-agnostic session open/create orchestration
 - `runtimes/registry.ts` — runtime contracts (`AgentRuntime`, `AgentRuntimeAdapter`) and adapter registration/lookup
 - `runtimes/pi/` — the registered AgentHarness Pi adapter, canonical SQLite storage adapter, provider integration, and ephemeral utility calls
 

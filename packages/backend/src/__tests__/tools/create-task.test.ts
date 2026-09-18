@@ -99,7 +99,7 @@ describe("createTaskTool", () => {
       expect(taskData.branch_name).toBe("task/my-custom-branch");
     });
 
-    test("includes _note when prompt provided but no createSession", async () => {
+    test("includes _note when prompt provided but session orchestration is unavailable", async () => {
       const tool = createTaskTool({ projectId, broadcast, sessions });
 
       const result = await executeTool(tool, "call-3", {
@@ -110,6 +110,32 @@ describe("createTaskTool", () => {
 
       const taskData = JSON.parse(textOf(result.content[0]));
       expect(taskData._note).toContain("not available");
+    });
+
+    test("starts an initial task session through the session instance", async () => {
+      const started: { taskId: number; prompt: string }[] = [];
+      const tool = createTaskTool({
+        projectId,
+        broadcast,
+        sessions,
+        instance: {
+          async startTaskSession(taskId, prompt) {
+            started.push({ taskId, prompt });
+            return { sessionId: "started-session" };
+          },
+        },
+      });
+
+      const result = await executeTool(tool, "call-4", {
+        title: "With session",
+        description: "Start work immediately",
+        prompt: "Implement it",
+      });
+      await Bun.sleep(0);
+
+      const taskData = JSON.parse(textOf(result.content[0]));
+      expect(started).toEqual([{ taskId: taskData.id, prompt: "Implement it" }]);
+      expect(taskData._note).toContain("started in background");
     });
   });
 

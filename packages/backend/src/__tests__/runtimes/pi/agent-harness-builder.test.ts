@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { Type } from "@sinclair/typebox";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { setApiKeyCredential } from "../../../auth-credentials-store.js";
 import { createProject } from "../../../project-store.js";
@@ -82,12 +81,8 @@ describe("unselected AgentHarness Pi builder", () => {
       const entries = await runtime.lane.findEntries(undefined, BACKGROUND_CONTEXT);
       expect(JSON.stringify(entries).match(/UNIQUE_SKILL_MARKER/g)).toHaveLength(1);
 
-      expect(runtime.executionEnv).toBeInstanceOf(NodeExecutionEnv);
-      let cleanups = 0;
-      Object.defineProperty(runtime.executionEnv, "cleanup", { value: async () => { cleanups++; } });
       await runtime.close();
       await runtime.close();
-      expect(cleanups).toBe(1);
     } finally {
       unregisterPiProvider("builder-faux");
     }

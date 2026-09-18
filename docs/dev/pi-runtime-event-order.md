@@ -45,7 +45,7 @@ Retries and deferred polling likewise complete before the single terminal `agent
 
 ## Reins consumers
 
-- `AgentHarnessPiRuntime` owns native lifecycle listeners and invokes `SessionRuntimeLifecycle`; that sink persists activity and final metadata before scheduling any parent report.
+- `AgentHarnessPiRuntime` owns native lifecycle listeners and invokes its caller-scoped `SessionInstance`; that sink persists activity and final metadata before scheduling any parent report.
 - The frontend promotes final run-local messages and displays authoritative terminal errors from `agent_end`.
 - Canonical transcript persistence is independent of these events because AgentHarness commits entries directly through `PiStorageAdapter`.
 - Live session waits read the latest durable AgentHarness operation result through the lane API rather than retaining a second adapter-local outcome.

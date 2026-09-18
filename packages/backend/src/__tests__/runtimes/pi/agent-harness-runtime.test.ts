@@ -15,7 +15,7 @@ describe("AgentHarnessPiRuntime", () => {
 
   test("frames sourced input for the provider while retaining clean application content", () => {
     const thinking = fauxAssistantMessage([{ type: "thinking", thinking: "native", thinkingSignature: "signature" }]);
-    const projected = AgentHarnessPiRuntime.toProviderMessages([
+    const projected = AgentHarnessPiRuntime.toProviderMessagesForSession("unused", [
       createReinsInputMessage([{ type: "text", text: "clean update" }], "reins-only-id", { sourceSessionId: "child-1" }, 10),
       thinking,
     ]);
@@ -56,11 +56,14 @@ describe("AgentHarnessPiRuntime", () => {
     });
 
     const runtime = await open();
-    expect(runtime.openOperations).toEqual([]);
     const events: string[] = [];
     runtime.subscribe((event) => events.push(event.type));
     const input = createReinsInputMessage([{ type: "text", text: "hello" }], "input-1", { source: "test" }, 10);
-    await runtime.promptMessage(input);
+    await runtime.prompt(input.content, {
+      reinsId: input.reinsId,
+      metadata: input.metadata,
+      timestamp: input.timestamp,
+    });
     await runtime.waitForIdle();
     expect(events).toContain("agent_start");
     expect(events).toContain("message_update");
@@ -84,7 +87,6 @@ describe("AgentHarnessPiRuntime", () => {
     await runtime.close();
 
     const reopenedRuntime = await open();
-    expect(reopenedRuntime.openOperations).toEqual([]);
     expect(await reopenedRuntime.getLastRunOutcome()).toMatchObject({
       runId: expect.any(String), status: "completed",
     });
@@ -259,7 +261,11 @@ describe("AgentHarnessPiRuntime", () => {
     const events: string[] = [];
     runtime.subscribe((event) => events.push(event.type));
 
-    await runtime.promptMessage(createReinsInputMessage([{ type: "text", text: "retry" }], "retry-input", { exact: true }, 5));
+    await runtime.prompt([{ type: "text", text: "retry" }], {
+      reinsId: "retry-input",
+      metadata: { exact: true },
+      timestamp: 5,
+    });
     await runtime.waitForIdle();
 
     expect(provider.state.callCount).toBe(2);
@@ -479,9 +485,8 @@ describe("AgentHarnessPiRuntime", () => {
       db: getDb(), sessionId: "effect-recovery", createdAt: 1, cwd: "/tmp/effect-recovery",
       options: { models, model: provider.getModel(), tools: [replacementTool], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
     });
-    expect(reopened.openOperations).toHaveLength(1);
-
-    await reopened.resumeOpenOperation(reopened.openOperations[0]!.operationId);
+    await reopened.resumePendingOperation();
+    await reopened.waitForIdle();
 
     expect(sideEffects).toBe(1);
     expect((await reopened.getMessages()).some((message) => message.role === "toolResult" && message.isError && JSON.stringify(message.content).includes("interrupted"))).toBe(true);
@@ -557,6 +562,41 @@ describe("AgentHarnessPiRuntime", () => {
     expect(runtime.isStreaming()).toBe(false);
   });
 
+  test("wait includes steering while native admission is still pending", async () => {
+    const project = createProject("Steering Gate", "/tmp/steering-gate");
+    createSession("steering-gate", project.id, { agentRuntimeType: "pi" });
+    const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+    provider.setResponses([fauxAssistantMessage("handled")]);
+    const models = createModels();
+    models.setProvider(provider.provider);
+    const runtime = await createAgentHarnessPiRuntime({
+      db: getDb(), sessionId: "steering-gate", createdAt: 1, cwd: "/tmp/steering-gate",
+      options: { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
+    });
+    const nativeSteer = runtime.lane.steer.bind(runtime.lane);
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    Object.defineProperty(runtime.lane, "steer", { value: async (...args: Parameters<typeof nativeSteer>) => {
+      entered.resolve();
+      await release.promise;
+      return nativeSteer(...args);
+    } });
+
+    const steering = runtime.steer([{ type: "text", text: "gated" }]);
+    await entered.promise;
+    let waited = false;
+    const waiting = runtime.waitForIdle().then(() => { waited = true; });
+    await Promise.resolve();
+    expect(waited).toBe(false);
+    expect(runtime.isStreaming()).toBe(true);
+
+    release.resolve();
+    await steering;
+    await waiting;
+    expect((await runtime.getMessages()).at(-1)).toMatchObject({ role: "assistant" });
+    await runtime.close();
+  });
+
   test("nonterminal drive rejection emits no terminal event or stale outcome", async () => {
     const project = createProject("Drive Failure", "/tmp/drive-failure");
     createSession("drive-failure", project.id, { agentRuntimeType: "pi" });
@@ -599,12 +639,10 @@ describe("AgentHarnessPiRuntime", () => {
     });
     const acceptResult = await originalRuntime.lane.accept({ kind: "prompt", prompt: createReinsInputMessage([{ type: "text", text: "recover me" }]) }, BACKGROUND_CONTEXT);
     if (!acceptResult.ok) throw acceptResult.error;
-    const accepted = acceptResult.value;
 
     const reopened = await createAgentHarnessPiRuntime({
       db: getDb(), sessionId: "recovery-harness", createdAt: 1, cwd: "/tmp/recovery-harness", options,
     });
-    expect(reopened.openOperations.map((operation) => operation.operationId)).toEqual([accepted.operationId]);
     expect(reopened.isStreaming()).toBe(false);
     expect(provider.state.callCount).toBe(0);
     let completions = 0;

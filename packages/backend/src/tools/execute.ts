@@ -21,7 +21,7 @@ import { Type } from "@sinclair/typebox";
 import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
-import type { CreateSessionFn } from "../runtimes/sessions-manager.js";
+import type { SessionInstance } from "../runtimes/session-instance.js";
 import { buildApiObject } from "../scripting/api-registry.js";
 import type { ReinsToolContext } from "./types.js";
 
@@ -35,8 +35,7 @@ export interface ExecuteToolOpts {
   taskId: number | null;
   broadcast: Broadcast;
   sessions: Map<string, ManagedSession>;
-  createSession?: CreateSessionFn;
-  openSession?: (sessionId: string) => Promise<ManagedSession>;
+  instance?: SessionInstance;
 }
 
 // ---------------------------------------------------------------------------
@@ -84,8 +83,7 @@ export function createExecuteTool(opts: ExecuteToolOpts): AgentHarnessTool<Reins
           taskId: opts.taskId,
           broadcast: opts.broadcast,
           sessions: opts.sessions,
-          createSession: opts.createSession,
-          openSession: opts.openSession,
+          instance: opts.instance,
           signal: context.abortSignal,
         });
 

@@ -36,7 +36,7 @@ Consumers should use terminal `status` and `error` instead of inferring an outco
 
 Canonical AgentHarness transcript entries are committed directly through `PiStorageAdapter`; runtime events do not trigger transcript snapshot writes.
 
-The injected `SessionRuntimeLifecycle` applies settlement effects in order:
+The injected caller-scoped `SessionInstance` applies settlement effects in order:
 
 1. persist final model/thinking metadata;
 2. set `activity_state = 'finished'` and broadcast the session update;

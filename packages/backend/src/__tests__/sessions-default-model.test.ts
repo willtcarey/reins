@@ -5,7 +5,7 @@ import { createServerState } from "./helpers/server-state.js";
 import { createProject } from "../project-store.js";
 import { createSession, getSession } from "../session-store.js";
 import { setSetting, deleteSetting } from "../settings-store.js";
-import { createNewSession, ensureSessionOpen } from "../runtimes/sessions-manager.js";
+import { createNewSession, ensureSessionOpen } from "../runtimes/session-manager.js";
 import { resolveModelSetting, resolveUtilityModel } from "../models/model-settings.js";
 
 describe("resolveModelSetting(default_model)", () => {

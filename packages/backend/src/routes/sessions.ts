@@ -14,7 +14,7 @@ import { SessionNotFoundError, Sessions } from "../models/sessions.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { parseDisplayCursor } from "../messages-store.js";
 import { parseBody } from "./validate.js";
-import { ensureSessionOpen } from "../runtimes/sessions-manager.js";
+import { ensureSessionOpen } from "../runtimes/session-manager.js";
 
 const DEFAULT_MESSAGE_PAGE_LIMIT = 50;
 const MAX_MESSAGE_PAGE_LIMIT = 200;

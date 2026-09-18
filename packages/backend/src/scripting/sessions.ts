@@ -4,12 +4,7 @@
 
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import {
-  sendSessionMessage,
-  startSession,
-  waitForSession,
-  type SessionOperationContext,
-} from "../models/session-operations.js";
+import type { SessionInstance } from "../runtimes/session-instance.js";
 import {
   getSession,
   listSessions,
@@ -245,14 +240,9 @@ export const SessionWaitResultSchema = Type.Object({
   error: Type.Union([Type.String(), Type.Null()]),
 });
 
-function sessionOperations(ctx: ApiContext): SessionOperationContext {
-  return {
-    callerId: ctx.sessionId,
-    sessions: ctx.sessions,
-    broadcast: ctx.broadcast,
-    createSession: ctx.createSession,
-    openSession: ctx.openSession,
-  };
+function sessionInstance(ctx: ApiContext): SessionInstance {
+  if (!ctx.instance) throw new Error("Session operations are unavailable");
+  return ctx.instance;
 }
 
 const sessionsStartFunction = defineFunction({
@@ -268,7 +258,7 @@ const sessionsStartFunction = defineFunction({
   execute: async (params, ctx) => {
     if (!Value.Check(StartParameters, params)) throw new Error("Invalid session start parameters; options.parentSessionId must be current or null");
     if (ctx.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    return startSession(sessionOperations(ctx), params.prompt, params.options);
+    return sessionInstance(ctx).start(params.prompt, params.options);
   },
 });
 const sessionsSendFunction = defineFunction({
@@ -284,14 +274,14 @@ const sessionsSendFunction = defineFunction({
   execute: async (params, ctx) => {
     if (!Value.Check(SendParameters, params)) throw new Error("Invalid send parameters; sessionId and message must be non-empty strings");
     if (ctx.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    return sendSessionMessage(sessionOperations(ctx), params.sessionId, params.message);
+    return sessionInstance(ctx).send(params.sessionId, params.message);
   },
 });
 const sessionsWaitFunction = defineFunction({
   name: "sessions.wait",
   description: "Observe native idleness for a session in the caller's project/task, including native steering and compaction, then return its latest response/outcome. " +
     "timeoutMs defaults to 10000, maximum 30000; 0 checks immediately. Timeout or cancelling this script never cancels the target. " +
-    "Already-settled sessions return immediately. Pi uses native idleness, which may report idle during startup; an immediate wait can return before work begins. " +
+    "Already-settled sessions return immediately. Runtime admission and idle-start handoff remain visible to concurrent waits. " +
     "Pi returns the latest transcript outcome, not a retained prompt failure. Closed sessions read persisted history; transient execution failures are not recovered after restart. Children automatically report to their parent when new work settles, so explicit waiting is optional. Cannot wait for yourself.",
   parameters: WaitParameters,
   returns: SessionWaitResultSchema,
@@ -299,7 +289,7 @@ const sessionsWaitFunction = defineFunction({
   tags: ["sessions", "wait", "settled", "result", "async", "timeout"],
   execute: async (params, ctx) => {
     if (!Value.Check(WaitParameters, params)) throw new Error("Invalid wait parameters; timeoutMs must be between 0 and 30000");
-    return waitForSession(sessionOperations(ctx), params.sessionId, params.timeoutMs, ctx.signal);
+    return sessionInstance(ctx).wait(params.sessionId, params.timeoutMs, ctx.signal);
   },
 });
 

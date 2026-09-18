@@ -7,7 +7,7 @@ import { createProject } from "../../project-store.js";
 import { createTask } from "../../task-store.js";
 import { createSession, getSession, listSessions, updateActivityState } from "../../session-store.js";
 import { loadMessages, type RuntimeMessage } from "../../messages-store.js";
-import { createNewSession, ensureSessionOpen } from "../../runtimes/sessions-manager.js";
+import { SessionManager } from "../../runtimes/session-manager.js";
 import { registerRuntimeAdapter } from "../../runtimes/registry.js";
 import { buildApiObject, searchFunctions, referencedTypes } from "../../scripting/api-registry.js";
 import { createExecuteTool } from "../../tools/execute.js";
@@ -19,6 +19,7 @@ import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { executeTool } from "../helpers/execute-tool.js";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
+const noopBroadcast = () => {};
 
 describe("api.sessions orchestration", () => {
   useTestDb();
@@ -67,12 +68,18 @@ describe("api.sessions orchestration", () => {
         return stub.runtime;
       },
     });
-    const lifecycle = {
-      createSession: (projectId: number, projectDir: string, options?: Parameters<typeof createNewSession>[3]) => createNewSession(state, projectId, projectDir, options),
-      openSession: (sessionId: string) => ensureSessionOpen(state, sessionId),
+    const broadcast = noopBroadcast;
+    const manager = new SessionManager(state);
+    const instanceFor = (sessionId: string) => manager.forSession(sessionId);
+    const context = {
+      projectId: project.id,
+      sessionId: "parent",
+      taskId: null,
+      sessions: state.sessions,
+      broadcast,
+      instance: instanceFor("parent"),
     };
-    const context = { projectId: project.id, sessionId: "parent", taskId: null, sessions: state.sessions, broadcast: () => {}, ...lifecycle };
-    return { state, project, turns, context, api: buildApiObject(context), get created() { return created; } };
+    return { state, project, turns, context, instanceFor, api: buildApiObject(context), get created() { return created; } };
   }
 
   test("discovers unread activity and returns persisted status without marking sessions read", async () => {
@@ -165,12 +172,18 @@ describe("api.sessions orchestration", () => {
   });
 
   test("inherits task scope and enforces child depth while independent sessions have no parent", async () => {
-    const { project, context, turns } = setup();
+    const { project, context, instanceFor, turns } = setup();
     await Bun.spawn(["git", "branch", "task/orchestration"], { cwd: repo.dir }).exited;
     const task = createTask(project.id, "Orchestration", null, "task/orchestration");
     createSession("task-parent", project.id, { agentRuntimeType: "pi", taskId: task.id });
     context.sessions.set("task-parent", { id: "task-parent", runtime: createRuntimeStub({ isStreaming: true }).runtime, lastActivity: Date.now() });
-    const api = buildApiObject({ ...context, sessionId: "task-parent", taskId: task.id });
+    const taskContext = {
+      ...context,
+      sessionId: "task-parent",
+      taskId: task.id,
+      instance: instanceFor("task-parent"),
+    };
+    const api = buildApiObject(taskContext);
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Task work", { parentSessionId: "current" }));
     expect(getSession(child.sessionId)).toMatchObject({ task_id: task.id, parent_session_id: "task-parent" });
     turns[0].finish();
@@ -178,7 +191,11 @@ describe("api.sessions orchestration", () => {
 
     createSession("level-two", project.id, { agentRuntimeType: "pi", taskId: task.id, parentSessionId: child.sessionId });
     createSession("level-three", project.id, { agentRuntimeType: "pi", taskId: task.id, parentSessionId: "level-two" });
-    const deep = buildApiObject({ ...context, sessionId: "level-three", taskId: task.id });
+    const deep = buildApiObject({
+      ...taskContext,
+      sessionId: "level-three",
+      instance: instanceFor("level-three"),
+    });
     const before = listSessions({ taskId: task.id });
     await expect(deep.sessions.start("Too deep", { parentSessionId: "current" })).rejects.toThrow("depth");
     expect(listSessions({ taskId: task.id })).toEqual(before);
@@ -189,12 +206,17 @@ describe("api.sessions orchestration", () => {
   });
 
   test("starting siblings on the active task does not contend for Git's checkout lock", async () => {
-    const { project, context, turns } = setup();
+    const { project, context, instanceFor, turns } = setup();
     await Bun.spawn(["git", "checkout", "-b", "task/parallel"], { cwd: repo.dir, stderr: "ignore" }).exited;
     const task = createTask(project.id, "Parallel", null, "task/parallel");
     createSession("task-parent", project.id, { agentRuntimeType: "pi", taskId: task.id });
     context.sessions.set("task-parent", { id: "task-parent", runtime: createRuntimeStub({ isStreaming: true }).runtime, lastActivity: Date.now() });
-    const api = buildApiObject({ ...context, sessionId: "task-parent", taskId: task.id });
+    const api = buildApiObject({
+      ...context,
+      sessionId: "task-parent",
+      taskId: task.id,
+      instance: instanceFor("task-parent"),
+    });
     // Another agent may be using Git; creating sessions on the already-active branch needs no checkout.
     const lock = join(repo.dir, ".git/index.lock");
     writeFileSync(lock, "held by another operation");

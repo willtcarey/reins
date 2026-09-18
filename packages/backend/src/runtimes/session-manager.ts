@@ -9,9 +9,7 @@ import { loadMessages as dbLoadMessages, type ClientPromptContent } from "../mes
 import { getProject } from "../project-store.js";
 import { touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
-import { Sessions } from "../models/sessions.js";
-import { SessionMessages } from "../models/session-messages.js";
-import { SessionRuntimeLifecycle } from "./session-runtime-lifecycle.js";
+import { SessionInstance, type SessionCreationOptions } from "./session-instance.js";
 import { createCustomTools } from "../tools/index.js";
 import {
   createAgentRuntime,
@@ -25,19 +23,26 @@ import { attachRuntimeBroadcastObserver } from "./runtime-broadcast-observer.js"
 import { expandPrompt } from "./prompt.js";
 import type { AgentRuntime } from "./registry.js";
 
-export interface CreateSessionOpts {
-  taskId?: number;
-  parentSessionId?: string;
-  title?: string;
-  model?: { provider: string; modelId: string };
-  thinkingLevel?: string;
-}
+export class SessionManager {
+  readonly sessions: Map<string, ManagedSession>;
+  readonly broadcast: ReturnType<typeof createBroadcast>;
 
-export type CreateSessionFn = (projectId: number, projectDir: string, opts?: CreateSessionOpts) => Promise<ManagedSession>;
+  constructor(readonly state: ServerState) {
+    this.sessions = state.sessions;
+    this.broadcast = createBroadcast(state.clients);
+  }
 
-function createSessionFactory(state: ServerState) {
-  return (projectId: number, projectDir: string, opts?: CreateSessionOpts) =>
-    createNewSession(state, projectId, projectDir, opts);
+  forSession(sessionId: string): SessionInstance {
+    return new SessionInstance(this, sessionId);
+  }
+
+  create(projectId: number, projectDir: string, options?: SessionCreationOptions): Promise<ManagedSession> {
+    return createManagedSession(this, projectId, projectDir, options);
+  }
+
+  open(sessionId: string): Promise<ManagedSession> {
+    return openManagedSession(this, sessionId);
+  }
 }
 
 function attachPromptExpansion(params: {
@@ -58,23 +63,20 @@ function attachPromptExpansion(params: {
 }
 
 function resolveSessionTools(params: {
-  state: ServerState;
+  manager: SessionManager;
   projectId: number;
   sessionId: string;
   taskId: number | null;
+  instance: SessionInstance;
 }): RuntimeSessionTools {
-  const { state, projectId, sessionId, taskId } = params;
-  const createSession = createSessionFactory(state);
-
-  const broadcast = createBroadcast(state.clients);
+  const { manager, projectId, sessionId, taskId, instance } = params;
   const harnessTools = createCustomTools({
     projectId,
     sessionId,
     taskId,
-    broadcast,
-    sessions: state.sessions,
-    createSession,
-    openSession: (id) => ensureSessionOpen(state, id),
+    broadcast: manager.broadcast,
+    sessions: manager.sessions,
+    instance,
   });
 
   return {
@@ -85,7 +87,7 @@ function resolveSessionTools(params: {
 
 
 async function createManagedSessionRuntime(params: {
-  state: ServerState;
+  manager: SessionManager;
   runtimeType: string;
   projectId: number;
   projectDir: string;
@@ -96,7 +98,7 @@ async function createManagedSessionRuntime(params: {
   resume?: boolean;
 }): Promise<ManagedSession> {
   const {
-    state,
+    manager,
     runtimeType,
     projectId,
     projectDir,
@@ -106,20 +108,16 @@ async function createManagedSessionRuntime(params: {
     thinkingLevel,
     resume,
   } = params;
+  const { state } = manager;
 
+  const instance = manager.forSession(sessionId);
   const sessionTools = resolveSessionTools({
-    state,
+    manager,
     projectId,
     sessionId,
     taskId,
+    instance,
   });
-
-  const broadcast = createBroadcast(state.clients);
-  const lifecycle = new SessionRuntimeLifecycle(
-    sessionId,
-    new Sessions(state.sessions, broadcast),
-    new SessionMessages(state.sessions, broadcast, (id) => ensureSessionOpen(state, id)),
-  );
   let runtime: Awaited<ReturnType<typeof createAgentRuntime>>;
 
   try {
@@ -132,7 +130,7 @@ async function createManagedSessionRuntime(params: {
       model,
       thinkingLevel,
       sessionTools,
-      lifecycle,
+      lifecycle: instance,
       resume,
     });
   } catch (err) {
@@ -194,11 +192,11 @@ async function createManagedSessionRuntime(params: {
 /**
  * Create a brand-new session with runtime-agnostic persistence orchestration.
  */
-export async function createNewSession(
-  state: ServerState,
+async function createManagedSession(
+  manager: SessionManager,
   projectId: number,
   projectDir: string,
-  opts?: CreateSessionOpts,
+  opts?: SessionCreationOptions,
 ): Promise<ManagedSession> {
   const project = getProject(projectId);
   if (!project) {
@@ -237,7 +235,7 @@ export async function createNewSession(
   let managed: ManagedSession;
   try {
     managed = await createManagedSessionRuntime({
-      state,
+      manager,
       runtimeType,
       projectId,
       projectDir,
@@ -256,8 +254,7 @@ export async function createNewSession(
     touchTask(opts.taskId);
   }
 
-  const broadcast = createBroadcast(state.clients);
-  broadcast({
+  manager.broadcast({
     type: "session_created",
     projectId,
     sessionId: managed.id,
@@ -268,13 +265,21 @@ export async function createNewSession(
   return managed;
 }
 
-/**
- * Ensure a session is open in memory.
- */
-export async function ensureSessionOpen(
+/** Create a brand-new session using the process-scoped manager. */
+export function createNewSession(
   state: ServerState,
+  projectId: number,
+  projectDir: string,
+  options?: SessionCreationOptions,
+): Promise<ManagedSession> {
+  return new SessionManager(state).create(projectId, projectDir, options);
+}
+
+async function openManagedSession(
+  manager: SessionManager,
   sessionId: string,
 ): Promise<ManagedSession> {
+  const { state } = manager;
   const existing = state.sessions.get(sessionId);
   if (existing) {
     existing.lastActivity = Date.now();
@@ -284,7 +289,7 @@ export async function ensureSessionOpen(
   const openings = state.sessionOpenings ??= new Map();
   const opening = openings.get(sessionId);
   if (opening) return opening;
-  const pending = reopenSession(state, sessionId);
+  const pending = reopenSession(manager, sessionId);
   openings.set(sessionId, pending);
   try {
     return await pending;
@@ -293,7 +298,12 @@ export async function ensureSessionOpen(
   }
 }
 
-async function reopenSession(state: ServerState, sessionId: string): Promise<ManagedSession> {
+/** Ensure a session is open using the process-scoped manager. */
+export function ensureSessionOpen(state: ServerState, sessionId: string): Promise<ManagedSession> {
+  return new SessionManager(state).open(sessionId);
+}
+
+async function reopenSession(manager: SessionManager, sessionId: string): Promise<ManagedSession> {
   const row = dbGetSession(sessionId);
   if (!row) {
     throw new Error(`Session not found: ${sessionId}`);
@@ -327,7 +337,7 @@ async function reopenSession(state: ServerState, sessionId: string): Promise<Man
   const hasPersistedMessages = dbLoadMessages(sessionId).length > 0;
 
   return createManagedSessionRuntime({
-    state,
+    manager,
     runtimeType: row.agent_runtime_type,
     projectId: row.project_id,
     projectDir: project.path,

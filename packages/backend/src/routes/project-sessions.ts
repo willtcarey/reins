@@ -7,7 +7,7 @@
 
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
-import { createNewSession } from "../runtimes/sessions-manager.js";
+import { createNewSession } from "../runtimes/session-manager.js";
 import { Sessions } from "../models/sessions.js";
 import { touchProject } from "../project-store.js";
 
