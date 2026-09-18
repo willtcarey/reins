@@ -63,6 +63,7 @@ describe("runtime registry", () => {
       projectDir: "/tmp/project-a",
       sessionId: "sess-1",
       taskId: null,
+      lifecycle: { started() {}, settled() {} },
     };
 
     const { taskId: _taskId, ...expectedRuntimeParams } = inputParams;

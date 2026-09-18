@@ -21,7 +21,7 @@ export interface RuntimeStubOptions {
 
 export interface RuntimeStub {
   runtime: AgentRuntime;
-  /** Emit an event to all subscribers */
+  /** Emit an event to all UI event subscribers. */
   emit(event: AgentRuntimeEvent): void;
   /** Number of times getMessages() was called */
   getMessagesCalls: number;

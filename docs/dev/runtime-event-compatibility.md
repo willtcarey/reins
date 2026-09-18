@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the normalized backend contract used for WebSocket streaming, session lifecycle state, and runtime metadata updates. Runtime adapters explicitly map native events to `AgentRuntimeEvent`; vendor events are not passed through unchecked.
+This document defines the normalized backend contracts for WebSocket streaming and session lifecycle. Runtime adapters explicitly map native events; vendor events are not passed through unchecked.
 
 Only the AgentHarness Pi adapter is currently registered.
 
@@ -12,16 +12,16 @@ Runtimes publish events through `AgentRuntime.subscribe(listener)`. Reins broadc
 
 - `{ type: "event", sessionId, projectId, event }`
 
-The terminal activity event is `agent_end`. There is no separate normalized settlement event or runtime-selected completion boundary.
+This rich event stream is a frontend compatibility surface. Application lifecycle effects do not infer operation state from it.
 
 ## Lifecycle semantics
 
-- `agent_start` marks runtime work as running.
-- `compaction_start` also marks runtime work as running; it need not be nested under an already observed `agent_start`.
-- `compaction_end` reports compaction completion but does not finish session activity.
-- `agent_end` marks the complete runtime operation finished.
+Each runtime receives a `RuntimeLifecycleSink` when it is constructed. The AgentHarness runtime listens to its native events internally and calls:
 
-AgentHarness 0.85.1 emits native `run_end` from the durable terminal transaction, after retries, deferred polling, steering, and automatic compaction. The Pi adapter therefore maps `run_end` directly to `agent_end`; it does not synthesize a later event after Reins removes the operation from its local `activeOperations` map.
+- `started()` for `run_start`, `run_resume`, and `compaction_start`;
+- `settled(runtime, outcome)` for durable `run_end`.
+
+`compaction_end` is intentionally not a settlement boundary because automatic compaction can precede the terminal run transaction. AgentHarness emits `run_end` after retries, deferred polling, steering, and automatic compaction. The runtime does not expose a second lifecycle event stream.
 
 When the native runtime provides it, `agent_end` includes:
 
@@ -36,14 +36,13 @@ Consumers should use terminal `status` and `error` instead of inferring an outco
 
 Canonical AgentHarness transcript entries are committed directly through `PiStorageAdapter`; runtime events do not trigger transcript snapshot writes.
 
-The synchronous lifecycle observer:
+The injected `SessionRuntimeLifecycle` applies settlement effects in order:
 
-- sets `activity_state = 'running'` on `agent_start` and `compaction_start`
-- persists final metadata and sets `activity_state = 'finished'` on `agent_end`
+1. persist final model/thinking metadata;
+2. set `activity_state = 'finished'` and broadcast the session update;
+3. asynchronously report a child's authoritative outcome and latest result text to its parent.
 
-The parent-report observer is subscribed after the lifecycle observer and also reacts to `agent_end`, reporting the authoritative terminal status/error plus the latest result text. A native `run_end` callback may occur just before Reins removes its local active-operation bookkeeping; this local cleanup gap is not a second runtime lifecycle phase.
-
-On `agent_end`, Reins may update `model_provider`, `model_id`, and `thinking_level` from `runtime.getSessionMetadata()`.
+It sets `activity_state = 'running'` when the runtime calls `started()`. A native `run_end` callback may occur just before Reins removes its local active-operation bookkeeping; this local cleanup gap is not a second runtime lifecycle phase.
 
 ## Frontend behavior
 
@@ -65,10 +64,11 @@ Tool names should be normalized to canonical Reins names where feasible.
 
 Runtime adapters should:
 
-1. Explicitly map native lifecycle events to the typed normalized contract.
-2. Map the native durable terminal event to `agent_end` exactly once.
-3. Preserve native terminal identity, status, and error when available.
-4. Normalize compaction events to `compaction_start` / `compaction_end` without treating them as terminal activity.
-5. Keep tool-call IDs stable across tool events.
-6. Include run-local `agent_end.messages` when available.
-7. Keep runtime-specific extra fields additive.
+1. Consume native operation boundaries internally and notify the injected `RuntimeLifecycleSink`.
+2. Explicitly map rich native events to `AgentRuntimeEvent` for frontend compatibility.
+3. Map the native durable terminal event to both sink `settled()` and UI `agent_end` exactly once.
+4. Preserve native terminal identity, status, and error in both projections.
+5. Normalize compaction UI events without treating `compaction_end` as terminal activity.
+6. Keep tool-call IDs stable across tool events.
+7. Include run-local `agent_end.messages` when available.
+8. Keep runtime-specific extra fields additive.

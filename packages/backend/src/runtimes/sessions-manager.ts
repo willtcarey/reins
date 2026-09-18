@@ -11,7 +11,7 @@ import { touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { Sessions } from "../models/sessions.js";
 import { SessionMessages } from "../models/session-messages.js";
-import { attachRuntimeParentReportObserver } from "./runtime-parent-report-observer.js";
+import { SessionRuntimeLifecycle } from "./session-runtime-lifecycle.js";
 import { createCustomTools } from "../tools/index.js";
 import {
   createAgentRuntime,
@@ -22,7 +22,6 @@ import {
 import { getSetting } from "../settings-store.js";
 import { parseThinkingLevel } from "../models/model-settings.js";
 import { attachRuntimeBroadcastObserver } from "./runtime-broadcast-observer.js";
-import { attachRuntimeLifecycleObserver } from "./runtime-lifecycle-observer.js";
 import { expandPrompt } from "./prompt.js";
 import type { AgentRuntime } from "./registry.js";
 
@@ -115,6 +114,12 @@ async function createManagedSessionRuntime(params: {
     taskId,
   });
 
+  const broadcast = createBroadcast(state.clients);
+  const lifecycle = new SessionRuntimeLifecycle(
+    sessionId,
+    new Sessions(state.sessions, broadcast),
+    new SessionMessages(state.sessions, broadcast, (id) => ensureSessionOpen(state, id)),
+  );
   let runtime: Awaited<ReturnType<typeof createAgentRuntime>>;
 
   try {
@@ -127,6 +132,7 @@ async function createManagedSessionRuntime(params: {
       model,
       thinkingLevel,
       sessionTools,
+      lifecycle,
       resume,
     });
   } catch (err) {
@@ -158,27 +164,11 @@ async function createManagedSessionRuntime(params: {
     runtime,
     clients: state.clients,
   });
-  const broadcast = createBroadcast(state.clients);
-  const sessions = new Sessions(state.sessions, broadcast);
-  const detachRuntimeLifecycleObserver = attachRuntimeLifecycleObserver({
-    sessionId,
-    runtime,
-    sessions,
-  });
-
-  const detachRuntimeParentReportObserver = attachRuntimeParentReportObserver({
-    sessionId,
-    runtime,
-    messages: new SessionMessages(state.sessions, broadcast, (id) => ensureSessionOpen(state, id)),
-  });
-
-  let observersDetached = false;
-  const detachRuntimeObservers = () => {
-    if (observersDetached) return;
-    observersDetached = true;
+  let observerDetached = false;
+  const detachRuntimeObserver = () => {
+    if (observerDetached) return;
+    observerDetached = true;
     detachRuntimeBroadcastObserver();
-    detachRuntimeLifecycleObserver();
-    detachRuntimeParentReportObserver();
   };
 
   const originalClose = runtime.close.bind(runtime);
@@ -186,7 +176,7 @@ async function createManagedSessionRuntime(params: {
     try {
       await originalClose();
     } finally {
-      detachRuntimeObservers();
+      detachRuntimeObserver();
     }
   };
 

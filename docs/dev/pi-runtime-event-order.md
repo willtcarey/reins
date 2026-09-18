@@ -13,11 +13,11 @@ AgentHarness emits `run_end` from the durable terminal commit after all operatio
 - accepted steering
 - automatic compaction
 
-The adapter maps that event directly to normalized `agent_end`. `agent_end` is consequently both the session activity completion boundary and the child parent-report boundary.
+The runtime calls its injected lifecycle sink's `settled()` method for application effects and projects normalized `agent_end` for frontend compatibility. Both represent the same native boundary.
 
-There is no normalized `agent_settled` event and no `AgentRuntime.activityCompletionBoundary` capability. The removed synthetic event merely waited for Reins to delete the operation from its local `activeOperations` map after `lane.drive()` returned; that bookkeeping does not represent additional AgentHarness work or persistence.
+There is no later synthetic settlement boundary or `AgentRuntime.activityCompletionBoundary` capability. Waiting for Reins to delete the operation from its local `activeOperations` map after `lane.drive()` returns would only observe local bookkeeping, not additional AgentHarness work or persistence.
 
-A listener invoked for native `run_end` can still observe `runtime.isStreaming() === true` during the callback because local operation cleanup follows event delivery. Consumers must use `agent_end` as the terminal event rather than deriving the lifecycle boundary from that callback-time local flag. APIs such as `waitForIdle()` continue to wait through local cleanup before resolving.
+A handler invoked for native `run_end` can still observe `runtime.isStreaming() === true` during the callback because local operation cleanup follows event delivery. Application effects run through the lifecycle sink; frontend consumers use `agent_end`. Neither should derive the lifecycle boundary from that callback-time local flag. APIs such as `waitForIdle()` continue to wait through local cleanup before resolving.
 
 ## Representative ordering
 
@@ -45,8 +45,7 @@ Retries and deferred polling likewise complete before the single terminal `agent
 
 ## Reins consumers
 
-- `runtime-lifecycle-observer.ts` synchronously marks activity running on `agent_start` or `compaction_start`, then persists final runtime metadata and marks activity finished on `agent_end`.
-- `runtime-parent-report-observer.ts` is subscribed afterward and reports on `agent_end`.
+- `AgentHarnessPiRuntime` owns native lifecycle listeners and invokes `SessionRuntimeLifecycle`; that sink persists activity and final metadata before scheduling any parent report.
 - The frontend promotes final run-local messages and displays authoritative terminal errors from `agent_end`.
 - Canonical transcript persistence is independent of these events because AgentHarness commits entries directly through `PiStorageAdapter`.
 - Live session waits read the latest durable AgentHarness operation result through the lane API rather than retaining a second adapter-local outcome.

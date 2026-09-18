@@ -19,6 +19,7 @@ import {
   registerRuntimeAdapter,
   ModelNotFoundError,
   type AgentRuntimeAdapter,
+  type RuntimeLifecycleSink,
 } from "../../runtimes/registry.js";
 import { setSetting } from "../../settings-store.js";
 import type { WsClient } from "../../state.js";
@@ -64,16 +65,25 @@ describe("runtime sessions manager", () => {
     state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: Date.now() });
     const messages = [{ role: "assistant", content: [{ type: "text" as const, text: "First result" }], timestamp: 1 }];
     const child = createRuntimeStub({ messages });
-    registerRuntimeAdapter({ runtimeType: "report-test", listModels: async () => [], ask: async () => "", createRuntime: async () => child.runtime });
+    let lifecycle: RuntimeLifecycleSink | undefined;
+    registerRuntimeAdapter({
+      runtimeType: "report-test",
+      listModels: async () => [],
+      ask: async () => "",
+      createRuntime: async (params) => {
+        lifecycle = params.lifecycle;
+        return child.runtime;
+      },
+    });
     await ensureSessionOpen(state, "child");
     expect(parent.steerCalls).toEqual([]);
-    child.emit({ type: "agent_end", messages, runId: "run-1", status: "completed" });
+    lifecycle!.settled(child.runtime, { runId: "run-1", status: "completed" });
     await firstSteered.promise;
     expect(parent.promptCalls).toEqual([]);
     expect(parent.steerCalls).toHaveLength(1);
     expect(JSON.stringify(parent.steerCalls)).toContain("First result");
     messages.push({ role: "assistant", content: [{ type: "text", text: "Follow-up result" }], timestamp: 2 });
-    child.emit({ type: "agent_end", messages, runId: "run-2", status: "completed" });
+    lifecycle!.settled(child.runtime, { runId: "run-2", status: "completed" });
     await secondSteered.promise;
     expect(parent.steerCalls).toHaveLength(2);
     expect(JSON.stringify(parent.steerCalls)).toContain("Follow-up result");
@@ -95,11 +105,15 @@ describe("runtime sessions manager", () => {
     const child = createRuntimeStub({
       messages: [{ role: "assistant", content: [{ type: "text", text: "Canonical result" }], timestamp: 1 }],
     });
+    let lifecycle: RuntimeLifecycleSink | undefined;
     registerRuntimeAdapter({
       runtimeType: "settlement-child-test",
       listModels: async () => [],
       ask: async () => "",
-      createRuntime: async () => child.runtime,
+      createRuntime: async (params) => {
+        lifecycle = params.lifecycle;
+        return child.runtime;
+      },
     });
     createSession("parent", project.id, {
       agentRuntimeType: "pi",
@@ -115,12 +129,7 @@ describe("runtime sessions manager", () => {
       await ensureSessionOpen(state, "child");
       expect(state.sessions.has("parent")).toBe(false);
 
-      child.emit({
-        type: "agent_end",
-        messages: [],
-        runId: "settled-run",
-        status: "completed",
-      });
+      lifecycle!.settled(child.runtime, { runId: "settled-run", status: "completed" });
       await parentResponded.promise;
       const parent = state.sessions.get("parent");
       if (!parent) throw new Error("Expected the settlement report to reopen the parent");
@@ -466,11 +475,6 @@ describe("runtime sessions manager", () => {
         event: { type: "compaction_start", reason: "auto" },
       },
       {
-        type: "session_updated",
-        sessionId: "sess-broadcast-observer",
-        projectId: project.id,
-      },
-      {
         type: "event",
         sessionId: "sess-broadcast-observer",
         projectId: project.id,
@@ -506,6 +510,7 @@ describe("runtime sessions manager", () => {
             listeners.delete(candidate);
           };
         },
+
         getMessages: async () => [],
         waitForIdle: async () => {},
         isStreaming: () => false,
@@ -518,12 +523,12 @@ describe("runtime sessions manager", () => {
     createSession("sess-observer-cleanup", project.id, { agentRuntimeType: "test_runtime" });
 
     const managed = await ensureSessionOpen(state, "sess-observer-cleanup");
-    expect(listeners.size).toBe(3);
+    expect(listeners.size).toBe(1);
 
     await managed.runtime.close();
 
     expect(listeners.size).toBe(0);
-    expect(unsubscribeCount).toBe(3);
+    expect(unsubscribeCount).toBe(1);
   });
 
   test("ensureSessionOpen resolves session tools during runtime creation", async () => {

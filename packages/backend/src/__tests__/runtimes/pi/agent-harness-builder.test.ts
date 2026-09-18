@@ -14,6 +14,7 @@ import { useTestDb } from "../../helpers/test-db.js";
 
 describe("unselected AgentHarness Pi builder", () => {
   useTestDb();
+  const lifecycle = { started() {}, settled() {} };
 
   test("assembles DB auth, Reins prompt, resources, and filtered builtin/custom tools", async () => {
     await mkdir("/tmp/harness-builder/.pi/skills/local", { recursive: true });
@@ -55,7 +56,7 @@ describe("unselected AgentHarness Pi builder", () => {
     try {
       const runtime = await buildAgentHarnessPiRuntime({
         state: createServerState(), projectId: project.id, projectDir: "/tmp/harness-builder",
-        sessionId: "harness-builder", task: null,
+        sessionId: "harness-builder", task: null, lifecycle,
         model: { provider: "builder-faux", modelId: "fake" }, thinkingLevel: "minimal",
         sessionTools: { builtins: ["read"], harnessTools: [customTool] }, resume: false,
       });
@@ -121,7 +122,7 @@ describe("unselected AgentHarness Pi builder", () => {
     try {
       const initialRuntime = await buildAgentHarnessPiRuntime({
         state: createServerState(), projectId: project.id, projectDir: "/tmp/harness-reopen-tools",
-        sessionId: "harness-reopen-tools", task: null,
+        sessionId: "harness-reopen-tools", task: null, lifecycle,
         model: { provider: "reopen-tools-faux", modelId: "fake" }, thinkingLevel: "minimal",
         sessionTools: { builtins: ["read"], harnessTools: [] }, resume: false,
       });
@@ -131,7 +132,7 @@ describe("unselected AgentHarness Pi builder", () => {
 
       const reopenedRuntime = await buildAgentHarnessPiRuntime({
         state: createServerState(), projectId: project.id, projectDir: "/tmp/harness-reopen-tools",
-        sessionId: "harness-reopen-tools", task: null,
+        sessionId: "harness-reopen-tools", task: null, lifecycle,
         model: { provider: "reopen-tools-faux", modelId: "fake" }, thinkingLevel: "minimal",
         sessionTools: { builtins: ["read"], harnessTools: [customTool] }, resume: true,
       });
@@ -169,7 +170,7 @@ describe("unselected AgentHarness Pi builder", () => {
     try {
       const runtime = await buildAgentHarnessPiRuntime({
         state: createServerState(), projectId: project.id, projectDir: "/tmp/harness-bash",
-        sessionId: "harness-bash", task: null,
+        sessionId: "harness-bash", task: null, lifecycle,
         model: { provider: "bash-faux", modelId: "one" }, thinkingLevel: "minimal",
         sessionTools: { builtins: ["bash"], harnessTools: [] }, resume: false,
       });

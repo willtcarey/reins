@@ -42,8 +42,13 @@ describe("AgentHarnessPiRuntime", () => {
     ]);
     const models = createModels();
     models.setProvider(provider.provider);
+    const lifecycle: unknown[] = [];
     const open = () => createAgentHarnessPiRuntime({
       db: getDb(), sessionId: "harness-session", createdAt: 1, cwd: "/tmp/harness",
+      lifecycle: {
+        started: () => lifecycle.push({ type: "started" }),
+        settled: (_runtime, outcome) => lifecycle.push({ type: "settled", outcome }),
+      },
       options: {
         models, model: provider.getModel(), tools: [],
         compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 },
@@ -60,6 +65,10 @@ describe("AgentHarnessPiRuntime", () => {
     expect(events).toContain("agent_start");
     expect(events).toContain("message_update");
     expect(events.at(-1)).toBe("agent_end");
+    expect(lifecycle).toEqual([
+      { type: "started" },
+      { type: "settled", outcome: { runId: expect.any(String), status: "completed" } },
+    ]);
     expect(await runtime.getMessages()).toEqual([
       {
         role: "user",

@@ -17,7 +17,7 @@ import type { Message, Models } from "@earendil-works/pi-ai";
 import { hydratePromptContent } from "../../session-attachments-store.js";
 import type { ClientPromptContent, RuntimeMessage } from "../../messages-store.js";
 import { logger } from "../../logger.js";
-import type { AgentRuntime, AgentRuntimeEvent, RuntimePromptOptions, RuntimePromptSubmission, RuntimeRunOutcome, SetRuntimeModelParams } from "../registry.js";
+import type { AgentRuntime, AgentRuntimeEvent, RuntimeLifecycleSink, RuntimePromptOptions, RuntimePromptSubmission, RuntimeRunOutcome, SetRuntimeModelParams } from "../registry.js";
 import { PiStorageAdapter } from "./storage-adapter.js";
 
 export interface ReinsInputMessage {
@@ -127,6 +127,7 @@ export interface AgentHarnessPiRuntimeParams {
   models?: Models;
   sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null };
   executionEnv?: ExecutionEnv;
+  lifecycle?: RuntimeLifecycleSink;
 }
 
 /** Registered Pi runtime backed directly by AgentHarness. */
@@ -142,6 +143,7 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
   private readonly pendingSubmissions = new Set<PromiseWithResolvers<void>>();
   private readonly pendingSteering = new Set<PromiseWithResolvers<void>>();
   private closePromise?: Promise<void>;
+  private readonly lifecycleDisposers: (() => void)[];
   private metadata: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
 
   constructor(params: AgentHarnessPiRuntimeParams) {
@@ -153,6 +155,17 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     this.models = params.models;
     this.sessionEnvironment = params.sessionEnvironment;
     this.executionEnv = params.executionEnv;
+    const lifecycle = params.lifecycle;
+    this.lifecycleDisposers = lifecycle ? [
+      this.harness.events.on("run_start", () => lifecycle.started()),
+      this.harness.events.on("run_resume", () => lifecycle.started()),
+      this.harness.events.on("compaction_start", () => lifecycle.started()),
+      this.harness.events.on("run_end", (event) => lifecycle.settled(this, {
+        runId: event.runId,
+        status: event.status,
+        ...(event.status === "failed" ? { error: event.error } : {}),
+      })),
+    ] : [];
   }
 
   static toProviderMessages(messages: AgentMessage[]): Message[] {
@@ -420,7 +433,10 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
       }
       finally {
         try { await this.harness.close(BACKGROUND_CONTEXT); }
-        finally { await this.executionEnv?.cleanup(BACKGROUND_CONTEXT); }
+        finally {
+          for (const dispose of this.lifecycleDisposers) dispose();
+          await this.executionEnv?.cleanup(BACKGROUND_CONTEXT);
+        }
       }
     })();
     return this.closePromise;
@@ -436,6 +452,7 @@ export interface CreateAgentHarnessPiRuntimeParams {
   options: Omit<AgentHarnessOptions, "session" | "toProviderMessages">;
   sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null };
   executionEnv?: ExecutionEnv;
+  lifecycle?: RuntimeLifecycleSink;
 }
 
 /** Attach AgentHarness to a canonical Reins session backed by PiStorageAdapter. */
@@ -486,6 +503,7 @@ export async function createAgentHarnessPiRuntime(
       models: params.options.models,
       sessionEnvironment: params.sessionEnvironment,
       executionEnv: params.executionEnv,
+      lifecycle: params.lifecycle,
     });
   } catch (error) {
     try {

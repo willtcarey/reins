@@ -106,5 +106,6 @@ export async function buildAgentHarnessPiRuntime(
     options: { ...options, toolContext: { env: executionEnv } },
     sessionEnvironment,
     executionEnv,
+    lifecycle: params.lifecycle,
   });
 }

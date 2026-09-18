@@ -269,7 +269,7 @@ export function updateSessionMeta(
 }
 
 /**
- * Update the activity_state of a session. Used by the runtime lifecycle observer
+ * Update the activity_state of a session. Used by session runtime lifecycle handling
  * to persist running/finished state server-side.
  *
  * Parented sessions participate in activity tracking independently of their

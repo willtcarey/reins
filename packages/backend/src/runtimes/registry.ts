@@ -82,6 +82,11 @@ export interface RuntimeRunOutcome {
   error?: RuntimeOperationError;
 }
 
+export interface RuntimeLifecycleSink {
+  started(): void;
+  settled(runtime: AgentRuntime, outcome: RuntimeRunOutcome): void;
+}
+
 export type AgentRuntimeEvent =
   | { type: "agent_start" }
   | {
@@ -118,6 +123,7 @@ export interface CreateAgentRuntimeParams {
   model?: { provider: string; modelId: string } | null;
   thinkingLevel?: string | null;
   sessionTools?: RuntimeSessionTools;
+  lifecycle: RuntimeLifecycleSink;
   resume?: boolean;
 }
 
