@@ -1,6 +1,6 @@
 # Session message ancestry schema
 
-Status: **active**
+Status: **completed**
 
 ## Scope
 
