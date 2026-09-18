@@ -118,6 +118,8 @@ describe("ChatMessage", () => {
     expect(output).toContain("#/session/child-1");
     expect(output).toContain("The investigation is complete.");
     expect(output).toContain("<details");
+    expect(output).toContain("<markdown-content");
+    expect(output).not.toContain("whitespace-pre-wrap");
     expect(output).not.toContain('data-role="user-message-bubble"');
     expect(output).not.toContain("bg-blue-600");
   });

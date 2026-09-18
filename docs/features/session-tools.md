@@ -23,7 +23,7 @@ These tools let the agent interact with Reins itself:
 | **search** | Discover Reins internal API functions for `execute` scripts against Reins-managed data or UI state. Returns documentation-only TypeScript interfaces filtered by query. | All sessions |
 | **execute** | Run async JavaScript against Reins internals. The agent writes a function body with access to the existing `api` object. See [Scripting](scripting.md) for details. | All sessions |
 
-Session orchestration uses `api.sessions.start`, `send`, and `wait` through **execute**. Starting returns a session ID without waiting for the response. Agents can create child or independent sessions, supply an optional title, and send messages that resume idle sessions or steer busy ones. Unsupported steering is reported; messages are not queued for later delivery. See [Scripting](scripting.md#start-message-and-wait-for-sessions).
+Session orchestration uses `api.sessions.start`, `send`, and `wait` through **execute**. Starting returns a session ID without waiting for the response. Agents can create child or independent sessions, supply an optional title, and send messages that resume idle sessions or steer busy ones. Unsupported steering is reported; messages are not queued for later delivery. Reports delivered from another session appear as linked, collapsible cards whose message body renders as Markdown. See [Scripting](scripting.md#start-message-and-wait-for-sessions).
 
 ## How They Appear in Chat
 

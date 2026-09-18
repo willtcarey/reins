@@ -136,7 +136,11 @@ export class ChatMessage extends LitElement {
             @click=${(event: Event) => event.stopPropagation()}
           >${label}</a>
         </summary>
-        ${text ? html`<div class="border-t border-zinc-700/70 px-3 py-2 whitespace-pre-wrap">${text}</div>` : nothing}
+        ${text ? html`
+          <div class="border-t border-zinc-700/70 px-3 py-2">
+            <markdown-content .text=${text}></markdown-content>
+          </div>
+        ` : nothing}
       </details>
     `;
   }
