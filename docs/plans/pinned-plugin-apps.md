@@ -173,6 +173,21 @@ A first useful plugin should be able to:
 
 If the proposed interfaces cannot support this without Spoke-specific host branches, the interfaces are not ready.
 
+## Future acceptance case: Secrets
+
+A trusted Secrets plugin should be able to own encrypted secret storage and a client UI that collects values without placing them in conversation state. It should expose opaque secret references and agent-facing operations that can apply a stored value—for example, writing a named variable to an environment file—without returning the value to the model.
+
+This use case should validate:
+
+- plugin-owned encrypted storage and key management
+- frontend-to-plugin RPC that does not flow through model messages
+- agent tool registration with redacted results
+- plugin-controlled APIs for constrained secret operations
+- an interactive-request seam if a running tool should be able to summon and wait for plugin-rendered user input
+- transport and telemetry defaults that do not indiscriminately log RPC or tool payloads
+
+The plugin owns secret-specific behavior; Reins should provide only the general contribution and communication interfaces needed to implement it. Strictly preventing an agent with arbitrary filesystem and shell access from later reading a secret written into its workspace is outside this plugin's guarantee.
+
 ## Possible implementation slices
 
 ### 1. Resolve the app mounting seam
