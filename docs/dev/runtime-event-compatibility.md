@@ -2,81 +2,61 @@
 
 ## Purpose
 
-This document defines the backend contract that all agent runtimes must satisfy for:
+This document defines the normalized backend contracts for WebSocket streaming and session lifecycle. Runtime adapters explicitly map native events; vendor events are not passed through unchecked.
 
-- WebSocket event streaming
-- Session persistence
-- Session metadata updates
-
-Reins uses the pi `AgentSessionEvent` shape as the current wire format.
-This is a **structural data contract** only.
+Only the AgentHarness Pi adapter is currently registered.
 
 ## Event surface
 
-Runtimes publish events through `AgentRuntime.subscribe(listener)`.
-
-Reins broadcasts events to clients with this envelope:
+Runtimes publish events through `AgentRuntime.subscribe(listener)`. Reins broadcasts them as:
 
 - `{ type: "event", sessionId, projectId, event }`
 
-Lifecycle and compaction broadcasts include:
+This rich event stream is a frontend compatibility surface. Application lifecycle effects do not infer operation state from it.
 
-- `agent_settled`
-- `compaction_start`
-- `compaction_end`
+## Lifecycle semantics
 
-## Required event semantics
+Each runtime receives a `RuntimeLifecycleSink` when it is constructed. The AgentHarness runtime listens to its native events internally and calls:
 
-Runtimes must emit events that provide these semantics:
+- `started()` for `run_start`, `run_resume`, and `compaction_start`;
+- `settled(runtime, outcome)` for durable `run_end`.
 
-1. `turn_end`
-   - A turn completed and message state is checkpointable.
+`compaction_end` is intentionally not a settlement boundary because automatic compaction can precede the terminal run transaction. AgentHarness emits `run_end` after retries, deferred polling, steering, and automatic compaction. The runtime does not expose a second lifecycle event stream.
 
-2. `agent_end`
-   - A run completed and final state is available.
+When the native runtime provides it, `agent_end` includes:
 
-3. `compaction_end` (or runtime-native equivalent normalized to this)
-   - A compaction attempt finished.
-   - `aborted: true` means compaction did not commit.
+- `runId`: native run/operation identity
+- `status`: `completed`, `failed`, or `aborted`
+- `error`: structured native failure information
+- `messages`: messages produced during this run
 
-## Persistence contract
+Consumers should use terminal `status` and `error` instead of inferring an outcome from the last assistant message. Adapters without authoritative outcome fields may omit them, preserving transcript inference as a compatibility fallback.
 
-Persistence is event-driven by runtime events.
+## Persistence and reporting
 
-Reins persists messages when it observes:
+Canonical AgentHarness transcript entries are committed directly through `PiStorageAdapter`; runtime events do not trigger transcript snapshot writes.
 
-- `turn_end`
-- `agent_end`
-- `compaction_end` when `aborted !== true`
+The injected caller-scoped `SessionInstance` applies settlement effects in order:
 
-Reins does not persist on aborted compaction.
+1. persist final model/thinking metadata;
+2. set `activity_state = 'finished'` and broadcast the session update;
+3. asynchronously report a child's authoritative outcome and latest result text to its parent.
 
-Session activity indicators are event-driven and selected by the runtime's `activityCompletionBoundary` policy:
+It sets `activity_state = 'running'` when the runtime calls `started()`. A native `run_end` callback may occur just before Reins removes its local active-operation bookkeeping; this local cleanup gap is not a second runtime lifecycle phase.
 
-- `agent_start` marks a non-delegate session `activity_state = 'running'`
-- `compaction_start` marks a non-delegate session `activity_state = 'running'`
-- the default `agent_end` policy finishes at `agent_end`, and retains terminal `compaction_end` (`willRetry === false`) behavior
-- the `agent_settled` policy keeps activity running through `agent_end` and `compaction_end`, and finishes only at `agent_settled`
+## Frontend behavior
 
-Do not assume compaction is nested inside an already-started agent run, and do not assume compaction is followed by `agent_end`. Pi opts into settlement-aware completion because automatic threshold compaction can occur after `agent_end` while its outer prompt remains streaming. See [Pi Runtime Event Ordering](pi-runtime-event-order.md).
+The raw normalized events remain broadcast for streaming compatibility. The frontend treats `agent_end` as both final-message promotion and stream-finalization for that run. It prefers `agent_end.error.message` for user-facing terminal errors, falling back to an assistant error message only when authoritative outcome data is absent.
 
-On `agent_end`, Reins may also update session metadata (`model_provider`, `model_id`, `thinking_level`) from `runtime.getSessionMetadata()` when available. Checkpoints remain `turn_end`, `agent_end`, and successful `compaction_end`; settlement does not move transcript persistence. A finished transition is queued behind all preceding checkpoints before its `session_updated` broadcast, ensuring clients refreshing on completion observe the durable compacted transcript. Running activity transitions remain immediate.
-
-The raw `agent_end` event remains broadcast for runtime compatibility. Frontend conversation handling ignores every `role: "user"` entry in `agent_end.messages`; those entries remain inputs to persistence, while visible user text comes from optimistic local entries, peer `user_message` events, and persisted display projections.
+Frontend conversation handling ignores `role: "user"` entries in `agent_end.messages`; visible user text comes from optimistic local entries, peer `user_message` events, and persisted projections.
 
 ## Tool event contract
 
-For streaming UI compatibility, runtimes should emit:
+For useful tool rendering, adapters should emit:
 
-- `tool_execution_start` with:
-  - `toolCallId` (required, stable)
-  - `toolName`
-  - `args`
-- `tool_execution_end` with:
-  - same `toolCallId`
-  - `toolName`
-  - optional `result`
-  - optional `isError`
+- `tool_execution_start` with stable `toolCallId`, `toolName`, and `args`
+- `tool_execution_update` when progress is available
+- `tool_execution_end` with the same ID/name, optional `result`, and `isError`
 
 Tool names should be normalized to canonical Reins names where feasible.
 
@@ -84,9 +64,11 @@ Tool names should be normalized to canonical Reins names where feasible.
 
 Runtime adapters should:
 
-1. Explicitly map runtime-native lifecycle events to the typed normalized contract, including `agent_settled` when supported.
-2. Normalize compaction events to `compaction_start` / `compaction_end` for broadcast.
-3. Keep `toolCallId` stable across tool start/end.
-4. Normalize tool names to Reins canonical names when possible.
-5. Include `agent_end.messages` when available (recommended for frontend correctness).
-6. Keep runtime-specific extra fields additive.
+1. Consume native operation boundaries internally and notify the injected `RuntimeLifecycleSink`.
+2. Explicitly map rich native events to `AgentRuntimeEvent` for frontend compatibility.
+3. Map the native durable terminal event to both sink `settled()` and UI `agent_end` exactly once.
+4. Preserve native terminal identity, status, and error in both projections.
+5. Normalize compaction UI events without treating `compaction_end` as terminal activity.
+6. Keep tool-call IDs stable across tool events.
+7. Include run-local `agent_end.messages` when available.
+8. Keep runtime-specific extra fields additive.

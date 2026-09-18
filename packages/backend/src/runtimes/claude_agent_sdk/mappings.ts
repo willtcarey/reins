@@ -24,7 +24,7 @@ const NORMALIZED_TO_SDK_TOOL_NAMES: Record<string, string> = Object.fromEntries(
 
 export const MCP_CUSTOM_TOOL_PREFIX = "mcp__custom-tools__";
 
-/** Custom MCP tool names (without prefix) */
+/** Custom MCP tool names, including historical delegate calls for transcript resume. */
 export const CUSTOM_TOOL_NAMES = new Set(["create_task", "delegate", "search", "execute"]);
 
 /** SDK tool name → normalized name, stripping MCP prefix for custom tools. */

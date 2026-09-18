@@ -12,13 +12,10 @@ import { SESSION_FUNCTIONS, sessionsSetModelFunction } from "../../scripting/ses
 import type { ApiContext } from "../../scripting/define-function.js";
 import type { ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
-import { getPiSession } from "../../runtimes/pi/runtime.js";
 
 async function createMockManagedSession(sessionId: string): Promise<ManagedSession> {
   const managed = await createTestManagedSession(sessionId);
-  const session = getPiSession(managed.runtime);
-  session.setModel = mock<typeof session.setModel>(async () => {});
-  session.setThinkingLevel = mock<typeof session.setThinkingLevel>(() => {});
+  managed.runtime.setModel = mock(async () => {});
   return managed;
 }
 
@@ -88,7 +85,11 @@ describe("sessions.setModel", () => {
       ctx,
     );
 
-    expect(getPiSession(managed.runtime).setModel).toHaveBeenCalledTimes(1);
+    expect(managed.runtime.setModel).toHaveBeenCalledWith({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      thinkingLevel: null,
+    });
   });
 
   test("sets thinking level when provided", async () => {
@@ -102,8 +103,11 @@ describe("sessions.setModel", () => {
       ctx,
     );
 
-    expect(getPiSession(managed.runtime).setThinkingLevel).toHaveBeenCalledTimes(1);
-    expect(getPiSession(managed.runtime).setThinkingLevel).toHaveBeenCalledWith("high");
+    expect(managed.runtime.setModel).toHaveBeenCalledWith({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      thinkingLevel: "high",
+    });
 
     const updated = getSession("sess-3");
     expect(updated!.thinking_level).toBe("high");
@@ -121,7 +125,11 @@ describe("sessions.setModel", () => {
     );
 
     // setThinkingLevel should NOT be called since no level was provided
-    expect(getPiSession(managed.runtime).setThinkingLevel).not.toHaveBeenCalled();
+    expect(managed.runtime.setModel).toHaveBeenCalledWith({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      thinkingLevel: null,
+    });
 
     // DB should keep the session's current thinking level
     const updated = getSession("sess-4");

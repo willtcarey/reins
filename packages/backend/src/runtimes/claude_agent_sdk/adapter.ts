@@ -3,8 +3,6 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { buildReinsSystemPrompt } from "../system-prompt.js";
 import { ReinsResourceLoader } from "../resource-loader.js";
 import {
-  type AgentRuntime,
-  type AgentRuntimeAdapter,
   type AvailabilitySourceType,
   type CreateAgentRuntimeParams,
   type ProviderInfo,
@@ -13,13 +11,13 @@ import {
 import { ClaudeSdkAgentRuntime, isThinkingDisabled, mapThinkingEffort } from "./runtime.js";
 import CLAUDE_SDK_MODELS from "./models.json";
 
-function resolvePromptTools(projectDir: string, params: CreateAgentRuntimeParams): import("@earendil-works/pi-coding-agent").ToolDefinition[] {
+function resolvePromptTools(projectDir: string, params: CreateAgentRuntimeParams): import("@earendil-works/pi-agent-core").AgentTool[] {
   const builtinNames = new Set(params.sessionTools?.builtins ?? ["read", "write", "edit", "bash"]);
-  const builtins = createCodingTools(projectDir).filter((tool) => builtinNames.has(tool.name));
-  return [...builtins, ...(params.sessionTools?.customTools ?? [])];
+  return createCodingTools(projectDir).filter((tool) => builtinNames.has(tool.name));
 }
 
-export class ClaudeSdkRuntimeAdapter implements AgentRuntimeAdapter {
+/** Dormant legacy adapter retained outside the active AgentRuntime registry contract. */
+export class ClaudeSdkRuntimeAdapter {
   readonly runtimeType = "claude_agent_sdk";
 
   async listModels(): Promise<ProviderInfo[]> {
@@ -62,7 +60,7 @@ export class ClaudeSdkRuntimeAdapter implements AgentRuntimeAdapter {
     return resultText.trim();
   }
 
-  async createRuntime(params: CreateAgentRuntimeParams): Promise<AgentRuntime> {
+  async createRuntime(params: CreateAgentRuntimeParams): Promise<ClaudeSdkAgentRuntime> {
     const { task } = params;
     const tools = resolvePromptTools(params.projectDir, params);
     const resources = new ReinsResourceLoader({ cwd: params.projectDir });
@@ -81,7 +79,7 @@ export class ClaudeSdkRuntimeAdapter implements AgentRuntimeAdapter {
       resumeOnFirstPrompt: Boolean(params.resume),
       model: params.model,
       thinkingLevel: params.thinkingLevel ?? null,
-      customTools: params.sessionTools?.customTools ?? [],
+      customTools: [],
     });
   }
 }

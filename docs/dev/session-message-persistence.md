@@ -1,28 +1,42 @@
-# Session Message Persistence
+# Session message persistence
 
-Runtime checkpoints are **complete snapshots**, not append-only message events. A runtime may rewrite or shorten its array—for example, Pi removes a failed partial assistant response before inserting a successful retry at the same position.
+## Canonical ownership
 
-## Ordering
+AgentHarness is the only transcript writer. `PiStorageAdapter` stores each public harness `Entry` in `session_messages`; Reins does not persist runtime snapshots or maintain a second replay transcript.
 
-The runtime persistence observer serializes checkpoint handling in event order. It does not start `getMessages()` for a later checkpoint until the preceding checkpoint has been stored. Terminal non-checkpoint boundaries such as settlement-aware `agent_settled` also wait behind that queue before broadcasting finished activity. This is the concurrency boundary: the messages store does not infer whether one valid snapshot is newer than another from message contents.
+- `session_messages.id` is the stable UI row identity.
+- `harness_id` is the exact AgentHarness entry identity.
+- `parent_id` stores actual ancestry.
+- `seq` is the global harness write sequence; gaps are expected.
+- `message_json` is the canonical PiStorageAdapter entry envelope.
+- `pi_values`, `pi_lists`, and `pi_usage` store the remaining harness contract state.
 
-Non-checkpoint activity events remain immediate. All sessions, including parented sessions with or without a task, persist and broadcast their own running/finished activity. Parent links do not suppress lifecycle updates; active child-session views need terminal metadata for reconciliation.
+Canonical readers do not accept legacy `RuntimeMessage` JSON. Process bootstrap inspects the database before importing application handlers or calling `getDb()`. After the operator stops the old server and all database users, startup creates an immutable WAL-consistent backup of the original schema, runs ordinary schema migrations, then converts and validates legacy history in one transaction on the live database. Fresh installs continue normally and canonical databases are not reconverted. Conversion failure rolls history back, though completed backward-compatible schema migrations may remain; migration failure requires explicit backup restoration. The cooperative lock and open-handle check do not fence arbitrary old binaries. See the cutover runbook for recovery details.
 
-## Active transcript projection
+## Archive and active history
 
-`persistMessages(sessionId, messages)` treats its input as the authoritative runtime snapshot. The rows in the active transcript window are a mutable projection of that snapshot:
+Archive display and active execution are deliberately separate projections.
 
-- matching prefix rows remain unchanged;
-- changed positions are updated in place;
-- additional positions are inserted;
-- positions removed from the snapshot are deleted.
+`loadMessages()`, message pages, session search, and timeline entries project every message or compaction entry in sequence order. Message pages retain SQLite row IDs and stored parent row IDs. Custom and branch-summary entries are not chat records.
 
-The synchronization occurs in one SQLite transaction. Updating by position retains row IDs and sequence values where possible, preserving display parent links and pagination cursors. Attachment references removed by a rewrite are pruned after the projection is updated.
+Closed-session results follow `pi.branch.tip/main` ancestry through `loadActiveMessages()`. They do not select a newer archived branch merely because it has a greater sequence. Open runtimes obtain context through AgentHarness branch traversal. After compaction, context is the latest summary, its retained tail, and descendants; archive readers still show older rows.
 
-Persistence deliberately does not inspect `stopReason` or tool-call IDs to decide which snapshot should win. Those are message-domain details and cannot reliably establish checkpoint ordering.
+The one-time offline importer removes the specifically validated legacy tool-result rows that have no genuine matching call from canonical output. Runtime provider projection has no orphan compatibility filter: it projects clean canonical history directly, without fabricating calls, migration flags, or runtime codecs. Historical thinking blocks, including unsigned blocks imported from Claude history, are passed unchanged to Pi's native provider serialization; provider-specific serializers may handle them differently.
 
-## Compaction
+## Lifecycle observers
 
-Rows before the latest compaction summary are archived history and remain append-only. A new compaction summary and its retained tail are appended as a new active window. Later snapshots with that same summary synchronize only that active window.
+The runtime observer stores activity and final model/thinking metadata only. Running activity remains immediate. Terminal activity and parent settlement reporting are ordered through the observer's `flush()` handle. The observer never calls `getMessages()` to write a checkpoint.
 
-As before, storing a compaction boundary replaces pre-boundary tool-result content with `[pruned]`, and `loadMessagesForLLM()` returns only the latest summary and its tail. Paginated display APIs continue to include archived rows.
+Parent reports wait for lifecycle handling, then derive their result from the child's live canonical runtime branch. Passive reopened operations are returned by AgentHarness but are not driven automatically.
+
+## Attachments and metadata
+
+Entries retain Reins attachment references. Bytes remain in `session_attachments` and are hydrated only at the provider boundary.
+
+Reins-owned input entries carry their stable `reinsId` and application metadata inside the supported `reinsInput` custom message. Metadata is supplied when AgentHarness durably accepts the prompt; there is no post-hoc transcript mutation API or compatibility side table. Cross-session inputs use only `metadata.sourceSessionId`, while their content remains clean. Archive, active-runtime, and live-delivery projections preserve that metadata for recipient rendering. The provider projection alone frames sourced content as a Reins session update that is not new user authorization. The approved legacy import has no application metadata, so imported input metadata starts empty.
+
+Some historical model IDs and the imported utility-model ID may not exist in the installed catalog. They remain visible as historical identity and must be replaced explicitly in Settings or through the inactive-session model picker; no fallback is selected.
+
+## Retired models
+
+Archive reads do not open a runtime. An inactive session with an unavailable stored model can be updated through the existing session model route before it is opened. Selection validates the exact provider/model against the registered Pi catalog; runtime construction never silently substitutes a model.

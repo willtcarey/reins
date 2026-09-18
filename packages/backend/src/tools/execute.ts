@@ -13,15 +13,17 @@
  * security boundary against a determined attacker. See docs/tech-debt.md
  * for notes on upgrading to a child-process sandbox if needed.
  *
- * Use the `search` tool first to discover the available API surface.
+ * Use `search` for functions not already documented in the system prompt.
  */
 
 import { createContext, runInContext } from "node:vm";
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import type { Broadcast } from "../models/broadcast.js";
 import type { ManagedSession } from "../state.js";
+import type { SessionInstance } from "../runtimes/session-instance.js";
 import { buildApiObject } from "../scripting/api-registry.js";
+import type { ReinsToolContext } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -33,6 +35,7 @@ export interface ExecuteToolOpts {
   taskId: number | null;
   broadcast: Broadcast;
   sessions: Map<string, ManagedSession>;
+  instance?: SessionInstance;
 }
 
 // ---------------------------------------------------------------------------
@@ -46,7 +49,7 @@ const parameters = Type.Object({
     description:
       "Async JavaScript function body. Has access to the existing `api` object " +
       "for Reins-managed data or UI state. Use `return` to produce a result. " +
-      "Use the `search` tool first to discover available API functions.",
+      "Use the `search` tool for functions not already documented in the system prompt.",
   }),
 });
 
@@ -61,17 +64,18 @@ function formatResult(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
-export function createExecuteTool(opts: ExecuteToolOpts): ToolDefinition<typeof parameters> {
+export function createExecuteTool(opts: ExecuteToolOpts): AgentHarnessTool<ReinsToolContext | undefined, typeof parameters> {
   return {
     name: "execute",
     label: "Execute",
     description:
       "Run async JavaScript against Reins internals. " +
       "Write a function body using the existing `api` object. " +
-      "Use the `search` tool first to discover available API functions and documentation interfaces.",
+      "Use the `search` tool to discover functions not already documented in the system prompt.",
     parameters,
+    replay: "never",
 
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, _onUpdate, _toolContext, _invocation, context) {
       try {
         const api = buildApiObject({
           projectId: opts.projectId,
@@ -79,6 +83,8 @@ export function createExecuteTool(opts: ExecuteToolOpts): ToolDefinition<typeof 
           taskId: opts.taskId,
           broadcast: opts.broadcast,
           sessions: opts.sessions,
+          instance: opts.instance,
+          signal: context.abortSignal,
         });
 
         // Build a vm context with only the api object and safe JS builtins.

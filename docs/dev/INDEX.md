@@ -22,7 +22,9 @@
 | [tool-renderers.md](tool-renderers.md) | frontend | Tool renderer registry, per-tool rendering tiers, adding new renderers |
 | [lit-conventions.md](lit-conventions.md) | frontend | Lit gotchas: cross-component template `this` binding, conventions |
 | [runtime-event-compatibility.md](runtime-event-compatibility.md) | backend | Runtime adapter event compatibility contract for persistence, WS broadcast, and normalization |
-| [pi-runtime-event-order.md](pi-runtime-event-order.md) | backend | Pi lifecycle event ordering notes, especially compaction before `agent_start` |
+| [pi-runtime-event-order.md](pi-runtime-event-order.md) | backend | Current AgentHarness Pi lifecycle and durable terminal ordering |
 | [runtime-adapter-contract.md](runtime-adapter-contract.md) | backend | Minimum viable runtime adapter contract: adapter methods, runtime methods, events, messages, tools, and resume expectations |
-| [session-message-persistence.md](session-message-persistence.md) | backend | Ordered runtime snapshots, active transcript projection, compaction, and pagination stability |
+| [manual-agent-harness-pi.md](manual-agent-harness-pi.md) | backend | Isolated fake-provider launcher for the AgentHarness Pi runtime |
+| [session-message-persistence.md](session-message-persistence.md) | backend | Canonical AgentHarness entries, archive/active projections, provider normalization, and lifecycle ordering |
+| [offline-agent-harness-history-import.md](offline-agent-harness-history-import.md) | backend | Offline legacy-history import and independent validation procedure |
 

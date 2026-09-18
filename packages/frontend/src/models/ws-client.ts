@@ -16,6 +16,7 @@ export interface SessionState {
   thinkingLevel: string;
 }
 
+/** REST response from GET /api/sessions/:sessionId; not a WebSocket message. */
 export interface SessionData {
   id: string;
   projectId: number;
@@ -26,6 +27,7 @@ export interface SessionData {
   updatedAt: string;
   runtimeType?: string;
   activityState: "running" | "finished" | null;
+  pendingOperation: { kind: "run" | "compaction" | "navigation" } | null;
   messageCount: number;
   state: SessionState;
 }
@@ -67,7 +69,13 @@ export type ServerMessage =
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number }
   | { type: "code_review_updated"; projectId: number; taskId: number | null; reviewId: string; revision: number }
-  | { type: "user_message"; sessionId: string; projectId: number; message: ClientPromptContent }
+  | {
+    type: "user_message";
+    sessionId: string;
+    projectId: number;
+    message: ClientPromptContent;
+    metadata?: Record<string, unknown>;
+  }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
   | { type: "ack"; command: string }
   | { type: "error"; sessionId?: string; error: string };
@@ -306,6 +314,7 @@ export class AppClient implements IAppClient {
           listener(msg.sessionId, msg.projectId, {
             type: "user_message",
             message: msg.message,
+            ...(msg.metadata ? { metadata: msg.metadata } : {}),
           });
         }
         break;

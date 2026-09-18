@@ -1,5 +1,4 @@
-import { PiRuntimeAdapter } from "./pi/session.js";
-import { ClaudeSdkRuntimeAdapter } from "./claude_agent_sdk/adapter.js";
+import { AgentHarnessPiRuntimeAdapter } from "./pi/agent-harness-adapter.js";
 import { registerRuntimeAdapter } from "./registry.js";
 
 /**
@@ -7,6 +6,5 @@ import { registerRuntimeAdapter } from "./registry.js";
  * Safe to call repeatedly (Map#set overwrites by runtimeType).
  */
 export function registerBuiltinRuntimeAdapters(): void {
-  registerRuntimeAdapter(new PiRuntimeAdapter());
-  registerRuntimeAdapter(new ClaudeSdkRuntimeAdapter());
+  registerRuntimeAdapter(new AgentHarnessPiRuntimeAdapter());
 }

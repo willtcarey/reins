@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { generateBranchName, slugifyBranchName } from "../branch-namer.js";
 import { clearRuntimeAdapters, registerRuntimeAdapter } from "../runtimes/registry.js";
 import { deleteSetting, setSetting } from "../settings-store.js";
@@ -13,85 +13,22 @@ describe("generateBranchName", () => {
     deleteSetting("default_model");
   });
 
-  test("uses the configured utility model runtime for branch generation", async () => {
-    const piAsk = mock(async () => "task/wrong-runtime");
-    const claudeAsk = mock(async () => '"task/from-claude-runtime"');
-
-    registerRuntimeAdapter({
-      runtimeType: "pi",
-      listModels: async () => [],
-      ask: piAsk,
-      createRuntime: async () => {
-        throw new Error("not used");
-      },
-    });
-
-    registerRuntimeAdapter({
-      runtimeType: "claude_agent_sdk",
-      listModels: async () => [],
-      ask: claudeAsk,
-      createRuntime: async () => {
-        throw new Error("not used");
-      },
-    });
-
-    setSetting("default_model", {
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
-      runtimeType: "pi",
-      thinkingLevel: "medium",
-    });
+  test("rejects an inert utility runtime instead of falling back", async () => {
     setSetting("utility_model", {
-      provider: "anthropic",
-      modelId: "claude-haiku-4-5",
-      runtimeType: "claude_agent_sdk",
-      thinkingLevel: "minimal",
+      provider: "anthropic", modelId: "claude-haiku-4-5",
+      runtimeType: "claude_agent_sdk", thinkingLevel: "minimal",
     });
-
-    await expect(generateBranchName("Add dark mode support")).resolves.toBe("task/from-claude-runtime");
-
-    expect(claudeAsk).toHaveBeenCalledTimes(1);
-    expect(claudeAsk).toHaveBeenCalledWith(expect.objectContaining({
-      prompt: "Add dark mode support",
-      cwd: process.cwd(),
-      model: {
-        provider: "anthropic",
-        modelId: "claude-haiku-4-5",
-      },
-      thinkingLevel: "minimal",
-    }));
-    expect(piAsk).not.toHaveBeenCalled();
+    await expect(generateBranchName("Add dark mode support"))
+      .rejects.toThrow("Configured utility model uses unavailable runtime 'claude_agent_sdk'");
   });
 
-  test("falls back to default model runtime when utility model is unset", async () => {
-    const ask = mock(async () => "task/from-default-runtime");
-
-    registerRuntimeAdapter({
-      runtimeType: "claude_agent_sdk",
-      listModels: async () => [],
-      ask,
-      createRuntime: async () => {
-        throw new Error("not used");
-      },
-    });
-
+  test("rejects an inert default utility runtime when no utility override exists", async () => {
     setSetting("default_model", {
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
-      runtimeType: "claude_agent_sdk",
-      thinkingLevel: "medium",
+      provider: "anthropic", modelId: "claude-sonnet-4-5",
+      runtimeType: "claude_agent_sdk", thinkingLevel: "medium",
     });
-
-    await expect(generateBranchName("Add dark mode support")).resolves.toBe("task/from-default-runtime");
-
-    expect(ask).toHaveBeenCalledTimes(1);
-    expect(ask).toHaveBeenCalledWith(expect.objectContaining({
-      model: {
-        provider: "anthropic",
-        modelId: "claude-sonnet-4-5",
-      },
-      thinkingLevel: "medium",
-    }));
+    await expect(generateBranchName("Add dark mode support"))
+      .rejects.toThrow("Configured utility model uses unavailable runtime 'claude_agent_sdk'");
   });
 
   test("falls back to slugify when runtime adapter returns invalid output", async () => {

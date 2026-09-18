@@ -17,7 +17,7 @@ import {
 import { getModel } from "@earendil-works/pi-ai/compat";
 import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
 import type { ManagedSession } from "../../state.js";
-import { PiAgentRuntime } from "../../runtimes/pi/runtime.js";
+import { createRuntimeStub } from "./test-runtime-stub.js";
 
 const defaultModel = getModel("anthropic", "claude-sonnet-4-5");
 
@@ -25,7 +25,7 @@ const defaultModel = getModel("anthropic", "claude-sonnet-4-5");
  * Create a real AgentSession with in-memory storage.
  * No filesystem access, no network calls, no API key required.
  */
-export async function createTestAgentSession(): Promise<AgentSession> {
+export async function createTestAgentSession(options: { sessionManager?: SessionManager } = {}): Promise<AgentSession> {
   const credentials = new Map<string, Credential>([
     ["anthropic", { type: "api_key", key: "fake-key-for-testing" }],
   ]);
@@ -48,7 +48,7 @@ export async function createTestAgentSession(): Promise<AgentSession> {
   const { session } = await createAgentSession({
     modelRuntime,
     model: defaultModel,
-    sessionManager: SessionManager.inMemory(),
+    sessionManager: options.sessionManager ?? SessionManager.inMemory(),
     settingsManager: SettingsManager.inMemory(),
     tools: [],
     cwd: "/tmp",
@@ -71,17 +71,8 @@ export async function createTestManagedSession(
   id: string,
   overrides?: TestManagedSessionOverrides,
 ): Promise<ManagedSession> {
-  const session = await createTestAgentSession();
-
-  if (overrides?.isStreaming !== undefined) {
-    Object.defineProperty(session, "isStreaming", {
-      get: () => overrides.isStreaming,
-      configurable: true,
-    });
-  }
-
   return {
-    runtime: new PiAgentRuntime(session, id),
+    runtime: createRuntimeStub({ isStreaming: overrides?.isStreaming }).runtime,
     id,
     lastActivity: Date.now(),
   };

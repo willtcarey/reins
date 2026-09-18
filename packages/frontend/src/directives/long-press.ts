@@ -59,6 +59,7 @@ export class LongPressDirective extends AsyncDirective {
   private token = 0;
   private listening = false;
   private connected = true;
+  private suppressNextClick = false;
 
   constructor(partInfo: PartInfo) {
     super(partInfo);
@@ -104,6 +105,7 @@ export class LongPressDirective extends AsyncDirective {
     this.element.addEventListener("pointermove", this.onPointerMove);
     this.element.addEventListener("pointerup", this.onPointerEnd);
     this.element.addEventListener("pointercancel", this.onPointerEnd);
+    this.element.addEventListener("click", this.onClick, true);
     this.listening = true;
   }
 
@@ -113,6 +115,8 @@ export class LongPressDirective extends AsyncDirective {
     this.element.removeEventListener("pointermove", this.onPointerMove);
     this.element.removeEventListener("pointerup", this.onPointerEnd);
     this.element.removeEventListener("pointercancel", this.onPointerEnd);
+    this.element.removeEventListener("click", this.onClick, true);
+    this.suppressNextClick = false;
     this.listening = false;
   }
 
@@ -124,6 +128,7 @@ export class LongPressDirective extends AsyncDirective {
       || !this.options
     ) return;
 
+    this.suppressNextClick = false;
     this.cancelPress(true);
     const feedback = this.resolveFeedback(this.options.feedback);
     if (!feedback) return;
@@ -168,6 +173,13 @@ export class LongPressDirective extends AsyncDirective {
     this.cancelPress();
   };
 
+  private readonly onClick = (event: MouseEvent) => {
+    if (!this.suppressNextClick) return;
+    this.suppressNextClick = false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+
   private resolveFeedback(target: FeedbackTarget | undefined): FeedbackElement | null {
     if (!this.element) return null;
     if (typeof target === "function") return target(this.element);
@@ -179,6 +191,7 @@ export class LongPressDirective extends AsyncDirective {
     if (!this.press || this.press.token !== token || !this.options) return;
     this.clearTimers();
     this.press.completed = true;
+    this.suppressNextClick = true;
     const onComplete = this.options.onComplete;
 
     let completion: Completion;

@@ -54,6 +54,7 @@ describe("SessionModelPicker", () => {
       messageCount,
       runtimeType: "pi",
       activityState: null,
+      pendingOperation: null,
       state: {
         model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
         thinkingLevel: "high",

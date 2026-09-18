@@ -58,15 +58,6 @@ export interface PaletteItem {
   updatedAt: string;
 }
 
-const MESSAGE_COUNT_BY_SESSION_SQL =
-  "SELECT session_id, COUNT(*) AS cnt FROM session_messages GROUP BY session_id";
-
-const FIRST_USER_MESSAGE_BY_SESSION_SQL = `SELECT session_id,
-  json_extract(message_json, '$.content[0].text') AS first_message
-FROM session_messages
-WHERE role = 'user'
-  AND seq = (SELECT MIN(seq) FROM session_messages sm2 WHERE sm2.session_id = session_messages.session_id AND sm2.role = 'user')`;
-
 // ---- Session CRUD ----------------------------------------------------------
 
 export function createSession(
@@ -147,26 +138,42 @@ export function listSessions(options: SessionListOptions): SessionRow[] {
     where.push(
       `(s.id LIKE ? OR s.name LIKE ? OR EXISTS (
          SELECT 1 FROM session_messages sm
-         WHERE sm.session_id = s.id AND sm.message_json LIKE ?
+         WHERE sm.session_id = s.id
+           AND json_valid(sm.message_json)
+           AND (CAST(json_extract(sm.message_json, '$.message.content') AS TEXT) LIKE ?
+             OR CAST(json_extract(sm.message_json, '$.summary') AS TEXT) LIKE ?)
        ))`,
     );
-    binds.push(pattern, pattern, pattern);
+    binds.push(pattern, pattern, pattern, pattern);
   }
 
+  let sql = `WITH listed_sessions AS MATERIALIZED (
+       SELECT
+         s.*,
+         (
+           SELECT COUNT(*)
+           FROM session_messages sm
+           WHERE sm.session_id = s.id
+             AND sm.role NOT IN ('branch_summary', 'custom')
+         ) AS message_count,
+         (
+           SELECT json_extract(sm.message_json, '$.message.content[0].text')
+           FROM session_messages sm
+           WHERE sm.session_id = s.id AND sm.role = 'reinsInput' AND json_valid(sm.message_json)
+           ORDER BY sm.seq
+           LIMIT 1
+         ) AS first_message
+       FROM sessions s
+       WHERE ${where.join(" AND ")}
+     )
+     SELECT * FROM listed_sessions`;
+
   if (options.minMessages !== undefined) {
-    where.push("COALESCE(mc.cnt, 0) >= ?");
+    sql += " WHERE message_count >= ?";
     binds.push(options.minMessages);
   }
 
-  let sql = `SELECT
-       s.*,
-       COALESCE(mc.cnt, 0) AS message_count,
-       fm.first_message
-     FROM sessions s
-     LEFT JOIN (${MESSAGE_COUNT_BY_SESSION_SQL}) mc ON mc.session_id = s.id
-     LEFT JOIN (${FIRST_USER_MESSAGE_BY_SESSION_SQL}) fm ON fm.session_id = s.id
-     WHERE ${where.join(" AND ")}
-     ORDER BY s.updated_at DESC`;
+  sql += " ORDER BY updated_at DESC";
 
   if (options.limit !== undefined) {
     sql += " LIMIT ?";
@@ -215,9 +222,9 @@ export function listPaletteItems(): PaletteItem[] {
          s.task_id AS taskId,
          t.title AS taskTitle,
          (
-           SELECT json_extract(sm.message_json, '$.content[0].text')
+           SELECT json_extract(sm.message_json, '$.message.content[0].text')
            FROM session_messages sm
-           WHERE sm.session_id = s.id AND sm.role = 'user'
+           WHERE sm.session_id = s.id AND sm.role = 'reinsInput' AND json_valid(sm.message_json)
            ORDER BY sm.seq
            LIMIT 1
          ) AS firstMessage,
@@ -262,7 +269,7 @@ export function updateSessionMeta(
 }
 
 /**
- * Update the activity_state of a session. Used by the persistence observer
+ * Update the activity_state of a session. Used by session runtime lifecycle handling
  * to persist running/finished state server-side.
  *
  * Parented sessions participate in activity tracking independently of their

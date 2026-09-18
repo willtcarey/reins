@@ -57,6 +57,9 @@ export function resolveModelSettingWithConfig(key: ModelSettingsKey): {
 } | undefined {
   const config = getSetting(key);
   if (!config) return undefined;
+  if (config.runtimeType !== "pi") {
+    throw new Error(`Configured ${key} uses unavailable runtime '${config.runtimeType}'. Update it in Settings.`);
+  }
 
   const model = resolveModel(config.provider, config.modelId);
   if (!model) {
@@ -77,6 +80,9 @@ export function resolveModelSettingWithConfigInRuntime(
 } | undefined {
   const config = getSetting(key);
   if (!config) return undefined;
+  if (config.runtimeType !== "pi") {
+    throw new Error(`Configured ${key} uses unavailable runtime '${config.runtimeType}'. Update it in Settings.`);
+  }
 
   const model = resolveModel(config.provider, config.modelId, modelRuntime);
   if (!model) {
@@ -106,7 +112,11 @@ export async function resolveModelSettingForCwd(cwd: string, key: ModelSettingsK
 }
 
 export function resolveUtilityModelConfig(): ModelSetting | undefined {
-  return getSetting("utility_model") ?? getSetting("default_model") ?? undefined;
+  const config = getSetting("utility_model") ?? getSetting("default_model") ?? undefined;
+  if (config && config.runtimeType !== "pi") {
+    throw new Error(`Configured utility model uses unavailable runtime '${config.runtimeType}'. Update it in Settings.`);
+  }
+  return config;
 }
 
 export function resolveUtilityModel(): Model<Api> | undefined {

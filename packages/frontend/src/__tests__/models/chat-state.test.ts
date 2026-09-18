@@ -157,14 +157,13 @@ describe("other chat events", () => {
     expect(initialChatState()).not.toHaveProperty("isStreaming");
   });
 
-  test("agent_start and agent_settled are presentation no-ops", () => {
+  test("agent_start is a presentation no-op", () => {
     const before = applyEvents([{
       type: "message_end",
       message: assistant(100, [{ type: "text", text: "earlier turn" }]),
     }]);
 
     expect(applyChatEvent(before, { type: "agent_start" })).toBe(before);
-    expect(applyChatEvent(before, { type: "agent_settled" })).toBe(before);
   });
 
   test("agent_end promotes final assistants and tool results before clearing live overlays", () => {
@@ -212,14 +211,17 @@ describe("other chat events", () => {
     expect(state.messages).toEqual([finalAssistant, originalToolResult]);
   });
 
-  test("agent_end surfaces assistant errors without displaying an empty assistant", () => {
+  test("agent_end surfaces authoritative run errors without displaying an empty assistant", () => {
     const state = applyEvents([{
       type: "agent_end",
       messages: [{
         ...assistant(100),
         stopReason: "error",
-        errorMessage: "overloaded",
+        errorMessage: "stale transcript error",
       }],
+      runId: "run-1",
+      status: "failed",
+      error: { code: "provider_error", message: "overloaded" },
     }]);
 
     expect(state.errorMessage).toBe("overloaded");
@@ -232,7 +234,6 @@ describe("other chat events", () => {
 
     state = applyChatEvent(state, { type: "agent_start" });
     state = applyChatEvent(state, { type: "agent_end" });
-    state = applyChatEvent(state, { type: "agent_settled" });
     expect(state.isCompacting).toBe(true);
 
     state = applyChatEvent(state, { type: "compaction_end", result: { summary: "summary" }, aborted: false });

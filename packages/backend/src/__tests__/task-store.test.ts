@@ -13,7 +13,8 @@ import {
   getTaskSessionIds,
 } from "../task-store.js";
 import { createSession, getSession } from "../session-store.js";
-import { loadMessages, persistMessages } from "../messages-store.js";
+import { loadMessages } from "../messages-store.js";
+import { persistCanonicalMessages } from "./helpers/canonical-messages.js";
 
 let projectId: number;
 
@@ -132,7 +133,7 @@ describe("task-store", () => {
     test("cascades to sessions and messages", () => {
       const t = createTask(projectId, "T", null, "task/t");
       createSession("sess-1", projectId, {  agentRuntimeType: "pi",taskId: t.id });
-      persistMessages("sess-1", [
+      persistCanonicalMessages("sess-1", [
         { role: "user", content: [{ type: "text", text: "hello" }] },
       ]);
 

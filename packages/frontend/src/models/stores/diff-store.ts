@@ -149,23 +149,7 @@ export class DiffStore {
   /** Set the active project. Resets all state and restarts polling. */
   setProject(id: number | null) {
     if (id === this._projectId) return;
-    this._projectId = id;
-    this._branch = null;
-    this.fileData = this.fileData.asLoaded({ files: [], branch: null, baseBranch: null });
-    this.patchData = Loadable.idle();
-    this._patchDiffVersion = 0;
-    this._patchRequestGeneration += 1;
-    this.lastFilesRefreshAt = null;
-    this.lastPayloadRefreshAt = null;
-    this.lastRefreshTrigger = null;
-    this.lastSummaryChanged = null;
-    this.spread = null;
-    this.syncAction = "idle";
-    this.syncResult = null;
-    this.contextLines = DEFAULT_CONTEXT;
-    this.notify();
-    this._restartPolling();
-    this._restartSpreadPolling();
+    this.setScope(id, null);
   }
 
   // ---- Branch management -----------------------------------------------------
@@ -177,14 +161,49 @@ export class DiffStore {
    */
   setBranch(branch: string | null) {
     if (branch === this._branch) return;
-    this._branch = branch;
-    this.patchData = Loadable.idle();
-    this._patchDiffVersion = 0;
-    this._patchRequestGeneration += 1;
-    this.spread = null;
-    this.notify();
-    void this.refresh({ trigger: "branch-change" });
-    this._restartSpreadPolling();
+    this.setScope(this._projectId, branch);
+  }
+
+  /**
+   * Apply route-derived project and branch state atomically. Project switches
+   * otherwise fetch once for HEAD, again for the task branch, and once more
+   * from AppStore after initialization.
+   */
+  setScope(projectId: number | null, branch: string | null) {
+    const projectChanged = projectId !== this._projectId;
+    const branchChanged = branch !== this._branch;
+
+    if (projectChanged) {
+      this._projectId = projectId;
+      this.fileData = this.fileData.asLoaded({ files: [], branch: null, baseBranch: null });
+      this.lastFilesRefreshAt = null;
+      this.lastPayloadRefreshAt = null;
+      this.lastRefreshTrigger = null;
+      this.lastSummaryChanged = null;
+      this.syncAction = "idle";
+      this.syncResult = null;
+      this.contextLines = DEFAULT_CONTEXT;
+    }
+
+    if (projectChanged || branchChanged) {
+      this._branch = branch;
+      this.patchData = Loadable.idle();
+      this._patchDiffVersion = 0;
+      this._patchRequestGeneration += 1;
+      this.spread = null;
+      this.notify();
+    }
+
+    if (projectChanged) {
+      this._restartPolling();
+    } else {
+      void this.refresh({
+        trigger: branchChanged ? "branch-change" : "route",
+        onlyFetchDiffIfNeeded: !branchChanged,
+      });
+    }
+
+    if (projectChanged || branchChanged) this._restartSpreadPolling();
   }
 
   // ---- Diff mode -------------------------------------------------------------
@@ -412,9 +431,11 @@ export class DiffStore {
     this._stopSpreadPolling();
     if (this._projectId == null) return;
 
-    // First tick always fetches remote
+    // Show local spread immediately without putting a remote fetch and task
+    // reconciliation on the project-switch request burst. The first interval
+    // refreshes remote refs, then subsequent remote refreshes stay sparse.
     this._spreadTickCount = 0;
-    this._spreadTick();
+    void this.fetchSpread(false);
     this._spreadTimer = setInterval(() => this._spreadTick(), SPREAD_INTERVAL);
   }
 

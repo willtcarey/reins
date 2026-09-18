@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { API } from "../../api-paths.js";
-import { persistMessages } from "../../messages-store.js";
 import { createProject } from "../../project-store.js";
 import { buildRouter } from "../../routes/index.js";
 import { createSession } from "../../session-store.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestDb } from "../helpers/test-db.js";
+import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
 describe("palette routes", () => {
   useTestDb();
@@ -14,7 +14,7 @@ describe("palette routes", () => {
   test("GET /api/palette returns session items", async () => {
     const project = createProject("Test Project", "/tmp/test-project");
     createSession("session-1", project.id, { agentRuntimeType: "pi" });
-    persistMessages("session-1", [
+    persistCanonicalMessages("session-1", [
       { role: "user", content: [{ type: "text", text: "Hello" }] },
     ]);
 

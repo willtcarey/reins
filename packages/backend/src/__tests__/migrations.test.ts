@@ -96,6 +96,72 @@ function insertMessage(db: Database, seq: number, role: string, message: unknown
 }
 
 describe("migrations", () => {
+  test("backfills linear message ancestry and enforces nullable per-session harness identities", () => {
+    const db = new Database(":memory:");
+    try {
+      createLegacySchema(db);
+      insertMessage(db, 0, "user", { role: "user", content: [] });
+      insertMessage(db, 4, "assistant", { role: "assistant", content: [] });
+      insertMessage(db, 9, "user", { role: "user", content: [] });
+      db.exec(`
+        INSERT INTO sessions (id, project_id, agent_runtime_type) VALUES ('sess-other', 1, 'pi');
+        INSERT INTO session_messages (session_id, seq, role, message_json)
+        VALUES ('sess-other', 2, 'user', '{"role":"user","content":[]}');
+      `);
+
+      runMigrations(db);
+
+      const piTables = db.query<{ name: string }, []>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'pi_%' ORDER BY name",
+      ).all().map((row) => row.name);
+      expect(piTables).toEqual(["pi_lists", "pi_usage", "pi_values"]);
+
+      const rows = db.query<{
+        id: number;
+        session_id: string;
+        seq: number;
+        parent_id: number | null;
+        harness_id: string | null;
+      }, []>(
+        "SELECT id, session_id, seq, parent_id, harness_id FROM session_messages ORDER BY session_id, seq",
+      ).all();
+      const legacyRows = rows.filter((row) => row.session_id === "sess-legacy");
+      const otherRow = rows.find((row) => row.session_id === "sess-other")!;
+
+      expect(legacyRows.map((row) => ({ seq: row.seq, parent_id: row.parent_id, harness_id: row.harness_id }))).toEqual([
+        { seq: 0, parent_id: null, harness_id: null },
+        { seq: 4, parent_id: legacyRows[0].id, harness_id: null },
+        { seq: 9, parent_id: legacyRows[1].id, harness_id: null },
+      ]);
+      expect(otherRow).toMatchObject({ seq: 2, parent_id: null, harness_id: null });
+
+      const parentForeignKey = db.query<{
+        from: string;
+        table: string;
+        to: string;
+        on_delete: string;
+      }, []>("PRAGMA foreign_key_list('session_messages')").all()
+        .find((foreignKey) => foreignKey.from === "parent_id");
+      expect(parentForeignKey).toMatchObject({
+        table: "session_messages",
+        to: "id",
+        on_delete: "SET NULL",
+      });
+
+      db.query("UPDATE session_messages SET harness_id = 'entry-1' WHERE id = ?").run(legacyRows[0].id);
+      expect(() => db.query("UPDATE session_messages SET harness_id = 'entry-1' WHERE id = ?").run(legacyRows[1].id)).toThrow();
+      db.query("UPDATE session_messages SET harness_id = 'entry-1' WHERE id = ?").run(otherRow.id);
+
+      db.query("DELETE FROM session_messages WHERE id = ?").run(legacyRows[1].id);
+      expect(db.query<{ parent_id: number | null }, [number]>(
+        "SELECT parent_id FROM session_messages WHERE id = ?",
+      ).get(legacyRows[2].id)?.parent_id).toBeNull();
+      expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   test("externalizes inline persisted images and canonicalizes string content", () => {
     const db = new Database(":memory:");
     try {

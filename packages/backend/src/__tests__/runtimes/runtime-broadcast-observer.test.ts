@@ -36,7 +36,7 @@ describe("runtime broadcast observer", () => {
     createSession("sess-runtime-broadcast", projectId, { agentRuntimeType: "pi" });
   });
 
-  test("broadcasts agent_settled as a valid raw runtime event in order", () => {
+  test("broadcasts terminal agent_end outcome data", () => {
     const { runtime, emit } = createRuntimeStub();
     const ws = createWsClient();
     attachRuntimeBroadcastObserver({
@@ -46,16 +46,26 @@ describe("runtime broadcast observer", () => {
       clients: new Set([ws.client]),
     });
 
-    emit({ type: "agent_end", messages: [] });
     emit({ type: "compaction_start", reason: "threshold" });
-    emit({ type: "compaction_end", aborted: false, willRetry: false });
-    emit({ type: "agent_settled" });
+    emit({ type: "compaction_end", aborted: false });
+    emit({
+      type: "agent_end",
+      messages: [],
+      runId: "operation-1",
+      status: "failed",
+      error: { code: "provider_error", message: "Provider unavailable" },
+    });
 
     expect(ws.messages().map(({ event }) => event)).toEqual([
-      { type: "agent_end", messages: [] },
       { type: "compaction_start", reason: "threshold" },
-      { type: "compaction_end", aborted: false, willRetry: false },
-      { type: "agent_settled" },
+      { type: "compaction_end", aborted: false },
+      {
+        type: "agent_end",
+        messages: [],
+        runId: "operation-1",
+        status: "failed",
+        error: { code: "provider_error", message: "Provider unavailable" },
+      },
     ]);
   });
 

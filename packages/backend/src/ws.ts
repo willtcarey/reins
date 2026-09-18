@@ -10,7 +10,7 @@
  */
 
 import type { ServerState, WsClient, WebSocketLike } from "./state.js";
-import { ensureSessionOpen } from "./runtimes/sessions-manager.js";
+import { ensureSessionOpen } from "./runtimes/session-manager.js";
 import { getSession } from "./session-store.js";
 import { createBroadcastExcluding } from "./models/broadcast.js";
 import { logger } from "./logger.js";

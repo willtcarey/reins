@@ -105,6 +105,51 @@ describe("ProjectStore", () => {
     expect(store.activityForSession("s-task")).toBe("finished");
   });
 
+  test("selects only running immediate children of a session", () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+    sessionCache.setMany([
+      session({ id: "running-child", parentSessionId: "parent", activityState: "running" }),
+      session({ id: "finished-child", parentSessionId: "parent", activityState: "finished" }),
+      session({ id: "grandchild", parentSessionId: "running-child", activityState: "running" }),
+      session({ id: "other-parent-child", parentSessionId: "other", activityState: "running" }),
+      session({ id: "other-project-child", projectId: 99, parentSessionId: "parent", activityState: "running" }),
+    ]);
+
+    expect(store.runningChildSessionsFor("parent").map((child) => child.id)).toEqual([
+      "running-child",
+    ]);
+  });
+
+  test("marks session activity read and unread", async () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+    sessionCache.setMany([session({ id: "s-task", activityState: "finished" })]);
+    const requests: RequestInit[] = [];
+    mockFetch((_url, init) => {
+      requests.push(init ?? {});
+      return jsonResponse({ ok: true });
+    });
+
+    expect(await store.setSessionUnread("s-task", false)).toEqual({ ok: true });
+    expect(store.activityForSession("s-task")).toBeNull();
+    expect(JSON.parse(String(requests[0]?.body))).toEqual({ unread: false });
+
+    expect(await store.setSessionUnread("s-task", true)).toEqual({ ok: true });
+    expect(store.activityForSession("s-task")).toBe("finished");
+    expect(JSON.parse(String(requests[1]?.body))).toEqual({ unread: true });
+  });
+
+  test("restores session activity when marking it read fails", async () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+    sessionCache.setMany([session({ id: "s-task", activityState: "finished" })]);
+    mockFetch(() => jsonResponse({}, false));
+
+    expect(await store.setSessionUnread("s-task", false)).toEqual({ error: "HTTP 500" });
+    expect(store.activityForSession("s-task")).toBe("finished");
+  });
+
   test("openTasks and closedTasks split task rows", () => {
     const open = makeTask({ id: 1, status: "open" });
     const closed = makeTask({ id: 2, status: "closed" });

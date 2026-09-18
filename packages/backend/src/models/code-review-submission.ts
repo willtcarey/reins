@@ -1,11 +1,7 @@
-import {
-  acceptCodeReviewSubmission,
-  type AcceptedCodeReviewSubmission,
-} from "../code-review-store.js";
+import { acceptCodeReviewSubmission } from "../code-review-store.js";
 import { getSession } from "../session-store.js";
 import type { ServerState } from "../state.js";
-import { ensureSessionOpen } from "../runtimes/sessions-manager.js";
-import { logger } from "../logger.js";
+import { ensureSessionOpen } from "../runtimes/session-manager.js";
 import type { Broadcast } from "./broadcast.js";
 import {
   CodeReviewError,
@@ -52,35 +48,21 @@ export class CodeReviewSubmission {
       throw new CodeReviewError("Session is currently running", "conflict");
     }
 
-    const accepted = acceptCodeReviewSubmission(
-      review,
-      command.sessionId,
-      this.compileFeedback(review.annotations),
-    );
+    const feedback = this.compileFeedback(review.annotations);
+    const message = [{ type: "text" as const, text: feedback }];
+    const submitted = await managed.runtime.prompt(message, {
+      reinsId: `code-review:${review.id}:${review.revision}`,
+      metadata: { source: "code-review", reviewId: review.id, revision: review.revision },
+    });
+    acceptCodeReviewSubmission(review, command.sessionId, feedback);
     this.broadcastReview(review);
-    this.dispatch(command.sessionId, accepted);
-    return { messageId: accepted.messageId };
-  }
-
-  private dispatch(sessionId: string, accepted: AcceptedCodeReviewSubmission): void {
     this.broadcast({
       type: "user_message",
-      sessionId,
+      sessionId: command.sessionId,
       projectId: this.projectId,
-      message: accepted.message,
+      message,
     });
-    const runtime = this.state.sessions.get(sessionId)?.runtime;
-    if (!runtime) return;
-    try {
-      void runtime.prompt(accepted.message).catch((error: unknown) => {
-        // The durable user message remains in the transcript and receipt. A later
-        // turn will include it in context even when immediate runtime dispatch fails.
-        logger.error(`Failed to dispatch submitted review to session ${sessionId}:`, error);
-      });
-    } catch (error) {
-      // Treat synchronous adapter failures like rejected prompt promises.
-      logger.error(`Failed to dispatch submitted review to session ${sessionId}:`, error);
-    }
+    return { messageId: submitted.messageId };
   }
 
   private broadcastReview(review: CodeReview): void {

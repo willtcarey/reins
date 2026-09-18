@@ -1,6 +1,7 @@
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { copyTextToClipboard } from "../helpers/clipboard.js";
+import type { ActivityState } from "../models/stores/session-cache.js";
 import { openFileBrowserEvent, paneSelectEvent, reloadRequestEvent } from "./events.js";
 import type { MainPaneSelectDetail, MainWorkspacePane } from "./events.js";
 import { showToast, type ToastLevel } from "./toast.js";
@@ -18,6 +19,8 @@ export class AppMainToolbar extends LitElement {
   @property({ type: String }) activePane: MainWorkspacePane = "chat";
   @property({ type: String }) currentBranch: string | null = null;
   @property({ type: String }) sessionId = "";
+  @property({ attribute: false }) activityState: ActivityState | undefined;
+  @property({ attribute: false }) onSetSessionUnread: ((unread: boolean) => Promise<unknown>) | null = null;
   @property({ type: Boolean }) isStandalone = false;
   @property({ type: Boolean }) connected = false;
 
@@ -45,7 +48,14 @@ export class AppMainToolbar extends LitElement {
   }
 
   private renderSessionActions() {
+    const unread = this.activityState === "finished";
     return html`
+      ${this.sessionId && this.onSetSessionUnread && this.activityState !== "running" ? html`
+        <button
+          class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
+          @click=${() => this.onSetSessionUnread?.(!unread)}
+        >${unread ? "Mark as read" : "Mark as unread"}</button>
+      ` : ""}
       ${this.sessionId ? html`
         <button
           class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"

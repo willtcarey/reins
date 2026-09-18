@@ -236,6 +236,55 @@ const MIGRATIONS: Migration[] = [
        WHERE task_id IS NULL;
      PRAGMA foreign_keys = ON`,
   ],
+  [
+    "026_add_session_message_ancestry",
+    `ALTER TABLE session_messages
+       ADD COLUMN parent_id INTEGER REFERENCES session_messages(id) ON DELETE SET NULL;
+     ALTER TABLE session_messages ADD COLUMN harness_id TEXT;
+     UPDATE session_messages AS child
+     SET parent_id = (
+       SELECT parent.id
+       FROM session_messages AS parent
+       WHERE parent.session_id = child.session_id
+         AND parent.seq < child.seq
+       ORDER BY parent.seq DESC
+       LIMIT 1
+     );
+     CREATE UNIQUE INDEX idx_session_messages_session_harness_id
+       ON session_messages(session_id, harness_id)
+       WHERE harness_id IS NOT NULL`,
+  ],
+  [
+    "027_add_agent_harness_storage",
+    `ALTER TABLE sessions ADD COLUMN harness_next_seq INTEGER NOT NULL DEFAULT 1;
+     CREATE TABLE pi_values (
+       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+       namespace TEXT NOT NULL,
+       key TEXT NOT NULL,
+       seq INTEGER NOT NULL,
+       value_json TEXT NOT NULL CHECK(json_valid(value_json)),
+       PRIMARY KEY(session_id, namespace, key)
+     );
+     CREATE TABLE pi_lists (
+       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+       namespace TEXT NOT NULL,
+       key TEXT NOT NULL,
+       seq INTEGER NOT NULL,
+       value_json TEXT NOT NULL CHECK(json_valid(value_json)),
+       PRIMARY KEY(session_id, namespace, key, seq)
+     );
+     CREATE TABLE pi_usage (
+       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+       id TEXT NOT NULL,
+       seq INTEGER NOT NULL,
+       entry_id TEXT,
+       adjustment INTEGER NOT NULL,
+       usage_json TEXT NOT NULL CHECK(json_valid(usage_json)),
+       details_json TEXT CHECK(details_json IS NULL OR json_valid(details_json)),
+       PRIMARY KEY(session_id, id),
+       UNIQUE(session_id, seq)
+     )`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

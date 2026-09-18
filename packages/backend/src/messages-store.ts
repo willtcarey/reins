@@ -1,18 +1,12 @@
 /**
  * Messages Store
  *
- * SQLite-backed persistence and query helpers for session messages.
- * Owns the `session_messages` table: incremental persistence, compaction
- * pruning, LLM replay windows, and analysis-friendly timeline entries.
+ * SQLite-backed query helpers for canonical AgentHarness session messages.
+ * Owns archive/display projections and analysis-friendly timeline entries;
+ * AgentHarness storage commits are the sole transcript write path.
  */
 
 import { getDb } from "./db.js";
-import {
-  collectAttachmentIds,
-  externalizeRuntimeContentBlock,
-  hydrateImageAttachmentBlock,
-  pruneUnreferencedAttachmentData,
-} from "./session-attachments-store.js";
 
 // ---- Types -----------------------------------------------------------------
 
@@ -65,6 +59,9 @@ export type RuntimeContentBlock = TextContentBlock | ThinkingContentBlock | Tool
 
 export interface RuntimeMessage {
   role: string;
+  /** Stable runtime-owned logical identity. Not a provider response or SQLite row ID. */
+  logicalId?: string;
+  metadata?: Record<string, unknown>;
   content?: RuntimeContentBlock[];
   stopReason?: string;
   summary?: string;
@@ -106,6 +103,8 @@ type SessionMessageEntryMetadata<Role extends Exclude<SessionEntryType, "toolCal
 };
 
 type PersistedMessageBase = {
+  logicalId?: string;
+  metadata?: Record<string, unknown>;
   summary?: string;
   [key: string]: unknown;
 };
@@ -207,22 +206,6 @@ function contentPreview(content: PersistedContentBlock[]): string {
   return `${text.slice(0, TOOL_RESULT_PREVIEW_CHARS)}…`;
 }
 
-type HydratedPersistedMessage = Omit<PersistedMessage, "content"> & {
-  content?: RuntimeContentBlock[];
-};
-
-function hydratePersistedMessageImages(sessionId: string, message: PersistedMessage): HydratedPersistedMessage {
-  if (message.role === "compactionSummary") return message;
-  return {
-    ...message,
-    content: message.content.map((block) => (
-      block.type === "image"
-        ? hydrateImageAttachmentBlock(sessionId, block)
-        : block
-    )),
-  };
-}
-
 function extractToolCallBlocks(message: PersistedAssistantMessage): ToolCallContentBlock[] {
   return message.content.filter((block): block is ToolCallContentBlock => block.type === "toolCall");
 }
@@ -245,185 +228,97 @@ function entryMatchesToolFilters(entry: SessionEntry, options: SessionEntryOptio
   return true;
 }
 
-function rawMessageMatchesSearch(rawMessage: string, search: string | undefined): boolean {
+function rawMessageMatchesSearch(message: PersistedMessage, search: string | undefined): boolean {
   if (!search) return true;
-  return rawMessage.toLowerCase().includes(search.toLowerCase());
+  return JSON.stringify(message).toLowerCase().includes(search.toLowerCase());
 }
 
-function parsePersistedMessage(messageJson: string): PersistedMessage {
-  const parsed: PersistedMessage = JSON.parse(messageJson);
-  return parsed;
-}
+type StoredReinsInputMessage = {
+  role: "reinsInput";
+  content: PersistedContentBlock[];
+  timestamp?: number;
+  reinsId: string;
+  metadata: Record<string, unknown>;
+};
 
-function compactionSummaryMatches(summaryJson: string, incoming: RuntimeMessage): boolean {
-  const parsed = parsePersistedMessage(summaryJson);
-  return parsed.role === "compactionSummary"
-    && incoming.role === "compactionSummary"
-    && parsed.summary === incoming.summary;
-}
+type StoredEntryEnvelope =
+  | { type: "message"; message: PersistedMessage | StoredReinsInputMessage; timestamp: number; terminate?: true }
+  | { type: "compaction"; summary: string; retainedTail: unknown[]; tokensBefore: number; timestamp: number; fromHook: boolean; details?: unknown; usage?: unknown }
+  | { type: "branch_summary" | "custom"; timestamp: number; [key: string]: unknown };
 
-interface PersistableRuntimeMessage {
-  role: string;
-  content?: PersistedContentBlock[];
-  stopReason?: string;
-  summary?: string;
-  [key: string]: unknown;
-}
-
-function toPersistableMessage(sessionId: string, message: RuntimeMessage): PersistableRuntimeMessage {
-  if (!message.content) return { ...message, content: undefined };
-  return {
-    ...message,
-    content: message.content.map((block) => externalizeRuntimeContentBlock(sessionId, block)),
-  };
-}
-
-function messagesMatch(persistedJson: string, incoming: PersistableRuntimeMessage): boolean {
-  return persistedJson === JSON.stringify(incoming);
-}
-
-interface ActiveTailRow {
-  id: number;
-  seq: number;
-  message_json: string;
-}
-
-/**
- * Prune tool result content from pre-compaction messages by replacing
- * their content with `[pruned]`. Called after a compactionSummary is stored.
- */
-function pruneToolResultsBeforeSeq(sessionId: string, compactionSeq: number): void {
-  const db = getDb();
-
-  const preCompactionResults = db
-    .query<{ id: number; message_json: string }, [string, number]>(
-      `SELECT id, message_json FROM session_messages
-       WHERE session_id = ? AND seq < ? AND role = 'toolResult'`,
-    )
-    .all(sessionId, compactionSeq);
-
-  const prunedAttachmentIds: string[] = [];
-  const update = db.query(
-    `UPDATE session_messages SET message_json = ? WHERE id = ?`,
-  );
-  for (const row of preCompactionResults) {
-    const msg = JSON.parse(row.message_json);
-    prunedAttachmentIds.push(...collectAttachmentIds(msg));
-    msg.content = [{ type: "text", text: "[pruned]" }];
-    update.run(JSON.stringify(msg), row.id);
+/** Project the sole canonical AgentHarness storage envelope into Reins transcript shape. */
+function parsePersistedMessage(messageJson: string): PersistedMessage | null {
+  const entry: StoredEntryEnvelope = JSON.parse(messageJson);
+  if (entry.type === "message") {
+    const message = entry.message;
+    if (message.role === "reinsInput") {
+      return {
+        role: "user",
+        content: message.content,
+        ...(Object.keys(message.metadata).length > 0 ? { metadata: message.metadata } : {}),
+        timestamp: typeof message.timestamp === "number" ? message.timestamp : entry.timestamp,
+      };
+    }
+    return message;
   }
-
-  pruneUnreferencedAttachmentData(sessionId, prunedAttachmentIds);
-}
-
-// ---- Message persistence ---------------------------------------------------
-
-/**
- * Persist a complete runtime snapshot as the authoritative active transcript.
- * Compacted history remains append-only; rows at and after the latest compaction
- * boundary are a mutable projection of the runtime array. Synchronizing by
- * position preserves row IDs and pagination cursors for unchanged positions.
- */
-export function persistMessages(sessionId: string, runtimeMessages: RuntimeMessage[]): void {
-  const db = getDb();
-  const compactionIdx = runtimeMessages.findIndex((message) => message.role === "compactionSummary");
-  let changed = false;
-
-  const tx = db.transaction(() => {
-    const lastSummaryRow = db
-      .query<{ last_seq: number; message_json: string }, [string]>(
-        `SELECT seq AS last_seq, message_json FROM session_messages
-         WHERE session_id = ? AND role = 'compactionSummary'
-         ORDER BY seq DESC LIMIT 1`,
-      )
-      .get(sessionId);
-
-    if (compactionIdx < 0 && lastSummaryRow) {
-      // A compacted runtime snapshot must retain its summary boundary.
-      return;
-    }
-
-    const incomingWindow = runtimeMessages.slice(compactionIdx < 0 ? 0 : compactionIdx)
-      .map((message) => toPersistableMessage(sessionId, message));
-    const latestBoundaryMatches = compactionIdx >= 0
-      && lastSummaryRow !== null
-      && lastSummaryRow !== undefined
-      && compactionSummaryMatches(lastSummaryRow.message_json, runtimeMessages[compactionIdx]);
-
-    if (compactionIdx >= 0 && !latestBoundaryMatches) {
-      const maxRow = db.query<{ max_seq: number }, [string]>(
-        "SELECT COALESCE(MAX(seq), -1) AS max_seq FROM session_messages WHERE session_id = ?",
-      ).get(sessionId)!;
-      insertMessages(sessionId, incomingWindow, maxRow.max_seq + 1);
-      changed = incomingWindow.length > 0;
-      return;
-    }
-
-    const activeStartSeq = latestBoundaryMatches ? lastSummaryRow!.last_seq : 0;
-    const activeRows = db.query<ActiveTailRow, [string, number]>(
-      `SELECT id, seq, message_json FROM session_messages
-       WHERE session_id = ? AND seq >= ? ORDER BY seq`,
-    ).all(sessionId, activeStartSeq);
-
-    let mismatchIdx = 0;
-    while (
-      mismatchIdx < activeRows.length
-      && mismatchIdx < incomingWindow.length
-      && messagesMatch(activeRows[mismatchIdx].message_json, incomingWindow[mismatchIdx])
-    ) mismatchIdx++;
-
-    if (mismatchIdx === activeRows.length) {
-      if (incomingWindow.length > activeRows.length) {
-        insertMessages(
-          sessionId,
-          incomingWindow.slice(activeRows.length),
-          (activeRows.at(-1)?.seq ?? activeStartSeq - 1) + 1,
-        );
-        changed = true;
-      }
-      return;
-    }
-
-    const removedAttachmentIds = activeRows
-      .slice(mismatchIdx)
-      .flatMap((row) => collectAttachmentIds(parsePersistedMessage(row.message_json)));
-    const update = db.query("UPDATE session_messages SET role = ?, message_json = ? WHERE id = ?");
-    const overlap = Math.min(activeRows.length, incomingWindow.length);
-    for (let index = mismatchIdx; index < overlap; index++) {
-      const incoming = incomingWindow[index];
-      if (!messagesMatch(activeRows[index].message_json, incoming)) {
-        update.run(incoming.role, JSON.stringify(incoming), activeRows[index].id);
-      }
-    }
-
-    if (incomingWindow.length < activeRows.length) {
-      db.query("DELETE FROM session_messages WHERE session_id = ? AND seq >= ?")
-        .run(sessionId, activeRows[incomingWindow.length]!.seq);
-    } else if (incomingWindow.length > activeRows.length) {
-      insertMessages(
-        sessionId,
-        incomingWindow.slice(activeRows.length),
-        activeRows.at(-1)!.seq + 1,
-      );
-    }
-    pruneUnreferencedAttachmentData(sessionId, removedAttachmentIds);
-    changed = true;
-  });
-
-  tx();
-  if (changed) {
-    db.query("UPDATE sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(sessionId);
+  if (entry.type === "compaction") {
+    return { role: "compactionSummary", summary: entry.summary, timestamp: entry.timestamp };
   }
+  return null;
 }
 
-/** Load all messages for replay/counting callers that need the complete transcript. */
+// ---- Message projections --------------------------------------------------
+
+/** Count canonical entries that participate in transcript display. */
+export function countMessages(sessionId: string): number {
+  const row = getDb().query<{ count: number }, [string]>(
+    `SELECT COUNT(*) AS count
+     FROM session_messages
+     WHERE session_id = ? AND role NOT IN ('branch_summary', 'custom')`,
+  ).get(sessionId);
+  return row?.count ?? 0;
+}
+
+/** Load every canonical transcript entry for archive display. */
 export function loadMessages(sessionId: string): any[] {
-  const db = getDb();
-  const rows = db
+  const rows = getDb()
     .query<{ message_json: string }, [string]>("SELECT message_json FROM session_messages WHERE session_id = ? ORDER BY seq")
     .all(sessionId);
 
-  return rows.map((row) => JSON.parse(row.message_json));
+  return rows.flatMap((row) => {
+    const message = parsePersistedMessage(row.message_json);
+    return message ? [message] : [];
+  });
+}
+
+/** Load only the canonical main-tip ancestry, excluding archived branches. */
+export function loadActiveMessages(sessionId: string): any[] {
+  const tipRow = getDb().query<{ value_json: string }, [string]>(
+    "SELECT value_json FROM pi_values WHERE session_id = ? AND namespace = 'pi.branch.tip' AND key = 'main'",
+  ).get(sessionId);
+  if (!tipRow) throw new Error(`Canonical main branch is missing for session ${sessionId}`);
+  const tip: unknown = JSON.parse(tipRow.value_json);
+  if (tip === null) return [];
+  if (typeof tip !== "string" || tip.length === 0) throw new Error(`Canonical main branch tip is invalid for session ${sessionId}`);
+
+  const rows = getDb().query<{ message_json: string }, [string, string, string]>(
+    `WITH RECURSIVE ancestry(id, parent_id, depth, visited) AS (
+       SELECT id, parent_id, 0, printf('/%d/', id)
+       FROM session_messages WHERE session_id = ? AND harness_id = ?
+       UNION ALL
+       SELECT parent.id, parent.parent_id, ancestry.depth + 1, ancestry.visited || parent.id || '/'
+       FROM session_messages parent JOIN ancestry ON parent.id = ancestry.parent_id
+       WHERE parent.session_id = ? AND instr(ancestry.visited, printf('/%d/', parent.id)) = 0
+     )
+     SELECT message_json FROM ancestry
+     JOIN session_messages entry ON entry.id = ancestry.id
+     ORDER BY ancestry.depth DESC`,
+  ).all(sessionId, tip, sessionId);
+  if (rows.length === 0) throw new Error(`Canonical main branch tip is unknown for session ${sessionId}`);
+  return rows.flatMap((row) => {
+    const message = parsePersistedMessage(row.message_json);
+    return message ? [message] : [];
+  });
 }
 
 type DisplayCursorDirection = "before" | "after";
@@ -460,10 +355,7 @@ interface MessagePagePosition {
   afterSeq?: number;
 }
 
-const DISPLAY_ROW_SELECT = `SELECT sm.id, sm.session_id, sm.seq, sm.role, sm.message_json, sm.created_at,
-  (SELECT parent.id FROM session_messages AS parent
-   WHERE parent.session_id = sm.session_id AND parent.seq < sm.seq
-   ORDER BY parent.seq DESC LIMIT 1) AS parent_id
+const DISPLAY_ROW_SELECT = `SELECT sm.id, sm.parent_id, sm.session_id, sm.seq, sm.role, sm.message_json, sm.created_at
  FROM session_messages AS sm`;
 
 function queryDisplayRows(
@@ -475,15 +367,17 @@ function queryDisplayRows(
 ): SessionMessageRow[] {
   return getDb().query<SessionMessageRow, (string | number)[]>(
     `${DISPLAY_ROW_SELECT}
-     WHERE sm.session_id = ? AND ${condition}
+     WHERE sm.session_id = ?
+       AND json_extract(sm.message_json, '$.type') IN ('message', 'compaction')
+       AND ${condition}
      ORDER BY sm.seq ${order}${limit === undefined ? "" : " LIMIT ?"}`,
   ).all(sessionId, ...values, ...(limit === undefined ? [] : [limit]));
 }
 
-const parseDisplayRows = (rows: SessionMessageRow[]) => rows.map((row) => ({
-  row,
-  message: parsePersistedMessage(row.message_json),
-}));
+const parseDisplayRows = (rows: SessionMessageRow[]) => rows.flatMap((row) => {
+  const message = parsePersistedMessage(row.message_json);
+  return message ? [{ row, message }] : [];
+});
 
 /**
  * Load one chronological display window. The limit is soft: a selected tool
@@ -505,15 +399,24 @@ export function loadMessagePage(
   );
 
   if (rows.length === 0) {
+    const boundary = forward ? position.afterSeq! : (position.beforeSeq ?? Number.MAX_SAFE_INTEGER);
+    const hasPreviousPage = db.query<{ present: number }, [string, number]>(
+      `SELECT 1 AS present FROM session_messages
+       WHERE session_id = ? AND json_extract(message_json, '$.type') IN ('message', 'compaction')
+         AND seq ${forward ? "<=" : "<"} ? LIMIT 1`,
+    ).get(sessionId, boundary) !== null;
+    const hasNextPage = db.query<{ present: number }, [string, number]>(
+      `SELECT 1 AS present FROM session_messages
+       WHERE session_id = ? AND json_extract(message_json, '$.type') IN ('message', 'compaction')
+         AND seq ${forward ? ">" : ">="} ? LIMIT 1`,
+    ).get(sessionId, boundary) !== null;
     return {
       items: [],
       pageInfo: {
-        hasPreviousPage: false,
-        previousCursor: null,
-        hasNextPage: false,
-        endCursor: position.afterSeq === undefined
-          ? null
-          : displayCursor(sessionId, position.afterSeq, "after"),
+        hasPreviousPage,
+        previousCursor: hasPreviousPage ? displayCursor(sessionId, boundary, "before") : null,
+        hasNextPage,
+        endCursor: forward ? displayCursor(sessionId, boundary, "after") : null,
       },
     };
   }
@@ -530,7 +433,7 @@ export function loadMessagePage(
        WHERE sm.session_id = ? AND sm.seq < ? AND sm.role = 'assistant'
          AND json_valid(sm.message_json)
          AND EXISTS (
-           SELECT 1 FROM json_each(sm.message_json, '$.content') AS block
+           SELECT 1 FROM json_each(sm.message_json, '$.message.content') AS block
            WHERE CASE WHEN block.type = 'object' THEN json_extract(block.value, '$.type') END = 'toolCall'
              AND CASE WHEN block.type = 'object' THEN json_extract(block.value, '$.id') END = ?
          )
@@ -557,7 +460,7 @@ export function loadMessagePage(
       `SELECT MAX(seq) AS seq FROM session_messages
        WHERE session_id = ? AND seq > ? AND role = 'toolResult'
          AND json_valid(message_json)
-         AND json_extract(message_json, '$.toolCallId') IN (SELECT value FROM json_each(?))`,
+         AND json_extract(message_json, '$.message.toolCallId') IN (SELECT value FROM json_each(?))`,
     ).get(sessionId, last.row.seq, JSON.stringify(toolCallIds));
     if (result?.seq != null) {
       parsedPage.push(...parseDisplayRows(queryDisplayRows(
@@ -571,10 +474,12 @@ export function loadMessagePage(
   const firstSeq = parsedPage[0].row.seq;
   const lastSeq = parsedPage.at(-1)!.row.seq;
   const hasPreviousPage = db.query<{ present: number }, [string, number]>(
-    `SELECT 1 AS present FROM session_messages WHERE session_id = ? AND seq < ? LIMIT 1`,
+    `SELECT 1 AS present FROM session_messages
+     WHERE session_id = ? AND json_extract(message_json, '$.type') IN ('message', 'compaction') AND seq < ? LIMIT 1`,
   ).get(sessionId, firstSeq) !== null;
   const hasNextPage = db.query<{ present: number }, [string, number]>(
-    `SELECT 1 AS present FROM session_messages WHERE session_id = ? AND seq > ? LIMIT 1`,
+    `SELECT 1 AS present FROM session_messages
+     WHERE session_id = ? AND json_extract(message_json, '$.type') IN ('message', 'compaction') AND seq > ? LIMIT 1`,
   ).get(sessionId, lastSeq) !== null;
 
   return {
@@ -603,43 +508,29 @@ export function listSessionEntries(
   options: SessionEntryOptions = {},
 ): SessionEntry[] {
   const db = getDb();
-  const where: string[] = ["session_id = ?"];
-  const binds: (string | number)[] = [sessionId];
   const requestedTypes = new Set<SessionEntryType>(options.types ?? ALL_SESSION_ENTRY_TYPES);
-
   if (requestedTypes.size === 0) return [];
-
-  if (options.since) {
-    where.push("created_at >= ?");
-    binds.push(options.since);
-  }
-
-  if (options.afterSeq !== undefined) {
-    where.push("seq > ?");
-    binds.push(options.afterSeq);
-  }
-
-  if (options.beforeSeq !== undefined) {
-    where.push("seq < ?");
-    binds.push(options.beforeSeq);
-  }
 
   const search = options.search?.trim();
   const rows = db
-    .query<{ seq: number; message_json: string; created_at: string }, (string | number)[]>(
+    .query<{ seq: number; message_json: string; created_at: string }, [string]>(
       `SELECT seq, message_json, created_at
        FROM session_messages
-       WHERE ${where.join(" AND ")}
+       WHERE session_id = ?
        ORDER BY seq ASC`,
     )
-    .all(...binds)
+    .all(sessionId)
+    .map((row) => ({ ...row, parsed: parsePersistedMessage(row.message_json) }))
+    .filter((row): row is typeof row & { parsed: PersistedMessage } => row.parsed !== null)
     .map((row) => ({
       ...row,
-      parsed: parsePersistedMessage(row.message_json),
-      matchesSearch: rawMessageMatchesSearch(row.message_json, search),
+      inWindow: (!options.since || row.created_at >= options.since) &&
+        (options.afterSeq === undefined || row.seq > options.afterSeq) &&
+        (options.beforeSeq === undefined || row.seq < options.beforeSeq),
+      matchesSearch: rawMessageMatchesSearch(row.parsed, search),
     }));
 
-  const toolResultsById = new Map<string, { result: SessionToolCallResult; matchesSearch: boolean }>();
+  const toolResultsById = new Map<string, { result: SessionToolCallResult; matchesSearch: boolean; inWindow: boolean }[]>();
   for (const row of rows) {
     if (row.parsed.role !== "toolResult") continue;
 
@@ -651,7 +542,10 @@ export function listSessionEntries(
     };
     if (options.includeContent) result.content = row.parsed.content;
 
-    toolResultsById.set(row.parsed.toolCallId, { result, matchesSearch: row.matchesSearch });
+    const candidate = { result, matchesSearch: row.matchesSearch, inWindow: row.inWindow };
+    const existing = toolResultsById.get(row.parsed.toolCallId);
+    if (existing) existing.push(candidate);
+    else toolResultsById.set(row.parsed.toolCallId, [candidate]);
   }
 
   const entries: SessionEntry[] = [];
@@ -659,7 +553,7 @@ export function listSessionEntries(
   for (const row of rows) {
     const parsed = row.parsed;
 
-    if (row.matchesSearch) {
+    if (row.inWindow && row.matchesSearch) {
       switch (parsed.role) {
         case "user":
           if (requestedTypes.has("user")) {
@@ -684,8 +578,10 @@ export function listSessionEntries(
     if (parsed.role !== "assistant") continue;
 
     for (const block of extractToolCallBlocks(parsed)) {
-      const result = toolResultsById.get(block.id);
-      if (requestedTypes.has("toolCall") && (row.matchesSearch || result?.matchesSearch)) {
+      const result = toolResultsById.get(block.id)?.find((candidate) => candidate.result.seq > row.seq);
+      const assistantMatches = row.inWindow && row.matchesSearch;
+      const resultMatches = result?.inWindow === true && result.matchesSearch;
+      if (requestedTypes.has("toolCall") && (assistantMatches || resultMatches)) {
         entries.push({
           sessionId,
           seq: row.seq,
@@ -700,75 +596,4 @@ export function listSessionEntries(
   const filtered = entries.filter((entry) => entryMatchesToolFilters(entry, options));
 
   return orderAndLimit(filtered, options);
-}
-
-function insertMessages(
-  sessionId: string,
-  messages: PersistableRuntimeMessage[],
-  startSeq: number,
-): void {
-  const db = getDb();
-  const insert = db.query(
-    `INSERT INTO session_messages (session_id, seq, role, message_json, created_at)
-     VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
-  );
-
-  let seq = startSeq;
-  for (const message of messages) {
-    insert.run(sessionId, seq, message.role, JSON.stringify(message));
-    if (message.role === "compactionSummary") pruneToolResultsBeforeSeq(sessionId, seq);
-    seq++;
-  }
-}
-
-/**
- * Append messages incrementally to a session. Unlike `persistMessages()` which
- * expects the full ordered message array, this inserts new messages starting
- * from the current max seq. Handles compaction boundaries the same way:
- * prunes tool result content from pre-compaction messages.
- */
-export function appendMessages(sessionId: string, messages: RuntimeMessage[]): void {
-  if (messages.length === 0) return;
-
-  const db = getDb();
-  const tx = db.transaction(() => {
-    const maxRow = db.query<{ max_seq: number }, [string]>(
-      "SELECT COALESCE(MAX(seq), -1) AS max_seq FROM session_messages WHERE session_id = ?",
-    ).get(sessionId)!;
-    const persisted = messages.map((message) => toPersistableMessage(sessionId, message));
-    insertMessages(sessionId, persisted, maxRow.max_seq + 1);
-  });
-  tx();
-
-  // Touch updated_at
-  db.query("UPDATE sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(sessionId);
-}
-
-/**
- * Load messages for LLM context: returns messages from the last
- * compactionSummary (inclusive) onwards. If no compaction has occurred,
- * returns all messages.
- */
-export function loadMessagesForLLM(sessionId: string): any[] {
-  const db = getDb();
-
-  // Find the seq of the last compaction summary
-  const summaryRow = db
-    .query<{ last_seq: number | null }, [string]>(
-      `SELECT MAX(seq) AS last_seq FROM session_messages
-       WHERE session_id = ? AND role = 'compactionSummary'`,
-    )
-    .get(sessionId);
-
-  const minSeq = summaryRow?.last_seq != null ? summaryRow.last_seq : 0;
-
-  const rows = db
-    .query<{ message_json: string }, [string, number]>(
-      `SELECT message_json FROM session_messages
-       WHERE session_id = ? AND seq >= ?
-       ORDER BY seq`,
-    )
-    .all(sessionId, minSeq);
-
-  return rows.map((r) => hydratePersistedMessageImages(sessionId, parsePersistedMessage(r.message_json)));
 }

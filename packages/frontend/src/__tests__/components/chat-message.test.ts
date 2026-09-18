@@ -102,6 +102,28 @@ describe("ChatMessage", () => {
     expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "open-image-viewer" }));
   });
 
+  test("renders a sourced input as a collapsed neutral card linked to its current session title", () => {
+    const element = displayMessage({
+      role: "user",
+      timestamp: 2,
+      metadata: { sourceSessionId: "child-1" },
+      content: [{ type: "text", text: "The investigation is complete." }],
+    });
+    element.sourceSessionTitle = "Investigation";
+
+    const output = templateToString(element.render());
+    expect(output).toContain('data-role="session-update"');
+    expect(output).toContain("Message from");
+    expect(output).toContain("Investigation");
+    expect(output).toContain("#/session/child-1");
+    expect(output).toContain("The investigation is complete.");
+    expect(output).toContain("<details");
+    expect(output).toContain("<markdown-content");
+    expect(output).not.toContain("whitespace-pre-wrap");
+    expect(output).not.toContain('data-role="user-message-bubble"');
+    expect(output).not.toContain("bg-blue-600");
+  });
+
   test("renders assistant text and associated tool results in native content order", () => {
     const assistant: AgentAssistantMessage = {
       role: "assistant",

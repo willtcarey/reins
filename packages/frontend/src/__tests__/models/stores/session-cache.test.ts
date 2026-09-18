@@ -18,6 +18,7 @@ function sessionDetail(overrides: Partial<SessionData> = {}): SessionData {
     updatedAt: "2026-01-01T00:01:00.000Z",
     runtimeType: "pi",
     activityState: null,
+    pendingOperation: null,
     messageCount: 0,
     state: {
       model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },

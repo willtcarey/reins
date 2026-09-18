@@ -177,14 +177,12 @@ export class AppStore {
   // ---- ActiveSessionStore delegate methods -----------------------------------
 
   async setRoute(sessionId: string | null): Promise<void> {
-    const previousProjectId = this.projectId;
     const nextSessionId = sessionId ?? "";
     if (nextSessionId === this.sessionId) return;
 
     if (!nextSessionId) {
       this.clearActiveSessionStore();
-      if (previousProjectId !== null) this.diffStore.setProject(null);
-      this._updateDiffBranch();
+      this.diffStore.setScope(null, null);
       return;
     }
 
@@ -214,14 +212,9 @@ export class AppStore {
       });
     }
 
-    // Update diff store project when it changes
-    if (this.projectId !== previousProjectId) {
-      this.diffStore.setProject(this.projectId);
-    }
-
-    // After route is applied, resolve the branch and refresh the diff store.
-    this._updateDiffBranch();
-    void this.diffStore.refresh({ trigger: "route" });
+    // Apply the route's final project and branch together so an intermediate
+    // HEAD scope cannot start duplicate filesystem/git requests.
+    this.diffStore.setScope(this.projectId, this._diffBranch());
   }
 
   async updateTask(
@@ -361,17 +354,14 @@ export class AppStore {
    * Resolve the viewed session's task branch and update the diff store.
    * Task sessions → task's branch_name; scratch sessions → null (HEAD).
    */
-  private _updateDiffBranch() {
+  private _diffBranch(): string | null {
     const session = this.activeSessionStore?.sessionData;
-    if (!session?.taskId) {
-      this.diffStore.setBranch(null);
-      return;
-    }
+    if (!session?.taskId) return null;
     const projectId = this.activeSessionStore?.projectId ?? null;
     const task = projectId != null
       ? this.projectsStore.peekStore(projectId)?.findTask(session.taskId)
       : undefined;
-    this.diffStore.setBranch(task?.branch_name ?? null);
+    return task?.branch_name ?? null;
   }
 
   // ---- Subscription ---------------------------------------------------------

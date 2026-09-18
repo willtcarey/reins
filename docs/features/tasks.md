@@ -60,11 +60,13 @@ A task cannot be deleted while any of its sessions are actively running. Stop th
 
 ## Delegation
 
-Task sessions can **delegate** work to sub-sessions. When an agent calls the `delegate` tool, a new session is spawned on the same task with a fresh context window. The sub-session does a focused piece of work and returns a summary to the parent. This enables work decomposition — an orchestrating session can break a large task into steps, delegating each one to keep context windows lean.
+Task sessions can **delegate** work using `api.sessions.start` through `execute`. A new session starts on the same task with a fresh context window and returns its session ID without waiting for its response. The parent can continue working, send messages that resume idle sessions or steer busy ones, and call `api.sessions.wait(sessionId)` to retrieve the latest result once all work in that session has settled. See [Scripting](scripting.md#start-message-and-wait-for-sessions).
 
-Sub-sessions are hidden from the top-level task session list. Instead, parent sessions that spawned sub-sessions show a **+N** badge. Clicking the badge expands an inline list of the sub-sessions, each marked with a "sub" tag. Clicking a sub-session navigates to it.
+Sub-sessions are hidden from the top-level task session list. Instead, top-level sessions that spawned sub-sessions show a **+N** badge. Clicking the badge opens a list of all their delegate descendants, including nested sub-sessions; clicking one navigates to it. A child conversation also shows a muted link to its immediate parent at the top of the conversation.
 
-Delegation is depth-limited (max 3 levels) to prevent runaway nesting, and serialized per project to avoid branch conflicts.
+Finished sessions retain an amber unread indicator until they are opened or explicitly marked read. Idle task sessions and sub-sessions can be marked read or unread from their three-dot menus, and the active session has the same action in the main header menu. The sub-session popover also provides **Mark all as read** when one or more children have unread activity. Running sessions keep their running state and cannot be manually marked unread.
+
+Creating a session requires an explicit parent choice: `parentSessionId: "current"` for a child, or `null` for an independent session. Optional titles use normal session names. Children are depth-limited (max 3 levels). Sessions run independently in the same checkout, so agents must coordinate file edits. Cancelling a parent or its wait does not cancel a child; children report their latest outcome on runtime settlement. Reports durably prompt idle parents or steer busy ones; there is no notification queue, retry, or restart recovery. Reopening alone does not report, while subsequent work reports again.
 
 ## Starting work on creation
 

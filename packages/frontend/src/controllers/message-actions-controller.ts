@@ -2,11 +2,9 @@ import { html, nothing, type ReactiveController, type ReactiveControllerHost } f
 import { createRef, ref, type Ref } from "lit/directives/ref.js";
 import { copyTextToClipboard } from "../helpers/clipboard.js";
 import type { MessageActionMenuElement } from "../components/message-action-menu.js";
-import { checkIcon, copyIcon } from "../components/icons.js";
+import { copyIcon } from "../components/icons.js";
 import { showToast } from "../components/toast.js";
 import "../components/message-action-menu.js";
-
-const COPY_FEEDBACK_MS = 700;
 
 export interface MarkdownCopySource {
   toMarkdown(): string | null;
@@ -46,8 +44,6 @@ export class BoundMessageActions {
 /** Owns clipboard orchestration and transient actions for one chat-message host. */
 export class MessageActionsController implements ReactiveController {
   private readonly menuRef: Ref<MessageActionMenuElement> = createRef();
-  private copied = false;
-  private feedbackTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly host: ReactiveControllerHost) {
     host.addController(this);
@@ -63,11 +59,6 @@ export class MessageActionsController implements ReactiveController {
 
   close(): void {
     this.menuRef.value?.close();
-    this.clearFeedbackTimer();
-    if (this.copied) {
-      this.copied = false;
-      this.host.requestUpdate();
-    }
   }
 
   openSheet(message: MarkdownCopySource): Promise<void> {
@@ -115,13 +106,11 @@ export class MessageActionsController implements ReactiveController {
         data-role="desktop-copy-message"
         type="button"
         class="absolute top-0 right-[10%] z-[var(--layer-content)] hidden h-7 w-7 items-center justify-center rounded-md bg-transparent text-zinc-500 transition-colors hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 md:inline-flex"
-        title=${this.copied ? "Copied" : "Copy as Markdown"}
+        title="Copy as Markdown"
         aria-label="Copy as Markdown"
         @click=${(event: Event) => this.copyDirect(event, message)}
       >
-        ${this.copied
-          ? checkIcon("h-3.5 w-3.5 text-green-400")
-          : copyIcon("h-3.5 w-3.5")}
+        ${copyIcon("h-3.5 w-3.5")}
       </button>
     `;
   }
@@ -129,16 +118,7 @@ export class MessageActionsController implements ReactiveController {
   private async copyDirect(event: Event, message: MarkdownCopySource) {
     event.stopPropagation();
     const text = message.toMarkdown();
-    if (!text || !await this.copyText(text)) return;
-
-    this.clearFeedbackTimer();
-    this.copied = true;
-    this.host.requestUpdate();
-    this.feedbackTimer = setTimeout(() => {
-      this.feedbackTimer = null;
-      this.copied = false;
-      this.host.requestUpdate();
-    }, COPY_FEEDBACK_MS);
+    if (text) await this.copyText(text);
   }
 
   private async copyText(text: string): Promise<boolean> {
@@ -151,8 +131,4 @@ export class MessageActionsController implements ReactiveController {
     }
   }
 
-  private clearFeedbackTimer() {
-    if (this.feedbackTimer !== null) clearTimeout(this.feedbackTimer);
-    this.feedbackTimer = null;
-  }
 }

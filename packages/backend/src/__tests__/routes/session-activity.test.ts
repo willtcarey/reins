@@ -22,13 +22,13 @@ describe("PATCH /api/sessions/:sessionId/activity", () => {
     projectId = p.id;
   });
 
-  test("transitions 'finished' to NULL and returns ok", async () => {
+  test("marks a finished session read", async () => {
     const sessionId = "sess-viewed";
     createSession(sessionId, projectId, { agentRuntimeType: "pi" });
     updateActivityState(sessionId, "finished");
 
     const res = await router.handle(
-      makeRequest("PATCH", `/api/sessions/${sessionId}/activity`),
+      makeRequest("PATCH", `/api/sessions/${sessionId}/activity`, { unread: false }),
       state,
     );
 
@@ -38,27 +38,39 @@ describe("PATCH /api/sessions/:sessionId/activity", () => {
     expect(getSession(sessionId)!.activity_state).toBeNull();
   });
 
+  test("marks an idle session unread", async () => {
+    const sessionId = "sess-unread";
+    createSession(sessionId, projectId, { agentRuntimeType: "pi" });
+
+    const res = await router.handle(
+      makeRequest("PATCH", `/api/sessions/${sessionId}/activity`, { unread: true }),
+      state,
+    );
+
+    expect(res!.status).toBe(200);
+    expect(getSession(sessionId)!.activity_state).toBe("finished");
+  });
+
   test("returns 404 for nonexistent session", async () => {
     const res = await router.handle(
-      makeRequest("PATCH", "/api/sessions/nonexistent/activity"),
+      makeRequest("PATCH", "/api/sessions/nonexistent/activity", { unread: false }),
       state,
     );
 
     expect(res!.status).toBe(404);
   });
 
-  test("no-ops when activity_state is not 'finished'", async () => {
+  test("does not mark a running session unread", async () => {
     const sessionId = "sess-running";
     createSession(sessionId, projectId, { agentRuntimeType: "pi" });
     updateActivityState(sessionId, "running");
 
     const res = await router.handle(
-      makeRequest("PATCH", `/api/sessions/${sessionId}/activity`),
+      makeRequest("PATCH", `/api/sessions/${sessionId}/activity`, { unread: true }),
       state,
     );
 
-    // Should still return ok even though no transition happened
-    expect(res!.status).toBe(200);
+    expect(res!.status).toBe(400);
     expect(getSession(sessionId)!.activity_state).toBe("running");
   });
 });

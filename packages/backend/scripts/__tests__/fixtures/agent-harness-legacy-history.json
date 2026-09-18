@@ -1,0 +1,16 @@
+{
+  "pi": [
+    {"role":"user","logicalId":"pi-user","clientMessageId":"client-message-1","content":[{"type":"text","text":"before"}],"displayContent":[{"type":"text","text":"before"}]},
+    {"role":"assistant","logicalId":"pi-assistant","content":[{"type":"thinking","thinking":"reason","thinkingSignature":"sig"},{"type":"toolCall","id":"call-1","name":"read","arguments":{"path":"a.txt"}}],"stopReason":"toolUse"},
+    {"role":"toolResult","logicalId":"pi-result","toolCallId":"call-1","toolName":"read","content":[{"type":"text","text":"contents"}],"isError":false},
+    {"role":"compactionSummary","logicalId":"pi-compaction","summary":"summary","tokensBefore":123},
+    {"role":"user","logicalId":"pi-retained-user","content":[{"type":"text","text":"retained"}]},
+    {"role":"assistant","logicalId":"pi-retained-assistant","content":[{"type":"text","text":"after"}],"stopReason":"endTurn"}
+  ],
+  "claude": [
+    {"role":"user","content":[{"type":"text","text":"claude question"},{"type":"image","attachmentId":"att-1","mimeType":"image/png","byteSize":3,"sha256":"hash"}]},
+    {"role":"assistant","content":[{"type":"thinking","thinking":"claude thought","thinkingSignature":"claude-signature"},{"type":"toolCall","id":"tool-claude","name":"bash","arguments":{"command":"pwd"}}],"stopReason":"toolUse"},
+    {"role":"toolResult","toolCallId":"tool-claude","toolName":"bash","content":[{"type":"text","text":"/tmp"}],"isError":false},
+    {"role":"assistant","content":[{"type":"text","text":"done"}],"stopReason":"endTurn"}
+  ]
+}

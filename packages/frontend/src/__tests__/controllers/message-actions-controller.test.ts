@@ -30,14 +30,14 @@ describe("MessageActionsController", () => {
       await collectTemplateEventListeners(template, "click")[0]?.call(controller, new Event("click"));
 
       expect(writeText).toHaveBeenCalledWith("**raw markdown**");
-      expect(templateToString(controller.for(message).render({ directCopy: true }))).toContain("Copied");
+      expect(templateToString(controller.for(message).render({ directCopy: true }))).not.toContain("Copied");
     } finally {
       controller.hostDisconnected();
       Object.defineProperty(navigator, "clipboard", { configurable: true, value: originalClipboard });
     }
   });
 
-  test("does not show copied feedback when the clipboard operation fails", async () => {
+  test("keeps the direct copy control stable when the clipboard operation fails", async () => {
     const writeText = mock(async (_text: string) => { throw new Error("denied"); });
     const toast = { add(_message: string, _level: string) {} };
     const textarea = { value: "", style: {}, select() {} };

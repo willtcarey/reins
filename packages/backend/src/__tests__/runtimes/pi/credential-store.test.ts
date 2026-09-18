@@ -1,17 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { useTestDb } from "../../helpers/test-db.js";
-import { useTestRepo } from "../../helpers/test-repo.js";
-import { createServerState } from "../../helpers/server-state.js";
-import { makeRequest } from "../../helpers/request.js";
-import { buildRouter } from "../../../routes/index.js";
-import { createProject } from "../../../project-store.js";
-import { createNewSession } from "../../../runtimes/sessions-manager.js";
 import {
   DbCredentialStore,
   createDbCredentialStore,
 } from "../../../runtimes/pi/credential-store.js";
-import { getPiSession } from "../../../runtimes/pi/runtime.js";
 import {
   getAuthCredential,
   setApiKeyCredential,
@@ -20,7 +13,6 @@ import {
 
 describe("Pi database credential storage", () => {
   useTestDb();
-  const repo = useTestRepo();
 
   test("reads preferred API-key and OAuth credentials", async () => {
     setApiKeyCredential("anthropic", "sk-ant-db");
@@ -80,25 +72,4 @@ describe("Pi database credential storage", () => {
     }
   });
 
-  test("existing sessions read API-key route changes without rebuilding", async () => {
-    const state = createServerState();
-    const router = buildRouter();
-    const projectId = createProject("Test Project", repo.dir, "main").id;
-    const managed = await createNewSession(state, projectId, repo.dir);
-    const modelRuntime = getPiSession(managed.runtime).modelRuntime;
-
-    const putResponse = await router.handle(
-      makeRequest("PUT", "/api/auth/api-keys/anthropic", { apiKey: "sk-updated" }),
-      state,
-    );
-    expect(putResponse!.status).toBe(200);
-    expect((await modelRuntime.getAuth("anthropic"))?.auth.apiKey).toBe("sk-updated");
-
-    const deleteResponse = await router.handle(
-      makeRequest("DELETE", "/api/auth/api-keys/anthropic"),
-      state,
-    );
-    expect(deleteResponse!.status).toBe(204);
-    await expect(modelRuntime.getAuth("anthropic")).resolves.toBeUndefined();
-  });
 });

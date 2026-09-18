@@ -11,19 +11,21 @@ Frontend dev-only code uses the compile-time `REINS_DEV` Bun define so productio
 ```
 src/
 ├── models/          Pure logic — no LitElement, no html``
-├── components/      Lit components — rendering + interaction
+├── ui/              Domain-agnostic Lit presentation primitives
+├── components/      Feature and domain Lit components
 ├── controllers/     Lit reactive controllers (glue between models + components)
 ├── directives/      Reusable element-local Lit behavior
 ├── __tests__/       Tests mirroring app structure
 └── index.ts         Entry point
 ```
 
-**Dependency rule:** `models/` never imports from `components/` or `controllers/`. Everything else can import from `models/`.
+**Dependency rules:** `models/` never imports Lit layers. `ui/` contains domain-agnostic presentation primitives and does not import from `models/`, `components/`, or `controllers/`. Feature components and controllers may import from `models/` and `ui/`.
 
 ```
   components/  ──→  models/  ←──  controllers/
-       │                               │
-       └──────→  controllers/  ←───────┘
+       │              ↑                │
+       ├────────→ controllers/         │
+       └────────→ ui/ ←────────────────┘
 ```
 
 ### models/
@@ -62,9 +64,13 @@ models/
 └── ws-client.ts         WebSocket client
 ```
 
+### ui/
+
+Domain-agnostic Lit presentation primitives shared across features. UI primitives own reusable visual and interaction contracts without importing feature stores or domain models. Current primitives include `info-card.ts` for linked/actionable information rows and `action-menu-presenter.ts` for context-menu and mobile-sheet presentation.
+
 ### components/
 
-Lit custom elements that own rendering and user interaction. Import from `models/` for data, from `controllers/` for lifecycle-managed behavior.
+Feature and domain Lit custom elements that own rendering and user interaction. Import from `models/` for data, from `controllers/` for lifecycle-managed behavior, and from `ui/` for shared presentation primitives.
 
 ```
 components/
@@ -181,7 +187,7 @@ Keep store descriptions at the ownership-boundary level. Avoid listing every end
 - **DiffStore** (`models/stores/diff-store.ts`) — Git diff domain state, lightweight changed-file polling, raw patch loading, diff-mode selection, and branch synchronization. Context expansion state belongs to the review model rather than the store; rendering concerns such as syntax highlighting stay in controllers/components.
 - **CodeReviewStore** (`models/stores/code-review-store.ts`) — Synchronizes raw `CodeReviewState` for the viewed session's exact project/task scope and owns loads, optimistic annotation writes, submission, revision-aware invalidation reloads, and notifications. Pure functions in `models/code-review.ts` project saved annotations and build anchor evidence without wrapping transport state in another object. The panel's `InlineReviewController` owns one selection and composer across virtual remounts and exposes one per-file interface to the diff UI. Submission receives the selected session identity at action time; runtime activity remains owned by `SessionCache`.
 - **SessionCache** (`models/stores/session-cache.ts`) — Canonical client cache for server-provided session metadata and the sole frontend owner of runtime activity. Stores and components derive running/activity views from it rather than duplicating activity in conversation or component state.
-- **ConversationsStore** (`models/stores/conversations-store.ts`) — Keyed per-session conversation presentation state that must survive route changes or missed streaming events. Internally it retains raw persistence/runtime records so reconciliation remains faithful to those protocols; its public `ConversationView` projects them into `Message` domain objects as the primary display interface. Each display message carries its persisted entry/parent IDs or store-local render identity, owns raw Markdown copy semantics, and assistants expose ordered blocks whose tool calls already reference their matching persisted `ToolResultMessage` or live `ToolExecution`. Standalone tool-result records are therefore not display messages. Successful prompt and steer actions add optimistic user entries immediately; peer `user_message` events add equivalent live entries. Components own only outgoing animation metadata and must not maintain parallel pending-message or persistence-reconciliation state. `ActiveSessionStore.prompt()` and `steer()` return the exact `LiveConversationEntry` inserted so local-only interactions can use its store-local render key. Runtime `agent_end` user messages are ignored because they may contain runtime-only skill expansion. During a run, assistant display comes from normalized message snapshots; `agent_start` and `agent_settled` are presentation no-ops, while `agent_end` promotes fresh final assistants and tool results before clearing streaming assistants without completing runtime activity. Genuinely new persisted forward user rows consume pending live users FIFO, independent of content, and replace them with canonical persisted entries. Stale/overlapping pages and earlier-history loads never consume pending users. Persisted IDs flow through render keys and history anchors; do not reconstruct persisted identity from message content, roles, or timestamps. `ConversationsStore` owns persisted-message queries and cursor traversal, merges API records by ID and parent links, and reconciles live/streaming state separately. Ordered streaming snapshots keep only matching tool-execution overlays, keyed by stable tool-call ID; complete snapshot updates can recover missed starts/deltas. Persisted assistant timestamps remove matching streaming snapshots while unmatched newer work remains. Persisted tool results replace live results by tool-call ID. Disconnect and route/metadata updates do not discard received snapshots. When authoritative metadata is non-running, `ActiveSessionStore` narrowly clears only stale compaction presentation and synchronizes canonical messages when needed. Runtime activity remains solely owned by `SessionCache`.
+- **ConversationsStore** (`models/stores/conversations-store.ts`) — Keyed per-session conversation presentation state that must survive route changes or missed streaming events. Internally it retains raw persistence/runtime records so reconciliation remains faithful to those protocols; its public `ConversationView` projects them into `Message` domain objects as the primary display interface. Each display message carries its persisted entry/parent IDs or store-local render identity, owns raw Markdown copy semantics, and assistants expose ordered blocks whose tool calls already reference their matching persisted `ToolResultMessage` or live `ToolExecution`. Standalone tool-result records are therefore not display messages. Successful prompt and steer actions add optimistic user entries immediately; peer `user_message` events add equivalent live entries. Components own only outgoing animation metadata and must not maintain parallel pending-message or persistence-reconciliation state. `ActiveSessionStore.prompt()` and `steer()` return the exact `LiveConversationEntry` inserted so local-only interactions can use its store-local render key. Runtime `agent_end` user messages are ignored because they may contain runtime-only skill expansion. During a run, assistant display comes from normalized message snapshots; `agent_start` is a presentation no-op, while terminal `agent_end` promotes fresh final assistants and tool results, prefers its authoritative native error when present, and clears streaming assistants. Genuinely new persisted forward user rows consume pending live users FIFO, independent of content, and replace them with canonical persisted entries. Stale/overlapping pages and earlier-history loads never consume pending users. Persisted IDs flow through render keys and history anchors; do not reconstruct persisted identity from message content, roles, or timestamps. `ConversationsStore` owns persisted-message queries and cursor traversal, merges API records by ID and parent links, and reconciles live/streaming state separately. Ordered streaming snapshots keep only matching tool-execution overlays, keyed by stable tool-call ID; complete snapshot updates can recover missed starts/deltas. Persisted assistant timestamps remove matching streaming snapshots while unmatched newer work remains. Persisted tool results replace live results by tool-call ID. Disconnect and route/metadata updates do not discard received snapshots. When authoritative metadata is non-running, `ActiveSessionStore` narrowly clears only stale compaction presentation and synchronizes canonical messages when needed. Runtime activity remains solely owned by `SessionCache`.
 - **ProjectsStore / ProjectStore** (`models/stores/projects-store.ts`, `models/stores/project-store.ts`) — Project/task/session list ownership and project-scoped mutations. Activity and session metadata are derived from `SessionCache` instead of stored redundantly.
 - **QuickOpenStore** (`models/stores/quick-open-store.ts`) — Shared quick-open data, filtering, and recency state. Overlay open/closed state remains component-local.
 - **FileBrowserStore** (`models/stores/file-browser-store.ts`) — Shared file browser data and file-content loading. Viewer overlay state remains component-local.
@@ -225,7 +231,7 @@ Thin WebSocket wrapper for receiving server events and sending session-scoped co
 
 Session activity is server-authoritative and enters the frontend through `SessionCache`. Project/session views derive activity indicators from cached session metadata rather than raw runtime events or duplicated component state.
 
-Running indicators remain visible while the agent loop is active. Finished indicators represent unread completed work and are cleared when the session is viewed. Reconnect/resume flows reconcile from the server snapshot instead of trusting missed client events.
+Running indicators remain visible while the agent loop is active. Finished indicators represent unread completed work and are cleared when the session is viewed or explicitly marked read; idle sessions can also be marked unread. Reconnect/resume flows reconcile from the server snapshot instead of trusting missed client events.
 
 ## Routing (`models/router.ts`)
 

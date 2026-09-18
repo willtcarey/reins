@@ -15,7 +15,8 @@ describe("runtime registry", () => {
     clearRuntimeAdapters();
 
     const runtime: AgentRuntime = {
-      prompt: async () => {},
+      waitForIdle: async () => {},
+      prompt: async () => ({ messageId: "test-message" }),
       steer: async () => {},
       abort: async () => {},
       setModel: async () => {},
@@ -45,7 +46,8 @@ describe("runtime registry", () => {
     clearRuntimeAdapters();
 
     const runtime: AgentRuntime = {
-      prompt: async () => {},
+      waitForIdle: async () => {},
+      prompt: async () => ({ messageId: "test-message" }),
       steer: async () => {},
       abort: async () => {},
       setModel: async () => {},
@@ -61,6 +63,7 @@ describe("runtime registry", () => {
       projectDir: "/tmp/project-a",
       sessionId: "sess-1",
       taskId: null,
+      lifecycle: { started() {}, settled() {} },
     };
 
     const { taskId: _taskId, ...expectedRuntimeParams } = inputParams;
@@ -115,7 +118,8 @@ describe("runtime registry", () => {
       listModels: aListModels,
       ask: async () => "",
       createRuntime: async () => ({
-        prompt: async () => {},
+        waitForIdle: async () => {},
+        prompt: async () => ({ messageId: "test-message" }),
         steer: async () => {},
         abort: async () => {},
         setModel: async () => {},
@@ -131,7 +135,8 @@ describe("runtime registry", () => {
       listModels: bListModels,
       ask: async () => "",
       createRuntime: async () => ({
-        prompt: async () => {},
+        waitForIdle: async () => {},
+        prompt: async () => ({ messageId: "test-message" }),
         steer: async () => {},
         abort: async () => {},
         setModel: async () => {},

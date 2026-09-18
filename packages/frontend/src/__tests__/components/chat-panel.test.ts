@@ -4,6 +4,7 @@ import { ActiveSessionStore } from "../../models/stores/active-session-store.js"
 import { ConversationsStore } from "../../models/stores/conversations-store.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
 import type { ClientPromptContent } from "../../models/chat-content.js";
+import type { SessionListItem } from "../../models/ws-client.js";
 import { applyStreamingAssistant, setPersistedMessages } from "../helpers/conversations.js";
 import { collectTemplateEventListeners, templateToString } from "../helpers/lit-template.js";
 import { StubClient } from "../helpers/stub-client.js";
@@ -14,15 +15,21 @@ function callPrivate(obj: object, key: string, ...args: unknown[]) {
   return Reflect.apply(fn, obj, args);
 }
 
-function cacheSessionData(cache: SessionCache, activityState: "running" | "finished" | null = null) {
+function cacheSessionData(
+  cache: SessionCache,
+  activityState: "running" | "finished" | null = null,
+  parentSessionId: string | null = null,
+  pendingOperation: { kind: "run" } | null = null,
+) {
   cache.set("sess-1", {
     projectId: 42,
     taskId: null,
-    parentSessionId: null,
+    parentSessionId,
     name: null,
     createdAt: "",
     updatedAt: "",
     activityState,
+    pendingOperation,
     messageCount: 0,
     state: { model: null, thinkingLevel: "off" },
   });
@@ -58,6 +65,23 @@ describe("ChatPanel conversation orchestration", () => {
     expect(output).toContain(".sessionId=sess-1");
   });
 
+  test("passes the source session's current display title to session updates", () => {
+    const conversations = new ConversationsStore();
+    setPersistedMessages(conversations, "sess-1", [{
+      role: "user",
+      content: "Investigation complete",
+      metadata: { sourceSessionId: "child-1" },
+      timestamp: 1,
+    }]);
+    const panel = new ChatPanel();
+    panel.store = new ActiveSessionStore("sess-1", null, undefined, conversations);
+    Reflect.set(panel, "projectStore", {
+      getSession: () => ({ name: null, firstMessage: "Investigate the cache" }),
+    });
+
+    expect(templateToString(firstRepeatTemplate(panel))).toContain(".sourceSessionTitle=Investigate the cache");
+  });
+
   test("renders previous-history loading at the conversation boundary", async () => {
     const panel = new ChatPanel();
     let finishLoad!: (loaded: boolean) => void;
@@ -87,6 +111,22 @@ describe("ChatPanel conversation orchestration", () => {
     await loading;
   });
 
+  test("offers to resume a pending inactive operation", async () => {
+    const sessionCache = new SessionCache();
+    cacheSessionData(sessionCache, null, null, { kind: "run" });
+    const store = new ActiveSessionStore("sess-1", null, sessionCache, new ConversationsStore());
+    const resume = mock(async () => true);
+    Object.defineProperty(store, "resumePendingOperation", { value: resume });
+    const panel = new ChatPanel();
+    panel.store = store;
+
+    const pending = callPrivate(panel, "renderPendingOperation");
+    expect(templateToString(pending)).toContain("Resume interrupted session");
+    const [click] = collectTemplateEventListeners(pending, "click");
+    await click?.call(panel, new Event("click"));
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+
   test("keeps streaming aggregate indicators in the panel", () => {
     const sessionCache = new SessionCache();
     cacheSessionData(sessionCache, "running");
@@ -107,6 +147,112 @@ describe("ChatPanel conversation orchestration", () => {
     const compacting = templateToString(callPrivate(panel, "renderStreamingContent"));
     expect(compacting).toContain("Summarizing conversation…");
     expect(compacting).not.toContain("Thinking...");
+  });
+
+  test("links a child conversation to its loaded parent title", () => {
+    const sessionCache = new SessionCache();
+    cacheSessionData(sessionCache, null, "parent/session");
+    const panel = new ChatPanel();
+    panel.store = new ActiveSessionStore("sess-1", null, sessionCache, new ConversationsStore());
+    panel.parentSession = {
+      id: "parent/session",
+      projectId: 42,
+      taskId: null,
+      parentSessionId: null,
+      name: "Original investigation",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      firstMessage: "Investigate the bug",
+      messageCount: 1,
+      activityState: null,
+      pendingOperation: null,
+      runtimeType: null,
+      state: null,
+    };
+
+    const output = templateToString(panel.render());
+
+    expect(output).toContain('aria-label="Parent session"');
+    expect(output).toContain('data-role="parent-session-rail"');
+    expect(output).toContain('href="#/session/parent%2Fsession"');
+    expect(output).toContain("Parent session");
+    expect(output).toContain("Original investigation");
+    expect(output).not.toContain("Investigate the bug");
+    expect(output.indexOf('data-role="parent-session-rail"')).toBeLessThan(
+      output.indexOf('id="chat-scroll"'),
+    );
+  });
+
+  test("uses the loaded parent first message or fallback label", () => {
+    const sessionCache = new SessionCache();
+    cacheSessionData(sessionCache, null, "parent-1");
+    const panel = new ChatPanel();
+    panel.store = new ActiveSessionStore("sess-1", null, sessionCache, new ConversationsStore());
+    panel.parentSession = {
+      id: "parent-1",
+      projectId: 42,
+      taskId: null,
+      parentSessionId: null,
+      name: null,
+      createdAt: null,
+      updatedAt: null,
+      firstMessage: "Start with the API",
+      messageCount: null,
+      activityState: null,
+      pendingOperation: null,
+      runtimeType: null,
+      state: null,
+    };
+
+    expect(templateToString(panel.render())).toContain("Start with the API");
+
+    panel.parentSession = null;
+    expect(templateToString(panel.render())).toContain("Parent session");
+  });
+
+  test("hides parent navigation for root sessions", () => {
+    const sessionCache = new SessionCache();
+    cacheSessionData(sessionCache);
+    const panel = new ChatPanel();
+    panel.store = new ActiveSessionStore("sess-1", null, sessionCache, new ConversationsStore());
+
+    expect(templateToString(panel.render())).not.toContain('aria-label="Parent session"');
+  });
+
+  test("renders running child sessions as a separate linked card group", () => {
+    const child: SessionListItem = {
+      id: "child/session",
+      projectId: 42,
+      taskId: null,
+      parentSessionId: "sess-1",
+      name: "Investigate the cache",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      messageCount: 1,
+      firstMessage: "Investigate",
+      activityState: "running",
+    };
+    const sessionCache = new SessionCache();
+    cacheSessionData(sessionCache, "running");
+    const conversations = new ConversationsStore();
+    conversations.applyEvent("sess-1", {
+      type: "message_update",
+      message: { role: "assistant", timestamp: 2, content: [{ type: "thinking", thinking: "secret" }] },
+      assistantMessageEvent: { type: "snapshot" },
+    });
+    const panel = new ChatPanel();
+    panel.store = new ActiveSessionStore("sess-1", null, sessionCache, conversations);
+    panel.runningChildSessions = [child];
+
+    const output = templateToString(panel.render());
+
+    expect(output).toContain('aria-label="Running child sessions"');
+    expect(output).toContain("Investigate the cache");
+    expect(output).toContain('href="#/session/child%2Fsession"');
+    expect(output).toContain("Running");
+    expect(output.indexOf('data-role="streaming-content"')).toBeLessThan(
+      output.indexOf('data-role="running-child-sessions"'),
+    );
   });
 
   test("coordinates optimistic identity from composer submission", () => {

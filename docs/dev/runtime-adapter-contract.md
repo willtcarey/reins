@@ -9,11 +9,13 @@ Runtime adapters are registered with `registerRuntimeAdapter()` and selected by 
 
 The orchestration path is:
 
-1. `runtimes/sessions-manager.ts` creates or reopens a Reins session.
+1. `runtimes/session-manager.ts` creates or reopens a Reins session.
 2. `createAgentRuntime(runtimeType, ...)` finds the adapter.
 3. The adapter builds an `AgentRuntime` for the project/session/task.
-4. Runtime events are broadcast to the frontend and observed for persistence.
-5. The persistence observer snapshots `runtime.getMessages()` on checkpoint events.
+4. Rich runtime events are broadcast to the frontend; the runtime reports native operation transitions to its injected lifecycle sink.
+5. AgentHarness commits transcript entries directly through `PiStorageAdapter`; lifecycle handling never writes message snapshots.
+
+Only the AgentHarness Pi adapter is currently registered. The Claude SDK implementation remains in-tree but unregistered.
 
 ## Minimum viable `AgentRuntimeAdapter`
 
@@ -44,10 +46,12 @@ A runtime adapter must implement `AgentRuntimeAdapter` from `runtimes/registry.t
 - `thinkingLevel` — Reins thinking level (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`) or `null`.
 - `sessionTools`
   - `builtins`: currently `read`, `write`, `edit`, `bash`.
-  - `customTools`: Reins tools (`create_task`, `delegate`, `search`, `execute`; `delegate` only for task sessions).
+  - `harnessTools`: Reins tools (`create_task`, `search`, `execute`). Session orchestration is exposed through `api.sessions` in execute.
+- `lifecycle`
+  - Application-owned sink supplied at construction. The runtime owns native event listening and calls `started()`/`settled()`; it does not expose lifecycle observation to session management.
 - `resume`
-  - `true` when SQLite already has persisted messages for the session.
-  - Runtime must hydrate or otherwise continue from Reins persisted history.
+  - Legacy adapter input retained only by the unregistered Claude implementation.
+  - AgentHarness reopens its lane and active branch directly from canonical storage.
 
 A runtime should build the Reins system prompt with project/task context and available tools. Existing runtimes use `buildReinsSystemPrompt()` plus resource loading for AGENTS/context/skills where applicable.
 
@@ -55,31 +59,35 @@ A runtime should build the Reins system prompt with project/task context and ava
 
 A runtime returned from `createRuntime()` must implement:
 
-- `prompt(content): Promise<void>`
-  - Starts a user turn from `RuntimePromptContent` (`runtimes/registry.ts`) and resolves only when the run is complete or failed.
+- `prompt(content, options?): Promise<RuntimePromptSubmission>`
+  - Durably records a canonical AgentHarness prompt operation, starts execution in the background, and returns its exact message identity without waiting for the response.
   - Text-only prompts are represented as `[{ type: "text", text }]`; prompt images are attachment refs that the runtime hydrates at the provider boundary.
-  - Must reject on fatal prompt failures so the initiating WS client sees an error.
-  - Must update `isStreaming()` while running.
+  - Optional `reinsId`, metadata, and timestamp are stored with the admitted input. Admission failures reject; later execution failures are reported through terminal events and logging.
+  - Must update `isStreaming()` while running. If AgentHarness reopened an interrupted operation passively, the next ordinary prompt is durably queued as steering and resumes that operation instead of failing with `LaneBusy`; genuinely concurrent prompts still reject.
+- `waitForIdle(): Promise<void>`
+  - Observes AgentHarness lane operation settlement, including steering, retry, and compaction.
+  - Waiting never aborts work. The model/API layer bounds individual waits and handles waiter cancellation separately.
 - `steer(content): Promise<void>`
-  - Called when the user submits validated `RuntimePromptContent` while streaming.
-  - If unsupported, reject with a clear error. Claude SDK currently does this.
+  - Submits validated `RuntimePromptContent` through the runtime's native steering path.
+  - AgentHarness durably queues the input, lets active work consume it, or starts idle work from it. A passively reopened operation is resumed when steered. Never add a Reins-managed follow-up queue or abort/restart fallback.
+- Optional `resumePendingOperation(): Promise<void>`
+  - Starts a durable operation that was reopened passively after process interruption, without adding a prompt. The session detail REST response exposes this state and `POST /api/sessions/:sessionId/resume` invokes it; no pending-state WebSocket payload is added.
 - `abort(): Promise<void>`
-  - Cancels the active prompt and aborts active tool execution where possible.
+  - Cancels the active prompt and aborts active tool execution where possible; discard pending native steering messages.
 - `setModel({ provider, modelId, thinkingLevel }): Promise<void>`
   - Applies live model changes for an already-open runtime.
   - If runtime-native live switching is unsupported, store for next turn or reject clearly.
 - `subscribe(listener): () => void`
   - Registers a listener for normalized `AgentRuntimeEvent` values and returns an unsubscribe function.
   - Adapters must explicitly map supported native events; unchecked vendor-event pass-through is not part of the contract.
-  - Events drive both frontend streaming and persistence checkpoints.
-- Optional `activityCompletionBoundary: "agent_end" | "agent_settled"`
-  - Defaults to `agent_end`. Opt into `agent_settled` only when the runtime has an outer lifecycle that remains active after its inner agent run ends.
-  - Pi opts into `agent_settled`; Claude SDK and runtimes without this property retain existing `agent_end`/terminal-compaction completion behavior.
+  - These rich events drive frontend streaming, not application lifecycle state.
 - `getMessages(): Promise<AgentRuntimeMessage[]>`
-  - Returns the full current Reins-normalized transcript for persistence/LLM resume.
-  - This is the source of truth used by `runtime-persistence-observer.ts`.
+  - Projects the current active AgentHarness branch into Reins-normalized messages for UI outcomes and parent reports.
+  - It is not a persistence source; canonical entries are already durable.
+- Optional `getLastRunOutcome()`
+  - Reads the latest durable native terminal run identity, status, and error. AgentHarness resolves it from lane operation storage, so live session waits do not depend on an adapter-local outcome cache or transcript inference.
 - `isStreaming(): boolean`
-  - Used by routes, health checks, idle eviction, task deletion guards, and frontend session state.
+  - Used by routes, health checks, idle eviction, task deletion guards, and frontend session state. Reflect active AgentHarness operations, including compaction and steering, not only token streaming.
 - `close(): Promise<void>`
   - Releases subprocesses, SDK handles, streams, MCP servers, and listeners.
 - Optional `getSessionMetadata()`
@@ -98,21 +106,13 @@ Events are `AgentRuntimeEvent` values from `runtimes/registry.ts`.
   - Emit `message_update` whenever assistant content changes. Provider delta metadata may remain in `assistantMessageEvent`, but consumers must not need it to reconstruct content.
   - Pi provides full snapshots natively. Adapters for delta-only providers must accumulate provider deltas and synthesize the normalized snapshot before emitting each update.
 - `agent_end`
-  - Emit when the inner agent run is complete.
+  - The terminal runtime activity boundary. AgentHarness maps its durable `run_end`, which occurs after automatic retry, deferred polling, steering, and automatic compaction.
   - Include `messages` produced during this run (not necessarily the full transcript) so the frontend can append final assistant/tool messages.
-- `agent_settled`
-  - A normalized terminal event for runtimes whose outer prompt can continue automatically after `agent_end` (for example through threshold compaction or retry).
-  - Required when `activityCompletionBoundary` is `agent_settled`; it marks activity finished but is not a transcript persistence checkpoint.
+  - Preserve native terminal data when available: `runId`, `status` (`completed`, `failed`, or `aborted`), and structured `error`. Consumers should prefer this outcome over inferring failure from the transcript.
 
-### Required for persistence
+### Required for lifecycle state
 
-The persistence observer snapshots `getMessages()` when it sees any of:
-
-- `turn_end`
-- `agent_end`
-- `compaction_end` with `aborted !== true`
-
-A minimal runtime can persist only on `agent_end`, but should emit `turn_end` when the underlying agent has internal turn boundaries or long tool loops.
+Canonical transcript persistence does not depend on runtime events. AgentHarness storage commits entries directly. `CreateAgentRuntimeParams.lifecycle` is the application lifecycle seam; the rich events in this section remain UI projections. The runtime calls sink `started()` for native `run_start`, `run_resume`, and `compaction_start`, and sink `settled()` for durable `run_end`.
 
 ### Required for tool UI
 
@@ -132,7 +132,7 @@ Tool names should be normalized to Reins names where possible (`read`, `write`, 
 - `compaction_start`, `compaction_end`
   - Required if the runtime performs context compaction/summarization.
   - `compaction_start` may occur before `agent_start` for runtimes that compact before entering the agent loop for a new turn. Reins treats it as active session work.
-  - Set `compaction_end.willRetry` when known. For default runtimes, `willRetry: false` is terminal. For settlement-aware runtimes, successful automatic compaction remains active until `agent_settled`.
+  - Compaction is not an activity completion boundary. AgentHarness emits its terminal `run_end` only after automatic compaction and any retry work has durably completed.
 - `auto_retry_start`, `auto_retry_end`
   - Optional UI diagnostics for retrying runtimes.
 
@@ -159,29 +159,52 @@ Tool names should be normalized to Reins names where possible (`read`, `write`, 
   - `role: "compactionSummary"`
   - `summary` contains the compacted context; do not also set `content`.
 
-Persistence filters empty assistant error messages (`role="assistant"`, `stopReason="error"`, empty `content`) so runtimes may emit those only as transient UI error carriers.
+Reins input messages use the supported custom `reinsInput` role in canonical storage. They carry a stable `reinsId` and application-owned `metadata` supplied at durable prompt submission. Provider projection strips both fields and converts the entry to an ordinary user message.
+
+Normalized application projections use `logicalId` for the exact AgentHarness entry identity. Metadata is never reconstructed from timestamps, provider response IDs, tool-call IDs, content, or position, and there is no post-hoc metadata mutation API.
 
 ## Tool integration expectations
 
 A replacement runtime must expose Reins tools to the model somehow:
 
 - Built-in coding tools: `read`, `write`, `edit`, `bash`.
-- Custom tools: `create_task`, `delegate`, `search`, `execute`.
+- Custom tools: `create_task`, `search`, `execute`.
 
-The adapter is responsible for converting Reins `ToolDefinition`s into the runtime-native tool format. Examples today:
+The registered AgentHarness Pi runtime uses AgentHarness-native built-ins and Reins application tools directly. Its read/write/edit/bash tools share a cwd-scoped `NodeExecutionEnv`; bash adds live session/model/reasoning environment values in its native prepare hook, and runtime shutdown cleans up the environment. Reins application tools use the native harness execution signature and cancellation context without custom durable checkpoints. When a persisted lane reopens, Reins synchronizes its active tool names with the currently registered tool set so long-lived sessions gain newly added application tools and drop removed ones. The unregistered Claude SDK implementation retains isolated legacy tool conversion for later cleanup or reintegration.
 
-- Pi consumes the Pi `customTools` directly.
-- Claude SDK exposes custom tools through an SDK MCP server.
+If a runtime cannot expose custom tools, task creation/session orchestration/search/execute will not be available to agents running through it.
 
-If a runtime cannot expose custom tools, task creation/delegation/search/execute will not be available to agents running through it.
+## Asynchronous session orchestration
+
+`api.sessions.start(prompt, options)` materializes a normal session and starts `runtime.prompt()` without waiting for its response, returning `{ sessionId }`. Background prompt failures are logged. `options.parentSessionId` is explicitly `"current"` (child) or `null` (independent); creation stays in the caller's project/task. Optional titles reuse `sessions.name`; omitted titles leave normal naming unchanged. Children retain the depth limit of three. Prompts are not prefixed with an artificial delegation preamble.
+
+`api.sessions.send(sessionId, message)` reopens the existing session if needed and always calls native `steer()`, without consulting `isStreaming()`. AgentHarness durably queues the input, joins active work, starts an idle run, or resumes a passively reopened operation. There is no mode parameter, Reins-managed follow-up operation, hidden waiting/retry, or cancellation/restart fallback. Explicit abort remains separate.
+
+`api.sessions.wait(sessionId, timeoutMs?)` observes the entire session until settled, then returns its latest response/outcome. It waits through native idleness, reads the durable native run outcome when available, and rechecks runtime activity before returning. Waits are bounded to 0–30,000 ms (default 10,000); timeout or execute-tool abort stops only the observation. Self-waits are rejected. Closed sessions are read directly from persisted history without opening an LLM runtime.
+
+There are no receipts, unsent-message tables, dispatchers, or parallel Reins execution state machines. AgentHarness operations are the durable work identity:
+
+- Prompt acceptance commits the `reinsInput` metadata and harness operation before provider execution begins.
+- Steering uses the AgentHarness inbox as the atomic delivery boundary. Reins tracks native idle-start handoff so waits cannot pass between steering admission and operation startup.
+- Explicit abort and retry behavior remain owned by AgentHarness. Reopened operations remain passive until explicitly driven, steered, or continued by the next ordinary user prompt. Once a runtime is evicted, waits inspect canonical active-branch outcomes but cannot reconstruct transient execution errors.
+- The unregistered Claude implementation is not part of current orchestration guarantees.
+- The session manager coalesces concurrent opens using `ServerState.sessionOpenings`, avoiding duplicate runtimes for simultaneous sends. This and the runtime map survive handler hot reloads. Creating sibling sessions on the active task branch skips redundant Git checkouts, so session creation does not contend for the checkout/index lock.
+
+Sessions share the existing checkout. No project-wide lock is held across execution or nested waits; agents must coordinate file edits. Parent links do not propagate cancellation. Historical delegate transcripts and frontend renderers remain readable.
+
+### Child settlement reports
+
+The caller-scoped `SessionInstance` is injected as the runtime lifecycle sink. Its `settled()` method persists metadata and finished activity first, then asynchronously reads the child's latest output and reports it to the parent. The report uses the authoritative lifecycle outcome rather than inferring status/error from the transcript. Reports carry clean result or error text and `metadata.sourceSessionId`; provider projection supplies the explicit session-update/not-user-authorization boundary without polluting stored or UI content.
+
+`SessionManager` owns creation, reopening, and live runtime materialization; `SessionManager.forSession()` returns the instance used by scripting and lifecycle callbacks. `runtimes/session-instance.ts` owns caller-scoped start/send/wait policy and addressed delivery: native prompt or steering submission, activity touch, and broadcast. No creation/open adapter or callback plumbing sits between the two. No HTTP route is added.
+
+There is no Reins inbox, dispatcher, or receipt layer. Reports enter the parent's native AgentHarness steering inbox, which handles active versus idle delivery. Delivery errors are logged by `SessionInstance` and are not retried; they do not affect lifecycle updates. Reopening alone emits no settlement and produces no report; follow-up settlement reports again. Only outcomes represented by the active branch at settlement are reported; startup failures without a settlement event do not produce a report. Pending callbacks are not recovered after restart.
 
 ## Resume and persistence expectations
 
-Reins SQLite is the canonical Reins transcript store. Runtime-private files may exist, but the adapter must not depend on them as the only source of truth.
+Reins SQLite is the canonical transcript and AgentHarness state store. `PiStorageAdapter` implements the harness storage contract, including entries, ancestry, lane values, lists, and usage. Runtime-private replay files are not a second source of truth.
 
-On `resume: true`, the runtime should hydrate from `loadMessagesForLLM(sessionId)` or equivalent Reins persistence, including the last compaction summary boundary.
-
-On each checkpoint event, `getMessages()` should return the complete current transcript in stable order. The persistence observer appends ordinary growth, reconciles failed assistant responses replaced by runtime retries, and handles compaction pruning. See [Session Message Persistence](session-message-persistence.md).
+Opening a session reconstructs AgentHarness directly from canonical storage. `getMessages()` projects active branch context for application readers; it never feeds a snapshot writer. See [Session Message Persistence](session-message-persistence.md).
 
 ## Conversation forking expectations
 
@@ -195,7 +218,7 @@ Conversation forking is not part of the current `AgentRuntime` interface, but an
 
 For a true fork, Reins needs the runtime to continue from an arbitrary persisted prefix, not just resume the runtime's latest saved session. That implies an adapter API beyond today's `resume: true`, for example a future `forkFromMessages(prefixMessages)` or `createRuntime({ initialMessages })` contract.
 
-Pi is closest today because its session manager is tree-shaped and can build context from a branch. Claude Code may be viable through its SDK/session-store path if we can load a synthetic prefix as the session history. A generic ACP/acpx adapter is not enough unless ACP `session/fork` exists for the target agent or the adapter can import an arbitrary transcript prefix.
+AgentHarness already stores tree-shaped entry ancestry and selects context through a lane branch tip. A future runtime adapter is not sufficient for true forking unless it can preserve equivalent ancestry or import an exact arbitrary transcript prefix.
 
 ## Model/runtime UX expectations
 

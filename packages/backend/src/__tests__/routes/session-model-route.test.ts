@@ -6,8 +6,8 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createSession, getSession } from "../../session-store.js";
-import { persistMessages } from "../../messages-store.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
+import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
 describe("PUT /api/sessions/:sessionId/model", () => {
   let state: ReturnType<typeof createServerState>;
@@ -49,7 +49,7 @@ describe("PUT /api/sessions/:sessionId/model", () => {
     expect(updated?.thinking_level).toBe("high");
   });
 
-  test("allows switching runtime before any messages are sent", async () => {
+  test("rejects switching away from the canonical runtime", async () => {
     const sessionId = "session-runtime-switch-empty";
     createSession(sessionId, projectId, { agentRuntimeType: "pi", thinkingLevel: "medium" });
     state.sessions.set(sessionId, await createTestManagedSession(sessionId));
@@ -64,23 +64,33 @@ describe("PUT /api/sessions/:sessionId/model", () => {
       state,
     );
 
-    expect(res!.status).toBe(200);
-    const body = await res!.json();
-    expect(body.agent_runtime_type).toBe("claude_agent_sdk");
-    expect(body.model_provider).toBe("claude_agent_sdk");
-    expect(body.model_id).toBe("claude-sonnet-4-5");
-    expect(state.sessions.has(sessionId)).toBe(false);
+    expect(res!.status).toBe(400);
+    expect((await res!.json()).error).toContain("Canonical sessions use the pi runtime");
+    expect(getSession(sessionId)?.agent_runtime_type).toBe("pi");
+  });
 
-    const updated = getSession(sessionId);
-    expect(updated?.agent_runtime_type).toBe("claude_agent_sdk");
-    expect(updated?.model_provider).toBe("claude_agent_sdk");
-    expect(updated?.model_id).toBe("claude-sonnet-4-5");
+  test("updates a retired model on an inactive session before runtime open", async () => {
+    const sessionId = "retired-model";
+    createSession(sessionId, projectId, {
+      agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "retired-model-id", thinkingLevel: "high",
+    });
+    persistCanonicalMessages(sessionId, [{ role: "user", content: [{ type: "text", text: "history" }] }]);
+
+    const res = await router.handle(
+      makeRequest("PUT", `/api/sessions/${sessionId}/model`, {
+        runtimeType: "pi", provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "high",
+      }), state,
+    );
+
+    expect(res!.status).toBe(200);
+    expect(state.sessions.has(sessionId)).toBe(false);
+    expect(getSession(sessionId)).toMatchObject({ agent_runtime_type: "pi", model_provider: "anthropic", model_id: "claude-sonnet-4-5" });
   });
 
   test("rejects switching runtime after messages exist", async () => {
     const sessionId = "session-runtime-switch-nonempty";
     createSession(sessionId, projectId, { agentRuntimeType: "pi", thinkingLevel: "medium" });
-    persistMessages(sessionId, [{ role: "user", content: [{ type: "text", text: "hello" }] }]);
+    persistCanonicalMessages(sessionId, [{ role: "user", content: [{ type: "text", text: "hello" }] }]);
 
     const res = await router.handle(
       makeRequest("PUT", `/api/sessions/${sessionId}/model`, {
@@ -94,7 +104,7 @@ describe("PUT /api/sessions/:sessionId/model", () => {
 
     expect(res!.status).toBe(400);
     const body = await res!.json();
-    expect(body.error).toMatch(/before any messages are sent/i);
+    expect(body.error).toContain("Canonical sessions use the pi runtime");
   });
 
   test("returns 404 for a missing session", async () => {

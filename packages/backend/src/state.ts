@@ -30,6 +30,8 @@ export interface WsClient {
 
 export interface ServerState {
   sessions: Map<string, ManagedSession>;
+  /** Shared across hot-reloaded handlers to coalesce concurrent reopen requests. */
+  sessionOpenings?: Map<string, Promise<ManagedSession>>;
   clients: Set<WsClient>;
   frontendDir: string;
 }

@@ -8,7 +8,7 @@ import { createTaskTool } from "../../tools/create-task.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
-import { createStrictExtensionContext } from "../helpers/test-pi.js";
+import { executeTool } from "../helpers/execute-tool.js";
 
 /** Extract text from a TextContent | ImageContent, throwing if not text. */
 function textOf(item: TextContent | ImageContent): string {
@@ -16,7 +16,6 @@ function textOf(item: TextContent | ImageContent): string {
   return item.text;
 }
 
-const strictCtx = createStrictExtensionContext();
 
 describe("createTaskTool", () => {
   let projectId: number;
@@ -56,10 +55,10 @@ describe("createTaskTool", () => {
     test("creates a task and branch, returns success result", async () => {
       const tool = createTaskTool({ projectId, broadcast, sessions });
 
-      const result = await tool.execute("call-1", {
+      const result = await executeTool(tool, "call-1", {
         title: "Implement dark mode",
         description: "Add dark mode toggle to the settings page",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       // Result has the expected shape
       expect(result.content).toBeArray();
@@ -90,27 +89,53 @@ describe("createTaskTool", () => {
     test("uses provided branch_name", async () => {
       const tool = createTaskTool({ projectId, broadcast, sessions });
 
-      const result = await tool.execute("call-2", {
+      const result = await executeTool(tool, "call-2", {
         title: "Custom branch",
         description: "Test custom branch name",
         branch_name: "task/my-custom-branch",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const taskData = JSON.parse(textOf(result.content[0]));
       expect(taskData.branch_name).toBe("task/my-custom-branch");
     });
 
-    test("includes _note when prompt provided but no createSession", async () => {
+    test("includes _note when prompt provided but session orchestration is unavailable", async () => {
       const tool = createTaskTool({ projectId, broadcast, sessions });
 
-      const result = await tool.execute("call-3", {
+      const result = await executeTool(tool, "call-3", {
         title: "With prompt",
         description: "Test prompt without session",
         prompt: "Start working on this",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       const taskData = JSON.parse(textOf(result.content[0]));
       expect(taskData._note).toContain("not available");
+    });
+
+    test("starts an initial task session through the session instance", async () => {
+      const started: { taskId: number; prompt: string }[] = [];
+      const tool = createTaskTool({
+        projectId,
+        broadcast,
+        sessions,
+        instance: {
+          async startTaskSession(taskId, prompt) {
+            started.push({ taskId, prompt });
+            return { sessionId: "started-session" };
+          },
+        },
+      });
+
+      const result = await executeTool(tool, "call-4", {
+        title: "With session",
+        description: "Start work immediately",
+        prompt: "Implement it",
+      });
+      await Bun.sleep(0);
+
+      const taskData = JSON.parse(textOf(result.content[0]));
+      expect(started).toEqual([{ taskId: taskData.id, prompt: "Implement it" }]);
+      expect(taskData._note).toContain("started in background");
     });
   });
 
@@ -118,10 +143,10 @@ describe("createTaskTool", () => {
     test("returns error result when project not found", async () => {
       const tool = createTaskTool({ projectId: 99999, broadcast, sessions });
 
-      const result = await tool.execute("call-err-1", {
+      const result = await executeTool(tool, "call-err-1", {
         title: "Should fail",
         description: "No project",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       expect(textOf(result.content[0])).toStartWith("Error:");
       expect(textOf(result.content[0])).toContain("not found");
@@ -133,10 +158,10 @@ describe("createTaskTool", () => {
       const badProject = createProject("Bad Project", "/nonexistent/path", "main");
       const tool = createTaskTool({ projectId: badProject.id, broadcast, sessions });
 
-      const result = await tool.execute("call-err-2", {
+      const result = await executeTool(tool, "call-err-2", {
         title: "Should fail",
         description: "Bad git path",
-      }, undefined, undefined, strictCtx);
+      }, undefined, undefined);
 
       expect(textOf(result.content[0])).toStartWith("Error:");
       expect(result.details).toBeNull();

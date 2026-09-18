@@ -15,6 +15,7 @@ import {
   type SessionRow,
 } from "../session-store.js";
 import {
+  countMessages,
   loadMessagePage,
   loadMessages,
   type PersistedMessage,
@@ -33,6 +34,8 @@ import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
 import { getRuntimeAdapter } from "../runtimes/registry.js";
 import { stripLeadingSkillBlocks } from "./skill.js";
+import { getDb } from "../db.js";
+import { readPendingPiOperation, type PendingPiOperation } from "../runtimes/pi/pending-operation.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -80,6 +83,7 @@ export interface SessionView {
   createdAt: string;
   updatedAt: string;
   activityState: SessionRow["activity_state"];
+  pendingOperation?: PendingPiOperation | null;
   messageCount?: number;
   runtimeType?: string;
   state?: {
@@ -172,12 +176,15 @@ export class Sessions {
     const row = getSession(sessionId);
     if (!row) return null;
 
-    const messageCount = loadMessages(sessionId).length;
+    const messageCount = countMessages(sessionId);
 
     return {
       ...toSessionView(row),
       messageCount,
       runtimeType: row.agent_runtime_type,
+      pendingOperation: row.agent_runtime_type === "pi" && !this.sessions.get(sessionId)?.runtime.isStreaming()
+        ? readPendingPiOperation(getDb(), sessionId)
+        : null,
       state: {
         model: row.model_provider && row.model_id
           ? { provider: row.model_provider, id: row.model_id }
@@ -313,17 +320,19 @@ export class Sessions {
     });
   }
 
-  /**
-   * Mark completed activity as viewed. Only finished activity is cleared;
-   * running or absent activity is left unchanged.
-   */
-  markActivityViewed(sessionId: string): void {
+  /** Set an idle session's unread state without disturbing active work. */
+  setUnread(sessionId: string, unread: boolean): void {
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();
-    if (row.activity_state !== "finished") return;
+    if (unread && row.activity_state === "running") {
+      throw new Error("Running sessions cannot be marked unread");
+    }
 
-    this.updateActivityState(sessionId, null);
+    const activityState = unread ? "finished" : null;
+    if (row.activity_state === activityState || (!unread && row.activity_state === "running")) return;
+    this.updateActivityState(sessionId, activityState);
   }
+
 
   /**
    * Change the AI model for a session.
@@ -340,8 +349,11 @@ export class Sessions {
 
     const managed = this.sessions.get(params.sessionId);
     const nextRuntimeType = params.runtimeType ?? sessionRow.agent_runtime_type;
+    if (nextRuntimeType !== "pi") {
+      throw new Error("Canonical sessions use the pi runtime");
+    }
     const isRuntimeSwitch = nextRuntimeType !== sessionRow.agent_runtime_type;
-    const messageCount = loadMessages(params.sessionId).length;
+    const messageCount = countMessages(params.sessionId);
 
     if (isRuntimeSwitch) {
       if (messageCount > 0) {

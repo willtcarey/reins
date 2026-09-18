@@ -12,13 +12,13 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import type { TaskRow } from "../task-store.js";
 import type { Broadcast } from "../models/broadcast.js";
-import type { CreateSessionFn } from "./delegate.js";
 import { ProjectModel } from "../models/projects.js";
 import type { ManagedSession } from "../state.js";
 import { logger } from "../logger.js";
+import type { ReinsToolContext } from "./types.js";
 
 const parameters = Type.Object({
   title: Type.String({ description: "Concise task title (imperative mood, e.g. \"Add dark mode support\")" }),
@@ -36,12 +36,16 @@ const parameters = Type.Object({
   ),
 });
 
+export interface TaskSessionStarter {
+  startTaskSession(taskId: number, prompt: string): Promise<{ sessionId: string }>;
+}
+
 export interface CreateTaskToolOpts {
   projectId: number;
   broadcast: Broadcast;
   sessions: Map<string, ManagedSession>;
   /** When set, the tool can kick off sessions on newly created tasks. */
-  createSession?: CreateSessionFn;
+  instance?: TaskSessionStarter;
 }
 
 /**
@@ -49,8 +53,8 @@ export interface CreateTaskToolOpts {
  * Loads the project record at execution time so that changes to the
  * project path or base branch are picked up mid-conversation.
  */
-export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition<typeof parameters> {
-  const { projectId, broadcast, sessions, createSession } = opts;
+export function createTaskTool(opts: CreateTaskToolOpts): AgentHarnessTool<ReinsToolContext | undefined, typeof parameters> {
+  const { projectId, broadcast, sessions, instance } = opts;
 
   return {
     name: "create_task",
@@ -59,8 +63,9 @@ export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition<typeof 
       "Create a new task for the current project with a dedicated git branch. " +
       "Only use this when the user explicitly asks you to create a task — do not proactively create tasks.",
     parameters,
+    replay: "never",
 
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, _onUpdate, _toolContext, _invocation, _context) {
       try {
         const projectModel = new ProjectModel(projectId, sessions, broadcast);
         const task: TaskRow = await projectModel.tasks().create({
@@ -71,21 +76,15 @@ export function createTaskTool(opts: CreateTaskToolOpts): ToolDefinition<typeof 
 
         // Fire-and-forget: kick off a session on the new task if a prompt was provided.
         // Intentionally not awaited — the tool returns task info immediately.
-        if (params.prompt && createSession) {
-          createSession(projectId, projectModel.projectDir, { taskId: task.id })
-            .then((managed) => {
-              managed.runtime.prompt([{ type: "text", text: params.prompt! }]).catch((err: any) => {
-                logger.error(`  Failed to prompt task session ${managed.id}:`, err);
-              });
-            })
-            .catch((err: any) => {
-              logger.error(`  Failed to create session for task ${task.id}:`, err);
-            });
+        if (params.prompt && instance) {
+          void instance.startTaskSession(task.id, params.prompt).catch((err: unknown) => {
+            logger.error(`  Failed to start session for task ${task.id}:`, err);
+          });
         }
 
         const result: TaskRow & { _note?: string } = { ...task };
         if (params.prompt) {
-          result._note = createSession
+          result._note = instance
             ? "Session started in background — watch for progress via WebSocket events."
             : "Prompt was provided but session creation is not available in this context.";
         }

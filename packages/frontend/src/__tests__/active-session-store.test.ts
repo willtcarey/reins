@@ -52,6 +52,7 @@ function makeSessionData(overrides: {
     updatedAt: "",
     runtimeType: overrides.runtimeType ?? "pi",
     activityState: overrides.activityState ?? null,
+    pendingOperation: null,
     messageCount,
     state: {
       model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
@@ -100,6 +101,29 @@ describe("ActiveSessionStore.updateSessionModel", () => {
     expect(sessionCache.getDetail("sess-1")?.state.thinkingLevel).toBe("medium");
     expect(sessionCache.getDetail("sess-1")?.runtimeType).toBe("pi");
     expect(store.sessionData.state.model).toEqual({ provider: "openai", id: "gpt-5" });
+  });
+});
+
+describe("ActiveSessionStore.resumePendingOperation", () => {
+  afterEach(() => { restoreFetch(); });
+
+  test("resumes through REST and refreshes session metadata", async () => {
+    const sessionCache = new SessionCache();
+    sessionCache.set("sess-1", { ...makeSessionData(), pendingOperation: { kind: "run" } });
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
+    const requests: string[] = [];
+    mockFetch((url, init) => {
+      requests.push(`${init?.method ?? "GET"} ${url}`);
+      if (url === "/api/sessions/sess-1/resume") return jsonResponse({ ok: true });
+      if (url === "/api/sessions/sess-1") return jsonResponse(makeSessionData({ activityState: "running" }));
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    expect(await store.resumePendingOperation()).toBe(true);
+
+    expect(requests).toEqual(["POST /api/sessions/sess-1/resume", "GET /api/sessions/sess-1"]);
+    expect(store.sessionData.pendingOperation).toBeNull();
+    expect(store.sessionData.activityState).toBe("running");
   });
 });
 

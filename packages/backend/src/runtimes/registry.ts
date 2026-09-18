@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ReinsApplicationTool } from "../tools/types.js";
 import { getTask as storeGetTask, type TaskRow } from "../task-store.js";
 import type { ServerState } from "../state.js";
 import type {
@@ -6,7 +6,7 @@ import type {
   RuntimeContentBlock,
   RuntimeMessage,
 } from "../messages-store.js";
-import { checkoutBranch } from "../git.js";
+import { checkoutBranch, getCurrentBranch } from "../git.js";
 import { TaskNotFoundError } from "../models/tasks.js";
 
 export class ModelNotFoundError extends Error {
@@ -47,7 +47,7 @@ type RuntimeBuiltinToolName = "read" | "write" | "edit" | "bash";
 
 export interface RuntimeSessionTools {
   builtins: RuntimeBuiltinToolName[];
-  customTools: ToolDefinition[];
+  harnessTools: ReinsApplicationTool[];
 }
 
 type RuntimeCompactionEvent =
@@ -70,10 +70,32 @@ type RuntimeAssistantDelta = {
  * Fully owned by the runtime layer — not derived from any vendor-specific
  * event types — so every runtime can construct events without casting.
  */
+export interface RuntimeOperationError {
+  code?: string;
+  message: string;
+  details?: unknown;
+}
+
+export interface RuntimeRunOutcome {
+  runId: string;
+  status: "completed" | "failed" | "aborted";
+  error?: RuntimeOperationError;
+}
+
+export interface RuntimeLifecycleSink {
+  started(): void;
+  settled(runtime: AgentRuntime, outcome: RuntimeRunOutcome): void;
+}
+
 export type AgentRuntimeEvent =
   | { type: "agent_start" }
-  | { type: "agent_end"; messages: RuntimeMessage[] }
-  | { type: "agent_settled" }
+  | {
+    type: "agent_end";
+    messages: RuntimeMessage[];
+    runId?: string;
+    status?: "completed" | "failed" | "aborted";
+    error?: RuntimeOperationError;
+  }
   | { type: "turn_start" }
   | { type: "turn_end"; message: RuntimeMessage; toolResults: RuntimeMessage[] }
   | { type: "message_start"; message: RuntimeMessage }
@@ -101,6 +123,7 @@ export interface CreateAgentRuntimeParams {
   model?: { provider: string; modelId: string } | null;
   thinkingLevel?: string | null;
   sessionTools?: RuntimeSessionTools;
+  lifecycle: RuntimeLifecycleSink;
   resume?: boolean;
 }
 
@@ -121,17 +144,31 @@ export interface SetRuntimeModelParams {
   thinkingLevel?: string | null;
 }
 
-export type RuntimeActivityCompletionBoundary = "agent_end" | "agent_settled";
+export interface RuntimePromptSubmission {
+  /** Exact canonical AgentHarness entry identity. */
+  messageId: string;
+}
+
+export interface RuntimePromptOptions {
+  reinsId?: string;
+  metadata?: Record<string, unknown>;
+  timestamp?: number;
+}
 
 export interface AgentRuntime {
-  /** Lifecycle event that marks outer runtime activity finished. Defaults to agent_end. */
-  readonly activityCompletionBoundary?: RuntimeActivityCompletionBoundary;
-  prompt(content: ClientPromptContent): Promise<void>;
-  steer(content: ClientPromptContent): Promise<void>;
+  /** Durably admit a prompt, begin execution, and return without waiting for the response. */
+  prompt(content: ClientPromptContent, options?: RuntimePromptOptions): Promise<RuntimePromptSubmission>;
+  /** Observe native idleness, including native steering, retries and compaction; preflight coverage is runtime-specific. */
+  waitForIdle(): Promise<void>;
+  steer(content: ClientPromptContent, options?: RuntimePromptOptions): Promise<void>;
+  /** Start a durable operation that was reopened passively after interruption. */
+  resumePendingOperation?(): Promise<void>;
   abort(): Promise<void>;
   setModel(params: SetRuntimeModelParams): Promise<void>;
   subscribe(listener: (event: AgentRuntimeEvent) => void): () => void;
   getMessages(): Promise<RuntimeMessage[]>;
+  /** Read the latest durable native run outcome when the adapter can provide one. */
+  getLastRunOutcome?(): Promise<RuntimeRunOutcome | null>;
   getSessionMetadata?(): {
     model?: { provider: string; modelId: string } | null;
     thinkingLevel?: string | null;
@@ -176,7 +213,9 @@ export async function createAgentRuntime(
   if (taskId) {
     task = storeGetTask(taskId);
     if (!task) throw new TaskNotFoundError(`Task not found: ${taskId}`);
-    await checkoutBranch(params.projectDir, task.branch_name);
+    if (await getCurrentBranch(params.projectDir) !== task.branch_name) {
+      await checkoutBranch(params.projectDir, task.branch_name);
+    }
   }
 
   const adapter = getRuntimeAdapter(runtimeType);

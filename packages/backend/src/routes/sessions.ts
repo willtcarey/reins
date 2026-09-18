@@ -14,6 +14,7 @@ import { SessionNotFoundError, Sessions } from "../models/sessions.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { parseDisplayCursor } from "../messages-store.js";
 import { parseBody } from "./validate.js";
+import { ensureSessionOpen } from "../runtimes/session-manager.js";
 
 const DEFAULT_MESSAGE_PAGE_LIMIT = 50;
 const MAX_MESSAGE_PAGE_LIMIT = 200;
@@ -23,6 +24,10 @@ const SessionModelBody = Type.Object({
   provider: Type.String(),
   modelId: Type.String(),
   thinkingLevel: Type.Optional(Type.String()),
+});
+
+const SessionActivityBody = Type.Object({
+  unread: Type.Boolean(),
 });
 
 export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
@@ -89,18 +94,35 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     return Response.json(data);
   });
 
-  // Mark a session's activity as viewed (finished → null)
+  router.post("/:sessionId/resume", async (ctx) => {
+    const sessionId = ctx.params.sessionId;
+    if (!new Sessions(ctx.state.sessions).get(sessionId)) notFound("Session not found");
+    try {
+      const managed = await ensureSessionOpen(ctx.state, sessionId);
+      if (!managed.runtime.resumePendingOperation) {
+        badRequest("This session runtime does not support resuming pending operations");
+      }
+      await managed.runtime.resumePendingOperation();
+      return Response.json({ ok: true });
+    } catch (err: unknown) {
+      badRequest(err instanceof Error ? err.message : "Failed to resume pending operation");
+    }
+  });
+
+  // Explicitly mark an idle session's completion read or unread.
   router.patch("/:sessionId/activity", async (ctx) => {
     const sessionId = ctx.params.sessionId;
+    const body = await parseBody(SessionActivityBody, ctx.req);
     const broadcast = createBroadcast(ctx.state.clients);
     const sessions = new Sessions(ctx.state.sessions, broadcast);
     try {
-      sessions.markActivityViewed(sessionId);
+      sessions.setUnread(sessionId, body.unread);
     } catch (err) {
       if (err instanceof SessionNotFoundError) {
         return new Response("Session not found", { status: 404 });
       }
-      throw err;
+      const message = err instanceof Error ? err.message : "Failed to update session activity";
+      badRequest(message);
     }
     return Response.json({ ok: true });
   });
