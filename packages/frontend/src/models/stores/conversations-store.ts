@@ -121,6 +121,7 @@ function mergeMessageRecords(...recordSets: PersistedConversationEntry[][]): Per
 export class ConversationsStore {
   private _states = new Map<string, ConversationState>();
   private _listeners = new Map<string, Set<ConversationsStoreListener>>();
+  private _syncs = new Map<string, Promise<boolean>>();
   private _sessionCache: SessionCache | null;
   private _unsubscribeSessionCache: (() => void) | null = null;
   private _nextLiveEntryId = 1;
@@ -152,6 +153,17 @@ export class ConversationsStore {
   /** Follow the persisted tail cursor through every available forward page. */
   async syncMessages(sessionId: string): Promise<boolean> {
     if (!sessionId) return false;
+    const existing = this._syncs.get(sessionId);
+    if (existing) return existing;
+
+    const sync = this.fetchMessageTail(sessionId).finally(() => {
+      this._syncs.delete(sessionId);
+    });
+    this._syncs.set(sessionId, sync);
+    return sync;
+  }
+
+  private async fetchMessageTail(sessionId: string): Promise<boolean> {
     const path = `/api/sessions/${encodeURIComponent(sessionId)}/messages`;
     let after = this.stateFor(sessionId).latestCursor;
 
@@ -341,6 +353,7 @@ export class ConversationsStore {
     this._unsubscribeSessionCache?.();
     this._unsubscribeSessionCache = null;
     this._listeners.clear();
+    this._syncs.clear();
     this._states.clear();
   }
 

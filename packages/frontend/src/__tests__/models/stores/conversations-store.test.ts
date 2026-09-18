@@ -38,6 +38,24 @@ function cachedSession(isRunning: boolean) {
 describe("ConversationsStore", () => {
   afterEach(() => { restoreFetch(); });
 
+  test("coalesces concurrent synchronization for the same session", async () => {
+    const conversations = new ConversationsStore();
+    let resolveResponse!: (response: Response) => void;
+    let requests = 0;
+    mockFetch(() => {
+      requests += 1;
+      return new Promise<Response>((resolve) => { resolveResponse = resolve; });
+    });
+
+    const first = conversations.syncMessages("sess-1");
+    const second = conversations.syncMessages("sess-1");
+    await Promise.resolve();
+
+    expect(requests).toBe(1);
+    resolveResponse(Response.json(conversationPage([])));
+    expect(await Promise.all([first, second])).toEqual([true, true]);
+  });
+
   test("loads latest, forward, and earlier pages through cursor API", async () => {
     const conversations = new ConversationsStore();
     const earlier = textUser("earlier", 100);

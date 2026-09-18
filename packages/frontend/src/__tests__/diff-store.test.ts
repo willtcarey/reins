@@ -57,6 +57,54 @@ describe("DiffStore", () => {
     expect(store.fileData.data).toEqual({ files: [], branch: null, baseBranch: null });
   });
 
+  test("applies a route scope with one changed-file request using the final branch", async () => {
+    const requests: string[] = [];
+    mockFetch((url) => {
+      requests.push(url);
+      if (url.includes("/diff/files")) return jsonResponse({ files: [] });
+      if (url.includes("/git/spread")) return jsonResponse({});
+      return jsonResponse({});
+    });
+
+    store.setScope(7, "feature/review");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(requests.filter((url) => url.includes("/diff/files"))).toEqual([
+      "/api/projects/7/diff/files?mode=branch&branch=feature%2Freview",
+    ]);
+    expect(requests.filter((url) => url.includes("/git/spread"))).toEqual([
+      "/api/projects/7/git/spread?branch=feature%2Freview&fetch=false",
+    ]);
+  });
+
+  test("does not refetch a loaded patch when the route scope and summaries are unchanged", async () => {
+    const requests: string[] = [];
+    mockFetch((url) => {
+      requests.push(url);
+      if (url.includes("/diff/files")) return jsonResponse({ files: [] });
+      if (url.includes("/git/spread")) return jsonResponse({});
+      return textResponse("unexpected patch");
+    });
+    store.setScope(7, "feature/review");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    store.patchData = store.patchData.asLoaded({
+      patch: "cached",
+      cacheKeyPrefix: "cached",
+      version: 1,
+      branch: "feature/review",
+      baseBranch: "main",
+    });
+    requests.length = 0;
+
+    store.setScope(7, "feature/review");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(requests).toEqual([
+      "/api/projects/7/diff/files?mode=branch&branch=feature%2Freview",
+    ]);
+    expect(store.patchData.data?.patch).toBe("cached");
+  });
+
   test("fetches raw patches with branch, mode, and context semantics", async () => {
     const requests: string[] = [];
     mockFetch((url) => {
