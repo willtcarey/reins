@@ -1,17 +1,17 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { Message } from "../models/message.js";
-import type { AgentMessage } from "../models/agent-message.js";
-import { ActiveSessionStore } from "../models/stores/active-session-store.js";
-import { ConversationsStore } from "../models/stores/conversations-store.js";
-import { SessionCache } from "../models/stores/session-cache.js";
-import { StubClient } from "./helpers/stub-client.js";
-import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
+import type { Message } from "../../../models/message.js";
+import type { AgentMessage } from "../../../models/agent-message.js";
+import { ActiveSessionStore } from "../../../models/stores/active-session-store.js";
+import { ConversationsStore } from "../../../models/stores/conversations-store.js";
+import { SessionCache } from "../../../models/stores/session-cache.js";
+import { StubClient } from "../../helpers/stub-client.js";
+import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import {
   applyStreamingAssistant,
   completedToolTurn,
   messagePage,
   setPersistedMessages,
-} from "./helpers/conversations.js";
+} from "../../helpers/conversations.js";
 
 type IsAny<T> = 0 extends (1 & T) ? true : false;
 type AssertFalse<T extends false> = T;
@@ -600,7 +600,7 @@ describe("ActiveSessionStore session loading contract", () => {
     expect(calls).toEqual([]);
   });
 
-  test("session cache update marks finished activity viewed", async () => {
+  test("session cache update leaves finished activity unread until the view marks it viewed", async () => {
     const sessionCache = new SessionCache();
     sessionCache.set("sess-1", makeSessionData({ activityState: "running" }));
     const store = new ActiveSessionStore("sess-1", null, sessionCache);
@@ -617,11 +617,65 @@ describe("ActiveSessionStore session loading contract", () => {
     sessionCache.set("sess-1", makeSessionData({ activityState: "finished" }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(sessionCache.get("sess-1")?.activityState).toBe("finished");
+    expect(calls).not.toContainEqual({ url: "/api/sessions/sess-1/activity", method: "PATCH" });
+
+    store.setObserved(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(sessionCache.get("sess-1")?.activityState).toBeNull();
     expect(calls).toContainEqual({ url: "/api/sessions/sess-1/activity", method: "PATCH" });
   });
 
-  test("markViewed clears finished activity optimistically", async () => {
+  test("setUnread marks the observed active session unread without an automatic read reversal", async () => {
+    const sessionCache = new SessionCache();
+    sessionCache.set("sess-1", makeSessionData());
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
+    const bodies: unknown[] = [];
+    mockFetch((url, init) => {
+      if (url === "/api/sessions/sess-1/activity" && init?.method === "PATCH") {
+        bodies.push(JSON.parse(String(init.body)));
+        return jsonResponse({ ok: true });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    store.setObserved(true);
+    expect(await store.setUnread(true)).toEqual({ ok: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sessionCache.get("sess-1")?.activityState).toBe("finished");
+    expect(bodies).toEqual([{ unread: true }]);
+  });
+
+  test("orders a manual unread after an in-flight automatic read", async () => {
+    const sessionCache = new SessionCache();
+    sessionCache.set("sess-1", makeSessionData({ activityState: "finished" }));
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
+    const bodies: unknown[] = [];
+    let finishRead!: (response: Response) => void;
+    mockFetch((url, init) => {
+      if (url !== "/api/sessions/sess-1/activity") throw new Error(`Unexpected fetch: ${url}`);
+      bodies.push(JSON.parse(String(init?.body)));
+      if (bodies.length === 1) {
+        return new Promise<Response>((resolve) => { finishRead = resolve; });
+      }
+      return jsonResponse({ ok: true });
+    });
+
+    store.setObserved(true);
+    await Promise.resolve();
+    const unread = store.setUnread(true);
+    await Promise.resolve();
+    expect(bodies).toEqual([{ unread: false }]);
+
+    finishRead(jsonResponse({ ok: true }));
+    await unread;
+
+    expect(bodies).toEqual([{ unread: false }, { unread: true }]);
+    expect(sessionCache.get("sess-1")?.activityState).toBe("finished");
+  });
+
+  test("observing clears finished activity optimistically", async () => {
     const sessionCache = new SessionCache();
     sessionCache.set("sess-1", makeSessionData({ activityState: "finished" }));
     const store = new ActiveSessionStore("sess-1", null, sessionCache);
@@ -635,11 +689,15 @@ describe("ActiveSessionStore session loading contract", () => {
     });
 
     await store.initialize();
+    expect(sessionCache.get("sess-1")?.activityState).toBe("finished");
+
+    store.setObserved(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(sessionCache.get("sess-1")?.activityState).toBeNull();
     expect(calls).toContainEqual({ url: "/api/sessions/sess-1/activity", method: "PATCH" });
   });
 
-  test("markViewed rolls back finished activity if the server request fails", async () => {
+  test("observing rolls back finished activity if the server request fails", async () => {
     const sessionCache = new SessionCache();
     sessionCache.set("sess-1", makeSessionData({ activityState: "finished" }));
     const store = new ActiveSessionStore("sess-1", null, sessionCache);
@@ -651,12 +709,13 @@ describe("ActiveSessionStore session loading contract", () => {
     });
 
     await store.initialize();
+    store.setObserved(true);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(sessionCache.get("sess-1")?.activityState).toBe("finished");
   });
 
-  test("markViewed is a no-op when activity is not finished", async () => {
+  test("observing does not clear running activity", async () => {
     const sessionCache = new SessionCache();
     const store = new ActiveSessionStore("sess-1", null, sessionCache);
     sessionCache.set("sess-1", makeSessionData({ activityState: "running" }));
@@ -670,7 +729,7 @@ describe("ActiveSessionStore session loading contract", () => {
     });
 
     await store.initialize();
-    await store.markViewed();
+    store.setObserved(true);
 
     expect(calls).toEqual(["/api/sessions/sess-1", "/api/sessions/sess-1/messages"]);
     expect(sessionCache.get("sess-1")?.activityState).toBe("running");

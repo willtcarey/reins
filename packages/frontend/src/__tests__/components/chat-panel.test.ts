@@ -51,6 +51,31 @@ function firstRepeatTemplate(panel: ChatPanel) {
 }
 
 describe("ChatPanel conversation orchestration", () => {
+  test("reports whether the foreground conversation is observed", () => {
+    const panel = new ChatPanel();
+    const setObserved = mock((_observed: boolean) => {});
+    Reflect.set(panel, "store", { setObserved });
+    Reflect.set(panel, "focusInput", () => {});
+    Reflect.set(panel, "autoScroll", () => {});
+    const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+    const documentState = { visibilityState: "visible" };
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: documentState,
+    });
+
+    try {
+      panel.visible = true;
+      panel.updated(new Map([["visible", false]]));
+      panel.visible = false;
+      panel.updated(new Map([["visible", true]]));
+      expect(setObserved.mock.calls.map((call) => call[0])).toEqual([true, false]);
+    } finally {
+      if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
+      else Reflect.deleteProperty(globalThis, "document");
+    }
+  });
+
   test("passes domain messages and stable history identity to chat-message", () => {
     const conversations = new ConversationsStore();
     setPersistedMessages(conversations, "sess-1", [{ role: "user", content: "visible", timestamp: 1 }]);

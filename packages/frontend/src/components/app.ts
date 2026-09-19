@@ -122,14 +122,6 @@ export class AppShell extends LitElement {
     // bubble to the template handler; document-level events need this listener.
     document.addEventListener("open-in-browser", this.handleOpenInBrowser);
 
-    // When the user returns to the tab, mark the active session as viewed so
-    // any finished/unread activity that accumulated while away is cleared.
-    //
-    // In Tauri the Rust side also dispatches visibilitychange on document when
-    // the window gains/loses focus (the Page Visibility API doesn't fire
-    // reliably on all webview backends).
-    document.addEventListener("visibilitychange", this.handleVisibilityChange);
-
     this.appStore.connect();
   }
 
@@ -137,21 +129,9 @@ export class AppShell extends LitElement {
     super.disconnectedCallback();
     this._unsubscribeStore?.();
     document.removeEventListener("open-in-browser", this.handleOpenInBrowser);
-    document.removeEventListener("visibilitychange", this.handleVisibilityChange);
     this.appStore.disconnect();
     this.appStore.dispose();
   }
-
-  /**
-   * When the user returns to the tab, mark the active session as viewed.
-   * This clears any finished/unread activity that accumulated while the
-   * window was in the background.
-   */
-  private handleVisibilityChange = () => {
-    if (document.visibilityState === "visible") {
-      void this.appStore.activeSessionStore?.markViewed();
-    }
-  };
 
   private updateTitleAndFavicon(): void {
     const { running, finished } = this.appStore.activitySummary;
@@ -246,8 +226,8 @@ export class AppShell extends LitElement {
         .sessionId=${store.sessionId}
         .activityState=${store.activeSessionStore?.sessionData?.activityState}
         .onSetSessionUnread=${(unread: boolean) => (
-          store.activeProjectStore?.setSessionUnread(store.sessionId, unread)
-            ?? Promise.resolve({ error: "Project is unavailable" })
+          store.activeSessionStore?.setUnread(unread)
+            ?? Promise.resolve({ error: "Session is unavailable" })
         )}
         .isStandalone=${this.viewport.isStandalone}
         .connected=${store.connected}
@@ -310,13 +290,16 @@ export class AppShell extends LitElement {
   private renderWorkspacePanes(store: AppStore): WorkspacePanes {
     const activeMainPane = mainWorkspacePaneFor(this.activePane);
     const swipeActive = this.pageSwipe.dragging || this.pageSwipe.settling;
+    const conversationVisible = this.viewport.isMobileLayout
+      ? this.activePane === "chat"
+      : activeMainPane === "chat";
     const hasSession = store.activeSessionStore != null;
     const hasProject = store.projectId != null;
 
     return {
       sessions: this.renderSessionSidebar(store),
       chat: hasSession
-        ? this.renderChatPane(store, this.viewport.isMobileLayout || activeMainPane === "chat" || swipeActive)
+        ? this.renderChatPane(store, conversationVisible)
         : this.renderEmptyState(),
       changes: hasProject
         ? keyed(

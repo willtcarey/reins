@@ -6,7 +6,7 @@
 import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
-import type { ActiveSessionStore } from "../models/stores/active-session-store.js";
+import { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import type { CachedSession } from "../models/stores/session-cache.js";
 import type { Message } from "../models/message.js";
@@ -52,20 +52,33 @@ export class ChatPanel extends LitElement {
   override connectedCallback() {
     super.connectedCallback();
     this.subscribeToStore();
+    this.syncConversationObservation();
+    document.addEventListener("visibilitychange", this.handleDocumentVisibilityChange);
   }
 
   override disconnectedCallback() {
     this.sendAnimator.cancel();
     this.closeMessageActions();
     super.disconnectedCallback();
+    this.store?.setObserved(false);
     this.unsubscribeStore?.();
+    document.removeEventListener("visibilitychange", this.handleDocumentVisibilityChange);
   }
 
   override willUpdate(changed: PropertyValues<this>) {
     if (changed.has("store")) {
+      const previousStore = changed.get("store");
+      if (previousStore instanceof ActiveSessionStore) previousStore.setObserved(false);
       this.resetSessionState();
       this.subscribeToStore();
     }
+  }
+
+  override updated(changed: Map<string, unknown>) {
+    if (changed.has("visible") && this.visible) this.focusInput();
+    if (changed.has("visible") || changed.has("store")) this.syncConversationObservation();
+    this.autoScroll();
+    this.sendAnimator.cancelIfTargetMissing();
   }
 
   private resetSessionState() {
@@ -99,11 +112,17 @@ export class ChatPanel extends LitElement {
     return this.store?.conversation.errorMessage ?? "";
   }
 
-  override updated(changed: Map<string, unknown>) {
-    if (changed.has("visible") && this.visible) this.focusInput();
-    this.autoScroll();
-    this.sendAnimator.cancelIfTargetMissing();
+  private isConversationVisible(): boolean {
+    return this.visible && globalThis.document?.visibilityState === "visible";
   }
+
+  private syncConversationObservation(): void {
+    this.store?.setObserved(this.isConversationVisible());
+  }
+
+  private handleDocumentVisibilityChange = () => {
+    this.syncConversationObservation();
+  };
 
   private focusInput() {
     if ("ontouchstart" in window || navigator.maxTouchPoints > 0) return;

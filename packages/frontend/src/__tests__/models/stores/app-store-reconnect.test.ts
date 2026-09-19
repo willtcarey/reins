@@ -8,10 +8,10 @@
  *  - Re-fetch the active session's messages if one is being viewed
  */
 import { describe, test, expect, beforeEach, mock, afterEach } from "bun:test";
-import { AppStore } from "../models/stores/app-store.js";
-import { StubClient } from "./helpers/stub-client.js";
-import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
-import { messagePage } from "./helpers/conversations.js";
+import { AppStore } from "../../../models/stores/app-store.js";
+import { StubClient } from "../../helpers/stub-client.js";
+import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
+import { messagePage } from "../../helpers/conversations.js";
 
 function sessionDetail(isRunning: boolean, taskId: number | null = null) {
   return {
@@ -228,7 +228,7 @@ describe("AppStore reconnect catch-up", () => {
     });
   });
 
-  test("reconnect marks a visible active session viewed when reconciliation finds it finished", async () => {
+  test("reconnect leaves finished activity unread for the conversation view to observe", async () => {
     store.projectsStore.fetchProjects = mock(async () => {});
     store.projectsStore.refreshAll = mock(async () => {});
 
@@ -261,8 +261,8 @@ describe("AppStore reconnect catch-up", () => {
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(requests).toContainEqual({ url: "/api/sessions/sess-1/activity", method: "PATCH" });
-    expect(store.projectsStore.activityForSession(42, "sess-1")).toBeNull();
+    expect(requests).not.toContainEqual({ url: "/api/sessions/sess-1/activity", method: "PATCH" });
+    expect(store.projectsStore.activityForSession(42, "sess-1")).toBe("finished");
   });
 
   test("browser resume reconciles a missed agent_end without waiting for websocket reconnect", async () => {

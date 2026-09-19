@@ -76,8 +76,10 @@ export class ActiveSessionStore {
   private _listeners = new Set<ActiveSessionStoreListener>();
   private _unsubscribeSession: (() => void) | null = null;
   private _unsubscribeConversation: (() => void) | null = null;
-  private _markViewedInFlight: string | null = null;
+  private _markReadInFlight: string | null = null;
+  private _activityMutationQueue: Promise<unknown> = Promise.resolve();
   private _lastKnownRunning = false;
+  private _observed = false;
   private _disposed = false;
 
   constructor(
@@ -127,14 +129,12 @@ export class ActiveSessionStore {
         this._conversationsStore.clearCompactingState(this.sessionId);
       }
       this.notify();
-      if (cachedSession.activityState === "finished") {
-        void this.markViewed();
-      }
     } else {
       this.notify();
     }
 
     await this.refreshFromServer();
+    if (this._observed) void this.setUnread(false);
   }
 
   /** Refresh canonical metadata and persisted messages for the active session. */
@@ -147,6 +147,13 @@ export class ActiveSessionStore {
   }
 
   // ---- Actions --------------------------------------------------------------
+
+  /** Report whether this session's conversation is meaningfully visible. */
+  setObserved(observed: boolean): void {
+    if (this._disposed || this._observed === observed) return;
+    this._observed = observed;
+    if (observed) void this.setUnread(false);
+  }
 
   prompt(message: ClientPromptContent): LiveConversationEntry | null {
     if (this._disposed || !this._client) return null;
@@ -230,8 +237,8 @@ export class ActiveSessionStore {
     // Received assistant snapshots remain visible until agent_end promotes
     // them or persisted assistant timestamps reconcile matching snapshots.
     this.notify();
-    if (data.activityState === "finished") {
-      void this.markViewed();
+    if (wasRunning && data.activityState === "finished" && this._observed) {
+      void this.setUnread(false);
     }
 
     // If running activity just ended, or the first observed metadata is
@@ -242,38 +249,48 @@ export class ActiveSessionStore {
     }
   }
 
-  /**
-   * Mark the displayed session's finished activity as viewed. Activity state
-   * itself lives in SessionCache, so clearing it there updates project/sidebar
-   * selectors immediately while the server request reconciles other clients.
-   */
-  async markViewed(): Promise<void> {
-    if (this._disposed) return;
+  /** Set unread state for the active session. */
+  async setUnread(unread: boolean): Promise<{ ok: true } | { error: string }> {
+    if (this._disposed) return { error: "No active session" };
     const sessionId = this.sessionId;
     const projectId = this.projectId;
-    if (projectId == null) return;
-    if (this.sessionData.activityState !== "finished") return;
-    if (this._markViewedInFlight === sessionId) return;
+    if (projectId == null) return { error: "No active session" };
+    if (this.sessionData.activityState === "running") {
+      return unread ? { error: "Running sessions cannot be marked unread" } : { ok: true };
+    }
 
-    this._markViewedInFlight = sessionId;
-    this._sessionCache.set(sessionId, { activityState: null });
+    const previousState = this.sessionData.activityState;
+    const nextState = unread ? "finished" : null;
+    if (previousState === nextState) return { ok: true };
+    if (!unread && this._markReadInFlight === sessionId) return { ok: true };
+
+    if (!unread) this._markReadInFlight = sessionId;
+    this._sessionCache.set(sessionId, { activityState: nextState });
 
     try {
-      const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/activity`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ unread: false }),
-      });
-      if (this._disposed) return;
-      if (!resp.ok) {
-        this._sessionCache.set(sessionId, { projectId, activityState: "finished" });
+      const request = this._activityMutationQueue.then(() => (
+        fetch(`/api/sessions/${encodeURIComponent(sessionId)}/activity`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ unread }),
+        })
+      ));
+      this._activityMutationQueue = request.catch(() => undefined);
+      const resp = await request;
+      if (this._disposed) return { error: "No active session" };
+      if (resp.ok) return { ok: true };
+      if (this.sessionData.activityState === nextState) {
+        this._sessionCache.set(sessionId, { projectId, activityState: previousState });
       }
+      return { error: `HTTP ${resp.status}` };
     } catch {
-      if (this._disposed) return;
-      this._sessionCache.set(sessionId, { projectId, activityState: "finished" });
+      if (!this._disposed && this.sessionData.activityState === nextState) {
+        this._sessionCache.set(sessionId, { projectId, activityState: previousState });
+      }
+      return { error: "Network error" };
     } finally {
-      if (this._markViewedInFlight === sessionId) {
-        this._markViewedInFlight = null;
+      if (!unread && this._markReadInFlight === sessionId) {
+        this._markReadInFlight = null;
       }
     }
   }
