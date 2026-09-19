@@ -1,7 +1,7 @@
 import { LitElement, html, type TemplateResult } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
 import type { ActionMenuPresentation, ActionMenuPresenter } from "../ui/action-menu-presenter.js";
-import { copyIcon } from "./icons.js";
+import { copyIcon } from "../ui/icons.js";
 import "../ui/action-menu-presenter.js";
 
 @customElement("message-action-menu")

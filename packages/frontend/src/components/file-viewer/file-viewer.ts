@@ -18,7 +18,7 @@ import type { FileBrowserStore } from "../../models/stores/file-browser-store.js
 import { StoreController } from "../../controllers/store-controller.js";
 import { isMarkdown, isImage, isPdf, isHtml } from "../../models/changes/diff-utils.js";
 import type { FileViewMode } from "../events.js";
-import { codeIcon, previewIcon } from "../icons.js";
+import { codeIcon, previewIcon } from "../../ui/icons.js";
 import "./file-viewer-image.js";
 import "./file-viewer-pdf.js";
 import "./file-viewer-binary.js";

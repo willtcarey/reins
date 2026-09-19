@@ -14,7 +14,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { getSearchSummary, getSearchQuery, getSearchResultText, getSearchResultCount } from "../../models/tools/search.js";
-import { ringSpinnerIcon, toolLogoIcon } from "../icons.js";
+import { ringSpinnerIcon, toolLogoIcon } from "../../ui/icons.js";
 
 @customElement("search-tool-block")
 export class SearchToolBlock extends LitElement {

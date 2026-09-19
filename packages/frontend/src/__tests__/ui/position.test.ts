@@ -1,16 +1,8 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { computePosition, type Placement, type PositionOptions } from "../../ui/position.js";
 
-// computePosition reads window.innerWidth / innerHeight, so provide a
-// minimal window object when running outside a browser (bun test).
 const VW = 1024;
 const VH = 768;
-
-const _win: Record<string, unknown> = {};
-if (typeof globalThis.window === "undefined") {
-  Object.defineProperty(globalThis, "window", { value: _win, configurable: true });
-}
-
-import { computePosition, type Placement, type PositionOptions } from "../../components/position.js";
 
 type Side = "top" | "bottom" | "left" | "right";
 
@@ -30,15 +22,16 @@ function compute(
   floatH = 60,
   extra: Partial<Pick<PositionOptions, "gap" | "viewportPad">> = {},
 ) {
-  return computePosition({ anchor, width: floatW, height: floatH, placement, ...extra });
+  return computePosition({
+    anchor,
+    width: floatW,
+    height: floatH,
+    placement,
+    viewportWidth: VW,
+    viewportHeight: VH,
+    ...extra,
+  });
 }
-
-// --- setup ------------------------------------------------------------------
-
-beforeEach(() => {
-  _win.innerWidth = VW;
-  _win.innerHeight = VH;
-});
 
 // A centered anchor far from any edge — no flipping or clamping expected.
 const center = rect(400, 300, 50, 30);

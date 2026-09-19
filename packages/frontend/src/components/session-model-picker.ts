@@ -6,7 +6,7 @@ import { formatModelSettingLabel } from "../models/settings.js";
 import { ModelRegistryStore } from "../models/stores/model-registry-store.js";
 import type { ModelSetting } from "../models/stores/settings-store.js";
 import { showToast } from "./toast.js";
-import "./popover-menu.js";
+import "../ui/popover-menu.js";
 import "./settings/model-selector-controls.js";
 
 @customElement("session-model-picker")
@@ -167,7 +167,7 @@ export class SessionModelPicker extends LitElement {
     }
 
     return html`
-      <div class="p-3 w-80 space-y-3">
+      <div class="w-full p-3 space-y-3">
         <div>
           <div class="text-xs font-medium text-zinc-200">Session model</div>
           <div class="text-[10px] text-zinc-500 mt-1">Changes apply to this session only.</div>

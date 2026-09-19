@@ -5,10 +5,10 @@ import type { ActivityState } from "../models/stores/session-cache.js";
 import { openFileBrowserEvent, paneSelectEvent, reloadRequestEvent } from "./events.js";
 import type { MainPaneSelectDetail, MainWorkspacePane } from "./events.js";
 import { showToast, type ToastLevel } from "./toast.js";
-import { menuIcon } from "./icons.js";
+import { menuIcon } from "../ui/icons.js";
 import "./branch-indicator.js";
 import "./nav-icon.js";
-import "./popover-menu.js";
+import "../ui/popover-menu.js";
 
 @customElement("app-main-toolbar")
 export class AppMainToolbar extends LitElement {

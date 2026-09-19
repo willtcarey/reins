@@ -21,7 +21,7 @@ import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { styleMap } from "lit/directives/style-map.js";
 import { treeDirToggleEvent, treeFileClickEvent } from "./events.js";
-import { treeFileIcon, treeFolderIcon } from "./icons.js";
+import { treeFileIcon, treeFolderIcon } from "../ui/icons.js";
 
 // ---- Public types -----------------------------------------------------------
 

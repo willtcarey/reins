@@ -17,7 +17,7 @@ import type { ChatComposerSubmitDetail } from "./events.js";
 import type { ChatMessage } from "./chat-message.js";
 import { ChatSendAnimator } from "../helpers/chat-send-animation.js";
 import { ChatHistoryController } from "../controllers/chat-history-controller.js";
-import { ringSpinnerIcon } from "./icons.js";
+import { ringSpinnerIcon } from "../ui/icons.js";
 import "./activity-dot.js";
 import "../ui/info-card.js";
 import "./chat-message.js";

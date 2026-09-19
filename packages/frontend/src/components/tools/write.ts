@@ -16,7 +16,7 @@ import { shouldWrapLines } from "../../models/changes/diff-utils.js";
 import { openInBrowserEvent } from "../events.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
-import { ringSpinnerIcon } from "../icons.js";
+import { ringSpinnerIcon } from "../../ui/icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { getWriteSummary, getWriteInfo, getWriteContent } from "../../models/tools/write.js";
 

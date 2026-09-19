@@ -11,7 +11,7 @@ import "./skill-suggest.js";
 import type { SendAnimationSource } from "../helpers/chat-send-animation.js";
 import type { SkillSuggest } from "./skill-suggest.js";
 import { composerStopEvent, composerSubmitEvent, type SkillInsertDetail } from "./events.js";
-import { ringSpinnerIcon, sendIcon } from "./icons.js";
+import { ringSpinnerIcon, sendIcon } from "../ui/icons.js";
 
 const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const IMAGE_ATTACHMENT_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";

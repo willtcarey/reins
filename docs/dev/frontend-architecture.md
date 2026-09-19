@@ -66,7 +66,7 @@ models/
 
 ### ui/
 
-Domain-agnostic Lit presentation primitives shared across features. UI primitives own reusable visual and interaction contracts without importing feature stores or domain models. Current primitives include `info-card.ts` for linked/actionable information rows and `action-menu-presenter.ts` for context-menu and mobile-sheet presentation.
+Domain-agnostic Lit presentation primitives shared across features. UI primitives own reusable visual and interaction contracts without importing feature stores or domain models. Current primitives include `icons.ts` for shared icon templates, `info-card.ts` for linked/actionable information rows, `action-menu-presenter.ts` for context-menu and mobile-sheet presentation, and `popover-menu.ts` with `position.ts` for viewport-aware anchored popovers.
 
 ### components/
 
@@ -90,7 +90,7 @@ components/
 ├── task-list.ts, task-detail.ts, task-form.ts
 ├── branch-indicator.ts, quick-open.ts, search-palette.ts
 ├── file-browser.ts, file-search.ts, file-viewer.ts
-├── popover-menu.ts, toast.ts
+├── toast.ts
 └── app.css
 ```
 

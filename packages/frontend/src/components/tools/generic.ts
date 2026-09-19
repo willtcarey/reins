@@ -12,7 +12,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { imageBlockSrc, isImageAttachmentBlock, isInlineImageBlock, type ChatImageBlock } from "../../models/chat-content.js";
 import type { ToolRenderer } from "./types.js";
-import { ringSpinnerIcon } from "../icons.js";
+import { ringSpinnerIcon } from "../../ui/icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { getToolSummary } from "../../models/tools/generic.js";
 

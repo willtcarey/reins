@@ -37,6 +37,8 @@ private renderMenuContent() {
 
 **When to watch out:** Any time a `TemplateResult` crosses a component boundary — callback props (`.content`, `.trigger`), helper methods whose output is rendered by a parent/child, etc.
 
-## Popover menu click behavior
+## Popover menu behavior
 
-`<popover-menu>` keeps its panel open when users click inside it by default so form-like popovers can host controls such as `<select>` elements. For action menus where choosing an item should dismiss the panel, opt in explicitly with `close-on-panel-click`.
+`<popover-menu>` keeps its panel open when users click inside it by default so form-like popovers can host controls such as `<select>` elements. For action menus where choosing an item should dismiss the panel, opt in explicitly with `close-on-panel-click`. Clicking outside dismisses the popover and consumes that click so the background control is not also activated.
+
+The shared primitive measures its rendered panel, observes async content-size changes, flips its preferred placement when needed, and clamps it to the viewport with a 4px gutter. Panels are capped to the viewport's width and dynamic height and scroll internally when their content is taller than the available space. Feature components should select the semantically appropriate `anchor`; they should not add feature-specific viewport positioning workarounds.
