@@ -9,8 +9,8 @@
 import { LitElement, html, nothing } from "lit";
 import { styleMap } from "lit/directives/style-map.js";
 import { customElement, property, state } from "lit/decorators.js";
-import { computePosition } from "./position.js";
-import { branchIcon } from "./icons.js";
+import { computePosition } from "../ui/position.js";
+import { branchIcon } from "../ui/icons.js";
 
 @customElement("branch-indicator")
 export class BranchIndicator extends LitElement {

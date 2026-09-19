@@ -21,7 +21,7 @@ import { AppRouteController } from "../controllers/app-route-controller.js";
 import { PageSwipeController } from "../controllers/page-swipe-controller.js";
 import { ViewportController } from "../controllers/viewport-controller.js";
 import { AppStore } from "../models/stores/app-store.js";
-import { folderIcon } from "./icons.js";
+import { folderIcon } from "../ui/icons.js";
 // Ensure sub-components are registered
 import type {
   MainPaneSelectDetail,

@@ -107,7 +107,7 @@ module.exports = {
           description: "Require frontend SVG icons to be defined in the shared icons module.",
         },
         messages: {
-          noInlineSvg: "Define SVG icons in components/icons.ts and import the icon function instead.",
+          noInlineSvg: "Define SVG icons in ui/icons.ts and import the icon function instead.",
         },
       },
       create(context) {

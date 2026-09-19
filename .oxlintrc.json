@@ -23,13 +23,19 @@
       }
     },
     {
+      "files": ["packages/frontend/src/ui/**/*.ts"],
+      "rules": {
+        "reins/no-inline-svg": "error"
+      }
+    },
+    {
       "files": ["packages/frontend/src/components/events.ts"],
       "rules": {
         "reins/no-custom-event-constructor": "off"
       }
     },
     {
-      "files": ["packages/frontend/src/components/icons.ts"],
+      "files": ["packages/frontend/src/ui/icons.ts"],
       "rules": {
         "reins/no-inline-svg": "off"
       }

@@ -16,7 +16,7 @@ import type { DiffStore } from "../../models/stores/diff-store.js";
 import type { CodeReviewStore } from "../../models/stores/code-review-store.js";
 import type { FileTreeState } from "../../models/changes/file-tree-state.js";
 import { fileSelectEvent } from "../events.js";
-import { conversationIcon } from "../icons.js";
+import { conversationIcon } from "../../ui/icons.js";
 import "../tree-view.js";
 import type { TreeNode, RenderNodeTrailer } from "../tree-view.js";
 

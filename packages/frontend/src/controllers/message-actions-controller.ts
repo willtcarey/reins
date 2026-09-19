@@ -2,7 +2,7 @@ import { html, nothing, type ReactiveController, type ReactiveControllerHost } f
 import { createRef, ref, type Ref } from "lit/directives/ref.js";
 import { copyTextToClipboard } from "../helpers/clipboard.js";
 import type { MessageActionMenuElement } from "../components/message-action-menu.js";
-import { copyIcon } from "../components/icons.js";
+import { copyIcon } from "../ui/icons.js";
 import { showToast } from "../components/toast.js";
 import "../components/message-action-menu.js";
 

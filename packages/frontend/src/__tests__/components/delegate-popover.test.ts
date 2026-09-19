@@ -1,7 +1,11 @@
 import { describe, expect, mock, test } from "bun:test";
 import { buildDescendantMap, DelegatePopover } from "../../components/delegate-popover.js";
 import type { SessionListItem } from "../../models/ws-client.js";
-import { templateToString } from "../helpers/lit-template.js";
+import type { InfoCardAction } from "../../ui/info-card.js";
+import {
+  collectTemplateEventListeners,
+  isTemplateResult,
+} from "../helpers/lit-template.js";
 
 function childSession(activityState: SessionListItem["activityState"]): SessionListItem {
   return {
@@ -18,16 +22,29 @@ function childSession(activityState: SessionListItem["activityState"]): SessionL
   };
 }
 
-function renderPopoverContent(popover: DelegatePopover): string {
-  const render: unknown = Reflect.get(popover, "renderPopoverContent");
-  if (typeof render !== "function") throw new Error("Expected popover content renderer");
-  return templateToString(Reflect.apply(render, popover, []));
+function popoverContent(popover: DelegatePopover): unknown {
+  const rendered = popover.render();
+  const contentIndex = rendered.strings.findIndex((part) => part.includes(".content="));
+  const content = rendered.values[contentIndex];
+  if (typeof content !== "function") throw new Error("Expected popover content renderer");
+  return content();
 }
 
-function renderChildActivityActions(popover: DelegatePopover, child: SessionListItem): string {
-  const render: unknown = Reflect.get(popover, "renderChildActivityActions");
-  if (typeof render !== "function") throw new Error("Expected child activity action renderer");
-  return templateToString(Reflect.apply(render, popover, [child]));
+function infoCardActions(value: unknown): readonly InfoCardAction[][] {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => infoCardActions(entry));
+  }
+  if (!isTemplateResult(value)) return [];
+
+  const actions: InfoCardAction[][] = [];
+  for (let index = 0; index < value.values.length; index += 1) {
+    const entry = value.values[index];
+    if (value.strings[index]?.includes(".actions=") && Array.isArray(entry)) {
+      actions.push(entry);
+    }
+    actions.push(...infoCardActions(entry));
+  }
+  return actions;
 }
 
 describe("DelegatePopover", () => {
@@ -52,26 +69,64 @@ describe("DelegatePopover", () => {
     ]);
   });
 
-  test("shows completed child session activity", () => {
+  test("selects a child session when its card is activated", () => {
     const popover = new DelegatePopover();
     popover.childSessions = [childSession("finished")];
+    const selected = mock((_event: Event) => {});
+    popover.addEventListener("select-session", selected);
 
-    expect(renderPopoverContent(popover)).not.toContain(".runningOnly=true");
+    const [activate] = collectTemplateEventListeners(
+      popoverContent(popover),
+      "info-card-activate",
+    );
+    activate?.(new Event("info-card-activate"));
+
+    expect(selected).toHaveBeenCalledTimes(1);
+    expect(selected.mock.calls[0]?.[0]).toMatchObject({
+      detail: { sessionId: "child-1" },
+    });
   });
 
-  test("offers a bulk read control for completed children", () => {
+  test("marks idle child sessions read or unread through card actions", async () => {
     const popover = new DelegatePopover();
     popover.childSessions = [
       childSession("finished"),
       { ...childSession(null), id: "child-2", name: "Already read" },
+      { ...childSession("running"), id: "child-3", name: "Still running" },
     ];
-    popover.onSetSessionUnread = mock(async () => ({ ok: true }));
+    const setSessionUnread = mock(async (_sessionId: string, _unread: boolean) => ({ ok: true }));
+    popover.onSetSessionUnread = setSessionUnread;
 
-    const output = renderPopoverContent(popover);
-    expect(output).toContain("Mark all as read");
-    expect(output).toContain("<popover-menu");
-    expect(output).not.toContain("Mark as unread");
-    expect(renderChildActivityActions(popover, popover.childSessions[0]!)).toContain("Mark as read");
-    expect(renderChildActivityActions(popover, popover.childSessions[1]!)).toContain("Mark as unread");
+    const actions = infoCardActions(popoverContent(popover));
+    expect(actions.map((cardActions) => cardActions.map((action) => action.label))).toEqual([
+      ["Mark as read"],
+      ["Mark as unread"],
+      [],
+    ]);
+
+    await actions[0]?.[0]?.run();
+    await actions[1]?.[0]?.run();
+
+    expect(setSessionUnread).toHaveBeenNthCalledWith(1, "child-1", false);
+    expect(setSessionUnread).toHaveBeenNthCalledWith(2, "child-2", true);
+  });
+
+  test("marks every unread child as read from the bulk action", () => {
+    const popover = new DelegatePopover();
+    popover.childSessions = [
+      childSession("finished"),
+      { ...childSession("finished"), id: "child-2", name: "Other unread work" },
+      { ...childSession(null), id: "child-3", name: "Already read" },
+      { ...childSession("running"), id: "child-4", name: "Still running" },
+    ];
+    const setSessionUnread = mock(async (_sessionId: string, _unread: boolean) => ({ ok: true }));
+    popover.onSetSessionUnread = setSessionUnread;
+
+    const [markAllRead] = collectTemplateEventListeners(popoverContent(popover), "click");
+    markAllRead?.(new Event("click"));
+
+    expect(setSessionUnread).toHaveBeenCalledTimes(2);
+    expect(setSessionUnread).toHaveBeenNthCalledWith(1, "child-1", false);
+    expect(setSessionUnread).toHaveBeenNthCalledWith(2, "child-2", false);
   });
 });

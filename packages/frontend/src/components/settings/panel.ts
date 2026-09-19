@@ -11,7 +11,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import { SettingsStore, type SettingsChange, type SettingsKey } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
-import { closeIcon } from "../icons.js";
+import { closeIcon } from "../../ui/icons.js";
 import "./api-keys-section.js";
 import "./model-setting-section.js";
 

@@ -15,7 +15,7 @@ import { LazyHighlightController } from "../../controllers/lazy-highlight-contro
 import { escapeHtml } from "../../models/changes/diff-utils.js";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
-import { ringSpinnerIcon, toolLogoIcon } from "../icons.js";
+import { ringSpinnerIcon, toolLogoIcon } from "../../ui/icons.js";
 import {
   getExecuteCode,
   getExecuteExitInfo,

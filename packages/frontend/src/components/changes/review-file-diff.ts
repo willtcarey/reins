@@ -20,7 +20,7 @@ import {
   deletedFileIcon,
   modifiedFileIcon,
   renamedFileIcon,
-} from "../icons.js";
+} from "../../ui/icons.js";
 import "./diff-file-action-buttons.js";
 import {
   createReviewFileDiffRenderer,

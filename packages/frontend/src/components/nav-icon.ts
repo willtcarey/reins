@@ -15,8 +15,8 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { styleMap } from "lit/directives/style-map.js";
 import type { TemplateResult } from "lit";
-import { computePosition } from "./position.js";
-import { navigationFolderIcon, searchIcon, settingsIcon } from "./icons.js";
+import { computePosition } from "../ui/position.js";
+import { navigationFolderIcon, searchIcon, settingsIcon } from "../ui/icons.js";
 
 type IconName = "search" | "settings" | "folder";
 

@@ -1,12 +1,12 @@
 /**
  * Popover Menu
  *
- * A generic three-dot overflow menu. Handles open/close toggle and
- * click-outside dismissal.
+ * A generic anchored popover. Handles open/close toggling, viewport-aware
+ * positioning, and click-outside dismissal.
  *
- * Menu content is provided via the `content` property — a function
- * returning a Lit TemplateResult. This avoids light DOM / slot issues
- * since the component uses light DOM for Tailwind compatibility.
+ * Menu content is provided via the `content` property — a function returning a
+ * Lit TemplateResult. This avoids light DOM / slot issues since the component
+ * uses light DOM for Tailwind compatibility.
  *
  * Set `closeOnPanelClick` for action-menu usage where choosing an item should
  * dismiss the panel. Form-like popovers should keep the default open behavior.
@@ -14,8 +14,19 @@
 
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { styleMap } from "lit/directives/style-map.js";
 import { moreVerticalIcon } from "./icons.js";
+import { computePosition, type Placement } from "./position.js";
+
+export type PopoverAnchor = "right" | "left" | "right-start" | "left-start" | "right-end" | "left-end";
+
+const placements: Record<PopoverAnchor, Placement> = {
+  right: "bottom-end",
+  left: "bottom-start",
+  "right-start": "right-start",
+  "left-start": "left-start",
+  "right-end": "top-end",
+  "left-end": "top-start",
+};
 
 @customElement("popover-menu")
 export class PopoverMenu extends LitElement {
@@ -53,14 +64,18 @@ export class PopoverMenu extends LitElement {
    * - "left-end": left edge aligned, opens upward
    */
   @property({ type: String })
-  anchor: "right" | "left" | "right-start" | "left-start" | "right-end" | "left-end" = "right";
+  anchor: PopoverAnchor = "right";
 
   @state() private open = false;
-  @state() private panelStyle: Record<string, string> = {};
 
-  private _onDocClick = (e: MouseEvent) => {
+  private panelResizeObserver: ResizeObserver | null = null;
+  private observedPanel: HTMLElement | null = null;
+
+  private _onDocClick = (event: MouseEvent) => {
     if (!this.open) return;
-    if (!(e.target instanceof Node) || !this.contains(e.target)) {
+    if (!event.composedPath().includes(this)) {
+      event.preventDefault();
+      event.stopPropagation();
       this.open = false;
     }
   };
@@ -70,59 +85,49 @@ export class PopoverMenu extends LitElement {
     this.open = false;
   };
 
+  private _onResize = () => {
+    if (this.open) this.updatePanelPosition();
+  };
+
   override connectedCallback() {
     super.connectedCallback();
     document.addEventListener("click", this._onDocClick, true);
     document.addEventListener("scroll", this._onScroll, true);
+    window.addEventListener("resize", this._onResize);
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     document.removeEventListener("click", this._onDocClick, true);
     document.removeEventListener("scroll", this._onScroll, true);
+    window.removeEventListener("resize", this._onResize);
+    this.stopObservingPanel();
   }
 
   close() {
     this.open = false;
   }
 
-  private toggle(e: Event) {
-    e.stopPropagation();
-    if (!this.open) {
-      this.updatePanelPosition();
-    }
+  private toggle(event: Event) {
+    event.stopPropagation();
     this.open = !this.open;
   }
 
-  /** Compute fixed position for the panel based on trigger's viewport rect. */
-  private updatePanelPosition() {
-    const trigger = this.renderRoot.querySelector("button") ?? this;
-    const rect = trigger.getBoundingClientRect();
-    const gap = 2;
+  private updatePanelPosition(panel = this.renderRoot.querySelector<HTMLElement>("[data-role=popover-panel]")) {
+    const trigger = this.renderRoot.querySelector<HTMLElement>("button");
+    if (!trigger || !panel || typeof trigger.getBoundingClientRect !== "function") return;
 
-    let style: Record<string, string>;
-    switch (this.anchor) {
-      case "left":
-        style = { top: `${rect.bottom + gap}px`, left: `${rect.left}px` };
-        break;
-      case "right-start":
-        style = { top: `${rect.top}px`, left: `${rect.right + gap}px` };
-        break;
-      case "left-start":
-        style = { top: `${rect.top}px`, right: `${window.innerWidth - rect.left + gap}px` };
-        break;
-      case "right-end":
-        style = { bottom: `${window.innerHeight - rect.top + gap}px`, right: `${window.innerWidth - rect.right}px` };
-        break;
-      case "left-end":
-        style = { bottom: `${window.innerHeight - rect.top + gap}px`, left: `${rect.left}px` };
-        break;
-      case "right":
-      default:
-        style = { top: `${rect.bottom + gap}px`, right: `${window.innerWidth - rect.right}px` };
-        break;
-    }
-    this.panelStyle = style;
+    const position = computePosition({
+      anchor: trigger.getBoundingClientRect(),
+      width: panel.offsetWidth,
+      height: panel.offsetHeight,
+      placement: placements[this.anchor],
+      gap: 2,
+      viewportPad: 4,
+    });
+    const style = { top: `${position.top}px`, left: `${position.left}px` };
+
+    Object.assign(panel.style, style);
   }
 
   private onPanelClick() {
@@ -131,15 +136,35 @@ export class PopoverMenu extends LitElement {
     }
   }
 
+  private observePanel(panel: HTMLElement) {
+    if (this.observedPanel === panel || typeof ResizeObserver === "undefined") return;
+
+    this.stopObservingPanel();
+    this.observedPanel = panel;
+    this.panelResizeObserver = new ResizeObserver(() => {
+      if (this.open) this.updatePanelPosition(panel);
+    });
+    this.panelResizeObserver.observe(panel);
+  }
+
+  private stopObservingPanel() {
+    this.panelResizeObserver?.disconnect();
+    this.panelResizeObserver = null;
+    this.observedPanel = null;
+  }
+
   override updated() {
-    const panel = this.renderRoot.querySelector<HTMLElement>("[popover]");
-    if (
-      panel
-      && typeof panel.showPopover === "function"
-      && !panel.matches(":popover-open")
-    ) {
+    const panel = this.renderRoot.querySelector<HTMLElement>("[data-role=popover-panel]");
+    if (!panel) {
+      this.stopObservingPanel();
+      return;
+    }
+
+    if (typeof panel.showPopover === "function" && !panel.matches(":popover-open")) {
       panel.showPopover();
     }
+    this.updatePanelPosition(panel);
+    this.observePanel(panel);
   }
 
   override render() {
@@ -152,15 +177,13 @@ export class PopoverMenu extends LitElement {
           title="${this.triggerTemplate ? "" : "Actions"}"
           @click=${this.toggle}
         >
-          ${this.triggerTemplate ?? html`
-            ${moreVerticalIcon()}
-          `}
+          ${this.triggerTemplate ?? moreVerticalIcon()}
         </button>
         ${this.open && this.content ? html`
           <div
+            data-role="popover-panel"
             popover="manual"
-            class="fixed inset-auto m-0 p-0 z-[var(--layer-overlay)] ${this.panelClass || "w-36"} bg-zinc-800 border border-zinc-600 rounded-md shadow-xl overflow-hidden"
-            style=${styleMap(this.panelStyle)}
+            class="fixed inset-auto m-0 max-w-[calc(100vw-0.5rem)] max-h-[calc(100dvh-1rem)] p-0 z-[var(--layer-overlay)] ${this.panelClass || "w-36"} bg-zinc-800 border border-zinc-600 rounded-md shadow-xl overflow-x-hidden overflow-y-auto"
             @click=${this.onPanelClick}
           >
             ${this.content()}

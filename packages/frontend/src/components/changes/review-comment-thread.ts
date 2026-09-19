@@ -1,7 +1,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { InlineReviewPlacement } from "../../controllers/inline-review-controller.js";
-import { conversationIcon, spinnerIcon, trashIcon } from "../icons.js";
+import { conversationIcon, spinnerIcon, trashIcon } from "../../ui/icons.js";
 
 @customElement("review-comment-thread")
 export class ReviewCommentThread extends LitElement {

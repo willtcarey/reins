@@ -3,7 +3,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { copyTextToClipboard } from "../../helpers/clipboard.js";
 import { isHtml } from "../../models/changes/diff-utils.js";
 import { openInBrowserEvent } from "../events.js";
-import { checkIcon, copyIcon, downloadFileIcon, eyeIcon } from "../icons.js";
+import { checkIcon, copyIcon, downloadFileIcon, eyeIcon } from "../../ui/icons.js";
 
 type DiffFileActionButtonVariant = "card" | "header";
 

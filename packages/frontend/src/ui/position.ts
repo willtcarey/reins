@@ -30,6 +30,9 @@ export interface PositionOptions {
   gap?: number;
   /** Minimum distance from viewport edge (default 4). */
   viewportPad?: number;
+  /** Viewport dimensions. Defaults to the current browser viewport. */
+  viewportWidth?: number;
+  viewportHeight?: number;
 }
 
 /**
@@ -64,9 +67,18 @@ function parsePlacement(p: Placement): { side: Side; align: Alignment } {
 }
 
 export function computePosition(opts: PositionOptions): { top: number; left: number } {
-  const { anchor, width, height, placement, gap = 4, viewportPad = 4 } = opts;
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  const {
+    anchor,
+    width,
+    height,
+    placement,
+    gap = 4,
+    viewportPad = 4,
+    viewportWidth = window.innerWidth,
+    viewportHeight = window.innerHeight,
+  } = opts;
+  const vw = viewportWidth;
+  const vh = viewportHeight;
 
   const { side, align } = parsePlacement(placement);
 

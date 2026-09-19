@@ -20,9 +20,9 @@ import {
   requestDeleteTaskEvent,
   toggleTaskExpandEvent,
 } from "./events.js";
-import { branchIcon, plusIcon } from "./icons.js";
+import { branchIcon, plusIcon } from "../ui/icons.js";
 import "./activity-dot.js";
-import "./popover-menu.js";
+import "../ui/popover-menu.js";
 import "./session-list-item.js";
 
 @customElement("task-list-item")

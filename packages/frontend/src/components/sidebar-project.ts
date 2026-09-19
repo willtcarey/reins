@@ -6,13 +6,13 @@ import type { ActivityState } from "../models/stores/session-cache.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import type { ProjectInfo } from "../models/ws-client.js";
 import { projectEvent, type ProjectEventName } from "./events.js";
-import { folderIcon } from "./icons.js";
+import { folderIcon } from "../ui/icons.js";
 import {
   createTaskListDisclosureState,
   type TaskListDisclosureState,
 } from "./task-list.js";
 import "./assistant-session.js";
-import "./popover-menu.js";
+import "../ui/popover-menu.js";
 import "./task-list.js";
 
 @customElement("sidebar-project")

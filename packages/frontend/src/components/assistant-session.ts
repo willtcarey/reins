@@ -13,8 +13,8 @@ import { customElement, property } from "lit/decorators.js";
 import type { SessionListItem } from "../models/ws-client.js";
 import { formatRelativeDate } from "../models/format.js";
 import { newSessionEvent, selectSessionEvent } from "./events.js";
-import { conversationIcon } from "./icons.js";
-import "./popover-menu.js";
+import { conversationIcon } from "../ui/icons.js";
+import "../ui/popover-menu.js";
 
 @customElement("assistant-session")
 export class AssistantSession extends LitElement {

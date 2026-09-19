@@ -10,7 +10,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ToolRenderer } from "./types.js";
-import { ringSpinnerIcon } from "../icons.js";
+import { ringSpinnerIcon } from "../../ui/icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { getDelegateSummary, getDelegateDetail } from "../../models/tools/delegate.js";
 

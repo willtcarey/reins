@@ -9,9 +9,11 @@ import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { SessionListItem } from "../models/ws-client.js";
 import { formatRelativeDate } from "../models/format.js";
+import type { InfoCardAction } from "../ui/info-card.js";
 import { selectSessionEvent } from "./events.js";
 import "./activity-dot.js";
-import "./popover-menu.js";
+import "../ui/info-card.js";
+import "../ui/popover-menu.js";
 
 /**
  * Build a map of session ID → all delegate descendants from a flat session list.
@@ -71,14 +73,14 @@ export class DelegatePopover extends LitElement {
     );
   }
 
-  private renderChildActivityActions(child: SessionListItem) {
+  private childActions(child: SessionListItem): InfoCardAction[] {
+    if (!this.onSetSessionUnread || child.activityState === "running") return [];
+
     const unread = child.activityState === "finished";
-    return html`
-      <button
-        class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
-        @click=${() => this.onSetSessionUnread?.(child.id, !unread)}
-      >${unread ? "Mark as read" : "Mark as unread"}</button>
-    `;
+    return [{
+      label: unread ? "Mark as read" : "Mark as unread",
+      run: () => this.onSetSessionUnread?.(child.id, !unread),
+    }];
   }
 
   private renderPopoverContent() {
@@ -96,32 +98,20 @@ export class DelegatePopover extends LitElement {
       <div class="max-h-48 overflow-y-auto">
         ${this.childSessions.map(child => {
           const label = child.name || child.firstMessage || "Sub-session";
-          const truncated = label.length > 40 ? label.slice(0, 40) + "…" : label;
           const isActive = child.id === this.activeSessionId;
           const date = formatRelativeDate(child.updatedAt);
           return html`
-            <div class="flex items-center ${isActive ? "bg-zinc-700/60" : "hover:bg-zinc-700"}">
-              <button
-                data-session-id=${child.id}
-                class="flex-1 min-w-0 text-left px-3 py-1.5 cursor-pointer transition-colors flex items-center gap-1.5"
-                @click=${() => this.handleSelectSession(child.id)}
-              >
-                <activity-dot .state=${child.activityState}></activity-dot>
-                <div class="min-w-0 flex-1">
-                  <div class="text-xs ${isActive ? "text-zinc-100" : "text-zinc-300"} truncate">${truncated}</div>
-                  <div class="text-[10px] text-zinc-500">${date} · ${child.messageCount} msg</div>
-                </div>
-              </button>
-              ${canUpdateUnread && child.activityState !== "running" ? html`
-                <popover-menu
-                  triggerClass="px-1 py-2 text-zinc-500 hover:text-zinc-300"
-                  panelClass="w-40"
-                  anchor="right-start"
-                  close-on-panel-click
-                  .content=${() => this.renderChildActivityActions(child)}
-                ></popover-menu>
-              ` : null}
-            </div>
+            <info-card
+              class="block"
+              data-session-id=${child.id}
+              .title=${label}
+              .subtitle=${`${date} · ${child.messageCount} msg`}
+              .active=${isActive}
+              .primaryLabel=${`Open sub-session: ${label}`}
+              .leading=${html`<activity-dot .state=${child.activityState}></activity-dot>`}
+              .actions=${this.childActions(child)}
+              @info-card-activate=${() => this.handleSelectSession(child.id)}
+            ></info-card>
           `;
         })}
       </div>

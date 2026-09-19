@@ -20,7 +20,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type { TemplateResult } from "lit";
 import { paletteCloseEvent, paletteConfirmEvent, paletteQueryChangeEvent } from "./events.js";
-import { searchIcon } from "./icons.js";
+import { searchIcon } from "../ui/icons.js";
 
 export type PaletteRenderItem = (index: number, selected: boolean) => TemplateResult | typeof nothing;
 

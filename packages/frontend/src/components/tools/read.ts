@@ -19,7 +19,7 @@ import { imageBlockSrc, type ChatImageBlock } from "../../models/chat-content.js
 import { openImageViewerEvent, openInBrowserEvent } from "../events.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
-import { ringSpinnerIcon } from "../icons.js";
+import { ringSpinnerIcon } from "../../ui/icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import {
   getReadSummary, getReadRange, getReadTrailer, getReadPreview,

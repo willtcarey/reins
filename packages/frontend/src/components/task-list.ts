@@ -12,7 +12,7 @@ import { springCollapse } from "../directives/spring-collapse.js";
 import type { TaskListItem } from "../models/tasks.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import { deleteTaskEvent, newTaskEvent } from "./events.js";
-import { plusIcon } from "./icons.js";
+import { plusIcon } from "../ui/icons.js";
 import "./delete-task-dialog.js";
 import "./task-list-item.js";
 

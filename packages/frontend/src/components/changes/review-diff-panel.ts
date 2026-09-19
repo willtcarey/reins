@@ -34,7 +34,7 @@ import {
   activeFileChangeEvent,
   activeItemChangeEvent,
 } from "../events.js";
-import { branchIcon, conversationIcon } from "../icons.js";
+import { branchIcon, conversationIcon } from "../../ui/icons.js";
 import type { ReviewFileDiffHeightChange } from "./review-file-diff.js";
 import type { ReviewFileExpansionInteraction } from "./review-file-diff-renderer.js";
 import "./review-file-diff.js";

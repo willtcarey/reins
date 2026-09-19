@@ -18,7 +18,7 @@ import "./file-tree.js";
 import type { FileViewer } from "./file-viewer.js";
 import { openFileSearchEvent } from "../events.js";
 import type { FileViewMode } from "../events.js";
-import { closeIcon, downloadIcon, fileSearchIcon, menuIcon } from "../icons.js";
+import { closeIcon, downloadIcon, fileSearchIcon, menuIcon } from "../../ui/icons.js";
 
 @customElement("file-browser")
 export class FileBrowser extends LitElement {
