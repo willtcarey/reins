@@ -46,7 +46,9 @@ export interface SessionListOptions {
   includeTaskSessions?: boolean;
   since?: string;
   limit?: number;
+  offset?: number;
   search?: string;
+  orderBy?: "updated" | "archived";
   minMessages?: number;
   /** Archived rows are excluded by default; history requests can select only archived rows. */
   archived?: "exclude" | "only" | "include";
@@ -153,6 +155,9 @@ export function listSessions(options: SessionListOptions): SessionRow[] {
     const pattern = `%${options.search.trim()}%`;
     where.push(
       `(s.id LIKE ? OR s.name LIKE ? OR EXISTS (
+         SELECT 1 FROM tasks t
+         WHERE t.id = s.task_id AND t.title LIKE ?
+       ) OR EXISTS (
          SELECT 1 FROM session_messages sm
          WHERE sm.session_id = s.id
            AND json_valid(sm.message_json)
@@ -160,7 +165,7 @@ export function listSessions(options: SessionListOptions): SessionRow[] {
              OR CAST(json_extract(sm.message_json, '$.summary') AS TEXT) LIKE ?)
        ))`,
     );
-    binds.push(pattern, pattern, pattern, pattern);
+    binds.push(pattern, pattern, pattern, pattern, pattern);
   }
 
   let sql = `WITH listed_sessions AS MATERIALIZED (
@@ -189,11 +194,13 @@ export function listSessions(options: SessionListOptions): SessionRow[] {
     binds.push(options.minMessages);
   }
 
-  sql += " ORDER BY (pinned_at IS NOT NULL) DESC, updated_at DESC";
+  sql += options.orderBy === "archived"
+    ? " ORDER BY archived_at DESC, updated_at DESC"
+    : " ORDER BY (pinned_at IS NOT NULL) DESC, updated_at DESC";
 
   if (options.limit !== undefined) {
-    sql += " LIMIT ?";
-    binds.push(options.limit);
+    sql += " LIMIT ? OFFSET ?";
+    binds.push(options.limit, options.offset ?? 0);
   }
 
   return db

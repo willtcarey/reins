@@ -52,10 +52,30 @@ export function getTask(id: number): TaskRow | null {
   return db.query<TaskRow, [number]>("SELECT * FROM tasks WHERE id = ?").get(id) ?? null;
 }
 
-export function listTasks(projectId: number, status?: TaskStatus): TaskListItem[] {
+export interface TaskListOptions {
+  limit?: number;
+  offset?: number;
+  search?: string;
+}
+
+export function listTasks(
+  projectId: number,
+  status?: TaskStatus,
+  options: TaskListOptions = {},
+): TaskListItem[] {
   const db = getDb();
-  const statusFilter = status ? `AND t.status = ?` : "";
-  const params = status ? [projectId, status] : [projectId];
+  const filters: string[] = [];
+  const params: (number | string)[] = [projectId];
+  if (status) {
+    filters.push("t.status = ?");
+    params.push(status);
+  }
+  if (options.search?.trim()) {
+    filters.push("(t.title LIKE ? OR t.description LIKE ?)");
+    const pattern = `%${options.search.trim()}%`;
+    params.push(pattern, pattern);
+  }
+  const filterSql = filters.length > 0 ? `AND ${filters.join(" AND ")}` : "";
   const rows = db
     .query<TaskRow & { session_count: number; session_ids_json: string }, (number | string)[]>(
       `SELECT
@@ -70,10 +90,11 @@ export function listTasks(projectId: number, status?: TaskStatus): TaskListItem[
          WHERE task_id IS NOT NULL
          GROUP BY task_id
        ) sc ON sc.task_id = t.id
-       WHERE t.project_id = ? ${statusFilter}
-       ORDER BY CASE t.status WHEN 'closed' THEN 1 ELSE 0 END, t.updated_at DESC`,
+       WHERE t.project_id = ? ${filterSql}
+       ORDER BY CASE t.status WHEN 'closed' THEN 1 ELSE 0 END, t.updated_at DESC
+       ${options.limit === undefined ? "" : "LIMIT ? OFFSET ?"}`,
     )
-    .all(...params);
+    .all(...params, ...(options.limit === undefined ? [] : [options.limit, options.offset ?? 0]));
 
   return rows.map(({ session_ids_json, ...rest }) => ({
     ...rest,

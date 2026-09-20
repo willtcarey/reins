@@ -37,7 +37,7 @@ describe("ProjectHistory", () => {
     const urls: string[] = [];
     mockFetch((url) => {
       urls.push(url);
-      return Response.json([]);
+      return Response.json({ items: [], hasMore: false });
     });
     const history = new ProjectHistory();
     history.projectId = 7;
@@ -46,13 +46,13 @@ describe("ProjectHistory", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(urls).toEqual([
-      "/api/projects/7/sessions?archived=only",
-      "/api/projects/7/tasks?status=closed",
+      "/api/projects/7/sessions?archived=only&limit=20&offset=0",
+      "/api/projects/7/tasks?status=closed&limit=20&offset=0",
     ]);
-    expect(fullOutput(history.render())).toContain("No archived sessions or completed tasks yet");
+    expect(fullOutput(history.render())).toContain("No project history yet");
   });
 
-  test("renders archived sessions and completed tasks with project context", () => {
+  test("separates completed tasks and archived conversations into counted views", () => {
     const store = new ProjectHistoryStore(7);
     store.archivedSessions = [
       session({ id: "scratch", name: "Archived research" }),
@@ -64,20 +64,49 @@ describe("ProjectHistory", () => {
       description: null,
       updatedAt: "2026-01-04T00:00:00Z",
       sessionCount: 1,
+      sessions: null,
     }];
     store.loaded = true;
     const history = new ProjectHistory();
     history.projectName = "Reins";
     Reflect.set(history, "store", store);
 
-    const output = fullOutput(history.render());
+    const tasksOutput = fullOutput(history.render());
 
-    expect(output).toContain("Reins History");
-    expect(output).toContain("Archived sessions");
-    expect(output).toContain("Archived research");
-    expect(output).toContain("Frontend router");
-    expect(output).toContain("Completed tasks");
-    expect(output).toContain("1 session");
+    expect(tasksOutput).toContain("History");
+    expect(tasksOutput).toContain("Reins");
+    expect(tasksOutput).toContain("Completed tasks");
+    expect(tasksOutput).toContain("Archived conversations");
+    expect(tasksOutput).toContain("2");
+    expect(tasksOutput).toContain("Frontend router");
+    expect(tasksOutput).toContain("1 session");
+    expect(tasksOutput).not.toContain("Archived research");
+
+    Reflect.set(history, "activeView", "sessions");
+    const sessionsOutput = fullOutput(history.render());
+    expect(sessionsOutput).toContain("Archived research");
+    expect(sessionsOutput).not.toContain("1 session");
+  });
+
+  test("offers the next page when more completed tasks are available", () => {
+    const store = new ProjectHistoryStore(7);
+    store.completedTasks = Array.from({ length: 20 }, (_, index) => ({
+      id: index,
+      title: `Task ${index}`,
+      description: null,
+      updatedAt: "2026-01-04T00:00:00Z",
+      sessionCount: 0,
+      sessions: null,
+    }));
+    store.completedHasMore = true;
+    store.loaded = true;
+    const history = new ProjectHistory();
+    Reflect.set(history, "store", store);
+
+    const output = fullOutput(history.render());
+    expect(output).toContain("Task 19");
+    expect(output).toContain("20+");
+    expect(output).toContain("Show more");
   });
 
   test("shows a useful empty state after history loads", () => {
@@ -87,6 +116,6 @@ describe("ProjectHistory", () => {
     history.projectName = "Reins";
     Reflect.set(history, "store", store);
 
-    expect(fullOutput(history.render())).toContain("No archived sessions or completed tasks yet");
+    expect(fullOutput(history.render())).toContain("No project history yet");
   });
 });

@@ -6,7 +6,7 @@ import { useTestRepo, createTestRepo, commitFile } from "../helpers/test-repo.js
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createTask, getTask, setTaskStatus } from "../../task-store.js";
-import { createSession } from "../../session-store.js";
+import { createSession, updateSessionMetadata } from "../../session-store.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 
 describe("task routes", () => {
@@ -56,6 +56,43 @@ describe("task routes", () => {
       expect(body[0].diffStats).not.toBeNull();
     });
 
+    test("paginates and searches closed tasks without changing workspace responses", async () => {
+      for (const title of ["Router work", "Database work", "Design work"]) {
+        const task = createTask(projectId, title, null, `task/${title}`);
+        setTaskStatus(task.id, "closed");
+      }
+
+      const response = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/tasks?status=closed&limit=1&offset=0&search=work`),
+        state,
+      );
+      const page = await response!.json();
+
+      expect(page.items).toHaveLength(1);
+      expect(page.hasMore).toBe(true);
+
+      const searched = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/tasks?status=closed&limit=20&offset=0&search=router`),
+        state,
+      );
+      expect((await searched!.json()).items.map((task: { title: string }) => task.title)).toEqual(["Router work"]);
+
+      const unpaginated = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/tasks?status=closed`),
+        state,
+      );
+      expect(await unpaginated!.json()).toHaveLength(3);
+    });
+
+    test("rejects invalid collection pagination", async () => {
+      const response = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/tasks?limit=0`),
+        state,
+      );
+
+      expect(response?.status).toBe(400);
+    });
+
     test("filters task lists by status", async () => {
       createTask(projectId, "Open task", null, "task/open");
       const closed = createTask(projectId, "Closed task", null, "task/closed");
@@ -88,6 +125,23 @@ describe("task routes", () => {
       expect(body.id).toBe(task.id);
       expect(body.title).toBe("Test Task");
       expect(body.sessions).toBeArray();
+    });
+
+    test("optionally includes archived sessions for History", async () => {
+      const task = createTask(projectId, "Test Task", null, "task/test");
+      createSession("current", projectId, { agentRuntimeType: "pi", taskId: task.id });
+      createSession("archived", projectId, { agentRuntimeType: "pi", taskId: task.id });
+      updateSessionMetadata("archived", { archived: true });
+
+      const response = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/tasks/${task.id}?archived=include`),
+        state,
+      );
+
+      expect((await response!.json()).sessions.map((session: { id: string }) => session.id).toSorted()).toEqual([
+        "archived",
+        "current",
+      ]);
     });
 
     test("returns 404 for nonexistent task", async () => {

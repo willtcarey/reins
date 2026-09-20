@@ -15,7 +15,7 @@ import {
   TaskHasActiveSessionsError,
 } from "../models/tasks.js";
 import { Sessions } from "../models/sessions.js";
-import { parseBody, parseIntParam } from "./validate.js";
+import { parseBody, parseCollectionPage, parseIntParam } from "./validate.js";
 
 const GenerateTaskBody = Type.Object({
   prompt: Type.String({ minLength: 1, pattern: "\\S" }),
@@ -36,8 +36,17 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
     if (status !== null && status !== "open" && status !== "closed") {
       throw new HttpError(400, "Query parameter 'status' must be 'open' or 'closed'");
     }
-    const enriched = await ctx.project.tasks().listWithDiffStats(status ?? undefined);
-    return Response.json(enriched);
+    const page = parseCollectionPage(ctx.url);
+    const enriched = await ctx.project.tasks().listWithDiffStats(status ?? undefined, page ? {
+      limit: page.limit + 1,
+      offset: page.offset,
+      search: page.search,
+    } : {});
+    if (!page) return Response.json(enriched);
+    return Response.json({
+      items: enriched.slice(0, page.limit),
+      hasMore: enriched.length > page.limit,
+    });
   });
 
   // Generate a task from freeform input, then create it
@@ -68,7 +77,8 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
     const task = getTask(taskId);
     if (!task) notFound("Task not found");
 
-    const sessions = new Sessions(ctx.state.sessions).listByTask(task.id);
+    const archived = ctx.url.searchParams.get("archived") === "include" ? "include" : "exclude";
+    const sessions = new Sessions(ctx.state.sessions).listByTask(task.id, archived);
     return Response.json({ ...task, sessions });
   });
 

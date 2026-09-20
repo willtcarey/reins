@@ -36,7 +36,9 @@ Clicking a session navigates to it and sets that project as the active diff cont
 
 ## History
 
-Choose **History** from a project's menu to open its full-screen History page. History lists archived sessions from the project assistant and every task, with task context where applicable, plus the project's completed tasks. Archived sessions can be reopened to read their conversation or unarchived directly from the page. Reopened sessions preserve their conversation, while completed-task sessions show the project's current filesystem and HEAD changes rather than reconstructing the deleted task branch. The URL is project-scoped, so History can be bookmarked and restored like a session route.
+Choose **History** from a project's menu to open its full-screen History page. Separate **Completed tasks** and **Archived conversations** views keep the two kinds of history focused and searchable. Results use a compact responsive grid and load 20 items at a time, with additional pages available on demand.
+
+Completed tasks expand to show all of their conversations, which can be reopened directly. The archived-conversation view includes task context where applicable; archived conversations can be reopened to read or unarchived from their action menu. Reopened sessions preserve their conversation, while completed-task sessions show the project's current filesystem and HEAD changes rather than reconstructing the deleted task branch. The URL is project-scoped, so History can be bookmarked and restored like a session route.
 
 ## File Upload
 
