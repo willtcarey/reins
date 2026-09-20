@@ -108,6 +108,20 @@ describe("session attachment routes", () => {
     );
 
     expect(upload?.status).toBe(404);
+    expect(await upload!.json()).toEqual({ error: "Session not found" });
+  });
+
+  test("returns 404 when fetching an attachment for a missing session", async () => {
+    const router = buildRouter();
+    const state = createServerState();
+
+    const fetched = await router.handle(
+      makeRequest("/api/sessions/missing-session/attachments/missing-attachment"),
+      state,
+    );
+
+    expect(fetched?.status).toBe(404);
+    expect(await fetched!.json()).toEqual({ error: "Session not found" });
   });
 
   test("rejects malformed image bytes", async () => {

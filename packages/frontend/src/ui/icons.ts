@@ -90,6 +90,10 @@ export function branchIcon(className = "", size: IconSize = 14) {
   return html`<svg class=${className} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>`;
 }
 
+export function pinIcon(className = "", size: IconSize = 12) {
+  return html`<svg class=${className} width=${size} height=${size} viewBox="0 0 16 16" fill="currentColor" role="img" aria-label="Pinned"><title>Pinned</title><path stroke="currentColor" stroke-width="0.5" stroke-linejoin="round" d="m10.83.93 4.24 4.24-3.53 2.12v2.83l-.71.71-2.3-2.3-4.24 4.24-1.24.18.18-1.24 4.24-4.24-2.3-2.3.71-.71h2.83Z"/></svg>`;
+}
+
 function changedFileIcon(glyph: TemplateResult, className: string, label: string) {
   return html`<svg class="${className}" viewBox="0 0 16 16" fill="currentColor" role="img" aria-label="${label}"><title>${label}</title><path d="M1.79 4.3c.2-.88.48-1.39.8-1.71s.83-.61 1.71-.8C5.19 1.59 6.39 1.5 8 1.5s2.81.09 3.7.29c.88.19 1.39.48 1.71.8s.61.83.8 1.71c.2.89.29 2.09.29 3.7s-.09 2.81-.29 3.7c-.19.88-.48 1.39-.8 1.71s-.83.61-1.71.8c-.89.2-2.09.29-3.7.29s-2.81-.09-3.7-.29c-.88-.19-1.39-.48-1.71-.8s-.6-.83-.8-1.71C1.59 10.81 1.5 9.61 1.5 8s.09-2.81.29-3.7M8 0C1.41 0 0 1.41 0 8s1.41 8 8 8 8-1.41 8-8S14.59 0 8 0"/>${glyph}</svg>`;
 }

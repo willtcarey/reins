@@ -223,12 +223,6 @@ export class AppShell extends LitElement {
       <app-main-toolbar
         .activePane=${activePane}
         .currentBranch=${store.diffStore.branch}
-        .sessionId=${store.sessionId}
-        .activityState=${store.activeSessionStore?.sessionData?.activityState}
-        .onSetSessionUnread=${(unread: boolean) => (
-          store.activeSessionStore?.setUnread(unread)
-            ?? Promise.resolve({ error: "Session is unavailable" })
-        )}
         .isStandalone=${this.viewport.isStandalone}
         .connected=${store.connected}
         show-sidebar-button

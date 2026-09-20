@@ -58,6 +58,7 @@ describe("PATCH /api/sessions/:sessionId/activity", () => {
     );
 
     expect(res!.status).toBe(404);
+    expect(await res!.json()).toEqual({ error: "Session not found" });
   });
 
   test("does not mark a running session unread", async () => {

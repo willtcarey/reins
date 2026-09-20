@@ -8,6 +8,7 @@ import type { SessionInstance } from "../runtimes/session-instance.js";
 import {
   getSession,
   listSessions,
+  type SessionMetadataUpdates,
 } from "../session-store.js";
 import { listSessionEntries } from "../messages-store.js";
 import { Sessions } from "../models/sessions.js";
@@ -22,8 +23,18 @@ function sessionModel(ctx: ApiContext) {
   return new Sessions(ctx.sessions, ctx.broadcast);
 }
 
-function withUnread<T extends { activity_state: string | null }>(session: T) {
-  return { ...session, unread: session.activity_state === "finished" };
+function toScriptingSession<T extends {
+  activity_state: string | null;
+  pinned_at: string | null;
+  archived_at: string | null;
+}>(session: T) {
+  const { pinned_at, archived_at, ...metadata } = session;
+  return {
+    ...metadata,
+    unread: session.activity_state === "finished",
+    pinned: pinned_at !== null,
+    archived: archived_at !== null,
+  };
 }
 
 function assertSessionExists(sessionId: string) {
@@ -49,6 +60,8 @@ export const SessionSchema = Type.Object({
   thinking_level: Type.String(),
   agent_runtime_type: Type.String(),
   unread: Type.Boolean({ description: "Whether the session has an unread completion. API reads do not mark it read." }),
+  pinned: Type.Boolean({ description: "Whether the session is pinned above unpinned sessions." }),
+  archived: Type.Boolean({ description: "Whether the session is archived and omitted from normal session lists." }),
   activity_state: Type.Union([Type.Literal("running"), Type.Literal("finished"), Type.Null()], {
     description: "Persisted activity: finished means unread completion, running means active work, null means no pending activity. Reading via this API does not mark sessions read.",
   }),
@@ -130,8 +143,7 @@ const sessionsListFunction = defineFunction({
   description:
     "List sessions for a project. Call without options for all sessions in the current project. " +
     "Pass projectId to inspect another project, taskId for one task's sessions, or taskId: null " +
-    "for scratch sessions only. Use taskId: \"current\" from a task session to list that task's sessions. " +
-    "Session results include unread: true for unread completions, false otherwise. Reads do not mark sessions read.",
+    "for scratch sessions only. Use taskId: \"current\" from a task session to list that task's sessions.",
   parameters: Type.Object({ options: Type.Optional(SessionListOptionsSchema) }),
   returns: Type.Array(SessionSchema),
   tags: ["sessions", "list", "query", "read", "scratch", "filter", "search", "messages"],
@@ -150,30 +162,30 @@ const sessionsListFunction = defineFunction({
       limit: options?.limit,
       search: options?.search,
       minMessages: options?.minMessages,
-    }).map(withUnread);
+    }).map(toScriptingSession);
   },
 });
 
 const sessionsCurrentFunction = defineFunction({
   name: "sessions.current",
-  description: "Get the current session (the one running this script), including unread status. No ID needed. Does not mark it read.",
+  description: "Get the current session (the one running this script). No ID needed.",
   parameters: Type.Object({}),
   returns: SessionSchema,
   tags: ["sessions", "current", "read", "self", "context"],
   execute: (_params, ctx) => {
     const session = getSession(ctx.sessionId);
     if (!session) throw new Error(`Session ${ctx.sessionId} not found`);
-    return withUnread(session);
+    return toScriptingSession(session);
   },
 });
 
 const sessionsGetFunction = defineFunction({
   name: "sessions.get",
-  description: "Get a single session by ID, including unread status. Throws if not found. Does not mark it read.",
+  description: "Get a single session by ID. Throws if not found.",
   parameters: Type.Object({ sessionId: Type.String() }),
   returns: SessionSchema,
   tags: ["sessions", "get", "read", "lookup"],
-  execute: (params, _ctx) => withUnread(assertSessionExists(params.sessionId)),
+  execute: (params, _ctx) => toScriptingSession(assertSessionExists(params.sessionId)),
 });
 
 const sessionsEntriesFunction = defineFunction({
@@ -210,8 +222,69 @@ export const sessionsSetModelFunction = defineFunction({
   async: true,
   tags: ["sessions", "model", "set", "write", "switch", "provider"],
   execute: async (params, ctx) => {
-    return withUnread(await sessionModel(ctx).setModel({ ...params, projectId: ctx.projectId }));
+    return toScriptingSession(await sessionModel(ctx).setModel({ ...params, projectId: ctx.projectId }));
   },
+});
+
+function updateMetadata(
+  ctx: ApiContext,
+  sessionId: string,
+  updates: SessionMetadataUpdates,
+) {
+  const session = assertSessionExists(sessionId);
+  if (session.project_id !== ctx.projectId) {
+    throw new Error(`Session ${sessionId} is outside the current project scope`);
+  }
+  sessionModel(ctx).updateMetadata(sessionId, updates);
+  return toScriptingSession(assertSessionExists(sessionId));
+}
+
+const SetNameParameters = Type.Object({
+  sessionId: Type.String({ description: "Session ID to update." }),
+  name: Type.Union([
+    Type.String({ minLength: 1, description: "Non-empty session name. Leading and trailing whitespace is removed." }),
+    Type.Null({ description: "Clear the explicit name and restore the session's fallback label." }),
+  ]),
+});
+
+const sessionsSetNameFunction = defineFunction({
+  name: "sessions.setName",
+  description: "Rename a session in the current project, or pass null to clear its explicit name. Names are trimmed and must not be empty.",
+  parameters: SetNameParameters,
+  returns: SessionSchema,
+  tags: ["sessions", "session", "name", "rename", "title", "set", "write", "metadata"],
+  execute: (params, ctx) => {
+    if (!Value.Check(SetNameParameters, params)) {
+      throw new Error("Invalid session name; expected a non-empty string or null");
+    }
+    const name = typeof params.name === "string" ? params.name.trim() : null;
+    if (name === "") throw new Error("Invalid session name; expected a non-empty string or null");
+    return updateMetadata(ctx, params.sessionId, { name });
+  },
+});
+
+const sessionsSetPinnedFunction = defineFunction({
+  name: "sessions.setPinned",
+  description: "Pin or unpin a session in the current project. Pinning is independent of archive state and does not affect parent or child sessions.",
+  parameters: Type.Object({
+    sessionId: Type.String({ description: "Session ID to update." }),
+    pinned: Type.Boolean(),
+  }),
+  returns: SessionSchema,
+  tags: ["sessions", "session", "pin", "pinned", "unpin", "set", "write", "organize"],
+  execute: (params, ctx) => updateMetadata(ctx, params.sessionId, { pinned: params.pinned }),
+});
+
+const sessionsSetArchivedFunction = defineFunction({
+  name: "sessions.setArchived",
+  description: "Archive or unarchive a session in the current project. Archiving preserves history, pin state, and parent/child state; archived sessions are omitted from normal lists.",
+  parameters: Type.Object({
+    sessionId: Type.String({ description: "Session ID to update." }),
+    archived: Type.Boolean(),
+  }),
+  returns: SessionSchema,
+  tags: ["sessions", "session", "archive", "archived", "unarchive", "set", "write", "organize"],
+  execute: (params, ctx) => updateMetadata(ctx, params.sessionId, { archived: params.archived }),
 });
 
 const StartParameters = Type.Object({
@@ -302,4 +375,7 @@ export const SESSION_FUNCTIONS: ApiFunctionDef[] = [
   sessionsGetFunction,
   sessionsEntriesFunction,
   sessionsSetModelFunction,
+  sessionsSetNameFunction,
+  sessionsSetPinnedFunction,
+  sessionsSetArchivedFunction,
 ];

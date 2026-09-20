@@ -4,25 +4,23 @@ import {
   SessionAttachmentNotFoundError,
   SessionAttachmentPrunedError,
   SessionAttachmentUploadError,
-  SessionNotFoundError,
   Sessions,
 } from "../models/sessions.js";
 import {
   parseFormData,
   parseFormFiles,
 } from "./validate.js";
+import { withSessionNotFound } from "./session-errors.js";
 
 function handleAttachmentError(err: unknown): never {
-  if (err instanceof SessionNotFoundError || err instanceof SessionAttachmentNotFoundError) {
-    notFound(err.message);
-  }
+  if (err instanceof SessionAttachmentNotFoundError) notFound(err.message);
   if (err instanceof SessionAttachmentUploadError) badRequest(err.message);
   if (err instanceof SessionAttachmentPrunedError) throw new HttpError(410, err.message);
   throw err;
 }
 
 export function registerAttachmentRoutes(router: RouterGroup<RouteContext>) {
-  router.post("/:sessionId/attachments", async (ctx) => {
+  router.post("/:sessionId/attachments", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
 
     try {
@@ -34,9 +32,9 @@ export function registerAttachmentRoutes(router: RouterGroup<RouteContext>) {
     } catch (err) {
       handleAttachmentError(err);
     }
-  });
+  }));
 
-  router.get("/:sessionId/attachments/:attachmentId", async (ctx) => {
+  router.get("/:sessionId/attachments/:attachmentId", withSessionNotFound(async (ctx) => {
     const { sessionId, attachmentId } = ctx.params;
 
     try {
@@ -53,5 +51,5 @@ export function registerAttachmentRoutes(router: RouterGroup<RouteContext>) {
     } catch (err) {
       handleAttachmentError(err);
     }
-  });
+  }));
 }

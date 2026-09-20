@@ -9,12 +9,13 @@
 import { Type } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import type { RouteContext } from "../router.js";
-import { badRequest, notFound } from "../errors.js";
+import { badRequest, HttpError } from "../errors.js";
 import { SessionNotFoundError, Sessions } from "../models/sessions.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { parseDisplayCursor } from "../messages-store.js";
 import { parseBody } from "./validate.js";
 import { ensureSessionOpen } from "../runtimes/session-manager.js";
+import { withSessionNotFound } from "./session-errors.js";
 
 const DEFAULT_MESSAGE_PAGE_LIMIT = 50;
 const MAX_MESSAGE_PAGE_LIMIT = 200;
@@ -30,6 +31,12 @@ const SessionActivityBody = Type.Object({
   unread: Type.Boolean(),
 });
 
+const SessionMetadataBody = Type.Object({
+  name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  pinned: Type.Optional(Type.Boolean()),
+  archived: Type.Optional(Type.Boolean()),
+}, { minProperties: 1 });
+
 export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   // List all sessions with non-null activity_state — for initial page-load
   // reconciliation without needing to expand every project first.
@@ -37,7 +44,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     return Response.json(new Sessions(ctx.state.sessions).activeSessions());
   });
 
-  router.put("/:sessionId/model", async (ctx) => {
+  router.put("/:sessionId/model", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
     const body = await parseBody(SessionModelBody, ctx.req);
 
@@ -46,15 +53,13 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
       const updated = await sessions.setModel({ sessionId, ...body });
       return Response.json(updated);
     } catch (err: unknown) {
+      if (err instanceof SessionNotFoundError) throw err;
       const message = err instanceof Error ? err.message : "Failed to update session model";
-      if (message.includes("not found")) {
-        notFound(message);
-      }
       badRequest(message);
     }
-  });
+  }));
 
-  router.get("/:sessionId/messages", async (ctx) => {
+  router.get("/:sessionId/messages", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
     const limitParam = ctx.url.searchParams.get("limit");
     const limit = limitParam === null ? DEFAULT_MESSAGE_PAGE_LIMIT : Number(limitParam);
@@ -75,28 +80,24 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
       beforeSeq: beforeSeq ?? undefined,
       afterSeq: afterSeq ?? undefined,
     });
-    if (!page) {
-      return new Response("Session not found", { status: 404 });
-    }
+    if (!page) throw new SessionNotFoundError();
 
     return Response.json(page);
-  });
+  }));
 
   // Get a session by its globally-unique ID
-  router.get("/:sessionId", async (ctx) => {
+  router.get("/:sessionId", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
 
     const data = new Sessions(ctx.state.sessions).get(sessionId);
-    if (!data) {
-      return new Response("Session not found", { status: 404 });
-    }
+    if (!data) throw new SessionNotFoundError();
 
     return Response.json(data);
-  });
+  }));
 
-  router.post("/:sessionId/resume", async (ctx) => {
+  router.post("/:sessionId/resume", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
-    if (!new Sessions(ctx.state.sessions).get(sessionId)) notFound("Session not found");
+    if (!new Sessions(ctx.state.sessions).get(sessionId)) throw new SessionNotFoundError();
     try {
       const managed = await ensureSessionOpen(ctx.state, sessionId);
       if (!managed.runtime.resumePendingOperation) {
@@ -105,12 +106,20 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
       await managed.runtime.resumePendingOperation();
       return Response.json({ ok: true });
     } catch (err: unknown) {
+      if (err instanceof HttpError) throw err;
       badRequest(err instanceof Error ? err.message : "Failed to resume pending operation");
     }
-  });
+  }));
+
+  router.patch("/:sessionId/metadata", withSessionNotFound(async (ctx) => {
+    const sessionId = ctx.params.sessionId;
+    const body = await parseBody(SessionMetadataBody, ctx.req);
+    const sessions = new Sessions(ctx.state.sessions, createBroadcast(ctx.state.clients));
+    return Response.json(sessions.updateMetadata(sessionId, body));
+  }));
 
   // Explicitly mark an idle session's completion read or unread.
-  router.patch("/:sessionId/activity", async (ctx) => {
+  router.patch("/:sessionId/activity", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
     const body = await parseBody(SessionActivityBody, ctx.req);
     const broadcast = createBroadcast(ctx.state.clients);
@@ -118,12 +127,10 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     try {
       sessions.setUnread(sessionId, body.unread);
     } catch (err) {
-      if (err instanceof SessionNotFoundError) {
-        return new Response("Session not found", { status: 404 });
-      }
+      if (err instanceof SessionNotFoundError) throw err;
       const message = err instanceof Error ? err.message : "Failed to update session activity";
       badRequest(message);
     }
     return Response.json({ ok: true });
-  });
+  }));
 }

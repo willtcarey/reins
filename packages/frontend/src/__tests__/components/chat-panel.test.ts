@@ -190,6 +190,8 @@ describe("ChatPanel conversation orchestration", () => {
       firstMessage: "Investigate the bug",
       messageCount: 1,
       activityState: null,
+      pinnedAt: null,
+      archivedAt: null,
       pendingOperation: null,
       runtimeType: null,
       state: null,
@@ -224,6 +226,8 @@ describe("ChatPanel conversation orchestration", () => {
       firstMessage: "Start with the API",
       messageCount: null,
       activityState: null,
+      pinnedAt: null,
+      archivedAt: null,
       pendingOperation: null,
       runtimeType: null,
       state: null,
@@ -256,6 +260,8 @@ describe("ChatPanel conversation orchestration", () => {
       messageCount: 1,
       firstMessage: "Investigate",
       activityState: "running",
+      pinnedAt: null,
+      archivedAt: null,
     };
     const sessionCache = new SessionCache();
     cacheSessionData(sessionCache, "running");

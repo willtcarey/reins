@@ -9,6 +9,7 @@ import { createSession, updateActivityState } from "../../session-store.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { getDb } from "../../db.js";
+import type { WsClient } from "../../state.js";
 
 function textContent(text: string) {
   return [{ type: "text" as const, text }];
@@ -88,6 +89,10 @@ describe("session routes (top-level)", () => {
       expect(body.projectId).toBe(projectId);
       expect(body.messageCount).toBe(1);
       expect(body.activityState).toBeNull();
+      expect(body.pinnedAt).toBeNull();
+      expect(body.archivedAt).toBeNull();
+      expect(body).not.toHaveProperty("pinned_at");
+      expect(body).not.toHaveProperty("archived_at");
       expect(body).not.toHaveProperty("messages");
     });
 
@@ -127,8 +132,89 @@ describe("session routes (top-level)", () => {
         state,
       );
       expect(res!.status).toBe(404);
+      expect(await res!.json()).toEqual({ error: "Session not found" });
     });
 
+  });
+
+  describe("PATCH /api/sessions/:sessionId/metadata", () => {
+    test("renames a session and clears the name back to its fallback", async () => {
+      createSession("renamed", projectId, { agentRuntimeType: "pi" });
+
+      const rename = await router.handle(
+        makeRequest("PATCH", "/api/sessions/renamed/metadata", { name: "  Important investigation  " }),
+        state,
+      );
+      expect(rename!.status).toBe(200);
+      expect(await rename!.json()).toMatchObject({ name: "Important investigation" });
+
+      const clear = await router.handle(
+        makeRequest("PATCH", "/api/sessions/renamed/metadata", { name: "" }),
+        state,
+      );
+      expect(clear!.status).toBe(200);
+      expect(await clear!.json()).toMatchObject({ name: null });
+    });
+
+    test("pins, archives, and unarchives independently", async () => {
+      createSession("organized", projectId, { agentRuntimeType: "pi" });
+
+      const archive = await router.handle(
+        makeRequest("PATCH", "/api/sessions/organized/metadata", { pinned: true, archived: true }),
+        state,
+      );
+      expect(archive!.status).toBe(200);
+      expect(await archive!.json()).toMatchObject({ pinnedAt: expect.any(String), archivedAt: expect.any(String) });
+      expect(archive!.headers.get("content-type")).toContain("application/json");
+
+      const unarchive = await router.handle(
+        makeRequest("PATCH", "/api/sessions/organized/metadata", { archived: false }),
+        state,
+      );
+      expect(unarchive!.status).toBe(200);
+      expect(await unarchive!.json()).toMatchObject({ pinnedAt: expect.any(String), archivedAt: null });
+
+      const unpin = await router.handle(
+        makeRequest("PATCH", "/api/sessions/organized/metadata", { pinned: false }),
+        state,
+      );
+      expect(unpin!.status).toBe(200);
+      expect(await unpin!.json()).toMatchObject({ pinnedAt: null, archivedAt: null });
+    });
+
+    test("broadcasts metadata changes", async () => {
+      createSession("broadcast-organized", projectId, { agentRuntimeType: "pi" });
+      const sent: unknown[] = [];
+      const client: WsClient = {
+        ws: {
+          send: (payload: string) => {
+            sent.push(JSON.parse(payload));
+            return payload.length;
+          },
+        },
+      };
+      state.clients.add(client);
+
+      await router.handle(
+        makeRequest("PATCH", "/api/sessions/broadcast-organized/metadata", { pinned: true }),
+        state,
+      );
+
+      expect(sent).toEqual([{
+        type: "session_updated",
+        sessionId: "broadcast-organized",
+        projectId,
+      }]);
+    });
+
+    test("returns 404 for a missing session", async () => {
+      const res = await router.handle(
+        makeRequest("PATCH", "/api/sessions/missing/metadata", { pinned: true }),
+        state,
+      );
+      expect(res!.status).toBe(404);
+      expect(await res!.json()).toEqual({ error: "Session not found" });
+    });
   });
 
   describe("POST /api/sessions/:sessionId/resume", () => {
@@ -145,6 +231,13 @@ describe("session routes (top-level)", () => {
       expect(res!.status).toBe(200);
       expect(await res!.json()).toEqual({ ok: true });
       expect(resumePendingOperation).toHaveBeenCalledTimes(1);
+    });
+
+    test("returns 404 for a missing session", async () => {
+      const res = await router.handle(makeRequest("POST", "/api/sessions/missing/resume"), state);
+
+      expect(res!.status).toBe(404);
+      expect(await res!.json()).toEqual({ error: "Session not found" });
     });
   });
 
@@ -343,6 +436,7 @@ describe("session routes (top-level)", () => {
       );
 
       expect(res!.status).toBe(404);
+      expect(await res!.json()).toEqual({ error: "Session not found" });
     });
   });
 });

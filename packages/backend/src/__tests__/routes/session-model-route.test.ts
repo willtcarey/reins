@@ -117,6 +117,22 @@ describe("PUT /api/sessions/:sessionId/model", () => {
     );
 
     expect(res!.status).toBe(404);
+    expect(await res!.json()).toEqual({ error: "Session not found" });
+  });
+
+  test("does not treat a model validation error containing not found as a missing session", async () => {
+    const sessionId = "session-model-not-found";
+    createSession(sessionId, projectId, { agentRuntimeType: "pi" });
+
+    const res = await router.handle(
+      makeRequest("PUT", `/api/sessions/${sessionId}/model`, {
+        provider: "missing-provider",
+        modelId: "missing-model",
+      }),
+      state,
+    );
+
+    expect(res!.status).toBe(400);
   });
 
   test("returns 400 for an invalid body", async () => {

@@ -26,6 +26,19 @@ describe("InfoCard", () => {
     expect(output.indexOf("</a>")).toBeLessThan(output.indexOf("data-action"));
   });
 
+  test("renders a title prefix immediately before the title and above the subtitle", () => {
+    const card = new InfoCard();
+    card.title = "Session";
+    card.subtitle = "2 messages";
+    card.titlePrefix = html`<span aria-label="Pinned">◆</span>`;
+
+    const output = templateToString(card.render());
+
+    expect(output).toContain('aria-label="Pinned"');
+    expect(output.indexOf('aria-label="Pinned"')).toBeLessThan(output.indexOf("Session"));
+    expect(output.indexOf("Session")).toBeLessThan(output.indexOf("2 messages"));
+  });
+
   test("omits empty leading and trailing layout when Lit assigns undefined", () => {
     const card = new InfoCard();
     card.title = "Session";

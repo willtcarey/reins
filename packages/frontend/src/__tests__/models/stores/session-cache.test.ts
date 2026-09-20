@@ -18,6 +18,8 @@ function sessionDetail(overrides: Partial<SessionData> = {}): SessionData {
     updatedAt: "2026-01-01T00:01:00.000Z",
     runtimeType: "pi",
     activityState: null,
+    pinnedAt: null,
+    archivedAt: null,
     pendingOperation: null,
     messageCount: 0,
     state: {
@@ -40,6 +42,8 @@ function listItem(overrides: Partial<SessionListItem> = {}): SessionListItem {
     messageCount: 2,
     firstMessage: "hello",
     activityState: "running",
+    pinnedAt: null,
+    archivedAt: null,
     ...overrides,
   };
 }
@@ -57,10 +61,16 @@ describe("SessionCache", () => {
     expect(store.get("sess-1")?.messageCount).toBe(2);
     expect(store.get("sess-1")?.activityState).toBe("running");
 
-    const detailSession = sessionDetail({ activityState: "finished" });
+    const detailSession = sessionDetail({
+      activityState: "finished",
+      pinnedAt: "2026-01-02T00:00:00Z",
+      archivedAt: "2026-01-03T00:00:00Z",
+    });
     store.set(detailSession.id, detailSession);
     expect(store.get("sess-1")?.messageCount).toBe(0);
     expect(store.get("sess-1")?.activityState).toBe("finished");
+    expect(store.get("sess-1")?.pinnedAt).toBe("2026-01-02T00:00:00Z");
+    expect(store.get("sess-1")?.archivedAt).toBe("2026-01-03T00:00:00Z");
     expect(store.get("sess-1")?.firstMessage).toBe("hello");
   });
 

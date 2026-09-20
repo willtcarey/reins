@@ -57,6 +57,8 @@ describe("project session routes", () => {
         messageCount: 1,
         firstMessage: "hello",
         activityState: "running",
+        pinnedAt: null,
+        archivedAt: null,
       });
       expect(body[0]).toHaveProperty("createdAt");
       expect(body[0]).toHaveProperty("updatedAt");

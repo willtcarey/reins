@@ -30,6 +30,8 @@ function session(overrides: Partial<SessionListItem> = {}): SessionListItem {
     messageCount: 0,
     firstMessage: null,
     activityState: null,
+    pinnedAt: null,
+    archivedAt: null,
     ...overrides,
   };
 }
@@ -277,18 +279,106 @@ describe("ProjectStore", () => {
     expect(store.getSession("missing")).toBeUndefined();
   });
 
-  test("taskSessionsFor derives cached sessions by taskId", () => {
+  test("orders pinned sessions above unpinned sessions while preserving recency", () => {
     const sessionCache = new SessionCache();
     store = new ProjectStore(42, sessionCache);
 
-    sessionCache.set("older", session({ id: "older", taskId: 1, updatedAt: "2024-01-01T00:00:00Z" }));
-    sessionCache.set("newer", session({ id: "newer", taskId: 1, updatedAt: "2024-01-02T00:00:00Z" }));
-    sessionCache.set("other-task", session({ id: "other-task", taskId: 2 }));
-    sessionCache.set("scratch", session({ id: "scratch", taskId: null }));
-    sessionCache.set("other-project", session({ id: "other-project", projectId: 99, taskId: 1 }));
+    sessionCache.setMany([
+      session({ id: "older", taskId: 1, updatedAt: "2024-01-01T00:00:00Z" }),
+      session({ id: "newer", taskId: 1, updatedAt: "2024-01-04T00:00:00Z" }),
+      session({ id: "pinned-older", taskId: 1, updatedAt: "2024-01-02T00:00:00Z", pinnedAt: "2024-01-05T00:00:00Z" }),
+      session({ id: "pinned-newer", taskId: 1, updatedAt: "2024-01-03T00:00:00Z", pinnedAt: "2024-01-06T00:00:00Z" }),
+    ]);
 
-    expect(store.taskSessionsFor(1).map((s) => s.id)).toEqual(["newer", "older"]);
-    expect(store.taskSessionsFor(2).map((s) => s.id)).toEqual(["other-task"]);
+    expect(store.taskSessionsFor(1).map((s) => s.id)).toEqual([
+      "pinned-newer",
+      "pinned-older",
+      "newer",
+      "older",
+    ]);
+  });
+
+  test("optimistically updates session metadata and keeps pin and archive independent", async () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+    sessionCache.set("s1", session({ pinnedAt: "2024-01-01T00:00:00Z" }));
+    let resolveRequest!: (response: Response) => void;
+    mockFetch(() => new Promise<Response>((resolve) => { resolveRequest = resolve; }));
+
+    const request = store.updateSessionMetadata("s1", { archived: true });
+
+    expect(sessionCache.get("s1")?.archivedAt).toEqual(expect.any(String));
+    expect(sessionCache.get("s1")?.pinnedAt).toBe("2024-01-01T00:00:00Z");
+    resolveRequest(jsonResponse({
+      ...session(),
+      pinnedAt: "2024-01-01T00:00:00Z",
+      archivedAt: "2024-02-01T00:00:00Z",
+    }));
+    expect(await request).toEqual({ ok: true });
+    expect(sessionCache.get("s1")?.archivedAt).toBe("2024-02-01T00:00:00Z");
+    expect(sessionCache.get("s1")?.pinnedAt).toBe("2024-01-01T00:00:00Z");
+  });
+
+  test("optimistically renames a session and clears its custom name", async () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+    sessionCache.set("s1", session({ name: "Old name", firstMessage: "Fallback prompt" }));
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    mockFetch((url, init) => {
+      requests.push({ url, init: init ?? {} });
+      const body: { name: string | null } = JSON.parse(String(init?.body));
+      return jsonResponse({ ...session(), name: body.name?.trim() || null });
+    });
+
+    expect(await store.updateSessionMetadata("s1", { name: "  New name  " })).toEqual({ ok: true });
+    expect(sessionCache.get("s1")?.name).toBe("New name");
+    expect(requests[0]?.url).toBe("/api/sessions/s1/metadata");
+    expect(JSON.parse(String(requests[0]?.init.body))).toEqual({ name: "  New name  " });
+
+    expect(await store.updateSessionMetadata("s1", { name: null })).toEqual({ ok: true });
+    expect(sessionCache.get("s1")?.name).toBeNull();
+    expect(sessionCache.get("s1")?.firstMessage).toBe("Fallback prompt");
+  });
+
+  test("rolls back only the explicit metadata field when the request fails", async () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+    sessionCache.set("s1", session({ pinnedAt: null, archivedAt: "2024-01-01T00:00:00Z" }));
+    mockFetch(() => jsonResponse({}, false));
+
+    expect(await store.updateSessionMetadata("s1", { pinned: true })).toEqual({ error: "HTTP 500" });
+    expect(sessionCache.get("s1")?.pinnedAt).toBeNull();
+    expect(sessionCache.get("s1")?.archivedAt).toBe("2024-01-01T00:00:00Z");
+  });
+
+  test("sorts pinned scratch sessions above newer unpinned sessions", () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+    sessionCache.setMany([
+      session({ id: "newer", updatedAt: "2024-01-03T00:00:00Z" }),
+      session({ id: "pinned", updatedAt: "2024-01-01T00:00:00Z", pinnedAt: "2024-01-02T00:00:00Z" }),
+      session({ id: "older", updatedAt: "2024-01-02T00:00:00Z" }),
+    ]);
+    store.sessionIds = ["newer", "pinned", "older"];
+
+    expect(store.sessions.map((item) => item.id)).toEqual(["pinned", "newer", "older"]);
+  });
+
+  test("normal list refresh hides archived sessions without clearing direct metadata", async () => {
+    const sessionCache = new SessionCache();
+    store = new ProjectStore(42, sessionCache);
+    sessionCache.set("archived", session({ id: "archived", archivedAt: "2024-01-01T00:00:00Z" }));
+    store.sessionIds = ["archived"];
+    mockFetch((url) => {
+      if (url.includes("/tasks")) return jsonResponse([]);
+      if (url.includes("/sessions")) return jsonResponse([]);
+      return jsonResponse({}, false);
+    });
+
+    await store.fetchLists();
+
+    expect(store.sessions).toEqual([]);
+    expect(sessionCache.get("archived")?.archivedAt).toBe("2024-01-01T00:00:00Z");
   });
 
   test("fetchTaskSessions handles errors gracefully", async () => {

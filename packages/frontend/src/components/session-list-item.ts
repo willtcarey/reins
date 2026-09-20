@@ -12,7 +12,8 @@ import type { SessionListItem as SessionListItemData } from "../models/ws-client
 import type { InfoCardAction } from "../ui/info-card.js";
 import { copyTextToClipboard } from "../helpers/clipboard.js";
 import { formatRelativeDate } from "../models/format.js";
-import { selectSessionEvent } from "./events.js";
+import { pinIcon } from "../ui/icons.js";
+import { renameSessionEvent, selectSessionEvent } from "./events.js";
 import "./activity-dot.js";
 import "./delegate-popover.js";
 import { showToast } from "./toast.js";
@@ -39,22 +40,38 @@ export class SessionListItem extends LitElement {
   @property({ attribute: false })
   onSetSessionUnread: ((sessionId: string, unread: boolean) => Promise<unknown>) | null = null;
 
+  @property({ attribute: false })
+  onUpdateMetadata: ((sessionId: string, updates: { name?: string | null; pinned?: boolean; archived?: boolean }) => Promise<unknown>) | null = null;
+
   private handleClick() {
     this.dispatchEvent(selectSessionEvent(this.session.id, this.session.projectId));
   }
 
-  private cardActions(): InfoCardAction[] {
+  private cardActions(pinned: boolean): InfoCardAction[] {
     const actions: InfoCardAction[] = [{
       label: "Copy session ID",
       run: () => this.copySessionId(),
     }];
-    if (!this.onSetSessionUnread || this.session.activityState === "running") return actions;
-
-    const unread = this.session.activityState === "finished";
-    actions.push({
-      label: unread ? "Mark as read" : "Mark as unread",
-      run: () => this.onSetSessionUnread?.(this.session.id, !unread),
-    });
+    if (this.onSetSessionUnread && this.session.activityState !== "running") {
+      const unread = this.session.activityState === "finished";
+      actions.push({
+        label: unread ? "Mark as read" : "Mark as unread",
+        run: () => this.onSetSessionUnread?.(this.session.id, !unread),
+      });
+    }
+    if (this.onUpdateMetadata) {
+      actions.push({
+        label: "Rename",
+        run: () => this.dispatchEvent(renameSessionEvent(this.session.id)),
+      }, {
+        label: pinned ? "Unpin" : "Pin",
+        run: () => this.onUpdateMetadata?.(this.session.id, { pinned: !pinned }),
+      }, {
+        label: this.session.archivedAt ? "Unarchive" : "Archive",
+        tone: this.session.archivedAt ? "default" : "danger",
+        run: () => this.onUpdateMetadata?.(this.session.id, { archived: !this.session.archivedAt }),
+      });
+    }
     return actions;
   }
 
@@ -74,16 +91,23 @@ export class SessionListItem extends LitElement {
     const label = s.name || s.firstMessage || "Empty session";
     const date = formatRelativeDate(s.updatedAt);
     const childCount = this.childSessions.length;
+    const pinned = s.pinnedAt !== null;
 
     return html`
       <info-card
         class="block"
         data-session-id=${s.id}
         .title=${label}
+        .titlePrefix=${pinned ? html`
+          <span
+            data-role="pinned-session-indicator"
+            class="pointer-events-none block text-zinc-600"
+          >${pinIcon("", 10)}</span>
+        ` : nothing}
         .subtitle=${`${date} · ${s.messageCount} messages`}
         .active=${this.active}
         .primaryLabel=${`Open session: ${label}`}
-        .actions=${this.cardActions()}
+        .actions=${this.cardActions(pinned)}
         .trailing=${s.activityState || childCount > 0 ? html`
           <span class="flex items-center gap-1.5">
             ${s.activityState ? html`
@@ -94,6 +118,7 @@ export class SessionListItem extends LitElement {
                 .childSessions=${this.childSessions}
                 .activeSessionId=${this.activeSessionId}
                 .onSetSessionUnread=${this.onSetSessionUnread}
+                .onUpdateMetadata=${this.onUpdateMetadata}
               ></delegate-popover>
             ` : nothing}
           </span>

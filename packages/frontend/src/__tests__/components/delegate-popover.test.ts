@@ -1,10 +1,11 @@
 import { describe, expect, mock, test } from "bun:test";
 import { buildDescendantMap, DelegatePopover } from "../../components/delegate-popover.js";
 import type { SessionListItem } from "../../models/ws-client.js";
-import type { InfoCardAction } from "../../ui/info-card.js";
 import {
   collectTemplateEventListeners,
+  collectTemplateValues,
   isTemplateResult,
+  templateToString,
 } from "../helpers/lit-template.js";
 
 function childSession(activityState: SessionListItem["activityState"]): SessionListItem {
@@ -19,6 +20,8 @@ function childSession(activityState: SessionListItem["activityState"]): SessionL
     messageCount: 2,
     firstMessage: "Investigate",
     activityState,
+    pinnedAt: null,
+    archivedAt: null,
   };
 }
 
@@ -28,23 +31,6 @@ function popoverContent(popover: DelegatePopover): unknown {
   const content = rendered.values[contentIndex];
   if (typeof content !== "function") throw new Error("Expected popover content renderer");
   return content();
-}
-
-function infoCardActions(value: unknown): readonly InfoCardAction[][] {
-  if (Array.isArray(value)) {
-    return value.flatMap((entry) => infoCardActions(entry));
-  }
-  if (!isTemplateResult(value)) return [];
-
-  const actions: InfoCardAction[][] = [];
-  for (let index = 0; index < value.values.length; index += 1) {
-    const entry = value.values[index];
-    if (value.strings[index]?.includes(".actions=") && Array.isArray(entry)) {
-      actions.push(entry);
-    }
-    actions.push(...infoCardActions(entry));
-  }
-  return actions;
 }
 
 describe("DelegatePopover", () => {
@@ -69,46 +55,27 @@ describe("DelegatePopover", () => {
     ]);
   });
 
-  test("selects a child session when its card is activated", () => {
+  test("renders delegate sessions through the shared actionable session row", () => {
     const popover = new DelegatePopover();
-    popover.childSessions = [childSession("finished")];
-    const selected = mock((_event: Event) => {});
-    popover.addEventListener("select-session", selected);
-
-    const [activate] = collectTemplateEventListeners(
-      popoverContent(popover),
-      "info-card-activate",
-    );
-    activate?.(new Event("info-card-activate"));
-
-    expect(selected).toHaveBeenCalledTimes(1);
-    expect(selected.mock.calls[0]?.[0]).toMatchObject({
-      detail: { sessionId: "child-1" },
-    });
-  });
-
-  test("marks idle child sessions read or unread through card actions", async () => {
-    const popover = new DelegatePopover();
-    popover.childSessions = [
-      childSession("finished"),
-      { ...childSession(null), id: "child-2", name: "Already read" },
-      { ...childSession("running"), id: "child-3", name: "Still running" },
-    ];
-    const setSessionUnread = mock(async (_sessionId: string, _unread: boolean) => ({ ok: true }));
+    const child = childSession("finished");
+    const setSessionUnread = mock(async () => ({ ok: true }));
+    const updateMetadata = mock(async () => ({ ok: true }));
+    popover.childSessions = [child];
     popover.onSetSessionUnread = setSessionUnread;
+    popover.onUpdateMetadata = updateMetadata;
 
-    const actions = infoCardActions(popoverContent(popover));
-    expect(actions.map((cardActions) => cardActions.map((action) => action.label))).toEqual([
-      ["Mark as read"],
-      ["Mark as unread"],
-      [],
-    ]);
+    const content = popoverContent(popover);
+    const output = templateToString(content);
+    const values = collectTemplateValues(content);
+    const row = values
+      .flatMap((value) => Array.isArray(value) ? value : [])
+      .find((value) => isTemplateResult(value) && value.strings.join("").includes("<session-list-item"));
+    if (!isTemplateResult(row)) throw new Error("Expected shared session row");
 
-    await actions[0]?.[0]?.run();
-    await actions[1]?.[0]?.run();
-
-    expect(setSessionUnread).toHaveBeenNthCalledWith(1, "child-1", false);
-    expect(setSessionUnread).toHaveBeenNthCalledWith(2, "child-2", true);
+    expect(output).toContain("<session-list-item");
+    expect(row.values).toContain(child);
+    expect(row.values).toContain(setSessionUnread);
+    expect(row.values).toContain(updateMetadata);
   });
 
   test("marks every unread child as read from the bulk action", () => {

@@ -45,6 +45,8 @@ function blankSessionData(sessionId = ""): SessionData {
     updatedAt: "",
     runtimeType: undefined,
     activityState: null,
+    pinnedAt: null,
+    archivedAt: null,
     pendingOperation: null,
     messageCount: 0,
     state: {

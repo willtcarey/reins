@@ -22,6 +22,7 @@ export class InfoCard extends LitElement {
   @property({ type: String }) primaryLabel: string | null = null;
   @property({ type: Boolean }) active = false;
   @property({ attribute: false }) leading: TemplateResult | typeof nothing | null | undefined = nothing;
+  @property({ attribute: false }) titlePrefix: TemplateResult | typeof nothing | null | undefined = nothing;
   @property({ attribute: false }) trailing: TemplateResult | typeof nothing | null | undefined = nothing;
   @property({ attribute: false }) actions: readonly InfoCardAction[] = [];
 
@@ -70,13 +71,15 @@ export class InfoCard extends LitElement {
 
   private renderContent() {
     const hasLeading = this.leading != null && this.leading !== nothing;
+    const hasTitlePrefix = this.titlePrefix != null && this.titlePrefix !== nothing;
     return html`
       ${hasLeading ? html`
         <span class="flex shrink-0 items-center">${this.leading}</span>
       ` : nothing}
       <span class="min-w-0 flex-1">
-        <span class="block truncate text-xs ${this.active ? "text-blue-300" : "text-zinc-300 group-hover/info-card:text-zinc-100"}">
-          ${this.title}
+        <span class="flex min-w-0 items-center gap-1 text-xs ${this.active ? "text-blue-300" : "text-zinc-300 group-hover/info-card:text-zinc-100"}">
+          ${hasTitlePrefix ? html`<span class="shrink-0">${this.titlePrefix}</span>` : nothing}
+          <span class="min-w-0 truncate">${this.title}</span>
         </span>
         ${this.subtitle ? html`
           <span class="mt-0.5 block truncate text-[10px] text-zinc-500">${this.subtitle}</span>

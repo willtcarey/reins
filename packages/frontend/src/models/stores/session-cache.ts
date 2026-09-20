@@ -21,6 +21,8 @@ export interface CachedSession {
   firstMessage: string | null;
   messageCount: number | null;
   activityState: ActivityState;
+  pinnedAt: string | null;
+  archivedAt: string | null;
   pendingOperation: SessionData["pendingOperation"];
   runtimeType: string | null;
   state: SessionState | null;
@@ -43,6 +45,8 @@ function emptyCachedSession(sessionId: string): CachedSession {
     firstMessage: null,
     messageCount: null,
     activityState: null,
+    pinnedAt: null,
+    archivedAt: null,
     pendingOperation: null,
     runtimeType: null,
     state: null,
@@ -60,6 +64,8 @@ function withoutUndefined(data: SessionPatch): SessionPatch {
   if (data.firstMessage !== undefined) result.firstMessage = data.firstMessage;
   if (data.messageCount !== undefined) result.messageCount = data.messageCount;
   if (data.activityState !== undefined) result.activityState = data.activityState;
+  if (data.pinnedAt !== undefined) result.pinnedAt = data.pinnedAt;
+  if (data.archivedAt !== undefined) result.archivedAt = data.archivedAt;
   if (data.pendingOperation !== undefined) result.pendingOperation = data.pendingOperation;
   if (data.runtimeType !== undefined) result.runtimeType = data.runtimeType;
   if (data.state !== undefined) result.state = data.state;
@@ -76,6 +82,8 @@ function sessionEquals(a: CachedSession, b: CachedSession): boolean {
     a.firstMessage === b.firstMessage &&
     a.messageCount === b.messageCount &&
     a.activityState === b.activityState &&
+    a.pinnedAt === b.pinnedAt &&
+    a.archivedAt === b.archivedAt &&
     a.pendingOperation?.kind === b.pendingOperation?.kind &&
     a.runtimeType === b.runtimeType &&
     a.state === b.state;
@@ -143,6 +151,8 @@ export class SessionCache {
       updatedAt: entry.updatedAt,
       runtimeType: entry.runtimeType ?? undefined,
       activityState: entry.activityState,
+      pinnedAt: entry.pinnedAt,
+      archivedAt: entry.archivedAt,
       pendingOperation: entry.pendingOperation,
       messageCount: entry.messageCount,
       state: entry.state,

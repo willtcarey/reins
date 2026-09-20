@@ -30,6 +30,8 @@ declare global {
     "open-file-browser": CustomEvent<void>;
     "pane-select": CustomEvent<MainPaneSelectDetail>;
     "reload-request": CustomEvent<void>;
+    "rename-session": CustomEvent<RenameSessionDetail>;
+    "save-session-name": CustomEvent<SaveSessionNameDetail>;
     "active-file-change": CustomEvent<string | null>;
     "active-item-change": CustomEvent<string>;
   }
@@ -122,6 +124,23 @@ export function selectSessionEvent(sessionId: string, projectId?: number | null)
 
 export function newSessionEvent(projectId: number | null) {
   return componentEvent("new-session", { projectId });
+}
+
+export interface RenameSessionDetail {
+  sessionId: string;
+}
+
+export function renameSessionEvent(sessionId: string) {
+  return componentEvent<RenameSessionDetail>("rename-session", { sessionId });
+}
+
+export interface SaveSessionNameDetail {
+  sessionId: string;
+  name: string | null;
+}
+
+export function saveSessionNameEvent(detail: SaveSessionNameDetail) {
+  return componentEvent("save-session-name", detail);
 }
 
 export function toggleTaskExpandEvent(taskId: number) {

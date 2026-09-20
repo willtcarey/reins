@@ -1,18 +1,26 @@
 import { LitElement, html, nothing } from "lit";
-import { customElement, property } from "lit/decorators.js";
+import { customElement, property, query } from "lit/decorators.js";
 import { StoreController } from "../controllers/store-controller.js";
 import { springCollapse } from "../directives/spring-collapse.js";
 import type { ActivityState } from "../models/stores/session-cache.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import type { ProjectInfo } from "../models/ws-client.js";
-import { projectEvent, type ProjectEventName } from "./events.js";
-import { folderIcon } from "../ui/icons.js";
+import {
+  newSessionEvent,
+  projectEvent,
+  type ProjectEventName,
+  type RenameSessionDetail,
+  type SaveSessionNameDetail,
+} from "./events.js";
+import { conversationIcon, folderIcon, plusIcon } from "../ui/icons.js";
 import {
   createTaskListDisclosureState,
   type TaskListDisclosureState,
 } from "./task-list.js";
-import "./assistant-session.js";
 import "../ui/popover-menu.js";
+import type { SessionRenameDialog } from "./session-rename-dialog.js";
+import "./session-list-item.js";
+import "./session-rename-dialog.js";
 import "./task-list.js";
 
 @customElement("sidebar-project")
@@ -40,6 +48,8 @@ export class SidebarProject extends LitElement {
   @property({ attribute: false }) activityState: ActivityState | undefined = undefined;
   @property({ type: Number }) uploadProgress: number | null = null;
 
+  @query("session-rename-dialog") private sessionRenameDialog!: SessionRenameDialog;
+
   private taskListDisclosureState: TaskListDisclosureState = createTaskListDisclosureState();
 
   override willUpdate(changed: Map<string, unknown>) {
@@ -58,6 +68,69 @@ export class SidebarProject extends LitElement {
     this.dispatchEvent(projectEvent(name, this.project));
   }
 
+  private handleNewSession() {
+    this.dispatchEvent(newSessionEvent(this.project.id));
+  }
+
+  private handleRenameSession(event: CustomEvent<RenameSessionDetail>) {
+    event.stopPropagation();
+    const session = this.projectStore?.getSession(event.detail.sessionId);
+    if (session) this.sessionRenameDialog?.open(session);
+  }
+
+  private async handleSaveSessionName(event: CustomEvent<SaveSessionNameDetail>) {
+    event.stopPropagation();
+    const result = await this.projectStore?.updateSessionMetadata(event.detail.sessionId, {
+      name: event.detail.name,
+    }) ?? { error: "Project is unavailable" };
+    this.sessionRenameDialog?.saveComplete("error" in result ? result.error : undefined);
+  }
+
+  private renderScratchSessions() {
+    const sessions = this.projectStore?.sessions ?? [];
+
+    return html`
+      <div class="flex items-center px-3 pt-3 pb-1">
+        <h2 class="flex-1 text-[9px] font-semibold text-zinc-600 uppercase tracking-wider">
+          ${sessions.length > 0 ? "Assistant" : "Start a conversation"}
+        </h2>
+        <button
+          class="p-0.5 text-zinc-600 hover:text-zinc-400 cursor-pointer transition-colors shrink-0"
+          @click=${this.handleNewSession}
+          title="New conversation"
+        >${sessions.length > 0 ? plusIcon("", 10) : conversationIcon("", 12)}</button>
+      </div>
+      ${sessions.length > 0 ? html`
+        <div class="mx-2 mb-1 divide-y divide-zinc-800/80 rounded-md border border-zinc-800/80 bg-zinc-950/30 overflow-hidden">
+          ${sessions.map((session) => html`
+            <session-list-item
+              class="block"
+              .session=${session}
+              .active=${session.id === this.activeSessionId}
+              .activeSessionId=${this.activeSessionId}
+              .onSetSessionUnread=${(sessionId: string, unread: boolean) => (
+                this.projectStore?.setSessionUnread(sessionId, unread)
+                  ?? Promise.resolve({ error: "Project is unavailable" })
+              )}
+              .onUpdateMetadata=${(sessionId: string, updates: { name?: string | null; pinned?: boolean; archived?: boolean }) => (
+                this.projectStore?.updateSessionMetadata(sessionId, updates)
+                  ?? Promise.resolve({ error: "Project is unavailable" })
+              )}
+            ></session-list-item>
+          `)}
+        </div>
+      ` : html`
+        <button
+          class="mx-2 mb-2 flex items-center gap-2 px-2.5 py-2 text-xs text-zinc-400 hover:text-zinc-300 cursor-pointer"
+          @click=${this.handleNewSession}
+        >
+          ${conversationIcon("shrink-0")}
+          <span>Start a conversation</span>
+        </button>
+      `}
+    `;
+  }
+
   private renderActivityDot() {
     if (!this.activityState) return nothing;
     const classes = this.activityState === "running"
@@ -71,7 +144,11 @@ export class SidebarProject extends LitElement {
     if (!project) return nothing;
 
     return html`
-      <div class="px-1.5 py-0.5">
+      <div
+        class="px-1.5 py-0.5"
+        @rename-session=${this.handleRenameSession}
+        @save-session-name=${this.handleSaveSessionName}
+      >
         <div class="flex items-center rounded-md overflow-hidden transition-colors group/project relative z-10 ${this.active ? "bg-zinc-800/70" : "hover:bg-zinc-800/70"} ${this.expanded ? "shadow-[0_4px_6px_-2px_rgba(0,0,0,0.5)]" : ""}">
           <button
             class="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 cursor-pointer text-left"
@@ -121,11 +198,7 @@ export class SidebarProject extends LitElement {
             ${this.projectStore?.loading && !this.projectStore.loaded ? html`
               <div class="px-3 py-2 text-[10px] text-zinc-500">Loading...</div>
             ` : html`
-              <assistant-session
-                .projectId=${project.id}
-                .sessions=${this.projectStore?.sessions ?? []}
-                .activeSessionId=${this.activeSessionId}
-              ></assistant-session>
+              ${this.renderScratchSessions()}
 
               <task-list
                 .projectId=${project.id}
@@ -136,6 +209,8 @@ export class SidebarProject extends LitElement {
             `}
           </div>
         `)}
+
+        <session-rename-dialog></session-rename-dialog>
       </div>
     `;
   }

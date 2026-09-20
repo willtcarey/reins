@@ -1,10 +1,7 @@
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { copyTextToClipboard } from "../helpers/clipboard.js";
-import type { ActivityState } from "../models/stores/session-cache.js";
 import { openFileBrowserEvent, paneSelectEvent, reloadRequestEvent } from "./events.js";
 import type { MainPaneSelectDetail, MainWorkspacePane } from "./events.js";
-import { showToast, type ToastLevel } from "./toast.js";
 import { menuIcon } from "../ui/icons.js";
 import "./branch-indicator.js";
 import "./nav-icon.js";
@@ -18,14 +15,8 @@ export class AppMainToolbar extends LitElement {
 
   @property({ type: String }) activePane: MainWorkspacePane = "chat";
   @property({ type: String }) currentBranch: string | null = null;
-  @property({ type: String }) sessionId = "";
-  @property({ attribute: false }) activityState: ActivityState | undefined;
-  @property({ attribute: false }) onSetSessionUnread: ((unread: boolean) => Promise<unknown>) | null = null;
   @property({ type: Boolean }) isStandalone = false;
   @property({ type: Boolean }) connected = false;
-
-  /** Action-only feedback dependency; defaults to the app toast mechanism. */
-  notify: (message: string, level: ToastLevel) => void = showToast;
   @property({ type: Boolean, attribute: "show-sidebar-button" }) showSidebarButton = false;
 
   private selectPane(pane: MainPaneSelectDetail["pane"]) {
@@ -36,38 +27,12 @@ export class AppMainToolbar extends LitElement {
     return menuIcon();
   }
 
-  private async copySessionId() {
-    if (!this.sessionId) return;
-
-    try {
-      await copyTextToClipboard(this.sessionId);
-      this.notify("Session ID copied", "success");
-    } catch {
-      this.notify("Could not copy session ID", "error");
-    }
-  }
-
-  private renderSessionActions() {
-    const unread = this.activityState === "finished";
+  private renderOverflowActions() {
     return html`
-      ${this.sessionId && this.onSetSessionUnread && this.activityState !== "running" ? html`
-        <button
-          class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
-          @click=${() => this.onSetSessionUnread?.(!unread)}
-        >${unread ? "Mark as read" : "Mark as unread"}</button>
-      ` : ""}
-      ${this.sessionId ? html`
-        <button
-          class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
-          @click=${() => this.copySessionId()}
-        >Copy session ID</button>
-      ` : ""}
-      ${this.isStandalone ? html`
-        <button
-          class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
-          @click=${() => this.dispatchEvent(reloadRequestEvent())}
-        >Reload</button>
-      ` : ""}
+      <button
+        class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
+        @click=${() => this.dispatchEvent(reloadRequestEvent())}
+      >Reload</button>
     `;
   }
 
@@ -118,12 +83,12 @@ export class AppMainToolbar extends LitElement {
             : html`<span class="w-2 h-2 rounded-full bg-red-500" title="Disconnected"></span>`
           }
         </div>
-        ${this.sessionId || this.isStandalone ? html`
+        ${this.isStandalone ? html`
           <popover-menu
             triggerClass="px-1.5 py-2 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/70 rounded-md"
             panelClass="w-44"
             close-on-panel-click
-            .content=${() => this.renderSessionActions()}
+            .content=${() => this.renderOverflowActions()}
           ></popover-menu>
         ` : ""}
       </div>

@@ -12,6 +12,8 @@ import {
   listSessionsWithActivity,
   updateActivityState,
   updateSessionMeta,
+  updateSessionMetadata,
+  type SessionMetadataUpdates,
   type SessionRow,
 } from "../session-store.js";
 import {
@@ -83,6 +85,8 @@ export interface SessionView {
   createdAt: string;
   updatedAt: string;
   activityState: SessionRow["activity_state"];
+  pinnedAt: string | null;
+  archivedAt: string | null;
   pendingOperation?: PendingPiOperation | null;
   messageCount?: number;
   runtimeType?: string;
@@ -122,6 +126,8 @@ function toSessionView(row: SessionRow): SessionView {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     activityState: row.activity_state,
+    pinnedAt: row.pinned_at,
+    archivedAt: row.archived_at,
   };
 }
 
@@ -320,6 +326,21 @@ export class Sessions {
     });
   }
 
+  updateMetadata(sessionId: string, updates: SessionMetadataUpdates): SessionView {
+    const row = getSession(sessionId);
+    if (!row) throw new SessionNotFoundError();
+
+    const updated = updateSessionMetadata(sessionId, updates);
+    if (!updated) throw new SessionNotFoundError();
+
+    this.broadcast({
+      type: "session_updated",
+      sessionId,
+      projectId: row.project_id,
+    });
+    return toSessionView(updated);
+  }
+
   /** Set an idle session's unread state without disturbing active work. */
   setUnread(sessionId: string, unread: boolean): void {
     const row = getSession(sessionId);
@@ -344,7 +365,7 @@ export class Sessions {
   async setModel(params: SetSessionModelParams): Promise<SessionRow> {
     const sessionRow = getSession(params.sessionId);
     if (!sessionRow || (params.projectId !== undefined && sessionRow.project_id !== params.projectId)) {
-      throw new Error(`Session ${params.sessionId} not found`);
+      throw new SessionNotFoundError();
     }
 
     const managed = this.sessions.get(params.sessionId);

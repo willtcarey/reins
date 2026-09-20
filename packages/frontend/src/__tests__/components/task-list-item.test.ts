@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { PartType, type PartInfo } from "lit/directive.js";
 import { TaskListItemElement } from "../../components/task-list-item.js";
 import { SpringCollapseDirective } from "../../directives/spring-collapse.js";
+import type { SessionListItem } from "../../models/ws-client.js";
 import { makeTask } from "../helpers/fixtures.js";
 import { collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 
@@ -34,5 +35,28 @@ describe("TaskListItemElement", () => {
     item.expanded = true;
 
     expect(renderCollapse(item)).toContain("Loading…");
+  });
+
+  test("keeps a child visible when its archived parent is absent from the active list", () => {
+    const child: SessionListItem = {
+      id: "child",
+      projectId: 1,
+      taskId: 1,
+      parentSessionId: "archived-parent",
+      name: "Independent child",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      pinnedAt: null,
+      archivedAt: null,
+      messageCount: 1,
+      firstMessage: "Continue independently",
+      activityState: null,
+    };
+    const item = new TaskListItemElement();
+    item.task = makeTask({ id: 1, session_count: 2 });
+    item.sessions = [child];
+    item.expanded = true;
+
+    expect(renderCollapse(item)).toContain("<session-list-item");
   });
 });

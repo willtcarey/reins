@@ -4,7 +4,7 @@ import { describe, test, expect, mock } from "bun:test";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { getDb } from "../../db.js";
 import { createProject } from "../../project-store.js";
-import { createSession, getSession } from "../../session-store.js";
+import { createSession, getSession, updateSessionMetadata } from "../../session-store.js";
 import { loadMessages } from "../../messages-store.js";
 import { createTask } from "../../task-store.js";
 import { useTestDb } from "../helpers/test-db.js";
@@ -256,12 +256,15 @@ describe("runtime sessions manager", () => {
     const project = createProject("Reins", repo.dir);
 
     const managed = await createNewSession(state, project.id, repo.dir, { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } });
+    updateSessionMetadata(managed.id, { archived: true });
+    const archivedAt = getSession(managed.id)!.archived_at;
     state.sessions.delete(managed.id);
 
     const reopened = await ensureSessionOpen(state, managed.id);
 
     expect(reopened.id).toBe(managed.id);
     expect(state.sessions.get(managed.id)).toBe(reopened);
+    expect(getSession(managed.id)!.archived_at).toBe(archivedAt);
   });
 
   test("ensureSessionOpen returns warm in-memory session and touches activity", async () => {

@@ -52,6 +52,8 @@ function makeSessionData(overrides: {
     updatedAt: "",
     runtimeType: overrides.runtimeType ?? "pi",
     activityState: overrides.activityState ?? null,
+    pinnedAt: null,
+    archivedAt: null,
     pendingOperation: null,
     messageCount,
     state: {

@@ -78,7 +78,7 @@ describe("AppShell layout selection", () => {
 
     expect(output).toContain("data-workspace-shell");
     expect(output).toContain("<session-sidebar");
-    expect(output).toContain(".sessionId=s2");
+    expect(output).toContain("<app-main-toolbar");
     expect(output).not.toContain("No project selected");
   });
 

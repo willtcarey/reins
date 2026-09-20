@@ -285,6 +285,11 @@ const MIGRATIONS: Migration[] = [
        UNIQUE(session_id, seq)
      )`,
   ],
+  [
+    "028_add_session_organization_timestamps",
+    `ALTER TABLE sessions ADD COLUMN pinned_at TEXT;
+     ALTER TABLE sessions ADD COLUMN archived_at TEXT`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

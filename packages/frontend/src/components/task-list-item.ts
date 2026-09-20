@@ -52,6 +52,9 @@ export class TaskListItemElement extends LitElement {
   @property({ attribute: false })
   onSetSessionUnread: ((sessionId: string, unread: boolean) => Promise<unknown>) | null = null;
 
+  @property({ attribute: false })
+  onUpdateMetadata: ((sessionId: string, updates: { name?: string | null; pinned?: boolean; archived?: boolean }) => Promise<unknown>) | null = null;
+
   private handleExpand() {
     this.dispatchEvent(toggleTaskExpandEvent(this.task.id));
   }
@@ -152,7 +155,10 @@ export class TaskListItemElement extends LitElement {
           <div class="mx-2 mt-1 mb-1 divide-y divide-zinc-800/80 rounded-md border border-zinc-800/80 bg-zinc-950/30 overflow-hidden">
             ${(() => {
               const descendantMap = buildDescendantMap(sessions);
-              const topLevel = sessions.filter(s => !s.parentSessionId);
+              const visibleSessionIds = new Set(sessions.map((session) => session.id));
+              const topLevel = sessions.filter((session) => (
+                !session.parentSessionId || !visibleSessionIds.has(session.parentSessionId)
+              ));
               return topLevel.map(s => html`
                 <session-list-item
                   class="block"
@@ -161,6 +167,7 @@ export class TaskListItemElement extends LitElement {
                   .childSessions=${descendantMap.get(s.id) ?? []}
                   .activeSessionId=${this.activeSessionId}
                   .onSetSessionUnread=${this.onSetSessionUnread}
+                  .onUpdateMetadata=${this.onUpdateMetadata}
                 ></session-list-item>
               `);
             })()}

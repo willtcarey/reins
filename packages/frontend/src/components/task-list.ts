@@ -124,6 +124,14 @@ export class TaskList extends LitElement {
       ?? Promise.resolve({ error: "Project is unavailable" });
   }
 
+  private updateSessionMetadata(
+    sessionId: string,
+    updates: { name?: string | null; pinned?: boolean; archived?: boolean },
+  ): Promise<unknown> {
+    return this.projectStore?.updateSessionMetadata(sessionId, updates)
+      ?? Promise.resolve({ error: "Project is unavailable" });
+  }
+
   private renderTask(task: TaskListItem) {
     return html`
       <task-list-item
@@ -134,6 +142,7 @@ export class TaskList extends LitElement {
         .activityState=${this.projectStore?.activityForTask(task.id)}
         .projectId=${this.projectId}
         .onSetSessionUnread=${(sessionId: string, unread: boolean) => this.setSessionUnread(sessionId, unread)}
+        .onUpdateMetadata=${(sessionId: string, updates: { name?: string | null; pinned?: boolean; archived?: boolean }) => this.updateSessionMetadata(sessionId, updates)}
         @toggle-expand=${this.handleToggleExpand}
         @delete-task=${this.handleDeleteTask}
       ></task-list-item>

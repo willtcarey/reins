@@ -31,11 +31,11 @@ All projects appear in the sidebar simultaneously as collapsible sections. Click
 
 Each expanded project contains:
 
-- **Assistant** — the project's long-lived conversation. The ⋮ menu provides access to previous conversations and creating a new one.
+- **Assistant** — the project's conversations, with controls for starting another conversation. Pinned conversations stay above unpinned conversations while each group remains ordered by recent activity.
 - **Tasks** — active tasks with their branch names and diff stats. The + button creates a new task. Expanding a task springs open its sessions, and loaded session rows refresh automatically as turns complete so first-message labels and message counts stay current.
 - **Completed tasks** — closed tasks, collapsed by default and revealed with the shared spring expansion.
 
-Clicking a session navigates to it and sets that project as the active diff context.
+Clicking a session navigates to it and sets that project as the active diff context. Session action menus are available by context menu on desktop and long-press on mobile. Sessions can be renamed; clearing a custom name restores the first-message fallback. Pinning and archiving are explicit, independent choices: archiving does not remove a pin, and neither state propagates to parent or child sessions. Archived sessions are hidden from normal project and task lists; there is not yet a separate archive browser.
 
 ## File Upload
 

@@ -25,6 +25,8 @@ export interface SessionRow {
   task_id: number | null;
   parent_session_id: string | null;
   activity_state: ActivityStateValue | null;
+  pinned_at: string | null;
+  archived_at: string | null;
   /** Present on list/query rows that join session message metadata. */
   message_count?: number;
   /** Present on list/query rows that join the first user-message preview. */
@@ -46,6 +48,12 @@ export interface SessionListOptions {
   limit?: number;
   search?: string;
   minMessages?: number;
+}
+
+export interface SessionMetadataUpdates {
+  name?: string | null;
+  pinned?: boolean;
+  archived?: boolean;
 }
 
 export interface PaletteItem {
@@ -128,6 +136,8 @@ export function listSessions(options: SessionListOptions): SessionRow[] {
     where.push("s.task_id IS NULL");
   }
 
+  where.push("s.archived_at IS NULL");
+
   if (options.since) {
     where.push("s.updated_at >= ?");
     binds.push(options.since);
@@ -173,7 +183,7 @@ export function listSessions(options: SessionListOptions): SessionRow[] {
     binds.push(options.minMessages);
   }
 
-  sql += " ORDER BY updated_at DESC";
+  sql += " ORDER BY (pinned_at IS NOT NULL) DESC, updated_at DESC";
 
   if (options.limit !== undefined) {
     sql += " LIMIT ?";
@@ -195,6 +205,7 @@ export function listPaletteItems(): PaletteItem[] {
          FROM sessions s
          LEFT JOIN tasks t ON t.id = s.task_id
          WHERE s.parent_session_id IS NULL
+           AND s.archived_at IS NULL
            AND (s.task_id IS NULL OR t.status = 'open')
            AND EXISTS (
              SELECT 1 FROM session_messages sm
@@ -208,7 +219,7 @@ export function listPaletteItems(): PaletteItem[] {
              id,
              ROW_NUMBER() OVER (
                PARTITION BY project_id
-               ORDER BY updated_at DESC
+               ORDER BY (pinned_at IS NOT NULL) DESC, updated_at DESC
              ) AS recency_rank
            FROM eligible_sessions
            WHERE task_id IS NULL
@@ -234,10 +245,45 @@ export function listPaletteItems(): PaletteItem[] {
        LEFT JOIN tasks t ON t.id = s.task_id
        WHERE s.task_id IS NOT NULL
           OR s.id IN (SELECT id FROM latest_project_assistants)
-       ORDER BY s.updated_at DESC`,
+       ORDER BY (s.pinned_at IS NOT NULL) DESC, s.updated_at DESC`,
     )
     .all();
   return rows.map((r) => ({ ...r, firstMessage: stripLeadingSkillBlocks(r.firstMessage) }));
+}
+
+export function updateSessionMetadata(
+  id: string,
+  updates: SessionMetadataUpdates,
+): SessionRow | null {
+  const db = getDb();
+  if (!getSession(id)) return null;
+
+  const assignments: string[] = [];
+  const binds: (string | null)[] = [];
+  if (updates.name !== undefined) {
+    const name = updates.name?.trim() || null;
+    assignments.push("name = ?");
+    binds.push(name);
+  }
+  if (updates.pinned !== undefined) {
+    assignments.push(
+      updates.pinned
+        ? "pinned_at = COALESCE(pinned_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+        : "pinned_at = NULL",
+    );
+  }
+  if (updates.archived !== undefined) {
+    assignments.push(
+      updates.archived
+        ? "archived_at = COALESCE(archived_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+        : "archived_at = NULL",
+    );
+  }
+
+  if (assignments.length > 0) {
+    db.query(`UPDATE sessions SET ${assignments.join(", ")} WHERE id = ?`).run(...binds, id);
+  }
+  return getSession(id);
 }
 
 export function updateSessionMeta(

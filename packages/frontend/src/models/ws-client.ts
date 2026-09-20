@@ -29,6 +29,8 @@ export interface SessionData {
   activityState: "running" | "finished" | null;
   pendingOperation: { kind: "run" | "compaction" | "navigation" } | null;
   messageCount: number;
+  pinnedAt: string | null;
+  archivedAt: string | null;
   state: SessionState;
 }
 
@@ -43,6 +45,8 @@ export interface SessionListItem {
   messageCount: number;
   firstMessage: string | null;
   activityState: "running" | "finished" | null;
+  pinnedAt: string | null;
+  archivedAt: string | null;
 }
 
 export interface ProjectInfo {

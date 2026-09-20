@@ -1,21 +1,34 @@
 import { describe, expect, mock, test } from "bun:test";
 import { AppMainToolbar } from "../../components/app-main-toolbar.js";
-import { collectTemplateEventListeners, templateToString } from "../helpers/lit-template.js";
+import { collectTemplateEventListeners, isTemplateResult, templateToString } from "../helpers/lit-template.js";
 
-function renderSessionActions(toolbar: AppMainToolbar): string {
-  const render: unknown = Reflect.get(toolbar, "renderSessionActions");
-  if (typeof render !== "function") throw new Error("Expected session action renderer");
-  return templateToString(Reflect.apply(render, toolbar, []));
+function findOverflowContent(value: unknown): (() => unknown) | undefined {
+  if (!isTemplateResult(value)) return undefined;
+
+  const contentIndex = value.strings.findIndex((part) => part.includes(".content="));
+  const content = value.values[contentIndex];
+  if (typeof content === "function") return () => Reflect.apply(content, undefined, []);
+
+  for (const nestedValue of value.values) {
+    const nestedContent = findOverflowContent(nestedValue);
+    if (nestedContent) return nestedContent;
+  }
+  return undefined;
+}
+
+function renderOverflowContent(toolbar: AppMainToolbar) {
+  const content = findOverflowContent(toolbar.render());
+  if (!content) throw new Error("Expected overflow content renderer");
+  return content();
 }
 
 describe("AppMainToolbar", () => {
-  test("places active-session actions at the far right while preserving responsive status", () => {
+  test("shows no overflow menu in the browser", () => {
     const el = new AppMainToolbar();
     el.activePane = "changes";
     el.currentBranch = "feature/mobile-nav";
     el.showSidebarButton = true;
     el.connected = false;
-    el.sessionId = "session-123";
 
     const output = templateToString(el.render());
 
@@ -24,21 +37,24 @@ describe("AppMainToolbar", () => {
     expect(output).toContain("translate-x-full");
     expect(output).toContain("hidden md:flex");
     expect(output).toContain("Disconnected");
-    expect(output).toContain("<popover-menu");
-    expect(output.indexOf("Disconnected")).toBeLessThan(output.indexOf("<popover-menu"));
+    expect(output).not.toContain("<popover-menu");
   });
 
-  test("offers read and unread controls for the active idle session", () => {
+  test("offers Reload as the only standalone overflow action", () => {
     const el = new AppMainToolbar();
-    el.sessionId = "session-123";
-    el.onSetSessionUnread = mock(async () => ({ ok: true }));
-    el.activityState = "finished";
+    const reloadRequest = mock(() => {});
+    Reflect.set(el, "sessionId", "session-123");
+    el.isStandalone = true;
+    el.addEventListener("reload-request", reloadRequest);
 
-    expect(renderSessionActions(el)).toContain("Mark as read");
+    expect(templateToString(el.render())).toContain("<popover-menu");
 
-    el.activityState = null;
+    const content = renderOverflowContent(el);
+    expect(templateToString(content)).toContain("Reload");
+    expect(collectTemplateEventListeners(content, "click")).toHaveLength(1);
 
-    expect(renderSessionActions(el)).toContain("Mark as unread");
+    collectTemplateEventListeners(content, "click")[0]?.(new Event("click"));
+    expect(reloadRequest).toHaveBeenCalledTimes(1);
   });
 
   test("emits navigation events from toolbar controls", () => {

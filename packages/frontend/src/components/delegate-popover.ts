@@ -8,11 +8,7 @@
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { SessionListItem } from "../models/ws-client.js";
-import { formatRelativeDate } from "../models/format.js";
-import type { InfoCardAction } from "../ui/info-card.js";
-import { selectSessionEvent } from "./events.js";
-import "./activity-dot.js";
-import "../ui/info-card.js";
+import "./session-list-item.js";
 import "../ui/popover-menu.js";
 
 /**
@@ -51,16 +47,15 @@ export class DelegatePopover extends LitElement {
   @property({ attribute: false })
   onSetSessionUnread: ((sessionId: string, unread: boolean) => Promise<unknown>) | null = null;
 
+  @property({ attribute: false })
+  onUpdateMetadata: ((sessionId: string, updates: { name?: string | null; pinned?: boolean; archived?: boolean }) => Promise<unknown>) | null = null;
+
   private hasRunningChild(): boolean {
     return this.childSessions.some(c => c.activityState === "running");
   }
 
   private hasUnreadChild(): boolean {
     return this.childSessions.some(c => c.activityState === "finished");
-  }
-
-  private handleSelectSession(sessionId: string) {
-    this.dispatchEvent(selectSessionEvent(sessionId));
   }
 
   private markAllRead() {
@@ -71,16 +66,6 @@ export class DelegatePopover extends LitElement {
         .filter((child) => child.activityState === "finished")
         .map((child) => markUnread(child.id, false)),
     );
-  }
-
-  private childActions(child: SessionListItem): InfoCardAction[] {
-    if (!this.onSetSessionUnread || child.activityState === "running") return [];
-
-    const unread = child.activityState === "finished";
-    return [{
-      label: unread ? "Mark as read" : "Mark as unread",
-      run: () => this.onSetSessionUnread?.(child.id, !unread),
-    }];
   }
 
   private renderPopoverContent() {
@@ -96,24 +81,16 @@ export class DelegatePopover extends LitElement {
         ` : null}
       </div>
       <div class="max-h-48 overflow-y-auto">
-        ${this.childSessions.map(child => {
-          const label = child.name || child.firstMessage || "Sub-session";
-          const isActive = child.id === this.activeSessionId;
-          const date = formatRelativeDate(child.updatedAt);
-          return html`
-            <info-card
-              class="block"
-              data-session-id=${child.id}
-              .title=${label}
-              .subtitle=${`${date} · ${child.messageCount} msg`}
-              .active=${isActive}
-              .primaryLabel=${`Open sub-session: ${label}`}
-              .leading=${html`<activity-dot .state=${child.activityState}></activity-dot>`}
-              .actions=${this.childActions(child)}
-              @info-card-activate=${() => this.handleSelectSession(child.id)}
-            ></info-card>
-          `;
-        })}
+        ${this.childSessions.map(child => html`
+          <session-list-item
+            class="block"
+            .session=${child}
+            .active=${child.id === this.activeSessionId}
+            .activeSessionId=${this.activeSessionId}
+            .onSetSessionUnread=${this.onSetSessionUnread}
+            .onUpdateMetadata=${this.onUpdateMetadata}
+          ></session-list-item>
+        `)}
       </div>
     `;
   }

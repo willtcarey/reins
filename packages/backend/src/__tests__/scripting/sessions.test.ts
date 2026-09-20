@@ -5,7 +5,7 @@ import { Value } from "@sinclair/typebox/value";
 import { SessionHandleSchema } from "../../scripting/sessions.js";
 import { createProject } from "../../project-store.js";
 import { createTask } from "../../task-store.js";
-import { createSession, getSession, listSessions, updateActivityState } from "../../session-store.js";
+import { createSession, getSession, listSessions, updateActivityState, updateSessionMetadata } from "../../session-store.js";
 import { loadMessages, type RuntimeMessage } from "../../messages-store.js";
 import { SessionManager } from "../../runtimes/session-manager.js";
 import { registerRuntimeAdapter } from "../../runtimes/registry.js";
@@ -19,7 +19,6 @@ import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { executeTool } from "../helpers/execute-tool.js";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
-const noopBroadcast = () => {};
 
 describe("api.sessions orchestration", () => {
   useTestDb();
@@ -68,7 +67,8 @@ describe("api.sessions orchestration", () => {
         return stub.runtime;
       },
     });
-    const broadcast = noopBroadcast;
+    const broadcasts: unknown[] = [];
+    const broadcast = (message: unknown) => broadcasts.push(message);
     const manager = new SessionManager(state);
     const instanceFor = (sessionId: string) => manager.forSession(sessionId);
     const context = {
@@ -79,7 +79,7 @@ describe("api.sessions orchestration", () => {
       broadcast,
       instance: instanceFor("parent"),
     };
-    return { state, project, turns, context, instanceFor, api: buildApiObject(context), get created() { return created; } };
+    return { state, project, turns, broadcasts, context, instanceFor, api: buildApiObject(context), get created() { return created; } };
   }
 
   test("discovers unread activity and returns persisted status without marking sessions read", async () => {
@@ -90,11 +90,76 @@ describe("api.sessions orchestration", () => {
     for (const activity of [null, "running", "finished"] as const) {
       updateActivityState("parent", activity);
       const unread = activity === "finished";
-      expect(await api.sessions.current()).toMatchObject({ unread });
-      expect(await api.sessions.get("parent")).toMatchObject({ unread });
-      expect(await api.sessions.list()).toContainEqual(expect.objectContaining({ id: "parent", unread }));
+      expect(await api.sessions.current()).toMatchObject({ unread, pinned: false, archived: false });
+      expect(await api.sessions.get("parent")).toMatchObject({ unread, pinned: false, archived: false });
+      expect(await api.sessions.list()).toContainEqual(expect.objectContaining({
+        id: "parent", unread, pinned: false, archived: false,
+      }));
       expect(getSession("parent")!.activity_state).toBe(activity);
     }
+  });
+
+  test("exposes pin and archive state as booleans without leaking persistence timestamps", async () => {
+    const { api } = setup();
+    updateSessionMetadata("parent", { pinned: true, archived: true });
+
+    const current = await api.sessions.current();
+    const fetched = await api.sessions.get("parent");
+
+    expect(current).toMatchObject({ pinned: true, archived: true });
+    expect(fetched).toMatchObject({ pinned: true, archived: true });
+    expect(current).not.toHaveProperty("pinned_at");
+    expect(current).not.toHaveProperty("archived_at");
+  });
+
+  test("pins and archives independently through explicit session mutations", async () => {
+    const { api } = setup();
+
+    expect(await api.sessions.setPinned("parent", true)).toMatchObject({ pinned: true, archived: false });
+    expect(await api.sessions.setArchived("parent", true)).toMatchObject({ pinned: true, archived: true });
+    expect(await api.sessions.setArchived("parent", false)).toMatchObject({ pinned: true, archived: false });
+    expect(getSession("parent")).toMatchObject({ pinned_at: expect.any(String), archived_at: null });
+
+    const otherProject = createProject("Other organization", `${repo.dir}-organization`, "main");
+    createSession("foreign-organization", otherProject.id, { agentRuntimeType: "pi" });
+    await expect(Promise.resolve().then(() => api.sessions.setPinned("foreign-organization", true))).rejects.toThrow("scope");
+    expect(getSession("foreign-organization")!.pinned_at).toBeNull();
+  });
+
+  test("renames and clears a session through an explicit scoped mutation", async () => {
+    const { api, broadcasts } = setup();
+
+    expect(await api.sessions.setName("parent", "  Important investigation  ")).toMatchObject({
+      id: "parent",
+      name: "Important investigation",
+      pinned: false,
+      archived: false,
+    });
+    expect(getSession("parent")!.name).toBe("Important investigation");
+    expect(broadcasts).toEqual([{
+      type: "session_updated",
+      sessionId: "parent",
+      projectId: expect.any(Number),
+    }]);
+
+    expect(await api.sessions.setName("parent", null)).toMatchObject({ name: null });
+    expect(getSession("parent")!.name).toBeNull();
+  });
+
+  test("rejects invalid or foreign-project names without side effects", async () => {
+    const { api, broadcasts } = setup();
+    updateSessionMetadata("parent", { name: "Original" });
+
+    await expect(Promise.resolve().then(() => api.sessions.setName("parent", "   "))).rejects.toThrow();
+    expect(getSession("parent")!.name).toBe("Original");
+    expect(broadcasts).toEqual([]);
+
+    const otherProject = createProject("Other naming", `${repo.dir}-naming`, "main");
+    createSession("foreign-name", otherProject.id, { agentRuntimeType: "pi" });
+    updateSessionMetadata("foreign-name", { name: "Foreign original" });
+    await expect(Promise.resolve().then(() => api.sessions.setName("foreign-name", "Not allowed"))).rejects.toThrow("scope");
+    expect(getSession("foreign-name")!.name).toBe("Foreign original");
+    expect(broadcasts).toEqual([]);
   });
 
   test("starts immediately with explicit child/title semantics and waits for native settlement", async () => {

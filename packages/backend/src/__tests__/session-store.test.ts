@@ -10,6 +10,7 @@ import {
   listPaletteItems,
   updateSessionMeta,
   updateActivityState,
+  updateSessionMetadata,
 } from "../session-store.js";
 import { persistCanonicalMessages } from "./helpers/canonical-messages.js";
 
@@ -36,6 +37,8 @@ describe("session-store", () => {
       expect(s.task_id).toBeNull();
       expect(s.parent_session_id).toBeNull();
       expect(s.activity_state).toBeNull();
+      expect(s.pinned_at).toBeNull();
+      expect(s.archived_at).toBeNull();
       expect(s.created_at).toBeString();
       expect(s.updated_at).toBeString();
     });
@@ -144,6 +147,58 @@ describe("session-store", () => {
       expect(list[0].id).toBe("older");
     });
 
+    test("puts pinned sessions first while preserving recency within pinned and unpinned groups", () => {
+      for (const id of ["pinned-old", "pinned-new", "regular-old", "regular-new"]) {
+        createSession(id, projectId, { agentRuntimeType: "pi" });
+      }
+      const db = getDb();
+      db.query("UPDATE sessions SET updated_at = '2025-01-01T00:00:00.000Z' WHERE id IN ('pinned-old', 'regular-old')").run();
+      db.query("UPDATE sessions SET updated_at = '2025-01-02T00:00:00.000Z' WHERE id IN ('pinned-new', 'regular-new')").run();
+      updateSessionMetadata("pinned-old", { pinned: true });
+      updateSessionMetadata("pinned-new", { pinned: true });
+
+      expect(listSessions({ projectId, taskId: null }).map((session) => session.id)).toEqual([
+        "pinned-new",
+        "pinned-old",
+        "regular-new",
+        "regular-old",
+      ]);
+    });
+
+    test("excludes archived sessions without changing pin state", () => {
+      createSession("active", projectId, { agentRuntimeType: "pi" });
+      createSession("archived-pinned", projectId, { agentRuntimeType: "pi" });
+      updateSessionMetadata("archived-pinned", { pinned: true, archived: true });
+
+      expect(listSessions({ projectId, taskId: null }).map((session) => session.id)).toEqual(["active"]);
+      expect(getSession("archived-pinned")).toMatchObject({
+        pinned_at: expect.any(String),
+        archived_at: expect.any(String),
+      });
+    });
+
+    test("updates pin and archive independently without cascading to related sessions", () => {
+      const task = createTask(projectId, "T", null, "task/t");
+      createSession("parent", projectId, { agentRuntimeType: "pi", taskId: task.id });
+      createSession("child", projectId, { agentRuntimeType: "pi", taskId: task.id, parentSessionId: "parent" });
+      updateSessionMetadata("parent", { pinned: true, archived: true });
+      updateSessionMetadata("parent", { archived: false });
+
+      expect(getSession("parent")).toMatchObject({ pinned_at: expect.any(String), archived_at: null });
+      expect(getSession("child")).toMatchObject({ pinned_at: null, archived_at: null });
+    });
+
+    test("activity updates do not unarchive a session", () => {
+      createSession("archived", projectId, { agentRuntimeType: "pi" });
+      updateSessionMetadata("archived", { archived: true });
+      const archivedAt = getSession("archived")!.archived_at;
+
+      updateActivityState("archived", "running");
+      persistCanonicalMessages("archived", [{ role: "user", content: [{ type: "text", text: "new work" }] }]);
+
+      expect(getSession("archived")!.archived_at).toBe(archivedAt);
+    });
+
     test("returns empty array when no sessions exist", () => {
       expect(listSessions({ projectId, taskId: null })).toEqual([]);
     });
@@ -229,6 +284,16 @@ describe("session-store", () => {
   });
 
   describe("listPaletteItems", () => {
+    test("excludes archived sessions", () => {
+      createSession("active", projectId, { agentRuntimeType: "pi" });
+      createSession("archived", projectId, { agentRuntimeType: "pi" });
+      persistCanonicalMessages("active", [{ role: "user", content: [{ type: "text", text: "active" }] }]);
+      persistCanonicalMessages("archived", [{ role: "user", content: [{ type: "text", text: "archived" }] }]);
+      updateSessionMetadata("archived", { archived: true });
+
+      expect(listPaletteItems().map((item) => item.sessionId)).toEqual(["active"]);
+    });
+
     test("excludes closed-task sessions while retaining open-task and scratch sessions", () => {
       const openTask = createTask(projectId, "Open", null, "task/open");
       const closedTask = createTask(projectId, "Closed", null, "task/closed");

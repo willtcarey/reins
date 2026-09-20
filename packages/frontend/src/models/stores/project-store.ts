@@ -12,7 +12,7 @@
 
 import type { InjectedSkillInfo, SessionListItem } from "../ws-client.js";
 import type { TaskListItem } from "../tasks.js";
-import type { ActivityState, CachedSession, SessionCache } from "./session-cache.js";
+import type { ActivityState, CachedSession, SessionCache, SessionPatch } from "./session-cache.js";
 
 export type ProjectStoreListener = () => void;
 
@@ -26,8 +26,16 @@ function isSessionListItem(session: CachedSession): session is CachedSessionList
 }
 
 function compareSessionListItems(a: SessionListItem, b: SessionListItem): number {
+  const pinned = Number(b.pinnedAt !== null) - Number(a.pinnedAt !== null);
+  if (pinned !== 0) return pinned;
   const updated = b.updatedAt.localeCompare(a.updatedAt);
   return updated !== 0 ? updated : b.id.localeCompare(a.id);
+}
+
+export interface SessionMetadataUpdate {
+  name?: string | null;
+  pinned?: boolean;
+  archived?: boolean;
 }
 
 export class ProjectStore {
@@ -36,7 +44,7 @@ export class ProjectStore {
   // ---- Public reactive state ------------------------------------------------
 
   tasks: TaskListItem[] = [];
-  /** Server-provided ordering for project scratch sessions. Metadata lives in SessionCache. */
+  /** IDs returned by the latest active project-session list. Metadata lives in SessionCache. */
   sessionIds: string[] = [];
   /** Task IDs whose session sublists have been explicitly loaded and should be refreshed. */
   loadedTaskSessionIds: Set<number> = new Set();
@@ -96,18 +104,22 @@ export class ProjectStore {
     return session?.projectId === this.projectId ? session : undefined;
   }
 
-  /** Project scratch sessions derived from SessionCache in the latest server order. */
+  /** Active project scratch sessions, with pinned sessions above the recency order. */
   get sessions(): SessionListItem[] {
     return this.sessionIds.flatMap((sessionId) => {
       const session = this._sessionCache?.get(sessionId);
-      return session && isSessionListItem(session) ? [session] : [];
-    });
+      return session && isSessionListItem(session) && session.archivedAt === null ? [session] : [];
+    }).toSorted(compareSessionListItems);
   }
 
   /** Task sessions derived live from SessionCache for one task, ordered like the server list endpoint. */
   taskSessionsFor(taskId: number): SessionListItem[] {
     return (this._sessionCache?.entries() ?? [])
-      .filter((session) => session.projectId === this.projectId && session.taskId === taskId)
+      .filter((session) => (
+        session.projectId === this.projectId &&
+        session.taskId === taskId &&
+        session.archivedAt === null
+      ))
       .filter(isSessionListItem)
       .toSorted(compareSessionListItems);
   }
@@ -185,6 +197,70 @@ export class ProjectStore {
       if (this.activityForSession(sessionId) === nextState) {
         this._sessionCache?.set(sessionId, { activityState: previousState });
       }
+      return { error: "Network error" };
+    }
+  }
+
+  /** Optimistically rename, pin/unpin, or archive/unarchive a session. */
+  async updateSessionMetadata(
+    sessionId: string,
+    updates: SessionMetadataUpdate,
+  ): Promise<{ ok: true } | { error: string }> {
+    const session = this.getSession(sessionId);
+    if (!session) return { error: "Session not found" };
+
+    const optimisticAt = new Date().toISOString();
+    const previous: SessionPatch = {};
+    const optimistic: SessionPatch = {};
+    if (updates.name !== undefined) {
+      previous.name = session.name;
+      optimistic.name = updates.name?.trim() || null;
+    }
+    if (updates.pinned !== undefined) {
+      previous.pinnedAt = session.pinnedAt;
+      optimistic.pinnedAt = updates.pinned ? optimisticAt : null;
+    }
+    if (updates.archived !== undefined) {
+      previous.archivedAt = session.archivedAt;
+      optimistic.archivedAt = updates.archived ? optimisticAt : null;
+    }
+    this._sessionCache?.set(sessionId, optimistic);
+
+    const rollback = () => {
+      const current = this.getSession(sessionId);
+      const patch: SessionPatch = {};
+      if (updates.name !== undefined && current?.name === optimistic.name) {
+        patch.name = previous.name;
+      }
+      if (updates.pinned !== undefined && current?.pinnedAt === optimistic.pinnedAt) {
+        patch.pinnedAt = previous.pinnedAt;
+      }
+      if (updates.archived !== undefined && current?.archivedAt === optimistic.archivedAt) {
+        patch.archivedAt = previous.archivedAt;
+      }
+      this._sessionCache?.set(sessionId, patch);
+    };
+
+    try {
+      const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/metadata`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+      if (!resp.ok) {
+        rollback();
+        return { error: `HTTP ${resp.status}` };
+      }
+
+      const data: Pick<SessionListItem, "name" | "pinnedAt" | "archivedAt"> = await resp.json();
+      const confirmed: SessionPatch = {};
+      if (updates.name !== undefined) confirmed.name = data.name;
+      if (updates.pinned !== undefined) confirmed.pinnedAt = data.pinnedAt;
+      if (updates.archived !== undefined) confirmed.archivedAt = data.archivedAt;
+      this._sessionCache?.set(sessionId, confirmed);
+      return { ok: true };
+    } catch {
+      rollback();
       return { error: "Network error" };
     }
   }

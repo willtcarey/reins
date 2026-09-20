@@ -44,6 +44,12 @@ describe("searchFunctions", () => {
     expect(results.every((e) => e.tags.includes("write"))).toBe(true);
   });
 
+  test("discovers session metadata mutations", () => {
+    expect(searchFunctions("rename session").map((entry) => entry.name)).toContain("sessions.setName");
+    expect(searchFunctions("pin session").map((entry) => entry.name)).toContain("sessions.setPinned");
+    expect(searchFunctions("archive session").map((entry) => entry.name)).toContain("sessions.setArchived");
+  });
+
   test("multi-word query requires all terms to match when strict matches exist", () => {
     const results = searchFunctions("create task");
     expect(results.length).toBeGreaterThanOrEqual(1);
@@ -157,6 +163,16 @@ describe("createSearchTool", () => {
     expect(text).toContain("tasks: TasksApi;");
     expect(text).toContain("sessions: SessionsApi;");
     expect(text).toContain("projects: ProjectsApi;");
+    expectGeneratedTypeScriptToBeValid(text);
+  });
+
+  test("execute documents the session rename mutation", async () => {
+    const tool = createSearchTool();
+    const result = await executeTool(tool, "call-session-rename", { query: "rename session" }, undefined, undefined);
+
+    const text = result.content[0].type === "text" ? result.content[0].text : "";
+    expect(text).toContain("sessions: SessionsApi;");
+    expect(text).toContain("setName(sessionId: string, name: string | null): Session;");
     expectGeneratedTypeScriptToBeValid(text);
   });
 
