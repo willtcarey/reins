@@ -1,59 +1,24 @@
-/**
- * Frontend path utilities.
- */
+/** Pure frontend path normalization and safety helpers. */
 
-// ---- Project directory (set once when the active project changes) ----------
-
-let _projectDir: string | null = null;
-
-/**
- * Set the project's absolute directory so that `isBrowsablePath` and
- * `toRelativePath` can recognise absolute paths inside the project.
- * Call this whenever the active project changes.
- */
-export function setProjectDir(dir: string | null): void {
-  // Ensure it ends with "/" for easy prefix matching
-  _projectDir = dir && !dir.endsWith("/") ? dir + "/" : dir;
+function directoryPrefix(projectDir: string | null): string | null {
+  if (!projectDir) return null;
+  return projectDir.endsWith("/") ? projectDir : `${projectDir}/`;
 }
 
-/** Return the current project directory (with trailing slash), or null. */
-export function getProjectDir(): string | null {
-  return _projectDir;
-}
-
-// ---- Path helpers -----------------------------------------------------------
-
-/**
- * Convert a path to a project-relative path if it's an absolute path
- * inside the project directory.  Returns the original path unchanged
- * if it's already relative or outside the project.
- */
-export function toRelativePath(path: string): string {
+/** Convert an in-project absolute path to a project-relative path. */
+export function toRelativePath(path: string, projectDir: string | null): string {
   if (!path) return path;
-  if (_projectDir && path.startsWith(_projectDir)) {
-    return path.slice(_projectDir.length);
-  }
-  // Handle exact match without trailing slash (e.g. "/home/user/project")
-  if (_projectDir && path + "/" === _projectDir) {
-    return "";
-  }
+  const prefix = directoryPrefix(projectDir);
+  if (prefix && path.startsWith(prefix)) return path.slice(prefix.length);
+  if (prefix && `${path}/` === prefix) return "";
   return path;
 }
 
-/**
- * Whether a path looks safe to open in the file browser.
- *
- * Accepts relative paths that don't escape via `..`, and also absolute
- * paths that fall inside the current project directory (after stripping
- * the prefix).  The backend has its own validation, but we avoid even
- * sending the request for obviously-bad paths.
- */
-export function isBrowsablePath(path: string): boolean {
+/** Whether a path can be opened within the explicitly supplied project. */
+export function isBrowsablePath(path: string, projectDir: string | null): boolean {
   if (!path) return false;
-  // Normalise absolute project paths first
-  const rel = toRelativePath(path);
-  if (rel.startsWith("/")) return false;
-  // Reject ".." at start, end, or between separators
-  if (/(^|[/\\])\.\.([/\\]|$)/.test(rel)) return false;
+  const relativePath = toRelativePath(path, projectDir);
+  if (relativePath.startsWith("/")) return false;
+  if (/(^|[/\\])\.\.([/\\]|$)/.test(relativePath)) return false;
   return true;
 }

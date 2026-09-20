@@ -2,13 +2,13 @@
  * Task Form Dialog
  *
  * Modal dialog for creating a new task within a project.
- * Single text input — task generation goes through AppStore, which
- * calls the backend and auto-refreshes the task list on success.
+ * Single text input — the workspace supplies view context while ProjectsStore
+ * owns task generation and project-list refresh behavior.
  */
 
 import { LitElement, html } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
-import type { AppStore } from "../models/stores/app-store.js";
+import type { WorkspaceStore } from "../models/stores/workspace-store.js";
 
 @customElement("task-form")
 export class TaskForm extends LitElement {
@@ -17,7 +17,7 @@ export class TaskForm extends LitElement {
   }
 
   @property({ attribute: false })
-  store: AppStore | null = null;
+  store: WorkspaceStore | null = null;
 
   @state() private _projectId: number | null = null;
 

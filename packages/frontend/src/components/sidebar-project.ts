@@ -5,6 +5,7 @@ import { springCollapse } from "../directives/spring-collapse.js";
 import type { ActivityState } from "../models/stores/session-cache.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import type { ProjectInfo } from "../models/ws-client.js";
+import { navigateToProjectHistory } from "../routing/app-router.js";
 import {
   newSessionEvent,
   projectEvent,
@@ -163,6 +164,10 @@ export class SidebarProject extends LitElement {
             triggerClass="md:opacity-0 md:group-hover/project:opacity-100"
             close-on-panel-click
             .content=${() => html`
+              <button
+                class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
+                @click=${() => navigateToProjectHistory(project.id)}
+              >History</button>
               <button
                 class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
                 @click=${() => this.dispatchProjectEvent("edit-project")}

@@ -145,13 +145,13 @@ export class ProjectTasks {
   }
 
   /**
-   * List all tasks for a project, enriching open ones with diff stats.
+   * List tasks for a project, optionally filtered by status, enriching open ones with diff stats.
    *
    * Per-task errors (e.g. missing branch) are swallowed — the task is
    * returned with `diffStats: null`.
    */
-  async listWithDiffStats(): Promise<TaskWithDiffStats[]> {
-    const tasks = listTasks(this.projectId);
+  async listWithDiffStats(status?: TaskStatus): Promise<TaskWithDiffStats[]> {
+    const tasks = listTasks(this.projectId, status);
 
     return Promise.all(
       tasks.map(async (task) => {

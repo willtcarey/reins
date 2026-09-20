@@ -2,8 +2,9 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import "../helpers/local-storage.js";
 import { AppRouteController } from "../../controllers/app-route-controller.js";
+import type { Route } from "../../routing/router.js";
 
-function fakeHost(): ReactiveControllerHost {
+function fakeHost(): ReactiveControllerHost & { requestUpdate: ReturnType<typeof mock> } {
   return {
     addController(_controller: ReactiveController) {},
     removeController(_controller: ReactiveController) {},
@@ -16,21 +17,13 @@ function installRouteGlobals(hash: string) {
   const originalLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const originalHistory = Object.getOwnPropertyDescriptor(globalThis, "history");
-
   let hashChangeListener: (() => void) | null = null;
   const locationState = { hash };
   const replaceState = mock((_state: unknown, _title: string, url?: string | URL | null) => {
     if (typeof url === "string") locationState.hash = url;
   });
-
-  Object.defineProperty(globalThis, "location", {
-    configurable: true,
-    value: locationState,
-  });
-  Object.defineProperty(globalThis, "history", {
-    configurable: true,
-    value: { replaceState },
-  });
+  Object.defineProperty(globalThis, "location", { configurable: true, value: locationState });
+  Object.defineProperty(globalThis, "history", { configurable: true, value: { replaceState } });
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
@@ -42,7 +35,6 @@ function installRouteGlobals(hash: string) {
       }),
     },
   });
-
   return {
     get hashChangeListener() { return hashChangeListener; },
     locationState,
@@ -58,83 +50,42 @@ function installRouteGlobals(hash: string) {
   };
 }
 
-function createStore(initial: { sessionId?: string; projectId?: number | null } = {}) {
-  const store = {
-    sessionId: initial.sessionId ?? "",
-    projectId: initial.projectId ?? null,
-    setRoute: mock(async (sessionId: string | null) => {
-      store.sessionId = sessionId ?? "";
-    }),
-  };
-  return store;
-}
-
-afterEach(() => {
-  localStorage.clear();
-});
+afterEach(() => localStorage.clear());
 
 describe("AppRouteController", () => {
-  test("restores the last session hash on initial connect", async () => {
+  test("restores the last registered hash and reports the resolved route", () => {
     const globals = installRouteGlobals("");
     localStorage.setItem("reins:last-hash", "#/session/restored");
-    const store = createStore();
+    const host = fakeHost();
+    const onRouteChange = mock((_route: Route) => {});
 
-    new AppRouteController(fakeHost(), { store }).connect();
-    await Promise.resolve();
+    new AppRouteController(host, { onRouteChange }).connect();
 
     expect(globals.replaceState).toHaveBeenCalledWith(null, "", "#/session/restored");
-    expect(store.setRoute).toHaveBeenCalledWith("restored");
+    expect(onRouteChange).toHaveBeenCalledWith({
+      name: "session",
+      params: { sessionId: "restored" },
+    });
+    expect(host.requestUpdate).toHaveBeenCalledTimes(1);
     globals.restore();
   });
 
-  test("notifies session changes before route initialization finishes", async () => {
-    const store = createStore();
-    const onSessionChange = mock(() => {});
-    let resolveRoute!: () => void;
-    store.setRoute = mock((sessionId: string | null) => {
-      store.sessionId = sessionId ?? "";
-      return new Promise<void>((resolve) => { resolveRoute = resolve; });
-    });
-
-    const routePromise = new AppRouteController(fakeHost(), { store, onSessionChange })
-      .applyRoute({ sessionId: "s1" });
-    await Promise.resolve();
-
-    expect(onSessionChange).toHaveBeenCalled();
-
-    resolveRoute();
-    await routePromise;
-  });
-
-  test("handles hash changes with pane, project, and recency callbacks", async () => {
+  test("persists hash changes and reports any resolved route without route-specific callbacks", () => {
     const globals = installRouteGlobals("");
-    const store = createStore({ sessionId: "previous", projectId: 1 });
-    const onSessionChange = mock(() => {});
-    const onProjectChange = mock(() => {});
-    const onSessionVisit = mock(() => {});
-
-    store.setRoute = mock(async (sessionId: string | null) => {
-      store.sessionId = sessionId ?? "";
-      if (sessionId) store.projectId = 2;
-    });
-
-    const controller = new AppRouteController(fakeHost(), {
-      store,
-      onSessionChange,
-      onProjectChange,
-      onSessionVisit,
-    });
+    const host = fakeHost();
+    const onRouteChange = mock((_route: Route) => {});
+    const controller = new AppRouteController(host, { onRouteChange });
     controller.connect();
-    await Promise.resolve();
 
-    globals.locationState.hash = "#/session/another";
+    globals.locationState.hash = "#/projects/42/history";
     globals.hashChangeListener?.();
-    await Promise.resolve();
 
-    expect(localStorage.getItem("reins:last-hash")).toBe("#/session/another");
-    expect(onSessionChange).toHaveBeenCalled();
-    expect(onProjectChange).toHaveBeenCalled();
-    expect(onSessionVisit).toHaveBeenCalledWith("another");
+    expect(localStorage.getItem("reins:last-hash")).toBe("#/projects/42/history");
+    expect(onRouteChange).toHaveBeenLastCalledWith({
+      name: "project-history",
+      params: { projectId: "42" },
+    });
+    expect(host.requestUpdate).toHaveBeenCalledTimes(2);
     globals.restore();
   });
 });

@@ -10,7 +10,7 @@ import { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import type { CachedSession } from "../models/stores/session-cache.js";
 import type { Message } from "../models/message.js";
-import { sessionHash } from "../models/router.js";
+import { sessionHash } from "../routing/app-router.js";
 import type { SessionListItem } from "../models/ws-client.js";
 import type { ChatComposer } from "./chat-composer.js";
 import type { ChatComposerSubmitDetail } from "./events.js";
@@ -34,6 +34,8 @@ export class ChatPanel extends LitElement {
   @property({ attribute: false }) projectStore: ProjectStore | null = null;
   @property({ attribute: false }) parentSession: CachedSession | null = null;
   @property({ attribute: false }) runningChildSessions: SessionListItem[] = [];
+  @property({ attribute: false }) projectId: number | null = null;
+  @property({ attribute: false }) projectDir: string | null = null;
   @property({ type: Boolean }) visible = false;
 
   @state() private animatingUserMessageKeys = new Set<string>();
@@ -217,6 +219,8 @@ export class ChatPanel extends LitElement {
         .message=${message}
         .sessionId=${this.store?.sessionId ?? ""}
         .sourceSessionTitle=${sourceSessionTitle}
+        .projectId=${this.projectId}
+        .projectDir=${this.projectDir}
       ></chat-message>
     `;
   }

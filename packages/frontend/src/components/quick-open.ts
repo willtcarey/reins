@@ -12,9 +12,8 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
-import type { ActivityState } from "../models/stores/session-cache.js";
 import type { QuickOpenStore, PaletteItem } from "../models/stores/quick-open-store.js";
-import { navigateToSession } from "../models/router.js";
+import { navigateToSession } from "../routing/app-router.js";
 import { formatRelativeDate } from "../models/format.js";
 import "./search-palette.js";
 import type { SearchPalette } from "./search-palette.js";
@@ -25,7 +24,6 @@ export class QuickOpen extends LitElement {
     return this;
   }
 
-  @property({ attribute: false }) activityForSession: (projectId: number, sessionId: string) => ActivityState | undefined = () => undefined;
   @property({ attribute: false }) store!: QuickOpenStore;
 
   @state() private _open = false;
@@ -119,7 +117,7 @@ export class QuickOpen extends LitElement {
   }
 
   private renderActivityDot(item: PaletteItem) {
-    const activity = this.activityForSession(item.projectId, item.sessionId);
+    const activity = this.store.activityForSession(item.sessionId);
     if (!activity) return nothing;
 
     if (activity === "running") {

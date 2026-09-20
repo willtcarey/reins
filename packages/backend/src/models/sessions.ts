@@ -278,6 +278,10 @@ export class Sessions {
     return listSessions({ projectId, taskId: null }).map(toSessionListView);
   }
 
+  listArchivedByProject(projectId: number): SessionListView[] {
+    return listSessions({ projectId, includeTaskSessions: true, archived: "only" }).map(toSessionListView);
+  }
+
   listByTask(taskId: number): SessionListView[] {
     return listSessions({ taskId }).map(toSessionListView);
   }

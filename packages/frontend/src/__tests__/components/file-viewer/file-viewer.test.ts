@@ -13,7 +13,7 @@ import {
 
 function storeFor(path: string, content: string): FileBrowserStore {
   const store = new FileBrowserStore();
-  store.projectId = 7;
+  store.setProject(7);
   store.selectedFile = path;
   store.fileContent = content;
   store.isBinary = false;

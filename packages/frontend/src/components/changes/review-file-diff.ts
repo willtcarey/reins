@@ -397,7 +397,11 @@ export class ReviewFileDiff extends LitElement {
             </span>
           ` : nothing}
           <span class="flex shrink-0 items-center gap-1">
-            <diff-view-file-button .path=${change.path} variant="header"></diff-view-file-button>
+            <diff-view-file-button
+              .projectId=${this.projectId}
+              .path=${change.path}
+              variant="header"
+            ></diff-view-file-button>
             <diff-copy-path-button .path=${change.path} variant="header"></diff-copy-path-button>
             <diff-download-file-button
               .path=${change.path}

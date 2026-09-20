@@ -15,8 +15,8 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
-import { navigateToSession } from "../models/router.js";
-import type { AppStore } from "../models/stores/app-store.js";
+import { navigateToSession } from "../routing/app-router.js";
+import type { WorkspaceStore } from "../models/stores/workspace-store.js";
 import type { TaskListItem } from "../models/tasks.js";
 
 import type { ProjectInfo } from "../models/ws-client.js";
@@ -41,7 +41,7 @@ export class SessionSidebar extends LitElement {
   }
 
   @property({ attribute: false })
-  store: AppStore | null = null;
+  store: WorkspaceStore | null = null;
 
   @state() private collapsed = false;
   @state() private expandedProjects = new Set<number>();

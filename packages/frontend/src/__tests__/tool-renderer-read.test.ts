@@ -1,6 +1,8 @@
 import { describe, test, expect } from "bun:test";
+import { readRenderer } from "../components/tools/read.js";
 import { getReadSummary, getReadPreview, getReadContent, getReadLineCount, getReadRange, getReadTrailer } from "../models/tools/read.js";
 import type { ToolBlockData } from "../models/chat-state.js";
+import { templateToString } from "./helpers/lit-template.js";
 
 function makeReadBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockData {
   return {
@@ -15,6 +17,16 @@ function makeReadBlock(overrides: Partial<ToolBlockData> = {}): ToolBlockData {
 function makeReadResult(text: string): ToolBlockData["result"] {
   return { content: [{ type: "text", text }] };
 }
+
+describe("Read tool renderer", () => {
+  test("normalizes absolute paths with explicit render context", () => {
+    const block = makeReadBlock({ args: { path: "/work/project/src/index.ts" } });
+
+    const output = templateToString(readRenderer.render(block, { projectId: 42, projectDir: "/work/project" }));
+
+    expect(output).toContain(".path=src/index.ts");
+  });
+});
 
 describe("Read tool model helpers", () => {
   test("extracts path and requested range labels", () => {

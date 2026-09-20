@@ -11,6 +11,7 @@ import {
   applyChatEvent,
   initialChatState,
   removePersistedStreamingAssistants,
+  type ChatEvent,
   type ChatState,
 } from "../chat-state.js";
 import type { ClientPromptContent } from "../chat-content.js";
@@ -21,7 +22,7 @@ import {
   type AssistantMessage,
 } from "../message.js";
 import type { AgentMessage } from "../agent-message.js";
-import type { FrontendEvent } from "../ws-client.js";
+import type { InboundEventSource } from "../ws-client.js";
 import type { SessionCache } from "./session-cache.js";
 
 export interface PersistedConversationEntry {
@@ -75,6 +76,7 @@ type ConversationsStoreListener = () => void;
 
 interface ConversationsStoreOptions {
   sessionCache?: SessionCache;
+  eventSource?: InboundEventSource;
 }
 
 function blankConversationState(): ConversationState {
@@ -124,12 +126,24 @@ export class ConversationsStore {
   private _syncs = new Map<string, Promise<boolean>>();
   private _sessionCache: SessionCache | null;
   private _unsubscribeSessionCache: (() => void) | null = null;
+  private _unsubscribeEvents: (() => void) | null = null;
   private _nextLiveEntryId = 1;
 
   constructor(options: ConversationsStoreOptions = {}) {
     this._sessionCache = options.sessionCache ?? null;
     this._unsubscribeSessionCache = this._sessionCache?.subscribeAll((sessionId) => {
       this.pruneSessionIfInactive(sessionId);
+    }) ?? null;
+    this._unsubscribeEvents = options.eventSource?.subscribe({
+      event: (message) => this.applyEvent(message.sessionId, message.event),
+      user_message: (message) => this.applyEvent(message.sessionId, {
+        type: "user_message",
+        message: message.message,
+        ...(message.metadata ? { metadata: message.metadata } : {}),
+      }),
+      error: (message) => {
+        if (message.sessionId) this.setError(message.sessionId, message.error || "Something went wrong");
+      },
     }) ?? null;
   }
 
@@ -277,7 +291,7 @@ export class ConversationsStore {
   }
 
   /** Apply a runtime event against the session's complete persisted-plus-live view. */
-  applyEvent(sessionId: string, event: FrontendEvent): void {
+  applyEvent(sessionId: string, event: ChatEvent): void {
     if (!sessionId) return;
 
     switch (event.type) {
@@ -318,9 +332,6 @@ export class ConversationsStore {
         });
         return;
       }
-      case "ws_error":
-        this.setError(sessionId, event.error || "Something went wrong");
-        return;
       default:
         return;
     }
@@ -352,6 +363,8 @@ export class ConversationsStore {
   dispose(): void {
     this._unsubscribeSessionCache?.();
     this._unsubscribeSessionCache = null;
+    this._unsubscribeEvents?.();
+    this._unsubscribeEvents = null;
     this._listeners.clear();
     this._syncs.clear();
     this._states.clear();

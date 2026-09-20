@@ -7,7 +7,7 @@
 import { Type } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
-import { notFound, conflict } from "../errors.js";
+import { notFound, conflict, HttpError } from "../errors.js";
 import { getTask } from "../task-store.js";
 import { generateTask } from "../task-generator.js";
 import {
@@ -32,7 +32,11 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
 
   // List tasks for a project (enriched with diff stats for open tasks)
   router.get("/tasks", async (ctx) => {
-    const enriched = await ctx.project.tasks().listWithDiffStats();
+    const status = ctx.url.searchParams.get("status");
+    if (status !== null && status !== "open" && status !== "closed") {
+      throw new HttpError(400, "Query parameter 'status' must be 'open' or 'closed'");
+    }
+    const enriched = await ctx.project.tasks().listWithDiffStats(status ?? undefined);
     return Response.json(enriched);
   });
 

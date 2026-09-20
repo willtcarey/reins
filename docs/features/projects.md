@@ -17,14 +17,12 @@ All projects appear in the sidebar simultaneously as collapsible sections. Click
 ┃  💬 Assistant                ⋮
 ┃  TASKS                       +
 ┃  ▶ Refactor auth flow
-┃  ▶ COMPLETED TASKS (3)
 ▶ 📁 Shared Libs
 ▼ 📁 Web Frontend             ⋮
 ┃  💬 Assistant                ⋮
 ┃  TASKS                       +
 ┃  ▶ Add dark mode support
 ┃  ▶ Fix pagination bug
-┃  ▶ COMPLETED TASKS (12)
 ▶ 📁 Workers
 [+ Add Project]
 ```
@@ -32,10 +30,13 @@ All projects appear in the sidebar simultaneously as collapsible sections. Click
 Each expanded project contains:
 
 - **Assistant** — the project's conversations, with controls for starting another conversation. Pinned conversations stay above unpinned conversations while each group remains ordered by recent activity.
-- **Tasks** — active tasks with their branch names and diff stats. The + button creates a new task. Expanding a task springs open its sessions, and loaded session rows refresh automatically as turns complete so first-message labels and message counts stay current.
-- **Completed tasks** — closed tasks, collapsed by default and revealed with the shared spring expansion.
+- **Tasks** — active tasks with their branch names and diff stats. The + button creates a new task. Expanding a task springs open its sessions, and loaded session rows refresh automatically as turns complete so first-message labels and message counts stay current. Completed tasks are kept out of the sidebar and appear in the project's History page.
 
-Clicking a session navigates to it and sets that project as the active diff context. Session action menus are available by context menu on desktop and long-press on mobile. Sessions can be renamed; clearing a custom name restores the first-message fallback. Pinning and archiving are explicit, independent choices: archiving does not remove a pin, and neither state propagates to parent or child sessions. Archived sessions are hidden from normal project and task lists; there is not yet a separate archive browser.
+Clicking a session navigates to it and sets that project as the active diff context. Session action menus are available by context menu on desktop and long-press on mobile. Sessions can be renamed; clearing a custom name restores the first-message fallback. Pinning and archiving are explicit, independent choices: archiving does not remove a pin, and neither state propagates to parent or child sessions. Archived sessions are hidden from normal project and task lists.
+
+## History
+
+Choose **History** from a project's menu to open its full-screen History page. History lists archived sessions from the project assistant and every task, with task context where applicable, plus the project's completed tasks. Archived sessions can be reopened to read their conversation or unarchived directly from the page. Reopened sessions preserve their conversation, while completed-task sessions show the project's current filesystem and HEAD changes rather than reconstructing the deleted task branch. The URL is project-scoped, so History can be bookmarked and restored like a session route.
 
 ## File Upload
 

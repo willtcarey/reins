@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { PartType, type PartInfo } from "lit/directive.js";
 import {
   TaskList,
   createTaskListDisclosureState,
 } from "../../components/task-list.js";
-import { SpringCollapseDirective } from "../../directives/spring-collapse.js";
 import { ProjectStore } from "../../models/stores/project-store.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
 import type { TaskListItem } from "../../models/tasks.js";
@@ -24,24 +22,6 @@ function expectExpanded(el: TaskList, item: TaskListItem, expanded: boolean) {
   expect(rendered.values[index]).toBe(expanded);
 }
 
-interface DirectiveResult {
-  _$litDirective$: typeof SpringCollapseDirective;
-  values: Parameters<SpringCollapseDirective["render"]>;
-}
-
-function renderCollapse(el: TaskList): string {
-  const collapse = collectTemplateValues(el.render()).find((value): value is DirectiveResult => (
-    typeof value === "object"
-      && value !== null
-      && "_$litDirective$" in value
-      && value._$litDirective$ === SpringCollapseDirective
-  ));
-  if (!collapse) throw new Error("Expected spring collapse directive");
-
-  const childPart: PartInfo = { type: PartType.CHILD };
-  return templateToString(new SpringCollapseDirective(childPart).render(...collapse.values));
-}
-
 function projectStore(activeTaskId: number) {
   const sessionCache = new SessionCache();
   sessionCache.set("session-1", { projectId: 1, taskId: activeTaskId });
@@ -52,17 +32,18 @@ function projectStore(activeTaskId: number) {
 afterEach(restoreFetch);
 
 describe("TaskList expansion", () => {
-  test("lazily renders completed tasks when expanded", () => {
+  test("renders only active project tasks", () => {
     const el = new TaskList();
     const store = projectStore(1);
-    store.tasks = [makeTask({ id: 2, title: "Finished task", status: "closed" })];
+    store.tasks = [
+      makeTask({ id: 1, title: "Active task", status: "open" }),
+      makeTask({ id: 2, title: "Finished task", status: "closed" }),
+    ];
     el.projectStore = store;
 
-    expect(renderCollapse(el)).not.toContain("<task-list-item");
-
-    el.disclosureState.closedExpanded = true;
-
-    expect(renderCollapse(el)).toContain("<task-list-item");
+    const output = templateToString(collectTemplateValues(el.render()));
+    expect(output.match(/<task-list-item/g)).toHaveLength(1);
+    expect(output).not.toContain("Completed tasks");
   });
 
   test("restores disclosure state when the task list remounts", () => {

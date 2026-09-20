@@ -61,18 +61,19 @@ describe("AppMainToolbar", () => {
     const el = new AppMainToolbar();
     el.showSidebarButton = true;
     const panes: string[] = [];
-    const openFileBrowser = mock(() => {});
+    const openFileBrowserDetails: unknown[] = [];
+    el.projectId = 42;
 
     el.addEventListener("pane-select", (event) => {
       if (event instanceof CustomEvent) panes.push(event.detail.pane);
     });
-    el.addEventListener("open-file-browser", openFileBrowser);
+    el.addEventListener("open-file-browser", (event) => openFileBrowserDetails.push(event.detail));
 
     for (const click of collectTemplateEventListeners(el.render(), "click")) {
       click(new Event("click"));
     }
 
     expect(panes).toEqual(["sessions", "chat", "changes"]);
-    expect(openFileBrowser).toHaveBeenCalledTimes(1);
+    expect(openFileBrowserDetails).toEqual([{ projectId: 42 }]);
   });
 });

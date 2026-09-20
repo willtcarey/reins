@@ -1,180 +1,62 @@
-/**
- * Tests for WS client event listener contract.
- *
- * Verifies that EventListener receives (sessionId, projectId, event)
- * in the correct argument positions for all message types.
- */
+import { describe, expect, it } from "bun:test";
+import { AppClient, type InboundMessage } from "../models/ws-client.js";
 
-import { describe, it, expect } from "bun:test";
-import { AppClient } from "../models/ws-client.js";
-
-/**
- * Create an AppClient and invoke its private handleMessage method
- * to simulate an inbound WS message without needing a real WebSocket.
- */
-function simulateMessage(msg: any): { sessionId: string; projectId: number; event: any }[] {
-  const client = new AppClient("ws://localhost:0");
-  const received: { sessionId: string; projectId: number; event: any }[] = [];
-
-  client.onEvent((sessionId, projectId, event) => {
-    received.push({ sessionId, projectId, event });
-  });
-
-  // Access private handleMessage
-  client["handleMessage"](msg);
-
-  return received;
-}
-
-describe("WS client EventListener contract", () => {
-  it("passes (sessionId, projectId, event) for 'event' messages", () => {
-    const received = simulateMessage({
-      type: "event",
-      sessionId: "sess-1",
-      projectId: 42,
-      event: { type: "agent_start" },
-    });
-
-    expect(received).toHaveLength(1);
-    expect(received[0].sessionId).toBe("sess-1");
-    expect(received[0].projectId).toBe(42);
-    expect(received[0].event).toEqual({ type: "agent_start" });
-  });
-
-  it("preserves the full assistant message on runtime events", () => {
+describe("AppClient inbound event source", () => {
+  it("delivers the complete typed runtime envelope", () => {
+    const client = new AppClient("ws://localhost:0");
+    const received: InboundMessage[] = [];
     const message = {
-      role: "assistant",
-      content: [{ type: "text", text: "partial" }],
-      timestamp: 1234,
+      type: "event" as const,
+      sessionId: "sess-1",
+      projectId: 42,
+      event: {
+        type: "message_update" as const,
+        message: {
+          role: "assistant" as const,
+          content: [{ type: "text" as const, text: "partial" }],
+          timestamp: 1234,
+        },
+        assistantMessageEvent: { type: "text_delta" as const, delta: "partial" },
+      },
     };
-    const received = simulateMessage({
-      type: "event",
-      sessionId: "sess-1",
-      projectId: 42,
-      event: {
-        type: "message_update",
-        message,
-        assistantMessageEvent: { type: "text_delta", delta: "partial" },
-      },
-    });
+    client.subscribe({ event: (inbound) => received.push(inbound) });
 
-    expect(received[0].event.message).toEqual(message);
-    expect(received[0].event.message.timestamp).toBe(1234);
+    client["handleMessage"](message);
+
+    expect(received).toEqual([message]);
   });
 
-  it("passes projectId for 'task_updated' messages", () => {
-    const received = simulateMessage({
-      type: "task_updated",
-      projectId: 7,
+  it("preserves each message's natural scope without synthetic identifiers", () => {
+    const client = new AppClient("ws://localhost:0");
+    const received: InboundMessage[] = [];
+    const taskUpdate = { type: "task_updated" as const, projectId: 7 };
+    const error = { type: "error" as const, error: "Invalid JSON" };
+    client.subscribe({
+      task_updated: (message) => received.push(message),
+      error: (message) => received.push(message),
     });
 
-    expect(received).toHaveLength(1);
-    expect(received[0].sessionId).toBe("");
-    expect(received[0].projectId).toBe(7);
-    expect(received[0].event.type).toBe("task_updated");
+    client["handleMessage"](taskUpdate);
+    client["handleMessage"](error);
+
+    expect(received).toEqual([taskUpdate, error]);
   });
 
-  it("passes scoped code review invalidations", () => {
-    const received = simulateMessage({
-      type: "code_review_updated",
-      projectId: 7,
-      taskId: 11,
-      reviewId: "review-1",
-      revision: 3,
+  it("delivers only subscribed message kinds", () => {
+    const client = new AppClient("ws://localhost:0");
+    const received: InboundMessage[] = [];
+    client.subscribe({
+      task_updated: (message) => received.push(message),
+      session_updated: (message) => received.push(message),
     });
 
-    expect(received).toEqual([{
-      sessionId: "",
-      projectId: 7,
-      event: {
-        type: "code_review_updated",
-        projectId: 7,
-        taskId: 11,
-        reviewId: "review-1",
-        revision: 3,
-      },
-    }]);
-  });
+    client["handleMessage"]({ type: "task_updated", projectId: 7 });
+    client["handleMessage"]({ type: "open_file", sessionId: "sess-1", projectId: 7, path: "a.ts" });
+    client["handleMessage"]({ type: "session_updated", sessionId: "sess-1", projectId: 7 });
 
-  it("passes projectId for 'session_created' messages", () => {
-    const received = simulateMessage({
-      type: "session_created",
-      projectId: 5,
-      sessionId: "new-sess",
-      taskId: 3,
-    });
-
-    expect(received).toHaveLength(1);
-    expect(received[0].sessionId).toBe("");
-    expect(received[0].projectId).toBe(5);
-    expect(received[0].event.type).toBe("session_created");
-    expect(received[0].event.sessionId).toBe("new-sess");
-    expect(received[0].event.taskId).toBe(3);
-  });
-
-  it("passes (sessionId, projectId, event) for 'user_message' messages", () => {
-    const received = simulateMessage({
-      type: "user_message",
-      sessionId: "sess-1",
-      projectId: 42,
-      message: [{ type: "text", text: "hello world" }],
-      metadata: { sourceSessionId: "source-1" },
-    });
-
-    expect(received).toHaveLength(1);
-    expect(received[0].sessionId).toBe("sess-1");
-    expect(received[0].projectId).toBe(42);
-    expect(received[0].event.type).toBe("user_message");
-    expect(received[0].event.message).toEqual([{ type: "text", text: "hello world" }]);
-    expect(received[0].event.metadata).toEqual({ sourceSessionId: "source-1" });
-  });
-
-  it("passes session update broadcasts through to listeners", () => {
-    const received = simulateMessage({
-      type: "session_updated",
-      sessionId: "sess-1",
-      projectId: 42,
-    });
-
-    expect(received).toHaveLength(1);
-    expect(received[0].sessionId).toBe("sess-1");
-    expect(received[0].projectId).toBe(42);
-    expect(received[0].event).toEqual({
-      type: "session_updated",
-      sessionId: "sess-1",
-      projectId: 42,
-    });
-  });
-
-  it("passes sessionId for session-scoped error messages", () => {
-    const received = simulateMessage({
-      type: "error",
-      sessionId: "sess-1",
-      error: "Missing message field",
-    });
-
-    expect(received).toHaveLength(1);
-    expect(received[0].sessionId).toBe("sess-1");
-    expect(received[0].projectId).toBe(0);
-    expect(received[0].event).toEqual({
-      type: "ws_error",
-      sessionId: "sess-1",
-      error: "Missing message field",
-    });
-  });
-
-  it("event argument is always an object, never a number", () => {
-    const received = simulateMessage({
-      type: "event",
-      sessionId: "sess-1",
-      projectId: 99,
-      event: { type: "agent_end" },
-    });
-
-    // This is the exact regression that broke chat streaming:
-    // if event listener signature is wrong, event receives projectId (a number)
-    expect(typeof received[0].event).toBe("object");
-    expect(typeof received[0].event).not.toBe("number");
-    expect(received[0].event.type).toBe("agent_end");
+    expect(received).toEqual([
+      { type: "task_updated", projectId: 7 },
+      { type: "session_updated", sessionId: "sess-1", projectId: 7 },
+    ]);
   });
 });

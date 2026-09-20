@@ -17,7 +17,7 @@ declare global {
     "open-in-browser": CustomEvent<OpenInBrowserDetail>;
     "open-image-viewer": CustomEvent<OpenImageViewerDetail>;
     "open-quick-open": CustomEvent<void>;
-    "open-file-search": CustomEvent<void>;
+    "open-file-search": CustomEvent<ProjectScopeDetail>;
     "open-settings": CustomEvent<void>;
   }
 
@@ -25,9 +25,9 @@ declare global {
     "open-in-browser": CustomEvent<OpenInBrowserDetail>;
     "open-image-viewer": CustomEvent<OpenImageViewerDetail>;
     "open-quick-open": CustomEvent<void>;
-    "open-file-search": CustomEvent<void>;
+    "open-file-search": CustomEvent<ProjectScopeDetail>;
     "open-settings": CustomEvent<void>;
-    "open-file-browser": CustomEvent<void>;
+    "open-file-browser": CustomEvent<ProjectScopeDetail>;
     "pane-select": CustomEvent<MainPaneSelectDetail>;
     "reload-request": CustomEvent<void>;
     "rename-session": CustomEvent<RenameSessionDetail>;
@@ -47,7 +47,11 @@ function componentSignal(type: string) {
 
 export type FileViewMode = "code" | "preview";
 
-export interface OpenInBrowserDetail {
+export interface ProjectScopeDetail {
+  projectId: number;
+}
+
+export interface OpenInBrowserDetail extends ProjectScopeDetail {
   path: string;
   /** Optional 1-based start line to highlight and scroll to. */
   startLine?: number;
@@ -58,8 +62,12 @@ export interface OpenInBrowserDetail {
 }
 
 /** Request to open a file in the file browser overlay. */
-export function openInBrowserEvent(path: string, options?: Omit<OpenInBrowserDetail, "path">) {
-  return componentEvent<OpenInBrowserDetail>("open-in-browser", { path, ...options });
+export function openInBrowserEvent(
+  projectId: number,
+  path: string,
+  options?: Omit<OpenInBrowserDetail, "projectId" | "path">,
+) {
+  return componentEvent<OpenInBrowserDetail>("open-in-browser", { projectId, path, ...options });
 }
 
 export interface OpenImageViewerDetail {
@@ -79,8 +87,8 @@ export function openQuickOpenEvent() {
 }
 
 /** Request to open the file-search palette. */
-export function openFileSearchEvent() {
-  return componentSignal("open-file-search");
+export function openFileSearchEvent(projectId: number) {
+  return componentEvent<ProjectScopeDetail>("open-file-search", { projectId });
 }
 
 /** Request to open the settings panel. */
@@ -89,8 +97,8 @@ export function openSettingsEvent() {
 }
 
 /** Request to open the file browser overlay. */
-export function openFileBrowserEvent() {
-  return componentSignal("open-file-browser");
+export function openFileBrowserEvent(projectId: number) {
+  return componentEvent<ProjectScopeDetail>("open-file-browser", { projectId });
 }
 
 export type MainWorkspacePane = "chat" | "changes";

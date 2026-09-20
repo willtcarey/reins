@@ -15,6 +15,17 @@ export function registerProjectSessionRoutes(router: RouterGroup<ProjectRouteCon
   // List sessions for a project
   router.get("/sessions", async (ctx) => {
     const sessions = new Sessions(ctx.state.sessions);
+    if (ctx.url.searchParams.get("archived") === "only") {
+      const taskTitles = new Map(
+        ctx.project.tasks().list().map((task) => [task.id, task.title]),
+      );
+      return Response.json(
+        sessions.listArchivedByProject(ctx.project.projectId).map((session) => ({
+          ...session,
+          taskTitle: session.taskId == null ? null : taskTitles.get(session.taskId) ?? null,
+        })),
+      );
+    }
     return Response.json(sessions.listByProject(ctx.project.projectId));
   });
 

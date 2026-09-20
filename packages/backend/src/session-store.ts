@@ -48,6 +48,8 @@ export interface SessionListOptions {
   limit?: number;
   search?: string;
   minMessages?: number;
+  /** Archived rows are excluded by default; history requests can select only archived rows. */
+  archived?: "exclude" | "only" | "include";
 }
 
 export interface SessionMetadataUpdates {
@@ -136,7 +138,11 @@ export function listSessions(options: SessionListOptions): SessionRow[] {
     where.push("s.task_id IS NULL");
   }
 
-  where.push("s.archived_at IS NULL");
+  if (options.archived === "only") {
+    where.push("s.archived_at IS NOT NULL");
+  } else if (options.archived !== "include") {
+    where.push("s.archived_at IS NULL");
+  }
 
   if (options.since) {
     where.push("s.updated_at >= ?");

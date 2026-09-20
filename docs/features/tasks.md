@@ -48,7 +48,7 @@ Once a task exists you can create sessions under it. Each session:
 
 You can create as many sessions as you like per task. This is useful for breaking work into steps, trying different approaches, or resuming after reviewing changes. Long sessions open at their latest messages; scrolling to the top loads previous history while keeping the current reading position stable.
 
-Sessions can be renamed, pinned, or archived from their action menu. Clearing a custom session name restores its first-message fallback. Pinned sessions appear before unpinned sessions, with both groups ordered by recent activity. Archived sessions retain their full history but are omitted from normal lists; a dedicated archive browser is deferred. Pin and archive state are independent, never cascade between parent and child sessions, and are not changed implicitly when a session is opened or receives new activity.
+Sessions can be renamed, pinned, or archived from their action menu. Clearing a custom session name restores its first-message fallback. Pinned sessions appear before unpinned sessions, with both groups ordered by recent activity. Archived sessions retain their full history but are omitted from normal lists and appear in the project's full-screen History page, where they can be opened or unarchived. Pin and archive state are independent, never cascade between parent and child sessions, and are not changed implicitly when a session is opened or receives new activity.
 
 ## Deleting a task
 
@@ -85,4 +85,4 @@ Reins automatically detects when a task's work is done and marks it as **closed*
 1. **Branch merged** — the task branch still exists but all its commits are reachable from the base branch. Reins closes the task and cleans up the local branch.
 2. **Branch gone** — the task branch no longer exists locally or on the remote. This covers the common case where a branch is merged and deleted (via PR, CLI, etc.) before Reins gets a chance to observe it.
 
-Once closed, a task stays closed permanently. Closed tasks no longer show diff stats (since their changes are now part of the base branch). Activity notifications for the task's sessions are cleared when the task closes.
+Once closed, a task stays closed permanently. Closed tasks leave the project sidebar and appear in the project's History page. They no longer show diff stats (since their changes are now part of the base branch). Activity notifications for the task's sessions are cleared when the task closes.

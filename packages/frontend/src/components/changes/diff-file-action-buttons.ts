@@ -19,12 +19,15 @@ export class DiffViewFileButton extends LitElement {
     return this;
   }
 
+  @property({ type: Number, attribute: false }) projectId: number | null = null;
   @property() path = "";
   @property() variant: DiffFileActionButtonVariant = "card";
 
   handleClick(event: Event) {
     event.stopPropagation();
+    if (this.projectId == null) return;
     this.dispatchEvent(openInBrowserEvent(
+      this.projectId,
       this.path,
       isHtml(this.path) ? { viewMode: "preview" } : undefined,
     ));

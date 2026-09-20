@@ -1,227 +1,93 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { AppShell } from "../../components/app.js";
-import { collectTemplateEventListeners, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
+import { collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 
 const originalLocation = globalThis.location;
-const originalWindow = globalThis.window;
-const originalNavigator = globalThis.navigator;
 
-function fullTemplateOutput(value: unknown): string {
-  const collected = collectTemplateValues(value);
-  return `${templateToString(value)}\n${templateToString(collected)}`;
+function fullOutput(value: unknown): string {
+  return `${templateToString(value)}\n${templateToString(collectTemplateValues(value))}`;
 }
 
-function pointerEvent(fields: {
-  isPrimary?: boolean;
-  target?: EventTarget | null;
-  pointerId: number;
-  clientX: number;
-  clientY: number;
-  timeStamp: number;
-  currentTarget?: EventTarget | null;
-  preventDefault?: () => void;
-  composedPath?: () => EventTarget[];
-}): PointerEvent {
-  // @ts-expect-error The tests supply the PointerEvent fields AppShell's rendered handlers read.
-  return fields;
-}
-
-function installAppShellGlobals(options: {
-  mobile: boolean;
-  frameCallbacks?: FrameRequestCallback[];
-}) {
+function installLocation() {
   Reflect.set(globalThis, "location", { protocol: "http:", host: "localhost:3000" });
-  Reflect.set(globalThis, "navigator", { standalone: false });
-  Reflect.set(globalThis, "window", {
-    innerWidth: 390,
-    matchMedia: () => ({ matches: options.mobile }),
-    setTimeout(fn: () => void) { fn(); return 0; },
-    requestAnimationFrame(callback: FrameRequestCallback) {
-      options.frameCallbacks?.push(callback);
-      return options.frameCallbacks?.length ?? 1;
-    },
-    cancelAnimationFrame() {},
-  });
 }
 
-function installRenderableStore(el: AppShell, options: {
-  projectId?: number | null;
-  sessionId?: string;
-  activeSessionStore?: object | null;
-} = {}) {
-  Reflect.set(el, "appStore", {
+function installStore(shell: AppShell, route: { name: string; params: Record<string, string> }) {
+  Reflect.set(shell, "currentRoute", route);
+  Reflect.set(shell, "appStore", {
     connected: true,
-    projectId: options.projectId === undefined ? 42 : options.projectId,
-    sessionId: options.sessionId ?? "s1",
-    activeSessionStore: options.activeSessionStore === undefined
-      ? { sessionData: { parentSessionId: null } }
-      : options.activeSessionStore,
-    activeProjectStore: { getSession: () => undefined, runningChildSessionsFor: () => [] },
-    diffStore: { branch: "main" },
-    projectsStore: { activityForSession() {} },
+    projects: [{ id: 42, name: "Reins" }],
+    projectsStore: {},
+    settingsStore: {},
   });
 }
 
 afterEach(() => {
   Reflect.set(globalThis, "location", originalLocation);
-  Reflect.set(globalThis, "window", originalWindow);
-  Reflect.set(globalThis, "navigator", originalNavigator);
 });
 
-describe("AppShell layout selection", () => {
-  test("keeps the workspace mounted while selected session project metadata loads", () => {
-    installAppShellGlobals({ mobile: false });
+describe("AppShell route outlet", () => {
+  test("owns route selection and records session visits", () => {
+    installLocation();
+    const shell = new AppShell();
+    const routes = Reflect.get(shell, "routes");
+    const quickOpenStore = Reflect.get(shell, "quickOpenStore");
 
-    const el = new AppShell();
-    installRenderableStore(el, { projectId: null, sessionId: "s2" });
-    const output = fullTemplateOutput(el.render());
+    routes.applyRoute({ name: "session", params: { sessionId: "s1" } });
 
-    expect(output).toContain("data-workspace-shell");
-    expect(output).toContain("<session-sidebar");
-    expect(output).toContain("<app-main-toolbar");
-    expect(output).not.toContain("No project selected");
+    expect(Reflect.get(shell, "currentRoute")).toEqual({
+      name: "session",
+      params: { sessionId: "s1" },
+    });
+    expect(quickOpenStore.recentIds[0]).toBe("s1");
   });
 
-  test("renders the desktop layout on wider viewports", () => {
-    installAppShellGlobals({ mobile: false });
+  test("renders the registered workspace page for session routes", () => {
+    installLocation();
+    const shell = new AppShell();
+    installStore(shell, { name: "session", params: { sessionId: "s1" } });
 
-    const el = new AppShell();
-    installRenderableStore(el);
-    const rendered = el.render();
-    const output = fullTemplateOutput(rendered);
+    const output = fullOutput(shell.render());
 
-    expect(output).toContain("data-workspace-shell");
-    expect(output).toContain("overflow-clip swipe-shell");
-    expect(output).toContain("workspace-surface");
-    expect(output).toContain("md:!transform-none");
-    expect(output).toContain("md:![grid-template-columns:auto_minmax(0,1fr)_15rem]");
-    expect(output).not.toContain("swipe-shell md:grid");
-    expect(output).not.toContain("md:grid-cols-[auto_minmax(0,1fr)_15rem]");
-    expect(output).not.toContain("md:col-span-3");
-    expect(output).toContain("grid-template-columns: repeat(4, 100%); transform: translate3d(-100%, 0, 0);");
-    expect(output).not.toContain("data-page-swipe-region");
-    expect(output).not.toContain("sidebar-close-request");
-    expect(output).toContain("<session-sidebar");
-    expect(output).toContain("<app-main-toolbar");
-    expect(output).toContain("<diff-file-tree");
-    expect(output).not.toContain("<desktop-layout");
-    expect(output).not.toContain("<mobile-layout");
+    expect(output).toContain("<app-workspace");
+    expect(output).not.toContain("<project-history");
   });
 
-  test("renders the review surface directly as the Changes pane", () => {
-    installAppShellGlobals({ mobile: false });
-    const el = new AppShell();
-    installRenderableStore(el);
-    const store = Reflect.get(el, "appStore");
+  test("renders the registered full-screen History page without workspace-specific branching", () => {
+    installLocation();
+    const shell = new AppShell();
+    installStore(shell, { name: "project-history", params: { projectId: "42" } });
 
-    const output = fullTemplateOutput(Reflect.get(el, "renderChangesPane").call(el, store, true));
+    const output = fullOutput(shell.render());
 
-    expect(output).toContain("<review-diff-panel");
-    expect(output).not.toContain("<diff-renderer-shell");
+    expect(output).toContain("<project-history");
+    expect(output).toContain("Reins");
+    expect(output).not.toContain("<app-workspace");
   });
 
-  test("renders the mobile layout on mobile viewports", () => {
-    installAppShellGlobals({ mobile: true });
+  test("opens files and browser overlays with explicit project scope", () => {
+    installLocation();
+    const shell = new AppShell();
+    const openFile = mock(() => {});
+    Object.defineProperty(shell, "fileBrowser", { value: { openFile }, configurable: true });
 
-    const el = new AppShell();
-    installRenderableStore(el);
-    const rendered = el.render();
-    const output = fullTemplateOutput(rendered);
+    Reflect.get(shell, "handleOpenInBrowser")(new CustomEvent("open-in-browser", {
+      detail: { projectId: 42, path: "src/index.ts", startLine: 2, endLine: 4 },
+    }));
 
-    expect(output).toContain("data-workspace-shell");
-    expect(output).toContain("overflow-clip swipe-shell");
-    expect(output).toContain("workspace-surface");
-    expect(output).toContain("grid-template-columns: repeat(4, 100%); transform: translate3d(-100%, 0, 0);");
-    expect(output).toContain("<session-sidebar");
-    expect(output).toContain("<app-main-toolbar");
-    expect(output).toContain(".activePane=chat");
-    expect(output).toContain(".activePane=changes");
-    expect(output).not.toContain("show-connection-status");
-    expect(output).toContain("<diff-file-tree");
-    expect(output).not.toContain("Changed files");
-    expect(output).not.toContain("<desktop-layout");
-    expect(output).not.toContain("<mobile-layout");
+    expect(openFile).toHaveBeenCalledWith(42, "src/index.ts", { startLine: 2, endLine: 4 }, undefined);
   });
 
-  test("updates the mobile workspace transform during a swipe and settles on the next pane", () => {
-    const frameCallbacks: FrameRequestCallback[] = [];
-    installAppShellGlobals({ mobile: true, frameCallbacks });
-    const el = new AppShell();
-    installRenderableStore(el);
+  test("keeps global overlays outside the routed page", () => {
+    installLocation();
+    const shell = new AppShell();
+    installStore(shell, { name: "empty", params: {} });
 
-    const rendered = el.render();
-    const [pointerDown] = collectTemplateEventListeners(rendered, "pointerdown");
-    const [pointerMove] = collectTemplateEventListeners(rendered, "pointermove");
-    const [pointerUp] = collectTemplateEventListeners(rendered, "pointerup");
-    expect(pointerDown).toBeDefined();
-    expect(pointerMove).toBeDefined();
-    expect(pointerUp).toBeDefined();
+    const output = fullOutput(shell.render());
 
-    pointerDown(pointerEvent({
-      isPrimary: true,
-      target: null,
-      pointerId: 1,
-      clientX: 0,
-      clientY: 0,
-      timeStamp: 0,
-    }));
-    pointerMove(pointerEvent({
-      pointerId: 1,
-      clientX: -180,
-      clientY: 0,
-      timeStamp: 16,
-      currentTarget: null,
-      preventDefault() {},
-    }));
-
-    expect(fullTemplateOutput(el.render()))
-      .toContain("transform: translate3d(-570px, 0, 0);");
-
-    pointerUp(pointerEvent({
-      pointerId: 1,
-      clientX: -220,
-      clientY: 0,
-      timeStamp: 48,
-    }));
-
-    for (let index = 0; index < frameCallbacks.length; index += 1) {
-      frameCallbacks[index](index * 16);
-      if (fullTemplateOutput(el.render()).includes("transform: translate3d(-200%, 0, 0);")) break;
-    }
-
-    expect(fullTemplateOutput(el.render()))
-      .toContain("transform: translate3d(-200%, 0, 0);");
-  });
-
-  test("does not move the workspace from pointer drags on desktop", () => {
-    installAppShellGlobals({ mobile: false });
-    const el = new AppShell();
-    installRenderableStore(el);
-
-    const rendered = el.render();
-    const [pointerDown] = collectTemplateEventListeners(rendered, "pointerdown");
-    const [pointerMove] = collectTemplateEventListeners(rendered, "pointermove");
-    let prevented = false;
-
-    pointerDown(pointerEvent({
-      isPrimary: true,
-      target: null,
-      pointerId: 1,
-      clientX: 0,
-      clientY: 0,
-      timeStamp: 0,
-    }));
-    pointerMove(pointerEvent({
-      pointerId: 1,
-      clientX: -180,
-      clientY: 0,
-      timeStamp: 16,
-      currentTarget: null,
-      preventDefault() { prevented = true; },
-    }));
-
-    expect(prevented).toBe(false);
-    expect(fullTemplateOutput(el.render()))
-      .toContain("transform: translate3d(-100%, 0, 0);");
+    expect(output).toContain("<quick-open");
+    expect(output).toContain("<file-search");
+    expect(output).toContain("<file-browser");
+    expect(output).toContain("<settings-panel");
   });
 });

@@ -11,7 +11,7 @@
  * or any child store changes (notifications bubble up).
  */
 
-import type { ProjectInfo } from "../ws-client.js";
+import type { InboundEventSource, ProjectInfo } from "../ws-client.js";
 import { ProjectStore } from "./project-store.js";
 import { SessionCache, type ActivityState } from "./session-cache.js";
 
@@ -27,9 +27,25 @@ export class ProjectsStore {
   private _stores = new Map<number, ProjectStore>();
   private _unsubscribes = new Map<number, () => void>();
   private _listeners = new Set<ProjectsStoreListener>();
+  private _unsubscribers: Array<() => void> = [];
 
-  constructor(private _sessionCache: SessionCache = new SessionCache()) {
-    this._sessionCache.subscribeAll(() => this.notify());
+  constructor(
+    private _sessionCache: SessionCache = new SessionCache(),
+    eventSource?: InboundEventSource,
+  ) {
+    this._unsubscribers.push(this._sessionCache.subscribeAll(() => this.notify()));
+    if (eventSource) {
+      this._unsubscribers.push(eventSource.subscribe({
+        task_updated: (message) => { void this.handleTaskUpdated(message.projectId); },
+        session_created: (message) => { void this.handleSessionCreated(message); },
+        session_updated: (message) => {
+          void Promise.all([
+            this._sessionCache.fetchDetail(message.sessionId),
+            this.refresh(message.projectId),
+          ]);
+        },
+      }));
+    }
   }
 
   // ---- Subscription ---------------------------------------------------------
@@ -110,6 +126,60 @@ export class ProjectsStore {
       }
       await this.fetchProjects();
       return { ok: true };
+    } catch {
+      return { error: "Network error" };
+    }
+  }
+
+  // ---- Aggregate task and session mutations ---------------------------------
+
+  async updateTask(
+    projectId: number,
+    taskId: number,
+    updates: { title?: string; description?: string | null },
+  ): Promise<{ ok: true } | { error: string }> {
+    const store = this.peekStore(projectId);
+    if (!store) return { error: "No project data" };
+    return store.updateTask(taskId, updates);
+  }
+
+  async deleteTask(projectId: number, taskId: number): Promise<{ ok: true } | { error: string }> {
+    const store = this.peekStore(projectId);
+    if (!store) return { error: "No project data" };
+    return store.deleteTask(taskId);
+  }
+
+  async generateTask(projectId: number, prompt: string): Promise<{ ok: true } | { error: string }> {
+    const store = this.peekStore(projectId);
+    if (!store) return { error: "No project data" };
+    return store.generateTask(prompt);
+  }
+
+  async createSession(projectId: number): Promise<{ sessionId: string } | { error: string }> {
+    try {
+      const response = await fetch(`/api/projects/${projectId}/sessions`, { method: "POST" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        return { error: body.error || "Failed to create session" };
+      }
+      const data = await response.json();
+      void this.refresh(projectId);
+      return { sessionId: data.id };
+    } catch {
+      return { error: "Network error" };
+    }
+  }
+
+  async createTaskSession(taskId: number, projectId: number): Promise<{ sessionId: string } | { error: string }> {
+    try {
+      const response = await fetch(`/api/tasks/${taskId}/sessions`, { method: "POST" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        return { error: body.error || "Failed to create session" };
+      }
+      const data = await response.json();
+      void this.refresh(projectId);
+      return { sessionId: data.id };
     } catch {
       return { error: "Network error" };
     }
@@ -271,6 +341,16 @@ export class ProjectsStore {
       }
     }
     await Promise.all(refreshes);
+  }
+
+  dispose(): void {
+    for (const unsubscribe of this._unsubscribers) unsubscribe();
+    this._unsubscribers = [];
+    for (const unsubscribe of this._unsubscribes.values()) unsubscribe();
+    this._unsubscribes.clear();
+    for (const child of this._stores.values()) child.dispose();
+    this._stores.clear();
+    this._listeners.clear();
   }
 
   // ---- File upload ------------------------------------------------------------

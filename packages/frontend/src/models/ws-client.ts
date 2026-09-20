@@ -84,34 +84,44 @@ export type ServerMessage =
   | { type: "ack"; command: string }
   | { type: "error"; sessionId?: string; error: string };
 
-/**
- * All event shapes dispatched to `EventListener` subscribers.
- * Includes ChatEvent (agent/compaction/user_message), synthetic app events,
- * and WebSocket-level ack/error events.
- */
-export type FrontendEvent =
-  | ChatEvent
-  | { type: "task_updated"; projectId: number }
-  | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
-  | { type: "session_updated"; sessionId: string; projectId: number }
-  | { type: "code_review_updated"; projectId: number; taskId: number | null; reviewId: string; revision: number }
-  | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
-  | { type: "ws_ack"; command: string }
-  | { type: "ws_error"; sessionId?: string; error: string };
-
-export type EventListener = (sessionId: string, projectId: number, event: FrontendEvent) => void;
+/** Messages exposed to domain stores. Command acknowledgements are transport-only. */
+export type InboundMessage = Exclude<ServerMessage, { type: "ack" }>;
+export type InboundMessageKind = InboundMessage["type"];
+export type InboundMessageOf<K extends InboundMessageKind> = Extract<InboundMessage, { type: K }>;
+export type InboundMessageListener<K extends InboundMessageKind> = (message: InboundMessageOf<K>) => void;
+export type InboundMessageHandlers = {
+  [K in InboundMessageKind]?: InboundMessageListener<K>;
+};
 export type ConnectionListener = (connected: boolean) => void;
+
+/** Typed, kind-filtered source shared by aggregate and scoped stores. */
+export interface InboundEventSource {
+  subscribe(handlers: InboundMessageHandlers): () => void;
+}
+
+/** Dispatch while preserving the relationship between each kind and its envelope. */
+export function dispatchInboundMessage(handlers: InboundMessageHandlers, message: InboundMessage): void {
+  switch (message.type) {
+    case "event": handlers.event?.(message); break;
+    case "task_updated": handlers.task_updated?.(message); break;
+    case "session_created": handlers.session_created?.(message); break;
+    case "session_updated": handlers.session_updated?.(message); break;
+    case "code_review_updated": handlers.code_review_updated?.(message); break;
+    case "user_message": handlers.user_message?.(message); break;
+    case "open_file": handlers.open_file?.(message); break;
+    case "error": handlers.error?.(message); break;
+  }
+}
 
 // ---- Public interface (for test doubles) ------------------------------------
 
-export interface IAppClient {
+export interface IAppClient extends InboundEventSource {
   connect(): void;
   disconnect(): void;
   readonly isConnected: boolean;
   prompt(sessionId: string, message: ClientPromptContent): void;
   steer(sessionId: string, message: ClientPromptContent): void;
   abort(sessionId: string): void;
-  onEvent(listener: EventListener): () => void;
   onConnection(listener: ConnectionListener): () => void;
 }
 
@@ -123,7 +133,7 @@ export class AppClient implements IAppClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1000;
   private maxReconnectDelay = 10000;
-  private eventListeners = new Set<EventListener>();
+  private eventSubscriptions = new Set<InboundMessageHandlers>();
   private connectionListeners = new Set<ConnectionListener>();
   private connected = false;
 
@@ -267,95 +277,20 @@ export class AppClient implements IAppClient {
   // ---- Message handling ----------------------------------------------------
 
   private handleMessage(msg: ServerMessage | { type: "pong" }): void {
-    switch (msg.type) {
-      case "pong":
-        this.clearHeartbeatTimeout();
-        break;
-
-      case "event":
-        for (const listener of this.eventListeners) {
-          listener(msg.sessionId, msg.projectId, msg.event);
-        }
-        break;
-
-      case "task_updated":
-        // Forward as a synthetic event so app-level listeners can react
-        for (const listener of this.eventListeners) {
-          listener("", msg.projectId, { type: "task_updated", projectId: msg.projectId });
-        }
-        break;
-
-      case "session_created":
-        for (const listener of this.eventListeners) {
-          listener("", msg.projectId, {
-            type: "session_created",
-            projectId: msg.projectId,
-            sessionId: msg.sessionId,
-            taskId: msg.taskId,
-            parentSessionId: msg.parentSessionId,
-          });
-        }
-        break;
-
-      case "session_updated":
-        for (const listener of this.eventListeners) {
-          listener(msg.sessionId, msg.projectId, {
-            type: "session_updated",
-            sessionId: msg.sessionId,
-            projectId: msg.projectId,
-          });
-        }
-        break;
-
-      case "code_review_updated":
-        for (const listener of this.eventListeners) {
-          listener("", msg.projectId, msg);
-        }
-        break;
-
-      case "user_message":
-        for (const listener of this.eventListeners) {
-          listener(msg.sessionId, msg.projectId, {
-            type: "user_message",
-            message: msg.message,
-            ...(msg.metadata ? { metadata: msg.metadata } : {}),
-          });
-        }
-        break;
-
-      case "open_file":
-        for (const listener of this.eventListeners) {
-          listener(msg.sessionId, msg.projectId, {
-            type: "open_file",
-            sessionId: msg.sessionId,
-            projectId: msg.projectId,
-            path: msg.path,
-            startLine: msg.startLine,
-            endLine: msg.endLine,
-          });
-        }
-        break;
-
-      case "ack":
-        this.clearReplayBuffer();
-        for (const listener of this.eventListeners) {
-          listener("", 0, { ...msg, type: `ws_${msg.type}` });
-        }
-        break;
-
-      case "error": {
-        this.clearReplayBuffer();
-        const sessionId = msg.sessionId ?? "";
-        for (const listener of this.eventListeners) {
-          listener(sessionId, 0, {
-            type: "ws_error",
-            ...(msg.sessionId ? { sessionId: msg.sessionId } : {}),
-            error: msg.error,
-          });
-        }
-        break;
-      }
+    if (msg.type === "pong") {
+      this.clearHeartbeatTimeout();
+      return;
     }
+    if (msg.type === "ack") {
+      this.clearReplayBuffer();
+      return;
+    }
+    if (msg.type === "error") this.clearReplayBuffer();
+    this.publish(msg);
+  }
+
+  private publish(message: InboundMessage): void {
+    for (const handlers of this.eventSubscriptions) dispatchInboundMessage(handlers, message);
   }
 
   // ---- Commands ------------------------------------------------------------
@@ -392,9 +327,9 @@ export class AppClient implements IAppClient {
 
   // ---- Subscriptions -------------------------------------------------------
 
-  onEvent(listener: EventListener): () => void {
-    this.eventListeners.add(listener);
-    return () => this.eventListeners.delete(listener);
+  subscribe(handlers: InboundMessageHandlers): () => void {
+    this.eventSubscriptions.add(handlers);
+    return () => this.eventSubscriptions.delete(handlers);
   }
 
   onConnection(listener: ConnectionListener): () => void {

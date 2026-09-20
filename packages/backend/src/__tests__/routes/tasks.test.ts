@@ -5,7 +5,7 @@ import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo, createTestRepo, commitFile } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
-import { createTask, getTask } from "../../task-store.js";
+import { createTask, getTask, setTaskStatus } from "../../task-store.js";
 import { createSession } from "../../session-store.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 
@@ -54,6 +54,24 @@ describe("task routes", () => {
       expect(body).toHaveLength(1);
       expect(body[0].title).toBe("My Task");
       expect(body[0].diffStats).not.toBeNull();
+    });
+
+    test("filters task lists by status", async () => {
+      createTask(projectId, "Open task", null, "task/open");
+      const closed = createTask(projectId, "Closed task", null, "task/closed");
+      setTaskStatus(closed.id, "closed");
+
+      const openResponse = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/tasks?status=open`),
+        state,
+      );
+      const closedResponse = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/tasks?status=closed`),
+        state,
+      );
+
+      expect((await openResponse!.json()).map((task: { title: string }) => task.title)).toEqual(["Open task"]);
+      expect((await closedResponse!.json()).map((task: { title: string }) => task.title)).toEqual(["Closed task"]);
     });
   });
 

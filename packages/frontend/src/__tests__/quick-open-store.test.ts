@@ -1,8 +1,46 @@
 /**
  * Tests for quick-open store fuzzy matching and filtering.
  */
-import { describe, test, expect } from "bun:test";
-import { fuzzyMatch, filterItems, itemSearchText, type PaletteItem } from "../models/stores/quick-open-store.js";
+import { describe, expect, mock, test } from "bun:test";
+import {
+  QuickOpenStore,
+  fuzzyMatch,
+  filterItems,
+  itemSearchText,
+  type PaletteItem,
+} from "../models/stores/quick-open-store.js";
+import { SessionCache } from "../models/stores/session-cache.js";
+
+describe("QuickOpenStore activity", () => {
+  test("looks up activity by session ID and notifies only when activity changes", () => {
+    const sessions = new SessionCache();
+    sessions.set("s1", { projectId: 42, activityState: null });
+    const store = new QuickOpenStore(sessions);
+    const listener = mock(() => {});
+    store.subscribe(listener);
+
+    expect(store.activityForSession("s1")).toBeNull();
+
+    sessions.set("s1", { name: "Renamed" });
+    expect(listener).not.toHaveBeenCalled();
+
+    sessions.set("s1", { activityState: "running" });
+    expect(store.activityForSession("s1")).toBe("running");
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  test("stops reacting to activity after disposal", () => {
+    const sessions = new SessionCache();
+    const store = new QuickOpenStore(sessions);
+    const listener = mock(() => {});
+    store.subscribe(listener);
+
+    store.dispose();
+    sessions.set("s1", { activityState: "finished" });
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+});
 
 // ---- fuzzyMatch -------------------------------------------------------------
 

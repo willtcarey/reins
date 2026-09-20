@@ -7,6 +7,25 @@ import { describe, test, expect } from "bun:test";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 
 describe("FileBrowserStore", () => {
+  test("sets explicit project scope, preserving same-project state and clearing changed-project state", () => {
+    const store = new FileBrowserStore();
+    store.setProject(1);
+    store.files = ["old.ts"];
+    store.selectedFile = "old.ts";
+    store.fileContent = "old";
+
+    store.setProject(1);
+    expect(store.files).toEqual(["old.ts"]);
+    expect(store.selectedFile).toBe("old.ts");
+
+    store.setProject(2);
+
+    expect(store.projectId).toBe(2);
+    expect(store.files).toEqual([]);
+    expect(store.selectedFile).toBeNull();
+    expect(store.fileContent).toBeNull();
+  });
+
   describe("filter", () => {
     test("returns all files (up to limit) when query is empty", () => {
       const store = new FileBrowserStore();

@@ -1,19 +1,20 @@
-/**
- * Minimal test double for AppClient.
- *
- * Implements the full public API so it's structurally compatible
- * with AppClient and can be passed anywhere one is expected.
- */
+/** Minimal in-memory AppClient test double. */
 import type { ClientPromptContent } from "../../models/chat-content.js";
-import type { IAppClient, EventListener, ConnectionListener } from "../../models/ws-client.js";
+import {
+  dispatchInboundMessage,
+  type ConnectionListener,
+  type IAppClient,
+  type InboundMessage,
+  type InboundMessageHandlers,
+} from "../../models/ws-client.js";
 
 export class StubClient implements IAppClient {
-  private eventListeners = new Set<EventListener>();
+  private subscriptions = new Set<InboundMessageHandlers>();
   private connectionListeners = new Set<ConnectionListener>();
 
-  onEvent(listener: EventListener): () => void {
-    this.eventListeners.add(listener);
-    return () => this.eventListeners.delete(listener);
+  subscribe(handlers: InboundMessageHandlers): () => void {
+    this.subscriptions.add(handlers);
+    return () => this.subscriptions.delete(handlers);
   }
 
   onConnection(listener: ConnectionListener): () => void {
@@ -21,17 +22,13 @@ export class StubClient implements IAppClient {
     return () => this.connectionListeners.delete(listener);
   }
 
-  // ---- Test helpers --------------------------------------------------------
-
-  fireEvent(sessionId: string, projectId: number, event: Parameters<EventListener>[2]) {
-    for (const l of this.eventListeners) l(sessionId, projectId, event);
+  fireMessage(message: InboundMessage): void {
+    for (const handlers of this.subscriptions) dispatchInboundMessage(handlers, message);
   }
 
-  fireConnection(connected: boolean) {
-    for (const l of this.connectionListeners) l(connected);
+  fireConnection(connected: boolean): void {
+    for (const listener of this.connectionListeners) listener(connected);
   }
-
-  // ---- AppClient public API (no-ops) ---------------------------------------
 
   connect() {}
   disconnect() {}

@@ -59,8 +59,14 @@ export class FileBrowserStore {
     return this._projectId;
   }
 
-  set projectId(id: number | null) {
-    this._projectId = id;
+  /** Set explicit project scope before any file operation. */
+  setProject(projectId: number): void {
+    if (projectId === this._projectId) return;
+    this._projectId = projectId;
+    this._lastFetchProjectId = null;
+    this.files = [];
+    this.reset();
+    this.notify();
   }
 
   // ---- Data fetching --------------------------------------------------------
