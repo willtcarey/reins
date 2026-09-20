@@ -172,11 +172,13 @@ describe("ChatMessage", () => {
         type: "toolCall",
         id: "write-1",
         name: "write",
-        arguments: { path: "file.ts", content: "partial" },
+        arguments: { path: "/work/project/file.ts", content: "partial" },
       }],
     };
     const element = new ChatMessage();
     element.message = new AssistantMessage(raw, null, null, "streaming-assistant-20", true);
+    element.projectId = 42;
+    element.projectDir = "/work/project";
     expect(templateToString(element.render())).not.toContain("write-tool-block");
 
     element.message = new AssistantMessage(
@@ -190,13 +192,14 @@ describe("ChatMessage", () => {
         "write-1": {
           id: "write-1",
           name: "write",
-          args: { path: "file.ts", content: "complete" },
+          args: { path: "/work/project/file.ts", content: "complete" },
           status: "running",
         },
       },
     );
     const output = templateToString(element.render());
     expect(output).toContain("write-tool-block");
+    expect(output).toContain(".path=file.ts");
     expect(output).toContain("complete");
   });
 

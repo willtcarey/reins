@@ -18,6 +18,7 @@ import {
   getTaskSessionIds,
   type TaskRow,
   type TaskListItem,
+  type TaskListOptions,
   type TaskStatus,
 } from "../task-store.js";
 import { clearFinishedActivityForTasks } from "../session-store.js";
@@ -145,13 +146,16 @@ export class ProjectTasks {
   }
 
   /**
-   * List all tasks for a project, enriching open ones with diff stats.
+   * List tasks for a project, optionally filtered by status, enriching open ones with diff stats.
    *
    * Per-task errors (e.g. missing branch) are swallowed — the task is
    * returned with `diffStats: null`.
    */
-  async listWithDiffStats(): Promise<TaskWithDiffStats[]> {
-    const tasks = listTasks(this.projectId);
+  async listWithDiffStats(
+    status?: TaskStatus,
+    options: TaskListOptions = {},
+  ): Promise<TaskWithDiffStats[]> {
+    const tasks = listTasks(this.projectId, status, options);
 
     return Promise.all(
       tasks.map(async (task) => {

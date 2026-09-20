@@ -81,6 +81,8 @@ describe("ChatPanel conversation orchestration", () => {
     setPersistedMessages(conversations, "sess-1", [{ role: "user", content: "visible", timestamp: 1 }]);
     const panel = new ChatPanel();
     panel.store = new ActiveSessionStore("sess-1", null, undefined, conversations);
+    panel.projectId = 42;
+    panel.projectDir = "/work/project";
 
     const output = templateToString(firstRepeatTemplate(panel));
 
@@ -88,6 +90,8 @@ describe("ChatPanel conversation orchestration", () => {
     expect(output).toContain("data-conversation-key=1");
     expect(output).toContain("data-message-key=1");
     expect(output).toContain(".sessionId=sess-1");
+    expect(output).toContain(".projectId=42");
+    expect(output).toContain(".projectDir=/work/project");
   });
 
   test("passes the source session's current display title to session updates", () => {

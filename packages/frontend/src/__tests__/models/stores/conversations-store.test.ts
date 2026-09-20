@@ -12,6 +12,7 @@ import {
   type StreamingFixture,
 } from "../../helpers/conversations.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
+import { StubClient } from "../../helpers/stub-client.js";
 
 function textUser(content: string, timestamp: number): AgentMessage {
   return { role: "user", content, timestamp };
@@ -168,24 +169,12 @@ describe("ConversationsStore", () => {
   });
 
   test("stores session-scoped websocket errors", () => {
-    const conversations = new ConversationsStore();
+    const eventSource = new StubClient();
+    const conversations = new ConversationsStore({ eventSource });
 
-    conversations.applyEvent("sess-1", { type: "ws_error", sessionId: "sess-1", error: "Missing message field" });
+    eventSource.fireMessage({ type: "error", sessionId: "sess-1", error: "Missing message field" });
 
     expect(conversations.get("sess-1").errorMessage).toBe("Missing message field");
-  });
-
-  test("ignores frontend events that are not chat conversation events", () => {
-    const conversations = new ConversationsStore();
-
-    conversations.applyEvent("sess-1", { type: "session_updated", sessionId: "sess-1", projectId: 42 });
-    conversations.applyEvent("sess-1", { type: "task_updated", projectId: 42 });
-
-    expect(conversations.get("sess-1")).toMatchObject({
-      messages: [],
-      streamingMessages: [],
-      hasEarlierMessages: false,
-    });
   });
 
   test("keeps conversation state keyed by session for non-active events", () => {

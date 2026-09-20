@@ -52,6 +52,12 @@ export class ReadToolBlock extends LitElement {
   path = "";
 
   @property({ attribute: false })
+  projectId: number | null = null;
+
+  @property({ attribute: false })
+  projectDir: string | null = null;
+
+  @property({ attribute: false })
   range = "";
 
   @property({ attribute: false })
@@ -107,13 +113,13 @@ export class ReadToolBlock extends LitElement {
   /** Open this file in the file browser overlay, highlighting the read range. */
   private _openInBrowser = (e: Event) => {
     e.stopPropagation();
-    if (!this.path || !isBrowsablePath(this.path)) return;
+    if (this.projectId == null || !this.path || !isBrowsablePath(this.path, this.projectDir)) return;
     // Only highlight when a specific range was read (offset/limit specified).
     // Reading the full file doesn't benefit from highlighting every line.
     const lineRange = this.range && this.totalLines > 0
       ? { startLine: this.startLine, endLine: this.startLine + this.totalLines - 1 }
       : undefined;
-    this.dispatchEvent(openInBrowserEvent(this.path, lineRange));
+    this.dispatchEvent(openInBrowserEvent(this.projectId, this.path, lineRange));
   };
 
   private _openImage(event: Event, image: ChatImageBlock) {
@@ -167,6 +173,7 @@ export class ReadToolBlock extends LitElement {
     const contentColorCls = isError ? "text-red-400" : "text-zinc-400";
     const previewColorCls = isError ? "text-red-400" : "text-zinc-500";
     const wrap = shouldWrapLines(path || "");
+    const browsable = isBrowsablePath(path, this.projectDir);
 
     return html`
       <div
@@ -183,11 +190,11 @@ export class ReadToolBlock extends LitElement {
             : html`<span class="flex-shrink-0 text-xs">📄</span>`}
           <span class="text-[10px] font-semibold text-zinc-500 uppercase tracking-wide flex-shrink-0">Read</span>
           <span
-            class="text-xs font-mono ${isError ? "text-red-400" : "text-zinc-300"} truncate ${isBrowsablePath(path) ? "hover:underline cursor-pointer" : ""}"
-            @click=${isBrowsablePath(path) ? this._openInBrowser : nothing}
-            title=${isBrowsablePath(path) ? "Open in file browser" : "Outside project directory"}
+            class="text-xs font-mono ${isError ? "text-red-400" : "text-zinc-300"} truncate ${browsable ? "hover:underline cursor-pointer" : ""}"
+            @click=${browsable ? this._openInBrowser : nothing}
+            title=${browsable ? "Open in file browser" : "Outside project directory"}
           >${path || "…"}</span>
-          ${path && !isBrowsablePath(path)
+          ${path && !browsable
             ? html`<span class="text-[10px] font-mono text-zinc-600 bg-zinc-800/60 px-1.5 py-0.5 rounded flex-shrink-0">external</span>`
             : nothing}
           ${range
@@ -283,9 +290,9 @@ declare global {
 // ---------------------------------------------------------------------------
 
 export const readRenderer: ToolRenderer = {
-  render(block: ToolBlockData) {
+  render(block: ToolBlockData, context) {
     const isRunning = block.status === "running";
-    const path = toRelativePath(getReadSummary(block));
+    const path = toRelativePath(getReadSummary(block), context.projectDir);
     const range = getReadRange(block);
     const trailer = isRunning ? "" : getReadTrailer(block);
     const preview = isRunning ? "" : getReadPreview(block, PREVIEW_LINES);
@@ -297,6 +304,8 @@ export const readRenderer: ToolRenderer = {
 
     return html`<read-tool-block
       .path=${path}
+      .projectId=${context.projectId}
+      .projectDir=${context.projectDir}
       .range=${range}
       .trailer=${trailer}
       .preview=${preview}

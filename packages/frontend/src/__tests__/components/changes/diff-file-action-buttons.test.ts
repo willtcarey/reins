@@ -14,6 +14,7 @@ afterEach(() => {
 describe("shared diff file action buttons", () => {
   test("view file button opens HTML files on the Preview tab", () => {
     const el = new DiffViewFileButton();
+    el.projectId = 42;
     el.path = "public/index.html";
     const event = new Event("click", { bubbles: true });
     let detail: unknown;
@@ -25,12 +26,13 @@ describe("shared diff file action buttons", () => {
     el.handleClick(event);
 
     expect(output).toContain("View file");
-    expect(detail).toEqual({ path: "public/index.html", viewMode: "preview" });
+    expect(detail).toEqual({ projectId: 42, path: "public/index.html", viewMode: "preview" });
     expect(event.cancelBubble).toBe(true);
   });
 
   test("view file button opens non-HTML files without a requested view mode", () => {
     const el = new DiffViewFileButton();
+    el.projectId = 42;
     el.path = "src/app.ts";
     const event = new Event("click", { bubbles: true });
     let detail: unknown;
@@ -40,7 +42,7 @@ describe("shared diff file action buttons", () => {
 
     el.handleClick(event);
 
-    expect(detail).toEqual({ path: "src/app.ts" });
+    expect(detail).toEqual({ projectId: 42, path: "src/app.ts" });
     expect(event.cancelBubble).toBe(true);
   });
 

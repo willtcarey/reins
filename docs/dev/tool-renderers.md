@@ -32,12 +32,17 @@ models/tools/                      components/tools/
 Every renderer implements a single method:
 
 ```ts
+interface ToolRenderContext {
+  projectId: number | null;
+  projectDir: string | null;
+}
+
 interface ToolRenderer {
-  render(block: ToolBlockData): TemplateResult;
+  render(block: ToolBlockData, context: ToolRenderContext): TemplateResult;
 }
 ```
 
-The renderer receives the full `ToolBlockData` (including `status`) and decides how to present running vs done states internally — typically by computing a `showSpinner` flag and conditionally extracting result data. This ensures the same Lit component instance persists across the running→done transition, preserving local state like expand/collapse.
+The renderer receives the full `ToolBlockData` (including `status`) plus a narrow, extensible workspace context. `projectDir` lets file-oriented renderers normalize and validate paths without ambient state, while `projectId` scopes file-browser intents. Renderers do not depend on `WorkspaceStore`. The renderer decides how to present running vs done states internally — typically by computing a `showSpinner` flag and conditionally extracting result data. This ensures the same Lit component instance persists across the running→done transition, preserving local state like expand/collapse.
 
 Renderers own the **entire visual surface** for a tool block — layout, chrome, expand/collapse behavior (including expansion state), syntax highlighting. The chat panel is not involved in tool expansion state. This avoids locking all tools into one interaction pattern.
 
@@ -60,13 +65,14 @@ export function getToolRenderer(name: string): ToolRenderer {
 }
 ```
 
-`components/chat-panel.ts` dispatches in ~3 lines:
+`components/chat-message.ts` dispatches with the narrow render context supplied through the workspace/chat hierarchy:
 
 ```ts
-private renderToolBlock(block: ToolBlockData) {
-  const renderer = getToolRenderer(block.name);
-  return html`<div class="max-w-[90%]">${renderer.render(block)}</div>`;
-}
+const renderer = getToolRenderer(block.name);
+return renderer.render(block, {
+  projectId: this.projectId,
+  projectDir: this.projectDir,
+});
 ```
 
 ## Rendering Pattern
@@ -93,9 +99,9 @@ export class ReadToolBlock extends LitElement {
 
 // The renderer — extracts data from ToolBlockData, passes to component
 export const readRenderer: ToolRenderer = {
-  render(block) {
+  render(block, context) {
     const isRunning = block.status === "running";
-    const path = getReadSummary(block);       // from models/tools/read
+    const path = toRelativePath(getReadSummary(block), context.projectDir);
     const content = isRunning ? "" : getReadContent(block);
     const preview = isRunning ? "" : getReadPreview(block, PREVIEW_LINES);
     return html`<read-tool-block
@@ -109,7 +115,7 @@ export const readRenderer: ToolRenderer = {
 This gives a clean one-way data flow:
 
 ```
-ToolBlockData → renderer (extracts via models/tools/) → component (renders)
+ToolBlockData + ToolRenderContext → renderer (extracts/normalizes) → component (renders)
 ```
 
 Components are pure presentational — they have no knowledge of `ToolBlockData` and receive only strings, numbers, booleans, and simple typed arrays.

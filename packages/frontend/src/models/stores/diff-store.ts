@@ -103,7 +103,7 @@ export class DiffStore {
   /**
    * The task branch to diff against the base branch. When set, all API
    * calls include `?branch=...`. When null, the backend falls back to
-   * HEAD (used for scratch sessions).
+   * the current HEAD (used for scratch sessions and completed-task history).
    */
   private _branch: string | null = null;
   private _listeners = new Set<DiffStoreListener>();
@@ -113,8 +113,10 @@ export class DiffStore {
   private _syncResultTimer: ReturnType<typeof setTimeout> | null = null;
   /** Monotonic version for patch-backed renderer items. */
   private _patchDiffVersion = 0;
-  /** Only the latest started patch request may update renderer data. */
+  /** Only the latest request for each scoped resource may update state. */
+  private _filesRequestGeneration = 0;
   private _patchRequestGeneration = 0;
+  private _spreadRequestGeneration = 0;
 
   /** Build the `&branch=...` query fragment if a branch is set. */
   private get _branchParam(): string {
@@ -127,7 +129,7 @@ export class DiffStore {
     return this._projectId;
   }
 
-  /** The branch being viewed: selected task branch, or current branch for scratch sessions. */
+  /** The branch being viewed: selected open-task branch, or the current project branch. */
   get branch(): string | null {
     return this._branch ?? this.fileData.data?.branch ?? null;
   }
@@ -155,9 +157,9 @@ export class DiffStore {
   // ---- Branch management -----------------------------------------------------
 
   /**
-   * Set the task branch to diff. When a task session is selected, pass
-   * its branch_name. For scratch sessions (no task), pass null to fall
-   * back to HEAD behavior.
+   * Set the task branch to diff. When an open-task session is selected, pass
+   * its branch_name. Pass null for scratch sessions and completed-task history
+   * to show the current project HEAD rather than reconstructing old filesystem state.
    */
   setBranch(branch: string | null) {
     if (branch === this._branch) return;
@@ -166,8 +168,8 @@ export class DiffStore {
 
   /**
    * Apply route-derived project and branch state atomically. Project switches
-   * otherwise fetch once for HEAD, again for the task branch, and once more
-   * from AppStore after initialization.
+   * otherwise fetch once for HEAD and again after WorkspaceStore resolves the
+   * selected task branch.
    */
   setScope(projectId: number | null, branch: string | null) {
     const projectChanged = projectId !== this._projectId;
@@ -189,7 +191,9 @@ export class DiffStore {
       this._branch = branch;
       this.patchData = Loadable.idle();
       this._patchDiffVersion = 0;
+      this._filesRequestGeneration += 1;
       this._patchRequestGeneration += 1;
+      this._spreadRequestGeneration += 1;
       this.spread = null;
       this.notify();
     }
@@ -226,8 +230,12 @@ export class DiffStore {
 
   /** Refresh the file listing and, by default, any already-loaded rendered diff payloads. */
   async refresh(options: DiffRefreshOptions = {}) {
+    const requestGeneration = ++this._filesRequestGeneration;
     const trigger = options.trigger ?? "manual";
-    if (this._projectId == null) {
+    const projectId = this._projectId;
+    const mode = this.diffMode;
+    const branchParam = this._branchParam;
+    if (projectId == null) {
       this.fileData = this.fileData.asLoaded({ files: [], branch: null, baseBranch: null });
       this.notify();
       return;
@@ -238,8 +246,9 @@ export class DiffStore {
 
     try {
       const resp = await fetch(
-        `/api/projects/${this._projectId}/diff/files?mode=${this.diffMode}${this._branchParam}`
+        `/api/projects/${projectId}/diff/files?mode=${mode}${branchParam}`
       );
+      if (requestGeneration !== this._filesRequestGeneration) return;
       if (!resp.ok) {
         this.lastFilesRefreshAt = new Date().toISOString();
         this.lastRefreshTrigger = trigger;
@@ -249,6 +258,7 @@ export class DiffStore {
         return;
       }
       const json = await resp.json();
+      if (requestGeneration !== this._filesRequestGeneration) return;
       const newFiles = sortFileSummaries(json.files ?? []);
       const changed = JSON.stringify(newFiles) !== JSON.stringify(this.fileData.data?.files ?? []);
       this.lastFilesRefreshAt = new Date().toISOString();
@@ -273,6 +283,7 @@ export class DiffStore {
         await this.fetchPatchDiff(payloadTrigger);
       }
     } catch (err: any) {
+      if (requestGeneration !== this._filesRequestGeneration) return;
       this.lastFilesRefreshAt = new Date().toISOString();
       this.lastRefreshTrigger = trigger;
       this.lastSummaryChanged = null;
@@ -344,15 +355,19 @@ export class DiffStore {
 
   /** Fetch spread, optionally with a remote git fetch first. */
   async fetchSpread(remote = false) {
+    const requestGeneration = ++this._spreadRequestGeneration;
+    const projectId = this._projectId;
     const branch = this.branch;
-    if (this._projectId == null || !branch) return;
+    if (projectId == null || !branch) return;
 
     try {
       const resp = await fetch(
-        `/api/projects/${this._projectId}/git/spread?branch=${encodeURIComponent(branch)}&fetch=${remote}`,
+        `/api/projects/${projectId}/git/spread?branch=${encodeURIComponent(branch)}&fetch=${remote}`,
       );
-      if (!resp.ok) return;
-      this.spread = await resp.json();
+      if (requestGeneration !== this._spreadRequestGeneration || !resp.ok) return;
+      const spread = await resp.json();
+      if (requestGeneration !== this._spreadRequestGeneration) return;
+      this.spread = spread;
       this.notify();
     } catch {
       // silent
@@ -478,6 +493,9 @@ export class DiffStore {
   dispose() {
     this._stopPolling();
     this._stopSpreadPolling();
+    this._filesRequestGeneration += 1;
+    this._patchRequestGeneration += 1;
+    this._spreadRequestGeneration += 1;
     if (this._syncResultTimer) clearTimeout(this._syncResultTimer);
     this._listeners.clear();
   }

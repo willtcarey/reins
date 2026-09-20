@@ -10,11 +10,28 @@ import type { ProjectRouteContext } from "./index.js";
 import { createNewSession } from "../runtimes/session-manager.js";
 import { Sessions } from "../models/sessions.js";
 import { touchProject } from "../project-store.js";
+import { parseCollectionPage } from "./validate.js";
 
 export function registerProjectSessionRoutes(router: RouterGroup<ProjectRouteContext>) {
   // List sessions for a project
   router.get("/sessions", async (ctx) => {
     const sessions = new Sessions(ctx.state.sessions);
+    if (ctx.url.searchParams.get("archived") === "only") {
+      const page = parseCollectionPage(ctx.url);
+      const taskTitles = new Map(
+        ctx.project.tasks().list().map((task) => [task.id, task.title]),
+      );
+      const archived = sessions.listArchivedByProject(ctx.project.projectId, page ? {
+        limit: page.limit + 1,
+        offset: page.offset,
+        search: page.search,
+      } : {});
+      const items = archived.slice(0, page?.limit).map((session) => ({
+        ...session,
+        taskTitle: session.taskId == null ? null : taskTitles.get(session.taskId) ?? null,
+      }));
+      return Response.json(page ? { items, hasMore: archived.length > page.limit } : items);
+    }
     return Response.json(sessions.listByProject(ctx.project.projectId));
   });
 

@@ -15,6 +15,7 @@ src/
 ├── components/      Feature and domain Lit components
 ├── controllers/     Lit reactive controllers (glue between models + components)
 ├── directives/      Reusable element-local Lit behavior
+├── routing/         Browser route registration and navigation
 ├── __tests__/       Tests mirroring app structure
 └── index.ts         Entry point
 ```
@@ -38,10 +39,12 @@ Pure TypeScript with no Lit dependency. Contains business/domain logic, state ma
 models/
 ├── stores/              Shared state management (pubsub)
 │   ├── app-store.ts
+│   ├── workspace-store.ts
 │   ├── active-session-store.ts
 │   ├── diff-store.ts
 │   ├── conversations-store.ts
 │   ├── project-store.ts
+│   ├── project-history-store.ts
 │   ├── projects-store.ts
 │   ├── file-browser-store.ts
 │   ├── quick-open-store.ts
@@ -60,9 +63,12 @@ models/
 ├── message.ts           Displayable message domain model
 ├── chat-state.ts        Chat event reducer
 ├── format.ts            Display formatting helpers
-├── router.ts            Hash-based route parsing
 └── ws-client.ts         WebSocket client
 ```
+
+### routing/
+
+Browser-facing route registration, hash resolution, URL construction, navigation, page rendering, and last-route persistence. Routing is application infrastructure rather than domain logic, so it must not live under `models/`. `router.ts` is the generic matcher/renderer registry; `app-router.ts` composes application routes and their page renderers and exposes the application navigation helpers.
 
 ### ui/
 
@@ -81,7 +87,9 @@ components/
 │   ├── read.ts, edit.ts, write.ts, bash.ts
 │   ├── create-task.ts, delegate.ts, generic.ts
 │   ├── index.ts (registry), types.ts
-├── app.ts               Root shell: store/routing/overlays + pane rendering/layout selection
+├── app.ts               Root shell: lifecycle, route outlet, and global overlays
+├── app-workspace.ts     Routed workspace: panes, responsive layout, and workspace-local state
+├── project-history.ts   Routed full-screen project History page
 ├── chat-panel.ts        Message display + composer orchestration
 ├── message-action-menu.ts Action sheet/context-menu presentation
 ├── chat-composer.ts     Prompt input, autosize, skill suggestions, image attachments
@@ -102,6 +110,7 @@ Lit reactive controllers — lifecycle-managed glue reused across components. Se
 
 ```
 controllers/
+├── app-route-controller.ts           Route-agnostic browser/Lit hash lifecycle adapter
 ├── store-controller.ts               Generic store subscription
 ├── inline-review-controller.ts       Panel-lifetime selection/composer coordination
 ├── pierre-renderer.ts                Ref mounting, input identity, completion, and cleanup for Pierre renderers
@@ -159,19 +168,20 @@ Store/component boundary:
                     ┌──────────────────────────────────────────────┐
                     │              components/app.ts                │
                     │  - creates AppStore + AppClient               │
-                    │  - wires route/viewport controllers           │
-                    │  - passes store to views (read-only)          │
-                    │  - owns UI-local state (active pane, title)   │
+                    │  - activates and renders registered routes    │
+                    │  - owns global overlays and document state    │
                     └──────────────────┬───────────────────────────┘
-                                       │
+                                       │ shared application context
                            ┌───────────▼───────────┐
                            │       AppStore         │
-                           │   (models/stores/)     │
-                           │                        │
-                           │  Owns app/domain state │
-                           │  and coordinates        │
-                           │  sub-stores             │
+                           │  WS/client + long-lived│
+                           │  caches/shared stores  │
                            └───────────┬────────────┘
+                                       │
+                    ┌──────────────────▼──────────────────┐
+                    │ components/app-workspace            │
+                    │ owns one route-scoped WorkspaceStore│
+                    └──────────────────┬──────────────────┘
                                        │ subscribe()
                     ┌──────────┬───────┴───────┬──────────┐
                     ▼          ▼               ▼          ▼
@@ -183,20 +193,22 @@ Store/component boundary:
 
 Keep store descriptions at the ownership-boundary level. Avoid listing every endpoint, event, or feature a store currently supports; those details belong in code, tests, or feature-specific docs when they affect behavior.
 
-- **AppStore** (`models/stores/app-store.ts`) — Top-level orchestration for route-derived app state, WebSocket/reconnect side effects, shared app-wide settings, and sub-store coordination. Components should prefer semantic AppStore/sub-store methods over reaching into lower-level internals.
-- **DiffStore** (`models/stores/diff-store.ts`) — Git diff domain state, lightweight changed-file polling, raw patch loading, diff-mode selection, and branch synchronization. Context expansion state belongs to the review model rather than the store; rendering concerns such as syntax highlighting stay in controllers/components.
+- **AppStore** (`models/stores/app-store.ts`) — Application-lifetime composition and lifecycle context. It owns WebSocket connection state, `SessionCache`, `ConversationsStore`, `ProjectsStore`, `SettingsStore`, and reconnect/resume reconciliation orchestration. It does not expose domain mutation facades, interpret inbound message kinds or routes, or own the active workspace. Scoped stores register reconciliation work with it so browser resume and reconnect use one coordinator without introducing an event-forwarding bus.
+- **WorkspaceStore** (`models/stores/workspace-store.ts`) — Route-scoped active-session and workspace coordinator owned by `app-workspace`. It owns `ActiveSessionStore`, `DiffStore`, and `CodeReviewStore`, derives `projectDir` from the current project and application metadata, subscribes directly to workspace-owned inbound message kinds, and filters session-scoped messages to its current session. WebSocket file-open paths are normalized here before a UI intent is dispatched. Every session change synchronously clears diff/review scope, resolves canonical session metadata and the task branch, then commits both scopes only if its transition is still current. A superseded transition may populate long-lived caches but cannot update workspace selection, diff, or review state.
+- **DiffStore** (`models/stores/diff-store.ts`) — Git diff domain state, lightweight changed-file polling, raw patch loading, diff-mode selection, and branch synchronization. File-list, patch, and spread requests are generation-guarded so responses or errors from superseded project/branch scopes cannot restore stale data or diagnostics. Context expansion state belongs to the review model rather than the store; rendering concerns such as syntax highlighting stay in controllers/components.
 - **CodeReviewStore** (`models/stores/code-review-store.ts`) — Synchronizes raw `CodeReviewState` for the viewed session's exact project/task scope and owns loads, optimistic annotation writes, submission, revision-aware invalidation reloads, and notifications. Pure functions in `models/code-review.ts` project saved annotations and build anchor evidence without wrapping transport state in another object. The panel's `InlineReviewController` owns one selection and composer across virtual remounts and exposes one per-file interface to the diff UI. Submission receives the selected session identity at action time; runtime activity remains owned by `SessionCache`.
 - **SessionCache** (`models/stores/session-cache.ts`) — Canonical client cache for server-provided session metadata and the sole frontend owner of runtime activity. Stores and components derive running/activity views from it rather than duplicating activity in conversation or component state.
-- **ConversationsStore** (`models/stores/conversations-store.ts`) — Keyed per-session conversation presentation state that must survive route changes or missed streaming events. Internally it retains raw persistence/runtime records so reconciliation remains faithful to those protocols; its public `ConversationView` projects them into `Message` domain objects as the primary display interface. Each display message carries its persisted entry/parent IDs or store-local render identity, owns raw Markdown copy semantics, and assistants expose ordered blocks whose tool calls already reference their matching persisted `ToolResultMessage` or live `ToolExecution`. Standalone tool-result records are therefore not display messages. Successful prompt and steer actions add optimistic user entries immediately; peer `user_message` events add equivalent live entries. Components own only outgoing animation metadata and must not maintain parallel pending-message or persistence-reconciliation state. `ActiveSessionStore.prompt()` and `steer()` return the exact `LiveConversationEntry` inserted so local-only interactions can use its store-local render key. Runtime `agent_end` user messages are ignored because they may contain runtime-only skill expansion. During a run, assistant display comes from normalized message snapshots; `agent_start` is a presentation no-op, while terminal `agent_end` promotes fresh final assistants and tool results, prefers its authoritative native error when present, and clears streaming assistants. Genuinely new persisted forward user rows consume pending live users FIFO, independent of content, and replace them with canonical persisted entries. Stale/overlapping pages and earlier-history loads never consume pending users. Persisted IDs flow through render keys and history anchors; do not reconstruct persisted identity from message content, roles, or timestamps. `ConversationsStore` owns persisted-message queries and cursor traversal, merges API records by ID and parent links, and reconciles live/streaming state separately. Ordered streaming snapshots keep only matching tool-execution overlays, keyed by stable tool-call ID; complete snapshot updates can recover missed starts/deltas. Persisted assistant timestamps remove matching streaming snapshots while unmatched newer work remains. Persisted tool results replace live results by tool-call ID. Disconnect and route/metadata updates do not discard received snapshots. When authoritative metadata is non-running, `ActiveSessionStore` narrowly clears only stale compaction presentation and synchronizes canonical messages when needed. Runtime activity remains solely owned by `SessionCache`.
-- **ProjectsStore / ProjectStore** (`models/stores/projects-store.ts`, `models/stores/project-store.ts`) — Project/task/session list ownership and project-scoped mutations, including optimistic rename and explicit pin/archive updates with rollback. Activity and session metadata are derived from `SessionCache` instead of stored redundantly. Archived sessions are removed from normal list ownership after a successful archive; there is no archived-list view yet.
-- **QuickOpenStore** (`models/stores/quick-open-store.ts`) — Shared quick-open data, filtering, and recency state. Overlay open/closed state remains component-local.
-- **FileBrowserStore** (`models/stores/file-browser-store.ts`) — Shared file browser data and file-content loading. Viewer overlay state remains component-local.
+- **ConversationsStore** (`models/stores/conversations-store.ts`) — Keyed per-session conversation presentation state that must survive route changes or missed streaming events. It owns inbound runtime/chat events, peer user messages, and session-scoped transport errors. Internally it retains raw persistence/runtime records so reconciliation remains faithful to those protocols; its public `ConversationView` projects them into `Message` domain objects as the primary display interface. Each display message carries its persisted entry/parent IDs or store-local render identity, owns raw Markdown copy semantics, and assistants expose ordered blocks whose tool calls already reference their matching persisted `ToolResultMessage` or live `ToolExecution`. Standalone tool-result records are therefore not display messages. Successful prompt and steer actions add optimistic user entries immediately; peer `user_message` events add equivalent live entries. Components own only outgoing animation metadata and must not maintain parallel pending-message or persistence-reconciliation state. `ActiveSessionStore.prompt()` and `steer()` return the exact `LiveConversationEntry` inserted so local-only interactions can use its store-local render key. Runtime `agent_end` user messages are ignored because they may contain runtime-only skill expansion. During a run, assistant display comes from normalized message snapshots; `agent_start` is a presentation no-op, while terminal `agent_end` promotes fresh final assistants and tool results, prefers its authoritative native error when present, and clears streaming assistants. Genuinely new persisted forward user rows consume pending live users FIFO, independent of content, and replace them with canonical persisted entries. Stale/overlapping pages and earlier-history loads never consume pending users. Persisted IDs flow through render keys and history anchors; do not reconstruct persisted identity from message content, roles, or timestamps. `ConversationsStore` owns persisted-message queries and cursor traversal, merges API records by ID and parent links, and reconciles live/streaming state separately. Ordered streaming snapshots keep only matching tool-execution overlays, keyed by stable tool-call ID; complete snapshot updates can recover missed starts/deltas. Persisted assistant timestamps remove matching streaming snapshots while unmatched newer work remains. Persisted tool results replace live results by tool-call ID. Disconnect and route/metadata updates do not discard received snapshots. When authoritative metadata is non-running, `ActiveSessionStore` narrowly clears only stale compaction presentation and synchronizes canonical messages when needed. Runtime activity remains solely owned by `SessionCache`.
+- **ProjectsStore / ProjectStore** (`models/stores/projects-store.ts`, `models/stores/project-store.ts`) — Long-lived project/sidebar task and session list ownership plus project, task, and session-creation mutations. `ProjectsStore` is the aggregate interface: it hides child-store lookup policy, owns cross-project mutations and task/session creation, consumes task/session update subscriptions, and updates `SessionCache` as needed. `ProjectStore` retains one project's list state and detailed mutation implementation, including optimistic rename and explicit pin/archive updates with rollback. Route-scoped `WorkspaceStore` methods may add active-project context or route cleanup, but delegate domain work directly to `ProjectsStore`. Activity and session metadata are derived from `SessionCache` instead of stored redundantly. Normal lists exclude archived sessions and completed tasks.
+- **ProjectHistoryStore** (`models/stores/project-history-store.ts`) — Page-owned state for one project's full-screen History page. It composes independently paginated and searched session/task resource requests, loads completed-task conversations on demand, and owns optimistic unarchive/rollback. `project-history` creates, loads, subscribes to, and disposes this store from its `projectId`; neither `AppStore` nor the sidebar's `ProjectStore` knows about History data.
+- **QuickOpenStore** (`models/stores/quick-open-store.ts`) — Shared quick-open data, filtering, recency state, and session activity lookup through the application `SessionCache`. It subscribes to activity changes so an open palette rerenders indicators without a shell callback. Overlay open/closed state remains component-local.
+- **FileBrowserStore** (`models/stores/file-browser-store.ts`) — Shared file browser data and file-content loading. File browser and search open operations explicitly provide a project ID; the store atomically sets that scope before fetching or selecting files. File locations are `{ projectId, path }`, and open-file intents never infer project scope from ambient workspace state. Viewer overlay state remains component-local.
 - **ModelRegistryStore** (`models/stores/model-registry-store.ts`) — Provider/model registry data and derived selectors. Settings UI uses the instance owned by `SettingsStore`; other features may own their own registry instance when their data lifecycle is independent.
 - **SettingsStore** (`models/stores/settings-store.ts`) — Persisted settings, auth/OAuth mutations, settings-panel model registry loading, and successful settings-change callbacks. `AppStore` owns the shared instance so app-wide preferences and the settings panel stay in sync. Settings saves run in the background; avoid adding `saving*` props or disabling setting controls for routine persistence. Settings components keep only form/view-local state such as drafts and overlay visibility; `components/settings/panel.ts` subscribes to store change callbacks and owns success toast copy. Setting declarations in the panel define each setting's persisted keys, visibility, and render function; the panel filters visible declarations and passes their keys to `SettingsStore.loadSettings(...)`.
 
 ### Subscription model
 
-Both AppStore and DiffStore use a `Set<listener>` + `notify()` pattern. Components subscribe and trigger Lit re-renders on each notification. Fine-grained per-field subscriptions aren't needed — Lit's dirty checking keeps renders efficient.
+AppStore, WorkspaceStore, and DiffStore use a `Set<listener>` + `notify()` pattern. Components subscribe and trigger Lit re-renders on each notification. Fine-grained per-field subscriptions aren't needed — Lit's dirty checking keeps renders efficient.
 
 The preferred pattern is `StoreController` (see [reactive-controllers.md](reactive-controllers.md)), which handles subscribe/unsubscribe lifecycle automatically:
 
@@ -223,9 +235,9 @@ connectedCallback() {
 
 ## WebSocket client (`models/ws-client.ts`)
 
-Thin WebSocket wrapper for receiving server events and sending session-scoped commands. It exposes callbacks only; it does not decide how events affect UI state.
+Thin WebSocket wrapper for receiving server messages and sending session-scoped commands. Its inbound API publishes the original typed discriminated message envelope and accepts a typed handler map keyed by message kind. It filters delivery but does not decide how messages affect UI state; command acknowledgements remain internal transport concerns.
 
-`AppStore` is the store-layer consumer of WebSocket connection/event hooks. It translates events into store mutations, refreshes, and conversation updates. Components never listen to WS events directly.
+Aggregate and scoped stores subscribe directly only to the message kinds they own: `ConversationsStore` owns conversation traffic and scoped errors, `ProjectsStore` owns task/session list invalidation, and `WorkspaceStore` owns review, file-open, and file-change reactions for its mounted scope. `AppStore` consumes connection state and coordinates reconnect/resume reconciliation, but is not an inbound message router. Components never subscribe to the WebSocket source.
 
 ### Activity indicator semantics
 
@@ -233,52 +245,54 @@ Session activity is server-authoritative and enters the frontend through `Sessio
 
 Running indicators remain visible while the agent loop is active. Finished indicators represent unread completed work and are cleared automatically only when the selected session's conversation is meaningfully visible: the document is foregrounded and the Chat surface is on screen (on mobile, Chat must be the active workspace page). Changes and other mobile pages do not count as viewing the conversation. `ChatPanel` reports whether its foreground conversation is meaningfully observed directly to its route-scoped `ActiveSessionStore`. The store owns the resulting policy: entering observation clears pending finished activity, completions are auto-read only while observed, and explicit unread intent is preserved until observation restarts or new work begins. It knows only the observation fact—not which app pane produced it—and serializes active-session read/unread requests. `ActiveSessionStore` owns the active session's read and unread operations, while idle sessions can also be marked unread through their project lists. Explicitly marking the open session unread is preserved until the conversation is viewed again or new work completes visibly. Reconnect/resume flows reconcile from the server snapshot instead of trusting missed client events.
 
-## Routing (`models/router.ts`)
+## Routing (`routing/router.ts`, `routing/app-router.ts`)
 
-Hash-based routing with a single pattern:
+`FrontendRouter` is a small registered hash router and page registry. Core routes are registered by `createAppRouter()`:
 
-- `#/session/:sessionId` — View a specific session
-- (empty hash) — No session selected, show empty state
+- `#/session/:sessionId` — view a specific session
+- `#/projects/:projectId/history` — view a project's full-screen History page
+- empty or unknown hash — render the workspace with no selected session
 
-`AppRouteController` listens for `hashchange`, parses the route, and calls `store.setRoute()`. The store fetches the session data (which includes `project_id`) and derives the active project from it. The chat panel is rendered with `keyed(store.sessionId, ...)` so switching sessions remounts the component and clears any per-session ephemeral UI state.
+Route definitions declare a stable name and path pattern with named parameters, optional parameter validation, and a `renderPage` callback. Empty/root and session routes render the main workspace; History renders its full-screen page. Register future page routes with `router.register(...)` rather than adding parser or route-outlet conditionals; plugin-owned routes use the same registry with a namespaced route name, so matching, canonical hash construction, and page rendering remain one extensible seam.
+
+`AppRouteController` is a route-agnostic browser/Lit lifecycle adapter. It listens for `hashchange`, restores and persists the last hash, resolves through the registered app router, reports every resolved `Route` through `onRouteChange`, and requests a host update. It does not interpret route names, invoke semantic route operations, or know about sessions. `app-shell` owns the active page route; its route-change handler assigns the resolved route and records quick-open recency for session routes. AppStore is intentionally absent from route interpretation and workspace selection.
+
+The shell passes the long-lived application context plus the routed session ID to `app-workspace`. `app-workspace` creates and disposes its `WorkspaceStore`; `WorkspaceStore.setSession()` applies that page-scoped route input to session metadata, project context, task branch, diff scope, and review scope without becoming a routing API. Project pages own their page-specific stores. The chat panel is rendered with `keyed(store.sessionId, ...)` so switching sessions remounts per-session ephemeral UI while long-lived conversations and caches survive workspace/History navigation.
 
 ### Last-viewed hash restore
 
-The router module provides `getLastHash()` and `saveHash()` helpers backed by `localStorage` (`reins:last-hash` key). `AppRouteController` saves `location.hash` on every `hashchange` event, and restores it on fresh page loads when no hash route is present. This is a pure routing concern — the store layer is not involved. If a stored hash points to a deleted session, the normal fetch-404 handling shows the empty state.
+The router module provides `getLastHash()` and `saveHash()` helpers backed by `localStorage` (`reins:last-hash` key). `AppRouteController` saves `location.hash` on every `hashchange` event, and restores any registered route on fresh page loads when no hash route is present. This is a pure routing concern. If a stored session route points to a deleted session, the normal fetch-404 handling shows the empty state.
 
 ## Component structure
 
-`app-shell` renders one canonical named pane set (`sessions`, `chat`, `changes`, `files`) into a single responsive workspace DOM. Keep that shell—and especially `session-sidebar`—mounted across route changes, including while the selected session's project metadata is loading; only session/project-scoped pane content should change identity. The workspace grid is a four-page mobile swipe surface (`sessions → chat → changes → files`) and becomes a desktop CSS grid at the `md` breakpoint (`sessions | chat/changes | files`) via responsive classes. Chat and Changes each render their own main toolbar in their mobile page column so the toolbar travels with the pane during swipes; at the desktop breakpoint those toolbars collapse into the same center grid header and only the active main-pane toolbar is shown. App-level navigation should use named `WorkspacePane` values rather than mobile page indexes; only `app-shell` translates the mobile page order to workspace page numbers.
+`app-workspace` receives the application-lifetime AppStore context, owns one WorkspaceStore for its mounted route lifetime, and renders one canonical named pane set (`sessions`, `chat`, `changes`, `files`) into a single responsive workspace DOM. Keep that routed workspace—and especially `session-sidebar`—mounted across session route changes, including while selected-session project metadata is loading; only session/project-scoped pane content should change identity. The workspace grid is a four-page mobile swipe surface (`sessions → chat → changes → files`) and becomes a desktop CSS grid at the `md` breakpoint (`sessions | chat/changes | files`) via responsive classes. Chat and Changes each render their own main toolbar in their mobile page column so the toolbar travels with the pane during swipes; at the desktop breakpoint those toolbars collapse into the same center grid header and only the active main-pane toolbar is shown. Workspace navigation uses named `WorkspacePane` values rather than mobile page indexes; only `app-workspace` translates the mobile page order to workspace page numbers.
 
 ```
-app-shell                    — root shell, creates store, applies routes, renders workspace panes
-├── session-sidebar          — project-list orchestration and shared dialogs
-│   ├── sidebar-project      — keyed project section; survives body collapse and retains task disclosure state
-│   │   ├── assistant-session — project assistant row and previous conversations
-│   │   └── task-list        — tasks with spring-collapsed completed tasks and session sublists
-│   ├── project-sidebar      — project selector + CRUD
-│   ├── task-form            — task creation (generate from prompt)
-│   └── task-detail          — task edit/delete
-├── chat-panel               — conversation ordering/history/streaming aggregates + composer orchestration
-│   ├── chat-message         — one domain message's text/images/tools/summary/actions and local feedback
-│   │   ├── longPress directive — element-local touch gesture + press animation
-│   │   └── message-action-menu — action sheet/context menu lifecycle, focus, positioning, and menu feedback
-│   ├── ChatHistoryController — earlier-history triggering + viewport preservation
-│   └── chat-composer        — prompt input, autosize, skill suggestions, image attachments
-├── review-diff-panel        — bounded Changes review surface
-├── diff-file-tree           — app-owned changed-file pane/sidebar
-├── quick-open               — Cmd+K fuzzy search across all sessions
-├── file-search              — Cmd+P fuzzy file search (uses search-palette)
+app-shell                    — root lifecycle, route outlet, and global overlays
+├── app-workspace            — registered root/session page; owns responsive panes
+│   ├── session-sidebar      — project-list orchestration and shared dialogs
+│   │   ├── sidebar-project  — project section with assistant and active tasks
+│   │   ├── project-sidebar  — project selector + CRUD
+│   │   ├── task-form        — task creation
+│   │   └── task-detail      — task edit/delete
+│   ├── chat-panel           — conversation + composer orchestration
+│   │   ├── chat-message
+│   │   └── chat-composer
+│   ├── review-diff-panel    — bounded Changes review surface
+│   └── diff-file-tree       — workspace-owned changed-file pane/sidebar
+├── project-history          — registered full-screen project History page
+├── quick-open               — Cmd+K session search overlay
+├── file-search              — Cmd+P file search overlay
 ├── file-browser             — file viewer overlay shell
-│   └── file-viewer          — rich previews plus Pierre File-rendered source content
-└── branch-indicator         — current branch display
+│   └── file-viewer
+└── settings-panel           — settings overlay
 ```
 
 All components live under `components/`. Sub-directories (`changes/`, `tools/`) group related components.
 
 ### Mobile workspace swipe
 
-`components/app.ts` owns workspace rendering and delegates mobile swipe event wiring/state to `PageSwipeController` in `controllers/page-swipe-controller.ts`. The workspace uses a single inner `.workspace-surface` grid as the layout authority: mobile translates the four full-width page columns (`sessions → chat → changes → files`), while the `md` breakpoint changes that same grid to the desktop columns. The outer workspace shell only clips overflow and hosts pointer listeners; keep it `overflow-clip` so it never becomes a restorable scroll container that can desync the visible mobile page from `activePane`. Do not add a second desktop grid wrapper around the surface. The controller owns page-specific behavior — page clamping, edge resistance, release thresholds, translate targets, and page commits — and creates one short-lived `Swipe` instance from `models/swipe.ts` per pointer-driven swipe. The swipe instance lasts from accepted `pointerdown` through drag classification, release/cancel spring animation, click suppression, and completion; keep per-swipe mutable state there rather than adding reset-heavy gesture fields to the Lit component. The shared scalar spring animation lifecycle lives in the one-shot `Spring` class in `models/spring.ts`; its stiffness and damping can be tuned per instance while omitted values retain the shared defaults. Swipe-specific pointer classification and DOM opt-out predicates stay private to `models/swipe.ts`.
+`components/app-workspace.ts` owns workspace rendering and delegates mobile swipe event wiring/state to `PageSwipeController` in `controllers/page-swipe-controller.ts`. The workspace uses a single inner `.workspace-surface` grid as the layout authority: mobile translates the four full-width page columns (`sessions → chat → changes → files`), while the `md` breakpoint changes that same grid to the desktop columns. The outer workspace shell only clips overflow and hosts pointer listeners; keep it `overflow-clip` so it never becomes a restorable scroll container that can desync the visible mobile page from `activePane`. Do not add a second desktop grid wrapper around the surface. The controller owns page-specific behavior — page clamping, edge resistance, release thresholds, translate targets, and page commits — and creates one short-lived `Swipe` instance from `models/swipe.ts` per pointer-driven swipe. The swipe instance lasts from accepted `pointerdown` through drag classification, release/cancel spring animation, click suppression, and completion; keep per-swipe mutable state there rather than adding reset-heavy gesture fields to the Lit component. The shared scalar spring animation lifecycle lives in the one-shot `Spring` class in `models/spring.ts`; its stiffness and damping can be tuned per instance while omitted values retain the shared defaults. Swipe-specific pointer classification and DOM opt-out predicates stay private to `models/swipe.ts`.
 
 ### Message actions
 
@@ -327,11 +341,11 @@ Per-component state and behavior (collapse toggles, markdown preview, clipboard 
 - **Read from store, don't fetch** — Views receive the store (or store state) as Lit properties and render from it. No direct `fetch()` calls.
 - **Pass callbacks for action-only dependencies** — If a child only needs to trigger an action and does not subscribe to or render from store state, pass a narrow callback like `onSave` / `updateSessionModel` instead of the whole store.
 - **Dispatch intents via events** — Views emit custom events (`new-session`, `delete-task`, etc.) for actions. The parent component or store handles the intent.
-- **No WS event handling** — Views never listen to WebSocket events. All event→refetch logic is internal to AppStore.
+- **No WS event handling** — Views never listen to WebSocket messages. Aggregate and scoped stores subscribe to the typed event source for only the message kinds they own; `AppStore` coordinates connection lifetime and reconciliation rather than forwarding inbound events.
 
 ## Tool renderers (`components/tools/`)
 
-Tool calls in the chat panel are rendered by tool-specific renderers rather than a generic JSON dump. Each tool (read, bash, edit, write, create_task, delegate) has a dedicated component in `components/tools/` that owns its full visual output. Pure data-extraction helpers live in `models/tools/`. A registry in `components/tools/index.ts` maps tool names to renderers, falling back to a generic renderer for unknown tools.
+Tool calls in the chat panel are rendered by tool-specific renderers rather than a generic JSON dump. Each tool (read, bash, edit, write, create_task, delegate) has a dedicated component in `components/tools/` that owns its full visual output. Pure data-extraction helpers live in `models/tools/`. A registry in `components/tools/index.ts` maps tool names to renderers, falling back to a generic renderer for unknown tools. Renderers receive `ToolBlockData` plus a narrow `ToolRenderContext`; the workspace threads only `projectId` and `projectDir` through the chat hierarchy so file tools normalize paths and emit explicitly project-scoped file locations without ambient workspace state.
 
 `components/chat-panel.ts`'s `renderToolBlock()` is a thin 5-line dispatcher that looks up the renderer and calls `render()`.
 

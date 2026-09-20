@@ -6,6 +6,8 @@
  * this store owns all server communication and localStorage persistence.
  */
 
+import { SessionCache, type ActivityState } from "./session-cache.js";
+
 // ---- Types ------------------------------------------------------------------
 
 export interface PaletteItem {
@@ -132,6 +134,21 @@ export class QuickOpenStore {
   // ---- Subscription ---------------------------------------------------------
 
   private _listeners = new Set<QuickOpenStoreListener>();
+  private _activityBySession = new Map<string, ActivityState>();
+  private _unsubscribeSessionCache: (() => void) | null;
+
+  constructor(private _sessionCache: SessionCache) {
+    for (const session of _sessionCache.entries()) {
+      this._activityBySession.set(session.id, session.activityState);
+    }
+    this._unsubscribeSessionCache = _sessionCache.subscribeAll((sessionId) => {
+      const activity = _sessionCache.get(sessionId)?.activityState ?? null;
+      const previous = this._activityBySession.get(sessionId) ?? null;
+      if (activity === previous) return;
+      this._activityBySession.set(sessionId, activity);
+      this.notify();
+    });
+  }
 
   subscribe(fn: QuickOpenStoreListener): () => void {
     this._listeners.add(fn);
@@ -140,6 +157,16 @@ export class QuickOpenStore {
 
   private notify() {
     for (const fn of this._listeners) fn();
+  }
+
+  activityForSession(sessionId: string): ActivityState {
+    return this._sessionCache.get(sessionId)?.activityState ?? null;
+  }
+
+  dispose(): void {
+    this._unsubscribeSessionCache?.();
+    this._unsubscribeSessionCache = null;
+    this._listeners.clear();
   }
 
   // ---- Data fetching --------------------------------------------------------

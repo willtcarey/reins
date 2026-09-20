@@ -74,7 +74,9 @@ export class FileTree extends LitElement {
   // ---- Event handlers -------------------------------------------------------
 
   private _handleFileClick(e: CustomEvent<string>) {
-    this.dispatchEvent(openInBrowserEvent(e.detail));
+    const projectId = this.store?.projectId;
+    if (projectId == null) return;
+    this.dispatchEvent(openInBrowserEvent(projectId, e.detail));
   }
 
   /**

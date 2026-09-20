@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { DiffStore } from "../models/stores/diff-store.js";
-import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
+import { DiffStore } from "../../../models/stores/diff-store.js";
+import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 
 function jsonResponse(data: unknown, status = 200): Response {
   return Response.json(data, { status });
@@ -151,6 +151,71 @@ describe("DiffStore", () => {
     expect(store.diffMode).toBe("uncommitted");
     expect(requests).toContain("/api/projects/1/diff/patch?context=3&mode=uncommitted");
     expect(requests.some((url) => /\/diff\?/.test(url))).toBe(false);
+  });
+
+  test("does not commit file or spread responses from a superseded scope", async () => {
+    const oldFiles = deferredResponse();
+    const oldSpread = deferredResponse();
+    mockFetch((url) => {
+      if (url === "/api/projects/1/diff/files?mode=branch&branch=old") return oldFiles.promise;
+      if (url === "/api/projects/1/git/spread?branch=old&fetch=false") return oldSpread.promise;
+      if (url === "/api/projects/2/diff/files?mode=branch&branch=new") {
+        return jsonResponse({
+          files: [{ path: "new.ts", additions: 2, removals: 0 }],
+          branch: "new",
+          baseBranch: "main",
+        });
+      }
+      if (url === "/api/projects/2/git/spread?branch=new&fetch=false") {
+        return jsonResponse({ branch: "new", aheadBase: 2, behindBase: 0, aheadRemote: 1, behindRemote: 0 });
+      }
+      return jsonResponse({});
+    });
+
+    store.setScope(1, "old");
+    store.setScope(2, "new");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    oldFiles.resolve(jsonResponse({
+      files: [{ path: "old.ts", additions: 1, removals: 0 }],
+      branch: "old",
+      baseBranch: "main",
+    }));
+    oldSpread.resolve(jsonResponse({ branch: "old", aheadBase: 99, behindBase: 0 }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(store.fileData.data).toEqual({
+      files: [{ path: "new.ts", additions: 2, removals: 0 }],
+      branch: "new",
+      baseBranch: "main",
+    });
+    expect(store.spread).toEqual({
+      branch: "new",
+      aheadBase: 2,
+      behindBase: 0,
+      aheadRemote: 1,
+      behindRemote: 0,
+    });
+  });
+
+  test("does not commit a superseded file-list error or its diagnostics after scope is cleared", async () => {
+    const oldFiles = deferredResponse();
+    mockFetch((url) => {
+      if (url.includes("/diff/files")) return oldFiles.promise;
+      if (url.includes("/git/spread")) return jsonResponse({});
+      return jsonResponse({});
+    });
+
+    store.setScope(1, "old");
+    store.setScope(null, null);
+    oldFiles.resolve(jsonResponse({ error: "old failure" }, 500));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(store.fileData.data).toEqual({ files: [], branch: null, baseBranch: null });
+    expect(store.fileData.error).toBeNull();
+    expect(store.lastFilesRefreshAt).toBeNull();
+    expect(store.lastRefreshTrigger).toBeNull();
+    expect(store.lastSummaryChanged).toBeNull();
   });
 
   test("keeps the latest patch when requests finish out of order", async () => {

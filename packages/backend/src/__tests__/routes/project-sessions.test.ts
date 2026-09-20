@@ -5,7 +5,8 @@ import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
-import { createSession, updateActivityState } from "../../session-store.js";
+import { createSession, updateActivityState, updateSessionMetadata } from "../../session-store.js";
+import { createTask } from "../../task-store.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 
 function textContent(text: string) {
@@ -65,6 +66,64 @@ describe("project session routes", () => {
       expect(body[0]).not.toHaveProperty("project_id");
       expect(body[0]).not.toHaveProperty("message_count");
       expect(body[0]).not.toHaveProperty("activity_state");
+    });
+
+    test("paginates archived sessions without changing unpaginated workspace responses", async () => {
+      for (const id of ["archived-1", "archived-2", "archived-3"]) {
+        createSession(id, projectId, { agentRuntimeType: "pi" });
+        updateSessionMetadata(id, { archived: true });
+      }
+
+      const response = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/sessions?archived=only&limit=2&offset=0`),
+        state,
+      );
+      const page = await response!.json();
+
+      expect(page.items).toHaveLength(2);
+      expect(page.hasMore).toBe(true);
+
+      const unpaginated = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/sessions?archived=only`),
+        state,
+      );
+      expect(await unpaginated!.json()).toHaveLength(3);
+    });
+
+    test("searches archived sessions before paginating", async () => {
+      createSession("matching", projectId, { agentRuntimeType: "pi" });
+      createSession("other", projectId, { agentRuntimeType: "pi" });
+      updateSessionMetadata("matching", { name: "Router research", archived: true });
+      updateSessionMetadata("other", { name: "Unrelated", archived: true });
+
+      const response = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/sessions?archived=only&limit=20&offset=0&search=router`),
+        state,
+      );
+      const page = await response!.json();
+
+      expect(page.items.map((session: { id: string }) => session.id)).toEqual(["matching"]);
+      expect(page.hasMore).toBe(false);
+    });
+
+    test("returns archived sessions from every project scope with task context", async () => {
+      const task = createTask(projectId, "Open task", null, "task/open");
+      createSession("active-scratch", projectId, { agentRuntimeType: "pi" });
+      createSession("archived-scratch", projectId, { agentRuntimeType: "pi" });
+      createSession("archived-task", projectId, { agentRuntimeType: "pi", taskId: task.id });
+      updateSessionMetadata("archived-scratch", { archived: true });
+      updateSessionMetadata("archived-task", { archived: true });
+
+      const response = await router.handle(
+        makeRequest("GET", `/api/projects/${projectId}/sessions?archived=only`),
+        state,
+      );
+
+      expect(response?.status).toBe(200);
+      expect(await response!.json()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "archived-task", taskTitle: "Open task" }),
+        expect.objectContaining({ id: "archived-scratch", taskTitle: null }),
+      ]));
     });
   });
 });

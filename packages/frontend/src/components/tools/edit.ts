@@ -42,6 +42,12 @@ export class EditToolBlock extends LitElement {
   @property({ attribute: false })
   path = "";
 
+  @property({ attribute: false })
+  projectId: number | null = null;
+
+  @property({ attribute: false })
+  projectDir: string | null = null;
+
   @property({ type: Boolean })
   isError = false;
 
@@ -83,10 +89,10 @@ export class EditToolBlock extends LitElement {
   /** Open this file in the file browser overlay, highlighting the edited range. */
   private _openInBrowser = (e: Event) => {
     e.stopPropagation();
-    if (!this.path || !isBrowsablePath(this.path)) return;
+    if (this.projectId == null || !this.path || !isBrowsablePath(this.path, this.projectDir)) return;
     // Compute the line range affected by the edit from the diff's new-side line numbers
     const lineRange = this._computeEditLineRange();
-    this.dispatchEvent(openInBrowserEvent(this.path, lineRange));
+    this.dispatchEvent(openInBrowserEvent(this.projectId, this.path, lineRange));
   };
 
   /** Extract the new-side line range from the diff lines (added + context lines). */
@@ -168,6 +174,7 @@ export class EditToolBlock extends LitElement {
         : "border-zinc-700";
 
     const wrap = shouldWrapLines(path || "");
+    const browsable = isBrowsablePath(path, this.projectDir);
 
     const showDiff = this.expanded && !showSpinner && !isError && diffLines.length > 0;
     const hasDiff = showDiff && diffLines.length > 0;
@@ -183,11 +190,11 @@ export class EditToolBlock extends LitElement {
             : html`<span class="flex-shrink-0 text-xs">✏️</span>`}
           <span class="text-[10px] font-semibold text-zinc-500 uppercase tracking-wide flex-shrink-0">Edit</span>
           <span
-            class="text-xs font-mono ${isError ? "text-red-400" : "text-zinc-300"} truncate ${isBrowsablePath(path) ? "hover:underline cursor-pointer" : ""}"
-            @click=${isBrowsablePath(path) ? this._openInBrowser : nothing}
-            title=${isBrowsablePath(path) ? "Open in file browser" : "Outside project directory"}
+            class="text-xs font-mono ${isError ? "text-red-400" : "text-zinc-300"} truncate ${browsable ? "hover:underline cursor-pointer" : ""}"
+            @click=${browsable ? this._openInBrowser : nothing}
+            title=${browsable ? "Open in file browser" : "Outside project directory"}
           >${path || "…"}</span>
-          ${path && !isBrowsablePath(path)
+          ${path && !browsable
             ? html`<span class="text-[10px] font-mono text-zinc-600 bg-zinc-800/60 px-1.5 py-0.5 rounded flex-shrink-0">external</span>`
             : nothing}
           ${isError
@@ -223,8 +230,13 @@ declare global {
 // Renderer — extracts all data and passes primitives to <edit-tool-block>
 // ---------------------------------------------------------------------------
 
-function renderEditBlock(block: ToolBlockData, showSpinner: boolean) {
-  const path = toRelativePath(getEditSummary(block));
+function renderEditBlock(
+  block: ToolBlockData,
+  projectId: number | null,
+  projectDir: string | null,
+  showSpinner: boolean,
+) {
+  const path = toRelativePath(getEditSummary(block), projectDir);
   const isError = !!block.isError;
   const { additions, removals } = getEditStats(block);
   const diffLines = getEditDiffLines(block);
@@ -232,6 +244,8 @@ function renderEditBlock(block: ToolBlockData, showSpinner: boolean) {
 
   return html`<edit-tool-block
     .path=${path}
+    .projectId=${projectId}
+    .projectDir=${projectDir}
     .isError=${isError}
     .additions=${additions}
     .removals=${removals}
@@ -242,7 +256,7 @@ function renderEditBlock(block: ToolBlockData, showSpinner: boolean) {
 }
 
 export const editRenderer: ToolRenderer = {
-  render(block: ToolBlockData) {
-    return renderEditBlock(block, block.status === "running");
+  render(block: ToolBlockData, context) {
+    return renderEditBlock(block, context.projectId, context.projectDir, block.status === "running");
   },
 };

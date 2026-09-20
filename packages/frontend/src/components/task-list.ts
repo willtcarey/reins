@@ -6,9 +6,8 @@
  * session is requested.
  */
 
-import { LitElement, html, nothing } from "lit";
+import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { springCollapse } from "../directives/spring-collapse.js";
 import type { TaskListItem } from "../models/tasks.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import { deleteTaskEvent, newTaskEvent } from "./events.js";
@@ -18,14 +17,12 @@ import "./task-list-item.js";
 
 export interface TaskListDisclosureState {
   expandedTaskId: number | null;
-  closedExpanded: boolean;
   activeSessionId: string;
 }
 
 export function createTaskListDisclosureState(): TaskListDisclosureState {
   return {
     expandedTaskId: null,
-    closedExpanded: false,
     activeSessionId: "",
   };
 }
@@ -150,8 +147,7 @@ export class TaskList extends LitElement {
   }
 
   override render() {
-    const openTasks = this.projectStore?.openTasks ?? [];
-    const closedTasks = this.projectStore?.closedTasks ?? [];
+    const tasks = this.projectStore?.tasks.filter((task) => task.status !== "closed") ?? [];
 
     return html`
       <div class="flex items-center px-3 pt-3 pb-1">
@@ -164,26 +160,7 @@ export class TaskList extends LitElement {
           ${plusIcon("", 10)}
         </button>
       </div>
-      ${openTasks.map(t => this.renderTask(t))}
-      ${closedTasks.length > 0 ? html`
-        <div class="px-1 pb-1">
-          <button
-            class="w-full px-3 py-1.5 rounded-md flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-400 hover:bg-zinc-800/70 cursor-pointer transition-colors"
-            @click=${() => {
-              this.disclosureState.closedExpanded = !this.disclosureState.closedExpanded;
-              this.requestUpdate();
-            }}
-          >
-            <span class="font-mono">${this.disclosureState.closedExpanded ? "▼" : "▶"}</span>
-            <span class="uppercase tracking-wide font-semibold">Completed tasks</span>
-            <span class="text-zinc-600">(${closedTasks.length})</span>
-          </button>
-          ${springCollapse(
-            !this.disclosureState.closedExpanded,
-            () => closedTasks.map(task => this.renderTask(task)),
-          )}
-        </div>
-      ` : nothing}
+      ${tasks.map(task => this.renderTask(task))}
       <delete-task-dialog
         .task=${this.deleteConfirmTask}
         @cancel-delete=${() => {

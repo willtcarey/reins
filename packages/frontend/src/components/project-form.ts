@@ -3,14 +3,14 @@
  *
  * Modal dialog for creating or editing a project.
  * Supports both modes via open({ mode, project? }).
- * Project mutations go through AppStore, which handles the fetch
- * and auto-refreshes the project list.
+ * Project mutations go through the route-scoped workspace interface, which
+ * delegates project-domain work to ProjectsStore.
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type { ProjectInfo } from "../models/ws-client.js";
-import type { AppStore } from "../models/stores/app-store.js";
+import type { WorkspaceStore } from "../models/stores/workspace-store.js";
 import { projectCreatedEvent, projectUpdatedEvent } from "./events.js";
 
 interface OpenCreateOptions {
@@ -29,7 +29,7 @@ export class ProjectForm extends LitElement {
   }
 
   @property({ attribute: false })
-  store: AppStore | null = null;
+  store: WorkspaceStore | null = null;
 
   @state() private mode: "create" | "edit" = "create";
   @state() private editProjectId: number | null = null;

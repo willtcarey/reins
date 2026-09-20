@@ -9,6 +9,7 @@
  */
 import { describe, test, expect, beforeEach, mock, afterEach } from "bun:test";
 import { AppStore } from "../../../models/stores/app-store.js";
+import { WorkspaceStore } from "../../../models/stores/workspace-store.js";
 import { StubClient } from "../../helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { messagePage } from "../../helpers/conversations.js";
@@ -35,14 +36,17 @@ function sessionDetail(isRunning: boolean, taskId: number | null = null) {
 describe("AppStore reconnect catch-up", () => {
   let client: StubClient;
   let store: AppStore;
+  let workspace: WorkspaceStore;
 
   beforeEach(() => {
     client = new StubClient();
     store = new AppStore(client);
+    workspace = new WorkspaceStore(store);
     restoreFetch();
   });
 
   afterEach(() => {
+    workspace.dispose();
     store.dispose();
     restoreFetch();
   });
@@ -57,23 +61,23 @@ describe("AppStore reconnect catch-up", () => {
 
   test("sets the code review scope from the viewed session", async () => {
     const setScope = mock(async () => {});
-    store.codeReviewStore.setScope = setScope;
+    workspace.codeReviewStore.setScope = setScope;
     mockFetch((url) => {
       if (url === "/api/sessions/sess-1") return Response.json(sessionDetail(false, 11));
       if (url === "/api/sessions/sess-1/messages") return Response.json(messagePage());
       return Response.json([]);
     });
 
-    await store.setRoute("sess-1");
+    await workspace.setSession("sess-1");
 
     expect(setScope).toHaveBeenLastCalledWith({ projectId: 42, taskId: 11 });
   });
 
   test("applies scoped code review invalidations", () => {
     const handleUpdated = mock(async () => {});
-    store.codeReviewStore.handleUpdated = handleUpdated;
+    workspace.codeReviewStore.handleUpdated = handleUpdated;
 
-    client.fireEvent("", 7, {
+    client.fireMessage({
       type: "code_review_updated",
       projectId: 7,
       taskId: 11,
@@ -100,8 +104,8 @@ describe("AppStore reconnect catch-up", () => {
       if (url === "/api/projects") return Response.json([]);
       return new Response("", { status: 404 });
     });
-    await store.setRoute("sess-1");
-    const activeStore = store.activeSessionStore;
+    await workspace.setSession("sess-1");
+    const activeStore = workspace.activeSessionStore;
     if (!activeStore) throw new Error("Expected active session store");
     const refreshFromServerSpy = mock(async () => {});
     activeStore.refreshFromServer = refreshFromServerSpy;
@@ -119,20 +123,26 @@ describe("AppStore reconnect catch-up", () => {
       ...start,
       content: [{ type: "text" as const, text: "received" }],
     };
-    client.fireEvent("sess-1", 42, { type: "agent_start" });
-    client.fireEvent("sess-1", 42, { type: "message_start", message: start });
-    client.fireEvent("sess-1", 42, {
-      type: "message_update",
-      message,
-      assistantMessageEvent: { type: "snapshot" },
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "agent_start" } });
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "message_start", message: start } });
+    client.fireMessage({
+      type: "event",
+      sessionId: "sess-1",
+      projectId: 42,
+      event: { type: "message_update", message, assistantMessageEvent: { type: "snapshot" } },
     });
 
     client.fireConnection(false);
-    client.fireEvent("sess-1", 42, {
-      type: "tool_execution_start",
-      toolCallId: "missed-owner",
-      toolName: "read",
-      args: {},
+    client.fireMessage({
+      type: "event",
+      sessionId: "sess-1",
+      projectId: 42,
+      event: {
+        type: "tool_execution_start",
+        toolCallId: "missed-owner",
+        toolName: "read",
+        args: {},
+      },
     });
 
     expect(store.activeConversationsStore.get("sess-1").streamingMessages.map(({ raw }) => raw)).toEqual([message]);
@@ -200,12 +210,13 @@ describe("AppStore reconnect catch-up", () => {
   test("reconnect prunes unobserved conversation state when no running activity remains", async () => {
     const start = { role: "assistant" as const, content: [], timestamp: 100 };
     const message = { ...start, content: [{ type: "text" as const, text: "working" }] };
-    client.fireEvent("bg-session", 42, { type: "agent_start" });
-    client.fireEvent("bg-session", 42, { type: "message_start", message: start });
-    client.fireEvent("bg-session", 42, {
-      type: "message_update",
-      message,
-      assistantMessageEvent: { type: "snapshot" },
+    client.fireMessage({ type: "event", sessionId: "bg-session", projectId: 42, event: { type: "agent_start" } });
+    client.fireMessage({ type: "event", sessionId: "bg-session", projectId: 42, event: { type: "message_start", message: start } });
+    client.fireMessage({
+      type: "event",
+      sessionId: "bg-session",
+      projectId: 42,
+      event: { type: "message_update", message, assistantMessageEvent: { type: "snapshot" } },
     });
     expect(store.activeConversationsStore.get("bg-session").streamingMessages.map(({ raw }) => raw)).toEqual([message]);
 
@@ -254,7 +265,7 @@ describe("AppStore reconnect catch-up", () => {
       return new Response("", { status: 404 });
     });
 
-    await store.setRoute("sess-1");
+    await workspace.setSession("sess-1");
     isRunning = false;
 
     client.fireConnection(true);
@@ -266,6 +277,7 @@ describe("AppStore reconnect catch-up", () => {
   });
 
   test("browser resume reconciles a missed agent_end without waiting for websocket reconnect", async () => {
+    workspace.dispose();
     store.dispose();
 
     const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -279,6 +291,7 @@ describe("AppStore reconnect catch-up", () => {
     try {
       client = new StubClient();
       store = new AppStore(client);
+      workspace = new WorkspaceStore(store);
       store.connect();
       store.projectsStore.refreshAll = mock(async () => {});
 
@@ -299,16 +312,17 @@ describe("AppStore reconnect catch-up", () => {
         return new Response("", { status: 404 });
       });
 
-      await store.setRoute("sess-1");
+      await workspace.setSession("sess-1");
       isRunning = false;
 
       fakeWindow.dispatchEvent(new Event("focus"));
       await new Promise((r) => setTimeout(r, 0));
       await new Promise((r) => setTimeout(r, 0));
 
-      expect(store.activeSessionStore?.sessionData.activityState).toBe("finished");
-      expect(store.activeSessionStore?.conversation.messages ?? []).toHaveLength(2);
+      expect(workspace.activeSessionStore?.sessionData.activityState).toBe("finished");
+      expect(workspace.activeSessionStore?.conversation.messages ?? []).toHaveLength(2);
     } finally {
+      workspace.dispose();
       store.dispose();
       if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
       else Reflect.deleteProperty(globalThis, "window");

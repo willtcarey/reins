@@ -17,7 +17,7 @@ import {
   type ChatImageBlock,
 } from "../models/chat-content.js";
 import { MessageActionsController } from "../controllers/message-actions-controller.js";
-import { sessionHash } from "../models/router.js";
+import { sessionHash } from "../routing/app-router.js";
 import { longPress } from "../directives/long-press.js";
 import { getToolRenderer } from "./tools/index.js";
 import { openImageViewerEvent } from "./events.js";
@@ -28,6 +28,8 @@ export class ChatMessage extends LitElement {
   @property({ attribute: false }) message: Message | null = null;
   @property() sessionId = "";
   @property() sourceSessionTitle = "";
+  @property({ attribute: false }) projectId: number | null = null;
+  @property({ attribute: false }) projectDir: string | null = null;
 
   @state() private summaryExpanded = false;
 
@@ -195,7 +197,10 @@ export class ChatMessage extends LitElement {
     const block = toolCall.renderData;
     if (!block) return nothing;
     const renderer = getToolRenderer(block.name);
-    return html`<div class="max-w-[90%]">${renderer.render({ ...block, sessionId: this.sessionId })}</div>`;
+    return html`<div class="max-w-[90%]">${renderer.render(
+      { ...block, sessionId: this.sessionId },
+      { projectId: this.projectId, projectDir: this.projectDir },
+    )}</div>`;
   }
 
   private renderCompaction(message: CompactionMessage) {

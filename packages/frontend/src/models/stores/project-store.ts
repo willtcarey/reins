@@ -43,6 +43,7 @@ export class ProjectStore {
 
   // ---- Public reactive state ------------------------------------------------
 
+  /** Active tasks loaded for the normal project sidebar. */
   tasks: TaskListItem[] = [];
   /** IDs returned by the latest active project-session list. Metadata lives in SessionCache. */
   sessionIds: string[] = [];
@@ -84,14 +85,6 @@ export class ProjectStore {
   }
 
   // ---- Task selectors -------------------------------------------------------
-
-  get openTasks(): TaskListItem[] {
-    return this.tasks.filter((task) => task.status !== "closed");
-  }
-
-  get closedTasks(): TaskListItem[] {
-    return this.tasks.filter((task) => task.status === "closed");
-  }
 
   findTask(taskId: number): TaskListItem | undefined {
     return this.tasks.find((task) => task.id === taskId);
@@ -274,7 +267,7 @@ export class ProjectStore {
 
     try {
       const [tasksResp, sessionsResp, skillsResp] = await Promise.all([
-        fetch(`/api/projects/${this.projectId}/tasks`),
+        fetch(`/api/projects/${this.projectId}/tasks?status=open`),
         fetch(`/api/projects/${this.projectId}/sessions`),
         fetch(`/api/projects/${this.projectId}/skills`),
       ]);

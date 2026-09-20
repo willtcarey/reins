@@ -270,6 +270,51 @@ describe("ProjectsStore per-project data", () => {
     expect(cache.get("p2-session")?.projectId).toBe(2);
   });
 
+  // ---- Aggregate mutations --------------------------------------------------
+
+  test("routes task mutations through the loaded project store", async () => {
+    const project = store.getStore(42);
+    const updateTask = mock(async () => ({ ok: true as const }));
+    const deleteTask = mock(async () => ({ ok: true as const }));
+    const generateTask = mock(async () => ({ ok: true as const }));
+    project.updateTask = updateTask;
+    project.deleteTask = deleteTask;
+    project.generateTask = generateTask;
+
+    await expect(store.updateTask(42, 7, { title: "Updated" })).resolves.toEqual({ ok: true });
+    await expect(store.deleteTask(42, 7)).resolves.toEqual({ ok: true });
+    await expect(store.generateTask(42, "Build it")).resolves.toEqual({ ok: true });
+    expect(updateTask).toHaveBeenCalledWith(7, { title: "Updated" });
+    expect(deleteTask).toHaveBeenCalledWith(7);
+    expect(generateTask).toHaveBeenCalledWith("Build it");
+  });
+
+  test("returns a domain error when task mutations target unloaded project data", async () => {
+    await expect(store.updateTask(42, 7, { title: "Updated" })).resolves.toEqual({ error: "No project data" });
+    await expect(store.deleteTask(42, 7)).resolves.toEqual({ error: "No project data" });
+    await expect(store.generateTask(42, "Build it")).resolves.toEqual({ error: "No project data" });
+  });
+
+  test("creates project and task sessions and refreshes loaded project data", async () => {
+    const refresh = mock(async () => {});
+    store.refresh = refresh;
+    mockFetch((url, init) => {
+      if (url === "/api/projects/42/sessions" && init?.method === "POST") {
+        return Response.json({ id: "scratch-1" });
+      }
+      if (url === "/api/tasks/7/sessions" && init?.method === "POST") {
+        return Response.json({ id: "task-session-1" });
+      }
+      return Response.json({}, { status: 404 });
+    });
+
+    await expect(store.createSession(42)).resolves.toEqual({ sessionId: "scratch-1" });
+    await expect(store.createTaskSession(7, 42)).resolves.toEqual({ sessionId: "task-session-1" });
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(refresh).toHaveBeenNthCalledWith(1, 42);
+    expect(refresh).toHaveBeenNthCalledWith(2, 42);
+  });
+
   // ---- Notification bubbling ------------------------------------------------
 
   test("child store notifications bubble to projects store subscribers", async () => {

@@ -1,66 +1,29 @@
-/**
- * App Shell — thin root component.
- *
- * Creates the AppStore and WebSocket client, wires shell controllers,
- * and renders views. All server communication and event handling lives
- * in AppStore — this component only owns UI-local concerns (active pane,
- * file tree state, document title).
- *
- * Routes:
- *  - `#/session/:sessionId` — view a specific session
- *  - (empty hash)           — no project selected, show empty state
- */
+/** Root application shell: lifecycle, route outlet, and global overlays. */
 
-import { LitElement, html, nothing } from "lit";
-import { keyed } from "lit/directives/keyed.js";
-import { customElement, state, query } from "lit/decorators.js";
-import { AppClient } from "../models/ws-client.js";
-import type { ReviewDiffPanel } from "./changes/review-diff-panel.js";
-import { FileTreeState } from "../models/changes/file-tree-state.js";
+import { LitElement, html } from "lit";
+import { customElement, query, state } from "lit/decorators.js";
 import { AppRouteController } from "../controllers/app-route-controller.js";
-import { PageSwipeController } from "../controllers/page-swipe-controller.js";
-import { ViewportController } from "../controllers/viewport-controller.js";
 import { AppStore } from "../models/stores/app-store.js";
-import { folderIcon } from "../ui/icons.js";
-// Ensure sub-components are registered
+import { FileBrowserStore } from "../models/stores/file-browser-store.js";
+import { QuickOpenStore } from "../models/stores/quick-open-store.js";
+import { AppClient } from "../models/ws-client.js";
+import { renderRoutePage } from "../routing/app-router.js";
+import type { Route } from "../routing/router.js";
 import type {
-  MainPaneSelectDetail,
-  MainWorkspacePane,
   OpenImageViewerDetail,
   OpenInBrowserDetail,
-  WorkspacePane,
+  ProjectScopeDetail,
 } from "./events.js";
-import "./app-main-toolbar.js";
-import "./chat-panel.js";
-import "./changes/diff-file-tree.js";
-import "./changes/review-diff-panel.js";
-import "./session-sidebar.js";
-import "./quick-open.js";
-import type { QuickOpen } from "./quick-open.js";
-import { QuickOpenStore } from "../models/stores/quick-open-store.js";
-import "./file-search.js";
 import type { FileSearch } from "./file-search.js";
-import "./file-viewer/file-browser.js";
 import type { FileBrowser } from "./file-viewer/file-browser.js";
-import { FileBrowserStore } from "../models/stores/file-browser-store.js";
-import { setProjectDir, toRelativePath } from "../models/path-utils.js";
-import "./image-lightbox.js";
 import type { ImageLightbox } from "./image-lightbox.js";
-import "./settings/panel.js";
+import type { QuickOpen } from "./quick-open.js";
 import type { SettingsPanel } from "./settings/panel.js";
-
-type WorkspacePanes = Record<WorkspacePane, unknown>;
-
-const MOBILE_WORKSPACE_PANE_ORDER = [
-  "sessions",
-  "chat",
-  "changes",
-  "files",
-] as const satisfies readonly WorkspacePane[];
-
-function mainWorkspacePaneFor(pane: WorkspacePane): MainWorkspacePane {
-  return pane === "changes" || pane === "files" ? "changes" : "chat";
-}
+import "./file-search.js";
+import "./file-viewer/file-browser.js";
+import "./image-lightbox.js";
+import "./quick-open.js";
+import "./settings/panel.js";
 
 @customElement("app-shell")
 export class AppShell extends LitElement {
@@ -69,354 +32,104 @@ export class AppShell extends LitElement {
   }
 
   private appStore = new AppStore(new AppClient());
-  private fileTreeState = new FileTreeState();
-  private _unsubscribeStore: (() => void) | null = null;
-  private viewport = new ViewportController(this);
+  private quickOpenStore = new QuickOpenStore(this.appStore.sessionCache);
+  private fileBrowserStore = new FileBrowserStore();
+  private unsubscribeStore: (() => void) | null = null;
   private routes = new AppRouteController(this, {
-    store: this.appStore,
-    onSessionChange: () => { this.activePane = "chat"; },
-    onProjectChange: () => {
-      this.fileTreeState.reset();
-      this.activeDiffFile = null;
-    },
-    onSessionVisit: (sessionId) => this.quickOpenStore.recordVisit(sessionId),
+    onRouteChange: (route) => this.handleRouteChange(route),
   });
 
-  @state() private activePane: WorkspacePane = "chat";
-  @state() private activeDiffFile: string | null = null;
-  /** Bumped on every store notification to trigger a re-render. */
-  @state() private _storeVersion = 0;
-  private quickOpenStore = new QuickOpenStore();
-  @query("quick-open") private _quickOpen!: QuickOpen;
-  private fileBrowserStore = new FileBrowserStore();
-  @query("file-search") private _fileSearch!: FileSearch;
-  @query("file-browser") private _fileBrowser!: FileBrowser;
-  @query("image-lightbox") private _imageLightbox!: ImageLightbox;
-  @query("settings-panel") private _settingsPanel!: SettingsPanel;
-  private pageSwipe = new PageSwipeController(this, {
-    pageCount: MOBILE_WORKSPACE_PANE_ORDER.length,
-    getPage: () => this.pageForPane(this.activePane),
-    commitPage: (page) => { this.activePane = this.paneForPage(page); },
-    isEnabled: () => this.viewport.isMobileLayout,
-  });
+  @state() private currentRoute: Route = { name: "empty", params: {} };
+  @state() private storeVersion = 0;
+  @query("quick-open") private quickOpen!: QuickOpen;
+  @query("file-search") private fileSearch!: FileSearch;
+  @query("file-browser") private fileBrowser!: FileBrowser;
+  @query("image-lightbox") private imageLightbox!: ImageLightbox;
+  @query("settings-panel") private settingsPanel!: SettingsPanel;
 
   override connectedCallback() {
     super.connectedCallback();
-
-    // Subscribe to app store changes (covers project store + activity)
-    this._unsubscribeStore = this.appStore.subscribe(() => {
-      this._storeVersion++;
-      this.fileBrowserStore.projectId = this.appStore.projectId;
-      // Keep path-utils aware of the current project directory so
-      // absolute paths inside the project are treated as browsable.
-      const pid = this.appStore.projectId;
-      const proj = pid != null ? this.appStore.projects.find(p => p.id === pid) : null;
-      setProjectDir(proj?.path ?? null);
-      this.updateTitleAndFavicon();
+    this.unsubscribeStore = this.appStore.subscribe(() => {
+      this.storeVersion += 1;
+      this.updateDocumentTitle();
     });
-
     this.routes.connect();
-
-    // Listen for open-in-browser events dispatched on document (e.g. from
-    // agent-triggered ui.openFile() via WS). Events from child components
-    // bubble to the template handler; document-level events need this listener.
     document.addEventListener("open-in-browser", this.handleOpenInBrowser);
-
     this.appStore.connect();
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    this._unsubscribeStore?.();
+    this.unsubscribeStore?.();
     document.removeEventListener("open-in-browser", this.handleOpenInBrowser);
     this.appStore.disconnect();
+    this.quickOpenStore.dispose();
     this.appStore.dispose();
   }
 
-  private updateTitleAndFavicon(): void {
+  private updateDocumentTitle(): void {
     const { running, finished } = this.appStore.activitySummary;
+    if (running > 0) document.title = `(${running} running) REINS`;
+    else if (finished > 0) document.title = `(${finished} new) REINS`;
+    else document.title = "REINS";
+  }
 
-    if (running > 0) {
-      document.title = `(${running} running) REINS`;
-    } else if (finished > 0) {
-      document.title = `(${finished} new) REINS`;
-    } else {
-      document.title = "REINS";
+  private handleRouteChange(route: Route): void {
+    this.currentRoute = route;
+    if (route.name === "session" && route.params.sessionId) {
+      this.quickOpenStore.recordVisit(route.params.sessionId);
     }
   }
 
-  private getDiffPanel(): ReviewDiffPanel | null {
-    return this.querySelector("review-diff-panel");
-  }
-
-  /**
-   * Handle file selection from a layout-owned file tree:
-   * switch to the Changes tab, then scroll to that file's diff card.
-   */
-  private handleChatFileSelect(e: CustomEvent<string>) {
-    e.stopPropagation();
-    const path = e.detail;
-    this.activePane = "changes";
-    requestAnimationFrame(() => {
-      this.getDiffPanel()?.scrollToFile(path);
-    });
-  }
-
-  /** Handle `open-in-browser` events — from child components (bubbling) and agent-triggered (document dispatch). */
-  private handleOpenInBrowser = (e: CustomEvent<OpenInBrowserDetail>) => {
-    const { startLine, endLine, viewMode } = e.detail;
-    // Normalise absolute project paths to relative before opening
-    const path = toRelativePath(e.detail.path);
+  private handleOpenInBrowser = (event: CustomEvent<OpenInBrowserDetail>) => {
+    const { projectId, path, startLine, endLine, viewMode } = event.detail;
     if (!path) return;
-    this._fileBrowser?.openFile(
+    this.fileBrowser?.openFile(
+      projectId,
       path,
       startLine != null && endLine != null ? { startLine, endLine } : undefined,
       viewMode,
     );
-  }
-
-  private handleOpenImageViewer = (e: CustomEvent<OpenImageViewerDetail>) => {
-    this._imageLightbox?.show(e.detail);
   };
 
-  private handleMainPaneSelect(e: CustomEvent<MainPaneSelectDetail>) {
-    this.activePane = e.detail.pane;
-  }
-
-  private pageForPane(pane: WorkspacePane) {
-    const page = MOBILE_WORKSPACE_PANE_ORDER.indexOf(pane);
-    return page === -1 ? MOBILE_WORKSPACE_PANE_ORDER.indexOf("chat") : page;
-  }
-
-  private paneForPage(page: number): WorkspacePane {
-    return MOBILE_WORKSPACE_PANE_ORDER[page] ?? "chat";
-  }
-
-  private openQuickOpen() {
-    this._quickOpen?.open();
-  }
-
-  private openFileSearch() {
-    this._fileSearch?.open();
-  }
-
-  private openSettings() {
-    this._settingsPanel?.open();
-  }
-
-  private activityForSession = (projectId: number, sessionId: string) => {
-    return this.appStore.projectsStore.activityForSession(projectId, sessionId);
+  private handleOpenImageViewer = (event: CustomEvent<OpenImageViewerDetail>) => {
+    this.imageLightbox?.show(event.detail);
   };
 
-  private renderSessionSidebar(store: AppStore) {
-    return html`
-      <session-sidebar
-        class="block h-full"
-        .store=${store}
-        @select-session=${() => { this.activePane = "chat"; }}
-      ></session-sidebar>
-    `;
-  }
+  private handleOpenFileSearch = (event: CustomEvent<ProjectScopeDetail>) => {
+    this.fileSearch?.open(event.detail.projectId);
+  };
 
-  private renderMainToolbar(store: AppStore, activePane: MainWorkspacePane) {
-    return html`
-      <app-main-toolbar
-        .activePane=${activePane}
-        .currentBranch=${store.diffStore.branch}
-        .isStandalone=${this.viewport.isStandalone}
-        .connected=${store.connected}
-        show-sidebar-button
-        @open-file-browser=${() => this._fileBrowser?.open()}
-        @pane-select=${(e: CustomEvent<MainPaneSelectDetail>) => this.handleMainPaneSelect(e)}
-        @reload-request=${() => location.reload()}
-      ></app-main-toolbar>
-    `;
-  }
+  private handleOpenFileBrowser = (event: CustomEvent<ProjectScopeDetail>) => {
+    this.fileBrowser?.open(event.detail.projectId);
+  };
 
-  private renderChatPane(store: AppStore, visible: boolean) {
-    if (!store.activeSessionStore) return nothing;
-
-    const parentSessionId = store.activeSessionStore.sessionData.parentSessionId;
-    const parentSession = parentSessionId
-      ? store.activeProjectStore?.getSession(parentSessionId) ?? null
-      : null;
-
-    return keyed(store.sessionId, html`
-      <chat-panel
-        class="block h-full min-h-0 min-w-0"
-        .store=${store.activeSessionStore}
-        .projectStore=${store.activeProjectStore}
-        .parentSession=${parentSession}
-        .runningChildSessions=${store.activeProjectStore?.runningChildSessionsFor(store.sessionId) ?? []}
-        ?visible=${visible}
-      ></chat-panel>
-    `);
-  }
-
-  private renderChangesPane(store: AppStore, visible: boolean) {
-    return html`
-      <review-diff-panel
-        class="block h-full min-h-0 min-w-0"
-        .store=${store.diffStore}
-        .reviewStore=${store.codeReviewStore}
-        .sessionId=${store.sessionId}
-        .sessionRunning=${store.activeSessionStore?.sessionData?.activityState === "running"}
-        .visible=${visible}
-        @active-file-change=${(e: CustomEvent<string | null>) => { this.activeDiffFile = e.detail; }}
-      ></review-diff-panel>
-    `;
-  }
-
-  private renderFileTree(store: AppStore) {
-    return html`
-      <diff-file-tree
-        class="block h-full min-h-0 flex-1"
-        data-swipe-surface
-        .store=${store.diffStore}
-        .reviewStore=${store.codeReviewStore}
-        .treeState=${this.fileTreeState}
-        .activeFile=${this.activeDiffFile}
-        @file-select=${(e: CustomEvent<string>) => this.handleChatFileSelect(e)}
-      ></diff-file-tree>
-    `;
-  }
-
-  private renderWorkspacePanes(store: AppStore): WorkspacePanes {
-    const activeMainPane = mainWorkspacePaneFor(this.activePane);
-    const swipeActive = this.pageSwipe.dragging || this.pageSwipe.settling;
-    const conversationVisible = this.viewport.isMobileLayout
-      ? this.activePane === "chat"
-      : activeMainPane === "chat";
-    const hasSession = store.activeSessionStore != null;
-    const hasProject = store.projectId != null;
-
-    return {
-      sessions: this.renderSessionSidebar(store),
-      chat: hasSession
-        ? this.renderChatPane(store, conversationVisible)
-        : this.renderEmptyState(),
-      changes: hasProject
-        ? keyed(
-            store.projectId,
-            this.renderChangesPane(store, this.viewport.isMobileLayout || activeMainPane === "changes" || swipeActive),
-          )
-        : nothing,
-      files: hasProject ? this.renderFileTree(store) : nothing,
-    };
-  }
-
-  private renderWorkspace(store: AppStore, panes: WorkspacePanes) {
-    const activeMainPane = mainWorkspacePaneFor(this.activePane);
-    const hasSession = store.activeSessionStore != null;
-    const hasProject = store.projectId != null;
-    this.pageSwipe.syncPage();
-    const page = this.pageForPane(this.activePane);
-    const swipeTranslateX = this.pageSwipe.translateX == null
-      ? `${-page * 100}%`
-      : `${this.pageSwipe.translateX}px`;
-    const gridStyle = `grid-template-columns: repeat(${MOBILE_WORKSPACE_PANE_ORDER.length}, 100%); transform: translate3d(${swipeTranslateX}, 0, 0);`;
-    const desktopColumns = hasProject
-      ? "md:![grid-template-columns:auto_minmax(0,1fr)_15rem]"
-      : "md:![grid-template-columns:auto_minmax(0,1fr)_0]";
+  override render() {
+    void this.storeVersion;
+    const store = this.appStore;
+    const mainContent = renderRoutePage(this.currentRoute, { app: store });
 
     return html`
       <div
-        class="relative h-full min-h-0 min-w-0 overflow-clip swipe-shell"
-        data-workspace-shell
-        @click=${this.pageSwipe.clickCaptureHandler}
-        @pointerdown=${this.pageSwipe.handlePointerDown}
-        @pointermove=${this.pageSwipe.handlePointerMove}
-        @pointerup=${this.pageSwipe.handlePointerEnd}
-        @pointercancel=${this.pageSwipe.handlePointerCancel}
-      >
-        <div
-          class="workspace-surface grid h-full min-h-0 min-w-0 grid-rows-[50px_minmax(0,1fr)] md:!transform-none ${desktopColumns} md:grid-rows-[50px_minmax(0,1fr)]"
-          data-dragging=${this.pageSwipe.dragging || this.pageSwipe.settling ? "true" : "false"}
-          style=${gridStyle}
-        >
-          <div class="z-20 col-start-2 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "chat" ? "md:block" : "md:hidden"}">
-            ${hasSession ? this.renderMainToolbar(store, "chat") : nothing}
-          </div>
-          <div class="z-20 col-start-3 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "changes" ? "md:block" : "md:hidden"}">
-            ${hasProject ? this.renderMainToolbar(store, "changes") : nothing}
-          </div>
-          <section class="col-start-1 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-1 md:row-start-1 md:row-span-2">
-            ${panes.sessions}
-          </section>
-          <section class="col-start-2 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 md:row-start-2 ${activeMainPane === "chat" ? "" : "md:hidden"}">
-            ${panes.chat}
-          </section>
-          <section class="col-start-3 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 md:row-start-2 ${activeMainPane === "changes" ? "" : "md:hidden"}">
-            ${panes.changes}
-          </section>
-          <section class="col-start-4 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-3 md:row-start-1 md:row-span-2 ${hasProject ? "md:border-l md:border-zinc-700" : ""}">
-            ${panes.files}
-          </section>
-        </div>
-      </div>
-    `;
-  }
-
-  private renderEmptyState() {
-    return html`
-      <div class="flex-1 flex flex-col">
-        <div class="flex-1 flex items-center justify-center">
-        <div class="text-center max-w-md px-6">
-          ${folderIcon("mx-auto mb-4 text-zinc-600", 48, 1.5)}
-          <h2 class="text-lg font-medium text-zinc-400 mb-2">No project selected</h2>
-          <p class="text-sm text-zinc-500">
-            Select a project from the sidebar or add a new one to get started.
-          </p>
-        </div>
-        </div>
-      </div>
-    `;
-  }
-
-  override render() {
-    // Read from store (the _storeVersion state ensures re-renders on changes)
-    void this._storeVersion;
-    const store = this.appStore;
-    const panes = this.renderWorkspacePanes(store);
-
-    return html`
-      <div class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"
-        @open-quick-open=${() => this.openQuickOpen()}
-        @open-file-search=${() => this.openFileSearch()}
+        class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"
+        @open-quick-open=${() => this.quickOpen?.open()}
+        @open-file-search=${this.handleOpenFileSearch}
+        @open-file-browser=${this.handleOpenFileBrowser}
         @open-image-viewer=${this.handleOpenImageViewer}
-        @open-settings=${() => this.openSettings()}>
-        <!-- Connection status bar -->
+        @open-settings=${() => this.settingsPanel?.open()}
+      >
         ${!store.connected ? html`
           <div class="bg-yellow-800 text-yellow-200 text-xs text-center py-1">
             Connecting to server...
           </div>
         ` : ""}
 
-        <!-- Main layout: one responsive grid with swipe navigation -->
-        <div class="flex-1 min-h-0 min-w-0 overflow-hidden">
-          ${this.renderWorkspace(store, panes)}
-        </div>
+        <div class="flex-1 min-h-0 min-w-0 overflow-hidden">${mainContent}</div>
 
-        <!-- Quick-open overlay -->
-        <quick-open
-          .activityForSession=${this.activityForSession}
-          .store=${this.quickOpenStore}
-        ></quick-open>
-
-        <!-- File search palette (Cmd+P) -->
-        <file-search
-          .store=${this.fileBrowserStore}
-        ></file-search>
-
-        <!-- File viewer overlay -->
-        <file-browser
-          .store=${this.fileBrowserStore}
-        ></file-browser>
-
-        <!-- Image preview overlay -->
+        <quick-open .store=${this.quickOpenStore}></quick-open>
+        <file-search .store=${this.fileBrowserStore}></file-search>
+        <file-browser .store=${this.fileBrowserStore}></file-browser>
         <image-lightbox></image-lightbox>
-
-        <!-- Settings panel overlay -->
         <settings-panel .store=${store.settingsStore}></settings-panel>
       </div>
     `;

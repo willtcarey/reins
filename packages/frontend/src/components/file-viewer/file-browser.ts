@@ -1,7 +1,7 @@
 /**
  * File Browser — overlay with tree sidebar and file content viewer.
  *
- * Opens via `openFile(path)` (called by the app shell in response to
+ * Opens via `openFile(projectId, path)` (called by the app shell in response to
  * `open-in-browser` events). Renders a header bar, a directory tree
  * sidebar (`<file-tree>`), and a content viewer (`<file-viewer>`).
  * Escape or the close button dismisses it.
@@ -58,7 +58,8 @@ export class FileBrowser extends LitElement {
   }
 
   /** Open the overlay (tree + viewer) without selecting a file. */
-  open() {
+  open(projectId: number) {
+    this.store?.setProject(projectId);
     if (!this._open) {
       this.store?.reset();
       this._open = true;
@@ -69,11 +70,12 @@ export class FileBrowser extends LitElement {
 
   /** Open the overlay to a specific file, or switch files if already open. */
   openFile(
+    projectId: number,
     path: string,
     lineRange?: { startLine: number; endLine: number },
     initialView: FileViewMode = "code",
   ) {
-    this.open();
+    this.open(projectId);
     this._initialView = initialView;
     this._viewer?.resetHighlight();
     this._pendingHighlight = lineRange ?? null;
@@ -97,7 +99,9 @@ export class FileBrowser extends LitElement {
   }
 
   private _openFileSearch() {
-    this.dispatchEvent(openFileSearchEvent());
+    const projectId = this.store?.projectId;
+    if (projectId == null) return;
+    this.dispatchEvent(openFileSearchEvent(projectId));
   }
 
   private _downloadUrl(): string | null {

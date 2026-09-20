@@ -47,8 +47,6 @@ describe("ProjectStore", () => {
   test("constructor sets projectId and initial state", () => {
     expect(store.projectId).toBe(42);
     expect(store.tasks).toEqual([]);
-    expect(store.openTasks).toEqual([]);
-    expect(store.closedTasks).toEqual([]);
     expect(store.sessionIds).toEqual([]);
     expect(store.sessions).toEqual([]);
     expect(store.loadedTaskSessionIds).toEqual(new Set());
@@ -152,15 +150,6 @@ describe("ProjectStore", () => {
     expect(store.activityForSession("s-task")).toBe("finished");
   });
 
-  test("openTasks and closedTasks split task rows", () => {
-    const open = makeTask({ id: 1, status: "open" });
-    const closed = makeTask({ id: 2, status: "closed" });
-    store.tasks = [open, closed];
-
-    expect(store.openTasks).toEqual([open]);
-    expect(store.closedTasks).toEqual([closed]);
-  });
-
   test("fetchLists fetches tasks and sessions in parallel", async () => {
     const sessionIds: string[] = [];
     const tasks = [{ id: 1, project_id: 42, title: "Task 1", description: null, branch_name: "", status: "open" as const, created_at: "", updated_at: "", session_count: 0, session_ids: sessionIds, diffStats: null }];
@@ -175,8 +164,6 @@ describe("ProjectStore", () => {
     await store.fetchLists();
 
     expect(store.tasks).toEqual(tasks);
-    expect(store.openTasks).toEqual(tasks);
-    expect(store.closedTasks).toEqual([]);
     expect(store.sessionIds).toEqual(["s1"]);
     expect(store.sessions).toMatchObject(sessions);
     expect(store.loading).toBe(false);
@@ -409,7 +396,7 @@ describe("ProjectStore", () => {
 
     await store.fetchLists();
 
-    expect(urls).toContain("/api/projects/42/tasks");
+    expect(urls).toContain("/api/projects/42/tasks?status=open");
     expect(urls).toContain("/api/projects/42/sessions");
   });
 
@@ -429,7 +416,7 @@ describe("ProjectStore", () => {
     store.loadedTaskSessionIds = new Set([7]);
 
     mockFetch((url) => {
-      if (url === "/api/projects/42/tasks") {
+      if (url === "/api/projects/42/tasks?status=open") {
         return jsonResponse([
           {
             id: 7,

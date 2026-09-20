@@ -146,7 +146,7 @@ const sessionsListFunction = defineFunction({
     "for scratch sessions only. Use taskId: \"current\" from a task session to list that task's sessions.",
   parameters: Type.Object({ options: Type.Optional(SessionListOptionsSchema) }),
   returns: Type.Array(SessionSchema),
-  tags: ["sessions", "list", "query", "read", "scratch", "filter", "search", "messages"],
+  tags: ["sessions", "list", "query", "read", "scratch", "filter", "search", "messages", "unread", "activity"],
   execute: (params, ctx) => {
     const options = params.options;
     const projectId = options?.projectId === "current" || options?.projectId === undefined

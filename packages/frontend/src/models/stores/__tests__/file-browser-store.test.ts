@@ -20,7 +20,7 @@ describe("FileBrowserStore tree state", () => {
 
   beforeEach(() => {
     store = new FileBrowserStore();
-    store.projectId = 1;
+    store.setProject(1);
   });
 
   afterEach(() => {
@@ -184,7 +184,7 @@ describe("FileBrowserStore selectFile binary detection", () => {
 
   function setupStore(contentType: string, body: BodyInit = "data") {
     store = new FileBrowserStore();
-    store.projectId = 1;
+    store.setProject(1);
     fetchCalls = [];
     mockFetch((url) => {
       fetchCalls.push(String(url));

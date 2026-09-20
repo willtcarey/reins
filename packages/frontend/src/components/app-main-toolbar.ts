@@ -13,6 +13,7 @@ export class AppMainToolbar extends LitElement {
     return this;
   }
 
+  @property({ type: Number, attribute: false }) projectId: number | null = null;
   @property({ type: String }) activePane: MainWorkspacePane = "chat";
   @property({ type: String }) currentBranch: string | null = null;
   @property({ type: Boolean }) isStandalone = false;
@@ -53,7 +54,9 @@ export class AppMainToolbar extends LitElement {
           </button>
         ` : ""}
         <nav-icon icon="folder" label="Browse files" .size=${18}
-          @click=${() => this.dispatchEvent(openFileBrowserEvent())}></nav-icon>
+          @click=${() => {
+            if (this.projectId != null) this.dispatchEvent(openFileBrowserEvent(this.projectId));
+          }}></nav-icon>
         <div class="relative grid grid-cols-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-1 shrink-0 overflow-hidden">
           <span
             class="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-md bg-blue-500/20 shadow-sm transition-transform duration-200 ease-out will-change-transform ${chatActive ? "translate-x-0" : "translate-x-full"}"

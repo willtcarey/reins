@@ -1,8 +1,9 @@
 /**
  * File Search — standalone Cmd+P / Ctrl+P fuzzy file search palette.
  *
- * Owns its own open/close state. Registers the global keyboard shortcut
- * and exposes an `open()` method for programmatic triggers.
+ * Owns its own open/close state and exposes an `open(projectId)` method for
+ * explicitly scoped triggers. The mounted workspace handles Cmd+P because it
+ * owns the current project context.
  * Selecting a file dispatches a bubbling `open-in-browser` event that
  * the app shell catches to open the file viewer overlay.
  *
@@ -34,15 +35,9 @@ export class FileSearch extends LitElement {
 
   private _unsub: (() => void) | null = null;
 
-  override connectedCallback() {
-    super.connectedCallback();
-    window.addEventListener("keydown", this._onKeydown);
-  }
-
   override disconnectedCallback() {
     super.disconnectedCallback();
     this._unsub?.();
-    window.removeEventListener("keydown", this._onKeydown);
   }
 
   override willUpdate(changed: Map<string, unknown>) {
@@ -65,20 +60,14 @@ export class FileSearch extends LitElement {
   }
 
   /** Open the palette. */
-  open() {
+  open(projectId: number) {
+    this.store?.setProject(projectId);
     this._open = true;
   }
 
   private close() {
     this._open = false;
   }
-
-  private _onKeydown = (e: KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "p") {
-      e.preventDefault();
-      this._open = !this._open;
-    }
-  };
 
   @state() private _filteredFiles: string[] = [];
 
@@ -95,8 +84,10 @@ export class FileSearch extends LitElement {
   private handleConfirm(e: CustomEvent<number>) {
     const items = this._filteredFiles;
     if (items.length > 0 && e.detail < items.length) {
+      const projectId = this.store?.projectId;
+      if (projectId == null) return;
       this.close();
-      this.dispatchEvent(openInBrowserEvent(items[e.detail]));
+      this.dispatchEvent(openInBrowserEvent(projectId, items[e.detail]));
     }
   }
 

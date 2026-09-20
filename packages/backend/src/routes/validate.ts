@@ -67,6 +67,38 @@ export function parseFormFiles(
  * Extract an integer URL param by name. Throws HttpError(400) if missing or
  * not a valid integer string.
  */
+export interface CollectionPageParams {
+  limit: number;
+  offset: number;
+  search: string | undefined;
+}
+
+/**
+ * Parse optional offset pagination. A missing limit preserves the route's
+ * existing unpaginated response contract.
+ */
+export function parseCollectionPage(url: URL, maxLimit = 100): CollectionPageParams | null {
+  const limitParam = url.searchParams.get("limit");
+  if (limitParam === null) return null;
+
+  const limit = Number(limitParam);
+  if (!Number.isInteger(limit) || limit < 1 || limit > maxLimit) {
+    throw new HttpError(400, `limit must be an integer between 1 and ${maxLimit}`);
+  }
+
+  const offsetParam = url.searchParams.get("offset");
+  const offset = offsetParam === null ? 0 : Number(offsetParam);
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new HttpError(400, "offset must be a non-negative integer");
+  }
+
+  return {
+    limit,
+    offset,
+    search: url.searchParams.get("search")?.trim() || undefined,
+  };
+}
+
 export function parseIntParam(
   params: Record<string, string>,
   name: string,
