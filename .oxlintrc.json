@@ -16,6 +16,12 @@
   },
   "overrides": [
     {
+      "files": ["packages/frontend/src/**/*.ts"],
+      "rules": {
+        "reins/frontend-backend-imports-type-only": "error"
+      }
+    },
+    {
       "files": ["packages/frontend/src/components/**/*.ts"],
       "rules": {
         "reins/no-custom-event-constructor": "error",

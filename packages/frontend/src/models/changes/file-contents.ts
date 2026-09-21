@@ -1,4 +1,5 @@
 import type { FileContents } from "@pierre/diffs";
+import { ReinsClient, api } from "../reins-client.js";
 import type { FileChange } from "./file-changes.js";
 import { extractFile, reversePatch } from "./patch.js";
 
@@ -36,7 +37,7 @@ export class UnsupportedFileContents extends Error {
 export async function loadFileContents(
   change: FileChange,
   scope: FileDiffContextScope,
-  fetchResponse: FetchResponse,
+  fetchResponse?: FetchResponse,
 ): Promise<FilePair> {
   const oldName = change.oldPath ?? change.path;
   const oldKey = `review-expansion:${change.contentKey}:old`;
@@ -49,9 +50,12 @@ export async function loadFileContents(
     };
   }
 
-  const params = new URLSearchParams({ path: change.path });
-  if (scope.branch) params.set("ref", scope.branch);
-  const response = await fetchResponse(`/api/projects/${scope.projectId}/files/content?${params}`);
+  const client = fetchResponse ? new ReinsClient(fetchResponse) : api;
+  const response = await client.files.content(
+    scope.projectId,
+    change.path,
+    scope.branch ? { ref: scope.branch } : {},
+  );
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const newContents = await readText(response);
   const oldContents = reversePatch(change.filePatch, newContents);

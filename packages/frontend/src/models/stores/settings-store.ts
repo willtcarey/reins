@@ -5,41 +5,25 @@
  * and settings-related mutations, including model/provider registry loading.
  */
 
+import type { OAuthProviderInfo } from "@backend/routes/oauth.js";
+import type { ModelSetting, ModelSettingsKey as ModelSettingKey, SettingEntry } from "@backend/settings-store.js";
+import { api } from "../reins-client.js";
 import { ModelRegistryStore } from "./model-registry-store.js";
-
-export interface OAuthProviderInfo {
-  id: string;
-  name: string;
-  configured: boolean;
-}
-
-export interface ModelSetting {
-  provider: string;
-  modelId: string;
-  runtimeType: string;
-  thinkingLevel: string;
-}
 
 export type SettingsStoreResult = { ok: true } | { error: string };
 export type SettingsStoreListener = () => void;
-export type ModelSettingKey = "default_model" | "utility_model";
-export type SettingsKey = "default_model" | "utility_model";
+type SettingsKey = ModelSettingKey;
 export type SettingsChange = { key: string };
 export type SettingsChangeListener = (change: SettingsChange) => void;
 
-type ModelSelection = {
-  provider: string;
-  modelId: string;
-  runtimeType: string;
-  thinkingLevel: string;
-};
+type ModelSelection = ModelSetting;
 
 type ModelSettingState = {
   stored: ModelSetting | null;
   selected: ModelSelection;
 };
 
-type LoadedSettingEntry = { key: ModelSettingKey; value: ModelSetting };
+type LoadedSettingEntry = SettingEntry<ModelSettingKey>;
 
 const MODEL_SETTING_KEYS: ModelSettingKey[] = ["default_model", "utility_model"];
 
@@ -131,21 +115,15 @@ export class SettingsStore {
     this.notify();
 
     try {
-      const settingsQuery = settingKeys.map((key) => `key=${encodeURIComponent(key)}`).join("&");
-      const [settingsRes, oauthRes] = await Promise.all([
-        settingKeys.length > 0 ? fetch(`/api/settings?${settingsQuery}`) : emptyJsonResponse(),
-        fetch("/api/oauth/providers"),
+      const [settings, oauthProviders] = await Promise.all([
+        settingKeys.length > 0
+          ? api.settings.list(settingKeys)
+          : Promise.resolve([]),
+        api.oauth.providers(),
       ]);
 
-      if (!settingsRes.ok) {
-        return { error: await errorDetail(settingsRes) };
-      }
-      this._applyLoadedSettings(await settingsRes.json(), settingKeys);
-
-      if (!oauthRes.ok) {
-        return { error: await errorDetail(oauthRes) };
-      }
-      this.oauthProviders = await oauthRes.json();
+      this._applyLoadedSettings(settings, settingKeys);
+      this.oauthProviders = oauthProviders;
 
       this._resetOAuthLoginState();
       this._syncSelectionsFromSettings(settingKeys);
@@ -165,16 +143,7 @@ export class SettingsStore {
 
   async saveApiKey(provider: string, value: string): Promise<SettingsStoreResult> {
     try {
-      const res = await fetch(`/api/auth/api-keys/${provider}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: value }),
-      });
-
-      if (!res.ok) {
-        return { error: await errorDetail(res) };
-      }
-
+      await api.auth.putApiKey(provider, value);
       this.notifySettingChanged({ key: `api_key_${provider}` });
       return { ok: true };
     } catch (err: unknown) {
@@ -184,14 +153,7 @@ export class SettingsStore {
 
   async deleteApiKey(provider: string): Promise<SettingsStoreResult> {
     try {
-      const res = await fetch(`/api/auth/api-keys/${provider}`, {
-        method: "DELETE",
-      });
-
-      if (!res.ok) {
-        return { error: await errorDetail(res) };
-      }
-
+      await api.auth.deleteApiKey(provider);
       this.notifySettingChanged({ key: `api_key_${provider}` });
       return { ok: true };
     } catch (err: unknown) {
@@ -207,16 +169,7 @@ export class SettingsStore {
     this.notify();
 
     try {
-      const res = await fetch(`/api/oauth/start/${providerId}`, {
-        method: "POST",
-      });
-
-      if (!res.ok) {
-        this._resetOAuthLoginState();
-        return { error: await errorDetail(res) };
-      }
-
-      const data = await res.json();
+      const data = await api.oauth.start(providerId);
       this.oauthAuthUrl = data.url;
       this.oauthInstructions = data.instructions || "";
       return { ok: true };
@@ -239,16 +192,7 @@ export class SettingsStore {
 
     try {
       const providerId = this.oauthLoginProvider;
-      const res = await fetch(`/api/oauth/callback/${providerId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
-      });
-
-      if (!res.ok) {
-        return { error: await errorDetail(res) };
-      }
-
+      await api.oauth.callback(providerId, code);
       const result = await this.loadSettings([]);
       if ("error" in result) return result;
 
@@ -267,14 +211,7 @@ export class SettingsStore {
     this.notify();
 
     try {
-      const res = await fetch(`/api/oauth/${providerId}`, {
-        method: "DELETE",
-      });
-
-      if (!res.ok) {
-        return { error: await errorDetail(res) };
-      }
-
+      await api.oauth.disconnect(providerId);
       const result = await this.loadSettings([]);
       if ("error" in result) return result;
 
@@ -317,7 +254,10 @@ export class SettingsStore {
     return this._persistModelSetting(settingKey);
   }
 
-  async selectModelSettingThinkingLevel(settingKey: ModelSettingKey, thinkingLevel: string): Promise<SettingsStoreResult> {
+  async selectModelSettingThinkingLevel(
+    settingKey: ModelSettingKey,
+    thinkingLevel: ModelSetting["thinkingLevel"],
+  ): Promise<SettingsStoreResult> {
     this._setSelectedModelSetting(settingKey, { thinkingLevel });
     this.notify();
 
@@ -331,14 +271,7 @@ export class SettingsStore {
 
   async clearModelSetting(settingKey: ModelSettingKey): Promise<SettingsStoreResult> {
     try {
-      const res = await fetch(`/api/settings/${settingKey}`, {
-        method: "DELETE",
-      });
-
-      if (!res.ok) {
-        return { error: await errorDetail(res) };
-      }
-
+      await api.settings.delete(settingKey);
       this._modelSettings[settingKey] = {
         stored: null,
         selected: { ...MODEL_SETTING_DEFAULTS[settingKey] },
@@ -350,7 +283,7 @@ export class SettingsStore {
     }
   }
 
-  defaultThinkingLevel(settingKey: ModelSettingKey): string {
+  defaultThinkingLevel(settingKey: ModelSettingKey): ModelSetting["thinkingLevel"] {
     return MODEL_SETTING_DEFAULTS[settingKey].thinkingLevel;
   }
 
@@ -358,16 +291,7 @@ export class SettingsStore {
     try {
       const body: ModelSetting = { ...this.getSelectedModelSetting(settingKey) };
 
-      const res = await fetch(`/api/settings/${settingKey}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (!res.ok) {
-        return { error: await errorDetail(res) };
-      }
-
+      await api.settings.put(settingKey, body);
       this._modelSettings[settingKey] = {
         ...this._modelSettings[settingKey],
         stored: body,
@@ -430,15 +354,4 @@ export class SettingsStore {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function emptyJsonResponse(): Response {
-  return new Response("[]", {
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-async function errorDetail(response: Response): Promise<string> {
-  const body = await response.json().catch(() => null);
-  return body?.error ?? `HTTP ${response.status}`;
 }

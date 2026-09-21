@@ -12,7 +12,7 @@ describe("ModelSelectorControls", () => {
         isAvailable: true,
         availabilitySource: "db",
         availabilitySources: ["db"],
-        models: [{ id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true }],
+        models: [{ id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true, contextWindow: 200_000, maxTokens: 8_192 }],
       },
     ];
     el.selectedRuntimeType = "pi";

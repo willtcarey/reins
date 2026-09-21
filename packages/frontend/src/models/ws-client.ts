@@ -11,60 +11,8 @@
 
 // ---- Types ----------------------------------------------------------------
 
-export interface SessionState {
-  model: { provider: string; id: string } | null;
-  thinkingLevel: string;
-}
-
-/** REST response from GET /api/sessions/:sessionId; not a WebSocket message. */
-export interface SessionData {
-  id: string;
-  projectId: number;
-  taskId: number | null;
-  parentSessionId: string | null;
-  name: string | null;
-  createdAt: string;
-  updatedAt: string;
-  runtimeType?: string;
-  activityState: "running" | "finished" | null;
-  pendingOperation: { kind: "run" | "compaction" | "navigation" } | null;
-  messageCount: number;
-  pinnedAt: string | null;
-  archivedAt: string | null;
-  state: SessionState;
-}
-
-export interface SessionListItem {
-  id: string;
-  projectId: number;
-  taskId: number | null;
-  parentSessionId: string | null;
-  name: string | null;
-  createdAt: string;
-  updatedAt: string;
-  messageCount: number;
-  firstMessage: string | null;
-  activityState: "running" | "finished" | null;
-  pinnedAt: string | null;
-  archivedAt: string | null;
-}
-
-export interface ProjectInfo {
-  id: number;
-  name: string;
-  path: string;
-  base_branch: string;
-  created_at: string;
-  last_opened_at: string;
-}
-
 import type { ChatEvent } from "./chat-state.js";
 import type { ClientPromptContent } from "./chat-content.js";
-
-export interface InjectedSkillInfo {
-  name: string;
-  description: string;
-}
 
 /** Inbound message shapes from the backend */
 export type ServerMessage =

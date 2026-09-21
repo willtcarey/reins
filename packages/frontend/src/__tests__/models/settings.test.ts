@@ -17,8 +17,8 @@ describe("settings helpers", () => {
       availabilitySource: "db" as const,
       availabilitySources: ["db" as const],
       models: [
-        { id: "shared-model", name: "Claude Sonnet 4", reasoning: true },
-        { id: "unique-model", name: "Claude Haiku 4.5", reasoning: true },
+        { id: "shared-model", name: "Claude Sonnet 4", reasoning: true, contextWindow: 200_000, maxTokens: 8_192 },
+        { id: "unique-model", name: "Claude Haiku 4.5", reasoning: true, contextWindow: 200_000, maxTokens: 8_192 },
       ],
     },
     {
@@ -28,7 +28,7 @@ describe("settings helpers", () => {
       availabilitySource: "db" as const,
       availabilitySources: ["db" as const],
       models: [
-        { id: "shared-model", name: "GPT Shared", reasoning: false },
+        { id: "shared-model", name: "GPT Shared", reasoning: false, contextWindow: 128_000, maxTokens: 4_096 },
       ],
     },
   ];

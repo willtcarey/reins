@@ -8,8 +8,12 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "outDir": "dist",
-    "rootDir": "src",
-    "declaration": true
+    "rootDir": "..",
+    "declaration": true,
+    "baseUrl": ".",
+    "paths": {
+      "@backend/*": ["../backend/src/*"]
+    }
   },
   "include": ["src"]
 }

@@ -11,7 +11,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { DiffFileSummary } from "../../models/changes/types.js";
+import type { DiffFileSummary } from "@backend/models/diff-parser.js";
 import type { DiffStore } from "../../models/stores/diff-store.js";
 import type { CodeReviewStore } from "../../models/stores/code-review-store.js";
 import type { FileTreeState } from "../../models/changes/file-tree-state.js";

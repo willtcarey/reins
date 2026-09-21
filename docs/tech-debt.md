@@ -38,7 +38,3 @@ Tracked items for cleanup and improvement. Items are added as they're identified
 ## Tests
 
 - Test files are organized by concept rather than mirroring the source file structure. For example, `__tests__/runtimes/claude_agent_sdk/` has `events.test.ts` and `stream-processor.test.ts` but there are also test files like `session-manager.test.ts` that cover multiple source files. Reorganize tests to mirror the `src/` directory structure so each source file has a corresponding test file, making it easier to find and maintain tests.
-
-## Cross-cutting
-
-- Frontend duplicates backend types (`ProjectInfo`, `SessionListItem`, `SessionData` in `ws-client.ts`; `TaskListItem` in `tasks.ts`) and API path strings (hardcoded in stores). These can drift. Use TypeScript `paths` mapping (`"@backend/*": ["../backend/src/*"]`) so the frontend can `import type` directly from backend source files — `tsc` resolves them for type checking, `bun build` erases them completely. Runtime values like `API` path constants would need a zero-dependency shared file or stay duplicated.

@@ -10,8 +10,10 @@
  * Components subscribe via `subscribe()` and read public state directly.
  */
 
-import type { InjectedSkillInfo, SessionListItem } from "../ws-client.js";
-import type { TaskListItem } from "../tasks.js";
+import type { InjectedSkillInfo } from "@backend/routes/skills.js";
+import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
+import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
+import { ReinsHttpError, api } from "../reins-client.js";
 import type { ActivityState, CachedSession, SessionCache, SessionPatch } from "./session-cache.js";
 
 export type ProjectStoreListener = () => void;
@@ -175,18 +177,15 @@ export class ProjectStore {
     this._sessionCache?.set(sessionId, { activityState: nextState });
 
     try {
-      const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/activity`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ unread }),
-      });
-      if (resp.ok) return { ok: true };
-
-      if (this.activityForSession(sessionId) === nextState) {
-        this._sessionCache?.set(sessionId, { activityState: previousState });
+      await api.sessions.setActivity(sessionId, { unread });
+      return { ok: true };
+    } catch (error) {
+      if (error instanceof ReinsHttpError) {
+        if (this.activityForSession(sessionId) === nextState) {
+          this._sessionCache?.set(sessionId, { activityState: previousState });
+        }
+        return { error: `HTTP ${error.status}` };
       }
-      return { error: `HTTP ${resp.status}` };
-    } catch {
       if (this.activityForSession(sessionId) === nextState) {
         this._sessionCache?.set(sessionId, { activityState: previousState });
       }
@@ -235,26 +234,16 @@ export class ProjectStore {
     };
 
     try {
-      const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/metadata`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updates),
-      });
-      if (!resp.ok) {
-        rollback();
-        return { error: `HTTP ${resp.status}` };
-      }
-
-      const data: Pick<SessionListItem, "name" | "pinnedAt" | "archivedAt"> = await resp.json();
+      const data = await api.sessions.update(sessionId, updates);
       const confirmed: SessionPatch = {};
       if (updates.name !== undefined) confirmed.name = data.name;
       if (updates.pinned !== undefined) confirmed.pinnedAt = data.pinnedAt;
       if (updates.archived !== undefined) confirmed.archivedAt = data.archivedAt;
       this._sessionCache?.set(sessionId, confirmed);
       return { ok: true };
-    } catch {
+    } catch (error) {
       rollback();
-      return { error: "Network error" };
+      return { error: error instanceof ReinsHttpError ? `HTTP ${error.status}` : "Network error" };
     }
   }
 
@@ -266,30 +255,34 @@ export class ProjectStore {
     this.notify();
 
     try {
-      const [tasksResp, sessionsResp, skillsResp] = await Promise.all([
-        fetch(`/api/projects/${this.projectId}/tasks?status=open`),
-        fetch(`/api/projects/${this.projectId}/sessions`),
-        fetch(`/api/projects/${this.projectId}/skills`),
+      const [tasksResult, sessionsResult, skillsResult] = await Promise.allSettled([
+        api.tasks.list(this.projectId),
+        api.sessions.listForProject(this.projectId),
+        api.skills.list(this.projectId),
       ]);
 
-      if (tasksResp.ok) {
-        this.tasks = await tasksResp.json();
+      if (tasksResult.status === "fulfilled") {
+        this.tasks = tasksResult.value;
       }
-      if (sessionsResp.ok) {
-        const sessions: SessionListItem[] = await sessionsResp.json();
+      if (sessionsResult.status === "fulfilled") {
+        const sessions = sessionsResult.value;
         this._sessionCache?.setMany(sessions);
         this.sessionIds = sessions.map((session) => session.id);
       }
-      if (skillsResp.ok) {
-        const body = await skillsResp.json().catch(() => null);
-        this.skills = Array.isArray(body?.skills) ? body.skills : [];
+      if (skillsResult.status === "fulfilled") {
+        this.skills = skillsResult.value.skills;
       }
-      if (this.loadedTaskSessionIds.size > 0) {
-        await Promise.all(
-          [...this.loadedTaskSessionIds].map((taskId) => this.fetchTaskSessions(taskId)),
-        );
+      const allLoaded = [tasksResult, sessionsResult].every((result) => (
+        result.status === "fulfilled" || result.reason instanceof ReinsHttpError
+      ));
+      if (allLoaded) {
+        if (this.loadedTaskSessionIds.size > 0) {
+          await Promise.all(
+            [...this.loadedTaskSessionIds].map((taskId) => this.fetchTaskSessions(taskId)),
+          );
+        }
+        this.loaded = true;
       }
-      this.loaded = true;
     } catch {
       // silent — leave loaded as-is (false if first attempt)
     }
@@ -304,59 +297,30 @@ export class ProjectStore {
     updates: { title?: string; description?: string | null },
   ): Promise<{ ok: true } | { error: string }> {
     try {
-      const resp = await fetch(
-        `/api/projects/${this.projectId}/tasks/${taskId}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(updates),
-        },
-      );
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        return { error: body.error || `HTTP ${resp.status}` };
-      }
+      await api.tasks.update(this.projectId, taskId, updates);
       return { ok: true };
-    } catch {
-      return { error: "Network error" };
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
     }
   }
 
   /** Delete a task. */
   async deleteTask(taskId: number): Promise<{ ok: true } | { error: string }> {
     try {
-      const resp = await fetch(
-        `/api/projects/${this.projectId}/tasks/${taskId}`,
-        { method: "DELETE" },
-      );
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        return { error: body.error || `HTTP ${resp.status}` };
-      }
+      await api.tasks.delete(this.projectId, taskId);
       return { ok: true };
-    } catch {
-      return { error: "Network error" };
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
     }
   }
 
   /** Generate a task from a freeform prompt. */
   async generateTask(prompt: string): Promise<{ ok: true } | { error: string }> {
     try {
-      const resp = await fetch(
-        `/api/projects/${this.projectId}/tasks/generate`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt }),
-        },
-      );
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        return { error: body.error || `Error creating task (HTTP ${resp.status})` };
-      }
+      await api.tasks.generate(this.projectId, { prompt });
       return { ok: true };
-    } catch {
-      return { error: "Network error" };
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
     }
   }
 
@@ -366,11 +330,8 @@ export class ProjectStore {
    */
   async fetchSkills(): Promise<void> {
     try {
-      const resp = await fetch(`/api/projects/${this.projectId}/skills`);
-      if (!resp.ok) return;
-      const body = await resp.json();
-      const skills: InjectedSkillInfo[] = Array.isArray(body.skills) ? body.skills : [];
-      this.skills = skills;
+      const body = await api.skills.list(this.projectId);
+      this.skills = body.skills;
       this.notify();
     } catch {
       // silent — skill autocomplete is best-effort
@@ -384,19 +345,14 @@ export class ProjectStore {
    */
   async fetchTaskSessions(taskId: number): Promise<void> {
     try {
-      const resp = await fetch(
-        `/api/tasks/${taskId}/sessions`,
-      );
-      if (resp.ok) {
-        const sessions: SessionListItem[] = await resp.json();
-        const wasLoaded = this.loadedTaskSessionIds.has(taskId);
-        const previousIds = this.taskSessionsFor(taskId).map((session) => session.id);
-        this.loadedTaskSessionIds.add(taskId);
-        this._sessionCache?.setMany(sessions);
-        const nextIds = this.taskSessionsFor(taskId).map((session) => session.id);
-        if (!wasLoaded || JSON.stringify(previousIds) !== JSON.stringify(nextIds)) {
-          this.notify();
-        }
+      const sessions = await api.sessions.listForTask(taskId);
+      const wasLoaded = this.loadedTaskSessionIds.has(taskId);
+      const previousIds = this.taskSessionsFor(taskId).map((session) => session.id);
+      this.loadedTaskSessionIds.add(taskId);
+      this._sessionCache?.setMany(sessions);
+      const nextIds = this.taskSessionsFor(taskId).map((session) => session.id);
+      if (!wasLoaded || JSON.stringify(previousIds) !== JSON.stringify(nextIds)) {
+        this.notify();
       }
     } catch {
       // silent

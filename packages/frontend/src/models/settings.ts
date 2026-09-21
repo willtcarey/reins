@@ -1,5 +1,12 @@
-import type { ProviderInfo } from "./model-catalog.js";
-import type { ModelSetting } from "./stores/settings-store.js";
+import type { RuntimeProviderInfo as ProviderInfo } from "@backend/runtimes/registry.js";
+import type { ModelSetting } from "@backend/settings-store.js";
+
+export interface ModelSettingLabel {
+  runtimeType?: string;
+  provider: string;
+  modelId: string;
+  thinkingLevel: string;
+}
 
 export function providerLabel(provider: string): string {
   return provider
@@ -45,7 +52,7 @@ export function findModelInfo(providers: ProviderInfo[], providerName: string, m
 
 export function formatModelSettingLabel(params: {
   providers: ProviderInfo[];
-  model: ModelSetting;
+  model: ModelSettingLabel;
   includeProviderWhenAmbiguous?: boolean;
 }): string {
   const {
@@ -76,3 +83,7 @@ export const THINKING_LEVELS = [
   { value: "xhigh", label: "Extra High" },
   { value: "max", label: "Max" },
 ] as const;
+
+export function isThinkingLevel(value: string): value is ModelSetting["thinkingLevel"] {
+  return THINKING_LEVELS.some((level) => level.value === value);
+}

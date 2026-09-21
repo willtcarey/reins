@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { DiffFileTree } from "../../../components/changes/diff-file-tree.js";
 import { Loadable } from "../../../helpers/loadable.js";
+import type { DiffFileResponse } from "@backend/routes/diff.js";
 import { CodeReviewStore } from "../../../models/stores/code-review-store.js";
-import { DiffStore, type DiffFileData } from "../../../models/stores/diff-store.js";
+import { DiffStore } from "../../../models/stores/diff-store.js";
 import {
   collectTemplateEventListeners,
   isTemplateResult,
@@ -30,7 +31,7 @@ describe("DiffFileTree", () => {
   test("shows the active review comment count beside each changed file", () => {
     const el = new DiffFileTree();
     const store = new DiffStore();
-    store.fileData = Loadable.idle<DiffFileData>().asLoaded({
+    store.fileData = Loadable.idle<DiffFileResponse>().asLoaded({
       branch: "feature/review",
       baseBranch: "master",
       files: [
@@ -73,7 +74,7 @@ describe("DiffFileTree", () => {
   test("emits file-select when the rendered tree-view reports a file click", () => {
     const el = new DiffFileTree();
     const store = new DiffStore();
-    store.fileData = Loadable.idle<DiffFileData>().asLoaded({
+    store.fileData = Loadable.idle<DiffFileResponse>().asLoaded({
       branch: "feature/mobile-nav",
       baseBranch: "master",
       files: [{ path: "src/file.ts", additions: 1, removals: 0 }],

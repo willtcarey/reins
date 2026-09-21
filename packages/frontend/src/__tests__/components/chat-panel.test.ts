@@ -4,7 +4,7 @@ import { ActiveSessionStore } from "../../models/stores/active-session-store.js"
 import { ConversationsStore } from "../../models/stores/conversations-store.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
 import type { ClientPromptContent } from "../../models/chat-content.js";
-import type { SessionListItem } from "../../models/ws-client.js";
+import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import { applyStreamingAssistant, setPersistedMessages } from "../helpers/conversations.js";
 import { collectTemplateEventListeners, templateToString } from "../helpers/lit-template.js";
 import { StubClient } from "../helpers/stub-client.js";

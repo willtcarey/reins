@@ -1,9 +1,8 @@
 import type { ReactiveController, ReactiveControllerHost } from "lit";
+import type { CodeReviewState, NewReviewComment } from "@backend/models/code-review.js";
 import {
   reviewPlacementId,
   reviewPlacements,
-  type CodeReviewState,
-  type NewReviewComment,
   type ReviewedFile,
   type ReviewLineRange,
   type ReviewPlacement,

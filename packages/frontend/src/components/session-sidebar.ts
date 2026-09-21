@@ -17,9 +17,9 @@ import { customElement, property, state, query } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import { navigateToSession } from "../routing/app-router.js";
 import type { WorkspaceStore } from "../models/stores/workspace-store.js";
-import type { TaskListItem } from "../models/tasks.js";
+import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 
-import type { ProjectInfo } from "../models/ws-client.js";
+import type { Project as ProjectInfo } from "@backend/project-store.js";
 import { chevronLeftIcon, chevronRightIcon } from "../ui/icons.js";
 import type { TaskForm } from "./task-form.js";
 import type { TaskDetail } from "./task-detail.js";

@@ -1,6 +1,7 @@
 /** Long-lived application runtime and shared stores. */
 
-import type { IAppClient, ProjectInfo } from "../ws-client.js";
+import type { Project as ProjectInfo } from "@backend/project-store.js";
+import type { IAppClient } from "../ws-client.js";
 import { ConversationsStore } from "./conversations-store.js";
 import { ProjectsStore } from "./projects-store.js";
 import { SessionCache } from "./session-cache.js";

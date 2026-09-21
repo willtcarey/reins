@@ -121,7 +121,7 @@ describe("SettingsStore", () => {
     mockFetch((url, init) => {
       requests.push({ url, init });
       if (url === "/api/auth/api-keys/openai" && init?.method === "PUT") {
-        return new Response(null, { status: 200 });
+        return Response.json({ ok: true });
       }
       return jsonResponse({}, false);
     });
@@ -185,7 +185,7 @@ describe("SettingsStore", () => {
     mockFetch((url, init) => {
       requests.push({ url, init });
       if (url === "/api/settings/default_model" && init?.method === "PUT") {
-        return new Response(null, { status: 200 });
+        return Response.json({ ok: true });
       }
       return jsonResponse({}, false);
     });
@@ -225,7 +225,7 @@ describe("SettingsStore", () => {
     mockFetch((url, init) => {
       requests.push({ url, init });
       if (url === "/api/settings/utility_model" && init?.method === "PUT") {
-        return new Response(null, { status: 200 });
+        return Response.json({ ok: true });
       }
       return jsonResponse({}, false);
     });
@@ -260,7 +260,7 @@ describe("SettingsStore", () => {
 
     mockFetch((url, init) => {
       if (url === "/api/settings/default_model" && init?.method === "PUT") {
-        return new Response(null, { status: 200 });
+        return Response.json({ ok: true });
       }
       if (url === "/api/settings/default_model" && init?.method === "DELETE") {
         return new Response(null, { status: 204 });

@@ -2,12 +2,12 @@
  * Tests for quick-open store fuzzy matching and filtering.
  */
 import { describe, expect, mock, test } from "bun:test";
+import type { PaletteItem } from "@backend/session-store.js";
 import {
   QuickOpenStore,
   fuzzyMatch,
   filterItems,
   itemSearchText,
-  type PaletteItem,
 } from "../models/stores/quick-open-store.js";
 import { SessionCache } from "../models/stores/session-cache.js";
 

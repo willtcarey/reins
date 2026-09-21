@@ -6,7 +6,7 @@
  * derive the active project context from a session URL.
  */
 
-import { Type } from "@sinclair/typebox";
+import { Type, type Static } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import type { RouteContext } from "../router.js";
 import { badRequest, HttpError } from "../errors.js";
@@ -16,6 +16,14 @@ import { parseDisplayCursor } from "../messages-store.js";
 import { parseBody } from "./validate.js";
 import { ensureSessionOpen } from "../runtimes/session-manager.js";
 import { withSessionNotFound } from "./session-errors.js";
+
+export interface MessagePageQuery { before?: string; after?: string; limit?: number }
+export interface ActivitySnapshotItem {
+  id: string;
+  projectId: number;
+  taskId: number | null;
+  activityState: "running" | "finished";
+}
 
 const DEFAULT_MESSAGE_PAGE_LIMIT = 50;
 const MAX_MESSAGE_PAGE_LIMIT = 200;
@@ -36,6 +44,10 @@ const SessionMetadataBody = Type.Object({
   pinned: Type.Optional(Type.Boolean()),
   archived: Type.Optional(Type.Boolean()),
 }, { minProperties: 1 });
+
+export type SessionModelUpdate = Static<typeof SessionModelBody>;
+export type SessionActivityUpdate = Static<typeof SessionActivityBody>;
+export type SessionMetadataUpdate = Static<typeof SessionMetadataBody>;
 
 export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   // List all sessions with non-null activity_state — for initial page-load

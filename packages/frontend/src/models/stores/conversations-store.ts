@@ -21,13 +21,13 @@ import {
   type Message,
   type AssistantMessage,
 } from "../message.js";
+import type { SessionMessagePage, SessionMessagePageItem } from "@backend/messages-store.js";
 import type { AgentMessage } from "../agent-message.js";
 import type { InboundEventSource } from "../ws-client.js";
+import { api } from "../reins-client.js";
 import type { SessionCache } from "./session-cache.js";
 
-export interface PersistedConversationEntry {
-  id: string;
-  parentId: string | null;
+export interface PersistedConversationEntry extends Omit<SessionMessagePageItem, "message"> {
   message: AgentMessage;
 }
 
@@ -40,14 +40,8 @@ export interface LiveConversationEntry {
 
 export type ConversationEntry = PersistedConversationEntry | LiveConversationEntry;
 
-export interface MessageRecordPage {
+export interface MessageRecordPage extends Omit<SessionMessagePage, "items"> {
   items: PersistedConversationEntry[];
-  pageInfo: {
-    hasPreviousPage: boolean;
-    previousCursor: string | null;
-    hasNextPage: boolean;
-    endCursor: string | null;
-  };
 }
 
 interface ConversationState extends Omit<ChatState, "messages"> {
@@ -178,15 +172,14 @@ export class ConversationsStore {
   }
 
   private async fetchMessageTail(sessionId: string): Promise<boolean> {
-    const path = `/api/sessions/${encodeURIComponent(sessionId)}/messages`;
     let after = this.stateFor(sessionId).latestCursor;
 
     try {
       while (true) {
-        const url = after === null ? path : `${path}?after=${encodeURIComponent(after)}`;
-        const response = await fetch(url);
-        if (!response.ok) return false;
-        const page: MessageRecordPage = await response.json();
+        const page = await api.sessions.messages(
+          sessionId,
+          after === null ? {} : { after },
+        );
         this.mergeMessages(sessionId, page);
         if (!page.pageInfo.hasNextPage) return true;
         if (!page.pageInfo.endCursor || page.pageInfo.endCursor === after) return false;
@@ -204,10 +197,7 @@ export class ConversationsStore {
     if (!before) return false;
 
     try {
-      const path = `/api/sessions/${encodeURIComponent(sessionId)}/messages`;
-      const response = await fetch(`${path}?before=${encodeURIComponent(before)}`);
-      if (!response.ok) return false;
-      const page: MessageRecordPage = await response.json();
+      const page = await api.sessions.messages(sessionId, { before });
       this.mergeMessages(sessionId, page, { earlier: true });
       return true;
     } catch {

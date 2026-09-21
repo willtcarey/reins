@@ -9,7 +9,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
-import type { ProjectInfo } from "../models/ws-client.js";
+import type { Project as ProjectInfo } from "@backend/project-store.js";
 import type { WorkspaceStore } from "../models/stores/workspace-store.js";
 import { projectCreatedEvent, projectUpdatedEvent } from "./events.js";
 

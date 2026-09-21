@@ -1,6 +1,6 @@
 /** Directory-first, alphabetical ordering shared by changed-file surfaces. */
 
-import type { DiffFileSummary } from "./types.js";
+import type { DiffFileSummary } from "@backend/models/diff-parser.js";
 
 export function compareFilePaths(a: string, b: string): number {
   const partsA = a.split("/");

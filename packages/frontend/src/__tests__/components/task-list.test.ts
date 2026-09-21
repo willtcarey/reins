@@ -5,7 +5,7 @@ import {
 } from "../../components/task-list.js";
 import { ProjectStore } from "../../models/stores/project-store.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
-import type { TaskListItem } from "../../models/tasks.js";
+import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 import { makeTask } from "../helpers/fixtures.js";
 import {
   collectTemplateValues,

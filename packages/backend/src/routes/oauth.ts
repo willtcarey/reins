@@ -1,4 +1,4 @@
-import type { AuthPrompt, OAuthCredential } from "@earendil-works/pi-ai";
+import type { AuthPrompt, OAuthCredential, Provider } from "@earendil-works/pi-ai";
 import type { RouterGroup, RouteContext } from "../router.js";
 import { badRequest, notFound } from "../errors.js";
 import {
@@ -6,6 +6,9 @@ import {
   hasStoredAuthCredential,
 } from "../models/auth-credentials.js";
 import { createPiModelRuntime } from "../runtimes/pi/factory.js";
+
+export type OAuthProviderInfo = Pick<Provider, "id" | "name"> & { configured: boolean };
+export interface OAuthStartResponse { url: string; instructions: string }
 
 interface PendingLogin {
   resolveManualCode: (code: string) => void;
@@ -30,7 +33,7 @@ export function registerOAuthRoutes(router: RouterGroup) {
     return Response.json(
       modelRuntime.getProviders()
         .filter((provider) => provider.auth.oauth)
-        .map((provider) => ({
+        .map((provider): OAuthProviderInfo => ({
           id: provider.id,
           name: provider.name,
           configured: hasStoredAuthCredential(provider.id, "oauth"),
@@ -100,7 +103,10 @@ export function registerOAuthRoutes(router: RouterGroup) {
       ),
     ]);
 
-    return Response.json({ url: authUrl, instructions: authInstructions });
+    return Response.json({
+      url: authUrl,
+      instructions: authInstructions,
+    } satisfies OAuthStartResponse);
   });
 
   router.post("/callback/:providerId", async (ctx: RouteContext) => {

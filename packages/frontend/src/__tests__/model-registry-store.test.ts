@@ -30,14 +30,14 @@ describe("ModelRegistryStore", () => {
             isAvailable: true,
             availabilitySource: "env",
             availabilitySources: ["env"],
-            models: [{ id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true }],
+            models: [{ id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true, contextWindow: 200_000, maxTokens: 8_192 }],
           },
           {
             provider: "openai",
             isAvailable: false,
             availabilitySource: null,
             availabilitySources: [],
-            models: [{ id: "gpt-4.1", name: "GPT-4.1", reasoning: false }],
+            models: [{ id: "gpt-4.1", name: "GPT-4.1", reasoning: false, contextWindow: 128_000, maxTokens: 4_096 }],
           },
         ]);
       }
@@ -59,7 +59,7 @@ describe("ModelRegistryStore", () => {
     expect(store.unconfiguredProviders.map((provider) => provider.provider)).toEqual(["openai"]);
     expect(store.availableProviders.map((provider) => provider.provider)).toEqual(["anthropic"]);
     expect(store.getModelsForProvider("anthropic")).toEqual([
-      { id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true },
+      { id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true, contextWindow: 200_000, maxTokens: 8_192 },
     ]);
     expect(store.findModel("anthropic", "claude-sonnet-4")?.name).toBe("Claude Sonnet 4");
   });

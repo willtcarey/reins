@@ -4,11 +4,13 @@
  * CRUD for tasks. Registered under /api/projects/:id.
  */
 
-import { Type } from "@sinclair/typebox";
+import { Type, type Static } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
 import { notFound, conflict, HttpError } from "../errors.js";
-import { getTask } from "../task-store.js";
+import { getTask, type TaskRow } from "../task-store.js";
+import type { SessionListView } from "../models/sessions.js";
+import type { TaskWithDiffStats } from "../models/tasks.js";
 import { generateTask } from "../task-generator.js";
 import {
   TaskNotFoundError,
@@ -17,15 +19,21 @@ import {
 import { Sessions } from "../models/sessions.js";
 import { parseBody, parseCollectionPage, parseIntParam } from "./validate.js";
 
+export type TaskDetail = TaskRow & { sessions: SessionListView[] };
+export interface TaskHistoryPage { items: TaskWithDiffStats[]; hasMore: boolean }
+
 const GenerateTaskBody = Type.Object({
   prompt: Type.String({ minLength: 1, pattern: "\\S" }),
 });
 
 const UpdateTaskBody = Type.Object({
   title: Type.Optional(Type.String()),
-  description: Type.Optional(Type.String()),
+  description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   base_commit: Type.Optional(Type.String()),
 });
+
+export type GeneratedTaskInput = Static<typeof GenerateTaskBody>;
+export type TaskUpdate = Static<typeof UpdateTaskBody>;
 
 export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
   // ---- Tasks ---------------------------------------------------------------
@@ -46,7 +54,7 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
     return Response.json({
       items: enriched.slice(0, page.limit),
       hasMore: enriched.length > page.limit,
-    });
+    } satisfies TaskHistoryPage);
   });
 
   // Generate a task from freeform input, then create it
@@ -79,7 +87,7 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
 
     const archived = ctx.url.searchParams.get("archived") === "include" ? "include" : "exclude";
     const sessions = new Sessions(ctx.state.sessions).listByTask(task.id, archived);
-    return Response.json({ ...task, sessions });
+    return Response.json({ ...task, sessions } satisfies TaskDetail);
   });
 
   // Update a task

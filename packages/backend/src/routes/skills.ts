@@ -8,14 +8,19 @@
 
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
-import { ReinsResourceLoader } from "../runtimes/resource-loader.js";
+import { ReinsResourceLoader, type Skill } from "../runtimes/resource-loader.js";
+
+export type InjectedSkillInfo = Pick<Skill, "name" | "description">;
 
 export function registerSkillRoutes(router: RouterGroup<ProjectRouteContext>) {
   router.get("/skills", async (ctx) => {
     const loader = new ReinsResourceLoader({ cwd: ctx.project.projectDir });
     loader.load();
     return Response.json({
-      skills: loader.skills.map((s) => ({ name: s.name, description: s.description })),
+      skills: loader.skills.map((skill): InjectedSkillInfo => ({
+        name: skill.name,
+        description: skill.description,
+      })),
     });
   });
 }

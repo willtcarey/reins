@@ -1,11 +1,5 @@
-export interface ClientTelemetryEvent {
-  readonly timestamp: string;
-  readonly runId: string;
-  readonly sequence: number;
-  readonly scope: string;
-  readonly event: string;
-  readonly attributes?: Record<string, unknown>;
-}
+import type { ClientTelemetryEvent } from "@backend/routes/client-telemetry.js";
+import { api } from "./reins-client.js";
 
 type TelemetryAttributes = Record<string, unknown> | (() => Record<string, unknown>);
 
@@ -126,13 +120,7 @@ export class ClientTelemetryOperation {
 export const clientTelemetry = new ClientTelemetry({
   enabled: isDevBuild,
   transport: async (events) => {
-    const response = await fetch("/api/diagnostics/client-events", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ events }),
-      keepalive: true,
-    });
-    if (!response.ok) throw new Error(`Telemetry export failed: ${response.status}`);
+    await api.telemetry.send(events);
   },
 });
 

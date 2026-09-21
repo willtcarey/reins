@@ -14,6 +14,7 @@ import {
 import type { InlineReviewFile } from "../../controllers/inline-review-controller.js";
 import type { ReviewLineRange } from "../../models/code-review.js";
 import { clientTelemetry } from "../../models/client-telemetry.js";
+import { api } from "../../models/reins-client.js";
 import {
   addedFileIcon,
   conversationIcon,
@@ -222,9 +223,11 @@ export class ReviewFileDiff extends LitElement {
 
   private _fileUrl(path: string): string {
     if (this.projectId == null) return "";
-    let url = `/api/projects/${this.projectId}/files/content?path=${encodeURIComponent(path)}`;
-    if (this.branch) url += `&ref=${encodeURIComponent(this.branch)}`;
-    return url;
+    return api.files.contentUrl(
+      this.projectId,
+      path,
+      this.branch ? { ref: this.branch } : {},
+    );
   }
 
   private _expansionAnimationHeight(): number | undefined {

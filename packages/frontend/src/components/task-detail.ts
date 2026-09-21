@@ -7,7 +7,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, state, query } from "lit/decorators.js";
-import type { TaskListItem } from "../models/tasks.js";
+import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 import { saveTaskEvent } from "./events.js";
 
 @customElement("task-detail")

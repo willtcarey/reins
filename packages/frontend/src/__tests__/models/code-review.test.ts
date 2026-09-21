@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import type { CodeReviewState } from "@backend/models/code-review.js";
 import {
   reviewPlacements,
-  type CodeReviewState,
   type ReviewedFile,
 } from "../../models/code-review.js";
 

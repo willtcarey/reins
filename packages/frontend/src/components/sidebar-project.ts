@@ -4,7 +4,7 @@ import { StoreController } from "../controllers/store-controller.js";
 import { springCollapse } from "../directives/spring-collapse.js";
 import type { ActivityState } from "../models/stores/session-cache.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
-import type { ProjectInfo } from "../models/ws-client.js";
+import type { Project as ProjectInfo } from "@backend/project-store.js";
 import { navigateToProjectHistory } from "../routing/app-router.js";
 import {
   newSessionEvent,

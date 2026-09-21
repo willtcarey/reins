@@ -15,8 +15,16 @@
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
 import { getCurrentBranch } from "../git.js";
+import type { DiffFileSummary } from "../models/diff-parser.js";
+import type { DiffMode } from "../models/workspace.js";
 
-type DiffMode = "branch" | "uncommitted";
+export interface DiffQuery { mode?: DiffMode; branch?: string }
+export interface DiffPatchQuery extends DiffQuery { context?: number }
+export interface DiffFileResponse {
+  files: DiffFileSummary[];
+  branch: string | null;
+  baseBranch: string | null;
+}
 
 function parseDiffParams(url: URL): { contextLines: number; mode: DiffMode; branch?: string } {
   const parsedContext = parseInt(url.searchParams.get("context") ?? "3", 10);
@@ -46,7 +54,7 @@ export function registerDiffRoutes(router: RouterGroup<ProjectRouteContext>) {
       files,
       branch: branch ?? currentBranch,
       baseBranch: ctx.project.baseBranch,
-    });
+    } satisfies DiffFileResponse);
   });
 
   /** Raw unified patch text for patch-backed diff consumers. */

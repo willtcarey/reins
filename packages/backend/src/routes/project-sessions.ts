@@ -6,11 +6,15 @@
  */
 
 import type { RouterGroup } from "../router.js";
+import type { SessionListView } from "../models/sessions.js";
 import type { ProjectRouteContext } from "./index.js";
 import { createNewSession } from "../runtimes/session-manager.js";
 import { Sessions } from "../models/sessions.js";
 import { touchProject } from "../project-store.js";
 import { parseCollectionPage } from "./validate.js";
+
+export type ArchivedSessionHistoryItem = SessionListView & { taskTitle: string | null };
+export interface ArchivedSessionPage { items: ArchivedSessionHistoryItem[]; hasMore: boolean }
 
 export function registerProjectSessionRoutes(router: RouterGroup<ProjectRouteContext>) {
   // List sessions for a project
@@ -30,7 +34,11 @@ export function registerProjectSessionRoutes(router: RouterGroup<ProjectRouteCon
         ...session,
         taskTitle: session.taskId == null ? null : taskTitles.get(session.taskId) ?? null,
       }));
-      return Response.json(page ? { items, hasMore: archived.length > page.limit } : items);
+      if (!page) return Response.json(items);
+      return Response.json({
+        items,
+        hasMore: archived.length > page.limit,
+      } satisfies ArchivedSessionPage);
     }
     return Response.json(sessions.listByProject(ctx.project.projectId));
   });

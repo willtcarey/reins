@@ -25,6 +25,34 @@ module.exports = {
     name: "reins",
   },
   rules: {
+    "frontend-backend-imports-type-only": {
+      meta: {
+        type: "problem",
+        docs: {
+          description: "Keep frontend imports from backend modules type-only.",
+        },
+        messages: {
+          typeOnly: "Frontend imports from @backend must use `import type`; runtime backend imports are forbidden.",
+        },
+      },
+      create(context) {
+        return {
+          ImportDeclaration(node) {
+            if (typeof node.source?.value === "string"
+              && node.source.value.startsWith("@backend/")
+              && node.importKind !== "type") {
+              context.report({ node, messageId: "typeOnly" });
+            }
+          },
+          ImportExpression(node) {
+            if (typeof node.source?.value === "string" && node.source.value.startsWith("@backend/")) {
+              context.report({ node, messageId: "typeOnly" });
+            }
+          },
+        };
+      },
+    },
+
     "no-telemetry-error-guards": {
       meta: {
         type: "problem",

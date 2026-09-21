@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { ClientTelemetry, type ClientTelemetryEvent } from "../../models/client-telemetry.js";
+import type { ClientTelemetryEvent } from "@backend/routes/client-telemetry.js";
+import { ClientTelemetry } from "../../models/client-telemetry.js";
 
 describe("ClientTelemetry", () => {
   test("bounds its queue and exports structured events in bounded batches", async () => {

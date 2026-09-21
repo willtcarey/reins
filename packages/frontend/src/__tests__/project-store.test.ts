@@ -7,7 +7,7 @@ import { ProjectsStore } from "../models/stores/projects-store.js";
 import { SessionCache } from "../models/stores/session-cache.js";
 import { makeTask } from "./helpers/fixtures.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
-import type { SessionListItem } from "../models/ws-client.js";
+import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 
 // Mock fetch globally
 
@@ -152,7 +152,7 @@ describe("ProjectStore", () => {
 
   test("fetchLists fetches tasks and sessions in parallel", async () => {
     const sessionIds: string[] = [];
-    const tasks = [{ id: 1, project_id: 42, title: "Task 1", description: null, branch_name: "", status: "open" as const, created_at: "", updated_at: "", session_count: 0, session_ids: sessionIds, diffStats: null }];
+    const tasks = [{ id: 1, project_id: 42, title: "Task 1", description: null, branch_name: "", base_commit: null, status: "open" as const, created_at: "", updated_at: "", session_count: 0, session_ids: sessionIds, diffStats: null }];
     const sessions = [session()];
 
     mockFetch((url) => {

@@ -7,7 +7,7 @@
 
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { SessionListItem } from "../models/ws-client.js";
+import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import "./session-list-item.js";
 import "../ui/popover-menu.js";
 

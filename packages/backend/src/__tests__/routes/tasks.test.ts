@@ -166,6 +166,18 @@ describe("task routes", () => {
       expect(body.title).toBe("Updated");
     });
 
+    test("clears a task description", async () => {
+      const task = createTask(projectId, "Original", "Existing description", "task/original");
+
+      const res = await router.handle(
+        makeRequest("PATCH", `/api/projects/${projectId}/tasks/${task.id}`, { description: null }),
+        state,
+      );
+
+      expect(res!.status).toBe(200);
+      expect(await res!.json()).toMatchObject({ description: null });
+    });
+
     test("returns 404 for nonexistent task", async () => {
       const res = await router.handle(
         makeRequest("PATCH", `/api/projects/${projectId}/tasks/9999`, { title: "Nope" }),

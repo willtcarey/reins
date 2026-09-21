@@ -1,10 +1,9 @@
 import { LitElement, html, nothing } from "lit";
 import type { PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { SessionData } from "../models/ws-client.js";
-import { formatModelSettingLabel } from "../models/settings.js";
+import type { SessionDetailView as SessionData } from "@backend/models/sessions.js";
+import { formatModelSettingLabel, type ModelSettingLabel } from "../models/settings.js";
 import { ModelRegistryStore } from "../models/stores/model-registry-store.js";
-import type { ModelSetting } from "../models/stores/settings-store.js";
 import { showToast } from "./toast.js";
 import "../ui/popover-menu.js";
 import "./settings/model-selector-controls.js";
@@ -66,7 +65,7 @@ export class SessionModelPicker extends LitElement {
     this._syncSelectionFromSession();
   }
 
-  private _currentModel(): ModelSetting | null {
+  private _currentModel(): (ModelSettingLabel & { runtimeType: string }) | null {
     const model = this.sessionData?.state.model;
     if (!model) return null;
     return {

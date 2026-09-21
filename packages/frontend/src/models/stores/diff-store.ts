@@ -9,34 +9,20 @@
  * panel and file tree, eliminating duplicate fetches.
  */
 
-import type { DiffFileSummary } from "../changes/types.js";
+import type { DiffFileResponse } from "@backend/routes/diff.js";
+import type { SpreadResponse } from "@backend/routes/git.js";
+import type { DiffMode } from "@backend/models/workspace.js";
 import { sortFileSummaries } from "../changes/diff-sort.js";
 import { Loadable, type Loadable as LoadableState } from "../../helpers/loadable.js";
+import { api } from "../reins-client.js";
 
 const DEFAULT_CONTEXT = 3;
 const POLL_INTERVAL = 5000;
 const SPREAD_INTERVAL = 10_000;
 const SPREAD_FETCH_EVERY = 6;
 
-export type DiffMode = "branch" | "uncommitted";
-
-/** Commit spread for a branch relative to base and remote. */
-export interface SpreadData {
-  branch: string;
-  aheadBase: number;
-  behindBase: number;
-  aheadRemote: number | null;
-  behindRemote: number | null;
-}
-
 export type SyncAction = "idle" | "pushing" | "rebasing";
 export type SyncResult = { ok: true } | { error: string } | null;
-
-export interface DiffFileData {
-  files: DiffFileSummary[];
-  branch: string | null;
-  baseBranch: string | null;
-}
 
 export interface DiffPatchData {
   patch: string;
@@ -71,7 +57,7 @@ export class DiffStore {
   // ---- Public reactive state ------------------------------------------------
 
   /** Lightweight file listing — always up to date via polling. */
-  fileData: LoadableState<DiffFileData> = Loadable.idle<DiffFileData>().asLoaded({ files: [], branch: null, baseBranch: null });
+  fileData: LoadableState<DiffFileResponse> = Loadable.idle<DiffFileResponse>().asLoaded({ files: [], branch: null, baseBranch: null });
 
   /** Raw patch diff — fetched on demand by the Changes renderer. */
   patchData: LoadableState<DiffPatchData> = Loadable.idle();
@@ -82,7 +68,7 @@ export class DiffStore {
   diffMode: DiffMode = "branch";
 
   /** Commit spread for the active branch (ahead/behind base & remote). */
-  spread: SpreadData | null = null;
+  spread: SpreadResponse | null = null;
 
   /** Current sync action (push or rebase) in progress. */
   syncAction: SyncAction = "idle";
@@ -117,11 +103,6 @@ export class DiffStore {
   private _filesRequestGeneration = 0;
   private _patchRequestGeneration = 0;
   private _spreadRequestGeneration = 0;
-
-  /** Build the `&branch=...` query fragment if a branch is set. */
-  private get _branchParam(): string {
-    return this._branch ? `&branch=${encodeURIComponent(this._branch)}` : "";
-  }
 
   // ---- Accessors ------------------------------------------------------------
 
@@ -234,7 +215,6 @@ export class DiffStore {
     const trigger = options.trigger ?? "manual";
     const projectId = this._projectId;
     const mode = this.diffMode;
-    const branchParam = this._branchParam;
     if (projectId == null) {
       this.fileData = this.fileData.asLoaded({ files: [], branch: null, baseBranch: null });
       this.notify();
@@ -245,19 +225,11 @@ export class DiffStore {
     this.notify();
 
     try {
-      const resp = await fetch(
-        `/api/projects/${projectId}/diff/files?mode=${mode}${branchParam}`
-      );
+      const json = await api.diff.files(projectId, {
+        mode,
+        ...(this._branch ? { branch: this._branch } : {}),
+      });
       if (requestGeneration !== this._filesRequestGeneration) return;
-      if (!resp.ok) {
-        this.lastFilesRefreshAt = new Date().toISOString();
-        this.lastRefreshTrigger = trigger;
-        this.lastSummaryChanged = null;
-        this.fileData = this.fileData.asError(`HTTP ${resp.status}`);
-        this.notify();
-        return;
-      }
-      const json = await resp.json();
       if (requestGeneration !== this._filesRequestGeneration) return;
       const newFiles = sortFileSummaries(json.files ?? []);
       const changed = JSON.stringify(newFiles) !== JSON.stringify(this.fileData.data?.files ?? []);
@@ -307,19 +279,12 @@ export class DiffStore {
     this.notify();
 
     try {
-      const resp = await fetch(
-        `/api/projects/${this._projectId}/diff/patch?context=${this.contextLines}&mode=${this.diffMode}${this._branchParam}`
-      );
+      const patch = await api.diff.patch(this._projectId, {
+        context: this.contextLines,
+        mode: this.diffMode,
+        ...(this._branch ? { branch: this._branch } : {}),
+      });
       if (requestGeneration !== this._patchRequestGeneration) return;
-      if (!resp.ok) {
-        this.lastPayloadRefreshAt = new Date().toISOString();
-        this.lastRefreshTrigger = trigger;
-        this.patchData = this.patchData.asError(`HTTP ${resp.status}`);
-        this.notify();
-        return;
-      }
-
-      const patch = await resp.text();
       if (requestGeneration !== this._patchRequestGeneration) return;
       const version = this._patchDiffVersion + 1;
       this._patchDiffVersion = version;
@@ -361,11 +326,8 @@ export class DiffStore {
     if (projectId == null || !branch) return;
 
     try {
-      const resp = await fetch(
-        `/api/projects/${projectId}/git/spread?branch=${encodeURIComponent(branch)}&fetch=${remote}`,
-      );
-      if (requestGeneration !== this._spreadRequestGeneration || !resp.ok) return;
-      const spread = await resp.json();
+      const spread = await api.git.spread(projectId, branch, remote);
+      if (requestGeneration !== this._spreadRequestGeneration) return;
       if (requestGeneration !== this._spreadRequestGeneration) return;
       this.spread = spread;
       this.notify();
@@ -386,13 +348,8 @@ export class DiffStore {
     this.notify();
 
     try {
-      const resp = await fetch(`/api/projects/${this._projectId}/git/push`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ branch }),
-      });
-      const body = await resp.json();
-      this.syncResult = resp.ok ? { ok: true } : { error: body.error ?? "Push failed" };
+      await api.git.push(this._projectId, branch);
+      this.syncResult = { ok: true };
     } catch (err: any) {
       this.syncResult = { error: err.message ?? "Network error" };
     }
@@ -414,13 +371,8 @@ export class DiffStore {
     this.notify();
 
     try {
-      const resp = await fetch(`/api/projects/${this._projectId}/git/rebase`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ branch }),
-      });
-      const body = await resp.json();
-      this.syncResult = resp.ok ? { ok: true } : { error: body.error ?? "Rebase failed" };
+      await api.git.rebase(this._projectId, branch);
+      this.syncResult = { ok: true };
     } catch (err: any) {
       this.syncResult = { error: err.message ?? "Network error" };
     }

@@ -6,10 +6,11 @@
  * This shell owns overlay visibility and visible setting composition.
  */
 
+import type { SettingsKey } from "@backend/settings-store.js";
 import { LitElement, html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
-import { SettingsStore, type SettingsChange, type SettingsKey } from "../../models/stores/settings-store.js";
+import { SettingsStore, type SettingsChange } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
 import { closeIcon } from "../../ui/icons.js";
 import "./api-keys-section.js";

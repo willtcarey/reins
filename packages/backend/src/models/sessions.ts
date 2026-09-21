@@ -96,8 +96,19 @@ export interface SessionView {
   };
 }
 
+export interface SessionDetailView extends SessionView {
+  pendingOperation: PendingPiOperation | null;
+  messageCount: number;
+  runtimeType?: string;
+  state: {
+    model: { provider: string; id: string } | null;
+    thinkingLevel: string;
+  };
+}
+
 export interface SessionListView extends SessionView {
-  firstMessage?: string | null;
+  messageCount: number;
+  firstMessage: string | null;
 }
 
 export interface SessionAttachmentBytes {
@@ -178,7 +189,7 @@ export class Sessions {
     private broadcast: Broadcast = () => {},
   ) {}
 
-  get(sessionId: string): SessionView | null {
+  get(sessionId: string): SessionDetailView | null {
     const row = getSession(sessionId);
     if (!row) return null;
 

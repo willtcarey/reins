@@ -11,7 +11,9 @@
  * or any child store changes (notifications bubble up).
  */
 
-import type { InboundEventSource, ProjectInfo } from "../ws-client.js";
+import type { Project as ProjectInfo } from "@backend/project-store.js";
+import type { InboundEventSource } from "../ws-client.js";
+import { ReinsHttpError, api } from "../reins-client.js";
 import { ProjectStore } from "./project-store.js";
 import { SessionCache, type ActivityState } from "./session-cache.js";
 
@@ -64,11 +66,8 @@ export class ProjectsStore {
   /** Fetch the project list from the server. */
   async fetchProjects(): Promise<void> {
     try {
-      const resp = await fetch("/api/projects");
-      if (resp.ok) {
-        this.projects = await resp.json();
-        this.notify();
-      }
+      this.projects = await api.projects.list();
+      this.notify();
     } catch {
       // silent
     }
@@ -77,7 +76,7 @@ export class ProjectsStore {
   /** Delete a project and refresh the list. */
   async deleteProject(projectId: number): Promise<void> {
     try {
-      await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
+      await api.projects.delete(projectId);
       this.remove(projectId);
       await this.fetchProjects();
     } catch {
@@ -92,20 +91,11 @@ export class ProjectsStore {
     base_branch: string;
   }): Promise<ProjectInfo | { error: string }> {
     try {
-      const resp = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        return { error: body.error || "Failed to create project" };
-      }
-      const project: ProjectInfo = await resp.json();
+      const project = await api.projects.create(data);
       await this.fetchProjects();
       return project;
-    } catch {
-      return { error: "Network error" };
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
     }
   }
 
@@ -115,19 +105,11 @@ export class ProjectsStore {
     data: { name: string; path: string; base_branch: string },
   ): Promise<{ ok: true } | { error: string }> {
     try {
-      const resp = await fetch(`/api/projects/${projectId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        return { error: body.error || "Failed to update project" };
-      }
+      await api.projects.update(projectId, data);
       await this.fetchProjects();
       return { ok: true };
-    } catch {
-      return { error: "Network error" };
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
     }
   }
 
@@ -157,31 +139,21 @@ export class ProjectsStore {
 
   async createSession(projectId: number): Promise<{ sessionId: string } | { error: string }> {
     try {
-      const response = await fetch(`/api/projects/${projectId}/sessions`, { method: "POST" });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        return { error: body.error || "Failed to create session" };
-      }
-      const data = await response.json();
+      const data = await api.sessions.create(projectId);
       void this.refresh(projectId);
       return { sessionId: data.id };
-    } catch {
-      return { error: "Network error" };
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
     }
   }
 
   async createTaskSession(taskId: number, projectId: number): Promise<{ sessionId: string } | { error: string }> {
     try {
-      const response = await fetch(`/api/tasks/${taskId}/sessions`, { method: "POST" });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        return { error: body.error || "Failed to create session" };
-      }
-      const data = await response.json();
+      const data = await api.sessions.createForTask(taskId);
       void this.refresh(projectId);
       return { sessionId: data.id };
-    } catch {
-      return { error: "Network error" };
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
     }
   }
 
@@ -219,9 +191,7 @@ export class ProjectsStore {
    */
   async fetchActivitySnapshot(): Promise<void> {
     try {
-      const resp = await fetch("/api/sessions/activity");
-      if (!resp.ok) return;
-      const sessions: Array<{ id: string; activityState: "running" | "finished"; projectId: number; taskId: number | null }> = await resp.json();
+      const sessions = await api.sessions.activity();
       const snapshotIds = new Set(sessions.map((entry) => entry.id));
       const previousActivityIds = this._sessionCache
         .entries()
@@ -360,57 +330,19 @@ export class ProjectsStore {
    * Uses XHR for progress tracking. Returns a promise that resolves with
    * the list of uploaded filenames on success or an error message on failure.
    */
-  uploadFiles(
+  async uploadFiles(
     projectId: number,
     files: FileList,
     onProgress?: (percent: number) => void,
   ): Promise<{ uploaded: string[] } | { error: string }> {
-    return new Promise((resolve) => {
-      const formData = new FormData();
-      for (const file of files) {
-        formData.append("files", file);
+    try {
+      return await api.projects.upload(projectId, files, { onProgress });
+    } catch (error) {
+      if (error instanceof ReinsHttpError) {
+        return { error: `Upload failed (${error.status}): ${error.message}` };
       }
-
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", `/api/projects/${projectId}/upload`);
-
-      xhr.upload.addEventListener("progress", (e) => {
-        if (e.lengthComputable) {
-          onProgress?.(Math.round((e.loaded / e.total) * 100));
-        }
-      });
-
-      xhr.addEventListener("load", () => {
-        onProgress?.(100);
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const body = JSON.parse(xhr.responseText);
-            resolve({ uploaded: body.uploaded ?? [] });
-          } catch {
-            resolve({ uploaded: [] });
-          }
-        } else {
-          let detail: string;
-          try {
-            detail = JSON.parse(xhr.responseText).error ?? xhr.responseText;
-          } catch {
-            detail = xhr.responseText;
-          }
-          resolve({ error: `Upload failed (${xhr.status}): ${detail || xhr.statusText}` });
-        }
-      });
-
-      xhr.addEventListener("error", () => {
-        resolve({ error: "Upload failed (network error)." });
-      });
-
-      xhr.addEventListener("abort", () => {
-        resolve({ error: "Upload aborted." });
-      });
-
-      onProgress?.(0);
-      xhr.send(formData);
-    });
+      return { error: "Upload failed (network error)." };
+    }
   }
 
   /**

@@ -8,7 +8,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { SessionListItem as SessionListItemData } from "../models/ws-client.js";
+import type { SessionListView as SessionListItemData } from "@backend/models/sessions.js";
 import type { InfoCardAction } from "../ui/info-card.js";
 import { copyTextToClipboard } from "../helpers/clipboard.js";
 import { formatRelativeDate } from "../models/format.js";

@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { ArchivedSessionHistoryItem } from "@backend/routes/project-sessions.js";
 import { ProjectHistory } from "../../components/project-history.js";
-import {
-  ProjectHistoryStore,
-  type ArchivedSessionHistoryItem,
-} from "../../models/stores/project-history-store.js";
+import { ProjectHistoryStore } from "../../models/stores/project-history-store.js";
 import { collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
 

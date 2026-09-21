@@ -24,7 +24,7 @@
  *   const html = this._hl.getLineHtml(index);
  */
 import type { ReactiveControllerHost } from "lit";
-import type { DiffHunk } from "../models/changes/types.js";
+import type { DiffHunk } from "@backend/models/diff-parser.js";
 import { HighlightController } from "./highlight-controller.js";
 import type { IHighlighter } from "../models/changes/highlighter.js";
 

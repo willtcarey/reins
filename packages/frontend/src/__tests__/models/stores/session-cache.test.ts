@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { SessionCache } from "../../../models/stores/session-cache.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import type { SessionData, SessionListItem } from "../../../models/ws-client.js";
+import type { SessionDetailView as SessionData, SessionListView as SessionListItem } from "@backend/models/sessions.js";
 
 function jsonResponse(data: unknown) {
   return new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } });

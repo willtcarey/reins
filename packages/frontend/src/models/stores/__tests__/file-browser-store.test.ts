@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
-import { FileBrowserStore, type DirEntry } from "../file-browser-store.js";
+import type { DirectoryEntry } from "@backend/models/projects.js";
+import { FileBrowserStore } from "../file-browser-store.js";
 import {
   mockFetch,
   restoreFetch,
@@ -8,7 +9,7 @@ import {
 describe("FileBrowserStore tree state", () => {
   let store: FileBrowserStore;
 
-  function setupFetch(response: { entries: DirEntry[] }, ok = true) {
+  function setupFetch(response: { entries: DirectoryEntry[] }, ok = true) {
     mockFetch(
       () =>
         new Response(JSON.stringify(response), {
@@ -30,7 +31,7 @@ describe("FileBrowserStore tree state", () => {
   // ---- fetchDirectory -------------------------------------------------------
 
   test("fetchDirectory fetches from the correct URL and caches results", async () => {
-    const entries: DirEntry[] = [
+    const entries: DirectoryEntry[] = [
       { name: "src", type: "directory" },
       { name: "README.md", type: "file" },
     ];
@@ -105,7 +106,7 @@ describe("FileBrowserStore tree state", () => {
   // ---- toggleDirectory ------------------------------------------------------
 
   test("toggleDirectory adds to expandedDirs and triggers fetch for uncached dirs", async () => {
-    const entries: DirEntry[] = [{ name: "index.ts", type: "file" }];
+    const entries: DirectoryEntry[] = [{ name: "index.ts", type: "file" }];
     setupFetch({ entries });
 
     await store.toggleDirectory("src");

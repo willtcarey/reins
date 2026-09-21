@@ -5,7 +5,8 @@ import { SidebarProject } from "../../components/sidebar-project.js";
 import { SpringCollapseDirective } from "../../directives/spring-collapse.js";
 import { ProjectStore } from "../../models/stores/project-store.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
-import type { ProjectInfo, SessionListItem } from "../../models/ws-client.js";
+import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
+import type { Project as ProjectInfo } from "@backend/project-store.js";
 import {
   collectTemplateEventListeners,
   collectTemplateValues,

@@ -7,7 +7,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { TaskListItem } from "../models/tasks.js";
+import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 import { cancelDeleteEvent, confirmDeleteEvent } from "./events.js";
 
 @customElement("delete-task-dialog")
