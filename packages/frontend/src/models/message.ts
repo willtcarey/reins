@@ -191,11 +191,11 @@ export function buildMessages(
 export function buildStreamingMessages(
   assistants: readonly StreamingAssistant[],
 ): AssistantMessage[] {
-  return assistants.map(({ message, toolExecutions }) => new AssistantMessage(
+  return assistants.map(({ streamId, message, toolExecutions }) => new AssistantMessage(
     message,
     null,
     null,
-    `streaming-assistant-${message.timestamp}`,
+    `streaming-assistant-${streamId}`,
     true,
     new Map(),
     toolExecutions,

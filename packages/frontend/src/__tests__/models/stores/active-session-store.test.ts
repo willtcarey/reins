@@ -221,12 +221,12 @@ describe("ActiveSessionStore command helpers", () => {
 
     const promptEntry = store.prompt([{ type: "text", text: "hello" }]);
     const steerEntry = store.steer([{ type: "text", text: "keep going" }]);
-    expect(promptEntry?.localId).toBe("live-1");
-    expect(steerEntry?.localId).toBe("live-2");
+    expect(promptEntry?.localId).toMatch(/^submission-/);
+    expect(steerEntry?.localId).toMatch(/^submission-/);
     expect(store.abort()).toBe(true);
 
-    expect(client.prompt).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "hello" }]);
-    expect(client.steer).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "keep going" }]);
+    expect(client.prompt).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "hello" }], expect.any(String));
+    expect(client.steer).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "keep going" }], expect.any(String));
     expect(client.abort).toHaveBeenCalledWith("sess-1");
     expect(rawMessages(store)).toEqual([
       { role: "user", content: [{ type: "text", text: "hello" }], timestamp: expect.any(Number) },
@@ -234,6 +234,28 @@ describe("ActiveSessionStore command helpers", () => {
     ]);
     expect(store.conversation.messages.every(({ entryId }) => entryId === null)).toBe(true);
     expect(new Set(store.conversation.messages.map(({ renderKey }) => renderKey)).size).toBe(2);
+  });
+
+  test("prompt and steer do not require crypto.randomUUID", () => {
+    const randomUUIDDescriptor = Object.getOwnPropertyDescriptor(globalThis.crypto, "randomUUID");
+    Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: undefined });
+    const client = new StubClient();
+    client.prompt = mock(() => {});
+    client.steer = mock(() => {});
+    const store = new ActiveSessionStore("sess-1", client);
+
+    try {
+      expect(store.prompt([{ type: "text", text: "hello" }])).not.toBeNull();
+      expect(store.steer([{ type: "text", text: "keep going" }])).not.toBeNull();
+      expect(client.prompt).toHaveBeenCalledWith("sess-1", expect.any(Array), expect.any(String));
+      expect(client.steer).toHaveBeenCalledWith("sess-1", expect.any(Array), expect.any(String));
+    } finally {
+      if (randomUUIDDescriptor) {
+        Object.defineProperty(globalThis.crypto, "randomUUID", randomUUIDDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis.crypto, "randomUUID");
+      }
+    }
   });
 
   test("prompt optimistically marks cached activityState running", () => {
@@ -411,6 +433,7 @@ describe("ActiveSessionStore session loading contract", () => {
     const optimistic = conversationsStore.addOptimisticUserMessage(
       "sess-1",
       [{ type: "text", text: "follow-up" }],
+      "follow-up-submission",
       3000,
     );
     if (!optimistic) throw new Error("Expected optimistic entry");
@@ -445,6 +468,7 @@ describe("ActiveSessionStore session loading contract", () => {
     const optimistic = conversationsStore.addOptimisticUserMessage(
       "sess-1",
       [{ type: "text", text: "queued steer" }],
+      "queued-steer-submission",
       3000,
     );
     if (!optimistic) throw new Error("Expected optimistic entry");
@@ -492,7 +516,7 @@ describe("ActiveSessionStore session loading contract", () => {
     expect(conversationsStore.get("sess-2").isCompacting).toBe(true);
   });
 
-  test("finished metadata cannot discard agent_end output when persistence sync fails", async () => {
+  test("agent_end does not create a second transcript when persistence sync fails", async () => {
     const sessionCache = new SessionCache();
     const conversationsStore = new ConversationsStore();
     sessionCache.set("sess-1", makeSessionData({ activityState: "running" }));
@@ -508,7 +532,7 @@ describe("ActiveSessionStore session loading contract", () => {
       type: "agent_end",
       messages: [{ role: "user", content: "runtime copy", timestamp: 1000 }, finalAssistant],
     });
-    expect(rawMessages(store)).toEqual([finalAssistant]);
+    expect(rawMessages(store)).toEqual([]);
     expect(store.conversation.streamingMessages).toEqual([]);
 
     mockFetch((url, init) => {
@@ -520,8 +544,7 @@ describe("ActiveSessionStore session loading contract", () => {
     sessionCache.set("sess-1", makeSessionData({ activityState: "finished", messageCount: 2 }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(rawMessages(store)).toEqual([finalAssistant]);
-    expect(store.conversation.messages[0]?.entryId).toBeNull();
+    expect(rawMessages(store)).toEqual([]);
   });
 
   test("finished metadata leaves only the canonical turn when the running transition was missed", async () => {
@@ -537,6 +560,12 @@ describe("ActiveSessionStore session loading contract", () => {
     };
     applyStreamingAssistant(conversationsStore, "sess-1", [tool], 1000);
     const finalMessages = completedToolTurn([tool], "Done", 1000);
+    conversationsStore.applyEvent("sess-1", {
+      type: "message_end",
+      streamId: "test-stream-1000",
+      entryId: "entry-1",
+      message: finalMessages[0]!,
+    });
     setPersistedMessages(conversationsStore, "sess-1", finalMessages);
 
     expect(rawMessages(store).at(-1)).toEqual(finalMessages.at(-1));

@@ -12,7 +12,6 @@
 import type { ServerState, WsClient, WebSocketLike } from "./state.js";
 import { ensureSessionOpen } from "./runtimes/session-manager.js";
 import { getSession } from "./session-store.js";
-import { createBroadcastExcluding } from "./models/broadcast.js";
 import { logger } from "./logger.js";
 import type { ClientPromptContent } from "./messages-store.js";
 import { parseClientPromptContent } from "./session-attachments-store.js";
@@ -33,7 +32,7 @@ async function handleWsCommand(
   client: WsClient,
   raw: string,
 ): Promise<void> {
-  let cmd: { type?: unknown; sessionId?: unknown; message?: unknown };
+  let cmd: { type?: unknown; sessionId?: unknown; clientId?: unknown; message?: unknown };
   try {
     cmd = JSON.parse(raw);
   } catch {
@@ -53,75 +52,37 @@ async function handleWsCommand(
   }
 
   const sessionId = cmd.sessionId;
-  const sendError = (error: string) => {
-    sendToWs(client.ws, { type: "error", sessionId, error });
+  const sendError = (error: string, clientId?: string) => {
+    sendToWs(client.ws, { type: "error", sessionId, ...(clientId ? { clientId } : {}), error });
   };
 
   switch (cmd.type) {
-    case "prompt": {
-      if (cmd.message === undefined) { sendError("Missing message field"); return; }
-      let message: ClientPromptContent;
-      try {
-        message = parseClientPromptContent(cmd.message);
-      } catch (err: unknown) {
-        const detail = err instanceof Error ? err.message : String(err);
-        sendError(`Invalid message field: ${detail}`);
-        return;
-      }
-      try {
-        const row = getSession(sessionId);
-        if (!row) { sendError("Session not found"); return; }
-        const managed = await ensureSessionOpen(state, sessionId);
-
-        sendToWs(client.ws, { type: "ack", command: "prompt" });
-
-        // Broadcast the raw user message to other clients so other devices see
-        // what was typed. Skill content is not expanded into the visible copy.
-        const broadcast = createBroadcastExcluding(state.clients, client);
-        broadcast({
-          type: "user_message",
-          sessionId,
-          projectId: row.project_id,
-          message,
-        });
-
-        void managed.runtime.prompt(message).catch((err: unknown) => {
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          sendError(`prompt failed: ${errorMessage}`);
-        });
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        sendError(`prompt failed: ${errorMessage}`);
-      }
-      break;
-    }
-
+    case "prompt":
     case "steer": {
-      if (cmd.message === undefined) { sendError("Missing message field"); return; }
+      const command = cmd.type;
+      const requestClientId = typeof cmd.clientId === "string" && cmd.clientId.length > 0
+        ? cmd.clientId
+        : undefined;
+      if (cmd.message === undefined) { sendError("Missing message field", requestClientId); return; }
+      if (!requestClientId) { sendError("Missing clientId"); return; }
+      const clientId = requestClientId;
       let message: ClientPromptContent;
       try {
         message = parseClientPromptContent(cmd.message);
       } catch (err: unknown) {
         const detail = err instanceof Error ? err.message : String(err);
-        sendError(`Invalid message field: ${detail}`);
+        sendError(`Invalid message field: ${detail}`, clientId);
         return;
       }
       try {
-        const row = getSession(sessionId);
-        if (!row) { sendError("Session not found"); return; }
+        if (!getSession(sessionId)) { sendError("Session not found", clientId); return; }
         const managed = await ensureSessionOpen(state, sessionId);
-
-        sendToWs(client.ws, { type: "ack", command: "steer" });
-        createBroadcastExcluding(state.clients, client)({
-          type: "user_message",
-          sessionId,
-          projectId: row.project_id,
-          message,
-        });
-        await managed.runtime.steer(message);
+        if (command === "prompt") await managed.runtime.prompt(message, { reinsId: clientId });
+        else await managed.runtime.steer(message, { reinsId: clientId });
+        sendToWs(client.ws, { type: "ack", command, clientId });
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
-        sendError(`steer failed: ${errorMessage}`);
+        sendError(`${command} failed: ${errorMessage}`, clientId);
       }
       break;
     }

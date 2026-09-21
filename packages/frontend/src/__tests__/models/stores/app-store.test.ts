@@ -32,12 +32,12 @@ describe("AppStore application runtime", () => {
     const start = { role: "assistant" as const, content: [], timestamp: 100 };
     const message = { ...start, content: [{ type: "text" as const, text: "working" }] };
     client.fireMessage({ type: "event", sessionId: "s1", projectId: 42, event: { type: "agent_start" } });
-    client.fireMessage({ type: "event", sessionId: "s1", projectId: 42, event: { type: "message_start", message: start } });
+    client.fireMessage({ type: "event", sessionId: "s1", projectId: 42, event: { type: "message_start", streamId: "stream-1", message: start } });
     client.fireMessage({
       type: "event",
       sessionId: "s1",
       projectId: 42,
-      event: { type: "message_update", message, assistantMessageEvent: { type: "snapshot" } },
+      event: { type: "message_update", streamId: "stream-1", message, assistantMessageEvent: { type: "snapshot" } },
     });
 
     expect(store.activeConversationsStore.get("s1").streamingMessages.map(({ raw }) => raw)).toEqual([message]);

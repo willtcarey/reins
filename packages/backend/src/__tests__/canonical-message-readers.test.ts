@@ -39,9 +39,9 @@ describe("canonical AgentHarness message readers", () => {
       { role: "assistant", content: text("done"), stopReason: "stop", timestamp: 20 },
     ]);
     const page = loadMessagePage("canonical", 10);
-    expect(page.items.map(({ id, parentId }) => ({ id, parentId }))).toEqual([
-      { id: String(user), parentId: null },
-      { id: String(assistant), parentId: String(user) },
+    expect(page.items).toMatchObject([
+      { id: "entry-user", parentId: null, seq: 2, clientId: "input-1" },
+      { id: "entry-assistant", parentId: "entry-user", seq: 5 },
     ]);
   });
 

@@ -105,7 +105,7 @@ function toError(error: unknown, fallback = "Claude query failed"): Error {
   return error instanceof Error ? error : new Error(String(error ?? fallback));
 }
 
-/** Dormant legacy runtime retained outside the active AgentRuntime contract. */
+/** Dormant unregistered SDK source retained outside the active runtime path. */
 export class ClaudeSdkAgentRuntime {
   readonly runtimeType = "claude_agent_sdk" as const;
 

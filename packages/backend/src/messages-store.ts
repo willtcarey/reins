@@ -59,8 +59,6 @@ export type RuntimeContentBlock = TextContentBlock | ThinkingContentBlock | Tool
 
 export interface RuntimeMessage {
   role: string;
-  /** Stable runtime-owned logical identity. Not a provider response or SQLite row ID. */
-  logicalId?: string;
   metadata?: Record<string, unknown>;
   content?: RuntimeContentBlock[];
   stopReason?: string;
@@ -104,7 +102,6 @@ type SessionMessageEntryMetadata<Role extends Exclude<SessionEntryType, "toolCal
 
 type PersistedMessageBase = {
   timestamp: number;
-  logicalId?: string;
   metadata?: Record<string, unknown>;
   summary?: string;
 };
@@ -162,21 +159,26 @@ export type SessionEntry = SessionMessageEntry | SessionToolCallEntry;
 export interface SessionMessageRow {
   id: number;
   parent_id: number | null;
+  parent_harness_id: string | null;
   session_id: string;
   seq: number;
+  harness_id: string;
   role: string;
   message_json: string;
   created_at: string;
 }
 
-export interface SessionMessagePageItem {
+/** Canonical durable conversation envelope used by pages and runtime events. */
+export interface ConversationEntry<TMessage = PersistedMessage> {
   id: string;
   parentId: string | null;
-  message: PersistedMessage;
+  seq: number;
+  clientId?: string;
+  message: TMessage;
 }
 
 export interface SessionMessagePage {
-  items: SessionMessagePageItem[];
+  items: ConversationEntry[];
   pageInfo: {
     hasPreviousPage: boolean;
     previousCursor: string | null;
@@ -270,6 +272,13 @@ function parsePersistedMessage(messageJson: string): PersistedMessage | null {
   return null;
 }
 
+function persistedClientId(messageJson: string): string | undefined {
+  const entry: StoredEntryEnvelope = JSON.parse(messageJson);
+  return entry.type === "message" && entry.message.role === "reinsInput"
+    ? entry.message.reinsId
+    : undefined;
+}
+
 // ---- Message projections --------------------------------------------------
 
 /** Count canonical entries that participate in transcript display. */
@@ -358,8 +367,10 @@ interface MessagePagePosition {
   afterSeq?: number;
 }
 
-const DISPLAY_ROW_SELECT = `SELECT sm.id, sm.parent_id, sm.session_id, sm.seq, sm.role, sm.message_json, sm.created_at
- FROM session_messages AS sm`;
+const DISPLAY_ROW_SELECT = `SELECT sm.id, sm.parent_id, parent.harness_id AS parent_harness_id,
+ sm.session_id, sm.seq, sm.harness_id, sm.role, sm.message_json, sm.created_at
+ FROM session_messages AS sm
+ LEFT JOIN session_messages AS parent ON parent.id = sm.parent_id AND parent.session_id = sm.session_id`;
 
 function queryDisplayRows(
   sessionId: string,
@@ -487,8 +498,10 @@ export function loadMessagePage(
 
   return {
     items: parsedPage.map(({ row, message }) => ({
-      id: String(row.id),
-      parentId: row.parent_id === null ? null : String(row.parent_id),
+      id: row.harness_id,
+      parentId: row.parent_harness_id,
+      seq: row.seq,
+      ...(persistedClientId(row.message_json) ? { clientId: persistedClientId(row.message_json) } : {}),
       message,
     })),
     pageInfo: {

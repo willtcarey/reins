@@ -262,10 +262,21 @@ describe("session routes (top-level)", () => {
       expect(res!.status).toBe(200);
       expect(await res!.json()).toEqual({
         items: [
-          { id: expect.any(String), parentId: null, message: { role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1000 } },
+          {
+            id: expect.any(String),
+            parentId: null,
+            seq: 0,
+            clientId: expect.any(String),
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+              timestamp: 1000,
+            },
+          },
           {
             id: expect.any(String),
             parentId: expect.any(String),
+            seq: 1,
             message: {
               role: "assistant",
               content: [{ type: "text", text: "hi" }],
@@ -336,7 +347,12 @@ describe("session routes (top-level)", () => {
         items: [{
           id: expect.any(String),
           parentId: null,
-          message: { role: "assistant", content: [{ type: "text", text: "from db" }], timestamp: 0 },
+          seq: 0,
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "from db" }],
+            timestamp: 0,
+          },
         }],
         pageInfo: {
           hasPreviousPage: false,

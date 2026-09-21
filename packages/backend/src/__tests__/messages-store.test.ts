@@ -37,8 +37,12 @@ describe("canonical messages store", () => {
       content: [{ type: "text", text: "clean update" }],
       metadata: { sourceSessionId: "source-1" },
     });
-    expect(loadMessagePage("session", 10).items[0]?.message).toMatchObject({
-      metadata: { sourceSessionId: "source-1" },
+    expect(loadMessagePage("session", 10).items[0]).toMatchObject({
+      id: expect.any(String),
+      parentId: null,
+      seq: 0,
+      clientId: expect.any(String),
+      message: { metadata: { sourceSessionId: "source-1" } },
     });
   });
 

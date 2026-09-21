@@ -16,14 +16,16 @@ type ExternalizedRuntimeToolResultPayload = Omit<RuntimeToolResultPayload, "cont
 type AgentEndEvent = Extract<AgentRuntimeEvent, { type: "agent_end" }>;
 type TurnEndEvent = Extract<AgentRuntimeEvent, { type: "turn_end" }>;
 type MessageEvent = Extract<AgentRuntimeEvent, { type: "message_start" | "message_update" | "message_end" }>;
+type EntryAddedEvent = Extract<AgentRuntimeEvent, { type: "entry_added" }>;
 type ToolExecutionEndEvent = Extract<AgentRuntimeEvent, { type: "tool_execution_end" }>;
-type PassthroughEvent = Exclude<AgentRuntimeEvent, AgentEndEvent | TurnEndEvent | MessageEvent | ToolExecutionEndEvent>;
+type PassthroughEvent = Exclude<AgentRuntimeEvent, AgentEndEvent | TurnEndEvent | MessageEvent | EntryAddedEvent | ToolExecutionEndEvent>;
 
 export type ExternalizedAgentRuntimeEvent =
   | PassthroughEvent
   | (Omit<AgentEndEvent, "messages"> & { messages: ExternalizedRuntimeMessage[] })
   | (Omit<TurnEndEvent, "message" | "toolResults"> & { message: ExternalizedRuntimeMessage; toolResults: ExternalizedRuntimeMessage[] })
   | (Omit<MessageEvent, "message"> & { message: ExternalizedRuntimeMessage })
+  | (Omit<EntryAddedEvent, "entry"> & { entry: Omit<EntryAddedEvent["entry"], "message"> & { message: ExternalizedRuntimeMessage } })
   | (Omit<ToolExecutionEndEvent, "result"> & { result?: ExternalizedRuntimeToolResultPayload });
 
 function externalizeRuntimeContent(sessionId: string, content: RuntimeContentBlock[]): PersistedContentBlock[] {
@@ -63,6 +65,15 @@ export function externalizeRuntimeEventImages(
       return {
         ...event,
         message: externalizeRuntimeMessageImages(sessionId, event.message),
+      };
+
+    case "entry_added":
+      return {
+        ...event,
+        entry: {
+          ...event.entry,
+          message: externalizeRuntimeMessageImages(sessionId, event.entry.message),
+        },
       };
 
     case "tool_execution_end":

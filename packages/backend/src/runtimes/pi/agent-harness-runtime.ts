@@ -15,7 +15,7 @@ import {
 import type { Database } from "bun:sqlite";
 import type { Message, Models } from "@earendil-works/pi-ai";
 import { hydratePromptContent } from "../../session-attachments-store.js";
-import type { ClientPromptContent, RuntimeMessage } from "../../messages-store.js";
+import type { ClientPromptContent, ConversationEntry, RuntimeMessage } from "../../messages-store.js";
 import { logger } from "../../logger.js";
 import type { AgentRuntime, AgentRuntimeEvent, RuntimeLifecycleSink, RuntimePromptOptions, RuntimePromptSubmission, RuntimeRunOutcome, SetRuntimeModelParams } from "../registry.js";
 import { PiStorageAdapter } from "./storage-adapter.js";
@@ -69,35 +69,62 @@ function providerInput(message: ReinsInputMessage, content: unknown[]): { role: 
   return { role: "user", content: framed, timestamp: message.timestamp };
 }
 
-function projectMessage(message: AgentMessage, logicalId?: string): RuntimeMessage {
+function projectMessage(message: AgentMessage): RuntimeMessage {
   if (message.role === "reinsInput") {
     return {
       role: "user",
       content: message.content as RuntimeMessage["content"],
       timestamp: message.timestamp,
       ...(Object.keys(message.metadata).length > 0 ? { metadata: message.metadata } : {}),
-      ...(logicalId ? { logicalId } : {}),
     };
   }
-  return { ...message, ...(logicalId ? { logicalId } : {}) } as RuntimeMessage;
+  return { ...message } as RuntimeMessage;
 }
 
-function projectEntry(entry: Entry): RuntimeMessage | undefined {
-  if (entry.type === "message") return projectMessage(entry.message, entry.id);
-  if (entry.type === "compaction") {
-    return { role: "compactionSummary", summary: entry.summary, logicalId: entry.id };
-  }
-  return undefined;
+function projectEntry(entry: Entry): ConversationEntry<RuntimeMessage> | undefined {
+  const message = entry.type === "message"
+    ? projectMessage(entry.message)
+    : entry.type === "compaction"
+      ? { role: "compactionSummary", summary: entry.summary, timestamp: entry.timestamp }
+      : undefined;
+  if (!message) return undefined;
+  return {
+    id: entry.id,
+    parentId: entry.parentId,
+    seq: entry.seq,
+    ...(entry.type === "message" && entry.message.role === "reinsInput"
+      ? { clientId: entry.message.reinsId }
+      : {}),
+    message,
+  };
 }
 
-function mapHarnessEvent(event: HarnessEvent): AgentRuntimeEvent | undefined {
+function mapHarnessEvent(event: HarnessEvent, streamId: string | undefined): AgentRuntimeEvent | undefined {
   switch (event.type) {
     case "run_start": return { type: "agent_start" };
     case "turn_start": return { type: "turn_start" };
     case "turn_end": return { type: "turn_end", message: projectMessage(event.message), toolResults: event.toolResults.map((message) => projectMessage(message)) };
-    case "message_start": return { type: "message_start", message: projectMessage(event.message) };
-    case "message_update": return { type: "message_update", message: projectMessage(event.message), assistantMessageEvent: event.event };
-    case "message_end": return { type: "message_end", message: projectMessage(event.message, event.entryId) };
+    case "message_start": {
+      if (!streamId) throw new Error("AgentHarness message_start is missing a stream identity");
+      return { type: "message_start", message: projectMessage(event.message), streamId };
+    }
+    case "message_update": {
+      if (!streamId) throw new Error("AgentHarness message_update is missing a stream identity");
+      return { type: "message_update", message: projectMessage(event.message), streamId, assistantMessageEvent: event.event };
+    }
+    case "message_end": {
+      if (!streamId) throw new Error("AgentHarness message_end is missing a stream identity");
+      return {
+        type: "message_end",
+        message: projectMessage(event.message),
+        streamId,
+        ...(event.entryId ? { entryId: event.entryId } : {}),
+      };
+    }
+    case "entry_added": {
+      const entry = projectEntry(event.entry);
+      return entry ? { type: "entry_added", entry } : undefined;
+    }
     case "tool_start": return { type: "tool_execution_start", toolCallId: event.toolCallId, toolName: event.toolName, args: event.args as Record<string, unknown> };
     case "tool_update": return { type: "tool_execution_update", toolCallId: event.toolCallId, toolName: event.toolName, args: {}, partialResult: event.partialResult };
     case "tool_end": return {
@@ -141,6 +168,7 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
   private readonly sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null };
   private readonly activeOperations = new Map<string, Promise<void>>();
   private readonly pendingAdmissions = new Set<Promise<void>>();
+  private readonly submissionAdmissions = new Map<string, Promise<unknown>>();
   private readonly pendingIdleStarts = new Set<Promise<void>>();
   private closePromise?: Promise<void>;
   private readonly lifecycleDisposers: (() => void)[];
@@ -177,6 +205,16 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
   async prompt(
     content: ClientPromptContent,
     options: RuntimePromptOptions = {},
+  ): Promise<RuntimePromptSubmission> {
+    const reinsId = options.reinsId ?? crypto.randomUUID();
+    return this.deduplicateAdmission(`prompt:${reinsId}`, () => (
+      this.admitPrompt(content, { ...options, reinsId })
+    ));
+  }
+
+  private async admitPrompt(
+    content: ClientPromptContent,
+    options: RuntimePromptOptions & { reinsId: string },
   ): Promise<RuntimePromptSubmission> {
     if (!this.sessionId && content.some((block) => block.type === "image")) {
       throw new Error("Cannot hydrate prompt attachments without a Reins session id");
@@ -261,12 +299,45 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
   }
 
   async steer(content: ClientPromptContent, options: RuntimePromptOptions = {}): Promise<void> {
-    await this.enqueueSteering(createReinsInputMessage(
+    const message = createReinsInputMessage(
       content,
       options.reinsId,
       options.metadata,
       options.timestamp,
+    );
+    await this.deduplicateAdmission(`steer:${message.reinsId}`, () => this.admitSteering(message));
+  }
+
+  private async deduplicateAdmission<T>(key: string, admit: () => Promise<T>): Promise<T> {
+    const pending = this.submissionAdmissions.get(key);
+    if (pending) return pending as Promise<T>;
+    const admission = admit();
+    this.submissionAdmissions.set(key, admission);
+    try {
+      return await admission;
+    } finally {
+      this.submissionAdmissions.delete(key);
+    }
+  }
+
+  private async admitSteering(message: ReinsInputMessage): Promise<void> {
+    const existing = (await this.lane.findEntries(undefined, BACKGROUND_CONTEXT)).some((entry) => (
+      entry.type === "message"
+      && entry.message.role === "reinsInput"
+      && entry.message.reinsId === message.reinsId
     ));
+    if (existing) return;
+
+    const watch = await this.lane.watch(BACKGROUND_CONTEXT);
+    const queued = watch.snapshot.queues.some((item) => (
+      item.type === "message"
+      && item.message.role === "reinsInput"
+      && item.message.reinsId === message.reinsId
+    ));
+    watch.unsubscribe();
+    if (queued) return;
+
+    await this.enqueueSteering(message);
   }
 
   private enqueueSteering(message: ReinsInputMessage): Promise<string> {
@@ -341,14 +412,26 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
 
   subscribe(listener: (event: AgentRuntimeEvent) => void): () => void {
     const runMessages = new Map<string, RuntimeMessage[]>();
-    const disposers = (["run_start", "turn_start", "turn_end", "message_start", "message_update", "message_end", "tool_start", "tool_update", "tool_end", "retry_scheduled", "retry_end", "compaction_start", "compaction_end"] as const)
+    const activeStreams = new Map<string, string>();
+    let nextStream = 1;
+    const disposers = (["run_start", "turn_start", "turn_end", "message_start", "message_update", "message_end", "entry_added", "tool_start", "tool_update", "tool_end", "retry_scheduled", "retry_end", "compaction_start", "compaction_end"] as const)
       .map((type) => this.harness.events.on(type, (event) => {
-        if (event.type === "turn_end") {
+        if (event.type === "message_end" && event.runId && event.message.role !== "reinsInput") {
           const messages = runMessages.get(event.runId) ?? [];
-          messages.push(projectMessage(event.message), ...event.toolResults.map((message) => projectMessage(message)));
+          messages.push(projectMessage(event.message));
           runMessages.set(event.runId, messages);
         }
-        const mapped = mapHarnessEvent(event);
+        let streamId: string | undefined;
+        if (event.type === "message_start" || event.type === "message_update" || event.type === "message_end") {
+          const streamKey = event.runId ?? "unscoped";
+          streamId = activeStreams.get(streamKey);
+          if (event.type === "message_start" || !streamId) {
+            streamId = `${streamKey}:${nextStream++}`;
+            activeStreams.set(streamKey, streamId);
+          }
+          if (event.type === "message_end") activeStreams.delete(streamKey);
+        }
+        const mapped = mapHarnessEvent(event, streamId);
         if (mapped) listener(mapped);
       }));
     disposers.push(this.harness.events.on("run_end", (event) => {
@@ -371,7 +454,7 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     try {
       return watch.snapshot.transcript.flatMap((entry) => {
         const projected = projectEntry(entry);
-        return projected ? [projected] : [];
+        return projected ? [projected.message] : [];
       });
     } finally {
       watch.unsubscribe();

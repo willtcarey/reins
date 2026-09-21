@@ -56,6 +56,8 @@ interface StreamProcessorState {
   emittedToolExecutionEnd: Set<string>;
   emittedMessageStart: boolean;
   emittedTurnStart: boolean;
+  currentStreamId: string | null;
+  nextStreamId: number;
   currentStreamBlocks?: Map<number, CurrentStreamBlock>;
   /** Messages accumulated from completed intermediate turns within one agent loop. */
   completedTurnMessages: RuntimeMessage[];
@@ -83,6 +85,8 @@ export class ClaudeStreamProcessor {
     emittedToolExecutionEnd: new Set(),
     emittedMessageStart: false,
     emittedTurnStart: false,
+    currentStreamId: null,
+    nextStreamId: 1,
     completedTurnMessages: [],
   };
 
@@ -246,6 +250,7 @@ export class ClaudeStreamProcessor {
         {
           type: "message_update",
           message: assistant,
+          streamId: this.ensureStreamId(),
           assistantMessageEvent: {
             type: "text_delta",
             delta: delta.text ?? "",
@@ -268,6 +273,7 @@ export class ClaudeStreamProcessor {
         {
           type: "message_update",
           message: assistant,
+          streamId: this.ensureStreamId(),
           assistantMessageEvent: {
             type: "thinking_delta",
             delta: delta.thinking ?? "",
@@ -321,6 +327,7 @@ export class ClaudeStreamProcessor {
       {
         type: "message_update",
         message: this.ensureAssistant(),
+        streamId: this.ensureStreamId(),
         assistantMessageEvent: { type: "tool_call", toolCallId },
       },
       {
@@ -523,7 +530,7 @@ export class ClaudeStreamProcessor {
     if (!this.state.emittedMessageStart) {
       this.state.emittedMessageStart = true;
       const assistant = this.ensureAssistant();
-      events.push({ type: "message_start", message: assistant });
+      events.push({ type: "message_start", message: assistant, streamId: this.ensureStreamId() });
     }
 
     return events;
@@ -543,7 +550,7 @@ export class ClaudeStreamProcessor {
     const events: AgentRuntimeEvent[] = [];
     const assistant = this.state.activeAssistant;
 
-    events.push({ type: "message_end", message: assistant });
+    events.push({ type: "message_end", message: assistant, streamId: this.ensureStreamId() });
     events.push({
       type: "turn_end",
       message: assistant,
@@ -559,6 +566,7 @@ export class ClaudeStreamProcessor {
     this.state.turnToolResults = [];
     this.state.emittedToolExecutionEnd.clear();
     this.state.emittedMessageStart = false;
+    this.state.currentStreamId = null;
     // Keep emittedTurnStart = true — the outer agent is still running
 
     // Signal that a new internal turn is starting
@@ -573,7 +581,7 @@ export class ClaudeStreamProcessor {
     const events: AgentRuntimeEvent[] = [];
     const assistant = this.ensureAssistant();
 
-    events.push({ type: "message_end", message: assistant });
+    events.push({ type: "message_end", message: assistant, streamId: this.ensureStreamId() });
     events.push({
       type: "turn_end",
       message: assistant,
@@ -586,9 +594,15 @@ export class ClaudeStreamProcessor {
     this.state.emittedToolExecutionEnd.clear();
     this.state.emittedMessageStart = false;
     this.state.emittedTurnStart = false;
+    this.state.currentStreamId = null;
     this.resetCurrentStreamBlocks();
 
     return events;
+  }
+
+  private ensureStreamId(): string {
+    this.state.currentStreamId ??= `claude:${this.state.nextStreamId++}`;
+    return this.state.currentStreamId;
   }
 
   private completeTurn(stopReason?: string): AgentRuntimeEvent[] {

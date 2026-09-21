@@ -11,7 +11,6 @@
  * broadcast payload shape — keep it in sync when adding new messages.
  */
 
-import type { ClientPromptContent } from "../messages-store.js";
 import type { ExternalizedAgentRuntimeEvent } from "../runtimes/runtime-image-externalization.js";
 import type { WsClient } from "../state.js";
 // ---------------------------------------------------------------------------
@@ -24,13 +23,6 @@ export type ServerMessage =
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number }
   | { type: "code_review_updated"; projectId: number; taskId: number | null; reviewId: string; revision: number }
-  | {
-    type: "user_message";
-    sessionId: string;
-    projectId: number;
-    message: ClientPromptContent;
-    metadata?: Record<string, unknown>;
-  }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number };
 
 // ---------------------------------------------------------------------------
@@ -43,19 +35,6 @@ export function createBroadcast(clients: Set<WsClient>): Broadcast {
   return (message) => {
     const payload = JSON.stringify(message);
     for (const client of clients) {
-      try {
-        client.ws.send(payload);
-      } catch {}
-    }
-  };
-}
-
-/** Like createBroadcast, but skips one client (e.g. the command sender). */
-export function createBroadcastExcluding(clients: Set<WsClient>, exclude: WsClient): Broadcast {
-  return (message) => {
-    const payload = JSON.stringify(message);
-    for (const client of clients) {
-      if (client === exclude) continue;
       try {
         client.ws.send(payload);
       } catch {}

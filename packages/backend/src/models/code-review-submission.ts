@@ -56,12 +56,6 @@ export class CodeReviewSubmission {
     });
     acceptCodeReviewSubmission(review, command.sessionId, feedback);
     this.broadcastReview(review);
-    this.broadcast({
-      type: "user_message",
-      sessionId: command.sessionId,
-      projectId: this.projectId,
-      message,
-    });
     return { messageId: submitted.messageId };
   }
 

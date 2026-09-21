@@ -87,8 +87,8 @@ describe("ChatPanel conversation orchestration", () => {
     const output = templateToString(firstRepeatTemplate(panel));
 
     expect(output).toContain("<chat-message");
-    expect(output).toContain("data-conversation-key=1");
-    expect(output).toContain("data-message-key=1");
+    expect(output).toContain("data-conversation-key=entry-1");
+    expect(output).toContain("data-message-key=entry-1");
     expect(output).toContain(".sessionId=sess-1");
     expect(output).toContain(".projectId=42");
     expect(output).toContain(".projectDir=/work/project");
@@ -162,6 +162,7 @@ describe("ChatPanel conversation orchestration", () => {
     const conversations = new ConversationsStore();
     conversations.applyEvent("sess-1", {
       type: "message_update",
+      streamId: "stream-1",
       message: { role: "assistant", timestamp: 2, content: [{ type: "thinking", thinking: "secret" }] },
       assistantMessageEvent: { type: "snapshot" },
     });
@@ -272,6 +273,7 @@ describe("ChatPanel conversation orchestration", () => {
     const conversations = new ConversationsStore();
     conversations.applyEvent("sess-1", {
       type: "message_update",
+      streamId: "stream-1",
       message: { role: "assistant", timestamp: 2, content: [{ type: "thinking", thinking: "secret" }] },
       assistantMessageEvent: { type: "snapshot" },
     });
@@ -292,7 +294,8 @@ describe("ChatPanel conversation orchestration", () => {
 
   test("coordinates optimistic identity from composer submission", () => {
     const client = new StubClient();
-    client.prompt = mock((_sessionId: string, _message: ClientPromptContent) => undefined);
+    const prompt = mock((_sessionId: string, _message: ClientPromptContent, _clientId: string) => undefined);
+    client.prompt = prompt;
     const conversations = new ConversationsStore();
     const panel = new ChatPanel();
     panel.store = new ActiveSessionStore("sess-1", client, undefined, conversations);
@@ -302,9 +305,11 @@ describe("ChatPanel conversation orchestration", () => {
     }));
 
     const [message] = panel.store.conversation.messages;
-    expect(message?.renderKey).toBe("live-1");
-    expect(templateToString(firstRepeatTemplate(panel))).toContain("data-message-key=live-1");
-    expect(client.prompt).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "hello" }]);
+    if (message?.raw.role !== "user") throw new Error("Expected optimistic user submission");
+    const clientId = prompt.mock.calls[0]?.[2];
+    expect(message.renderKey).toBe(`submission-${clientId}`);
+    expect(templateToString(firstRepeatTemplate(panel))).toContain(`data-message-key=submission-${clientId}`);
+    expect(client.prompt).toHaveBeenCalledWith("sess-1", [{ type: "text", text: "hello" }], clientId);
   });
 
   test("renders live tool messages through the shared chat-message component", () => {
@@ -318,7 +323,7 @@ describe("ChatPanel conversation orchestration", () => {
     const streamingMessage = conversations.get("sess-1").streamingMessages[0];
     const output = templateToString(callPrivate(panel, "renderMessage", streamingMessage));
     expect(output).toContain("<chat-message");
-    expect(output).toContain("streaming-assistant-200");
+    expect(output).toContain("streaming-assistant-test-stream-200");
     expect(templateToString(callPrivate(panel, "renderStreamingContent"))).not.toContain("Thinking...");
   });
 });

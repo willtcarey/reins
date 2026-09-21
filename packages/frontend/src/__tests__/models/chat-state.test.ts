@@ -18,20 +18,23 @@ function applyEvents(events: ChatEvent[]): ChatState {
 describe("assistant snapshot streams", () => {
   test("a complete snapshot replaces prior content and recovers missed deltas", () => {
     const state = applyEvents([
-      { type: "message_start", message: assistant(100) },
+      { type: "message_start", streamId: "stream-1", message: assistant(100) },
       {
         type: "message_update",
+        streamId: "stream-1",
         message: assistant(100, [{ type: "text", text: "partial" }]),
         assistantMessageEvent: { type: "text_delta", delta: "partial" },
       },
       {
         type: "message_update",
+        streamId: "stream-1",
         message: assistant(100, [{ type: "text", text: "complete after missed updates" }]),
         assistantMessageEvent: { type: "text_delta", delta: "updates" },
       },
     ]);
 
     expect(state.streamingAssistants).toEqual([{
+      streamId: "stream-1",
       message: assistant(100, [{ type: "text", text: "complete after missed updates" }]),
       toolExecutions: {},
     }]);
@@ -40,6 +43,7 @@ describe("assistant snapshot streams", () => {
   test("message_update creates a group when message_start was missed", () => {
     const state = applyEvents([{
       type: "message_update",
+      streamId: "stream-1",
       message: assistant(100, [{ type: "text", text: "recovered" }]),
       assistantMessageEvent: { type: "snapshot" },
     }]);
@@ -51,9 +55,10 @@ describe("assistant snapshot streams", () => {
 
   test("preserves multiple assistant groups and their content order", () => {
     const state = applyEvents([
-      { type: "message_end", message: assistant(200, [{ type: "text", text: "first" }]) },
+      { type: "message_end", streamId: "stream-1", message: assistant(200, [{ type: "text", text: "first" }]) },
       {
         type: "message_update",
+        streamId: "stream-2",
         message: assistant(100, [
           { type: "text", text: "second" },
           { type: "toolCall", id: "tc-1", name: "read", arguments: { path: "a.ts" } },
@@ -84,9 +89,9 @@ describe("assistant snapshot streams", () => {
       timestamp: 200,
     };
     const state = applyEvents([
-      { type: "message_start", message: user },
-      { type: "message_update", message: toolResult, assistantMessageEvent: { type: "snapshot" } },
-      { type: "message_end", message: toolResult },
+      { type: "message_start", streamId: "user-stream", message: user },
+      { type: "message_update", streamId: "tool-stream", message: toolResult, assistantMessageEvent: { type: "snapshot" } },
+      { type: "message_end", streamId: "tool-stream", message: toolResult },
     ]);
 
     expect(state.streamingAssistants).toEqual([]);
@@ -97,7 +102,7 @@ describe("assistant snapshot streams", () => {
       { type: "toolCall", id: "tc-1", name: "bash", arguments: {} },
     ]);
     const state = applyEvents([
-      { type: "message_update", message, assistantMessageEvent: { type: "snapshot" } },
+      { type: "message_update", streamId: "stream-1", message, assistantMessageEvent: { type: "snapshot" } },
       { type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } },
       { type: "tool_execution_update", toolCallId: "tc-1", toolName: "bash", args: { timeout: 10 }, partialResult: {} },
       {
@@ -123,10 +128,11 @@ describe("assistant snapshot streams", () => {
       { type: "toolCall", id: "tc-1", name: "bash", arguments: {} },
     ]);
     const state = applyEvents([
-      { type: "message_update", message: withTool, assistantMessageEvent: { type: "snapshot" } },
+      { type: "message_update", streamId: "stream-1", message: withTool, assistantMessageEvent: { type: "snapshot" } },
       { type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } },
       {
         type: "message_update",
+        streamId: "stream-1",
         message: assistant(100, [{ type: "text", text: "replacement" }]),
         assistantMessageEvent: { type: "snapshot" },
       },
@@ -138,6 +144,7 @@ describe("assistant snapshot streams", () => {
   test("unknown tool events do not create or modify streaming assistants", () => {
     const initial = applyEvents([{
       type: "message_update",
+      streamId: "stream-1",
       message: assistant(100, [{ type: "text", text: "safe" }]),
       assistantMessageEvent: { type: "snapshot" },
     }]);
@@ -160,55 +167,20 @@ describe("other chat events", () => {
   test("agent_start is a presentation no-op", () => {
     const before = applyEvents([{
       type: "message_end",
+      streamId: "stream-1",
       message: assistant(100, [{ type: "text", text: "earlier turn" }]),
     }]);
 
     expect(applyChatEvent(before, { type: "agent_start" })).toBe(before);
   });
 
-  test("agent_end promotes final assistants and tool results before clearing live overlays", () => {
-    const snapshot = assistant(100, [
-      { type: "text", text: "answer" },
-      { type: "toolCall", id: "tc-1", name: "read", arguments: {} },
-    ]);
-    const toolResult = {
-      role: "toolResult" as const,
-      toolCallId: "tc-1",
-      toolName: "read",
-      content: [{ type: "text" as const, text: "result" }],
-      isError: false,
-      timestamp: 200,
-    };
-    let state = applyEvents([
-      { type: "message_end", message: snapshot },
-      { type: "tool_execution_start", toolCallId: "tc-1", toolName: "read", args: {} },
-    ]);
-    state = applyChatEvent(state, {
-      type: "agent_end",
-      messages: [{ role: "user", content: "prompt", timestamp: 1 }, snapshot, toolResult],
-    });
+  test("agent_end clears streaming overlays without promoting a second transcript", () => {
+    const snapshot = assistant(100, [{ type: "text", text: "answer" }]);
+    let state = applyEvents([{ type: "message_end", streamId: "stream-1", message: snapshot }]);
+    state = applyChatEvent(state, { type: "agent_end", messages: [snapshot] });
 
     expect(state.streamingAssistants).toEqual([]);
-    expect(state.messages).toEqual([snapshot, toolResult]);
-  });
-
-  test("agent_end recovers missed assistant lifecycles and deduplicates final messages", () => {
-    const finalAssistant = assistant(100, [{ type: "text", text: "recovered final answer" }]);
-    const originalToolResult = {
-      role: "toolResult" as const,
-      toolCallId: "tc-1",
-      toolName: "read",
-      content: [{ type: "text" as const, text: "original" }],
-      isError: false,
-      timestamp: 200,
-    };
-    const duplicateToolResult = { ...originalToolResult, content: [{ type: "text" as const, text: "duplicate" }], timestamp: 300 };
-    const state = applyEvents([
-      { type: "agent_end", messages: [finalAssistant, originalToolResult] },
-      { type: "agent_end", messages: [finalAssistant, duplicateToolResult] },
-    ]);
-
-    expect(state.messages).toEqual([finalAssistant, originalToolResult]);
+    expect(state.messages).toEqual([]);
   });
 
   test("agent_end surfaces authoritative run errors without displaying an empty assistant", () => {
@@ -238,7 +210,7 @@ describe("other chat events", () => {
 
     state = applyChatEvent(state, { type: "compaction_end", result: { summary: "summary" }, aborted: false });
     expect(state.isCompacting).toBe(false);
-    expect(state.messages[0]).toMatchObject({ role: "compactionSummary", content: "summary" });
+    expect(state.messages).toEqual([]);
   });
 
   test("retry events update presentation state", () => {

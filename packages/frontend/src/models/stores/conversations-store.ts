@@ -1,10 +1,7 @@
 /**
- * Conversations Store
- *
- * Owns persisted, optimistic, and live conversation presentation per session.
- * Runtime activity belongs exclusively to SessionCache. Keeping reconciliation
- * here lets WebSocket events update inactive routes without duplicating
- * canonical/live merge rules in rendering components.
+ * Canonical conversation ownership. Durable pages and WebSocket entries share
+ * one envelope and enter through one idempotent upsert path. Optimistic
+ * submissions and streaming assistants remain explicit overlays.
  */
 
 import {
@@ -15,51 +12,43 @@ import {
   type ChatState,
 } from "../chat-state.js";
 import type { ClientPromptContent } from "../chat-content.js";
-import {
-  buildMessages,
-  buildStreamingMessages,
-  type Message,
-  type AssistantMessage,
-} from "../message.js";
-import type { SessionMessagePage, SessionMessagePageItem } from "@backend/messages-store.js";
+import { buildMessages, buildStreamingMessages, type AssistantMessage, type Message } from "../message.js";
+import type { ConversationEntry as BackendConversationEntry, SessionMessagePage } from "@backend/messages-store.js";
 import type { AgentMessage } from "../agent-message.js";
 import type { InboundEventSource } from "../ws-client.js";
 import { api } from "../reins-client.js";
 import type { SessionCache } from "./session-cache.js";
 
-export interface PersistedConversationEntry extends Omit<SessionMessagePageItem, "message"> {
+export interface ConversationEntry extends Omit<BackendConversationEntry, "message"> {
   message: AgentMessage;
 }
 
 export interface LiveConversationEntry {
   id: null;
   parentId: null;
+  seq: null;
   localId: string;
+  clientId: string;
   message: AgentMessage;
 }
 
-export type ConversationEntry = PersistedConversationEntry | LiveConversationEntry;
-
 export interface MessageRecordPage extends Omit<SessionMessagePage, "items"> {
-  items: PersistedConversationEntry[];
+  items: ConversationEntry[];
 }
 
 interface ConversationState extends Omit<ChatState, "messages"> {
-  records: PersistedConversationEntry[];
-  liveTail: LiveConversationEntry[];
+  entries: ConversationEntry[];
+  pendingSubmissions: Map<string, LiveConversationEntry>;
   previousCursor: string | null;
   latestCursor: string | null;
 }
 
-interface ConversationUpdate extends Partial<Omit<ConversationState, "records">> {
-  /** Records are always merged by ID and ordered by parent links. */
-  records?: PersistedConversationEntry[];
+interface ConversationUpdate extends Partial<Omit<ConversationState, "entries">> {
+  entries?: ConversationEntry[];
 }
 
 export interface ConversationView {
-  /** Displayable persisted and live messages in conversation order. */
   messages: Message[];
-  /** Live assistant snapshots projected through the same display interface. */
   streamingMessages: AssistantMessage[];
   hasEarlierMessages: boolean;
   isCompacting: boolean;
@@ -67,17 +56,13 @@ export interface ConversationView {
 }
 
 type ConversationsStoreListener = () => void;
-
-interface ConversationsStoreOptions {
-  sessionCache?: SessionCache;
-  eventSource?: InboundEventSource;
-}
+interface ConversationsStoreOptions { sessionCache?: SessionCache; eventSource?: InboundEventSource }
 
 function blankConversationState(): ConversationState {
   const state = initialChatState();
   return {
-    records: [],
-    liveTail: [],
+    entries: [],
+    pendingSubmissions: new Map(),
     previousCursor: null,
     latestCursor: null,
     streamingAssistants: state.streamingAssistants,
@@ -86,32 +71,11 @@ function blankConversationState(): ConversationState {
   };
 }
 
-/**
- * Merge pages by stable record ID, then derive display order from parent links.
- * This preserves graph order when overlapping or earlier pages arrive later.
- */
-function mergeMessageRecords(...recordSets: PersistedConversationEntry[][]): PersistedConversationEntry[] {
-  const records = new Map<string, PersistedConversationEntry>();
-  for (const record of recordSets.flat()) records.set(record.id, record);
-
-  const ordered: PersistedConversationEntry[] = [];
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-  const visit = (record: PersistedConversationEntry) => {
-    if (visited.has(record.id)) return;
-    if (visiting.has(record.id)) return;
-    visiting.add(record.id);
-    if (record.parentId) {
-      const parent = records.get(record.parentId);
-      if (parent) visit(parent);
-    }
-    visiting.delete(record.id);
-    visited.add(record.id);
-    ordered.push(record);
-  };
-
-  for (const record of records.values()) visit(record);
-  return ordered;
+/** Idempotent canonical upsert. Harness sequence is the transcript order. */
+function upsertEntries(current: readonly ConversationEntry[], incoming: readonly ConversationEntry[]): ConversationEntry[] {
+  const entries = new Map(current.map((entry) => [entry.id, entry]));
+  for (const entry of incoming) entries.set(entry.id, entry);
+  return [...entries.values()].toSorted((left, right) => left.seq - right.seq || left.id.localeCompare(right.id));
 }
 
 export class ConversationsStore {
@@ -121,34 +85,30 @@ export class ConversationsStore {
   private _sessionCache: SessionCache | null;
   private _unsubscribeSessionCache: (() => void) | null = null;
   private _unsubscribeEvents: (() => void) | null = null;
-  private _nextLiveEntryId = 1;
 
   constructor(options: ConversationsStoreOptions = {}) {
     this._sessionCache = options.sessionCache ?? null;
-    this._unsubscribeSessionCache = this._sessionCache?.subscribeAll((sessionId) => {
-      this.pruneSessionIfInactive(sessionId);
-    }) ?? null;
+    this._unsubscribeSessionCache = this._sessionCache?.subscribeAll((sessionId) => this.pruneSessionIfInactive(sessionId)) ?? null;
     this._unsubscribeEvents = options.eventSource?.subscribe({
       event: (message) => this.applyEvent(message.sessionId, message.event),
-      user_message: (message) => this.applyEvent(message.sessionId, {
-        type: "user_message",
-        message: message.message,
-        ...(message.metadata ? { metadata: message.metadata } : {}),
-      }),
       error: (message) => {
-        if (message.sessionId) this.setError(message.sessionId, message.error || "Something went wrong");
+        if (!message.sessionId) return;
+        if (message.clientId) this.rejectPendingSubmission(message.sessionId, message.clientId);
+        this.setError(message.sessionId, message.error || "Something went wrong");
       },
     }) ?? null;
   }
 
   get(sessionId: string): ConversationView {
     const state = sessionId ? this.stateFor(sessionId) : blankConversationState();
-    const entries = this.displayEntries(state);
+    const entries = [...state.entries, ...state.pendingSubmissions.values()];
     return {
       messages: buildMessages(entries.map((entry) => ({
         entryId: entry.id,
         parentEntryId: entry.parentId,
-        renderKey: entry.id ?? entry.localId,
+        renderKey: entry.clientId
+          ? `submission-${entry.clientId}`
+          : entry.id!,
         message: entry.message,
       }))),
       streamingMessages: buildStreamingMessages(state.streamingAssistants),
@@ -158,28 +118,20 @@ export class ConversationsStore {
     };
   }
 
-  /** Follow the persisted tail cursor through every available forward page. */
   async syncMessages(sessionId: string): Promise<boolean> {
     if (!sessionId) return false;
     const existing = this._syncs.get(sessionId);
     if (existing) return existing;
-
-    const sync = this.fetchMessageTail(sessionId).finally(() => {
-      this._syncs.delete(sessionId);
-    });
+    const sync = this.fetchMessageTail(sessionId).finally(() => this._syncs.delete(sessionId));
     this._syncs.set(sessionId, sync);
     return sync;
   }
 
   private async fetchMessageTail(sessionId: string): Promise<boolean> {
     let after = this.stateFor(sessionId).latestCursor;
-
     try {
       while (true) {
-        const page = await api.sessions.messages(
-          sessionId,
-          after === null ? {} : { after },
-        );
+        const page = await api.sessions.messages(sessionId, after === null ? {} : { after });
         this.mergeMessages(sessionId, page);
         if (!page.pageInfo.hasNextPage) return true;
         if (!page.pageInfo.endCursor || page.pageInfo.endCursor === after) return false;
@@ -190,15 +142,12 @@ export class ConversationsStore {
     }
   }
 
-  /** Load history before the current boundary without reconciling the live tail. */
   async loadEarlierMessages(sessionId: string): Promise<boolean> {
     if (!sessionId) return false;
     const before = this.stateFor(sessionId).previousCursor;
     if (!before) return false;
-
     try {
-      const page = await api.sessions.messages(sessionId, { before });
-      this.mergeMessages(sessionId, page, { earlier: true });
+      this.mergeMessages(sessionId, await api.sessions.messages(sessionId, { before }), { earlier: true });
       return true;
     } catch {
       return false;
@@ -207,153 +156,103 @@ export class ConversationsStore {
 
   subscribe(sessionId: string, listener: ConversationsStoreListener): () => void {
     if (!sessionId) return () => {};
-    let listeners = this._listeners.get(sessionId);
-    if (!listeners) {
-      listeners = new Set();
-      this._listeners.set(sessionId, listeners);
-    }
+    const listeners = this._listeners.get(sessionId) ?? new Set();
     listeners.add(listener);
+    this._listeners.set(sessionId, listeners);
     return () => {
       const current = this._listeners.get(sessionId);
-      if (!current) return;
-      current.delete(listener);
-      if (current.size === 0) {
+      current?.delete(listener);
+      if (current?.size === 0) {
         this._listeners.delete(sessionId);
         this.pruneSessionIfInactive(sessionId);
       }
     };
   }
 
-  /** Append a browser submission with a stable local identity until persistence catches up. */
   addOptimisticUserMessage(
     sessionId: string,
     content: ClientPromptContent,
+    clientId: string,
     timestamp = Date.now(),
   ): LiveConversationEntry | null {
+    return this.addPendingSubmission(sessionId, content, clientId, timestamp);
+  }
+
+  private addPendingSubmission(
+    sessionId: string,
+    content: ClientPromptContent,
+    clientId: string,
+    timestamp: number,
+    metadata?: Record<string, unknown>,
+  ): LiveConversationEntry | null {
     if (!sessionId) return null;
+    const state = this.stateFor(sessionId);
+    if (state.pendingSubmissions.has(clientId) || state.entries.some((entry) => entry.clientId === clientId)) return null;
     const entry: LiveConversationEntry = {
       id: null,
       parentId: null,
-      localId: `live-${this._nextLiveEntryId++}`,
-      message: { role: "user", content, timestamp },
+      seq: null,
+      clientId,
+      localId: `submission-${clientId}`,
+      message: { role: "user", content, ...(metadata ? { metadata } : {}), timestamp },
     };
-    this.update(sessionId, (state) => ({ liveTail: [...state.liveTail, entry] }));
+    const pendingSubmissions = new Map(state.pendingSubmissions);
+    pendingSubmissions.set(clientId, entry);
+    this.update(sessionId, { pendingSubmissions });
     return entry;
   }
 
-  /**
-   * Merge a persisted page and reconcile only the forward edge with optimistic
-   * entries and live assistants; earlier-history pages cannot acknowledge them.
-   */
-  mergeMessages(
-    sessionId: string,
-    page: MessageRecordPage,
-    options: { earlier?: boolean } = {},
-  ): void {
+  mergeMessages(sessionId: string, page: MessageRecordPage, options: { earlier?: boolean } = {}): void {
     if (!sessionId) return;
-    this.update(sessionId, (state) => {
-      if (options.earlier) {
-        return {
-          records: page.items,
-          previousCursor: page.pageInfo.previousCursor,
-        };
-      }
+    this.update(sessionId, (state) => ({
+      entries: page.items,
+      previousCursor: options.earlier || state.entries.length === 0 ? page.pageInfo.previousCursor : state.previousCursor,
+      latestCursor: options.earlier ? state.latestCursor : page.pageInfo.endCursor,
+    }));
+  }
 
-      const known = new Set(state.records.map(({ id }) => id));
-      const added = page.items.filter(({ id }) => !known.has(id));
-      const records = mergeMessageRecords(state.records, page.items);
-      const persistedAssistantTimestamps = new Set(
-        records.flatMap(({ message }) => message.role === "assistant" ? [message.timestamp] : []),
-      );
-      // Persistence acknowledges assistants by snapshot timestamp. Unmatched
-      // snapshots survive so a stale page cannot erase newer live work.
-      const reconciled = removePersistedStreamingAssistants(state, persistedAssistantTimestamps);
+  applyEvent(sessionId: string, event: ChatEvent): void {
+    if (!sessionId) return;
+    if (event.type === "entry_added") {
+      this.update(sessionId, { entries: [event.entry] });
+      return;
+    }
+    this.update(sessionId, (state) => {
+      const messages = [
+        ...state.entries.map(({ message }) => message),
+        ...[...state.pendingSubmissions.values()].map(({ message }) => message),
+      ];
+      const next = applyChatEvent({ ...state, messages }, event);
+      if (next.streamingAssistants === state.streamingAssistants
+        && next.isCompacting === state.isCompacting
+        && next.errorMessage === state.errorMessage) return undefined;
       return {
-        records: page.items,
-        // Only records not already known by ID can acknowledge pending live
-        // users. Stale and overlapping pages therefore leave them untouched.
-        liveTail: this.removePersistedLiveEntries(state.liveTail, added),
-        previousCursor: state.records.length === 0 ? page.pageInfo.previousCursor : state.previousCursor,
-        latestCursor: page.pageInfo.endCursor,
-        streamingAssistants: reconciled.streamingAssistants,
+        streamingAssistants: next.streamingAssistants,
+        isCompacting: next.isCompacting,
+        errorMessage: next.errorMessage,
       };
     });
   }
 
-  /** Apply a runtime event against the session's complete persisted-plus-live view. */
-  applyEvent(sessionId: string, event: ChatEvent): void {
-    if (!sessionId) return;
-
-    switch (event.type) {
-      case "agent_start":
-      case "message_start":
-      case "message_update":
-      case "tool_execution_start":
-      case "tool_execution_update":
-      case "tool_execution_end":
-      case "agent_end":
-      case "message_end":
-      case "compaction_start":
-      case "compaction_end":
-      case "auto_retry_start":
-      case "auto_retry_end":
-      case "user_message": {
-        this.update(sessionId, (state) => {
-          const messages = this.displayMessages(state);
-          const next = applyChatEvent({ ...state, messages }, event);
-          if (
-            next.messages === messages
-            && next.streamingAssistants === state.streamingAssistants
-            && next.isCompacting === state.isCompacting
-            && next.errorMessage === state.errorMessage
-          ) return undefined;
-
-          return {
-            // Convert the reducer's message tail back to owned live entries,
-            // retaining local IDs for unchanged message objects.
-            liveTail: this.liveEntriesForMessages(
-              state.liveTail,
-              next.messages.slice(state.records.length),
-            ),
-            streamingAssistants: next.streamingAssistants,
-            isCompacting: next.isCompacting,
-            errorMessage: next.errorMessage,
-          };
-        });
-        return;
-      }
-      default:
-        return;
-    }
+  private rejectPendingSubmission(sessionId: string, clientId: string): void {
+    const state = this.stateFor(sessionId);
+    if (!state.pendingSubmissions.has(clientId)) return;
+    const pendingSubmissions = new Map(state.pendingSubmissions);
+    pendingSubmissions.delete(clientId);
+    this.update(sessionId, { pendingSubmissions });
   }
 
   clearCompactingState(sessionId: string): void {
-    if (!sessionId) return;
-    this.update(sessionId, (state) => (
-      state.isCompacting ? { isCompacting: false } : undefined
-    ));
+    if (sessionId) this.update(sessionId, (state) => state.isCompacting ? { isCompacting: false } : undefined);
   }
+  setError(sessionId: string, errorMessage: string): void { if (sessionId) this.update(sessionId, { errorMessage }); }
+  clearError(sessionId: string): void { this.setError(sessionId, ""); }
 
-  setError(sessionId: string, errorMessage: string): void {
-    if (!sessionId) return;
-    this.update(sessionId, { errorMessage });
-  }
-
-  clearError(sessionId: string): void {
-    this.setError(sessionId, "");
-  }
-
-  /** Evict only sessions with neither subscribers nor active runtime work. */
-  pruneInactive(): void {
-    for (const sessionId of this._states.keys()) {
-      this.pruneSessionIfInactive(sessionId);
-    }
-  }
-
+  pruneInactive(): void { for (const sessionId of this._states.keys()) this.pruneSessionIfInactive(sessionId); }
   dispose(): void {
     this._unsubscribeSessionCache?.();
-    this._unsubscribeSessionCache = null;
     this._unsubscribeEvents?.();
+    this._unsubscribeSessionCache = null;
     this._unsubscribeEvents = null;
     this._listeners.clear();
     this._syncs.clear();
@@ -361,74 +260,13 @@ export class ConversationsStore {
   }
 
   private pruneSessionIfInactive(sessionId: string): void {
-    if (!this._states.has(sessionId)) return;
-    if (this._listeners.has(sessionId)) return;
+    if (!this._states.has(sessionId) || this._listeners.has(sessionId)) return;
     if (this._sessionCache?.get(sessionId)?.activityState === "running") return;
-    this.evict(sessionId);
+    if (this._states.delete(sessionId)) this.notify(sessionId);
   }
 
-  private evict(sessionId: string): void {
-    if (!this._states.delete(sessionId)) return;
-    this.notify(sessionId);
-  }
+  private stateFor(sessionId: string): ConversationState { return this._states.get(sessionId) ?? blankConversationState(); }
 
-  private displayEntries(state: ConversationState): ConversationEntry[] {
-    return [...state.records, ...state.liveTail];
-  }
-
-  private displayMessages(state: ConversationState): AgentMessage[] {
-    return this.displayEntries(state).map(({ message }) => message);
-  }
-
-  /**
-   * Consume newly persisted live entries by durable reconciliation rules:
-   * users FIFO, tool results by call ID, and other messages by role/timestamp.
-   */
-  private removePersistedLiveEntries(
-    liveEntries: readonly LiveConversationEntry[],
-    records: readonly PersistedConversationEntry[],
-  ): LiveConversationEntry[] {
-    const remaining = [...liveEntries];
-    for (const record of records) {
-      let match: number;
-      if (record.message.role === "user") {
-        match = remaining.findIndex(({ message }) => message.role === "user");
-      } else if (record.message.role === "toolResult") {
-        const toolCallId = record.message.toolCallId;
-        match = remaining.findIndex(({ message }) => (
-          message.role === "toolResult" && message.toolCallId === toolCallId
-        ));
-      } else {
-        match = remaining.findIndex(({ message }) => (
-          message.role === record.message.role
-          && message.timestamp === record.message.timestamp
-        ));
-      }
-      if (match !== -1) remaining.splice(match, 1);
-    }
-    return remaining;
-  }
-
-  private liveEntriesForMessages(
-    existing: readonly LiveConversationEntry[],
-    messages: readonly AgentMessage[],
-  ): LiveConversationEntry[] {
-    return messages.map((message) => {
-      const current = existing.find((entry) => entry.message === message);
-      return current ?? {
-        id: null,
-        parentId: null,
-        localId: `live-${this._nextLiveEntryId++}`,
-        message,
-      };
-    });
-  }
-
-  private stateFor(sessionId: string): ConversationState {
-    return this._states.get(sessionId) ?? blankConversationState();
-  }
-
-  /** Apply a state patch while keeping persisted records graph-merged and ordered. */
   private update(
     sessionId: string,
     build: ConversationUpdate | ((state: ConversationState) => ConversationUpdate | undefined),
@@ -436,19 +274,24 @@ export class ConversationsStore {
     const current = this.stateFor(sessionId);
     const patch = typeof build === "function" ? build(current) : build;
     if (!patch) return;
-
-    const { records, ...rest } = patch;
+    const entries = patch.entries ? upsertEntries(current.entries, patch.entries) : current.entries;
+    const pendingSubmissions = new Map(patch.pendingSubmissions ?? current.pendingSubmissions);
+    for (const entry of entries) if (entry.clientId) pendingSubmissions.delete(entry.clientId);
+    const reconciled = removePersistedStreamingAssistants(
+      { streamingAssistants: patch.streamingAssistants ?? current.streamingAssistants },
+      new Set(entries.map(({ id }) => id)),
+    );
     this._states.set(sessionId, {
       ...current,
-      ...rest,
-      records: records ? mergeMessageRecords(current.records, records) : current.records,
+      ...patch,
+      entries,
+      pendingSubmissions,
+      streamingAssistants: reconciled.streamingAssistants,
     });
     this.notify(sessionId);
   }
 
   private notify(sessionId: string): void {
-    const listeners = this._listeners.get(sessionId);
-    if (!listeners) return;
-    for (const listener of listeners) listener();
+    for (const listener of this._listeners.get(sessionId) ?? []) listener();
   }
 }

@@ -21,16 +21,9 @@ export type ServerMessage =
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number }
   | { type: "code_review_updated"; projectId: number; taskId: number | null; reviewId: string; revision: number }
-  | {
-    type: "user_message";
-    sessionId: string;
-    projectId: number;
-    message: ClientPromptContent;
-    metadata?: Record<string, unknown>;
-  }
   | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
-  | { type: "ack"; command: string }
-  | { type: "error"; sessionId?: string; error: string };
+  | { type: "ack"; command: string; clientId?: string }
+  | { type: "error"; sessionId?: string; clientId?: string; error: string };
 
 /** Messages exposed to domain stores. Command acknowledgements are transport-only. */
 export type InboundMessage = Exclude<ServerMessage, { type: "ack" }>;
@@ -55,7 +48,6 @@ export function dispatchInboundMessage(handlers: InboundMessageHandlers, message
     case "session_created": handlers.session_created?.(message); break;
     case "session_updated": handlers.session_updated?.(message); break;
     case "code_review_updated": handlers.code_review_updated?.(message); break;
-    case "user_message": handlers.user_message?.(message); break;
     case "open_file": handlers.open_file?.(message); break;
     case "error": handlers.error?.(message); break;
   }
@@ -67,8 +59,8 @@ export interface IAppClient extends InboundEventSource {
   connect(): void;
   disconnect(): void;
   readonly isConnected: boolean;
-  prompt(sessionId: string, message: ClientPromptContent): void;
-  steer(sessionId: string, message: ClientPromptContent): void;
+  prompt(sessionId: string, message: ClientPromptContent, clientId: string): void;
+  steer(sessionId: string, message: ClientPromptContent, clientId: string): void;
   abort(sessionId: string): void;
   onConnection(listener: ConnectionListener): () => void;
 }
@@ -91,9 +83,9 @@ export class AppClient implements IAppClient {
   private static readonly HEARTBEAT_INTERVAL_MS = 30_000;
   private static readonly HEARTBEAT_TIMEOUT_MS = 5_000;
 
-  // Outbound buffer — replay last command on reconnect if connection drops after send
-  private lastOutboundMessage: string | null = null;
-  private pendingReplay = false;
+  // Submission-keyed outbound buffer. Acknowledgements clear only their own
+  // command, so rapid prompt/steer submissions survive disconnects exactly once.
+  private pendingOutboundMessages = new Map<string, string>();
 
   constructor(url?: string) {
     if (url) {
@@ -123,7 +115,7 @@ export class AppClient implements IAppClient {
       this.ws = null;
     }
     this.setConnected(false);
-    this.clearReplayBuffer();
+    this.pendingOutboundMessages.clear();
   }
 
   private createSocket(): void {
@@ -192,13 +184,8 @@ export class AppClient implements IAppClient {
   // ---- Outbound replay -----------------------------------------------------
 
   private replayIfPending(): void {
-    if (this.pendingReplay && this.lastOutboundMessage) {
-      const msg = this.lastOutboundMessage;
-      this.clearReplayBuffer();
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(msg);
-      }
-    }
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    for (const message of this.pendingOutboundMessages.values()) this.ws.send(message);
   }
 
   private scheduleReconnect(): void {
@@ -230,10 +217,10 @@ export class AppClient implements IAppClient {
       return;
     }
     if (msg.type === "ack") {
-      this.clearReplayBuffer();
+      this.clearReplayBuffer(msg.clientId ?? msg.command);
       return;
     }
-    if (msg.type === "error") this.clearReplayBuffer();
+    if (msg.type === "error" && msg.clientId) this.clearReplayBuffer(msg.clientId);
     this.publish(msg);
   }
 
@@ -243,22 +230,21 @@ export class AppClient implements IAppClient {
 
   // ---- Commands ------------------------------------------------------------
 
-  prompt(sessionId: string, message: ClientPromptContent): void {
-    this.send({ type: "prompt", sessionId, message });
+  prompt(sessionId: string, message: ClientPromptContent, clientId: string): void {
+    this.send({ type: "prompt", sessionId, clientId, message }, clientId);
   }
 
-  steer(sessionId: string, message: ClientPromptContent): void {
-    this.send({ type: "steer", sessionId, message });
+  steer(sessionId: string, message: ClientPromptContent, clientId: string): void {
+    this.send({ type: "steer", sessionId, clientId, message }, clientId);
   }
 
   abort(sessionId: string): void {
-    this.send({ type: "abort", sessionId });
+    this.send({ type: "abort", sessionId }, "abort");
   }
 
-  private send(data: unknown): void {
+  private send(data: unknown, replayId: string): void {
     const json = JSON.stringify(data);
-    this.lastOutboundMessage = json;
-    this.pendingReplay = true;
+    this.pendingOutboundMessages.set(replayId, json);
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(json);
     }
@@ -268,9 +254,8 @@ export class AppClient implements IAppClient {
    * Called when the server acks a command — clear the replay buffer
    * since the message was delivered successfully.
    */
-  private clearReplayBuffer(): void {
-    this.pendingReplay = false;
-    this.lastOutboundMessage = null;
+  private clearReplayBuffer(replayId: string): void {
+    this.pendingOutboundMessages.delete(replayId);
   }
 
   // ---- Subscriptions -------------------------------------------------------
