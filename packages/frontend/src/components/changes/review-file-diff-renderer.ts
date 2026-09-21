@@ -180,6 +180,12 @@ export function createReviewFileDiffRenderer(
           rendered();
         },
       }, workerManager === null ? undefined : workerManager ?? getPierreWorkerPool());
+      const hunksRenderer: { onHighlightError(error: unknown): void } = Reflect.get(renderer, "hunksRenderer");
+      const nativeHighlightError = hunksRenderer.onHighlightError.bind(hunksRenderer);
+      hunksRenderer.onHighlightError = (error) => {
+        recordRendererFailure(error, target);
+        nativeHighlightError(error);
+      };
       const nativeExpand = renderer.handleExpandHunk;
       renderer.handleExpandHunk = (hunkIndex, direction, lineCount) => {
         const interaction = expansionInteractionFromNative(listeningRoot, hunkIndex, direction, lineCount);
@@ -215,36 +221,35 @@ export function createReviewFileDiffRenderer(
       return renderer;
     },
     render: (renderer, target, container) => {
-      try {
-        renderer.render({
-          // Never mark patch-only arrays complete: Pierre and Shiki use complete
-          // hunk positions to index lines whenever isPartial is false. The normal
-          // unmanaged FileDiff owns a nested <diffs-container>; Lit owns only this
-          // stable wrapper, so cleanup cannot remove Lit's mount.
-          fileDiff: target.fileDiff,
-          containerWrapper: container,
-          lineAnnotations: commentAnnotations(target),
-        });
-      } catch (error) {
-        clientTelemetry.record("review-renderer", "failed", () => ({
-          // Do not export arbitrary errors, paths, or source contents.
-          failure: error instanceof Error && error.message ===
-            "DiffHunksRenderer.processDiffResult: deletionLine and additionLine are null, something is wrong"
-            ? "null-diff-lines" : "other",
-          partial: target.fileDiff.isPartial === true,
-          additionLineCount: target.fileDiff.additionLines.length,
-          deletionLineCount: target.fileDiff.deletionLines.length,
-          hunkCount: target.fileDiff.hunks.length,
-          expansionCount: target.expansionHistory.length,
-        }));
-        void clientTelemetry.flush();
-        throw error;
-      }
+      renderer.render({
+        // Never mark patch-only arrays complete: Pierre and Shiki use complete
+        // hunk positions to index lines whenever isPartial is false. The normal
+        // unmanaged FileDiff owns a nested <diffs-container>; Lit owns only this
+        // stable wrapper, so cleanup cannot remove Lit's mount.
+        fileDiff: target.fileDiff,
+        containerWrapper: container,
+        lineAnnotations: commentAnnotations(target),
+      });
     },
     sameInput: (left, right) => left === right,
     onRendered,
   });
   return controller;
+}
+
+function recordRendererFailure(error: unknown, target: ReviewFileDiffTarget): void {
+  clientTelemetry.record("review-renderer", "failed", () => ({
+    // Do not export arbitrary errors, paths, or source contents.
+    failure: error instanceof Error && error.message ===
+      "DiffHunksRenderer.processDiffResult: deletionLine and additionLine are null, something is wrong"
+      ? "null-diff-lines" : "other",
+    partial: target.fileDiff.isPartial === true,
+    additionLineCount: target.fileDiff.additionLines.length,
+    deletionLineCount: target.fileDiff.deletionLines.length,
+    hunkCount: target.fileDiff.hunks.length,
+    expansionCount: target.expansionHistory.length,
+  }));
+  void clientTelemetry.flush();
 }
 
 function syncCommentGutterUtility(root: ShadowRoot | null, target: ReviewFileDiffTarget): void {

@@ -67,9 +67,9 @@ After installing instrumentation, refresh the browser once, then reproduce repea
 jq -c 'select(.scope == "review-renderer")' /tmp/reins-client-telemetry.jsonl*
 ```
 
-A catch around the review adapter's `renderer.render` call records `review-renderer` / `failed` with partial/full state, line-array lengths, hunk count, and expansion count, then attempts an immediate flush through the existing bounded queue. Use `runId` and `sequence` to locate the failure among other page events.
+The review adapter hooks Pierre's asynchronous highlight-error handler and records `review-renderer` / `failed` with partial/full state, line-array lengths, hunk count, and expansion count, then attempts an immediate flush through the existing bounded queue. Use `runId` and `sequence` to locate the failure among other page events.
 
-The known `DiffHunksRenderer.processDiffResult` null-line assertion is classified as `null-diff-lines`; other errors are classified as `other`. Raw error messages, stacks, paths, cache keys, and source contents are not exported. Errors are rethrown unchanged: this diagnostic-only pass does not retry or recover. It does not intercept later asynchronous worker errors, hydration rejections, or interaction-triggered rerenders. Save the browser console stack for those failures.
+The known `DiffHunksRenderer.processDiffResult` null-line assertion is classified as `null-diff-lines`; other errors are classified as `other`. Raw error messages, stacks, paths, cache keys, and source contents are not exported. Pierre's original error handler still runs, so failures retain their existing console behavior. This diagnostic-only hook does not retry or recover.
 
 ## Adding instrumentation
 
