@@ -18,7 +18,7 @@ import {
   type FileChange,
   type FileChangesResult,
 } from "../../models/changes/file-changes.js";
-import type { ReviewSide } from "../../models/code-review.js";
+import type { ReviewSide } from "@backend/models/code-review.js";
 import { reviewDiffLines } from "../../models/changes/review-diff-anchor.js";
 import {
   estimateFileChangeHeight,

@@ -57,8 +57,8 @@ models/
 │   ├── read.ts, edit.ts, write.ts, bash.ts
 │   ├── create-task.ts, delegate.ts, generic.ts
 │   └── bash-command-parser.ts
-├── code-review.ts       Review transport types and pure anchor/placement functions
-├── tasks.ts             Task list types
+├── reins-client.ts      Resource-oriented internal REST client
+├── code-review.ts       Pure review anchor/placement functions
 ├── agent-message.ts     Raw runtime/transport message protocol types
 ├── message.ts           Displayable message domain model
 ├── chat-state.ts        Chat event reducer
@@ -150,13 +150,17 @@ The overall data flow is one-directional:
 
 Views never call `fetch()` directly or listen to WebSocket events. Stores own business/domain decisions, persisted or server-derived state, async state, and event→refetch logic. Components own presentation and ephemeral interaction state.
 
+All built-in REST calls go through the resource-oriented `models/reins-client.ts` interface (for example, `api.sessions.get(...)`, `api.projects.create(...)`, and `api.diff.patch(...)`). The client privately owns paths and query construction, request serialization, response decoding, typed HTTP errors, browser-resource URL construction, upload transport, and `AbortSignal` forwarding. Callers do not construct endpoint descriptors or URLs.
+
+Shared request/response DTOs remain backend-owned and frontend imports from `@backend/*` must use `import type`; oxlint enforces this with no runtime-import exception. Stores remain responsible for caching, retries, loading/error presentation, request generations, and reactive state. The client is an internal module for the built-in frontend, not a plugin interface.
+
 ## Error handling
 
 Follow the repo-wide [error handling guide](error-handling.md). For frontend code, unexpected render/runtime failures should bubble to browser/global error handling. Use local error UI only for expected, recoverable outcomes that are part of a feature contract, such as validation failures, failed REST mutations, or WS command errors.
 
 ## Store layer
 
-All server communication — fetching, WebSocket event handling, polling, and invalidation — lives in a centralized store layer. Views read state and render; they never fetch data or decide when to refetch.
+All server communication — typed REST client calls, WebSocket event handling, polling, and invalidation — lives in the store/model layer. Views read state and render; they never fetch data or decide when to refetch.
 
 Store/component boundary:
 

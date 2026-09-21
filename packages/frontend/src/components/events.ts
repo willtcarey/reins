@@ -1,7 +1,8 @@
 import type { SendAnimationSource } from "../helpers/chat-send-animation.js";
 import type { ClientPromptContent } from "../models/chat-content.js";
-import type { TaskListItem } from "../models/tasks.js";
-import type { ProjectInfo } from "../models/ws-client.js";
+import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
+import type { ModelSetting } from "@backend/settings-store.js";
+import type { Project as ProjectInfo } from "@backend/project-store.js";
 
 /**
  * Shared custom event factories.
@@ -251,7 +252,7 @@ export function modelSelectionChangeEvent(detail: ModelSelectionDetail) {
   return componentEvent("selection-change", detail);
 }
 
-export function thinkingChangeEvent(thinkingLevel: string) {
+export function thinkingChangeEvent(thinkingLevel: ModelSetting["thinkingLevel"]) {
   return componentEvent("thinking-change", { thinkingLevel });
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { buildDescendantMap, DelegatePopover } from "../../components/delegate-popover.js";
-import type { SessionListItem } from "../../models/ws-client.js";
+import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import {
   collectTemplateEventListeners,
   collectTemplateValues,

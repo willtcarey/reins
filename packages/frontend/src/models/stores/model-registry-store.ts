@@ -1,4 +1,5 @@
-import type { ModelInfo, ProviderInfo } from "../model-catalog.js";
+import type { ModelInfo, RuntimeProviderInfo as ProviderInfo } from "@backend/runtimes/registry.js";
+import { api } from "../reins-client.js";
 import { providerLabel } from "../settings.js";
 
 export interface ApiKeyState {
@@ -62,12 +63,7 @@ export class ModelRegistryStore {
     this.notify();
 
     try {
-      const res = await fetch("/api/models");
-      if (!res.ok) {
-        return { error: await errorDetail(res) };
-      }
-
-      this.providers = await res.json();
+      this.providers = await api.models.list();
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
@@ -80,9 +76,4 @@ export class ModelRegistryStore {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-async function errorDetail(response: Response): Promise<string> {
-  const body = await response.json().catch(() => null);
-  return body?.error ?? `HTTP ${response.status}`;
 }

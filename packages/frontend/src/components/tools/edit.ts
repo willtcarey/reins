@@ -15,7 +15,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
 import { escapeHtml, shouldWrapLines } from "../../models/changes/diff-utils.js";
-import type { DiffLine } from "../../models/changes/types.js";
+import type { DiffLine } from "@backend/models/diff-parser.js";
 import { openInBrowserEvent } from "../events.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";

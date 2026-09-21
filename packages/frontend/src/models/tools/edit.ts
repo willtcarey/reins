@@ -3,7 +3,7 @@
  */
 
 import type { ToolBlockData } from "../chat-state.js";
-import type { DiffLine } from "../changes/types.js";
+import type { DiffLine } from "@backend/models/diff-parser.js";
 
 /** Extract the file path from an Edit tool block's args. */
 export function getEditSummary(block: ToolBlockData): string {

@@ -1,10 +1,8 @@
-import type { SessionListItem } from "../ws-client.js";
+import type { ArchivedSessionHistoryItem } from "@backend/routes/project-sessions.js";
+import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
+import { ReinsHttpError, api } from "../reins-client.js";
 
 const PAGE_SIZE = 20;
-
-export interface ArchivedSessionHistoryItem extends SessionListItem {
-  taskTitle: string | null;
-}
 
 export interface CompletedTaskHistoryItem {
   id: number;
@@ -13,19 +11,6 @@ export interface CompletedTaskHistoryItem {
   updatedAt: string;
   sessionCount: number;
   sessions: SessionListItem[] | null;
-}
-
-interface CompletedTaskResponse {
-  id: number;
-  title: string;
-  description: string | null;
-  updated_at: string;
-  session_count: number;
-}
-
-interface CollectionPage<T> {
-  items: T[];
-  hasMore: boolean;
 }
 
 export class ProjectHistoryStore {
@@ -99,9 +84,7 @@ export class ProjectHistoryStore {
     const task = this.completedTasks.find((candidate) => candidate.id === taskId);
     if (!task || task.sessions !== null) return;
 
-    const response = await fetch(`/api/projects/${this.projectId}/tasks/${taskId}?archived=include`);
-    if (!response.ok) return;
-    const detail: { sessions: SessionListItem[] } = await response.json();
+    const detail = await api.tasks.get(this.projectId, taskId, { archived: "include" });
     const archived = this.archivedSessions.filter((session) => session.taskId === taskId);
     const sessions = new Map(
       [...detail.sessions, ...archived].map((session) => [session.id, session]),
@@ -133,17 +116,11 @@ export class ProjectHistoryStore {
     };
 
     try {
-      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/metadata`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ archived: false }),
-      });
-      if (response.ok) return { ok: true };
+      await api.sessions.update(sessionId, { archived: false });
+      return { ok: true };
+    } catch (error) {
       rollback();
-      return { error: `HTTP ${response.status}` };
-    } catch {
-      rollback();
-      return { error: "Network error" };
+      return { error: error instanceof ReinsHttpError ? `HTTP ${error.status}` : "Network error" };
     }
   }
 
@@ -151,11 +128,11 @@ export class ProjectHistoryStore {
     this.loadingArchived = true;
     this.notify();
     try {
-      const response = await fetch(this.collectionUrl("sessions", reset ? 0 : this.archivedOffset, {
-        archived: "only",
-      }));
-      if (!response.ok) return;
-      const page: CollectionPage<ArchivedSessionHistoryItem> = await response.json();
+      const page = await api.sessions.history(this.projectId, {
+        limit: PAGE_SIZE,
+        offset: reset ? 0 : this.archivedOffset,
+        ...(this.search ? { search: this.search } : {}),
+      });
       if (generation !== this.generation) return;
       this.archivedSessions = reset ? page.items : [...this.archivedSessions, ...page.items];
       this.archivedOffset = (reset ? 0 : this.archivedOffset) + page.items.length;
@@ -174,11 +151,11 @@ export class ProjectHistoryStore {
     this.loadingCompleted = true;
     this.notify();
     try {
-      const response = await fetch(this.collectionUrl("tasks", reset ? 0 : this.completedOffset, {
-        status: "closed",
-      }));
-      if (!response.ok) return;
-      const page: CollectionPage<CompletedTaskResponse> = await response.json();
+      const page = await api.tasks.history(this.projectId, {
+        limit: PAGE_SIZE,
+        offset: reset ? 0 : this.completedOffset,
+        ...(this.search ? { search: this.search } : {}),
+      });
       if (generation !== this.generation) return;
       const items = page.items.map((task) => ({
         id: task.id,
@@ -199,20 +176,6 @@ export class ProjectHistoryStore {
         this.notify();
       }
     }
-  }
-
-  private collectionUrl(
-    resource: "sessions" | "tasks",
-    offset: number,
-    params: Record<string, string>,
-  ): string {
-    const query = new URLSearchParams({
-      ...params,
-      limit: String(PAGE_SIZE),
-      offset: String(offset),
-    });
-    if (this.search) query.set("search", this.search);
-    return `/api/projects/${this.projectId}/${resource}?${query}`;
   }
 
   private notify(): void {

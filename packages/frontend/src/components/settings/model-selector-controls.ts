@@ -6,10 +6,11 @@ import {
   encodeModelSelection,
   formatModelSelectionOptionLabel,
   formatModelSettingLabel,
+  isThinkingLevel,
   THINKING_LEVELS,
 } from "../../models/settings.js";
-import type { ProviderInfo } from "../../models/model-catalog.js";
-import type { ModelSetting } from "../../models/stores/settings-store.js";
+import type { RuntimeProviderInfo as ProviderInfo } from "@backend/runtimes/registry.js";
+import type { ModelSetting } from "@backend/settings-store.js";
 import {
   clearModelSelectionEvent,
   modelSelectionChangeEvent,
@@ -76,7 +77,9 @@ export class ModelSelectorControls extends LitElement {
 
   private _handleThinkingChange(e: Event) {
     if (!(e.target instanceof HTMLSelectElement)) return;
-    this.dispatchEvent(thinkingChangeEvent(e.target.value));
+    if (isThinkingLevel(e.target.value)) {
+      this.dispatchEvent(thinkingChangeEvent(e.target.value));
+    }
   }
 
   private _handleClear() {

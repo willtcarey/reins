@@ -15,13 +15,13 @@ export interface TextContentBlock {
   text: string;
 }
 
-interface ThinkingContentBlock {
+export interface ThinkingContentBlock {
   type: "thinking";
   thinking: string;
   thinkingSignature?: string;
 }
 
-interface ToolCallContentBlock {
+export interface ToolCallContentBlock {
   type: "toolCall";
   id: string;
   name: string;
@@ -48,7 +48,7 @@ export interface InlineImageBlock {
   height?: number;
 }
 
-type ClientPromptBlock = TextContentBlock | ImageAttachmentBlock;
+export type ClientPromptBlock = TextContentBlock | ImageAttachmentBlock;
 export type ClientPromptContent = ClientPromptBlock[];
 
 export type HydratedPromptBlock = TextContentBlock | InlineImageBlock;
@@ -103,27 +103,30 @@ type SessionMessageEntryMetadata<Role extends Exclude<SessionEntryType, "toolCal
 };
 
 type PersistedMessageBase = {
+  timestamp: number;
   logicalId?: string;
   metadata?: Record<string, unknown>;
   summary?: string;
-  [key: string]: unknown;
 };
 
 type PersistedUserMessage = PersistedMessageBase & {
   role: "user";
-  content: PersistedContentBlock[];
+  content: ClientPromptBlock[];
 };
 
 type PersistedAssistantMessage = PersistedMessageBase & {
   role: "assistant";
-  content: PersistedContentBlock[];
+  content: (TextContentBlock | ThinkingContentBlock | ToolCallContentBlock)[];
+  stopReason?: string;
+  errorMessage?: string;
 };
 
 type PersistedToolResultMessage = PersistedMessageBase & {
   role: "toolResult";
-  content: PersistedContentBlock[];
+  content: ClientPromptBlock[];
   toolCallId: string;
-  toolName?: string;
+  toolName: string;
+  details?: Record<string, unknown>;
   isError: boolean;
 };
 
@@ -235,7 +238,7 @@ function rawMessageMatchesSearch(message: PersistedMessage, search: string | und
 
 type StoredReinsInputMessage = {
   role: "reinsInput";
-  content: PersistedContentBlock[];
+  content: ClientPromptBlock[];
   timestamp?: number;
   reinsId: string;
   metadata: Record<string, unknown>;

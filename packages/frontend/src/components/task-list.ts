@@ -8,7 +8,7 @@
 
 import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { TaskListItem } from "../models/tasks.js";
+import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import { deleteTaskEvent, newTaskEvent } from "./events.js";
 import { plusIcon } from "../ui/icons.js";

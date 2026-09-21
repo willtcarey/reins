@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { PartType, type PartInfo } from "lit/directive.js";
 import { TaskListItemElement } from "../../components/task-list-item.js";
 import { SpringCollapseDirective } from "../../directives/spring-collapse.js";
-import type { SessionListItem } from "../../models/ws-client.js";
+import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import { makeTask } from "../helpers/fixtures.js";
 import { collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 

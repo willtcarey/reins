@@ -104,7 +104,7 @@ export function listTasks(
 
 export function updateTask(
   id: number,
-  updates: { title?: string; description?: string; base_commit?: string },
+  updates: { title?: string; description?: string | null; base_commit?: string },
 ): TaskRow | null {
   const db = getDb();
   const existing = getTask(id);

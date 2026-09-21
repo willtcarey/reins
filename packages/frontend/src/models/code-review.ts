@@ -1,55 +1,10 @@
-export type ReviewSide = "old" | "new";
-export type ReviewDiffLineKind = "context" | "addition" | "deletion";
-
-export interface ReviewDiffLine {
-  readonly kind: ReviewDiffLineKind;
-  readonly text: string;
-}
-
-export interface ReviewAnchorEvidence {
-  readonly path: string;
-  readonly oldPath: string | null;
-  readonly side: ReviewSide;
-  readonly startLine: number;
-  /** Original row contents support exact matching and unambiguous relocation. */
-  readonly lines: readonly ReviewDiffLine[];
-  readonly fileFingerprint: string | null;
-  /** Exact Git-native per-file patch shown when this anchor was created. */
-  readonly filePatch: string;
-  readonly baseRevision: string | null;
-  readonly headRevision: string | null;
-}
-
-export interface ReviewEntry {
-  readonly id: string;
-  readonly author: string;
-  readonly body: string;
-  readonly createdAt: string;
-  readonly sourceKey?: string;
-  readonly sourceUrl?: string;
-}
-
-export interface ReviewAnnotation {
-  readonly id: string;
-  readonly anchor: ReviewAnchorEvidence;
-  readonly entries: readonly ReviewEntry[];
-}
-
-export interface NewReviewComment extends ReviewLineRange {
-  readonly path: string;
-  readonly filePatch: string;
-  readonly body: string;
-}
-
-export interface CodeReviewState {
-  readonly id: string;
-  readonly projectId: number;
-  readonly taskId: number | null;
-  readonly revision: number;
-  readonly annotations: readonly ReviewAnnotation[];
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
+import type {
+  CodeReviewState,
+  ReviewAnchorEvidence,
+  ReviewDiffLine,
+  ReviewEntry,
+  ReviewSide,
+} from "@backend/models/code-review.js";
 
 export interface ReviewLineRange {
   readonly side: ReviewSide;

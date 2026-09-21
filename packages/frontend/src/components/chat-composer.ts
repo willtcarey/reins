@@ -1,9 +1,9 @@
+import type { SessionAttachmentInfo as AttachmentInfo } from "@backend/session-attachments-store.js";
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
 import {
   normalizeImageSizeHint,
-  type AttachmentInfo,
   type ClientPromptContent,
   type ImageAttachmentBlock,
 } from "../models/chat-content.js";

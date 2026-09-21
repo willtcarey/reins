@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { SessionListItem } from "../../components/session-list-item.js";
 import type { InfoCardAction } from "../../ui/info-card.js";
-import type { SessionListItem as SessionListItemData } from "../../models/ws-client.js";
+import type { SessionListView as SessionListItemData } from "@backend/models/sessions.js";
 import { isTemplateResult, templateToString } from "../helpers/lit-template.js";
 
 function session(activityState: SessionListItemData["activityState"]): SessionListItemData {

@@ -1,4 +1,4 @@
-import type { TaskListItem } from "../../models/tasks.js";
+import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 
 /** Build a valid task list row with focused overrides for the behavior under test. */
 export function makeTask(overrides: Partial<TaskListItem> = {}): TaskListItem {
@@ -8,6 +8,7 @@ export function makeTask(overrides: Partial<TaskListItem> = {}): TaskListItem {
     title: "Task",
     description: null,
     branch_name: "task/example",
+    base_commit: null,
     status: "open",
     created_at: "",
     updated_at: "",

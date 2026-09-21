@@ -49,7 +49,7 @@ export class FileDiffContextState {
 
   constructor(
     private readonly scope: FileDiffContextScope,
-    private readonly fetchResponse: FetchResponse = (input, init) => fetch(input, init),
+    private readonly fetchResponse?: FetchResponse,
   ) {}
 
   subscribe(listener: Listener): () => void {

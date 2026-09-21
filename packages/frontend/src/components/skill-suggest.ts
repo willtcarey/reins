@@ -25,7 +25,7 @@
 import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
-import type { InjectedSkillInfo } from "../models/ws-client.js";
+import type { InjectedSkillInfo } from "@backend/routes/skills.js";
 import { fuzzyMatch } from "../models/stores/quick-open-store.js";
 import { skillInsertEvent } from "./events.js";
 

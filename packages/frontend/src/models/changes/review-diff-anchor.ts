@@ -1,5 +1,5 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
-import type { ReviewDiffLine, ReviewSide } from "../code-review.js";
+import type { ReviewDiffLine, ReviewSide } from "@backend/models/code-review.js";
 
 export interface PositionedReviewDiffLine extends ReviewDiffLine {
   readonly line: number;

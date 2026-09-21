@@ -1,4 +1,5 @@
-import type { CodeReviewState, NewReviewComment } from "../code-review.js";
+import type { CodeReviewState, NewReviewComment } from "@backend/models/code-review.js";
+import { ReinsHttpError, api } from "../reins-client.js";
 
 interface CodeReviewScope {
   readonly projectId: number;
@@ -43,9 +44,7 @@ export class CodeReviewStore {
     this.notify();
 
     try {
-      const response = await fetch(reviewUrl(scope));
-      if (!response.ok) throw new Error(await responseError(response, "Unable to load code review"));
-      const review: CodeReviewState | null = await response.json();
+      const review = await api.reviews.get(scope.projectId, scope.taskId);
       if (generation !== this.generation || !sameScope(this.scope, scope)) return;
       this.review = review;
     } catch (error) {
@@ -67,17 +66,7 @@ export class CodeReviewStore {
       : undefined;
 
     try {
-      const response = await fetch(reviewCommentsUrl(scope), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ expectedReview, comment }),
-      });
-      if (!response.ok) {
-        const message = await responseError(response, "Unable to save code review comment");
-        if (response.status === 409) await this.refresh();
-        throw new Error(message);
-      }
-      const review: CodeReviewState = await response.json();
+      const review = await api.reviews.addComment(scope.projectId, scope.taskId, { expectedReview, comment });
       if (sameScope(this.scope, scope)) {
         const current = this.review;
         if (!current || current.id !== review.id || review.revision >= current.revision) {
@@ -88,6 +77,7 @@ export class CodeReviewStore {
       }
       return review;
     } catch (error) {
+      if (error instanceof ReinsHttpError && error.status === 409) await this.refresh();
       if (sameScope(this.scope, scope)) {
         this.error = errorMessage(error);
         this.notify();
@@ -102,19 +92,12 @@ export class CodeReviewStore {
     if (!scope || !review) throw new Error("No open code review comment to delete");
 
     try {
-      const response = await fetch(reviewCommentUrl(scope, commentId), {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          expectedReview: { id: review.id, revision: review.revision },
-        }),
-      });
-      if (!response.ok) {
-        const message = await responseError(response, "Unable to delete code review comment");
-        if (response.status === 409) await this.refresh();
-        throw new Error(message);
-      }
-      const updated: CodeReviewState = await response.json();
+      const updated = await api.reviews.deleteComment(
+        scope.projectId,
+        scope.taskId,
+        commentId,
+        { expectedReview: { id: review.id, revision: review.revision } },
+      );
       if (sameScope(this.scope, scope)) {
         const current = this.review;
         if (!current || current.id !== updated.id || updated.revision >= current.revision) {
@@ -125,6 +108,7 @@ export class CodeReviewStore {
       }
       return updated;
     } catch (error) {
+      if (error instanceof ReinsHttpError && error.status === 409) await this.refresh();
       if (sameScope(this.scope, scope)) {
         this.error = errorMessage(error);
         this.notify();
@@ -144,17 +128,11 @@ export class CodeReviewStore {
     this.submissionError = null;
     this.notify();
     try {
-      const response = await fetch(reviewSubmissionsUrl(scope), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          reviewId: review.id,
-          expectedRevision: review.revision,
-          sessionId,
-        }),
+      const result = await api.reviews.submit(scope.projectId, scope.taskId, {
+        reviewId: review.id,
+        expectedRevision: review.revision,
+        sessionId,
       });
-      if (!response.ok) throw new Error(await responseError(response, "Unable to submit code review"));
-      const result: { readonly messageId: string } = await response.json();
       if (sameScope(this.scope, scope)) {
         this.review = null;
         this.error = null;
@@ -187,34 +165,8 @@ export class CodeReviewStore {
   }
 }
 
-function reviewUrl(scope: CodeReviewScope): string {
-  return scopedReviewUrl(scope, "/code-review");
-}
-
-function reviewSubmissionsUrl(scope: CodeReviewScope): string {
-  return scopedReviewUrl(scope, "/code-review/submissions");
-}
-
-function reviewCommentsUrl(scope: CodeReviewScope): string {
-  return scopedReviewUrl(scope, "/code-review/comments");
-}
-
-function reviewCommentUrl(scope: CodeReviewScope, commentId: string): string {
-  return scopedReviewUrl(scope, `/code-review/comments/${encodeURIComponent(commentId)}`);
-}
-
-function scopedReviewUrl(scope: CodeReviewScope, path: string): string {
-  const task = scope.taskId === null ? "" : `?taskId=${scope.taskId}`;
-  return `/api/projects/${scope.projectId}${path}${task}`;
-}
-
 function sameScope(left: CodeReviewScope | null, right: CodeReviewScope | null): boolean {
   return left?.projectId === right?.projectId && left?.taskId === right?.taskId;
-}
-
-async function responseError(response: Response, fallback: string): Promise<string> {
-  const body: { error?: unknown } | null = await response.json().catch(() => null);
-  return typeof body?.error === "string" ? body.error : fallback;
 }
 
 function errorMessage(error: unknown): string {

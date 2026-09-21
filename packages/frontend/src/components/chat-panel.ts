@@ -11,7 +11,7 @@ import type { ProjectStore } from "../models/stores/project-store.js";
 import type { CachedSession } from "../models/stores/session-cache.js";
 import type { Message } from "../models/message.js";
 import { sessionHash } from "../routing/app-router.js";
-import type { SessionListItem } from "../models/ws-client.js";
+import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import type { ChatComposer } from "./chat-composer.js";
 import type { ChatComposerSubmitDetail } from "./events.js";
 import type { ChatMessage } from "./chat-message.js";

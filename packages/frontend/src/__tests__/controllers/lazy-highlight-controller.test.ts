@@ -9,7 +9,7 @@
 import { describe, test, expect } from "bun:test";
 import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
 import type { IHighlighter, HighlightHunkCallback } from "../../models/changes/highlighter.js";
-import type { DiffHunk, DiffLine } from "../../models/changes/types.js";
+import type { DiffHunk, DiffLine } from "@backend/models/diff-parser.js";
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 
 // ---------------------------------------------------------------------------

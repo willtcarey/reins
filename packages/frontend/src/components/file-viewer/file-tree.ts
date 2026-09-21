@@ -11,7 +11,8 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { FileBrowserStore, DirEntry } from "../../models/stores/file-browser-store.js";
+import type { DirectoryEntry } from "@backend/models/projects.js";
+import type { FileBrowserStore } from "../../models/stores/file-browser-store.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import { openInBrowserEvent } from "../events.js";
 import "../tree-view.js";
@@ -45,8 +46,8 @@ export class FileTree extends LitElement {
     return parent === "." ? name : `${parent}/${name}`;
   }
 
-  /** Convert store's DirEntry[] into TreeNode[] for tree-view. */
-  private _buildNodes(entries: DirEntry[], parentPath: string): TreeNode[] {
+  /** Convert store's DirectoryEntry[] into TreeNode[] for tree-view. */
+  private _buildNodes(entries: DirectoryEntry[], parentPath: string): TreeNode[] {
     return entries.map((entry) => {
       const path = this._buildPath(parentPath, entry.name);
 

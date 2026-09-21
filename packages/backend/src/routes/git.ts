@@ -14,10 +14,13 @@ import type { ProjectRouteContext } from "./index.js";
 import { badRequest } from "../errors.js";
 import {
   getSpread,
+  type Spread,
   pushBranch,
   rebaseBranch,
 } from "../git.js";
 import { parseBody } from "./validate.js";
+
+export type SpreadResponse = Spread & { branch: string };
 
 const GitBranchBody = Type.Object({
   branch: Type.String({ minLength: 1, pattern: "\\S" }),
@@ -43,7 +46,7 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
 
     const spread = await getSpread(ctx.project.projectDir, branch, ctx.project.baseBranch);
 
-    return Response.json({ branch, ...spread });
+    return Response.json({ branch, ...spread } satisfies SpreadResponse);
   });
 
   /**

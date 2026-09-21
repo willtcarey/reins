@@ -6,19 +6,11 @@
  * this store owns all server communication and localStorage persistence.
  */
 
+import type { PaletteItem } from "@backend/session-store.js";
+import { api } from "../reins-client.js";
 import { SessionCache, type ActivityState } from "./session-cache.js";
 
 // ---- Types ------------------------------------------------------------------
-
-export interface PaletteItem {
-  sessionId: string;
-  projectId: number;
-  projectName: string;
-  taskId: number | null;
-  taskTitle: string | null;
-  firstMessage: string | null;
-  updatedAt: string;
-}
 
 export interface FuzzyResult {
   item: PaletteItem;
@@ -176,10 +168,7 @@ export class QuickOpenStore {
     this.loading = this.items.length === 0;
     if (this.loading) this.notify();
     try {
-      const res = await fetch("/api/palette");
-      if (res.ok) {
-        this.items = await res.json();
-      }
+      this.items = await api.palette.list();
     } catch {
       // Keep cached items on error
     } finally {

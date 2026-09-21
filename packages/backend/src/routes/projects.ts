@@ -3,7 +3,7 @@
  */
 
 import { existsSync } from "fs";
-import { Type } from "@sinclair/typebox";
+import { Type, type Static } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import { API } from "../api-paths.js";
 import { badRequest, notFound, conflict } from "../errors.js";
@@ -25,6 +25,9 @@ const UpdateProjectBody = Type.Object({
   path: Type.Optional(Type.String()),
   base_branch: Type.Optional(Type.String()),
 });
+
+export type ProjectInput = Static<typeof CreateProjectBody>;
+export type ProjectUpdate = Static<typeof UpdateProjectBody>;
 
 export function registerProjectRoutes(router: RouterGroup) {
   // List all projects

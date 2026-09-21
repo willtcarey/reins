@@ -12,7 +12,8 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
-import type { QuickOpenStore, PaletteItem } from "../models/stores/quick-open-store.js";
+import type { PaletteItem } from "@backend/session-store.js";
+import type { QuickOpenStore } from "../models/stores/quick-open-store.js";
 import { navigateToSession } from "../routing/app-router.js";
 import { formatRelativeDate } from "../models/format.js";
 import "./search-palette.js";

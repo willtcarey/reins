@@ -16,6 +16,8 @@ routes / tools / ws
 
 Thin HTTP adapters. Parse requests, call model functions, format responses. Error handling is via thrown `HttpError`s (see [router.md](router.md)).
 
+Shared built-in HTTP DTOs live beside the route, model, or store that sends the data. The frontend may import these only as types. Runtime endpoint construction and transport behavior belong entirely to the internal frontend client; the backend does not publish endpoint descriptors or a plugin-facing client contract.
+
 ### Tools (`src/tools/`)
 
 Application tools are native `AgentHarnessTool` definitions. Each tool file exports a factory using the harness execution signature, including the harness `Context`; `execute` forwards `context.abortSignal` into the scripting API. Session materialization (`runtimes/session-manager.ts`) resolves these tools once per session. A separate legacy projection exists only to keep the dormant Claude SDK implementation compiling and is not used by the registered runtime.

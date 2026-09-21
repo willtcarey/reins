@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { compareFilePaths, sortFileSummaries } from "../models/changes/diff-sort.js";
-import type { DiffFileSummary } from "../models/changes/types.js";
+import type { DiffFileSummary } from "@backend/models/diff-parser.js";
 
 function summary(path: string): DiffFileSummary {
   return { path, additions: 0, removals: 0 };

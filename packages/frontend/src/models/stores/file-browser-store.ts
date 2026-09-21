@@ -7,11 +7,11 @@
  * fetched via the /api/projects/:id/files/content endpoint.
  */
 
+import type { DirectoryEntry } from "@backend/models/projects.js";
+import { ReinsHttpError, api } from "../reins-client.js";
 import { fuzzyMatch } from "./quick-open-store.js";
 
 export type FileBrowserStoreListener = () => void;
-
-export type DirEntry = { name: string; type: "file" | "directory" };
 
 export class FileBrowserStore {
   // ---- Public reactive state ------------------------------------------------
@@ -29,7 +29,7 @@ export class FileBrowserStore {
   // ---- Tree state -----------------------------------------------------------
 
   /** Cache of fetched directory contents, keyed by relative path */
-  directoryEntries: Map<string, DirEntry[]> = new Map();
+  directoryEntries: Map<string, DirectoryEntry[]> = new Map();
   /** Which directories are currently expanded in the tree */
   expandedDirs: Set<string> = new Set();
   /** Which directories are currently being fetched */
@@ -83,12 +83,9 @@ export class FileBrowserStore {
     this.notify();
 
     try {
-      const res = await fetch(`/api/projects/${this._projectId}/files`);
-      if (res.ok) {
-        const body = await res.json();
-        this.files = body.files;
-        this._lastFetchProjectId = this._projectId;
-      }
+      const body = await api.files.list(this._projectId);
+      this.files = body.files;
+      this._lastFetchProjectId = this._projectId;
     } catch {
       // Keep cached files on error
     } finally {
@@ -117,14 +114,7 @@ export class FileBrowserStore {
     this.expandToPath(path);
 
     try {
-      const res = await fetch(
-        `/api/projects/${this._projectId}/files/content?path=${encodeURIComponent(path)}`,
-      );
-      if (!res.ok) {
-        this.contentError = res.status === 404 ? "File not found" : `Error ${res.status}`;
-        return;
-      }
-
+      const res = await api.files.content(this._projectId, path);
       const contentType = res.headers.get("content-type") || "";
       if (isTextMimeType(contentType)) {
         this.fileContent = await res.text();
@@ -133,8 +123,10 @@ export class FileBrowserStore {
         const blob = await res.blob();
         this.fileContent = `Binary file (${formatSize(blob.size)})`;
       }
-    } catch {
-      this.contentError = "Failed to load file";
+    } catch (error) {
+      this.contentError = error instanceof ReinsHttpError && error.status === 404
+        ? "File not found"
+        : "Failed to load file";
     } finally {
       this.contentLoading = false;
       this.notify();
@@ -153,15 +145,8 @@ export class FileBrowserStore {
     this.notify();
 
     try {
-      const res = await fetch(
-        `/api/projects/${this._projectId}/files/tree?path=${encodeURIComponent(dirPath)}`,
-      );
-      if (res.ok) {
-        const body = await res.json();
-        this.directoryEntries.set(dirPath, body.entries);
-      } else {
-        this.treeError = "Failed to load directory";
-      }
+      const body = await api.files.tree(this._projectId, dirPath);
+      this.directoryEntries.set(dirPath, body.entries);
     } catch {
       this.treeError = "Failed to load directory";
     } finally {
@@ -234,7 +219,7 @@ export class FileBrowserStore {
   /** Build a URL to fetch the raw content of the currently selected file. */
   get contentUrl(): string | null {
     if (!this._projectId || !this.selectedFile) return null;
-    return `/api/projects/${this._projectId}/files/content?path=${encodeURIComponent(this.selectedFile)}`;
+    return api.files.contentUrl(this._projectId, this.selectedFile);
   }
 
   /** Reset store state (e.g. when closing the overlay). */

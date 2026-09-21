@@ -24,6 +24,34 @@ function catchCall(object: object) {
   };
 }
 
+describe("reins/frontend-backend-imports-type-only", () => {
+  test("rejects runtime backend imports from frontend code", () => {
+    const reports = runRule("frontend-backend-imports-type-only", "ImportDeclaration", {
+      source: { value: "@backend/api-types.js" },
+      importKind: "value",
+    });
+
+    expect(reports).toHaveLength(1);
+  });
+
+  test("allows type-only backend imports", () => {
+    const reports = runRule("frontend-backend-imports-type-only", "ImportDeclaration", {
+      source: { value: "@backend/api-types.js" },
+      importKind: "type",
+    });
+
+    expect(reports).toHaveLength(0);
+  });
+
+  test("rejects dynamic backend imports", () => {
+    const reports = runRule("frontend-backend-imports-type-only", "ImportExpression", {
+      source: { value: "@backend/project-store.js" },
+    });
+
+    expect(reports).toHaveLength(1);
+  });
+});
+
 describe("reins/no-telemetry-error-guards", () => {
   const record = {
     type: "CallExpression",

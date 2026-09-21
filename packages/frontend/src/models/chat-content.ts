@@ -1,3 +1,5 @@
+import { api } from "./reins-client.js";
+
 export interface TextContentBlock {
   type: "text";
   text: string;
@@ -32,18 +34,6 @@ type ClientPromptBlock = TextContentBlock | ImageAttachmentBlock;
 export type ClientPromptContent = ClientPromptBlock[];
 export type ChatImageBlock = InlineImageBlock | ImageAttachmentBlock;
 
-export interface AttachmentInfo {
-  id: string;
-  kind: "image";
-  mimeType: string;
-  filename?: string;
-  byteSize: number;
-  sha256: string;
-  url: string;
-  width?: number;
-  height?: number;
-}
-
 function isTextContentBlock(value: unknown): value is TextContentBlock {
   return typeof value === "object" && value !== null
     && "type" in value && value.type === "text"
@@ -76,7 +66,7 @@ export function imagesFromContent(content: unknown): ChatImageBlock[] {
 
 export function imageBlockSrc(sessionId: string, block: ChatImageBlock): string {
   if (isImageAttachmentBlock(block)) {
-    return `/api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(block.attachmentId)}`;
+    return api.sessions.attachmentUrl(sessionId, block.attachmentId);
   }
   return `data:${block.mimeType};base64,${block.data}`;
 }

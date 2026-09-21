@@ -1,12 +1,12 @@
+import type { ArchivedSessionHistoryItem } from "@backend/routes/project-sessions.js";
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { navigateToSession } from "../routing/app-router.js";
 import {
-  type ArchivedSessionHistoryItem,
   type CompletedTaskHistoryItem,
   ProjectHistoryStore,
 } from "../models/stores/project-history-store.js";
-import type { SessionListItem } from "../models/ws-client.js";
+import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import {
   checkIcon,
   chevronLeftIcon,

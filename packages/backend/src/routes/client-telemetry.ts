@@ -10,7 +10,7 @@ interface TelemetrySink {
   append(records: readonly unknown[]): Promise<void>;
 }
 
-interface ClientTelemetryEvent {
+export interface ClientTelemetryEvent {
   timestamp: string;
   runId: string;
   sequence: number;

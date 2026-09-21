@@ -10,21 +10,18 @@
  * Mutations go through action methods which call the backend API.
  */
 
-import type { AttachmentInfo, ClientPromptContent } from "../chat-content.js";
-import type { IAppClient, SessionData } from "../ws-client.js";
+import type { SessionModelUpdate } from "@backend/routes/sessions.js";
+import type { SessionDetailView as SessionData } from "@backend/models/sessions.js";
+import type { SessionAttachmentInfo as AttachmentInfo } from "@backend/session-attachments-store.js";
+import type { ClientPromptContent } from "../chat-content.js";
+import { ReinsHttpError, api } from "../reins-client.js";
+import type { IAppClient } from "../ws-client.js";
 import { SessionCache } from "./session-cache.js";
 import {
   ConversationsStore,
   type ConversationView,
   type LiveConversationEntry,
 } from "./conversations-store.js";
-
-export interface SessionModelUpdate {
-  runtimeType?: string;
-  provider: string;
-  modelId: string;
-  thinkingLevel: string;
-}
 
 export interface SessionAttachmentUpload {
   file: File;
@@ -173,11 +170,7 @@ export class ActiveSessionStore {
 
   async resumePendingOperation(): Promise<boolean> {
     if (this._disposed) return false;
-    const response = await fetch(`/api/sessions/${encodeURIComponent(this.sessionId)}/resume`, { method: "POST" });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(body.error || "Failed to resume interrupted session");
-    }
+    await api.sessions.resume(this.sessionId);
     await this._sessionCache.fetchDetail(this.sessionId);
     return true;
   }
@@ -205,18 +198,8 @@ export class ActiveSessionStore {
       form.append("files", uploadFile, attachment.filename);
     }
 
-    const response = await fetch(`/api/sessions/${encodeURIComponent(this.sessionId)}/attachments`, {
-      method: "POST",
-      body: form,
-    });
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(body.error || "Failed to upload attachments");
-    }
-
-    const body: { attachments?: AttachmentInfo[] } = await response.json();
-    return body.attachments ?? [];
+    const body = await api.sessions.addAttachments(this.sessionId, form);
+    return body.attachments;
   }
 
   /** React to canonical metadata changes for the active session. */
@@ -271,21 +254,19 @@ export class ActiveSessionStore {
 
     try {
       const request = this._activityMutationQueue.then(() => (
-        fetch(`/api/sessions/${encodeURIComponent(sessionId)}/activity`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ unread }),
-        })
+        api.sessions.setActivity(sessionId, { unread })
       ));
       this._activityMutationQueue = request.catch(() => undefined);
-      const resp = await request;
+      await request;
       if (this._disposed) return { error: "No active session" };
-      if (resp.ok) return { ok: true };
-      if (this.sessionData.activityState === nextState) {
-        this._sessionCache.set(sessionId, { projectId, activityState: previousState });
+      return { ok: true };
+    } catch (error) {
+      if (error instanceof ReinsHttpError) {
+        if (!this._disposed && this.sessionData.activityState === nextState) {
+          this._sessionCache.set(sessionId, { projectId, activityState: previousState });
+        }
+        return { error: `HTTP ${error.status}` };
       }
-      return { error: `HTTP ${resp.status}` };
-    } catch {
       if (!this._disposed && this.sessionData.activityState === nextState) {
         this._sessionCache.set(sessionId, { projectId, activityState: previousState });
       }
@@ -301,21 +282,11 @@ export class ActiveSessionStore {
     if (this._disposed) return { error: "No active session" };
 
     try {
-      const resp = await fetch(`/api/sessions/${encodeURIComponent(this.sessionId)}/model`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(update),
-      });
-
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        return { error: body.error || "Failed to update session model" };
-      }
-
+      await api.sessions.setModel(this.sessionId, update);
       await this._sessionCache.fetchDetail(this.sessionId);
       return { ok: true };
-    } catch {
-      return { error: "Network error" };
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
     }
   }
 

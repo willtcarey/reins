@@ -8,7 +8,7 @@
 
 import { LitElement, html } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
-import type { ProjectInfo } from "../models/ws-client.js";
+import type { Project as ProjectInfo } from "@backend/project-store.js";
 import type { WorkspaceStore } from "../models/stores/workspace-store.js";
 import type { ProjectForm } from "./project-form.js";
 import "./project-form.js";

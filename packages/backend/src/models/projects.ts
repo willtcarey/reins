@@ -73,6 +73,11 @@ export interface CreateProjectParams {
   base_branch?: string;
 }
 
+export interface DirectoryEntry {
+  name: string;
+  type: "file" | "directory";
+}
+
 /**
  * Create a project: detect the default branch (if not provided),
  * insert into the store, and translate UNIQUE constraint errors to a
@@ -175,7 +180,7 @@ export class ProjectModel {
    * Read one level of a directory, returning typed entries sorted
    * with directories first, then files, alphabetical within each group.
    */
-  listDirectory(subPath = "."): { name: string; type: "file" | "directory" }[] {
+  listDirectory(subPath = "."): DirectoryEntry[] {
     const resolved = resolve(this.projectDir, subPath);
     this.assertInsideProject(resolved);
 

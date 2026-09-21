@@ -1,7 +1,8 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
-import { SettingsStore, type ModelSettingKey } from "../../models/stores/settings-store.js";
+import type { ModelSetting, ModelSettingsKey as ModelSettingKey } from "@backend/settings-store.js";
+import { SettingsStore } from "../../models/stores/settings-store.js";
 import { showToast } from "../toast.js";
 import "./model-selector-controls.js";
 
@@ -52,7 +53,7 @@ export class SettingsModelSettingSection extends LitElement {
     }
   }
 
-  private async _handleThinkingChange(e: CustomEvent<{ thinkingLevel: string }>) {
+  private async _handleThinkingChange(e: CustomEvent<{ thinkingLevel: ModelSetting["thinkingLevel"] }>) {
     const store = this.store;
     if (!store) return;
 

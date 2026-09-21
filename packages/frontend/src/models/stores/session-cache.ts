@@ -6,7 +6,8 @@
  * write the resulting session records here for keyed lookup/subscription.
  */
 
-import type { SessionData, SessionState } from "../ws-client.js";
+import type { SessionDetailView as SessionData } from "@backend/models/sessions.js";
+import { api } from "../reins-client.js";
 
 export type ActivityState = "running" | "finished" | null;
 
@@ -25,7 +26,7 @@ export interface CachedSession {
   archivedAt: string | null;
   pendingOperation: SessionData["pendingOperation"];
   runtimeType: string | null;
-  state: SessionState | null;
+  state: SessionData["state"] | null;
 }
 
 export type SessionPatch = Partial<Omit<CachedSession, "id">>;
@@ -203,9 +204,7 @@ export class SessionCache {
 
   private async _fetchDetail(sessionId: string): Promise<SessionData | null> {
     try {
-      const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
-      if (!resp.ok) return null;
-      const data: SessionData = await resp.json();
+      const data = await api.sessions.get(sessionId);
       this.set(data.id, data);
       return data;
     } catch {
