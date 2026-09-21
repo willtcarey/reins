@@ -11,7 +11,7 @@ import { createServerState } from "../helpers/server-state.js";
 describe("SessionInstance", () => {
   useTestDb();
 
-  test("delivers addressed messages through native steering before broadcasting", async () => {
+  test("delivers addressed messages through native steering without duplicate AgentHarness broadcast", async () => {
     const project = createProject("Messages", "/tmp/messages-test");
     createSession("source", project.id, { agentRuntimeType: "pi" });
     createSession("target", project.id, { agentRuntimeType: "pi" });
@@ -37,14 +37,11 @@ describe("SessionInstance", () => {
     expect(await sending).toEqual({ sessionId: "target" });
     expect(stub.promptCalls).toEqual([]);
     expect(stub.steerCalls).toEqual([[{ type: "text", text: "First" }]]);
-    expect(stub.steerOptions).toEqual([{ metadata: { sourceSessionId: "source" } }]);
-    expect(broadcasts).toEqual([{
-      type: "user_message",
-      sessionId: "target",
-      projectId: project.id,
-      message: [{ type: "text", text: "First" }],
+    expect(stub.steerOptions).toEqual([{
+      reinsId: expect.any(String),
       metadata: { sourceSessionId: "source" },
     }]);
+    expect(broadcasts).toEqual([]);
   });
 
   test("updates activity and metadata without rewriting canonical entries", () => {
@@ -78,12 +75,16 @@ describe("SessionInstance", () => {
     const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "stale success" }] }] });
     const activity: string[] = [];
     const delivered = Promise.withResolvers<void>();
+    const originalSteer = parent.runtime.steer;
+    parent.runtime.steer = async (content, options) => {
+      await originalSteer(content, options);
+      delivered.resolve();
+    };
     const state = createServerState();
     state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: 0 });
     const manager = new SessionManager(state);
     Object.defineProperty(manager, "broadcast", { value: (event: { type: string }) => {
       if (event.type === "session_updated") activity.push(getSession("child")?.activity_state ?? "null");
-      if (event.type === "user_message") delivered.resolve();
     } });
     const instance = new SessionInstance(manager, "child");
 
@@ -100,6 +101,9 @@ describe("SessionInstance", () => {
     const notification = parent.steerCalls[0]?.find((block) => block.type === "text")?.text;
     expect(notification).toBe("Session failed: Provider unavailable");
     expect(notification).not.toContain("stale success");
-    expect(parent.steerOptions).toEqual([{ metadata: { sourceSessionId: "child" } }]);
+    expect(parent.steerOptions).toEqual([{
+      reinsId: expect.any(String),
+      metadata: { sourceSessionId: "child" },
+    }]);
   });
 });

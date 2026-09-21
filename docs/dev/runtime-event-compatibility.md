@@ -1,10 +1,10 @@
-# Runtime Event Compatibility Contract
+# Runtime event contract
 
 ## Purpose
 
 This document defines the normalized backend contracts for WebSocket streaming and session lifecycle. Runtime adapters explicitly map native events; vendor events are not passed through unchecked.
 
-Only the AgentHarness Pi adapter is currently registered.
+Only the AgentHarness Pi adapter is registered. Imported Claude sessions are converted to canonical Pi storage before they can be opened, so active runtime and frontend code do not maintain a legacy transcript protocol.
 
 ## Event surface
 
@@ -12,25 +12,39 @@ Runtimes publish events through `AgentRuntime.subscribe(listener)`. Reins broadc
 
 - `{ type: "event", sessionId, projectId, event }`
 
-This rich event stream is a frontend compatibility surface. Application lifecycle effects do not infer operation state from it.
+Every durable chat insertion is an `entry_added` event containing the canonical `ConversationEntry` envelope also returned by message pages:
+
+- `id`: AgentHarness entry ID
+- `parentId`: AgentHarness parent entry ID
+- `seq`: AgentHarness sequence
+- `clientId`: Reins submission ID for a `reinsInput` entry, when applicable
+- `message`: the content-only runtime projection
+
+The frontend upserts pages and events by `id`. It resolves an optimistic input only when the canonical entry has the same `clientId`. There is no separate peer-input broadcast, transcript fallback, FIFO matching, or timestamp matching.
+
+## Streaming semantics
+
+Each `message_start`, `message_update`, and `message_end` event carries a required `streamId`. An adapter must preserve that identity for the complete message lifecycle. `message_end` includes `entryId` when the native event exposes the corresponding durable entry, allowing the frontend to remove exactly that streaming overlay when its canonical entry arrives.
+
+Streaming messages are presentation overlays only. They never become persisted conversation entries by inference. `agent_end` clears remaining overlays and reports terminal errors, but does not promote `agent_end.messages` into conversation history. Compaction summaries likewise appear only through canonical `entry_added` events.
 
 ## Lifecycle semantics
 
-Each runtime receives a `RuntimeLifecycleSink` when it is constructed. The AgentHarness runtime listens to its native events internally and calls:
+Each runtime receives a `RuntimeLifecycleSink` when it is constructed. The AgentHarness runtime listens to native events internally and calls:
 
 - `started()` for `run_start`, `run_resume`, and `compaction_start`;
 - `settled(runtime, outcome)` for durable `run_end`.
 
 `compaction_end` is intentionally not a settlement boundary because automatic compaction can precede the terminal run transaction. AgentHarness emits `run_end` after retries, deferred polling, steering, and automatic compaction. The runtime does not expose a second lifecycle event stream.
 
-When the native runtime provides it, `agent_end` includes:
+`agent_end` includes:
 
 - `runId`: native run/operation identity
 - `status`: `completed`, `failed`, or `aborted`
-- `error`: structured native failure information
-- `messages`: messages produced during this run
+- `error`: structured native failure information when failed
+- `messages`: messages produced during this run, used for terminal diagnostics rather than transcript insertion
 
-Consumers should use terminal `status` and `error` instead of inferring an outcome from the last assistant message. Adapters without authoritative outcome fields may omit them, preserving transcript inference as a compatibility fallback.
+Consumers use terminal `status` and `error` instead of inferring operation state from transcript contents.
 
 ## Persistence and reporting
 
@@ -44,15 +58,9 @@ The injected caller-scoped `SessionInstance` applies settlement effects in order
 
 It sets `activity_state = 'running'` when the runtime calls `started()`. A native `run_end` callback may occur just before Reins removes its local active-operation bookkeeping; this local cleanup gap is not a second runtime lifecycle phase.
 
-## Frontend behavior
-
-The raw normalized events remain broadcast for streaming compatibility. The frontend treats `agent_end` as both final-message promotion and stream-finalization for that run. It prefers `agent_end.error.message` for user-facing terminal errors, falling back to an assistant error message only when authoritative outcome data is absent.
-
-Frontend conversation handling ignores `role: "user"` entries in `agent_end.messages`; visible user text comes from optimistic local entries, peer `user_message` events, and persisted projections.
-
 ## Tool event contract
 
-For useful tool rendering, adapters should emit:
+For useful tool rendering, adapters emit:
 
 - `tool_execution_start` with stable `toolCallId`, `toolName`, and `args`
 - `tool_execution_update` when progress is available
@@ -62,13 +70,14 @@ Tool names should be normalized to canonical Reins names where feasible.
 
 ## Adapter mapping rules
 
-Runtime adapters should:
+Runtime adapters must:
 
 1. Consume native operation boundaries internally and notify the injected `RuntimeLifecycleSink`.
-2. Explicitly map rich native events to `AgentRuntimeEvent` for frontend compatibility.
+2. Explicitly map rich native events to `AgentRuntimeEvent`.
 3. Map the native durable terminal event to both sink `settled()` and UI `agent_end` exactly once.
 4. Preserve native terminal identity, status, and error in both projections.
-5. Normalize compaction UI events without treating `compaction_end` as terminal activity.
-6. Keep tool-call IDs stable across tool events.
-7. Include run-local `agent_end.messages` when available.
-8. Keep runtime-specific extra fields additive.
+5. Emit canonical `ConversationEntry` envelopes for durable entries.
+6. Assign every active message lifecycle a stable, explicit `streamId`.
+7. Normalize compaction UI events without treating `compaction_end` as terminal activity.
+8. Keep tool-call IDs stable across tool events.
+9. Keep runtime-specific extra fields additive.

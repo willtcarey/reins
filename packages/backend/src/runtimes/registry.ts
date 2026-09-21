@@ -3,6 +3,7 @@ import { getTask as storeGetTask, type TaskRow } from "../task-store.js";
 import type { ServerState } from "../state.js";
 import type {
   ClientPromptContent,
+  ConversationEntry,
   RuntimeContentBlock,
   RuntimeMessage,
 } from "../messages-store.js";
@@ -98,9 +99,10 @@ export type AgentRuntimeEvent =
   }
   | { type: "turn_start" }
   | { type: "turn_end"; message: RuntimeMessage; toolResults: RuntimeMessage[] }
-  | { type: "message_start"; message: RuntimeMessage }
-  | { type: "message_update"; message: RuntimeMessage; assistantMessageEvent: RuntimeAssistantDelta }
-  | { type: "message_end"; message: RuntimeMessage }
+  | { type: "message_start"; message: RuntimeMessage; streamId: string }
+  | { type: "message_update"; message: RuntimeMessage; streamId: string; assistantMessageEvent: RuntimeAssistantDelta }
+  | { type: "message_end"; message: RuntimeMessage; streamId: string; entryId?: string }
+  | { type: "entry_added"; entry: ConversationEntry<RuntimeMessage> }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
   | { type: "tool_execution_update"; toolCallId: string; toolName: string; args: Record<string, unknown>; partialResult: unknown }
   | { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: RuntimeToolResultPayload; isError: boolean }

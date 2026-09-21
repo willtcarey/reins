@@ -182,20 +182,17 @@ export class SessionInstance implements RuntimeLifecycleSink {
     sourceSessionId?: string,
     opened?: ManagedSession,
   ): Promise<{ sessionId: string }> {
-    const row = this.session(sessionId);
+    this.session(sessionId);
     const managed = opened ?? this.manager.sessions.get(sessionId) ?? await this.manager.open(sessionId);
     const content = [{ type: "text" as const, text: message }];
-    const promptOptions = sourceSessionId ? { metadata: { sourceSessionId } } : undefined;
+    const clientId = crypto.randomUUID();
+    const promptOptions = {
+      reinsId: clientId,
+      ...(sourceSessionId ? { metadata: { sourceSessionId } } : {}),
+    };
     managed.lastActivity = Date.now();
     if (mode === "prompt") await managed.runtime.prompt(content, promptOptions);
     else await managed.runtime.steer(content, promptOptions);
-    this.manager.broadcast({
-      type: "user_message",
-      sessionId,
-      projectId: row.project_id,
-      message: content,
-      ...(promptOptions ? { metadata: promptOptions.metadata } : {}),
-    });
     return { sessionId };
   }
 

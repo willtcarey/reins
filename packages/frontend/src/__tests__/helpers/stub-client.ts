@@ -33,7 +33,7 @@ export class StubClient implements IAppClient {
   connect() {}
   disconnect() {}
   get isConnected() { return false; }
-  prompt(_sessionId: string, _message: ClientPromptContent) {}
-  steer(_sessionId: string, _message: ClientPromptContent) {}
+  prompt(_sessionId: string, _message: ClientPromptContent, _submissionId: string) {}
+  steer(_sessionId: string, _message: ClientPromptContent, _submissionId: string) {}
   abort(_sessionId: string) {}
 }

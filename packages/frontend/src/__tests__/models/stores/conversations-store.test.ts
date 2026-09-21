@@ -1,594 +1,105 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ConversationsStore } from "../../../models/stores/conversations-store.js";
-import { SessionCache } from "../../../models/stores/session-cache.js";
 import type { AgentMessage } from "../../../models/agent-message.js";
-import {
-  applyStreamingAssistant,
-  applyStreamingMessage,
-  completedToolTurn,
-  conversationPage,
-  setPersistedMessages,
-  streamingContentKeys,
-  type StreamingFixture,
-} from "../../helpers/conversations.js";
+import { conversationPage } from "../../helpers/conversations.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { StubClient } from "../../helpers/stub-client.js";
 
-function textUser(content: string, timestamp: number): AgentMessage {
-  return { role: "user", content, timestamp };
-}
+const content = (text: string) => [{ type: "text" as const, text }];
+const user = (text: string, timestamp: number): AgentMessage => ({ role: "user", content: content(text), timestamp });
+const assistant = (text: string, timestamp: number): AgentMessage => ({ role: "assistant", content: content(text), timestamp });
+const entry = (id: string, seq: number, message: AgentMessage, clientId?: string): import("../../../models/stores/conversations-store.js").ConversationEntry => ({
+  id, parentId: seq === 1 ? null : `entry-${seq - 1}`, seq, ...(clientId ? { clientId } : {}), message,
+});
+const raw = (store: ConversationsStore, sessionId = "session"): AgentMessage[] => (
+  store.get(sessionId).messages.map(({ raw: message }) => message)
+);
 
-function rawMessages(view: ReturnType<ConversationsStore["get"]>): AgentMessage[] {
-  return view.messages.map(({ raw }) => raw);
-}
+describe("ConversationsStore canonical reconciliation", () => {
+  afterEach(restoreFetch);
 
-function cachedSession(isRunning: boolean) {
-  return {
-    projectId: 42,
-    taskId: null,
-    parentSessionId: null,
-    name: null,
-    createdAt: "",
-    updatedAt: "",
-    activityState: isRunning ? "running" as const : "finished" as const,
-    messageCount: 0,
-    state: { model: null, thinkingLevel: "off" },
-  };
-}
-
-describe("ConversationsStore", () => {
-  afterEach(() => { restoreFetch(); });
-
-  test("coalesces concurrent synchronization for the same session", async () => {
-    const conversations = new ConversationsStore();
-    let resolveResponse!: (response: Response) => void;
-    let requests = 0;
-    mockFetch(() => {
-      requests += 1;
-      return new Promise<Response>((resolve) => { resolveResponse = resolve; });
-    });
-
-    const first = conversations.syncMessages("sess-1");
-    const second = conversations.syncMessages("sess-1");
-    await Promise.resolve();
-
-    expect(requests).toBe(1);
-    resolveResponse(Response.json(conversationPage([])));
-    expect(await Promise.all([first, second])).toEqual([true, true]);
-  });
-
-  test("loads latest, forward, and earlier pages through cursor API", async () => {
-    const conversations = new ConversationsStore();
-    const earlier = textUser("earlier", 100);
-    const latest = textUser("latest", 200);
-    const newer = textUser("newer", 300);
+  test("coalesces synchronization and follows canonical forward cursors", async () => {
+    const store = new ConversationsStore();
     const calls: string[] = [];
-
     mockFetch((url) => {
       calls.push(url);
-      if (url === "/api/sessions/sess-1/messages") {
-        return Response.json(conversationPage(
-          [{ id: "2", parentId: "1", message: latest }],
-          { hasPreviousPage: true, previousCursor: "cursor-2", hasNextPage: true, endCursor: "cursor-2" },
-        ));
-      }
-      if (url === "/api/sessions/sess-1/messages?after=cursor-2") {
-        return Response.json(conversationPage(
-          [{ id: "3", parentId: "2", message: newer }],
-          { endCursor: "cursor-3" },
-        ));
-      }
-      if (url === "/api/sessions/sess-1/messages?before=cursor-2") {
-        return Response.json(conversationPage([
-          { id: "1", parentId: null, message: earlier },
-        ], { hasNextPage: true }));
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
+      if (url.endsWith("/messages")) return Response.json(conversationPage(
+        [entry("entry-1", 1, user("one", 1))],
+        { hasNextPage: true, endCursor: "next" },
+      ));
+      return Response.json(conversationPage([entry("entry-2", 2, assistant("two", 2))]));
     });
 
-    expect(await conversations.syncMessages("sess-1")).toBe(true);
-    expect(await conversations.loadEarlierMessages("sess-1")).toBe(true);
+    const first = store.syncMessages("session");
+    const second = store.syncMessages("session");
+    expect(await Promise.all([first, second])).toEqual([true, true]);
+    expect(calls).toEqual(["/api/sessions/session/messages", "/api/sessions/session/messages?after=next"]);
+    expect(raw(store)).toEqual([user("one", 1), assistant("two", 2)]);
+  });
 
-    expect(calls).toEqual([
-      "/api/sessions/sess-1/messages",
-      "/api/sessions/sess-1/messages?after=cursor-2",
-      "/api/sessions/sess-1/messages?before=cursor-2",
+  test("upserts the same canonical envelope idempotently from event and page in either order", () => {
+    const canonical = entry("entry-1", 1, assistant("done", 2));
+    for (const eventFirst of [true, false]) {
+      const store = new ConversationsStore();
+      if (eventFirst) store.applyEvent("session", { type: "entry_added", entry: canonical });
+      store.mergeMessages("session", conversationPage([canonical]));
+      if (!eventFirst) store.applyEvent("session", { type: "entry_added", entry: canonical });
+      expect(raw(store)).toEqual([canonical.message]);
+      expect(store.get("session").messages[0]).toMatchObject({ entryId: "entry-1", renderKey: "entry-1" });
+    }
+  });
+
+  test("reconciles optimistic submissions only by client identity and preserves render continuity", () => {
+    const store = new ConversationsStore();
+    const optimistic = store.addOptimisticUserMessage("session", content("same"), "client-1", 10)!;
+    store.addOptimisticUserMessage("session", content("same"), "client-2", 11);
+
+    const second = entry("entry-2", 2, user("same", 20), "client-2");
+    store.applyEvent("session", { type: "entry_added", entry: second });
+    expect(store.get("session").messages.map(({ renderKey }) => renderKey)).toEqual([
+      "submission-client-2", "submission-client-1",
     ]);
-    expect(rawMessages(conversations.get("sess-1"))).toEqual([earlier, latest, newer]);
-  });
 
-  test("exposes display messages with stable identity and associated persisted tool results", () => {
-    const conversations = new ConversationsStore();
-    const assistant = {
-      role: "assistant" as const,
-      content: [
-        { type: "text" as const, text: "Checking" },
-        { type: "toolCall" as const, id: "tool-1", name: "read", arguments: { path: "README.md" } },
-      ],
-      timestamp: 200,
-    };
-    const result = {
-      role: "toolResult" as const,
-      toolCallId: "tool-1",
-      toolName: "read",
-      content: [{ type: "text" as const, text: "contents" }],
-      isError: false,
-      timestamp: 300,
-    };
-
-    conversations.mergeMessages("sess-1", conversationPage([
-      { id: "user-row", parentId: null, message: textUser("inspect it", 100) },
-      { id: "assistant-row", parentId: "user-row", message: assistant },
-      { id: "result-row", parentId: "assistant-row", message: result },
-    ]));
-
-    const messages = conversations.get("sess-1").messages;
-    expect(messages).toHaveLength(2);
-    expect(messages[0]).toMatchObject({
-      role: "user",
-      entryId: "user-row",
-      parentEntryId: null,
-      renderKey: "user-row",
-    });
-    expect(messages[0]?.toMarkdown()).toBe("inspect it");
-    expect(messages[1]).toMatchObject({
-      role: "assistant",
-      entryId: "assistant-row",
-      parentEntryId: "user-row",
-      renderKey: "assistant-row",
-    });
-    expect(messages[1]?.toMarkdown()).toBe("Checking");
-    if (messages[1]?.role !== "assistant") throw new Error("Expected assistant domain message");
-    const toolCall = messages[1].blocks.find((block) => block.type === "toolCall");
-    expect(toolCall).toMatchObject({ id: "tool-1", result });
-    expect(toolCall?.renderData).toMatchObject({ status: "done", result: { content: result.content } });
-  });
-
-  test("associates live tool execution with its owning streaming message", () => {
-    const conversations = new ConversationsStore();
-    applyStreamingAssistant(conversations, "sess-1", [{
-      id: "tool-1",
-      name: "read",
-      arguments: { path: "README.md" },
-      result: "live contents",
-      done: true,
-    }], 200);
-
-    const [message] = conversations.get("sess-1").streamingMessages;
-    expect(message).toMatchObject({
-      role: "assistant",
-      renderKey: "streaming-assistant-200",
-      streaming: true,
-    });
-    const toolCall = message?.blocks.find((block) => block.type === "toolCall");
-    expect(toolCall).toMatchObject({
-      id: "tool-1",
-      execution: { id: "tool-1", status: "done" },
-    });
-    expect(toolCall?.renderData).toMatchObject({ status: "done", result: { content: [{ text: "live contents" }] } });
-  });
-
-  test("stores session-scoped websocket errors", () => {
-    const eventSource = new StubClient();
-    const conversations = new ConversationsStore({ eventSource });
-
-    eventSource.fireMessage({ type: "error", sessionId: "sess-1", error: "Missing message field" });
-
-    expect(conversations.get("sess-1").errorMessage).toBe("Missing message field");
-  });
-
-  test("keeps conversation state keyed by session for non-active events", () => {
-    const conversations = new ConversationsStore();
-
-    applyStreamingAssistant(conversations, "inactive-session", ["hello"], 100);
-
-    expect(conversations.get("active-session").streamingMessages).toEqual([]);
-    expect(streamingContentKeys(conversations, "inactive-session")).toEqual(["text:hello"]);
-  });
-
-  test("prepending history preserves websocket message tail and streaming assistants", () => {
-    const conversations = new ConversationsStore();
-    const earlier = textUser("earlier", 100);
-    const latest = textUser("latest", 200);
-    const liveAssistant: AgentMessage = {
-      role: "assistant",
-      content: [{ type: "text", text: "live reply" }],
-      timestamp: 300,
-    };
-
-    conversations.mergeMessages("sess-1", conversationPage(
-      [{ id: "2", parentId: "1", message: latest }],
-      { hasPreviousPage: true, previousCursor: "cursor-2" },
-    ));
-    conversations.applyEvent("sess-1", {
-      type: "user_message",
-      message: [{ type: "text", text: "live prompt" }],
-    });
-    const liveUser = conversations.get("sess-1").messages.at(-1)!.raw;
-    conversations.applyEvent("sess-1", { type: "message_end", message: liveAssistant });
-    applyStreamingAssistant(conversations, "sess-1", ["still working"], 400);
-
-    conversations.mergeMessages("sess-1", conversationPage(
-      [{ id: "1", parentId: null, message: earlier }],
-      { hasNextPage: true },
-    ), { earlier: true });
-
-    const state = conversations.get("sess-1");
-    expect(rawMessages(state)).toEqual([earlier, latest, liveUser]);
-    expect(state.messages.slice(0, 2)).toMatchObject([
-      { entryId: "1", parentEntryId: null, raw: earlier },
-      { entryId: "2", parentEntryId: "1", raw: latest },
+    const first = entry("entry-1", 1, user("same", 21), "client-1");
+    store.mergeMessages("session", conversationPage([first, second]));
+    expect(store.get("session").messages.map(({ renderKey }) => renderKey)).toEqual([
+      optimistic.localId, "submission-client-2",
     ]);
-    expect(state.messages.slice(2).map((message) => message.entryId)).toEqual([null]);
-    expect(state.messages.slice(2).every((message) => message.renderKey.length > 0)).toBe(true);
-    expect(streamingContentKeys(conversations, "sess-1")).toEqual(["text:live reply", "text:still working"]);
+    expect(store.get("session").messages.map(({ entryId }) => entryId)).toEqual(["entry-1", "entry-2"]);
   });
 
-  test("reconciles newly persisted differently shaped users with optimistic entries FIFO", () => {
-    const conversations = new ConversationsStore();
-    conversations.mergeMessages("sess-1", conversationPage([
-      { id: "old", parentId: null, message: textUser("old", 100) },
-    ]));
-    const original = [{ type: "text" as const, text: "/dip start" }];
-    conversations.addOptimisticUserMessage("sess-1", original, 5_000);
-
-    const strippedPersisted = [{ type: "text" as const, text: "/dip start\n" }];
-    conversations.mergeMessages("sess-1", conversationPage([
-      { id: "new", parentId: "old", message: { role: "user", content: strippedPersisted, timestamp: 5_500 } },
-    ]));
-
-    expect(conversations.get("sess-1").messages).toMatchObject([
-      { entryId: "old", parentEntryId: null, raw: textUser("old", 100) },
-      { entryId: "new", parentEntryId: "old", raw: { role: "user", content: strippedPersisted, timestamp: 5_500 } },
+  test("stale pages cannot consume a different pending submission", () => {
+    const store = new ConversationsStore();
+    const stale = entry("entry-old", 1, user("same", 1), "old-client");
+    store.mergeMessages("session", conversationPage([stale]));
+    store.addOptimisticUserMessage("session", content("same"), "new-client", 2);
+    store.mergeMessages("session", conversationPage([stale]));
+    expect(store.get("session").messages.map(({ renderKey }) => renderKey)).toEqual([
+      "submission-old-client", "submission-new-client",
     ]);
   });
 
-  test("reconciles repeated identical local and remote prompts one-for-one", () => {
-    const conversations = new ConversationsStore();
-    conversations.mergeMessages("sess-1", conversationPage([
-      { id: "old", parentId: null, message: textUser("old", 100) },
-    ]));
-    const content = [{ type: "text" as const, text: "repeat this prompt" }];
+  test("message_end upgrades a streaming overlay and canonical identity removes exactly that overlay", () => {
+    const store = new ConversationsStore();
+    store.applyEvent("session", { type: "message_start", streamId: "stream-1", message: assistant("working", 10) });
+    store.applyEvent("session", { type: "message_start", streamId: "stream-2", message: assistant("other", 10) });
+    store.applyEvent("session", { type: "message_end", streamId: "stream-1", entryId: "entry-1", message: assistant("done", 10) });
+    store.applyEvent("session", { type: "entry_added", entry: entry("entry-1", 1, assistant("done", 10)) });
 
-    conversations.addOptimisticUserMessage("sess-1", content, 5_000);
-    conversations.applyEvent("sess-1", { type: "user_message", message: content });
-    expect(conversations.get("sess-1").messages.filter(({ role }) => role === "user")).toHaveLength(3);
-
-    conversations.mergeMessages("sess-1", conversationPage([
-      { id: "persisted-1", parentId: "old", message: { role: "user", content, timestamp: 5_500 } },
-    ]));
-    expect(conversations.get("sess-1").messages.filter(({ entryId }) => entryId === null)).toHaveLength(1);
-
-    conversations.mergeMessages("sess-1", conversationPage([
-      { id: "persisted-2", parentId: "persisted-1", message: { role: "user", content, timestamp: 6_500 } },
-    ]));
-    expect(conversations.get("sess-1").messages.filter(({ entryId }) => entryId === null)).toHaveLength(0);
-    expect(conversations.get("sess-1").messages.map(({ entryId }) => entryId)).toEqual(["old", "persisted-1", "persisted-2"]);
+    expect(raw(store)).toEqual([assistant("done", 10)]);
+    expect(store.get("session").streamingMessages).toHaveLength(1);
+    expect(store.get("session").streamingMessages[0]?.toMarkdown()).toBe("other");
   });
 
-  test("stale overlapping pages never consume pending optimistic users", () => {
-    const conversations = new ConversationsStore();
-    const stale = { id: "stale", parentId: null, message: textUser("same", 100) };
-    conversations.mergeMessages("overlap", conversationPage([stale]));
-    conversations.addOptimisticUserMessage("overlap", [{ type: "text", text: "same" }], 5_000);
+  test("shows only durable compaction summaries and never promotes canonical-runtime agent_end transcripts", () => {
+    const store = new ConversationsStore();
+    store.applyEvent("session", { type: "compaction_start" });
+    store.applyEvent("session", { type: "compaction_end", result: { summary: "synthetic" } });
+    store.applyEvent("session", { type: "agent_end", messages: [assistant("fallback", 2)] });
+    expect(raw(store)).toEqual([]);
 
-    conversations.mergeMessages("overlap", conversationPage([stale]));
-    conversations.mergeMessages("overlap", conversationPage([stale]));
-
-    expect(conversations.get("overlap").messages.filter(({ entryId }) => entryId === null)).toHaveLength(1);
-  });
-
-  test("agent_end exposes final output immediately and persistence replaces it by stable identity", () => {
-    const conversations = new ConversationsStore();
-    const liveAssistant: AgentMessage = {
-      role: "assistant",
-      content: [{ type: "text", text: "live final" }],
-      timestamp: 200,
-    };
-    const liveToolResult: AgentMessage = {
-      role: "toolResult",
-      toolCallId: "tool-1",
-      toolName: "read",
-      content: [{ type: "text", text: "live result" }],
-      isError: false,
-      timestamp: 300,
-    };
-
-    conversations.applyEvent("sess-1", {
-      type: "agent_end",
-      messages: [textUser("runtime copy", 100), liveAssistant, liveToolResult],
-    });
-
-    expect(rawMessages(conversations.get("sess-1"))).toEqual([liveAssistant]);
-    expect(conversations.get("sess-1").messages.every(({ entryId }) => entryId === null)).toBe(true);
-
-    const persistedAssistant: AgentMessage = {
-      ...liveAssistant,
-      content: [{ type: "text", text: "canonical final" }],
-    };
-    const persistedToolResult: AgentMessage = {
-      ...liveToolResult,
-      content: [{ type: "text", text: "canonical result" }],
-      timestamp: 350,
-    };
-    setPersistedMessages(conversations, "sess-1", [
-      textUser("canonical prompt", 150),
-      persistedAssistant,
-      persistedToolResult,
-    ]);
-
-    expect(rawMessages(conversations.get("sess-1"))).toEqual([
-      textUser("canonical prompt", 150),
-      persistedAssistant,
-    ]);
-  });
-
-  test("reconciles live tool results by stable tool-call ID", () => {
-    const conversations = new ConversationsStore();
-    const user = textUser("inspect it", 100);
-    conversations.mergeMessages("sess-1", conversationPage([
-      { id: "user", parentId: null, message: user },
-    ]));
-    conversations.applyEvent("sess-1", {
-      type: "agent_end",
-      messages: [{
-        role: "toolResult",
-        toolCallId: "tool-1",
-        toolName: "read",
-        content: [{ type: "text", text: "live result" }],
-        isError: false,
-        timestamp: 200,
-      }],
-    });
-
-    const persistedResult: AgentMessage = {
-      role: "toolResult",
-      toolCallId: "tool-1",
-      toolName: "read",
-      content: [{ type: "text", text: "persisted result" }],
-      isError: false,
-      timestamp: 250,
-    };
-    conversations.mergeMessages("sess-1", conversationPage([
-      { id: "result", parentId: "user", message: persistedResult },
-    ]));
-
-    expect(rawMessages(conversations.get("sess-1"))).toEqual([user]);
-  });
-
-  test("first canonical page replaces the optimistic prompt and matching live tool", () => {
-    const conversations = new ConversationsStore();
-    const prompt = [{ type: "text" as const, text: "Push that" }];
-    const tool = { id: "tool-1", name: "bash", arguments: { command: "git push" }, result: "pushed" };
-    conversations.addOptimisticUserMessage("sess-1", prompt, 100);
-    applyStreamingAssistant(conversations, "sess-1", [{ ...tool, done: true }], 200);
-    applyStreamingMessage(conversations, "sess-1", 202, ["Pushed successfully."]);
-
-    const canonicalMessages: AgentMessage[] = [
-      { role: "user", content: prompt, timestamp: 100 },
-      ...completedToolTurn([tool], "Pushed successfully.", 200),
-    ];
-    setPersistedMessages(conversations, "sess-1", canonicalMessages);
-
-    expect(rawMessages(conversations.get("sess-1"))).toEqual(
-      canonicalMessages.filter(({ role }) => role !== "toolResult"),
-    );
-    expect(streamingContentKeys(conversations, "sess-1")).toEqual([]);
-  });
-
-  test("a stale first page preserves unrelated active streaming work", () => {
-    const conversations = new ConversationsStore();
-    conversations.addOptimisticUserMessage("sess-1", [{ type: "text", text: "new work" }], 500);
-    applyStreamingAssistant(conversations, "sess-1", [{ id: "live-tool" }]);
-
-    setPersistedMessages(conversations, "sess-1", [
-      textUser("old work", 100),
-      { role: "assistant", content: [{ type: "text", text: "old response" }], timestamp: 200 },
-    ]);
-
-    expect(streamingContentKeys(conversations, "sess-1")).toEqual(["tool:live-tool"]);
-  });
-
-  const reconciliationCases: Array<{
-    name: string;
-    streaming: Array<{ timestamp: number; blocks: StreamingFixture[] }>;
-    persisted: AgentMessage[];
-    expected: string[];
-  }> = [
-    {
-      name: "a partial snapshot removes the entire matching streaming assistant",
-      streaming: [
-        { timestamp: 200, blocks: ["Checking", { id: "tool-1", done: true }] },
-        { timestamp: 300, blocks: ["Checking another file", { id: "tool-2" }] },
-      ],
-      persisted: completedToolTurn([{ id: "tool-1" }], "not persisted yet", 200).slice(0, 2),
-      expected: ["text:Checking another file", "tool:tool-2"],
-    },
-    {
-      name: "a completed turn preserves a newer unmatched streaming assistant",
-      streaming: [
-        { timestamp: 200, blocks: [{ id: "tool-1", done: true }] },
-        { timestamp: 202, blocks: ["Acknowledged text"] },
-        { timestamp: 500, blocks: [{ id: "tool-2" }, "Newer text"] },
-      ],
-      persisted: completedToolTurn([{ id: "tool-1" }], "Acknowledged text", 200),
-      expected: ["tool:tool-2", "text:Newer text"],
-    },
-    {
-      name: "matching persisted assistant timestamps clear multiple streaming assistants",
-      streaming: [
-        { timestamp: 200, blocks: [{ id: "tool-1", done: true }, { id: "tool-2", done: true }] },
-        { timestamp: 203, blocks: ["Both files checked."] },
-      ],
-      persisted: completedToolTurn([{ id: "tool-1" }, { id: "tool-2" }], "Both files checked.", 200),
-      expected: [],
-    },
-  ];
-
-  for (const scenario of reconciliationCases) {
-    test(scenario.name, () => {
-      const conversations = new ConversationsStore();
-      conversations.applyEvent("sess-1", { type: "agent_start" });
-      for (const group of scenario.streaming) {
-        applyStreamingMessage(conversations, "sess-1", group.timestamp, group.blocks);
-      }
-      setPersistedMessages(conversations, "sess-1", scenario.persisted);
-      expect(streamingContentKeys(conversations, "sess-1")).toEqual(scenario.expected);
-    });
-  }
-
-  test("disconnect leaves snapshots and tool state intact while a later full update recovers", () => {
-    const conversations = new ConversationsStore();
-    applyStreamingAssistant(conversations, "sess-1", ["Known text", { id: "known-tool" }], 200);
-
-    // A disconnect performs no conversation mutation. Known tool IDs can still
-    // be overlaid, while unrelated tool events are ignored.
-    conversations.applyEvent("sess-1", {
-      type: "tool_execution_update",
-      toolCallId: "known-tool",
-      toolName: "read",
-      args: { resumed: true },
-    });
-    conversations.applyEvent("sess-1", {
-      type: "tool_execution_start",
-      toolCallId: "unknown-tool",
-      toolName: "read",
-      args: {},
-    });
-    conversations.applyEvent("sess-1", {
-      type: "message_update",
-      message: {
-        role: "assistant",
-        timestamp: 300,
-        content: [{ type: "text", text: "recovered without start" }],
-      },
-      assistantMessageEvent: { type: "snapshot" },
-    });
-
-    expect(streamingContentKeys(conversations, "sess-1")).toEqual([
-      "text:Known text",
-      "tool:known-tool",
-      "text:recovered without start",
-    ]);
-    const knownTool = conversations.get("sess-1").streamingMessages[0]?.blocks.find((block) => (
-      block.type === "toolCall" && block.id === "known-tool"
-    ));
-    expect(knownTool?.type === "toolCall" ? knownTool.execution : undefined).toMatchObject({
-      args: { id: "known-tool", resumed: true },
-    });
-  });
-
-  test("clearing stale compacting state preserves all conversation work", () => {
-    const conversations = new ConversationsStore();
-    const persisted = textUser("earlier", 100);
-    conversations.mergeMessages("sess-1", conversationPage(
-      [{ id: "persisted-1", parentId: null, message: persisted }],
-      { hasPreviousPage: true, previousCursor: "earlier-cursor", endCursor: "latest-cursor" },
-    ));
-    const optimistic = conversations.addOptimisticUserMessage(
-      "sess-1",
-      [{ type: "text", text: "next prompt" }],
-      300,
-    );
-    if (!optimistic) throw new Error("Expected optimistic entry");
-    applyStreamingAssistant(conversations, "sess-1", [{ id: "tool-1", done: true }], 400);
-    conversations.applyEvent("sess-1", { type: "compaction_start", reason: "threshold" });
-    conversations.setError("sess-1", "still visible");
-    const before = conversations.get("sess-1");
-
-    conversations.clearCompactingState("sess-1");
-
-    expect(conversations.get("sess-1")).toEqual({ ...before, isCompacting: false });
-    expect(conversations.get("sess-1").messages).toMatchObject([
-      { entryId: "persisted-1", parentEntryId: null, raw: persisted },
-      { entryId: null, renderKey: optimistic.localId, raw: optimistic.message },
-    ]);
-    const tool = conversations.get("sess-1").streamingMessages[0]?.blocks.find((block) => block.type === "toolCall");
-    expect(tool?.type === "toolCall" ? tool.execution?.result : undefined).toBeDefined();
-  });
-
-  test("compaction_end still clears compacting state normally", () => {
-    const conversations = new ConversationsStore();
-    conversations.applyEvent("sess-1", { type: "compaction_start", reason: "threshold" });
-
-    conversations.applyEvent("sess-1", { type: "compaction_end", result: { summary: "done" } });
-
-    expect(conversations.get("sess-1").isCompacting).toBe(false);
-  });
-
-  test("stale persisted snapshots do not clear active streaming assistants", () => {
-    const conversations = new ConversationsStore();
-    const persisted = [textUser("earlier", 100)];
-    setPersistedMessages(conversations, "sess-1", persisted);
-    applyStreamingAssistant(conversations, "sess-1", ["working"], 200);
-
-    setPersistedMessages(conversations, "sess-1", [...persisted]);
-
-    expect(streamingContentKeys(conversations, "sess-1")).toEqual(["text:working"]);
-    expect(rawMessages(conversations.get("sess-1"))).toEqual(persisted);
-  });
-
-  test("persisted snapshots that advance past rendered messages clear active streaming assistants", () => {
-    const conversations = new ConversationsStore();
-    setPersistedMessages(conversations, "sess-1", [textUser("hello", 100)]);
-    applyStreamingAssistant(conversations, "sess-1", ["working"], 200);
-
-    const finalMessages: AgentMessage[] = [
-      textUser("hello", 100),
-      { role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 200 },
-    ];
-    setPersistedMessages(conversations, "sess-1", finalMessages);
-
-    expect(conversations.get("sess-1").streamingMessages).toEqual([]);
-    expect(rawMessages(conversations.get("sess-1"))).toEqual(finalMessages);
-  });
-
-  test("prunes unobserved conversation state when cached activity is not running", () => {
-    const sessionCache = new SessionCache();
-    const conversations = new ConversationsStore({ sessionCache });
-
-    applyStreamingAssistant(conversations, "background-session", ["working"], 100);
-
-    sessionCache.set("background-session", cachedSession(true));
-    expect(streamingContentKeys(conversations, "background-session")).toEqual(["text:working"]);
-
-    sessionCache.set("background-session", cachedSession(false));
-
-    expect(conversations.get("background-session")).toMatchObject({
-      messages: [],
-      streamingMessages: [],
-      hasEarlierMessages: false,
-    });
-  });
-
-  test("keeps observed conversation state when cached activity is not running", () => {
-    const sessionCache = new SessionCache();
-    const conversations = new ConversationsStore({ sessionCache });
-    const unsubscribe = conversations.subscribe("active-session", () => {});
-
-    applyStreamingAssistant(conversations, "active-session", ["working"], 100);
-
-    sessionCache.set("active-session", cachedSession(false));
-
-    expect(streamingContentKeys(conversations, "active-session")).toEqual(["text:working"]);
-    unsubscribe();
-  });
-
-  test("prunes completed conversation after last subscriber unsubscribes", () => {
-    const sessionCache = new SessionCache();
-    const conversations = new ConversationsStore({ sessionCache });
-    const unsubscribe = conversations.subscribe("sess-1", () => {});
-
-    applyStreamingAssistant(conversations, "sess-1", ["stale active state"], 100);
-    sessionCache.set("sess-1", cachedSession(false));
-    expect(streamingContentKeys(conversations, "sess-1")).toEqual(["text:stale active state"]);
-
-    unsubscribe();
-
-    expect(conversations.get("sess-1")).toMatchObject({
-      messages: [],
-      streamingMessages: [],
-      hasEarlierMessages: false,
-    });
+    const summary: AgentMessage = { role: "compactionSummary", summary: "canonical", timestamp: 3 };
+    store.applyEvent("session", { type: "entry_added", entry: entry("summary-1", 1, summary) });
+    expect(raw(store)).toEqual([summary]);
+    expect(store.get("session").isCompacting).toBe(false);
   });
 });

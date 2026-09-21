@@ -42,7 +42,7 @@ describe("resolveModelSetting(default_model)", () => {
     expect(() => resolveModelSetting("default_model")).toThrow(/Configured default_model is invalid/);
   });
 
-  test("rejects model settings for an inert legacy runtime", () => {
+  test("rejects model settings for an unregistered runtime", () => {
     setSetting("default_model", {
       provider: "claude_agent_sdk",
       modelId: "claude-sonnet-4-6",

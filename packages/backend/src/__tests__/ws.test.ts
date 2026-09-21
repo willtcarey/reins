@@ -246,6 +246,25 @@ describe("WebSocket handlers", () => {
       });
     });
 
+    test("prompt with a message but no submission identity is rejected", async () => {
+      const mock = createMockWs();
+      handleWsOpen(state, mock.ws);
+
+      handleWsMessage(
+        state,
+        mock.ws,
+        JSON.stringify({ type: "prompt", sessionId: "sess-1", message: [{ type: "text", text: "hello" }] }),
+      );
+
+      await Bun.sleep(10);
+
+      expect(mock.lastMessage()).toEqual({
+        type: "error",
+        sessionId: "sess-1",
+        error: "Missing clientId",
+      });
+    });
+
     test("prompt with non-block message sends validation error before session lookup", async () => {
       const mock = createMockWs();
       handleWsOpen(state, mock.ws);
@@ -253,7 +272,7 @@ describe("WebSocket handlers", () => {
       handleWsMessage(
         state,
         mock.ws,
-        JSON.stringify({ type: "prompt", sessionId: "missing-session", message: "hello" }),
+        JSON.stringify({ type: "prompt", sessionId: "missing-session", clientId: "request-1", message: "hello" }),
       );
 
       await Bun.sleep(10);
@@ -261,16 +280,17 @@ describe("WebSocket handlers", () => {
       expect(mock.lastMessage()).toEqual({
         type: "error",
         sessionId: "missing-session",
+        clientId: "request-1",
         error: "Invalid message field: expected content blocks array",
       });
     });
 
   });
 
-  describe("handleWsMessage — user message broadcasts", () => {
+  describe("handleWsMessage — request-keyed admission", () => {
     useTestDb();
 
-    test("broadcasts raw steer submissions to peer clients", async () => {
+    test("acknowledges a steer by client id without duplicating AgentHarness delivery", async () => {
       const project = createProject("WS Steer", "/tmp/ws-steer");
       createSession("sess-steer", project.id, { agentRuntimeType: "pi" });
       const stub = createRuntimeStub();
@@ -281,19 +301,20 @@ describe("WebSocket handlers", () => {
       handleWsOpen(state, observer.ws);
       const message = [{ type: "text" as const, text: "/dip keep going" }];
 
-      handleWsMessage(state, sender.ws, JSON.stringify({ type: "steer", sessionId: "sess-steer", message }));
+      handleWsMessage(state, sender.ws, JSON.stringify({
+        type: "steer",
+        sessionId: "sess-steer",
+        clientId: "submission-steer",
+        message,
+      }));
       await Bun.sleep(10);
 
-      expect(sender.lastMessage()).toEqual({ type: "ack", command: "steer" });
-      expect(observer.lastMessage()).toEqual({
-        type: "user_message",
-        sessionId: "sess-steer",
-        projectId: project.id,
-        message,
-      });
+      expect(sender.lastMessage()).toEqual({ type: "ack", command: "steer", clientId: "submission-steer" });
+      expect(stub.steerOptions).toEqual([{ reinsId: "submission-steer" }]);
+      expect(observer.lastMessage()).toBeNull();
     });
 
-    test("validates and forwards attachment refs to the runtime while broadcasting refs to other clients", async () => {
+    test("validates and forwards attachment refs to the runtime", async () => {
       const project = createProject("WS Multimodal", "/tmp/ws-multimodal");
       createSession("sess-ws", project.id, { agentRuntimeType: "pi" });
       const imageData = Buffer.from("runtime image bytes");
@@ -328,19 +349,15 @@ describe("WebSocket handlers", () => {
       handleWsMessage(state, sender.ws, JSON.stringify({
         type: "prompt",
         sessionId: "sess-ws",
+        clientId: "submission-prompt",
         message,
       }));
 
       await Bun.sleep(10);
 
-      expect(sender.lastMessage()).toEqual({ type: "ack", command: "prompt" });
-      expect(observer.lastMessage()).toEqual({
-        type: "user_message",
-        sessionId: "sess-ws",
-        projectId: project.id,
-        message,
-      });
-      expect(JSON.stringify(observer.lastMessage())).not.toContain(imageData.toString("base64"));
+      expect(sender.lastMessage()).toEqual({ type: "ack", command: "prompt", clientId: "submission-prompt" });
+      expect(stub.promptOptions).toEqual([{ reinsId: "submission-prompt" }]);
+      expect(observer.lastMessage()).toBeNull();
     });
   });
 });

@@ -8,6 +8,7 @@ import { createProject } from "../../../project-store.js";
 import { createSession } from "../../../session-store.js";
 import { storeSessionAttachment } from "../../../session-attachments-store.js";
 import { AgentHarnessPiRuntime, createAgentHarnessPiRuntime, createReinsInputMessage } from "../../../runtimes/pi/agent-harness-runtime.js";
+import type { AgentRuntimeEvent } from "../../../runtimes/registry.js";
 import { useTestDb } from "../../helpers/test-db.js";
 
 describe("AgentHarnessPiRuntime", () => {
@@ -57,7 +58,17 @@ describe("AgentHarnessPiRuntime", () => {
 
     const runtime = await open();
     const events: string[] = [];
-    runtime.subscribe((event) => events.push(event.type));
+    const durableEvents: AgentRuntimeEvent[] = [];
+    const streamIds: string[] = [];
+    const assistantStreamIds: string[] = [];
+    runtime.subscribe((event) => {
+      events.push(event.type);
+      if (event.type === "entry_added") durableEvents.push(event);
+      if (event.type === "message_start" || event.type === "message_update" || event.type === "message_end") {
+        streamIds.push(event.streamId);
+        if (event.message.role === "assistant") assistantStreamIds.push(event.streamId);
+      }
+    });
     const input = createReinsInputMessage([{ type: "text", text: "hello" }], "input-1", { source: "test" }, 10);
     await runtime.prompt(input.content, {
       reinsId: input.reinsId,
@@ -68,6 +79,9 @@ describe("AgentHarnessPiRuntime", () => {
     expect(events).toContain("agent_start");
     expect(events).toContain("message_update");
     expect(events.at(-1)).toBe("agent_end");
+    expect(streamIds.length).toBeGreaterThan(0);
+    expect(streamIds.every((streamId) => streamId.length > 0)).toBe(true);
+    expect(new Set(assistantStreamIds)).toHaveProperty("size", 1);
     expect(lifecycle).toEqual([
       { type: "started" },
       { type: "settled", outcome: { runId: expect.any(String), status: "completed" } },
@@ -78,10 +92,19 @@ describe("AgentHarnessPiRuntime", () => {
         content: [{ type: "text", text: "hello" }],
         metadata: { source: "test" },
         timestamp: 10,
-        logicalId: expect.any(String),
       },
-      expect.objectContaining({ role: "assistant", content: [{ type: "text", text: "first" }], logicalId: expect.any(String) }),
+      expect.objectContaining({ role: "assistant", content: [{ type: "text", text: "first" }] }),
     ]);
+    expect(durableEvents).toContainEqual({
+      type: "entry_added",
+      entry: expect.objectContaining({
+        id: expect.any(String),
+        parentId: null,
+        seq: expect.any(Number),
+        clientId: "input-1",
+        message: expect.objectContaining({ role: "user" }),
+      }),
+    });
     const stored = getDb().query<{ message_json: string }, []>("SELECT message_json FROM session_messages WHERE role = 'reinsInput'").get();
     expect(JSON.parse(stored!.message_json).message).toEqual(input);
     await runtime.close();
@@ -129,13 +152,20 @@ describe("AgentHarnessPiRuntime", () => {
       options: { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
     });
 
-    const submitted = await runtime.prompt(
-      [{ type: "text", text: "review" }],
-      { reinsId: "review-1:0", metadata: { source: "test" } },
-    );
-    const row = getDb().query<{ harness_id: string }, []>("SELECT harness_id FROM session_messages WHERE role = 'reinsInput'").get();
-    expect(row).not.toBeNull();
-    expect(submitted.messageId).toBe(row!.harness_id);
+    const [submitted, replayed] = await Promise.all([
+      runtime.prompt(
+        [{ type: "text", text: "review" }],
+        { reinsId: "review-1:0", metadata: { source: "test" } },
+      ),
+      runtime.prompt(
+        [{ type: "text", text: "review" }],
+        { reinsId: "review-1:0", metadata: { source: "test" } },
+      ),
+    ]);
+    const rows = getDb().query<{ harness_id: string }, []>("SELECT harness_id FROM session_messages WHERE role = 'reinsInput'").all();
+    expect(rows).toHaveLength(1);
+    expect(submitted.messageId).toBe(rows[0]!.harness_id);
+    expect(replayed).toEqual(submitted);
     expect(runtime.isStreaming()).toBe(true);
     await entered.promise;
     release.resolve();
@@ -182,6 +212,33 @@ describe("AgentHarnessPiRuntime", () => {
       }),
       expect.objectContaining({ role: "assistant", content: [{ type: "text", text: "handled" }] }),
     ]);
+    await runtime.close();
+  });
+
+  test("admits a replayed steering submission exactly once", async () => {
+    const project = createProject("Replay Steering", "/tmp/replay-steering");
+    createSession("replay-steering", project.id, { agentRuntimeType: "pi" });
+    const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 2_000, maxTokens: 100 }] });
+    provider.setResponses([fauxAssistantMessage("handled once")]);
+    const models = createModels();
+    models.setProvider(provider.provider);
+    const runtime = await createAgentHarnessPiRuntime({
+      db: getDb(), sessionId: "replay-steering", createdAt: 1, cwd: "/tmp/replay-steering",
+      options: { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
+    });
+    const content = [{ type: "text" as const, text: "do this once" }];
+
+    await Promise.all([
+      runtime.steer(content, { reinsId: "steer-submission" }),
+      runtime.steer(content, { reinsId: "steer-submission" }),
+    ]);
+    await runtime.steer(content, { reinsId: "steer-submission" });
+    await runtime.waitForIdle();
+
+    expect(getDb().query<{ count: number }, []>(
+      "SELECT COUNT(*) AS count FROM session_messages WHERE role = 'reinsInput'",
+    ).get()?.count).toBe(1);
+    expect(provider.state.callCount).toBe(1);
     await runtime.close();
   });
 
@@ -354,7 +411,7 @@ describe("AgentHarnessPiRuntime", () => {
     runtime.harness.hooks.on("before_compaction", ({ preparation }) => ({
       compaction: { summary: "compact summary", tokensBefore: preparation.tokensBefore, retainedTail: preparation.retainedTail },
     }));
-    const events: { type: string; messages?: unknown[]; runId?: string; status?: string; error?: unknown }[] = [];
+    const events: AgentRuntimeEvent[] = [];
     let streamingAtRunEnd: boolean | undefined;
     runtime.subscribe((event) => {
       events.push(event);
@@ -366,6 +423,15 @@ describe("AgentHarnessPiRuntime", () => {
 
     const types = events.map((event) => event.type);
     expect(types).toContain("compaction_start");
+    expect(events).toContainEqual({
+      type: "entry_added",
+      entry: expect.objectContaining({
+        id: expect.any(String),
+        parentId: expect.any(String),
+        seq: expect.any(Number),
+        message: expect.objectContaining({ role: "compactionSummary", summary: "compact summary" }),
+      }),
+    });
     expect(types.indexOf("compaction_end")).toBeLessThan(types.indexOf("agent_end"));
     expect(types.at(-1)).toBe("agent_end");
     expect(streamingAtRunEnd).toBe(true);
@@ -518,11 +584,12 @@ describe("AgentHarnessPiRuntime", () => {
     const submission = await reopened.prompt([{ type: "text", text: "continue" }]);
     await reopened.waitForIdle();
 
-    const messages = await reopened.getMessages();
-    expect(messages.find((message) => message.role === "user" && JSON.stringify(message.content).includes("continue"))?.logicalId)
-      .toBe(submission.messageId);
+    const persisted = getDb().query<{ harness_id: string }, [string]>(
+      "SELECT harness_id FROM session_messages WHERE role = 'reinsInput' AND message_json LIKE ?",
+    ).get("%continue%");
+    expect(persisted?.harness_id).toBe(submission.messageId);
     expect(provider.state.callCount).toBe(1);
-    expect(messages.filter((message) => message.role === "user")).toHaveLength(2);
+    expect((await reopened.getMessages()).filter((message) => message.role === "user")).toHaveLength(2);
     await reopened.close();
     await original.harness.close(BACKGROUND_CONTEXT);
   });

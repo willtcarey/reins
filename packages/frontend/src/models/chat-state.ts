@@ -6,7 +6,7 @@
  * belongs exclusively to SessionCache and is not represented here.
  */
 
-import type { ChatImageBlock, ClientPromptContent } from "./chat-content.js";
+import type { ChatImageBlock } from "./chat-content.js";
 import type { AgentMessage, AssistantMessage } from "./agent-message.js";
 
 /** Normalized rendering data shared by live and finalized tool calls. */
@@ -27,6 +27,10 @@ export interface ToolExecution extends ToolBlockData {}
  * owner and are keyed by stable call ID so concurrent assistants cannot mix.
  */
 export interface StreamingAssistant {
+  /** Runtime-owned identity for one streaming assistant lifecycle. */
+  streamId: string;
+  /** Durable identity learned at message_end, before the canonical entry arrives. */
+  durableId?: string;
   message: AssistantMessage;
   toolExecutions: Record<string, ToolExecution>;
 }
@@ -37,8 +41,8 @@ type RuntimeLifecycleMessage = AgentMessage;
 /** Runtime, compaction, retry, and synthetic user events handled by the reducer. */
 export type ChatEvent =
   | { type: "agent_start" }
-  | { type: "message_start"; message: RuntimeLifecycleMessage }
-  | { type: "message_update"; message: RuntimeLifecycleMessage; assistantMessageEvent?: { type: string; delta?: string } }
+  | { type: "message_start"; message: RuntimeLifecycleMessage; streamId: string }
+  | { type: "message_update"; message: RuntimeLifecycleMessage; streamId: string; assistantMessageEvent?: { type: string; delta?: string } }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
   | { type: "tool_execution_update"; toolCallId: string; toolName: string; args: Record<string, unknown>; partialResult?: Record<string, unknown> }
   | { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: ToolExecution["result"]; isError?: boolean }
@@ -49,12 +53,12 @@ export type ChatEvent =
     status?: "completed" | "failed" | "aborted";
     error?: { code?: string; message: string; details?: unknown };
   }
-  | { type: "message_end"; message: RuntimeLifecycleMessage }
+  | { type: "message_end"; message: RuntimeLifecycleMessage; streamId: string; entryId?: string }
+  | { type: "entry_added"; entry: import("@backend/messages-store.js").ConversationEntry<RuntimeLifecycleMessage> }
   | { type: "compaction_start"; reason?: string }
   | { type: "compaction_end"; result?: { summary?: string }; aborted?: boolean }
   | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
-  | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
-  | { type: "user_message"; message: ClientPromptContent; metadata?: Record<string, unknown> };
+  | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string };
 
 export interface ChatState {
   messages: AgentMessage[];
@@ -72,27 +76,38 @@ export function initialChatState(): ChatState {
   };
 }
 
-/**
- * Upsert a runtime's authoritative assistant snapshot by timestamp. Timestamps
- * identify a lifecycle, not display order, so updates replace the observed slot
- * rather than sorting on runtime clocks.
- */
-function upsertAssistantSnapshot(state: ChatState, message: RuntimeLifecycleMessage): ChatState {
+/** Upsert one explicitly identified streaming overlay. */
+function upsertAssistantSnapshot(
+  state: ChatState,
+  event: Extract<ChatEvent, { type: "message_start" | "message_update" | "message_end" }>,
+): ChatState {
+  const message = event.message;
   if (message.role !== "assistant") return state;
-  const index = state.streamingAssistants.findIndex(({ message: current }) => current.timestamp === message.timestamp);
+  const streamId = event.streamId;
+  const index = state.streamingAssistants.findIndex((current) => current.streamId === streamId);
   if (index === -1) {
-    return { ...state, streamingAssistants: [...state.streamingAssistants, { message, toolExecutions: {} }] };
+    return {
+      ...state,
+      streamingAssistants: [...state.streamingAssistants, {
+        streamId,
+        ...(event.type === "message_end" && event.entryId ? { durableId: event.entryId } : {}),
+        message,
+        toolExecutions: {},
+      }],
+    };
   }
-  if (state.streamingAssistants[index]?.message === message) return state;
   const streamingAssistants = [...state.streamingAssistants];
   const current = streamingAssistants[index]!;
   const toolCallIds = new Set(message.content.flatMap((block) => block.type === "toolCall" ? [block.id] : []));
-  // A replacement snapshot is authoritative: overlays for tool calls it no
-  // longer contains must not leak into this assistant's rendered content.
   const toolExecutions = Object.fromEntries(
     Object.entries(current.toolExecutions).filter(([toolCallId]) => toolCallIds.has(toolCallId)),
   );
-  streamingAssistants[index] = { message, toolExecutions };
+  streamingAssistants[index] = {
+    ...current,
+    ...(event.type === "message_end" && event.entryId ? { durableId: event.entryId } : {}),
+    message,
+    toolExecutions,
+  };
   return { ...state, streamingAssistants };
 }
 
@@ -128,9 +143,11 @@ function updateToolExecution(
  */
 export function removePersistedStreamingAssistants(
   state: Pick<ChatState, "streamingAssistants">,
-  timestamps: ReadonlySet<number>,
+  durableIds: ReadonlySet<string>,
 ): Pick<ChatState, "streamingAssistants"> {
-  const streamingAssistants = state.streamingAssistants.filter(({ message }) => !timestamps.has(message.timestamp));
+  const streamingAssistants = state.streamingAssistants.filter(({ durableId }) => (
+    !durableId || !durableIds.has(durableId)
+  ));
   return streamingAssistants.length === state.streamingAssistants.length ? state : { ...state, streamingAssistants };
 }
 
@@ -146,7 +163,7 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
     case "message_start":
     case "message_update":
     case "message_end":
-      return upsertAssistantSnapshot(state, event.message);
+      return upsertAssistantSnapshot(state, event);
 
     case "tool_execution_start":
       return updateToolExecution(state, event.toolCallId, (existing) => ({
@@ -193,33 +210,8 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
         }
       }
 
-      let messages = state.messages;
-      if (eventMessages) {
-        const existing = new Set(state.messages.map((message) => (
-          message.role === "toolResult"
-            ? `toolResult:${message.toolCallId}`
-            : `${message.role}:${message.timestamp}`
-        )));
-        const fresh: AgentMessage[] = [];
-        for (const message of eventMessages) {
-          // Runtime user messages may contain transformed prompt content; the
-          // browser's optimistic/user_message entry remains the display copy.
-          if (message.role === "user") continue;
-          if (message.role === "assistant" && message.stopReason === "error" && message.content.length === 0) {
-            continue;
-          }
-          const key = message.role === "toolResult"
-            ? `toolResult:${message.toolCallId}`
-            : `${message.role}:${message.timestamp}`;
-          if (existing.has(key)) continue;
-          existing.add(key);
-          fresh.push(message);
-        }
-        if (fresh.length > 0) messages = [...state.messages, ...fresh];
-      }
       return {
         ...state,
-        messages,
         streamingAssistants: [],
         errorMessage,
       };
@@ -229,16 +221,12 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
       return { ...state, isCompacting: true };
 
     case "compaction_end":
-      if (event.aborted) return { ...state, isCompacting: false };
-      return {
-        ...state,
-        isCompacting: false,
-        messages: [...state.messages, {
-          role: "compactionSummary",
-          content: event.result?.summary || "Conversation summarized",
-          timestamp: Date.now(),
-        }],
-      };
+      return state.isCompacting ? { ...state, isCompacting: false } : state;
+
+    // Durable entry insertion is owned by ConversationsStore, where it can be
+    // reconciled against pages and optimistic submissions by stable identity.
+    case "entry_added":
+      return state;
 
     case "auto_retry_start":
       return { ...state, errorMessage: `Retrying (${event.attempt}/${event.maxAttempts})… ${event.errorMessage}` };
@@ -247,17 +235,6 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
       return event.success
         ? { ...state, errorMessage: "" }
         : { ...state, errorMessage: event.finalError || "All retry attempts failed" };
-
-    case "user_message":
-      return {
-        ...state,
-        messages: [...state.messages, {
-          role: "user",
-          content: event.message,
-          ...(event.metadata ? { metadata: event.metadata } : {}),
-          timestamp: Date.now(),
-        }],
-      };
 
     default:
       return state;

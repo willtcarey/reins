@@ -2,7 +2,10 @@ import { getDb } from "../../db.js";
 import type { RuntimeMessage } from "../../messages-store.js";
 
 /** Store canonical AgentHarness entry fixtures without exercising a runtime. */
-export function persistCanonicalMessages(sessionId: string, messages: RuntimeMessage[]): void {
+export function persistCanonicalMessages(
+  sessionId: string,
+  messages: (RuntimeMessage & { id?: string; clientId?: string })[],
+): void {
   const db = getDb();
   const current = db.query<{ id: number; seq: number }, [string]>(
     "SELECT id, seq FROM session_messages WHERE session_id = ? ORDER BY seq DESC LIMIT 1",
@@ -15,8 +18,8 @@ export function persistCanonicalMessages(sessionId: string, messages: RuntimeMes
   );
 
   for (const [index, source] of messages.entries()) {
-    const { logicalId, metadata, ...message } = source;
-    const harnessId = logicalId ?? `fixture-${sessionId}-${seq}-${index}`;
+    const { id, clientId, metadata, ...message } = source;
+    const harnessId = id ?? `fixture-${sessionId}-${seq}-${index}`;
     const timestamp = typeof message.timestamp === "number" ? message.timestamp : seq;
     const entry = message.role === "compactionSummary"
       ? { type: "compaction", summary: message.summary ?? "", retainedTail: [], tokensBefore: 0, fromHook: false, timestamp }
@@ -24,10 +27,10 @@ export function persistCanonicalMessages(sessionId: string, messages: RuntimeMes
           type: "message",
           timestamp,
           message: message.role === "user"
-            ? { role: "reinsInput", content: message.content ?? [], reinsId: harnessId, metadata: metadata ?? {}, timestamp }
+            ? { role: "reinsInput", content: message.content ?? [], reinsId: clientId ?? harnessId, metadata: metadata ?? {}, timestamp }
             : { ...message, timestamp },
         };
-    const role = entry.type === "message" && entry.message ? entry.message.role : entry.type;
+    const role: string = entry.type === "message" && entry.message ? entry.message.role : entry.type;
     const row = insert.get(sessionId, seq, parentId, harnessId, role, JSON.stringify(entry));
     if (!row) throw new Error("Failed to store canonical fixture entry");
     parentId = row.id;

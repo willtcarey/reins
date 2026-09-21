@@ -31,6 +31,25 @@ export interface SessionAttachmentUpload {
 
 export type ActiveSessionStoreListener = () => void;
 
+let nextFallbackClientId = 0;
+
+function createClientId(): string {
+  const nativeId = globalThis.crypto?.randomUUID?.();
+  if (nativeId) return nativeId;
+
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] ?? 0) & 0x0f | 0x40;
+    bytes[8] = (bytes[8] ?? 0) & 0x3f | 0x80;
+    const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+
+  nextFallbackClientId += 1;
+  return `${Date.now().toString(36)}-${nextFallbackClientId.toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 function blankSessionData(sessionId = ""): SessionData {
   return {
     id: sessionId,
@@ -156,16 +175,19 @@ export class ActiveSessionStore {
 
   prompt(message: ClientPromptContent): LiveConversationEntry | null {
     if (this._disposed || !this._client) return null;
-    this._client.prompt(this.sessionId, message);
-    const entry = this._conversationsStore.addOptimisticUserMessage(this.sessionId, message);
+    const clientId = createClientId();
+    const entry = this._conversationsStore.addOptimisticUserMessage(this.sessionId, message, clientId);
+    this._client.prompt(this.sessionId, message, clientId);
     this.setOptimisticRunning();
     return entry;
   }
 
   steer(message: ClientPromptContent): LiveConversationEntry | null {
     if (this._disposed || !this._client) return null;
-    this._client.steer(this.sessionId, message);
-    return this._conversationsStore.addOptimisticUserMessage(this.sessionId, message);
+    const clientId = createClientId();
+    const entry = this._conversationsStore.addOptimisticUserMessage(this.sessionId, message, clientId);
+    this._client.steer(this.sessionId, message, clientId);
+    return entry;
   }
 
   async resumePendingOperation(): Promise<boolean> {
@@ -219,8 +241,8 @@ export class ActiveSessionStore {
       // identify which received assistant or live entries persistence contains.
       this._conversationsStore.clearCompactingState(this.sessionId);
     }
-    // Received assistant snapshots remain visible until agent_end promotes
-    // them or persisted assistant timestamps reconcile matching snapshots.
+    // Canonical entries remove identity-linked overlays; terminal metadata
+    // triggers a page sync to recover any durable events missed in transit.
     this.notify();
     if (wasRunning && data.activityState === "finished" && this._observed) {
       void this.setUnread(false);
@@ -228,7 +250,7 @@ export class ActiveSessionStore {
 
     // If running activity just ended, or the first observed metadata is
     // terminal while snapshots exist, pick up canonical records. The merge
-    // removes only matching assistant timestamps and preserves unmatched work.
+    // removes only matching durable identities and preserves unmatched work.
     if (!isRunning && (wasRunning || hadStreamingState)) {
       await this._conversationsStore.syncMessages(this.sessionId);
     }
