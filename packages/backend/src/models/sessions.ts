@@ -35,9 +35,15 @@ import { UploadedFile } from "./uploaded-file.js";
 import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
 import { getRuntimeAdapter } from "../runtimes/registry.js";
+import {
+  buildSessionContextSnapshot,
+  type SessionContextSnapshot,
+} from "./session-context.js";
 import { stripLeadingSkillBlocks } from "./skill.js";
 import { getDb } from "../db.js";
 import { readPendingPiOperation, type PendingPiOperation } from "../runtimes/pi/pending-operation.js";
+import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
+import { findPiModel } from "../runtimes/pi/model-catalog.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -209,6 +215,20 @@ export class Sessions {
         thinkingLevel: row.thinking_level,
       },
     };
+  }
+
+  async getContext(sessionId: string): Promise<SessionContextSnapshot | null> {
+    const row = getSession(sessionId);
+    if (!row) throw new SessionNotFoundError();
+    if (!row.model_provider || !row.model_id || row.agent_runtime_type !== "pi") return null;
+
+    const model = await findPiModel(row.model_provider, row.model_id);
+    if (!model) return null;
+
+    return buildSessionContextSnapshot(sessionId, {
+      contextWindow: model.contextWindow,
+      reserveTokens: DEFAULT_COMPACTION_SETTINGS.reserveTokens,
+    });
   }
 
   getMessages(sessionId: string): RuntimeMessage[] | null {

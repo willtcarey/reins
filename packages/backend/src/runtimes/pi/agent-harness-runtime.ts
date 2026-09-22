@@ -416,6 +416,7 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     let nextStream = 1;
     const disposers = (["run_start", "turn_start", "turn_end", "message_start", "message_update", "message_end", "entry_added", "tool_start", "tool_update", "tool_end", "retry_scheduled", "retry_end", "compaction_start", "compaction_end"] as const)
       .map((type) => this.harness.events.on(type, (event) => {
+        if ("lane" in event && event.lane !== this.lane.name) return;
         if (event.type === "message_end" && event.runId && event.message.role !== "reinsInput") {
           const messages = runMessages.get(event.runId) ?? [];
           messages.push(projectMessage(event.message));

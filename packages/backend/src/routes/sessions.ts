@@ -71,6 +71,11 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     }
   }));
 
+  router.get("/:sessionId/context", withSessionNotFound(async (ctx) => {
+    const snapshot = await new Sessions(ctx.state.sessions).getContext(ctx.params.sessionId);
+    return Response.json(snapshot);
+  }));
+
   router.get("/:sessionId/messages", withSessionNotFound(async (ctx) => {
     const sessionId = ctx.params.sessionId;
     const limitParam = ctx.url.searchParams.get("limit");

@@ -28,6 +28,12 @@ Each `message_start`, `message_update`, and `message_end` event carries a requir
 
 Streaming messages are presentation overlays only. They never become persisted conversation entries by inference. `agent_end` clears remaining overlays and reports terminal errors, but does not promote `agent_end.messages` into conversation history. Compaction summaries likewise appear only through canonical `entry_added` events.
 
+## Context occupancy semantics
+
+Context occupancy is a canonical REST projection, not a runtime event. The session context resource reads the active `main` branch and uses usage embedded in the latest valid assistant message with AgentHarness's `estimateContextTokens` semantics. This naturally excludes standalone structural requests such as compaction summaries and never substitutes cumulative session statistics for current occupancy.
+
+Existing durable event boundaries invalidate the frontend snapshot: canonical `entry_added` events and `compaction_end` schedule a refresh, while `compaction_start` makes the previous measurement unknown. Refresh, reconnect, and model changes use the same resource. The projection estimates messages after the latest provider measurement and replacement context after compaction. The runtime exposes only whether live compaction currently invalidates the canonical measurement; request generations prevent an older response from restoring stale exact data.
+
 ## Lifecycle semantics
 
 Each runtime receives a `RuntimeLifecycleSink` when it is constructed. The AgentHarness runtime listens to native events internally and calls:

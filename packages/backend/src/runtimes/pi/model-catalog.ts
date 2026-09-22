@@ -4,7 +4,7 @@ import type {
   AvailabilitySourceType,
   ProviderInfo,
 } from "../registry.js";
-import { createPiContext } from "./factory.js";
+import { createPiContext, createPiModelRuntime } from "./factory.js";
 
 function availabilitySources(providerId: string): AvailabilitySourceType[] {
   const sources: AvailabilitySourceType[] = [];
@@ -12,6 +12,11 @@ function availabilitySources(providerId: string): AvailabilitySourceType[] {
   if (getEnvApiKey(providerId)) sources.push("env");
   if (hasAuthCredential(providerId, "oauth")) sources.push("oauth");
   return sources;
+}
+
+export async function findPiModel(provider: string, modelId: string) {
+  const modelRuntime = await createPiModelRuntime();
+  return modelRuntime.getModel(provider, modelId);
 }
 
 export async function buildProviderList(cwd = process.cwd()): Promise<ProviderInfo[]> {

@@ -22,6 +22,7 @@ import "./activity-dot.js";
 import "../ui/info-card.js";
 import "./chat-message.js";
 import "./session-model-picker.js";
+import "./session-context-usage.js";
 import "./chat-composer.js";
 
 @customElement("chat-panel")
@@ -414,12 +415,14 @@ export class ChatPanel extends LitElement {
             </div>
           ` : nothing}
           ${sessionData?.state.model ? html`
-            <div class="mb-2 flex items-center justify-start leading-none">
+            <div class="mb-2 flex min-w-0 items-center justify-between gap-3 leading-none">
               <session-model-picker
+                class="min-w-0"
                 .sessionId=${sessionId}
                 .sessionData=${sessionData}
                 .updateSessionModel=${this.store?.updateSessionModel.bind(this.store) ?? null}
               ></session-model-picker>
+              <session-context-usage .snapshot=${this.store?.contextSnapshot ?? null}></session-context-usage>
             </div>
           ` : nothing}
           <chat-composer

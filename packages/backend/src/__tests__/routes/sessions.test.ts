@@ -10,6 +10,7 @@ import { createTestManagedSession } from "../helpers/test-pi.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { getDb } from "../../db.js";
 import type { WsClient } from "../../state.js";
+import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 
 function textContent(text: string) {
   return [{ type: "text" as const, text }];
@@ -124,6 +125,50 @@ describe("session routes (top-level)", () => {
       expect(res!.status).toBe(200);
       const body = await res!.json();
       expect(body.activityState).toBe("finished");
+    });
+
+    test("restores a normalized context snapshot through the session resource", async () => {
+      const sessionId = "context-snapshot";
+      const provider = getProviders().find((candidate) => getModels(candidate).length > 0)!;
+      const model = getModels(provider)[0]!;
+      createSession(sessionId, projectId, {
+        agentRuntimeType: "pi",
+        modelProvider: provider,
+        modelId: model.id,
+      });
+
+      const res = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}/context`), state);
+
+      expect(res!.status).toBe(200);
+      expect(await res!.json()).toEqual({
+        usedTokens: 0,
+        contextWindow: model.contextWindow,
+        compactionThresholdTokens: Math.max(0, model.contextWindow - 16_384),
+        utilization: 0,
+        measurement: "exact",
+      });
+    });
+
+    test("returns the latest durable occupancy while compaction is in progress", async () => {
+      const sessionId = "context-compacting";
+      const provider = getProviders().find((candidate) => getModels(candidate).length > 0)!;
+      const model = getModels(provider)[0]!;
+      createSession(sessionId, projectId, {
+        agentRuntimeType: "pi",
+        modelProvider: provider,
+        modelId: model.id,
+      });
+      persistCanonicalMessages(sessionId, [{
+        id: "assistant", role: "assistant", content: textContent("answer"), stopReason: "stop", timestamp: 1,
+      }]);
+      getDb().query("INSERT INTO pi_usage (session_id,id,seq,entry_id,adjustment,usage_json) VALUES (?,?,?,?,0,?)")
+        .run(sessionId, "usage", 2, "assistant", JSON.stringify({
+          input: 40, output: 2, cacheRead: 3, cacheWrite: 4, totalTokens: 100,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        }));
+      const res = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}/context`), state);
+
+      expect(await res!.json()).toMatchObject({ usedTokens: 2, measurement: "estimated" });
     });
 
     test("returns 404 for nonexistent session", async () => {
