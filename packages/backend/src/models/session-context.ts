@@ -1,105 +1,94 @@
-/* eslint-disable typescript-eslint/consistent-type-assertions -- canonical JSON includes the supported Reins custom message */
-import type { Database } from "bun:sqlite";
 import {
   createBranchSummaryMessage,
   createCompactionSummaryMessage,
   estimateContextTokens,
   type AgentMessage,
+  type Entry,
 } from "@earendil-works/pi-agent-core";
-import {
-  readActiveBranchEntries,
-  type StoredCanonicalEntry,
-  type StoredEntryEnvelope,
-} from "../messages-store.js";
+import type { ClientPromptContent } from "../messages-store.js";
+import { loadActivePiEntries } from "../pi-session-store.js";
 
-export type ContextUsageMeasurement = "exact" | "estimated" | "unknown";
+export type ContextUsageMeasurement = "exact" | "estimated";
 
 export interface SessionContextSnapshot {
-  usedTokens: number | null;
+  usedTokens: number;
   contextWindow: number;
   compactionThresholdTokens: number;
-  utilization: number | null;
+  utilization: number;
   measurement: ContextUsageMeasurement;
 }
 
+type ContextModel = {
+  contextWindow: number;
+  reserveTokens: number;
+};
+
 /** Normalize all live and restored context values through one client-facing shape. */
 export function createSessionContextSnapshot(
-  usedTokens: number | null,
+  usedTokens: number,
   measurement: ContextUsageMeasurement,
-  model: { contextWindow: number; reserveTokens: number },
+  model: ContextModel,
 ): SessionContextSnapshot {
   return {
     usedTokens,
     contextWindow: model.contextWindow,
     compactionThresholdTokens: Math.max(0, model.contextWindow - model.reserveTokens),
-    utilization: usedTokens === null || model.contextWindow <= 0 ? null : usedTokens / model.contextWindow,
+    utilization: model.contextWindow <= 0 ? 0 : usedTokens / model.contextWindow,
     measurement,
   };
 }
 
-export function unknownSessionContextSnapshot(
-  snapshot: Pick<SessionContextSnapshot, "contextWindow" | "compactionThresholdTokens">,
-): SessionContextSnapshot {
-  return {
-    ...snapshot,
-    usedTokens: null,
-    utilization: null,
-    measurement: "unknown",
-  };
-}
+type StoredContextMessage = AgentMessage | {
+  role: "reinsInput";
+  content: ClientPromptContent;
+  timestamp: number;
+};
 
-function projectContextMessage(message: unknown): AgentMessage | null {
-  const stored = message as {
-    role: string;
-    content?: unknown;
-    timestamp?: number;
-    stopReason?: string;
-  };
-  if (stored.role === "reinsInput") {
-    return {
-      role: "user",
-      content: stored.content ?? [],
-      timestamp: stored.timestamp ?? 0,
-    } as AgentMessage;
+function normalizeMessage(message: StoredContextMessage): AgentMessage | null {
+  if (message.role === "assistant" && ["aborted", "error", "deferred"].includes(message.stopReason)) {
+    return null;
   }
-  if (
-    stored.role === "assistant"
-    && (stored.stopReason === "aborted" || stored.stopReason === "error" || stored.stopReason === "deferred")
-  ) return null;
-  return message as AgentMessage;
+  if (message.role !== "reinsInput") return message;
+
+  const normalized: AgentMessage = {
+    role: "user",
+    content: message.content.map((block) => block.type === "text"
+      ? block
+      : { type: "image", data: "", mimeType: block.mimeType }),
+    timestamp: message.timestamp,
+  };
+  return normalized;
 }
 
-function contextMessages(entry: StoredCanonicalEntry): AgentMessage[] {
-  const envelope: StoredEntryEnvelope = entry.envelope;
-  if (envelope.type === "message") {
-    const message = projectContextMessage(envelope.message);
+function messagesForEntry(entry: Entry): AgentMessage[] {
+  if (entry.type === "message") {
+    const message = normalizeMessage(entry.message);
     return message ? [message] : [];
   }
-  if (envelope.type === "compaction") {
+  if (entry.type === "compaction") {
     return [
-      createCompactionSummaryMessage(envelope.summary, envelope.tokensBefore, envelope.timestamp),
-      ...envelope.retainedTail.flatMap((stored) => {
-        const message = projectContextMessage(stored);
-        return message ? [message] : [];
-      }),
+      createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp),
+      ...entry.retainedTail.flatMap((message) => normalizeMessage(message) ?? []),
     ];
   }
-  if (envelope.type === "branch_summary" && envelope.summary) {
-    return [createBranchSummaryMessage(envelope.summary, envelope.fromId, envelope.timestamp)];
+  if (entry.type === "branch_summary" && entry.summary) {
+    return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
   }
   return [];
 }
 
-/** Build current occupancy from the canonical active context, never cumulative session usage. */
-export function buildSessionContextSnapshot(
-  db: Database,
+function currentContext(entries: Entry[]): AgentMessage[] {
+  const latestCompaction = entries.findLastIndex((entry) => entry.type === "compaction");
+  const activeEntries = latestCompaction < 0 ? entries : entries.slice(latestCompaction);
+  return activeEntries.flatMap(messagesForEntry);
+}
+
+/** Build current occupancy from Pi's canonical active context, never cumulative session usage. */
+export async function buildSessionContextSnapshot(
   sessionId: string,
-  model: { contextWindow: number; reserveTokens: number },
-): SessionContextSnapshot {
-  const entries = readActiveBranchEntries(db, sessionId) ?? [];
-  const latestCompaction = entries.findLastIndex((entry) => entry.envelope.type === "compaction");
-  const contextEntries = latestCompaction < 0 ? entries : entries.slice(latestCompaction);
-  const messages = contextEntries.flatMap(contextMessages);
+  model: ContextModel,
+): Promise<SessionContextSnapshot> {
+  const messages = currentContext(await loadActivePiEntries(sessionId));
   if (messages.length === 0) return createSessionContextSnapshot(0, "exact", model);
 
   const estimate = estimateContextTokens(messages);

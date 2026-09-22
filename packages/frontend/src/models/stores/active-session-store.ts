@@ -93,10 +93,7 @@ export class ActiveSessionStore {
   }
 
   get contextSnapshot(): SessionContextSnapshot | null {
-    const snapshot = this._contextSnapshot;
-    return snapshot && this.conversation.isCompacting
-      ? { ...snapshot, usedTokens: null, utilization: null, measurement: "unknown" }
-      : snapshot;
+    return this._contextSnapshot;
   }
 
   // ---- Private state --------------------------------------------------------
@@ -130,11 +127,6 @@ export class ActiveSessionStore {
     this._unsubscribeEvents = this._client?.subscribe({
       event: (message) => {
         if (message.sessionId !== this.sessionId) return;
-        if (message.event.type === "compaction_start") {
-          this._contextRefreshGeneration += 1;
-          this.notify();
-          return;
-        }
         if (
           message.event.type === "entry_added"
           || message.event.type === "compaction_end"

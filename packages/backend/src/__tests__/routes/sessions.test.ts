@@ -149,7 +149,7 @@ describe("session routes (top-level)", () => {
       });
     });
 
-    test("reports unknown occupancy when reconnecting during active compaction", async () => {
+    test("returns the latest durable occupancy while compaction is in progress", async () => {
       const sessionId = "context-compacting";
       const provider = getProviders().find((candidate) => getModels(candidate).length > 0)!;
       const model = getModels(provider)[0]!;
@@ -166,13 +166,9 @@ describe("session routes (top-level)", () => {
           input: 40, output: 2, cacheRead: 3, cacheWrite: 4, totalTokens: 100,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
         }));
-      const managed = await createTestManagedSession(sessionId);
-      Object.defineProperty(managed.runtime, "isCompacting", { value: () => true });
-      state.sessions.set(sessionId, managed);
-
       const res = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}/context`), state);
 
-      expect(await res!.json()).toMatchObject({ usedTokens: null, utilization: null, measurement: "unknown" });
+      expect(await res!.json()).toMatchObject({ usedTokens: 2, measurement: "estimated" });
     });
 
     test("returns 404 for nonexistent session", async () => {

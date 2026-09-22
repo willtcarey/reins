@@ -23,11 +23,11 @@ const usage = (totalTokens: number, input = 1) => ({
 describe("buildSessionContextSnapshot", () => {
   useTestDb();
 
-  test("reports an empty new session as zero context usage", () => {
+  test("reports an empty new session as zero context usage", async () => {
     const project = createProject("New session", "/tmp/new-session");
     createSession("new-session", project.id, { agentRuntimeType: "pi" });
 
-    expect(buildSessionContextSnapshot(getDb(), "new-session", { contextWindow: 200, reserveTokens: 20 })).toEqual({
+    expect(await buildSessionContextSnapshot("new-session", { contextWindow: 200, reserveTokens: 20 })).toEqual({
       usedTokens: 0,
       contextWindow: 200,
       compactionThresholdTokens: 180,
@@ -36,7 +36,7 @@ describe("buildSessionContextSnapshot", () => {
     });
   });
 
-  test("uses the latest active assistant-linked usage instead of cumulative or structural usage", () => {
+  test("uses the latest active assistant-linked usage instead of cumulative or structural usage", async () => {
     const project = createProject("Context", "/tmp/context");
     createSession("context-session", project.id, { agentRuntimeType: "pi" });
     const db = getDb();
@@ -66,7 +66,7 @@ describe("buildSessionContextSnapshot", () => {
     db.query("INSERT INTO pi_values (session_id,namespace,key,seq,value_json) VALUES (?,?,?,?,?)")
       .run("context-session", "pi.branch.tip", "main", 7, JSON.stringify("assistant-2"));
 
-    expect(buildSessionContextSnapshot(db, "context-session", { contextWindow: 200, reserveTokens: 20 })).toEqual({
+    expect(await buildSessionContextSnapshot("context-session", { contextWindow: 200, reserveTokens: 20 })).toEqual({
       usedTokens: calculateContextTokens(usage(120)),
       contextWindow: 200,
       compactionThresholdTokens: 180,
@@ -75,7 +75,7 @@ describe("buildSessionContextSnapshot", () => {
     });
   });
 
-  test("uses AgentHarness fallback token calculation when totalTokens is zero", () => {
+  test("uses AgentHarness fallback token calculation when totalTokens is zero", async () => {
     const project = createProject("Fallback", "/tmp/fallback");
     createSession("fallback-session", project.id, { agentRuntimeType: "pi" });
     const db = getDb();
@@ -90,11 +90,11 @@ describe("buildSessionContextSnapshot", () => {
     db.query("INSERT INTO pi_values (session_id,namespace,key,seq,value_json) VALUES (?,?,?,?,?)")
       .run("fallback-session", "pi.branch.tip", "main", 3, JSON.stringify("assistant"));
 
-    expect(buildSessionContextSnapshot(db, "fallback-session", { contextWindow: 200, reserveTokens: 20 }).usedTokens)
+    expect((await buildSessionContextSnapshot("fallback-session", { contextWindow: 200, reserveTokens: 20 })).usedTokens)
       .toBe(20);
   });
 
-  test("estimates context instead of accepting an all-zero assistant measurement", () => {
+  test("estimates context instead of accepting an all-zero assistant measurement", async () => {
     const project = createProject("Zero", "/tmp/zero");
     createSession("zero-session", project.id, { agentRuntimeType: "pi" });
     const db = getDb();
@@ -114,11 +114,11 @@ describe("buildSessionContextSnapshot", () => {
     db.query("INSERT INTO pi_values (session_id,namespace,key,seq,value_json) VALUES (?,?,?,?,?)")
       .run("zero-session", "pi.branch.tip", "main", 3, JSON.stringify("assistant"));
 
-    expect(buildSessionContextSnapshot(db, "zero-session", { contextWindow: 200, reserveTokens: 20 }))
+    expect(await buildSessionContextSnapshot("zero-session", { contextWindow: 200, reserveTokens: 20 }))
       .toMatchObject({ usedTokens: 2, measurement: "estimated" });
   });
 
-  test("estimates trailing Reins inputs and branch summaries after the latest assistant usage", () => {
+  test("estimates trailing Reins inputs and branch summaries after the latest assistant usage", async () => {
     const project = createProject("Trailing", "/tmp/trailing");
     createSession("trailing-session", project.id, { agentRuntimeType: "pi" });
     const db = getDb();
@@ -145,7 +145,7 @@ describe("buildSessionContextSnapshot", () => {
     const expected = 100
       + estimateTokens({ role: "user", content: input.content, timestamp: input.timestamp })
       + estimateTokens(createBranchSummaryMessage("Branch context", "assistant", 3));
-    expect(buildSessionContextSnapshot(db, "trailing-session", { contextWindow: 500, reserveTokens: 20 })).toEqual({
+    expect(await buildSessionContextSnapshot("trailing-session", { contextWindow: 500, reserveTokens: 20 })).toEqual({
       usedTokens: expected,
       contextWindow: 500,
       compactionThresholdTokens: 480,
@@ -154,7 +154,7 @@ describe("buildSessionContextSnapshot", () => {
     });
   });
 
-  test("marks provider usage estimated when a tool result trails the measured assistant", () => {
+  test("marks provider usage estimated when a tool result trails the measured assistant", async () => {
     const project = createProject("Tool result", "/tmp/tool-result");
     createSession("tool-result-session", project.id, { agentRuntimeType: "pi" });
     const db = getDb();
@@ -182,11 +182,11 @@ describe("buildSessionContextSnapshot", () => {
       .run("tool-result-session", "pi.branch.tip", "main", 3, JSON.stringify("result"));
 
     const expected = 100 + estimateTokens(result);
-    expect(buildSessionContextSnapshot(db, "tool-result-session", { contextWindow: 500, reserveTokens: 20 }))
+    expect(await buildSessionContextSnapshot("tool-result-session", { contextWindow: 500, reserveTokens: 20 }))
       .toMatchObject({ usedTokens: expected, measurement: "estimated" });
   });
 
-  test("ignores failed assistant usage in restored occupancy", () => {
+  test("ignores failed assistant usage in restored occupancy", async () => {
     const project = createProject("Failed", "/tmp/failed");
     createSession("failed-session", project.id, { agentRuntimeType: "pi" });
     const db = getDb();
@@ -208,11 +208,11 @@ describe("buildSessionContextSnapshot", () => {
     db.query("INSERT INTO pi_values (session_id,namespace,key,seq,value_json) VALUES (?,?,?,?,?)")
       .run("failed-session", "pi.branch.tip", "main", 5, JSON.stringify("failed"));
 
-    expect(buildSessionContextSnapshot(db, "failed-session", { contextWindow: 200, reserveTokens: 20 }))
+    expect(await buildSessionContextSnapshot("failed-session", { contextWindow: 200, reserveTokens: 20 }))
       .toMatchObject({ usedTokens: 40, measurement: "exact" });
   });
 
-  test("estimates retained Reins inputs in replacement context after compaction", () => {
+  test("estimates retained Reins inputs in replacement context after compaction", async () => {
     const project = createProject("Retained input", "/tmp/retained-input");
     createSession("retained-input-session", project.id, { agentRuntimeType: "pi" });
     const db = getDb();
@@ -240,11 +240,11 @@ describe("buildSessionContextSnapshot", () => {
     const expected = estimateTokens(createCompactionSummaryMessage("Short summary", 120, 3))
       + estimateTokens({ role: "user", content: retainedInput.content, timestamp: retainedInput.timestamp });
 
-    expect(buildSessionContextSnapshot(db, "retained-input-session", { contextWindow: 200, reserveTokens: 20 }))
+    expect(await buildSessionContextSnapshot("retained-input-session", { contextWindow: 200, reserveTokens: 20 }))
       .toMatchObject({ usedTokens: expected, measurement: "estimated" });
   });
 
-  test("estimates the new active context after compaction instead of reusing pre-compaction usage", () => {
+  test("estimates the new active context after compaction instead of reusing pre-compaction usage", async () => {
     const project = createProject("Compacted", "/tmp/compacted");
     createSession("compacted-session", project.id, { agentRuntimeType: "pi" });
     const db = getDb();
@@ -268,7 +268,7 @@ describe("buildSessionContextSnapshot", () => {
       .run("compacted-session", "pi.branch.tip", "main", 5, JSON.stringify("compact"));
 
     const expected = estimateTokens(createCompactionSummaryMessage("Short summary", 120, 0));
-    const snapshot = buildSessionContextSnapshot(db, "compacted-session", { contextWindow: 200, reserveTokens: 20 });
+    const snapshot = await buildSessionContextSnapshot("compacted-session", { contextWindow: 200, reserveTokens: 20 });
 
     expect(snapshot).toEqual({
       usedTokens: expected,

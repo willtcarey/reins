@@ -166,8 +166,6 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
   private readonly sessionId?: string;
   private readonly models?: Models;
   private readonly sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null };
-  private readonly runtimeStateDisposers: Array<() => void>;
-  private compacting = false;
   private readonly activeOperations = new Map<string, Promise<void>>();
   private readonly pendingAdmissions = new Set<Promise<void>>();
   private readonly submissionAdmissions = new Map<string, Promise<unknown>>();
@@ -185,17 +183,6 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     this.models = params.models;
     this.sessionEnvironment = params.sessionEnvironment;
     this.executionEnv = params.executionEnv;
-    this.runtimeStateDisposers = [
-      this.harness.events.on("compaction_start", (event) => {
-        if (event.lane === this.lane.name) this.compacting = true;
-      }),
-      this.harness.events.on("compaction_end", (event) => {
-        if (event.lane === this.lane.name) this.compacting = false;
-      }),
-      this.harness.events.on("run_end", (event) => {
-        if (event.lane === this.lane.name) this.compacting = false;
-      }),
-    ];
     const lifecycle = params.lifecycle;
     this.lifecycleDisposers = lifecycle ? [
       this.harness.events.on("run_start", () => lifecycle.started()),
@@ -493,8 +480,6 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     return this.pendingAdmissions.size > 0 || this.pendingIdleStarts.size > 0 || this.activeOperations.size > 0;
   }
 
-  isCompacting(): boolean { return this.compacting; }
-
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closePromise = (async () => {
@@ -508,7 +493,6 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
         try { await this.harness.close(BACKGROUND_CONTEXT); }
         finally {
           for (const dispose of this.lifecycleDisposers) dispose();
-          for (const dispose of this.runtimeStateDisposers) dispose();
           await this.executionEnv?.cleanup(BACKGROUND_CONTEXT);
         }
       }

@@ -6,7 +6,6 @@
  * AgentHarness storage commits are the sole transcript write path.
  */
 
-import type { Database } from "bun:sqlite";
 import { getDb } from "./db.js";
 
 // ---- Types -----------------------------------------------------------------
@@ -247,21 +246,14 @@ type StoredReinsInputMessage = {
   metadata: Record<string, unknown>;
 };
 
-export type StoredEntryEnvelope =
+type StoredEntryEnvelope =
   | { type: "message"; message: PersistedMessage | StoredReinsInputMessage; timestamp: number; terminate?: true }
   | { type: "compaction"; summary: string; retainedTail: unknown[]; tokensBefore: number; timestamp: number; fromHook: boolean; details?: unknown; usage?: unknown }
-  | { type: "branch_summary"; summary: string; fromId: string; timestamp: number; [key: string]: unknown }
-  | { type: "custom"; timestamp: number; [key: string]: unknown };
-
-export interface StoredCanonicalEntry {
-  id: string;
-  parentId: string | null;
-  seq: number;
-  envelope: StoredEntryEnvelope;
-}
+  | { type: "branch_summary" | "custom"; timestamp: number; [key: string]: unknown };
 
 /** Project the sole canonical AgentHarness storage envelope into Reins transcript shape. */
-function parsePersistedEnvelope(entry: StoredEntryEnvelope): PersistedMessage | null {
+function parsePersistedMessage(messageJson: string): PersistedMessage | null {
+  const entry: StoredEntryEnvelope = JSON.parse(messageJson);
   if (entry.type === "message") {
     const message = entry.message;
     if (message.role === "reinsInput") {
@@ -278,10 +270,6 @@ function parsePersistedEnvelope(entry: StoredEntryEnvelope): PersistedMessage | 
     return { role: "compactionSummary", summary: entry.summary, timestamp: entry.timestamp };
   }
   return null;
-}
-
-function parsePersistedMessage(messageJson: string): PersistedMessage | null {
-  return parsePersistedEnvelope(JSON.parse(messageJson));
 }
 
 function persistedClientId(messageJson: string): string | undefined {
@@ -315,22 +303,17 @@ export function loadMessages(sessionId: string): any[] {
   });
 }
 
-/** Read canonical main-tip ancestry once for all active-branch projections. */
-export function readActiveBranchEntries(db: Database, sessionId: string): StoredCanonicalEntry[] | null {
-  const tipRow = db.query<{ value_json: string }, [string]>(
+/** Load only the canonical main-tip ancestry, excluding archived branches. */
+export function loadActiveMessages(sessionId: string): any[] {
+  const tipRow = getDb().query<{ value_json: string }, [string]>(
     "SELECT value_json FROM pi_values WHERE session_id = ? AND namespace = 'pi.branch.tip' AND key = 'main'",
   ).get(sessionId);
-  if (!tipRow) return null;
+  if (!tipRow) throw new Error(`Canonical main branch is missing for session ${sessionId}`);
   const tip: unknown = JSON.parse(tipRow.value_json);
   if (tip === null) return [];
   if (typeof tip !== "string" || tip.length === 0) throw new Error(`Canonical main branch tip is invalid for session ${sessionId}`);
 
-  const rows = db.query<{
-    harness_id: string;
-    parent_harness_id: string | null;
-    seq: number;
-    message_json: string;
-  }, [string, string, string]>(
+  const rows = getDb().query<{ message_json: string }, [string, string, string]>(
     `WITH RECURSIVE ancestry(id, parent_id, depth, visited) AS (
        SELECT id, parent_id, 0, printf('/%d/', id)
        FROM session_messages WHERE session_id = ? AND harness_id = ?
@@ -339,27 +322,13 @@ export function readActiveBranchEntries(db: Database, sessionId: string): Stored
        FROM session_messages parent JOIN ancestry ON parent.id = ancestry.parent_id
        WHERE parent.session_id = ? AND instr(ancestry.visited, printf('/%d/', parent.id)) = 0
      )
-     SELECT entry.harness_id, parent.harness_id AS parent_harness_id, entry.seq, entry.message_json
-     FROM ancestry
+     SELECT message_json FROM ancestry
      JOIN session_messages entry ON entry.id = ancestry.id
-     LEFT JOIN session_messages parent ON parent.id = entry.parent_id
      ORDER BY ancestry.depth DESC`,
   ).all(sessionId, tip, sessionId);
   if (rows.length === 0) throw new Error(`Canonical main branch tip is unknown for session ${sessionId}`);
-  return rows.map((row) => ({
-    id: row.harness_id,
-    parentId: row.parent_harness_id,
-    seq: row.seq,
-    envelope: JSON.parse(row.message_json),
-  }));
-}
-
-/** Load only the canonical main-tip ancestry, excluding archived branches. */
-export function loadActiveMessages(sessionId: string): any[] {
-  const entries = readActiveBranchEntries(getDb(), sessionId);
-  if (entries === null) throw new Error(`Canonical main branch is missing for session ${sessionId}`);
-  return entries.flatMap(({ envelope }) => {
-    const message = parsePersistedEnvelope(envelope);
+  return rows.flatMap((row) => {
+    const message = parsePersistedMessage(row.message_json);
     return message ? [message] : [];
   });
 }

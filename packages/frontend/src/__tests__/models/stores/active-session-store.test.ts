@@ -178,7 +178,7 @@ describe("ActiveSessionStore context usage", () => {
     }
   });
 
-  test("does not restore a stale exact snapshot after compaction starts", async () => {
+  test("keeps a completed refresh visible while compaction starts", async () => {
     const client = new StubClient();
     const store = new ActiveSessionStore(
       "sess-1", client, new SessionCache(), new ConversationsStore({ eventSource: client }),
@@ -202,14 +202,14 @@ describe("ActiveSessionStore context usage", () => {
       utilization: 0.9, measurement: "exact",
     }));
     await refresh;
-    expect(store.contextSnapshot).toBeNull();
+    expect(store.contextSnapshot).toMatchObject({ usedTokens: 180_000, measurement: "exact" });
 
     client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "compaction_end", aborted: false } });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(store.contextSnapshot).toMatchObject({ usedTokens: 12_000, measurement: "estimated" });
   });
 
-  test("marks occupancy unknown during compaction and restores the post-compaction estimate", async () => {
+  test("keeps the last known occupancy during compaction and refreshes when it ends", async () => {
     const client = new StubClient();
     const store = new ActiveSessionStore(
       "sess-1", client, new SessionCache(), new ConversationsStore({ eventSource: client }),
@@ -224,7 +224,7 @@ describe("ActiveSessionStore context usage", () => {
     await store.refreshContext();
 
     client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "compaction_start", reason: "threshold" } });
-    expect(store.contextSnapshot).toMatchObject({ usedTokens: null, measurement: "unknown" });
+    expect(store.contextSnapshot).toMatchObject({ usedTokens: 180_000, measurement: "exact" });
 
     compacted = true;
     client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "compaction_end", aborted: false } });

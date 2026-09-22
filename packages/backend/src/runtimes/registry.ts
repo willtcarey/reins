@@ -176,8 +176,6 @@ export interface AgentRuntime {
     thinkingLevel?: string | null;
   };
   isStreaming(): boolean;
-  /** Whether the runtime has invalidated its previous provider context measurement for compaction. */
-  isCompacting?(): boolean;
   close(): Promise<void>;
 }
 

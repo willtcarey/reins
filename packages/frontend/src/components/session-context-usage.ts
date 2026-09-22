@@ -83,9 +83,7 @@ export class SessionContextUsage extends LitElement {
 
   private contextDetail(): string {
     const snapshot = this.snapshot;
-    if (!snapshot || snapshot.usedTokens === null || snapshot.utilization === null) {
-      return snapshot ? "Context unknown" : "";
-    }
+    if (!snapshot) return "";
 
     const percent = Math.max(0, Math.round(snapshot.utilization * 100));
     return `${snapshot.measurement === "estimated" ? "~" : ""}${formatTokens(snapshot.usedTokens)} / ${formatTokens(snapshot.contextWindow)} · ${percent}%`;
@@ -112,12 +110,11 @@ export class SessionContextUsage extends LitElement {
     const snapshot = this.snapshot;
     if (!snapshot) return nothing;
 
-    const known = snapshot.usedTokens !== null && snapshot.utilization !== null;
-    const percent = known ? Math.max(0, Math.round(snapshot.utilization! * 100)) : null;
-    const progressPercent = percent === null ? 0 : Math.min(100, percent);
-    const atThreshold = known && snapshot.usedTokens! >= snapshot.compactionThresholdTokens;
-    const nearThreshold = known && !atThreshold
-      && snapshot.usedTokens! >= snapshot.compactionThresholdTokens * 0.9;
+    const percent = Math.max(0, Math.round(snapshot.utilization * 100));
+    const progressPercent = Math.min(100, percent);
+    const atThreshold = snapshot.usedTokens >= snapshot.compactionThresholdTokens;
+    const nearThreshold = !atThreshold
+      && snapshot.usedTokens >= snapshot.compactionThresholdTokens * 0.9;
     const stateText = atThreshold
       ? "Context compaction threshold reached"
       : nearThreshold
@@ -136,30 +133,17 @@ export class SessionContextUsage extends LitElement {
         aria-describedby=${this.tooltipVisible ? this.tooltipId : nothing}
         @click=${this.toggleTooltip}
       >
-        ${known ? html`
-          <span
-            class="h-1.5 w-14 shrink-0 overflow-hidden rounded-full bg-zinc-800 ring-1 ring-inset ring-zinc-700/70"
-            role="progressbar"
-            aria-label="Session context usage"
-            aria-valuemin="0"
-            aria-valuemax="100"
-            aria-valuenow=${progressPercent}
-            aria-valuetext=${accessibleDetail}
-          >
-            <span class="block h-full rounded-full ${fillClass} transition-[width]" style=${`width: ${progressPercent}%`}></span>
-          </span>
-        ` : html`
-          <span
-            class="h-1.5 w-14 shrink-0 overflow-hidden rounded-full bg-zinc-800 ring-1 ring-inset ring-zinc-700/70"
-            role="progressbar"
-            aria-label="Session context usage"
-            aria-valuemin="0"
-            aria-valuemax="100"
-            aria-valuetext=${accessibleDetail}
-          >
-            <span class="block h-full rounded-full bg-zinc-600"></span>
-          </span>
-        `}
+        <span
+          class="h-1.5 w-14 shrink-0 overflow-hidden rounded-full bg-zinc-800 ring-1 ring-inset ring-zinc-700/70"
+          role="progressbar"
+          aria-label="Session context usage"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow=${progressPercent}
+          aria-valuetext=${accessibleDetail}
+        >
+          <span class="block h-full rounded-full ${fillClass} transition-[width]" style=${`width: ${progressPercent}%`}></span>
+        </span>
         <span class="hidden whitespace-nowrap sm:inline">${detail}</span>
         ${(nearThreshold || atThreshold) ? html`
           <span class="sr-only">${stateText}</span>

@@ -34,12 +34,8 @@ describe("SessionContextUsage", () => {
     expect(output).toContain("21%");
   });
 
-  test("labels estimates and unknown post-compaction occupancy honestly", () => {
+  test("labels estimated occupancy", () => {
     expect(render({ usedTokens: 18_000, utilization: 0.09, measurement: "estimated" })).toContain("~18k / 200k");
-
-    const unknown = render({ usedTokens: null, utilization: null, measurement: "unknown" });
-    expect(unknown).toContain("Context unknown");
-    expect(unknown).not.toContain("aria-valuenow");
   });
 
   test("announces warning states near and beyond the compaction threshold", () => {

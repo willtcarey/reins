@@ -37,7 +37,6 @@ import { parseThinkingLevel } from "./model-settings.js";
 import { getRuntimeAdapter } from "../runtimes/registry.js";
 import {
   buildSessionContextSnapshot,
-  unknownSessionContextSnapshot,
   type SessionContextSnapshot,
 } from "./session-context.js";
 import { stripLeadingSkillBlocks } from "./skill.js";
@@ -226,13 +225,10 @@ export class Sessions {
     const model = await findPiModel(row.model_provider, row.model_id);
     if (!model) return null;
 
-    const snapshot = buildSessionContextSnapshot(getDb(), sessionId, {
+    return buildSessionContextSnapshot(sessionId, {
       contextWindow: model.contextWindow,
       reserveTokens: DEFAULT_COMPACTION_SETTINGS.reserveTokens,
     });
-    return this.sessions.get(sessionId)?.runtime.isCompacting?.()
-      ? unknownSessionContextSnapshot(snapshot)
-      : snapshot;
   }
 
   getMessages(sessionId: string): RuntimeMessage[] | null {
