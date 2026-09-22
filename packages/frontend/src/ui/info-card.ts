@@ -77,7 +77,7 @@ export class InfoCard extends LitElement {
         <span class="flex shrink-0 items-center">${this.leading}</span>
       ` : nothing}
       <span class="min-w-0 flex-1">
-        <span class="flex min-w-0 items-center gap-1 text-xs ${this.active ? "text-blue-300" : "text-zinc-300 group-hover/info-card:text-zinc-100"}">
+        <span class="flex min-w-0 items-center gap-1 text-xs ${this.active ? "text-blue-300" : "text-zinc-300 group-hover/primary:text-zinc-100"}">
           ${hasTitlePrefix ? html`<span class="shrink-0">${this.titlePrefix}</span>` : nothing}
           <span class="min-w-0 truncate">${this.title}</span>
         </span>
@@ -89,12 +89,14 @@ export class InfoCard extends LitElement {
   }
 
   override render() {
-    const primaryClass = `flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left outline-none cursor-pointer focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-500/70 active:bg-zinc-700/60 ${this.actions.length > 0 ? "select-none [-webkit-touch-callout:none] md:select-text" : ""}`;
+    const primaryClass = `group/primary flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left outline-none cursor-pointer focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-500/70 active:bg-zinc-700/60 ${this.actions.length > 0 ? "select-none [-webkit-touch-callout:none] md:select-text" : ""}`;
     const hasTrailing = this.trailing != null && this.trailing !== nothing;
 
     return html`
       <div
-        class="group/info-card flex min-w-0 items-stretch transition-colors ${this.active ? "bg-blue-500/15" : "hover:bg-zinc-800/70"}"
+        data-role="info-card-row"
+        data-active=${this.active ? "" : nothing}
+        class="flex min-w-0 items-stretch transition-colors ${this.active ? "bg-blue-500/15" : ""}"
         @contextmenu=${this.openActionMenu}
       >
         ${this.href ? html`

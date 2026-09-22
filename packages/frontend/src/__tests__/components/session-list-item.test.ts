@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import { SessionListItem } from "../../components/session-list-item.js";
 import type { InfoCardAction } from "../../ui/info-card.js";
 import type { SessionListView as SessionListItemData } from "@backend/models/sessions.js";
-import { isTemplateResult, templateToString } from "../helpers/lit-template.js";
+import { collectTemplateEventListeners, isTemplateResult, templateToString } from "../helpers/lit-template.js";
 
 function session(activityState: SessionListItemData["activityState"]): SessionListItemData {
   return {
@@ -36,6 +36,22 @@ function infoCardActions(item: SessionListItem): readonly InfoCardAction[] {
 }
 
 describe("SessionListItem", () => {
+  test("selecting a delegate does not activate its containing parent row", () => {
+    const child = new SessionListItem();
+    child.session = { ...session(null), id: "child-1", parentSessionId: "session-1" };
+    const selected: string[] = [];
+    child.addEventListener("select-session", (event) => {
+      if (event instanceof CustomEvent) selected.push(event.detail.sessionId);
+    });
+    const [activate] = collectTemplateEventListeners(child.render(), "info-card-activate");
+    const event = new Event("info-card-activate", { bubbles: true, composed: true });
+
+    activate?.(event);
+
+    expect(selected).toEqual(["child-1"]);
+    expect(event.cancelBubble).toBe(true);
+  });
+
   test("binds the accessible pin to the title line and keeps activity and delegates trailing", () => {
     const item = new SessionListItem();
     item.session = { ...session("running"), pinnedAt: "2026-01-02T00:00:00Z" };

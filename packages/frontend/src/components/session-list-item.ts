@@ -43,9 +43,10 @@ export class SessionListItem extends LitElement {
   @property({ attribute: false })
   onUpdateMetadata: ((sessionId: string, updates: { name?: string | null; pinned?: boolean; archived?: boolean }) => Promise<unknown>) | null = null;
 
-  private handleClick() {
+  private handleClick = (event: Event) => {
+    event.stopPropagation();
     this.dispatchEvent(selectSessionEvent(this.session.id, this.session.projectId));
-  }
+  };
 
   private cardActions(pinned: boolean): InfoCardAction[] {
     const actions: InfoCardAction[] = [{

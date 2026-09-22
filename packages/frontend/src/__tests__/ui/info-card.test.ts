@@ -5,6 +5,19 @@ import { LongPressDirective } from "../../directives/long-press.js";
 import { collectTemplateEventListeners, collectTemplateValues, isTemplateResult, templateToString } from "../helpers/lit-template.js";
 
 describe("InfoCard", () => {
+  test("keeps nested popover hover from highlighting its containing card", () => {
+    const card = new InfoCard();
+    card.title = "Parent session";
+    card.trailing = html`<div popover="manual"><button>Child session</button></div>`;
+
+    const output = templateToString(card.render());
+
+    expect(output).toContain('data-role="info-card-row"');
+    expect(output).toContain('data-role="info-card-primary"');
+    expect(output).not.toContain("group-hover/info-card");
+    expect(output).not.toContain("hover:bg-zinc-800/70");
+  });
+
   test("renders linked information with template-valued leading and trailing content", () => {
     const card = new InfoCard();
     card.title = "Investigate a very long-running child session";

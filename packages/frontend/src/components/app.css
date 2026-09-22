@@ -32,6 +32,15 @@ html, body {
   --input-bottom: 0.75rem;
 }
 
+/* Native popovers remain DOM descendants of their cards even when displayed in
+   the top layer. Only hovering the card's direct primary control highlights it;
+   hovering a nested popover cannot highlight its ancestor cards. */
+@layer components {
+  info-card > [data-role="info-card-row"]:not([data-active]):has(> [data-role="info-card-primary"]:hover) {
+    background-color: rgb(39 39 42 / 0.7);
+  }
+}
+
 .swipe-shell {
   touch-action: auto;
   overscroll-behavior-x: contain;

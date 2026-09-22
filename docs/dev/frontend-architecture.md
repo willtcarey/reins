@@ -74,6 +74,8 @@ Browser-facing route registration, hash resolution, URL construction, navigation
 
 Domain-agnostic Lit presentation primitives shared across features. UI primitives own reusable visual and interaction contracts without importing feature stores or domain models. Current primitives include `icons.ts` for shared icon templates, `info-card.ts` for linked/actionable information rows, `action-menu-presenter.ts` for context-menu and mobile-sheet presentation, and `popover-menu.ts` with `position.ts` for viewport-aware anchored popovers.
 
+Delegate popovers render `session-list-item` rows inside another session row. Their activation handler must retain its own element binding and stop the nested `info-card-activate` event before it reaches the containing row; the resulting `select-session` event still bubbles for navigation. Native popovers display in the top layer but remain DOM descendants, so card hover styling is scoped to the direct primary control rather than the entire card subtree.
+
 ### components/
 
 Feature and domain Lit custom elements that own rendering and user interaction. Import from `models/` for data, from `controllers/` for lifecycle-managed behavior, and from `ui/` for shared presentation primitives.
