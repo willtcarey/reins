@@ -185,9 +185,9 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     this.executionEnv = params.executionEnv;
     const lifecycle = params.lifecycle;
     this.lifecycleDisposers = lifecycle ? [
-      this.harness.events.on("run_start", () => lifecycle.started()),
-      this.harness.events.on("run_resume", () => lifecycle.started()),
-      this.harness.events.on("compaction_start", () => lifecycle.started()),
+      this.harness.events.on("run_start", (event) => lifecycle.started(event.runId)),
+      this.harness.events.on("run_resume", (event) => lifecycle.started(event.runId)),
+      this.harness.events.on("compaction_start", (event) => lifecycle.started(event.runId)),
       this.harness.events.on("run_end", (event) => lifecycle.settled(this, {
         runId: event.runId,
         status: event.status,

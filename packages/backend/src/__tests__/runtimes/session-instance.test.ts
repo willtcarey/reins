@@ -59,7 +59,7 @@ describe("SessionInstance", () => {
     const manager = new SessionManager(createServerState());
     const instance = new SessionInstance(manager, "session");
 
-    instance.started();
+    instance.started("run-1");
     instance.settled(stub.runtime, { runId: "run-1", status: "completed" });
 
     expect(stub.getMessagesCalls).toBe(0);
@@ -67,36 +67,46 @@ describe("SessionInstance", () => {
     expect(getSession("session")).toMatchObject({ activity_state: "finished", model_provider: "faux", model_id: "model", thinking_level: "high" });
   });
 
-  test("persists settlement before reporting its authoritative outcome", async () => {
+  test("clears child activity only after its authoritative outcome is admitted to the parent", async () => {
     const project = createProject("Reporter", "/tmp/reporter-test");
     createSession("parent", project.id, { agentRuntimeType: "pi" });
     createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
     const parent = createRuntimeStub();
     const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "stale success" }] }] });
     const activity: string[] = [];
-    const delivered = Promise.withResolvers<void>();
+    const admission = Promise.withResolvers<void>();
+    const cleared = Promise.withResolvers<void>();
     const originalSteer = parent.runtime.steer;
     parent.runtime.steer = async (content, options) => {
+      await admission.promise;
       await originalSteer(content, options);
-      delivered.resolve();
     };
     const state = createServerState();
     state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: 0 });
     const manager = new SessionManager(state);
     Object.defineProperty(manager, "broadcast", { value: (event: { type: string }) => {
-      if (event.type === "session_updated") activity.push(getSession("child")?.activity_state ?? "null");
+      if (event.type !== "session_updated") return;
+      const current = getSession("child")?.activity_state ?? "null";
+      activity.push(current);
+      if (current === "null") cleared.resolve();
     } });
     const instance = new SessionInstance(manager, "child");
 
-    instance.started();
+    instance.started("run-1");
     instance.settled(child.runtime, {
       runId: "run-1",
       status: "failed",
       error: { code: "provider_error", message: "Provider unavailable" },
     });
-    await delivered.promise;
+    await Bun.sleep(0);
 
-    expect(activity).toEqual(["running", "finished"]);
+    expect(getSession("child")?.activity_state).toBe("running");
+    expect(activity).toEqual(["running"]);
+
+    admission.resolve();
+    await cleared.promise;
+
+    expect(activity).toEqual(["running", "null"]);
     expect(parent.steerCalls).toHaveLength(1);
     const notification = parent.steerCalls[0]?.find((block) => block.type === "text")?.text;
     expect(notification).toBe("Session failed: Provider unavailable");
@@ -105,5 +115,75 @@ describe("SessionInstance", () => {
       reinsId: expect.any(String),
       metadata: { sourceSessionId: "child" },
     }]);
+  });
+
+  test("does not clear newer child activity when an earlier report finishes delivery", async () => {
+    const project = createProject("Overlapping reporter", "/tmp/overlapping-reporter-test");
+    createSession("parent", project.id, { agentRuntimeType: "pi" });
+    createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
+    const parent = createRuntimeStub();
+    const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "Result" }] }] });
+    const admission = Promise.withResolvers<void>();
+    const reported = Promise.withResolvers<void>();
+    parent.runtime.steer = async () => {
+      await admission.promise;
+      reported.resolve();
+    };
+    const state = createServerState();
+    state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: 0 });
+    const manager = new SessionManager(state);
+    const instance = new SessionInstance(manager, "child");
+
+    instance.started("run-1");
+    instance.settled(child.runtime, { runId: "run-1", status: "completed" });
+    instance.started("run-2");
+    admission.resolve();
+    await reported.promise;
+    await Bun.sleep(0);
+
+    expect(getSession("child")?.activity_state).toBe("running");
+  });
+
+  test("retains finished child activity when no valid parent is available", async () => {
+    const parentProject = createProject("Parent project", "/tmp/parent-project-test");
+    const childProject = createProject("Child project", "/tmp/child-project-test");
+    createSession("parent", parentProject.id, { agentRuntimeType: "pi" });
+    createSession("child", childProject.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
+    const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "Result" }] }] });
+    const finished = Promise.withResolvers<void>();
+    const manager = new SessionManager(createServerState());
+    Object.defineProperty(manager, "broadcast", { value: (event: { type: string }) => {
+      if (event.type === "session_updated" && getSession("child")?.activity_state === "finished") finished.resolve();
+    } });
+    const instance = new SessionInstance(manager, "child");
+
+    instance.started("run-1");
+    instance.settled(child.runtime, { runId: "run-1", status: "completed" });
+    await finished.promise;
+
+    expect(getSession("child")?.activity_state).toBe("finished");
+  });
+
+  test("retains finished child activity when parent delivery fails", async () => {
+    const project = createProject("Failed reporter", "/tmp/failed-reporter-test");
+    createSession("parent", project.id, { agentRuntimeType: "pi" });
+    createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
+    const parent = createRuntimeStub();
+    parent.runtime.steer = async () => { throw new Error("parent unavailable"); };
+    const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "Result" }] }] });
+    const finished = Promise.withResolvers<void>();
+    const state = createServerState();
+    state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: 0 });
+    const manager = new SessionManager(state);
+    Object.defineProperty(manager, "broadcast", { value: (event: { type: string }) => {
+      if (event.type === "session_updated" && getSession("child")?.activity_state === "finished") finished.resolve();
+    } });
+    const instance = new SessionInstance(manager, "child");
+
+    instance.started("run-1");
+    instance.settled(child.runtime, { runId: "run-1", status: "completed" });
+    await finished.promise;
+
+    expect(getSession("child")?.activity_state).toBe("finished");
   });
 });

@@ -60,6 +60,7 @@ export function transcriptResult(
 /** Caller-scoped session operations and runtime lifecycle effects. */
 export class SessionInstance implements RuntimeLifecycleSink {
   private readonly sessionModel: Sessions;
+  private activeRunId: string | null = null;
 
   constructor(
     private readonly manager: SessionManager,
@@ -132,7 +133,8 @@ export class SessionInstance implements RuntimeLifecycleSink {
     });
   }
 
-  started(): void {
+  started(runId: string): void {
+    this.activeRunId = runId;
     try {
       this.sessionModel.updateActivityState(this.sessionId, "running");
     } catch (error) {
@@ -143,9 +145,19 @@ export class SessionInstance implements RuntimeLifecycleSink {
   settled(runtime: AgentRuntime, outcome: RuntimeRunOutcome): void {
     try {
       this.persistRuntimeMetadata(runtime);
-      this.sessionModel.updateActivityState(this.sessionId, "finished");
-      void this.reportSettlement(runtime, outcome)
-        .catch((error: unknown) => logger.error(`Failed to report session ${this.sessionId} settlement:`, error));
+      const session = this.session(this.sessionId);
+      if (!session.parent_session_id) {
+        this.sessionModel.updateActivityState(this.sessionId, "finished");
+        return;
+      }
+
+      void this.reportChildSettlement(runtime, outcome, session.parent_session_id).then(
+        () => this.finishRun(outcome.runId, null),
+        (error: unknown) => {
+          this.finishRun(outcome.runId, "finished");
+          logger.error(`Failed to report session ${this.sessionId} settlement:`, error);
+        },
+      );
     } catch (error) {
       logger.error(`Failed to update runtime lifecycle for ${this.sessionId}:`, error);
     }
@@ -230,13 +242,21 @@ export class SessionInstance implements RuntimeLifecycleSink {
     });
   }
 
-  private async reportSettlement(runtime: AgentRuntime, outcome: RuntimeRunOutcome): Promise<void> {
-    const child = getSession(this.sessionId);
-    const parent = child?.parent_session_id ? getSession(child.parent_session_id) : null;
-    if (!child || !parent) return;
-    if (child.project_id !== parent.project_id || child.task_id !== parent.task_id) {
-      throw new Error("Parent is outside the child's project/task scope");
+  private finishRun(runId: string, activityState: SessionRow["activity_state"]): void {
+    if (this.activeRunId !== runId) return;
+    try {
+      this.sessionModel.updateActivityState(this.sessionId, activityState);
+    } catch (error) {
+      logger.error(`Failed to update runtime lifecycle for ${this.sessionId}:`, error);
     }
+  }
+
+  private async reportChildSettlement(
+    runtime: AgentRuntime,
+    outcome: RuntimeRunOutcome,
+    parentSessionId: string,
+  ): Promise<void> {
+    const parent = this.scopedSession(parentSessionId);
     const result = transcriptResult(this.sessionId, await runtime.getMessages(), outcome);
     const content = result.status === "completed"
       ? result.result ?? "Session completed."

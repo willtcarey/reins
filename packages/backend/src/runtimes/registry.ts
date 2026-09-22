@@ -84,7 +84,7 @@ export interface RuntimeRunOutcome {
 }
 
 export interface RuntimeLifecycleSink {
-  started(): void;
+  started(runId: string): void;
   settled(runtime: AgentRuntime, outcome: RuntimeRunOutcome): void;
 }
 

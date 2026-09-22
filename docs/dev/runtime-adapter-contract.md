@@ -48,7 +48,7 @@ A runtime adapter must implement `AgentRuntimeAdapter` from `runtimes/registry.t
   - `builtins`: currently `read`, `write`, `edit`, `bash`.
   - `harnessTools`: Reins tools (`create_task`, `search`, `execute`). Session orchestration is exposed through `api.sessions` in execute.
 - `lifecycle`
-  - Application-owned sink supplied at construction. The runtime owns native event listening and calls `started()`/`settled()`; it does not expose lifecycle observation to session management.
+  - Application-owned sink supplied at construction. The runtime owns native event listening and calls `started(runId)`/`settled()`; it does not expose lifecycle observation to session management.
 - `resume`
   - Legacy adapter input retained only by the unregistered Claude implementation.
   - AgentHarness reopens its lane and active branch directly from canonical storage.
@@ -112,7 +112,7 @@ Events are `AgentRuntimeEvent` values from `runtimes/registry.ts`.
 
 ### Required for lifecycle state
 
-Canonical transcript persistence does not depend on runtime events. AgentHarness storage commits entries directly. `CreateAgentRuntimeParams.lifecycle` is the application lifecycle seam; the rich events in this section remain UI projections. The runtime calls sink `started()` for native `run_start`, `run_resume`, and `compaction_start`, and sink `settled()` for durable `run_end`.
+Canonical transcript persistence does not depend on runtime events. AgentHarness storage commits entries directly. `CreateAgentRuntimeParams.lifecycle` is the application lifecycle seam; the rich events in this section remain UI projections. The runtime calls sink `started(runId)` for native `run_start`, `run_resume`, and `compaction_start`, and sink `settled()` for durable `run_end`.
 
 ### Required for tool UI
 
@@ -200,11 +200,11 @@ Sessions share the existing checkout. No project-wide lock is held across execut
 
 ### Child settlement reports
 
-The caller-scoped `SessionInstance` is injected as the runtime lifecycle sink. Its `settled()` method persists metadata and finished activity first, then asynchronously reads the child's latest output and reports it to the parent. The report uses the authoritative lifecycle outcome rather than inferring status/error from the transcript. Reports carry clean result or error text and `metadata.sourceSessionId`; provider projection supplies the explicit session-update/not-user-authorization boundary without polluting stored or UI content.
+The caller-scoped `SessionInstance` is injected as the runtime lifecycle sink. Its `settled()` method persists metadata and owns the complete activity/reporting transition. Top-level sessions become finished/unread as usual. A child remains visibly running while its authoritative outcome is read and reported; once the parent's native steering inbox durably admits that report, the child activity clears directly to idle without an intermediate finished/unread broadcast. If the parent is missing or out of scope, outcome reading fails, or delivery is rejected, the child becomes finished/unread as the user-visible fallback. The native run ID prevents a delayed report from clearing or finishing newer work already running in the child. Reports carry clean result or error text and `metadata.sourceSessionId`; provider projection supplies the explicit session-update/not-user-authorization boundary without polluting stored or UI content.
 
 `SessionManager` owns creation, reopening, and live runtime materialization; `SessionManager.forSession()` returns the instance used by scripting and lifecycle callbacks. `runtimes/session-instance.ts` owns caller-scoped start/send/wait policy and addressed delivery: native prompt or steering submission, activity touch, and broadcast. No creation/open adapter or callback plumbing sits between the two. No HTTP route is added.
 
-There is no Reins inbox, dispatcher, or receipt layer. Reports enter the parent's native AgentHarness steering inbox, which handles active versus idle delivery. Delivery errors are logged by `SessionInstance` and are not retried; they do not affect lifecycle updates. Reopening alone emits no settlement and produces no report; follow-up settlement reports again. Only outcomes represented by the active branch at settlement are reported; startup failures without a settlement event do not produce a report. Pending callbacks are not recovered after restart.
+There is no Reins inbox, dispatcher, or receipt layer. Reports enter the parent's native AgentHarness steering inbox, which handles active versus idle delivery. Delivery errors are logged by `SessionInstance` and are not retried; they leave the child finished/unread rather than silently clearing its activity. Reopening alone emits no settlement and produces no report; follow-up settlement reports again. Only outcomes represented by the active branch at settlement are reported; startup failures without a settlement event do not produce a report. Pending callbacks are not recovered after restart.
 
 ## Resume and persistence expectations
 
