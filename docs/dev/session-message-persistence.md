@@ -25,9 +25,9 @@ The one-time offline importer removes the specifically validated legacy tool-res
 
 ## Lifecycle observers
 
-The runtime observer stores activity and final model/thinking metadata only. Running activity remains immediate. Terminal activity and parent settlement reporting are ordered through the observer's `flush()` handle. The observer never calls `getMessages()` to write a checkpoint.
+The runtime lifecycle sink stores activity and final model/thinking metadata only; the broadcast observer only projects runtime events. Running activity remains immediate. At terminal settlement, top-level sessions become finished/unread. Child sessions remain running while their canonical result is delivered to the parent, then clear directly to idle after native inbox admission; failed or invalid parent delivery falls back to finished/unread. The lifecycle sink never calls `getMessages()` to write a checkpoint.
 
-Parent reports wait for lifecycle handling, then derive their result from the child's live canonical runtime branch. Passive reopened operations are returned by AgentHarness but are not driven automatically.
+Parent reports derive their result from the child's live canonical runtime branch and use the authoritative terminal outcome. Passive reopened operations are returned by AgentHarness but are not driven automatically.
 
 ## Attachments and metadata
 

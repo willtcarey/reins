@@ -44,11 +44,19 @@ describe("AgentHarnessPiRuntime", () => {
     const models = createModels();
     models.setProvider(provider.provider);
     const lifecycle: unknown[] = [];
+    let startedRunId: string | undefined;
+    let settledRunId: string | undefined;
     const open = () => createAgentHarnessPiRuntime({
       db: getDb(), sessionId: "harness-session", createdAt: 1, cwd: "/tmp/harness",
       lifecycle: {
-        started: () => lifecycle.push({ type: "started" }),
-        settled: (_runtime, outcome) => lifecycle.push({ type: "settled", outcome }),
+        started: (runId) => {
+          startedRunId = runId;
+          lifecycle.push({ type: "started", runId });
+        },
+        settled: (_runtime, outcome) => {
+          settledRunId = outcome.runId;
+          lifecycle.push({ type: "settled", outcome });
+        },
       },
       options: {
         models, model: provider.getModel(), tools: [],
@@ -83,9 +91,10 @@ describe("AgentHarnessPiRuntime", () => {
     expect(streamIds.every((streamId) => streamId.length > 0)).toBe(true);
     expect(new Set(assistantStreamIds)).toHaveProperty("size", 1);
     expect(lifecycle).toEqual([
-      { type: "started" },
+      { type: "started", runId: expect.any(String) },
       { type: "settled", outcome: { runId: expect.any(String), status: "completed" } },
     ]);
+    expect(startedRunId).toBe(settledRunId);
     expect(await runtime.getMessages()).toEqual([
       {
         role: "user",
