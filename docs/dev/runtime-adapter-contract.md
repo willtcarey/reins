@@ -136,6 +136,12 @@ Tool names should be normalized to Reins names where possible (`read`, `write`, 
 - `auto_retry_start`, `auto_retry_end`
   - Optional UI diagnostics for retrying runtimes.
 
+### Context occupancy
+
+Context occupancy is not part of `AgentRuntimeEvent`. The session context REST resource reconstructs it from the canonical active branch, using usage embedded in valid assistant messages and AgentHarness's context-estimation semantics. Standalone structural requests such as compaction summarization therefore cannot replace the current measurement, while cumulative session statistics remain a separate concern.
+
+The selected model supplies the denominator and compaction threshold. Existing canonical-entry and compaction events tell the frontend when to refresh or invalidate the resource. The Pi runtime's optional `isCompacting()` query lets REST report unknown occupancy during live compaction; after compaction, the canonical replacement context is estimated until a later assistant response provides a provider measurement.
+
 ## Message shape contract
 
 `getMessages()` must return `AgentRuntimeMessage[]` in Reins-normalized form:

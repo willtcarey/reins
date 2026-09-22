@@ -166,6 +166,8 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
   private readonly sessionId?: string;
   private readonly models?: Models;
   private readonly sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null };
+  private readonly runtimeStateDisposers: Array<() => void>;
+  private compacting = false;
   private readonly activeOperations = new Map<string, Promise<void>>();
   private readonly pendingAdmissions = new Set<Promise<void>>();
   private readonly submissionAdmissions = new Map<string, Promise<unknown>>();
@@ -183,6 +185,17 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     this.models = params.models;
     this.sessionEnvironment = params.sessionEnvironment;
     this.executionEnv = params.executionEnv;
+    this.runtimeStateDisposers = [
+      this.harness.events.on("compaction_start", (event) => {
+        if (event.lane === this.lane.name) this.compacting = true;
+      }),
+      this.harness.events.on("compaction_end", (event) => {
+        if (event.lane === this.lane.name) this.compacting = false;
+      }),
+      this.harness.events.on("run_end", (event) => {
+        if (event.lane === this.lane.name) this.compacting = false;
+      }),
+    ];
     const lifecycle = params.lifecycle;
     this.lifecycleDisposers = lifecycle ? [
       this.harness.events.on("run_start", () => lifecycle.started()),
@@ -416,6 +429,7 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     let nextStream = 1;
     const disposers = (["run_start", "turn_start", "turn_end", "message_start", "message_update", "message_end", "entry_added", "tool_start", "tool_update", "tool_end", "retry_scheduled", "retry_end", "compaction_start", "compaction_end"] as const)
       .map((type) => this.harness.events.on(type, (event) => {
+        if ("lane" in event && event.lane !== this.lane.name) return;
         if (event.type === "message_end" && event.runId && event.message.role !== "reinsInput") {
           const messages = runMessages.get(event.runId) ?? [];
           messages.push(projectMessage(event.message));
@@ -479,6 +493,8 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     return this.pendingAdmissions.size > 0 || this.pendingIdleStarts.size > 0 || this.activeOperations.size > 0;
   }
 
+  isCompacting(): boolean { return this.compacting; }
+
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closePromise = (async () => {
@@ -492,6 +508,7 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
         try { await this.harness.close(BACKGROUND_CONTEXT); }
         finally {
           for (const dispose of this.lifecycleDisposers) dispose();
+          for (const dispose of this.runtimeStateDisposers) dispose();
           await this.executionEnv?.cleanup(BACKGROUND_CONTEXT);
         }
       }

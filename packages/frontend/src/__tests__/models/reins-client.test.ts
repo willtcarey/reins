@@ -20,6 +20,29 @@ describe("ReinsClient", () => {
     });
   });
 
+  test("exposes the normalized session context snapshot resource", async () => {
+    const requests: string[] = [];
+    const client = new ReinsClient(async (input) => {
+      requests.push(input.toString());
+      return Response.json({
+        usedTokens: 42_000,
+        contextWindow: 200_000,
+        compactionThresholdTokens: 183_616,
+        utilization: 0.21,
+        measurement: "exact",
+      });
+    });
+
+    expect(await client.sessions.context("session / one")).toEqual({
+      usedTokens: 42_000,
+      contextWindow: 200_000,
+      compactionThresholdTokens: 183_616,
+      utilization: 0.21,
+      measurement: "exact",
+    });
+    expect(requests).toEqual(["/api/sessions/session%20%2F%20one/context"]);
+  });
+
   test("decodes resource responses without exposing transport descriptors", async () => {
     const responses = [
       Response.json([{

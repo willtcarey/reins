@@ -13,6 +13,7 @@
 import type { SessionModelUpdate } from "@backend/routes/sessions.js";
 import type { SessionDetailView as SessionData } from "@backend/models/sessions.js";
 import type { SessionAttachmentInfo as AttachmentInfo } from "@backend/session-attachments-store.js";
+import type { SessionContextSnapshot } from "@backend/models/session-context.js";
 import type { ClientPromptContent } from "../chat-content.js";
 import { ReinsHttpError, api } from "../reins-client.js";
 import type { IAppClient } from "../ws-client.js";
@@ -30,6 +31,8 @@ export interface SessionAttachmentUpload {
 }
 
 export type ActiveSessionStoreListener = () => void;
+
+const CONTEXT_POLL_INTERVAL_MS = 10_000;
 
 let nextFallbackClientId = 0;
 
@@ -89,11 +92,24 @@ export class ActiveSessionStore {
     return this._conversationsStore.get(this.sessionId);
   }
 
+  get contextSnapshot(): SessionContextSnapshot | null {
+    const snapshot = this._contextSnapshot;
+    return snapshot && this.conversation.isCompacting
+      ? { ...snapshot, usedTokens: null, utilization: null, measurement: "unknown" }
+      : snapshot;
+  }
+
   // ---- Private state --------------------------------------------------------
 
   private _listeners = new Set<ActiveSessionStoreListener>();
   private _unsubscribeSession: (() => void) | null = null;
   private _unsubscribeConversation: (() => void) | null = null;
+  private _unsubscribeEvents: (() => void) | null = null;
+  private _contextSnapshot: SessionContextSnapshot | null = null;
+  private _contextRefreshGeneration = 0;
+  private _contextRefreshScheduled = false;
+  private _contextPollTimer: ReturnType<typeof setInterval> | null = null;
+  private _lastKnownModelKey = "";
   private _markReadInFlight: string | null = null;
   private _activityMutationQueue: Promise<unknown> = Promise.resolve();
   private _lastKnownRunning = false;
@@ -111,6 +127,20 @@ export class ActiveSessionStore {
     this._unsubscribeConversation = this._conversationsStore.subscribe(sessionId, () => {
       this.notify();
     });
+    this._unsubscribeEvents = this._client?.subscribe({
+      event: (message) => {
+        if (message.sessionId !== this.sessionId) return;
+        if (message.event.type === "compaction_start") {
+          this._contextRefreshGeneration += 1;
+          this.notify();
+          return;
+        }
+        if (
+          message.event.type === "entry_added"
+          || message.event.type === "compaction_end"
+        ) this.scheduleContextRefresh();
+      },
+    }) ?? null;
   }
 
   // ---- Subscription ---------------------------------------------------------
@@ -127,10 +157,13 @@ export class ActiveSessionStore {
 
   dispose(): void {
     this._disposed = true;
+    this.stopContextPolling();
     this._unsubscribeSession?.();
     this._unsubscribeSession = null;
     this._unsubscribeConversation?.();
     this._unsubscribeConversation = null;
+    this._unsubscribeEvents?.();
+    this._unsubscribeEvents = null;
     this._listeners.clear();
   }
 
@@ -143,6 +176,7 @@ export class ActiveSessionStore {
     const cachedSession = this._sessionCache.getDetail(this.sessionId);
     if (cachedSession) {
       this._lastKnownRunning = cachedSession.activityState === "running";
+      this._lastKnownModelKey = this.modelKey(cachedSession);
       if (!this._lastKnownRunning) {
         this._conversationsStore.clearCompactingState(this.sessionId);
       }
@@ -161,15 +195,30 @@ export class ActiveSessionStore {
     await Promise.allSettled([
       this._sessionCache.fetchDetail(this.sessionId),
       this._conversationsStore.syncMessages(this.sessionId),
+      this.refreshContext(),
     ]);
   }
 
   // ---- Actions --------------------------------------------------------------
 
+  async refreshContext(): Promise<boolean> {
+    const generation = ++this._contextRefreshGeneration;
+    try {
+      const context = await api.sessions.context(this.sessionId);
+      if (this._disposed || generation !== this._contextRefreshGeneration) return false;
+      this._contextSnapshot = context;
+      this.notify();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Report whether this session's conversation is meaningfully visible. */
   setObserved(observed: boolean): void {
     if (this._disposed || this._observed === observed) return;
     this._observed = observed;
+    this.syncContextPolling();
     if (observed) void this.setUnread(false);
   }
 
@@ -233,13 +282,21 @@ export class ActiveSessionStore {
 
     const wasRunning = this._lastKnownRunning;
     const isRunning = data.activityState === "running";
+    const modelKey = this.modelKey(data);
+    const modelChanged = this._lastKnownModelKey !== "" && modelKey !== this._lastKnownModelKey;
+    this._lastKnownModelKey = modelKey;
+    if (modelChanged) void this.refreshContext();
     const conversation = this._conversationsStore.get(this.sessionId);
     const hadStreamingState = conversation.streamingMessages.length > 0 || conversation.isCompacting;
     this._lastKnownRunning = isRunning;
+    this.syncContextPolling();
     if (!isRunning) {
       // Terminal metadata can recover a missed compaction_end, but cannot
       // identify which received assistant or live entries persistence contains.
-      this._conversationsStore.clearCompactingState(this.sessionId);
+      if (conversation.isCompacting) {
+        this._conversationsStore.clearCompactingState(this.sessionId);
+        this.scheduleContextRefresh();
+      }
     }
     // Canonical entries remove identity-linked overlays; terminal metadata
     // triggers a page sync to recover any durable events missed in transit.
@@ -310,6 +367,35 @@ export class ActiveSessionStore {
     } catch (error) {
       return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
     }
+  }
+
+  private modelKey(data: SessionData): string {
+    const model = data.state.model;
+    return model ? `${model.provider}\u0000${model.id}` : "";
+  }
+
+  private scheduleContextRefresh(): void {
+    if (this._disposed || this._contextRefreshScheduled) return;
+    this._contextRefreshScheduled = true;
+    queueMicrotask(() => {
+      this._contextRefreshScheduled = false;
+      if (!this._disposed) void this.refreshContext();
+    });
+  }
+
+  private syncContextPolling(): void {
+    const shouldPoll = this._observed && this.sessionData.activityState === "running";
+    if (shouldPoll && this._contextPollTimer === null) {
+      this._contextPollTimer = setInterval(() => void this.refreshContext(), CONTEXT_POLL_INTERVAL_MS);
+    } else if (!shouldPoll) {
+      this.stopContextPolling();
+    }
+  }
+
+  private stopContextPolling(): void {
+    if (this._contextPollTimer === null) return;
+    clearInterval(this._contextPollTimer);
+    this._contextPollTimer = null;
   }
 
   private setOptimisticRunning(): void {

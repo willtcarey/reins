@@ -9,7 +9,7 @@ AgentHarness is the only transcript writer. `PiStorageAdapter` stores each publi
 - `parent_id` stores actual ancestry.
 - `seq` is the global harness write sequence; gaps are expected.
 - `message_json` is the canonical PiStorageAdapter entry envelope.
-- `pi_values`, `pi_lists`, and `pi_usage` store the remaining harness contract state.
+- `pi_values`, `pi_lists`, and `pi_usage` store the remaining harness contract state. `pi_usage` includes both assistant-linked provider calls and standalone structural calls and supports cumulative statistics. Current context occupancy instead uses usage embedded in valid assistant messages on the active branch, so structural requests cannot be mistaken for occupancy.
 
 Canonical readers do not accept legacy `RuntimeMessage` JSON. Process bootstrap inspects the database before importing application handlers or calling `getDb()`. After the operator stops the old server and all database users, startup creates an immutable WAL-consistent backup of the original schema, runs ordinary schema migrations, then converts and validates legacy history in one transaction on the live database. Fresh installs continue normally and canonical databases are not reconverted. Conversion failure rolls history back, though completed backward-compatible schema migrations may remain; migration failure requires explicit backup restoration. The cooperative lock and open-handle check do not fence arbitrary old binaries. See the cutover runbook for recovery details.
 

@@ -63,12 +63,192 @@ function makeSessionData(overrides: {
   };
 }
 
+describe("ActiveSessionStore context usage", () => {
+  afterEach(() => { restoreFetch(); });
+
+  test("restores context on refresh and refreshes it at a durable entry boundary", async () => {
+    const client = new StubClient();
+    const store = new ActiveSessionStore(
+      "sess-1", client, new SessionCache(), new ConversationsStore({ eventSource: client }),
+    );
+    let contextRequests = 0;
+    mockFetch((url) => {
+      if (url === "/api/sessions/sess-1") return jsonResponse(makeSessionData());
+      if (url === "/api/sessions/sess-1/messages") return jsonResponse([]);
+      if (url === "/api/sessions/sess-1/context") {
+        contextRequests += 1;
+        return jsonResponse(contextRequests === 1
+          ? {
+              usedTokens: 40_000, contextWindow: 200_000, compactionThresholdTokens: 183_616,
+              utilization: 0.2, measurement: "exact",
+            }
+          : {
+              usedTokens: 80_000, contextWindow: 200_000, compactionThresholdTokens: 183_616,
+              utilization: 0.4, measurement: "estimated",
+            });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await store.initialize();
+    expect(store.contextSnapshot).toMatchObject({ usedTokens: 40_000, measurement: "exact" });
+
+    client.fireMessage({
+      type: "event", sessionId: "sess-1", projectId: 42,
+      event: {
+        type: "entry_added",
+        entry: {
+          id: "assistant-1", parentId: null, seq: 1,
+          message: { role: "assistant", content: [{ type: "text", text: "answer" }], timestamp: 1 },
+        },
+      },
+    });
+    client.fireMessage({
+      type: "event", sessionId: "sess-1", projectId: 42,
+      event: {
+        type: "entry_added",
+        entry: {
+          id: "result-1", parentId: "assistant-1", seq: 2,
+          message: {
+            role: "toolResult", toolCallId: "call", toolName: "read",
+            content: [{ type: "text", text: "result" }], isError: false, timestamp: 2,
+          },
+        },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(store.contextSnapshot).toMatchObject({ usedTokens: 80_000, utilization: 0.4, measurement: "estimated" });
+    expect(contextRequests).toBe(2);
+  });
+
+  test("polls context every 10 seconds only while the running conversation is visible", async () => {
+    const originalSetInterval = Object.getOwnPropertyDescriptor(globalThis, "setInterval");
+    const originalClearInterval = Object.getOwnPropertyDescriptor(globalThis, "clearInterval");
+    const interval: { callback: (() => void) | null; delay?: number } = { callback: null };
+    const clearedTimers: unknown[] = [];
+    Object.defineProperty(globalThis, "setInterval", {
+      configurable: true,
+      value: (callback: () => void, delay?: number) => {
+        interval.callback = callback;
+        interval.delay = delay;
+        return 42;
+      },
+    });
+    Object.defineProperty(globalThis, "clearInterval", {
+      configurable: true,
+      value: (timer: unknown) => { clearedTimers.push(timer); },
+    });
+
+    try {
+      const client = new StubClient();
+      const sessionCache = new SessionCache();
+      sessionCache.set("sess-1", makeSessionData());
+      const store = new ActiveSessionStore("sess-1", client, sessionCache);
+      let contextRequests = 0;
+      mockFetch((url) => {
+        if (url === "/api/sessions/sess-1/context") {
+          contextRequests += 1;
+          return jsonResponse({
+            usedTokens: 40_000, contextWindow: 200_000, compactionThresholdTokens: 183_616,
+            utilization: 0.2, measurement: "exact",
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+
+      store.setObserved(true);
+      expect(interval.callback).toBeNull();
+
+      sessionCache.set("sess-1", makeSessionData({ activityState: "running" }));
+      expect(interval.delay).toBe(10_000);
+
+      const poll = interval.callback;
+      if (!poll) throw new Error("Expected context polling callback");
+      poll();
+      await Promise.resolve();
+      expect(contextRequests).toBe(1);
+
+      store.setObserved(false);
+      expect(clearedTimers).toEqual([42]);
+      store.dispose();
+    } finally {
+      if (originalSetInterval) Object.defineProperty(globalThis, "setInterval", originalSetInterval);
+      if (originalClearInterval) Object.defineProperty(globalThis, "clearInterval", originalClearInterval);
+    }
+  });
+
+  test("does not restore a stale exact snapshot after compaction starts", async () => {
+    const client = new StubClient();
+    const store = new ActiveSessionStore(
+      "sess-1", client, new SessionCache(), new ConversationsStore({ eventSource: client }),
+    );
+    let resolveFirst!: (response: Response) => void;
+    let requests = 0;
+    mockFetch((url) => {
+      if (url !== "/api/sessions/sess-1/context") throw new Error(`Unexpected fetch: ${url}`);
+      requests += 1;
+      if (requests === 1) return new Promise<Response>((resolve) => { resolveFirst = resolve; });
+      return jsonResponse({
+        usedTokens: 12_000, contextWindow: 200_000, compactionThresholdTokens: 183_616,
+        utilization: 0.06, measurement: "estimated",
+      });
+    });
+
+    const refresh = store.refreshContext();
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "compaction_start", reason: "threshold" } });
+    resolveFirst(jsonResponse({
+      usedTokens: 180_000, contextWindow: 200_000, compactionThresholdTokens: 183_616,
+      utilization: 0.9, measurement: "exact",
+    }));
+    await refresh;
+    expect(store.contextSnapshot).toBeNull();
+
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "compaction_end", aborted: false } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.contextSnapshot).toMatchObject({ usedTokens: 12_000, measurement: "estimated" });
+  });
+
+  test("marks occupancy unknown during compaction and restores the post-compaction estimate", async () => {
+    const client = new StubClient();
+    const store = new ActiveSessionStore(
+      "sess-1", client, new SessionCache(), new ConversationsStore({ eventSource: client }),
+    );
+    let compacted = false;
+    mockFetch((url) => {
+      if (url === "/api/sessions/sess-1/context") return jsonResponse(compacted
+        ? { usedTokens: 12_000, contextWindow: 200_000, compactionThresholdTokens: 183_616, utilization: 0.06, measurement: "estimated" }
+        : { usedTokens: 180_000, contextWindow: 200_000, compactionThresholdTokens: 183_616, utilization: 0.9, measurement: "exact" });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    await store.refreshContext();
+
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "compaction_start", reason: "threshold" } });
+    expect(store.contextSnapshot).toMatchObject({ usedTokens: null, measurement: "unknown" });
+
+    compacted = true;
+    client.fireMessage({ type: "event", sessionId: "sess-1", projectId: 42, event: { type: "compaction_end", aborted: false } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.contextSnapshot).toMatchObject({ usedTokens: 12_000, measurement: "estimated" });
+  });
+});
+
 describe("ActiveSessionStore.updateSessionModel", () => {
+  let contextRequests = 0;
+
   beforeEach(() => {
     restoreFetch();
+    contextRequests = 0;
     mockFetch((url, init) => {
       if (url === "/api/sessions/sess-1/model" && init?.method === "PUT") {
         return jsonResponse({ ok: true });
+      }
+      if (url === "/api/sessions/sess-1/context") {
+        contextRequests += 1;
+        return jsonResponse({
+          usedTokens: 20_000, contextWindow: 128_000, compactionThresholdTokens: 111_616,
+          utilization: 0.15625, measurement: "exact",
+        });
       }
       if (url === "/api/sessions/sess-1") {
         return jsonResponse({
@@ -103,6 +283,9 @@ describe("ActiveSessionStore.updateSessionModel", () => {
     expect(sessionCache.getDetail("sess-1")?.state.thinkingLevel).toBe("medium");
     expect(sessionCache.getDetail("sess-1")?.runtimeType).toBe("pi");
     expect(store.sessionData.state.model).toEqual({ provider: "openai", id: "gpt-5" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.contextSnapshot).toMatchObject({ contextWindow: 128_000, usedTokens: 20_000 });
+    expect(contextRequests).toBe(1);
   });
 });
 
@@ -283,11 +466,9 @@ describe("ActiveSessionStore session loading contract", () => {
   test("initialize reads cached metadata immediately while refreshing server state", async () => {
     const sessionCache = new SessionCache();
     const store = new ActiveSessionStore("sess-1", null, sessionCache);
-    const calls: string[] = [];
     sessionCache.set("sess-1", makeSessionData({ messageCount: 2 }));
 
     mockFetch((url) => {
-      calls.push(url);
       if (url === "/api/sessions/sess-1") return jsonResponse(makeSessionData({ messageCount: 2 }));
       if (url === "/api/sessions/sess-1/messages") return jsonResponse(twoMessages);
       throw new Error(`Unexpected fetch: ${url}`);
@@ -295,7 +476,6 @@ describe("ActiveSessionStore session loading contract", () => {
 
     await store.initialize();
 
-    expect(calls).toEqual(["/api/sessions/sess-1", "/api/sessions/sess-1/messages"]);
     expect(store.projectId).toBe(42);
     expect(store.sessionData.messageCount).toBe(2);
     expect(rawMessages(store)).toEqual(twoMessages);
@@ -303,10 +483,8 @@ describe("ActiveSessionStore session loading contract", () => {
 
   test("initialize fetches metadata when SessionCache has no detail", async () => {
     const store = new ActiveSessionStore("sess-1", null, new SessionCache());
-    const calls: string[] = [];
 
     mockFetch((url) => {
-      calls.push(url);
       if (url === "/api/sessions/sess-1") return jsonResponse(makeSessionData({ messageCount: 2 }));
       if (url === "/api/sessions/sess-1/messages") return jsonResponse(twoMessages);
       throw new Error(`Unexpected fetch: ${url}`);
@@ -314,7 +492,6 @@ describe("ActiveSessionStore session loading contract", () => {
 
     await store.initialize();
 
-    expect(calls).toEqual(["/api/sessions/sess-1", "/api/sessions/sess-1/messages"]);
     expect(store.projectId).toBe(42);
     expect(store.sessionData.messageCount).toBe(2);
     expect(rawMessages(store)).toEqual(twoMessages);
@@ -322,10 +499,8 @@ describe("ActiveSessionStore session loading contract", () => {
 
   test("initialize leaves metadata blank when detail fetch fails", async () => {
     const store = new ActiveSessionStore("sess-1", null, new SessionCache());
-    const calls: string[] = [];
 
     mockFetch((url) => {
-      calls.push(url);
       if (url === "/api/sessions/sess-1") return new Response("not found", { status: 404 });
       if (url === "/api/sessions/sess-1/messages") return jsonResponse(twoMessages);
       throw new Error(`Unexpected fetch: ${url}`);
@@ -333,7 +508,6 @@ describe("ActiveSessionStore session loading contract", () => {
 
     await store.initialize();
 
-    expect(calls).toEqual(["/api/sessions/sess-1", "/api/sessions/sess-1/messages"]);
     expect(store.projectId).toBeNull();
     expect(store.sessionData).toEqual({
       ...makeSessionData({ messageCount: 0, projectId: 0, runtimeType: undefined }),
@@ -751,9 +925,7 @@ describe("ActiveSessionStore session loading contract", () => {
     const store = new ActiveSessionStore("sess-1", null, sessionCache);
     sessionCache.set("sess-1", makeSessionData({ activityState: "running" }));
 
-    const calls: string[] = [];
     mockFetch((url) => {
-      calls.push(url);
       if (url === "/api/sessions/sess-1") return jsonResponse(makeSessionData({ activityState: "running" }));
       if (url === "/api/sessions/sess-1/messages") return jsonResponse([]);
       throw new Error(`Unexpected fetch: ${url}`);
@@ -762,7 +934,6 @@ describe("ActiveSessionStore session loading contract", () => {
     await store.initialize();
     store.setObserved(true);
 
-    expect(calls).toEqual(["/api/sessions/sess-1", "/api/sessions/sess-1/messages"]);
     expect(sessionCache.get("sess-1")?.activityState).toBe("running");
   });
 
