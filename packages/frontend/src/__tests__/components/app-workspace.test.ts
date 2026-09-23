@@ -49,6 +49,7 @@ function installRenderableStore(el: AppWorkspace, options: {
   sessionId?: string;
   activeSessionStore?: object | null;
 } = {}) {
+  Reflect.set(el, "getBoundingClientRect", () => ({ width: 1200 }));
   const store = {
     connected: true,
     projectId: options.projectId === undefined ? 42 : options.projectId,
@@ -98,7 +99,8 @@ describe("AppWorkspace layout selection", () => {
     expect(output).toContain("overflow-clip swipe-shell");
     expect(output).toContain("workspace-surface");
     expect(output).toContain("md:!transform-none");
-    expect(output).toContain("md:![grid-template-columns:auto_minmax(0,1fr)_15rem]");
+    expect(output).toContain("--workspace-left: 256px; --workspace-right: 240px");
+    expect(output).toContain('data-resize-handle');
     expect(output).not.toContain("swipe-shell md:grid");
     expect(output).not.toContain("md:grid-cols-[auto_minmax(0,1fr)_15rem]");
     expect(output).not.toContain("md:col-span-3");
@@ -110,6 +112,25 @@ describe("AppWorkspace layout selection", () => {
     expect(output).toContain("<diff-file-tree");
     expect(output).not.toContain("<desktop-layout");
     expect(output).not.toContain("<mobile-layout");
+  });
+
+  test("resizes desktop panes by keyboard and pointer without changing mobile page order", () => {
+    installWorkspaceGlobals({ mobile: false });
+    const el = new AppWorkspace();
+    installRenderableStore(el);
+    const separator = collectTemplateEventListeners(el.render(), "keydown")[0];
+    separator(Object.assign(new Event("keydown", { cancelable: true }), { key: "ArrowRight" }));
+    expect(fullTemplateOutput(el.render())).toContain("--workspace-left: 266px");
+    separator(Object.assign(new Event("keydown", { cancelable: true }), { key: "Home" }));
+    expect(fullTemplateOutput(el.render())).toContain("--workspace-left: 256px");
+
+    installWorkspaceGlobals({ mobile: true });
+    const mobile = new AppWorkspace();
+    installRenderableStore(mobile);
+    const mobileSeparator = collectTemplateEventListeners(mobile.render(), "keydown")[0];
+    mobileSeparator(Object.assign(new Event("keydown", { cancelable: true }), { key: "ArrowRight" }));
+    expect(fullTemplateOutput(mobile.render())).toContain("grid-template-columns: repeat(4, 100%); transform: translate3d(-100%, 0, 0);");
+    expect(fullTemplateOutput(mobile.render())).toContain("--workspace-left: 256px");
   });
 
   test("opens file search with explicit current project scope", () => {
@@ -157,6 +178,8 @@ describe("AppWorkspace layout selection", () => {
     expect(output).toContain("workspace-surface");
     expect(output).toContain("grid-template-columns: repeat(4, 100%); transform: translate3d(-100%, 0, 0);");
     expect(output).toContain("<session-sidebar");
+    expect(output).toContain("grid-template-columns: repeat(4, 100%)");
+    expect(output).toContain("hidden md:block absolute");
     expect(output).toContain("<app-main-toolbar");
     expect(output).toContain(".activePane=chat");
     expect(output).toContain(".activePane=changes");

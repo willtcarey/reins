@@ -5,6 +5,7 @@ import { PageSwipeController } from "../controllers/page-swipe-controller.js";
 import { StoreController } from "../controllers/store-controller.js";
 import { ViewportController } from "../controllers/viewport-controller.js";
 import { FileTreeState } from "../models/changes/file-tree-state.js";
+import { WorkspaceLayout, type SidePane } from "../models/workspace-layout.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import { WorkspaceStore } from "../models/stores/workspace-store.js";
 import { folderIcon } from "../ui/icons.js";
@@ -69,6 +70,34 @@ export class AppWorkspace extends LitElement {
   private observedSessionId = "";
   private observedProjectId: number | null = null;
   private fileTreeState = new FileTreeState();
+  private layout = new WorkspaceLayout(typeof localStorage === "undefined" ? null : localStorage, typeof navigator === "undefined" ? "browser" : navigator.userAgent ?? "browser");
+  private resizePointer: { pane: SidePane; id: number; startX: number; startWidth: number } | null = null;
+
+  private workspaceWidth() { return this.getBoundingClientRect().width || window.innerWidth; }
+  private startResize(pane: SidePane, event: PointerEvent) {
+    if (this.viewport.isMobileLayout || !event.isPrimary) return;
+    event.preventDefault();
+    if (event.currentTarget instanceof HTMLElement) event.currentTarget.setPointerCapture?.(event.pointerId);
+    this.resizePointer = { pane, id: event.pointerId, startX: event.clientX, startWidth: this.layout.width(pane, this.workspaceWidth()) };
+  }
+  private moveResize(event: PointerEvent) {
+    const drag = this.resizePointer;
+    if (!drag || drag.id !== event.pointerId) return;
+    this.layout.resize(drag.pane, drag.startWidth + (event.clientX - drag.startX) * (drag.pane === "sessions" ? 1 : -1), this.workspaceWidth());
+    this.requestUpdate();
+  }
+  private endResize(event: PointerEvent) { if (this.resizePointer?.id === event.pointerId) this.resizePointer = null; }
+  private resizeKey(pane: SidePane, event: KeyboardEvent) {
+    if (this.viewport.isMobileLayout) return;
+    if (event.key === "Home" || (event.key === "0" && (event.ctrlKey || event.metaKey))) this.layout.reset(pane);
+    else if (event.key === "ArrowLeft" || event.key === "ArrowRight") this.layout.resize(pane, this.layout.width(pane, this.workspaceWidth()) + (event.key === "ArrowRight" ? 10 : -10) * (pane === "sessions" ? 1 : -1), this.workspaceWidth());
+    else return;
+    event.preventDefault();
+    this.requestUpdate();
+  }
+  private renderHandle(pane: SidePane) {
+    return html`<div role="separator" aria-label="Resize ${pane === "sessions" ? "sessions" : "files"} pane" aria-orientation="vertical" aria-valuenow=${this.layout.width(pane, this.workspaceWidth())} tabindex="0" data-resize-handle=${pane} class="hidden md:block absolute z-30 top-0 bottom-0 w-2 cursor-col-resize touch-none focus-visible:bg-blue-500/40" style=${pane === "sessions" ? `left: ${this.layout.width("sessions", this.workspaceWidth()) - 4}px` : `right: ${this.layout.width("files", this.workspaceWidth()) - 4}px`} @pointerdown=${(e: PointerEvent) => this.startResize(pane, e)} @pointermove=${this.moveResize} @pointerup=${this.endResize} @pointercancel=${this.endResize} @dblclick=${() => { this.layout.reset(pane); this.requestUpdate(); }} @keydown=${(e: KeyboardEvent) => this.resizeKey(pane, e)}></div>`;
+  }
   private viewport = new ViewportController(this);
   private pageSwipe = new PageSwipeController(this, {
     pageCount: MOBILE_WORKSPACE_PANE_ORDER.length,
@@ -142,6 +171,8 @@ export class AppWorkspace extends LitElement {
       <session-sidebar
         class="block h-full"
         .store=${store}
+        .collapsed=${this.layout.sessionsCollapsed}
+        .onToggleCollapse=${() => { this.layout.toggleSessions(); this.requestUpdate(); }}
         @select-session=${() => { this.activePane = "chat"; }}
       ></session-sidebar>
     `;
@@ -261,9 +292,10 @@ export class AppWorkspace extends LitElement {
       ? `${-page * 100}%`
       : `${this.pageSwipe.translateX}px`;
     const gridStyle = `grid-template-columns: repeat(${MOBILE_WORKSPACE_PANE_ORDER.length}, 100%); transform: translate3d(${swipeTranslateX}, 0, 0);`;
-    const desktopColumns = hasProject
-      ? "md:![grid-template-columns:auto_minmax(0,1fr)_15rem]"
-      : "md:![grid-template-columns:auto_minmax(0,1fr)_0]";
+    const width = this.workspaceWidth();
+    const left = this.layout.width("sessions", width);
+    const right = hasProject ? this.layout.width("files", width) : 0;
+    const desktopColumns = `md:![grid-template-columns:var(--workspace-left)_minmax(0,1fr)_var(--workspace-right)]`; 
 
     return html`
       <div
@@ -275,10 +307,12 @@ export class AppWorkspace extends LitElement {
         @pointerup=${this.pageSwipe.handlePointerEnd}
         @pointercancel=${this.pageSwipe.handlePointerCancel}
       >
+        ${this.renderHandle("sessions")}
+        ${hasProject ? this.renderHandle("files") : nothing}
         <div
           class="workspace-surface grid h-full min-h-0 min-w-0 grid-rows-[50px_minmax(0,1fr)] md:!transform-none ${desktopColumns} md:grid-rows-[50px_minmax(0,1fr)]"
           data-dragging=${this.pageSwipe.dragging || this.pageSwipe.settling ? "true" : "false"}
-          style=${gridStyle}
+          style=${`${gridStyle} --workspace-left: ${left}px; --workspace-right: ${right}px;`}
         >
           <div class="z-20 col-start-2 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "chat" ? "md:block" : "md:hidden"}">
             ${hasSession ? this.renderMainToolbar(store, "chat") : nothing}

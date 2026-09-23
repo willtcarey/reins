@@ -29,7 +29,7 @@ describe("SessionSidebar viewport behavior", () => {
     const el = new SessionSidebar();
     Reflect.set(el, "collapsed", true);
 
-    expect(templateToString(el.render())).toContain("w-full md:w-64");
+    expect(templateToString(el.render())).toContain("class=w-full");
 
     Reflect.set(el, "collapsed", false);
     Reflect.get(el, "toggleCollapse").call(el);

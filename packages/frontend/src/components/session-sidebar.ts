@@ -43,7 +43,8 @@ export class SessionSidebar extends LitElement {
   @property({ attribute: false })
   store: WorkspaceStore | null = null;
 
-  @state() private collapsed = false;
+  @property({ attribute: false }) collapsed = false;
+  @property({ attribute: false }) onToggleCollapse: (() => void) | null = null;
   @state() private expandedProjects = new Set<number>();
 
   /** Upload progress per project: 0–100 while uploading, null when idle. */
@@ -192,7 +193,7 @@ export class SessionSidebar extends LitElement {
 
   private toggleCollapse() {
     if (this.viewport.isMobileLayout) return;
-    this.collapsed = !this.collapsed;
+    this.onToggleCollapse?.();
   }
 
   /** Open the quick-open palette (Cmd+K). */
@@ -294,7 +295,7 @@ export class SessionSidebar extends LitElement {
   override render() {
     const store = this.store;
     const isCollapsed = !this.viewport.isMobileLayout && this.collapsed;
-    const shellClass = `${isCollapsed ? "md:w-10" : "w-full md:w-64"}
+    const shellClass = `${isCollapsed ? "md:w-full" : "w-full"}
       h-full bg-zinc-900 border-r border-zinc-700 flex flex-col shrink-0 overflow-hidden
       md:transition-[width] duration-200 ease-out`;
 
