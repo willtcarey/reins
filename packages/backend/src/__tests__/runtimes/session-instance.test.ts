@@ -44,6 +44,37 @@ describe("SessionInstance", () => {
     expect(broadcasts).toEqual([]);
   });
 
+  test("sends to another task's session in the same project", async () => {
+    const project = createProject("Cross-task delivery", "/tmp/cross-task-delivery");
+    createSession("source", project.id, { agentRuntimeType: "pi" });
+    const task = getDb().query<{ id: number }, [number, string, string]>(
+      "INSERT INTO tasks (project_id, title, branch_name, status, created_at, updated_at) VALUES (?, ?, ?, 'open', datetime('now'), datetime('now')) RETURNING id",
+    ).get(project.id, "Other task", "task/other");
+    if (!task) throw new Error("Expected task");
+    createSession("target", project.id, { agentRuntimeType: "pi", taskId: task.id });
+    const stub = createRuntimeStub();
+    const state = createServerState();
+    state.sessions.set("target", { id: "target", runtime: stub.runtime, lastActivity: 0 });
+
+    await new SessionInstance(new SessionManager(state), "source").send("target", "Do not break mobile");
+
+    expect(stub.steerCalls).toEqual([[{ type: "text", text: "Do not break mobile" }]]);
+    expect(stub.steerOptions).toEqual([{ reinsId: expect.any(String), metadata: { sourceSessionId: "source" } }]);
+  });
+
+  test("rejects sending to a session in another project", async () => {
+    const sourceProject = createProject("Source", "/tmp/send-source");
+    const targetProject = createProject("Target", "/tmp/send-target");
+    createSession("source", sourceProject.id, { agentRuntimeType: "pi" });
+    createSession("target", targetProject.id, { agentRuntimeType: "pi" });
+    const stub = createRuntimeStub();
+    const state = createServerState();
+    state.sessions.set("target", { id: "target", runtime: stub.runtime, lastActivity: 0 });
+
+    await expect(new SessionInstance(new SessionManager(state), "source").send("target", "Nope")).rejects.toThrow();
+    expect(stub.steerCalls).toEqual([]);
+  });
+
   test("updates activity and metadata without rewriting canonical entries", () => {
     const project = createProject("Lifecycle", "/tmp/lifecycle");
     createSession("session", project.id, { agentRuntimeType: "pi" });

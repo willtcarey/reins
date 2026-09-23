@@ -100,7 +100,7 @@ export class SessionInstance implements RuntimeLifecycleSink {
   }
 
   async send(sessionId: string, message: string): Promise<{ sessionId: string }> {
-    this.scopedSession(sessionId);
+    this.projectSession(sessionId);
     return this.deliver(sessionId, message, "steer", this.sessionId);
   }
 
@@ -169,10 +169,19 @@ export class SessionInstance implements RuntimeLifecycleSink {
     return row;
   }
 
-  private scopedSession(sessionId: string): SessionRow {
+  private projectSession(sessionId: string): SessionRow {
     const caller = this.session(this.sessionId);
     const target = this.session(sessionId);
-    if (caller.project_id !== target.project_id || caller.task_id !== target.task_id) {
+    if (caller.project_id !== target.project_id) {
+      throw new Error("Session is outside the current project");
+    }
+    return target;
+  }
+
+  private scopedSession(sessionId: string): SessionRow {
+    const caller = this.session(this.sessionId);
+    const target = this.projectSession(sessionId);
+    if (caller.task_id !== target.task_id) {
       throw new Error("Session is outside the current project/task scope");
     }
     return target;

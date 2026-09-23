@@ -215,7 +215,7 @@ describe("api.sessions orchestration", () => {
     await expect(Promise.resolve().then(() => api.sessions.wait("parent", 0))).rejects.toThrow("itself");
     const other = createProject("Other", `${repo.dir}/other`, "main");
     createSession("foreign", other.id, { agentRuntimeType: "pi" });
-    await expect(Promise.resolve().then(() => api.sessions.send("foreign", "bad"))).rejects.toThrow("scope");
+    await expect(Promise.resolve().then(() => api.sessions.send("foreign", "bad"))).rejects.toThrow("project");
     expect(listSessions({ projectId: project.id })).toEqual(before);
     expect(turns).toEqual([]);
   });

@@ -336,7 +336,7 @@ const sessionsStartFunction = defineFunction({
 });
 const sessionsSendFunction = defineFunction({
   name: "sessions.send",
-  description: "Send a message to a session in the caller's project/task. Reopens it if necessary. " +
+  description: "Send a message to any session in the caller's project, even when its task ID differs. Reopens it if necessary. " +
     "Idle sessions start a prompt; busy sessions receive native steering without cancellation/restart. " +
     "Idle delivery is durably accepted before execution; busy delivery forwards directly to AgentHarness steering. " +
     "No Reins-managed queued follow-ups, deferred delivery, or automatic restart. Pi uses native idle state and does not serialize concurrent startup sends. Returns without waiting for response completion.",

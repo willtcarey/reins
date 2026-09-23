@@ -72,7 +72,7 @@ await api.sessions.send(sessionId, "Also check the cancellation case.");
 return await api.sessions.wait(sessionId, 10000);
 ```
 
-- **send** reopens a persisted session if needed and submits through native AgentHarness steering—there is no activity-state check, delivery mode parameter, or Reins-managed follow-up queue. AgentHarness joins an active operation or starts an idle run from the durable steering input. Sending and starting return without waiting for a response.
+- **send** accepts any session in the caller's project, including sessions on other tasks; sessions in other projects remain inaccessible. It reopens a persisted session if needed and submits through native AgentHarness steering—there is no activity-state check, delivery mode parameter, or Reins-managed follow-up queue. AgentHarness joins an active operation or starts an idle run from the durable steering input. Sending and starting return without waiting for a response.
 - Sends are durably accepted before provider execution begins. Steering a passively reopened operation resumes that operation so the native harness can consume the message.
 - No hidden waiting, automatic retry, unsent-message table, or cancellation/restart fallback. Explicit abort remains separate; if you want to interrupt work, abort it deliberately before sending again.
 - Reins tracks steering admission and idle-run startup so an immediate wait includes the submitted message without choosing delivery from a potentially stale streaming flag.
