@@ -5,7 +5,7 @@ import { createServerState } from "../helpers/server-state.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createSession, getSession, updateActivityState } from "../../session-store.js";
-import { createTask } from "../../task-store.js";
+import { createTask, setTaskStatus } from "../../task-store.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 
 describe("PATCH /api/sessions/:sessionId/activity", () => {
@@ -131,6 +131,18 @@ describe("GET /api/sessions/activity", () => {
     expect(res!.status).toBe(200);
     const body = await res!.json();
     expect(body).toEqual([{ id: "s-task", activityState: "finished", projectId, taskId: task.id }]);
+  });
+
+  test("excludes unread sessions on closed tasks from the activity snapshot", async () => {
+    const task = createTask(projectId, "Closed task", null, "task/closed-activity");
+    createSession("s-closed", projectId, { agentRuntimeType: "pi", taskId: task.id });
+    updateActivityState("s-closed", "finished");
+    setTaskStatus(task.id, "closed");
+
+    const res = await router.handle(makeRequest("GET", "/api/sessions/activity"), state);
+
+    expect(await res!.json()).toEqual([]);
+    expect(getSession("s-closed")!.activity_state).toBe("finished");
   });
 
   test("returns empty array when no active sessions", async () => {

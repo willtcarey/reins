@@ -384,7 +384,10 @@ export function listSessionsWithActivity() {
   const db = getDb();
   return db
     .query<{ id: string; activity_state: ActivityStateValue; project_id: number; task_id: number | null }, []>(
-      "SELECT id, activity_state, project_id, task_id FROM sessions WHERE activity_state IS NOT NULL",
+      `SELECT s.id, s.activity_state, s.project_id, s.task_id
+       FROM sessions s
+       LEFT JOIN tasks t ON t.id = s.task_id
+       WHERE s.activity_state IS NOT NULL AND (t.status IS NULL OR t.status != 'closed')`,
     )
     .all();
 }
