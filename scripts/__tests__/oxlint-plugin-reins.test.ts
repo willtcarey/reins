@@ -52,6 +52,23 @@ describe("reins/frontend-backend-imports-type-only", () => {
   });
 });
 
+describe("reins/node-import-boundary", () => {
+  test("server can import only the contract export, not daemon implementation", () => {
+    for (const specifier of ["@reins/node", "@reins/node/runtime", "../../../node/src/runtime.js"]) {
+      expect(runRule("node-import-boundary", "ImportDeclaration", { source: { value: specifier } })).toHaveLength(1);
+    }
+    expect(runRule("node-import-boundary", "ImportDeclaration", { source: { value: "@reins/node/contract" } })).toHaveLength(0);
+    expect(runRule("node-import-boundary", "ImportExpression", { source: { value: "@reins/node/runtime" } })).toHaveLength(1);
+    expect(runRule("node-import-boundary", "ExportNamedDeclaration", { source: { value: "@reins/node/runtime" } })).toHaveLength(1);
+  });
+
+  test("contract imports cannot depend on implementation", () => {
+    expect(runRule("node-contract-isolation", "ImportDeclaration", { source: { value: "./runtime.js" } })).toHaveLength(1);
+    expect(runRule("node-contract-isolation", "ImportDeclaration", { source: { value: "zod" } })).toHaveLength(0);
+    expect(runRule("node-contract-isolation", "ImportExpression", { source: { value: "./runtime.js" } })).toHaveLength(1);
+  });
+});
+
 describe("reins/no-telemetry-error-guards", () => {
   const record = {
     type: "CallExpression",

@@ -3,7 +3,7 @@
 | Doc | Package | Description |
 |---|---|---|
 | [hot-reload.md](hot-reload.md) | backend | How backend hot-reload works in dev mode |
-| [node-contract.md](node-contract.md) | backend/node-contract | Internal source routing and minimal semantic contract; remote limitations |
+| [node-contract.md](node-contract.md) | backend/node | Internal source routing, isolated node contract export and remote limitations |
 | [backend-architecture.md](backend-architecture.md) | backend | Backend layering: routes, tools, models, stores, utilities |
 | [router.md](router.md) | backend | Router API, adding routes, error handling |
 | [logging.md](logging.md) | backend | Logger levels, test behavior, and runtime verbosity configuration |

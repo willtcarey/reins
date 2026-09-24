@@ -49,8 +49,13 @@
     {
       "files": ["packages/backend/src/**/*.ts"],
       "rules": {
-        "no-console": "error"
+        "no-console": "error",
+        "reins/node-import-boundary": "error"
       }
+    },
+    {
+      "files": ["packages/node/src/contract.ts"],
+      "rules": { "reins/node-contract-isolation": "error" }
     },
     {
       "files": [

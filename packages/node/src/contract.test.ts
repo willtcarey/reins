@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { contractVersion, nodeCommand, nodeResult, nodeEvent } from "./index.js";
+import { contractVersion, nodeCommand, nodeResult, nodeEvent } from "./contract.js";
 
 test("semantic contract validates commands, results and observations without transport framing", () => {
   expect(contractVersion).toBe(1);

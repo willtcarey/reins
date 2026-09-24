@@ -25,6 +25,38 @@ module.exports = {
     name: "reins",
   },
   rules: {
+    "node-import-boundary": {
+      meta: {
+        type: "problem",
+        docs: { description: "Server modules may import only the node contract export." },
+        messages: { forbidden: "Server code may import @reins/node/contract, not daemon implementation." },
+      },
+      create(context) {
+        const check = (node) => {
+          const specifier = node.source?.value;
+          if (typeof specifier === "string" && (
+            (specifier.startsWith("@reins/node") && specifier !== "@reins/node/contract")
+            || /(?:^|\/)node\/src\//.test(specifier)
+          )) context.report({ node, messageId: "forbidden" });
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
+    "node-contract-isolation": {
+      meta: {
+        type: "problem",
+        docs: { description: "Keep node contract independent from daemon implementation." },
+        messages: { forbidden: "Node contract must not import daemon or server implementation." },
+      },
+      create(context) {
+        const check = (node) => {
+          if (typeof node.source?.value === "string" && node.source.value !== "zod") {
+            context.report({ node, messageId: "forbidden" });
+          }
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
     "frontend-backend-imports-type-only": {
       meta: {
         type: "problem",
