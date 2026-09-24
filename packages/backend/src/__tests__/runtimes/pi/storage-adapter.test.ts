@@ -10,7 +10,7 @@ for (const testCase of createStorageConformance(async () => {
   setupTestDb();
   const db = getDb();
   db.query("INSERT INTO projects(name,path) VALUES('project','/tmp/project')").run();
-  db.query("INSERT INTO sessions(id,project_id,agent_runtime_type) VALUES('session',1,'pi')").run();
+  db.query("INSERT INTO sessions(id,project_id,source_id,agent_runtime_type) VALUES('session',1,(SELECT id FROM sources WHERE project_id=1),'pi')").run();
   const storage = new PiStorageAdapter(db, "session", () => 1_700_000_000_000);
   return {
     storage,
@@ -36,7 +36,7 @@ describe("PiStorageAdapter", () => {
     try {
       const db = getDb();
       db.query("INSERT INTO projects(name,path) VALUES('project','/tmp/project')").run();
-      db.query("INSERT INTO sessions(id,project_id,agent_runtime_type) VALUES('session',1,'pi')").run();
+      db.query("INSERT INTO sessions(id,project_id,source_id,agent_runtime_type) VALUES('session',1,(SELECT id FROM sources WHERE project_id=1),'pi')").run();
       const storage = new PiStorageAdapter(db, "session", () => 42);
       await storage.commit([
         insertEntry({ id: "root", parentId: null, type: "message", message: { role: "user", content: "new", timestamp: 1 } }),
@@ -70,7 +70,7 @@ describe("PiStorageAdapter", () => {
     try {
       const db = getDb();
       db.query("INSERT INTO projects(name,path) VALUES('one','/tmp/one'),('two','/tmp/two')").run();
-      db.query("INSERT INTO sessions(id,project_id,agent_runtime_type) VALUES('one',1,'pi'),('two',2,'pi')").run();
+      db.query("INSERT INTO sessions(id,project_id,source_id,agent_runtime_type) VALUES('one',1,(SELECT id FROM sources WHERE project_id=1),'pi'),('two',2,(SELECT id FROM sources WHERE project_id=2),'pi')").run();
       const one = new PiStorageAdapter(db, "one", () => 42);
       const two = new PiStorageAdapter(db, "two", () => 42);
       await one.commit([insertEntry({ id: "one-root", parentId: null, type: "custom", customType: "note" })], BACKGROUND_CONTEXT);
@@ -93,7 +93,7 @@ describe("PiStorageAdapter", () => {
     try {
       const db = getDb();
       db.query("INSERT INTO projects(name,path) VALUES('project','/tmp/project')").run();
-      db.query("INSERT INTO sessions(id,project_id,agent_runtime_type) VALUES('one',1,'pi'),('two',1,'pi')").run();
+      db.query("INSERT INTO sessions(id,project_id,source_id,agent_runtime_type) VALUES('one',1,(SELECT id FROM sources WHERE project_id=1),'pi'),('two',1,(SELECT id FROM sources WHERE project_id=1),'pi')").run();
       const one = new PiStorageAdapter(db, "one", () => 42);
       const two = new PiStorageAdapter(db, "two", () => 42);
       await one.commit([

@@ -290,6 +290,32 @@ const MIGRATIONS: Migration[] = [
     `ALTER TABLE sessions ADD COLUMN pinned_at TEXT;
      ALTER TABLE sessions ADD COLUMN archived_at TEXT`,
   ],
+  [
+    "029_internal_nodes_and_sources",
+    `CREATE TABLE nodes (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+     INSERT INTO nodes VALUES ('internal', 'Internal');
+     CREATE TABLE sources (
+       id INTEGER PRIMARY KEY,
+       project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+       node_id TEXT NOT NULL REFERENCES nodes(id),
+       path TEXT NOT NULL,
+       UNIQUE(project_id, node_id, path)
+     );
+     INSERT INTO sources (project_id, node_id, path) SELECT id, 'internal', path FROM projects;
+     ALTER TABLE sessions ADD COLUMN source_id INTEGER REFERENCES sources(id);
+     UPDATE sessions SET source_id = (SELECT id FROM sources WHERE sources.project_id = sessions.project_id);
+     CREATE INDEX idx_sessions_source ON sessions(source_id);
+     CREATE TRIGGER session_source_insert BEFORE INSERT ON sessions
+       WHEN NEW.source_id IS NULL OR NOT EXISTS (SELECT 1 FROM sources WHERE id = NEW.source_id AND project_id = NEW.project_id)
+       BEGIN SELECT RAISE(ABORT, 'session source/project mismatch'); END;
+     CREATE TRIGGER session_source_update BEFORE UPDATE OF source_id, project_id ON sessions
+       WHEN NEW.source_id IS NULL OR NOT EXISTS (SELECT 1 FROM sources WHERE id = NEW.source_id AND project_id = NEW.project_id)
+       BEGIN SELECT RAISE(ABORT, 'session source/project mismatch'); END;
+     CREATE TRIGGER internal_project_source_insert AFTER INSERT ON projects
+       BEGIN INSERT INTO sources (project_id, node_id, path) VALUES (NEW.id, 'internal', NEW.path); END;
+     CREATE TRIGGER internal_project_source_update AFTER UPDATE OF path ON projects
+       BEGIN UPDATE sources SET path = NEW.path WHERE project_id = NEW.id AND node_id = 'internal' AND path = OLD.path; END;`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

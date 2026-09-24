@@ -25,14 +25,15 @@ async function legacyDir(options: { recorded027?: boolean; harnessColumn?: boole
   db.exec(`PRAGMA foreign_keys=ON;
     CREATE TABLE migrations(name TEXT PRIMARY KEY,applied_at TEXT);
     CREATE TABLE projects(id INTEGER PRIMARY KEY,name TEXT,path TEXT);
-    CREATE TABLE sessions(id TEXT PRIMARY KEY,agent_runtime_type TEXT NOT NULL,model_provider TEXT,model_id TEXT,thinking_level TEXT${harnessColumn ? ",harness_next_seq INTEGER NOT NULL DEFAULT 1" : ""});
+    CREATE TABLE sessions(id TEXT PRIMARY KEY,project_id INTEGER,agent_runtime_type TEXT NOT NULL,model_provider TEXT,model_id TEXT,thinking_level TEXT${harnessColumn ? ",harness_next_seq INTEGER NOT NULL DEFAULT 1" : ""});
     CREATE TABLE session_messages(id INTEGER PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id),seq INTEGER NOT NULL,role TEXT NOT NULL,message_json TEXT NOT NULL,created_at TEXT NOT NULL,parent_id INTEGER REFERENCES session_messages(id) ON DELETE SET NULL,harness_id TEXT);
     CREATE UNIQUE INDEX idx_session_messages_session_harness_id ON session_messages(session_id,harness_id) WHERE harness_id IS NOT NULL;
     CREATE TABLE session_attachments(id TEXT PRIMARY KEY,session_id TEXT,kind TEXT,mime_type TEXT,filename TEXT,byte_size INTEGER,sha256 TEXT,data BLOB,created_at TEXT,pruned_at TEXT,width INTEGER,height INTEGER);
   `);
   for (const name of migrationsThrough026) db.query("INSERT INTO migrations(name) VALUES(?)").run(name);
   if (options.recorded027) db.query("INSERT INTO migrations(name) VALUES('027_add_agent_harness_storage')").run();
-  db.query(`INSERT INTO sessions(id,agent_runtime_type,model_provider,model_id,thinking_level${harnessColumn ? ",harness_next_seq" : ""}) VALUES('legacy','claude_agent_sdk','claude_agent_sdk','claude-old','medium'${harnessColumn ? ",1" : ""})`).run();
+  db.query("INSERT INTO projects(id,name,path) VALUES(1,'legacy','/tmp/legacy')").run();
+  db.query(`INSERT INTO sessions(id,project_id,agent_runtime_type,model_provider,model_id,thinking_level${harnessColumn ? ",harness_next_seq" : ""}) VALUES('legacy',1,'claude_agent_sdk','claude_agent_sdk','claude-old','medium'${harnessColumn ? ",1" : ""})`).run();
   const timestamp = Date.parse("2026-01-01T00:00:00.000Z");
   db.query("INSERT INTO session_messages VALUES(1,'legacy',1,'user',?,'2026-01-01T00:00:00.000Z',NULL,NULL)")
     .run(JSON.stringify({ role: "user", content: [{ type: "text", text: "hello" }], timestamp }));

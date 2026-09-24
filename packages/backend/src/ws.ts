@@ -10,7 +10,7 @@
  */
 
 import type { ServerState, WsClient, WebSocketLike } from "./state.js";
-import { ensureSessionOpen } from "./runtimes/session-manager.js";
+import { executeSessionCommand } from "./runtimes/node-execution.js";
 import { getSession } from "./session-store.js";
 import { logger } from "./logger.js";
 import type { ClientPromptContent } from "./messages-store.js";
@@ -76,9 +76,7 @@ async function handleWsCommand(
       }
       try {
         if (!getSession(sessionId)) { sendError("Session not found", clientId); return; }
-        const managed = await ensureSessionOpen(state, sessionId);
-        if (command === "prompt") await managed.runtime.prompt(message, { reinsId: clientId });
-        else await managed.runtime.steer(message, { reinsId: clientId });
+        await executeSessionCommand(state, sessionId, command, message, clientId);
         sendToWs(client.ws, { type: "ack", command, clientId });
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -93,7 +91,7 @@ async function handleWsCommand(
       managed.lastActivity = Date.now();
       sendToWs(client.ws, { type: "ack", command: "abort" });
       try {
-        await managed.runtime.abort();
+        await executeSessionCommand(state, sessionId, "abort");
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         sendError(`abort failed: ${message}`);

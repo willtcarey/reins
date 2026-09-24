@@ -6,6 +6,7 @@
  */
 
 import { getDb } from "./db.js";
+import { internalSource } from "./node-store.js";
 import { stripLeadingSkillBlocks } from "./models/skill.js";
 
 // ---- Types -----------------------------------------------------------------
@@ -15,6 +16,7 @@ export type ActivityStateValue = "running" | "finished";
 export interface SessionRow {
   id: string;
   project_id: number;
+  source_id: number;
   name: string | null;
   created_at: string;
   updated_at: string;
@@ -82,18 +84,20 @@ export function createSession(
     agentRuntimeType: string;
     taskId?: number;
     parentSessionId?: string;
+    sourceId?: number;
   },
 ): SessionRow {
   const db = getDb();
   return db
-    .query<SessionRow, [string, number, string | null, string | null, string, string, number | null, string | null]>(
-      `INSERT INTO sessions (id, project_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    .query<SessionRow, [string, number, number, string | null, string | null, string, string, number | null, string | null]>(
+      `INSERT INTO sessions (id, project_id, source_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
     )
     .get(
       id,
       projectId,
+      opts.sourceId ?? internalSource(projectId).id,
       opts.modelProvider ?? null,
       opts.modelId ?? null,
       opts.thinkingLevel ?? "off",

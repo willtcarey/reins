@@ -68,6 +68,10 @@ Agent execution is routed through a runtime abstraction:
 
 `ManagedSession` holds a runtime handle (`managed.runtime`) instead of exposing Pi internals. AgentHarness Pi is the only registered session runtime; the Claude SDK implementation remains in-tree but unregistered.
 
+### Internal node/source affinity
+
+`nodes` identifies execution hosts; `sources` binds a project to a host-local path. Existing projects receive an internal source on migration; newly created projects get one automatically, and path updates follow the original internal source. Sessions persist `source_id` alongside `project_id`, with SQLite triggers enforcing project/source agreement. The session manager reopens from the bound source path rather than assuming the project's current path. Browser prompt/steer/abort and explicit resume enter `runtimes/node-execution.ts`, which rejects non-internal sources before opening the runtime. This is still an in-process seam: Pi storage, custom tools, files and git remain local; there is no external daemon or transport. Scripting-directed session sends still use the session manager's native runtime interface.
+
 ### Pi integration (`src/runtimes/pi/`)
 
 Pi-specific runtime boot/reopen behavior lives under `src/runtimes/pi/`.

@@ -1,6 +1,6 @@
 # Node Architecture
 
-Status: **design investigation** — start by mapping current boundaries and drafting a minimal server–daemon contract; do not implement the full architecture from this sketch.
+Status: **first internal-node slice implemented**; remote readiness gate remains open. The older sketches below are historical, not the current implementation.
 
 ## Motivation
 
@@ -54,7 +54,7 @@ Daemon → server `{type:"events",sessionId,instanceId,firstSeq,events:[{seq,kin
 
 ## Incremental implementation slices
 
-1. **First implementation slice — internal node only:** add stable `nodes` and `sources` rows; migrate existing projects to internal sources and sessions to source affinity. Keep `project_id` temporarily, enforcing agreement with the source's project. Route existing session open/prompt/steer/abort/explicit resume through an in-process node adapter with unchanged browser behavior. Add contract tests for routing and identity constraints. No external daemon, wire transport, or remote-session UI; local files/git/tools continue to work. Do not claim the server is repo-independent yet.
+1. **First implementation slice — internal node only (implemented):** add stable `nodes` and `sources` rows; migrate existing projects to internal sources and sessions to source affinity. Keep `project_id` temporarily, enforcing agreement with the source's project. Route existing session open/prompt/steer/abort/explicit resume through an in-process node adapter with unchanged browser behavior. Add contract tests for routing and identity constraints. No external daemon, wire transport, or remote-session UI; local files/git/tools continue to work. Do not claim the server is repo-independent yet.
 2. **Remote readiness gate:** test a transport-backed canonical Pi storage adapter against the current local adapter: create, prompt, steering, compaction/branch, restart/reopen and pending-operation continuation with exact IDs and usage. Verify DB/custom-tool calls and resource loading assumptions. Define `node-protocol` schemas and transport tests for version, ownership, correlation, event ordering and disconnect after admission. Stop if canonical storage cannot safely cross the transport.
 3. **Next implementation slice — one external daemon:** launch one manually configured daemon on another machine/process, relay browser events through the server and route selected new sessions plus scoped read/list/status/diff. Existing sessions stay on the internal node; never silently move a live session. Test reconnect and remote resume with the server unable to access the checkout. Move task/git mutations and DB-backed tools behind explicit server-policy/daemon-execution calls; block unsupported remote operations instead of falling back to server filesystem.
 4. Later: enrollment UI/token lifecycle, multi-host source selection, full git/task parity, cloud wake, installers/updates and optional direct transport. Use a separate server port/DB for development.

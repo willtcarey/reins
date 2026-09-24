@@ -7,6 +7,7 @@ import {
 } from "../session-store.js";
 import { loadMessages as dbLoadMessages, type ClientPromptContent } from "../messages-store.js";
 import { getProject } from "../project-store.js";
+import { getSource, internalSource } from "../node-store.js";
 import { touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { SessionInstance, type SessionCreationOptions } from "./session-instance.js";
@@ -203,6 +204,8 @@ async function createManagedSession(
     throw new Error(`Project not found: ${projectId}`);
   }
 
+  const source = internalSource(projectId);
+  if (source.path !== projectDir) throw new Error(`Project source path mismatch: ${projectId}`);
   const sessionId = crypto.randomUUID();
 
   const defaultModel = getSetting("default_model");
@@ -228,6 +231,7 @@ async function createManagedSession(
     agentRuntimeType: runtimeType,
     taskId: opts?.taskId,
     parentSessionId: opts?.parentSessionId,
+    sourceId: source.id,
   });
 
   if (opts?.title !== undefined) updateSessionMeta(sessionId, { name: opts.title });
@@ -314,6 +318,11 @@ async function reopenSession(manager: SessionManager, sessionId: string): Promis
     throw new Error(`Project not found: ${row.project_id}`);
   }
 
+  const source = getSource(row.source_id);
+  if (!source || source.project_id !== row.project_id || source.node_id !== "internal") {
+    throw new Error(`Execution source unavailable for session ${sessionId}`);
+  }
+
   const defaultModel = getSetting("default_model");
   const selectedResumeModel = (row.model_provider && row.model_id)
     ? {
@@ -340,7 +349,7 @@ async function reopenSession(manager: SessionManager, sessionId: string): Promis
     manager,
     runtimeType: row.agent_runtime_type,
     projectId: row.project_id,
-    projectDir: project.path,
+    projectDir: source.path,
     sessionId,
     taskId: row.task_id,
     model: selectedResumeModel,

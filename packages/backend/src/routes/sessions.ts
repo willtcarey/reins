@@ -14,7 +14,7 @@ import { SessionNotFoundError, Sessions } from "../models/sessions.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { parseDisplayCursor } from "../messages-store.js";
 import { parseBody } from "./validate.js";
-import { ensureSessionOpen } from "../runtimes/session-manager.js";
+import { executeSessionCommand } from "../runtimes/node-execution.js";
 import { withSessionNotFound } from "./session-errors.js";
 
 export interface MessagePageQuery { before?: string; after?: string; limit?: number }
@@ -116,11 +116,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     const sessionId = ctx.params.sessionId;
     if (!new Sessions(ctx.state.sessions).get(sessionId)) throw new SessionNotFoundError();
     try {
-      const managed = await ensureSessionOpen(ctx.state, sessionId);
-      if (!managed.runtime.resumePendingOperation) {
-        badRequest("This session runtime does not support resuming pending operations");
-      }
-      await managed.runtime.resumePendingOperation();
+      await executeSessionCommand(ctx.state, sessionId, "resumePending");
       return Response.json({ ok: true });
     } catch (err: unknown) {
       if (err instanceof HttpError) throw err;
