@@ -6,7 +6,6 @@
  */
 
 import { getDb } from "./db.js";
-import { internalSource } from "./node-store.js";
 import { stripLeadingSkillBlocks } from "./models/skill.js";
 
 // ---- Types -----------------------------------------------------------------
@@ -84,7 +83,7 @@ export function createSession(
     agentRuntimeType: string;
     taskId?: number;
     parentSessionId?: string;
-    sourceId?: number;
+    sourceId: number;
   },
 ): SessionRow {
   const db = getDb();
@@ -97,7 +96,7 @@ export function createSession(
     .get(
       id,
       projectId,
-      opts.sourceId ?? internalSource(projectId).id,
+      opts.sourceId,
       opts.modelProvider ?? null,
       opts.modelId ?? null,
       opts.thinkingLevel ?? "off",

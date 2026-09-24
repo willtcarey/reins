@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { runMigrations } from "../migrations.js";
 import { setDb } from "../db.js";
 import { createProject } from "../project-store.js";
-import { createSession } from "../session-store.js";
+import { createSession } from "./session-fixture.js";
 import { getSource, createSource } from "../node-store.js";
 import { executeSessionCommand } from "../runtimes/node-execution.js";
 

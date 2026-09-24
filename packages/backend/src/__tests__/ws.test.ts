@@ -3,7 +3,7 @@ import { handleWsOpen, handleWsMessage, handleWsClose } from "../ws.js";
 import { createServerState } from "./helpers/server-state.js";
 import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "../project-store.js";
-import { createSession } from "../session-store.js";
+import { createSession } from "./session-fixture.js";
 import { storeSessionAttachment } from "../session-attachments-store.js";
 import { createRuntimeStub } from "./helpers/test-runtime-stub.js";
 import type { ServerState } from "../state.js";

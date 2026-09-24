@@ -37,7 +37,7 @@ const [{ fauxAssistantMessage, fauxProvider }, { createProject }, { createSessio
 const provider = fauxProvider({ provider: "manual-faux", models: [{ id: "manual", contextWindow: 20_000, maxTokens: 1_000 }] });
 factory.registerPiProvider(provider.provider);
 const project = createProject("AgentHarness manual sandbox", projectDir);
-createSession("manual-agent-harness", project.id, { agentRuntimeType: "pi" });
+createSession("manual-agent-harness", project.id, { agentRuntimeType: "pi", sourceId: (await import("../src/node-store.js")).internalSource(project.id).id });
 const state = { sessions: new Map(), clients: new Set(), frontendDir: join(root, "frontend") };
 
 async function openRuntime() {

@@ -3,7 +3,7 @@ import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 import { createProject, type Project } from "../../project-store.js";
-import { createSession, getSession } from "../../session-store.js";
+import { createSession, getSession } from "../session-fixture.js";
 import { getSessionAttachment } from "../../session-attachments-store.js";
 import { Sessions } from "../../models/sessions.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";

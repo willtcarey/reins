@@ -5,7 +5,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { setApiKeyCredential } from "../../../auth-credentials-store.js";
 import { createProject } from "../../../project-store.js";
-import { createSession } from "../../../session-store.js";
+import { createSession } from "../../session-fixture.js";
 import { buildAgentHarnessPiRuntime } from "../../../runtimes/pi/agent-harness-builder.js";
 import { registerPiProvider, unregisterPiProvider } from "../../../runtimes/pi/factory.js";
 import { createServerState } from "../../helpers/server-state.js";

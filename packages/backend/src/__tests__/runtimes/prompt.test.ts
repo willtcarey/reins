@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { useTestDb } from "../helpers/test-db.js";
 import { createProject } from "../../project-store.js";
-import { createSession } from "../../session-store.js";
+import { createSession } from "../session-fixture.js";
 import type { ClientPromptContent } from "../../messages-store.js";
 import { stripLeadingSkillBlocks } from "../../models/skill.js";
 import { expandPrompt } from "../../runtimes/prompt.js";

@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { createProject } from "../../project-store.js";
-import { createSession } from "../../session-store.js";
+import { createSession } from "../session-fixture.js";
 import { attachRuntimeBroadcastObserver } from "../../runtimes/runtime-broadcast-observer.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 

@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach } from "bun:test";
 import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "../project-store.js";
-import { createSession } from "../session-store.js";
+import { createSession } from "./session-fixture.js";
 import {
   collectAttachmentIds,
   externalizeRuntimeContentBlock,

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createTask } from "../../task-store.js";
-import { createSession, updateActivityState } from "../../session-store.js";
+import { createSession, updateActivityState } from "../session-fixture.js";
 import { loadMessages } from "../../messages-store.js";
 import type { AgentRuntime } from "../../runtimes/registry.js";
 import { useTestDb } from "../helpers/test-db.js";

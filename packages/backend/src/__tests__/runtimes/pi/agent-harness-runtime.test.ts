@@ -5,7 +5,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "
 import { Type } from "@sinclair/typebox";
 import { getDb } from "../../../db.js";
 import { createProject } from "../../../project-store.js";
-import { createSession } from "../../../session-store.js";
+import { createSession } from "../../session-fixture.js";
 import { storeSessionAttachment } from "../../../session-attachments-store.js";
 import { AgentHarnessPiRuntime, createAgentHarnessPiRuntime, createReinsInputMessage } from "../../../runtimes/pi/agent-harness-runtime.js";
 import type { AgentRuntimeEvent } from "../../../runtimes/registry.js";

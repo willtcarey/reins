@@ -45,6 +45,16 @@
         "typescript": "^5.9.3",
       },
     },
+    "packages/node-contract": {
+      "name": "@reins/node-contract",
+      "version": "1.0.0",
+      "dependencies": {
+        "zod": "^4.3.6",
+      },
+      "devDependencies": {
+        "typescript": "^5.9.3",
+      },
+    },
     "packages/tauri": {
       "name": "@reins/tauri",
       "version": "0.1.0",
@@ -377,6 +387,8 @@
     "@reins/backend": ["@reins/backend@workspace:packages/backend"],
 
     "@reins/frontend": ["@reins/frontend@workspace:packages/frontend"],
+
+    "@reins/node-contract": ["@reins/node-contract@workspace:packages/node-contract"],
 
     "@reins/tauri": ["@reins/tauri@workspace:packages/tauri"],
 

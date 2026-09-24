@@ -4,7 +4,7 @@ import { describe, test, expect, mock } from "bun:test";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { getDb } from "../../db.js";
 import { createProject } from "../../project-store.js";
-import { createSession, getSession, updateSessionMetadata } from "../../session-store.js";
+import { createSession, getSession, updateSessionMetadata } from "../session-fixture.js";
 import { loadMessages } from "../../messages-store.js";
 import { createTask } from "../../task-store.js";
 import { useTestDb } from "../helpers/test-db.js";

@@ -7,7 +7,8 @@ import {
 } from "../session-store.js";
 import { loadMessages as dbLoadMessages, type ClientPromptContent } from "../messages-store.js";
 import { getProject } from "../project-store.js";
-import { getSource, internalSource } from "../node-store.js";
+import { getSource } from "../node-store.js";
+import { adapterFor, selectCreationSource } from "./node-execution.js";
 import { touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { SessionInstance, type SessionCreationOptions } from "./session-instance.js";
@@ -204,7 +205,7 @@ async function createManagedSession(
     throw new Error(`Project not found: ${projectId}`);
   }
 
-  const source = internalSource(projectId);
+  const source = selectCreationSource(projectId, opts?.sourceId);
   if (source.path !== projectDir) throw new Error(`Project source path mismatch: ${projectId}`);
   const sessionId = crypto.randomUUID();
 
@@ -319,10 +320,11 @@ async function reopenSession(manager: SessionManager, sessionId: string): Promis
   }
 
   const source = getSource(row.source_id);
-  if (!source || source.project_id !== row.project_id || source.node_id !== "internal") {
+  if (!source || source.project_id !== row.project_id) {
     throw new Error(`Execution source unavailable for session ${sessionId}`);
   }
 
+  adapterFor(source);
   const defaultModel = getSetting("default_model");
   const selectedResumeModel = (row.model_provider && row.model_id)
     ? {

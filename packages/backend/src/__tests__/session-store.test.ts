@@ -11,7 +11,7 @@ import {
   updateSessionMeta,
   updateActivityState,
   updateSessionMetadata,
-} from "../session-store.js";
+} from "./session-fixture.js";
 import { persistCanonicalMessages } from "./helpers/canonical-messages.js";
 
 let projectId: number;

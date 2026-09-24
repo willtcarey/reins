@@ -11,7 +11,7 @@ import {
 } from "../code-review-store.js";
 import { loadMessagePage } from "../messages-store.js";
 import type { CodeReview } from "../models/code-review.js";
-import { createSession } from "../session-store.js";
+import { createSession } from "./session-fixture.js";
 import { createTask } from "../task-store.js";
 import { useTestDb } from "./helpers/test-db.js";
 import { persistCanonicalMessages } from "./helpers/canonical-messages.js";

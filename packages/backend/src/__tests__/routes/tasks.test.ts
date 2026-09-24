@@ -6,7 +6,7 @@ import { useTestRepo, createTestRepo, commitFile } from "../helpers/test-repo.js
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
 import { createTask, getTask, setTaskStatus } from "../../task-store.js";
-import { createSession, updateSessionMetadata } from "../../session-store.js";
+import { createSession, updateSessionMetadata } from "../session-fixture.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 
 describe("task routes", () => {

@@ -6,6 +6,7 @@ import type { AgentRuntime, AgentRuntimeEvent, RuntimeLifecycleSink, RuntimeRunO
 import type { SessionManager } from "./session-manager.js";
 import type { ManagedSession } from "../state.js";
 import { Sessions } from "../models/sessions.js";
+import { executeSessionCommand } from "./node-execution.js";
 
 export interface SessionStartOptions {
   parentSessionId: "current" | null;
@@ -30,6 +31,7 @@ export interface SessionCreationOptions {
   title?: string;
   model?: { provider: string; modelId: string };
   thinkingLevel?: string;
+  sourceId?: number;
 }
 
 export function transcriptResult(
@@ -81,6 +83,7 @@ export class SessionInstance implements RuntimeLifecycleSink {
     const modelId = options.modelId ?? caller.model_id;
     const managed = await this.manager.create(caller.project_id, project.path, {
       taskId: caller.task_id ?? undefined,
+      sourceId: caller.source_id,
       parentSessionId: options.parentSessionId === "current" ? caller.id : undefined,
       title: options.title,
       model: provider && modelId ? { provider, modelId } : undefined,
@@ -94,7 +97,7 @@ export class SessionInstance implements RuntimeLifecycleSink {
     const caller = this.session(this.sessionId);
     const project = getProject(caller.project_id);
     if (!project) throw new Error("Project not found");
-    const managed = await this.manager.create(caller.project_id, project.path, { taskId });
+    const managed = await this.manager.create(caller.project_id, project.path, { taskId, sourceId: caller.source_id });
     await this.deliver(managed.id, prompt, "prompt", undefined, managed);
     return { sessionId: managed.id };
   }
@@ -201,19 +204,12 @@ export class SessionInstance implements RuntimeLifecycleSink {
     message: string,
     mode: "prompt" | "steer",
     sourceSessionId?: string,
-    opened?: ManagedSession,
+    _opened?: ManagedSession,
   ): Promise<{ sessionId: string }> {
     this.session(sessionId);
-    const managed = opened ?? this.manager.sessions.get(sessionId) ?? await this.manager.open(sessionId);
     const content = [{ type: "text" as const, text: message }];
     const clientId = crypto.randomUUID();
-    const promptOptions = {
-      reinsId: clientId,
-      ...(sourceSessionId ? { metadata: { sourceSessionId } } : {}),
-    };
-    managed.lastActivity = Date.now();
-    if (mode === "prompt") await managed.runtime.prompt(content, promptOptions);
-    else await managed.runtime.steer(content, promptOptions);
+    await executeSessionCommand(this.manager.state, sessionId, mode, content, clientId, sourceSessionId);
     return { sessionId };
   }
 

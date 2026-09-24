@@ -3,7 +3,7 @@ import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo, commitFile } from "../helpers/test-repo.js";
 import { createProject } from "../../project-store.js";
 import { createTask, getTask } from "../../task-store.js";
-import { createSession, getSession, updateActivityState } from "../../session-store.js";
+import { createSession, getSession, updateActivityState } from "../session-fixture.js";
 import { branchExists, revParse, mergeBase, createBranch } from "../../git.js";
 import { ProjectModel } from "../../models/projects.js";
 import type { CreateTaskParams } from "../../models/tasks.js";

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeSdkAgentRuntime } from "../../../runtimes/claude_agent_sdk/runtime.js";
 import { createProject } from "../../../project-store.js";
-import { createSession } from "../../../session-store.js";
+import { createSession } from "../../session-fixture.js";
 import { storeSessionAttachment } from "../../../session-attachments-store.js";
 import { useTestDb } from "../../helpers/test-db.js";
 

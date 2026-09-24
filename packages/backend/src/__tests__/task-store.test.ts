@@ -12,7 +12,7 @@ import {
   touchTask,
   getTaskSessionIds,
 } from "../task-store.js";
-import { createSession, getSession } from "../session-store.js";
+import { createSession, getSession } from "./session-fixture.js";
 import { loadMessages } from "../messages-store.js";
 import { persistCanonicalMessages } from "./helpers/canonical-messages.js";
 

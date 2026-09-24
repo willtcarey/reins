@@ -3,7 +3,7 @@ import { getDb } from "../../db.js";
 import { SessionInstance } from "../../runtimes/session-instance.js";
 import { SessionManager } from "../../runtimes/session-manager.js";
 import { createProject } from "../../project-store.js";
-import { createSession, getSession } from "../../session-store.js";
+import { createSession, getSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 import { createServerState } from "../helpers/server-state.js";

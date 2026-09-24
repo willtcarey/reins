@@ -5,7 +5,7 @@ import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../../project-store.js";
-import { createSession, updateActivityState } from "../../session-store.js";
+import { createSession, updateActivityState } from "../session-fixture.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { getDb } from "../../db.js";

@@ -7,7 +7,7 @@ import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 import { createProject, type Project } from "../../project-store.js";
-import { createSession, getSession } from "../../session-store.js";
+import { createSession, getSession } from "../session-fixture.js";
 import { SESSION_FUNCTIONS, sessionsSetModelFunction } from "../../scripting/sessions.js";
 import type { ApiContext } from "../../scripting/define-function.js";
 import type { ServerMessage } from "../../models/broadcast.js";

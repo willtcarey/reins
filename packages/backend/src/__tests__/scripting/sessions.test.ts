@@ -5,7 +5,7 @@ import { Value } from "@sinclair/typebox/value";
 import { SessionHandleSchema } from "../../scripting/sessions.js";
 import { createProject } from "../../project-store.js";
 import { createTask } from "../../task-store.js";
-import { createSession, getSession, listSessions, updateActivityState, updateSessionMetadata } from "../../session-store.js";
+import { createSession, getSession, listSessions, updateActivityState, updateSessionMetadata } from "../session-fixture.js";
 import { loadMessages, type RuntimeMessage } from "../../messages-store.js";
 import { SessionManager } from "../../runtimes/session-manager.js";
 import { registerRuntimeAdapter } from "../../runtimes/registry.js";
