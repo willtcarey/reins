@@ -1,12 +1,70 @@
 # Node Architecture
 
-Status: **early thinking** — not ready for implementation. Capturing direction for future reference.
+Status: **design investigation** — start by mapping current boundaries and drafting a minimal server–daemon contract; do not implement the full architecture from this sketch.
 
 ## Motivation
 
 Reins currently runs as a single server that owns everything: the database, agent sessions, git operations, and filesystem access. This means you can only work with repos on the machine running the server.
 
 The goal is to support multiple machines — e.g., a Mac and a Linux box — each with their own repos, connected to a single Reins backend. This also opens the door to a hosted backend with users connecting their own machines as execution nodes.
+
+## Direction agreed for the first slice
+
+- Route browser traffic, including agent events, through the server. Do not build WebRTC or direct browser–node connections initially; diagrams below retain the earlier exploration, not the first-slice target.
+- Organize around a server-owned product state/policy boundary and a daemon-owned host-local execution boundary. The server owns projects, sessions, persistence, client APIs, and routing; daemons own pi runtime, filesystem, git, and tools. The server must not need local repo access for remote sessions.
+- Bind a session to an execution daemon. Model project identity separately from host-specific source paths so one project may be available on multiple machines; do not assume one authoritative node per project.
+- Investigate Reins' existing session, tool, filesystem, and git entry points before finalizing commands. Candidate commands: session start/resume, prompt, steer, abort, file reads/listing, git status/diff. Specify correlation, typed errors, ordering, persistence, retry/reconnect, and versioning for commands/results/events. Validate whether server-reconstructed messages can faithfully resume pi sessions before choosing the durable session source of truth.
+- Keep the first implementation slice internal-node-only: establish node/source identity and route existing sessions through the in-process execution seam without changing browser behavior. A working external daemon and server-relayed events are the next slice, gated on canonical storage feasibility. Defer cloud sleep/wake, installers, auto-update, and direct browser transport.
+
+## Investigation: actual seams (2026-04)
+
+- `packages/backend/src/ws.ts` validates browser prompt/steer blocks and `clientId`, opens sessions, and acknowledges admission; abort currently acknowledges *before* awaiting cancellation. `runtimes/session-manager.ts` creates DB rows, resolves `project.path`, creates Pi runtimes, attaches broadcast and custom tools; `session-instance.ts` owns addressed sends and child reports. `routes/sessions.ts` exposes explicit pending-operation resume. Keep browser protocol separate from daemon RPC.
+- `runtimes/pi/storage-adapter.ts` writes canonical AgentHarness entries, branch/lane values, lists and usage directly to server SQLite (`session_messages`, `pi_values`, `pi_lists`, `pi_usage`). `docs/dev/session-message-persistence.md` explicitly rejects message snapshots as a replay source. **Server-reconstructed display messages cannot be assumed to resume Pi**: they omit lane operation/inbox state, branch ancestry and usage. Do not ship the earlier `resume_session(messages)` sketch. Canonical storage ownership needs a deliberate transfer mechanism.
+- `models/projects.ts` treats `project.path` as local cwd; `routes/projects.ts` checks local existence. `models/tasks.ts`, `models/projects.ts`, `routes/git.ts` and `git.ts` perform branch/checkout/push/rebase locally. `models/workspace.ts` and `routes/files.ts` mediate working-tree/ref listing and reads plus changed-file/diff projections. `runtimes/pi/agent-harness-builder.ts` uses cwd-scoped native tools; Reins custom `tools/` and `scripting/` reach DB-backed project/session models and git, so moving Pi alone does **not** remove server repo access or allow custom tools unchanged.
+
+## Skill and resource ownership
+
+Skills are **source/daemon-local execution resources**, not project-wide server records. Two sources for one project can legitimately have different repo skills, user-global skills, AGENTS files, and installed tools. The daemon runs Pi's `DefaultResourceLoader` in the selected source cwd when opening a session; it supplies discovered skill metadata, context files and prompt templates to the harness. Skill bodies and relative references are read on that daemon during execution. The server need not mirror skill files or require the same set on every host.
+
+There is a current split that must be removed: `runtimes/pi/agent-harness-builder.ts` discovers skills through Pi's loader, but `runtimes/session-manager.ts` calls `expandPrompt()` before prompt/steer; `runtimes/prompt.ts` separately scans `project.path` with `ReinsResourceLoader` and reads SKILL.md to expand `/name`. For remote sessions this must execute on the **bound daemon**, before durable prompt admission, against the same source used by the Pi loader. Keep the browser's submitted text/clientId and optimistic reconciliation intact; return a typed `skill_not_found` or `skill_read_failed` admission error when explicit slash invocation fails, rather than silently executing an unexpanded command or searching the server filesystem. Resolve collisions and invocation permissions with Pi's discovered list so advertised and invocable skills cannot disagree.
+
+For UI discovery, add a read-only `resources.list` command scoped to `sourceId` returning skill name, description, source, invocation flag and location (and prompt-template metadata if needed). It is a live per-source view, not a durable global catalog; refresh on open or explicitly, tolerate offline sources by showing no current inventory. Do not send skill bodies to the browser by default. Relative references stay relative to daemon paths and agent read/bash tools run there. A resumed session retains canonical conversation but re-discovers available resources on its bound source; if a skill changed between turns, subsequent invocations use the current version. Pinning skill versions for reproducibility is deferred. Tests should cover two sources with different skills, slash invocation on a server without the repo, removed skill after reconnect, and relative reference reads.
+
+## Proposed minimal contract (target, not yet implemented)
+
+Use a separate versioned `node-protocol` module with runtime-validated discriminated wire schemas and explicit results, rather than reusing browser WS events as control messages. One authenticated outbound daemon WS per host; server authorizes each session/source against that host before dispatch or event acceptance. On connect daemon sends `{type:"hello",version:1,daemonId,instanceId,sources:[{sourceId,projectId,path}]}`; server replies `{type:"ready",version:1,connectionId}` or closes with `version_mismatch`/`unauthorized`. Paths never define project identity; register source bindings explicitly (no automatic remote-URL merge). A session stores immutable `sourceId` (the node is derived from the source); different sessions of one project may choose different sources. Connection instance fences stale senders; reconnect replaces the old socket.
+
+Server → daemon `{type:"command",requestId,sessionId?,op,args}`; daemon → server `{type:"result",requestId,ok:true,value}` or `{type:"result",requestId,ok:false,error:{code,message,retryable}}`. `requestId` is server-generated and unique per command; response must match pending request and operation, at most once. v1 operations (semantic, not generic shell):
+
+| Operation | Inputs → result / admission |
+|---|---|
+| `session.open` | sessionId, sourceId, runtime/model/thinking/task context, `create` or `reopen` → `{pendingOperation}`; must not synthesize a transcript |
+| `session.prompt`, `session.steer` | sessionId, `clientId`, validated content blocks → `{inputId}` after *durable* harness admission; clientId is idempotency key per session |
+| `session.resumePending` | sessionId → `{started}` for explicit passive operation continuation |
+| `session.abort` | sessionId → `{aborted}` only after abort completes (unlike current browser WS early ack) |
+| `workspace.list`, `workspace.read` | sourceId, scoped relative path and optional ref → existing listing/content DTOs; reject escape paths |
+| `workspace.status`, `workspace.diff` | sourceId, optional ref/branch and paging/size limits → existing workspace projection DTOs |
+| `resources.list` | sourceId → current daemon-local skill/prompt metadata; no skill bodies |
+
+Do not claim this list covers task branch mutation, project sync, git push/rebase, uploads, model catalog/credentials or DB-backed custom tools. Those call sites must be migrated or explicitly unavailable for remote sources before a remote session is considered complete. `sourceId` must be resolved server-side from the session for session commands; daemon verifies its local binding and path. Never accept a browser-supplied host path or arbitrary executable command.
+
+Daemon → server `{type:"events",sessionId,instanceId,firstSeq,events:[{seq,kind,payload}]}`; monotonically increasing daemon-local per-session sequence, including durable canonical-entry notifications and normalized streaming events. Server validates ownership, commits durable entries/state first, then relays display events to browser in order; responds `{type:"events_ack",sessionId,throughSeq}` for a contiguous prefix. Missing sequence triggers replay request, duplicates are ignored; bounded batches/backpressure and payload limits are required. Stream updates may be coalesced but canonical entries and terminal outcomes may not be dropped. Lifecycle transitions must derive from durable native run IDs, not merely `agent_end` display events. Correlate terminal events with run ID, not request ID (admission is not completion). Unknown op/version → typed `unsupported`, wrong owner → `forbidden`, offline → `unavailable`, stale instance → `stale_connection`, invalid args → `invalid_request`, busy → `busy`, missing → `not_found`, unexpected → `internal`; transport timeout is **unknown outcome**, not an implicit retry. No automatic replay of prompt/steer/abort on reconnect; retry only with the same idempotency key after reconciling admission. Read-only calls may retry.
+
+**Resume ownership decision for the first vertical slice:** retain server SQLite as canonical AgentHarness storage, accessed by the daemon through an authenticated, session-scoped storage interface with transactional append/CAS and lane/value/list/usage operations matching `PiStorageAdapter`. The daemon reopens the actual harness lane from this store, not from projected messages. This adds a storage transport beyond command/result/event; canonical storage commits must precede `inputId` results and event delivery. Never treat event batches as a second transcript writer. Before implementation, inventory `PiStorageAdapter` transaction/ordering assumptions and prove remote reopen after process loss, compaction and pending steering in an integration test. If the synchronous storage adapter cannot safely bridge this interface over the network, stop and reconsider daemon-local durable canonical storage plus replication; do not silently fall back to display-message hydration. Authentication and credential placement (current Pi credential store uses server SQLite) must be separately resolved.
+
+## Incremental implementation slices
+
+1. **First implementation slice — internal node only:** add stable `nodes` and `sources` rows; migrate existing projects to internal sources and sessions to source affinity. Keep `project_id` temporarily, enforcing agreement with the source's project. Route existing session open/prompt/steer/abort/explicit resume through an in-process node adapter with unchanged browser behavior. Add contract tests for routing and identity constraints. No external daemon, wire transport, or remote-session UI; local files/git/tools continue to work. Do not claim the server is repo-independent yet.
+2. **Remote readiness gate:** test a transport-backed canonical Pi storage adapter against the current local adapter: create, prompt, steering, compaction/branch, restart/reopen and pending-operation continuation with exact IDs and usage. Verify DB/custom-tool calls and resource loading assumptions. Define `node-protocol` schemas and transport tests for version, ownership, correlation, event ordering and disconnect after admission. Stop if canonical storage cannot safely cross the transport.
+3. **Next implementation slice — one external daemon:** launch one manually configured daemon on another machine/process, relay browser events through the server and route selected new sessions plus scoped read/list/status/diff. Existing sessions stay on the internal node; never silently move a live session. Test reconnect and remote resume with the server unable to access the checkout. Move task/git mutations and DB-backed tools behind explicit server-policy/daemon-execution calls; block unsupported remote operations instead of falling back to server filesystem.
+4. Later: enrollment UI/token lifecycle, multi-host source selection, full git/task parity, cloud wake, installers/updates and optional direct transport. Use a separate server port/DB for development.
+
+### Decisions still open / gates
+
+- Whether networked AgentHarness storage can satisfy synchronous/transactional adapter semantics and acceptable latency; otherwise canonical daemon storage needs a durable replication and recovery design. The current sketch's server-replay-by-messages is invalid without an exact structural import proof.
+- How server-owned DB tools (`create_task`, `execute`/`search`, `api.sessions`) are exposed to daemon Pi without giving it arbitrary DB authority; which git mutations remain policy on server versus host execution; attachment bytes and OAuth refresh/key custody. Confirm Pi and Reins skill discovery/invocation semantics can be unified before remote prompt routing.
+- Durable event outbox location and replay window, payload cap/large binary transfer, crash atomicity between storage write and event publication, and handling a daemon restart mid-run (passive resume versus restart). Decide before promising lossless live streaming.
+- Identity/authentication and per-source grants, host-path changes, source selection UX, permission/audit model for a hosted server. v1 can use explicit self-hosted token configuration; do not claim hosted security yet.
 
 ## Current architecture
 
@@ -29,7 +87,7 @@ graph TD
 
 Everything runs on one machine. The backend owns the database, the agent loop, tool execution, and filesystem access.
 
-## New architecture
+## Earlier architecture sketch (not the agreed first-slice transport)
 
 ```mermaid
 graph LR
@@ -162,7 +220,7 @@ The node is essentially today's backend for a single machine, minus the DB and U
 - **Simpler protocol** — the backend says "prompt session X with this text," the node handles the full agent loop and streams events back
 - **Closer to current architecture** — the node is a thin wrapper around what `sessions.ts` already does
 
-## Communication protocol
+## Earlier protocol sketch (subject to contract investigation)
 
 The backend-to-node protocol mirrors the existing backend-to-frontend event protocol:
 
