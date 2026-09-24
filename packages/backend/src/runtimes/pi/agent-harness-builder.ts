@@ -22,7 +22,7 @@ export async function buildAgentHarnessPiRuntime(
 ): Promise<AgentHarnessPiRuntime> {
   const builtinNames = new Set<string>(params.sessionTools?.builtins ?? ["read", "write", "edit", "bash"]);
   const customTools = params.sessionTools?.harnessTools ?? [];
-  const { modelRuntime, resourceLoader } = await createPiContext({ cwd: params.projectDir });
+  const { modelRuntime, resourceLoader, resources: reinsResources } = await createPiContext({ cwd: params.projectDir });
   const model = params.model
     ? resolveModel(params.model.provider, params.model.modelId, modelRuntime)
     : undefined;
@@ -75,15 +75,8 @@ export async function buildAgentHarnessPiRuntime(
   const tools: AgentHarnessTool<ReinsToolContext>[] = [...builtinTools, ...customTools];
   const systemPrompt = buildReinsSystemPrompt({
     tools,
-    contextFiles: resourceLoader.getAgentsFiles().agentsFiles,
-    skills: skills.map((skill) => ({
-      name: skill.name,
-      description: skill.description,
-      filePath: skill.filePath,
-      baseDir: skill.baseDir,
-      source: skill.sourceInfo.source,
-      disableModelInvocation: skill.disableModelInvocation,
-    })),
+    contextFiles: reinsResources.contextFiles,
+    skills: reinsResources.skills,
     task: params.task ?? undefined,
     isScratchSession: !params.task,
   });

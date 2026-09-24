@@ -1,9 +1,17 @@
 #!/usr/bin/env bun
 
-import { createAgentSession, createCodingTools, SessionManager } from "@earendil-works/pi-coding-agent";
-import { createPiResourceLoader } from "../src/pi/resource-loader.js";
-import { buildReinsSystemPrompt } from "../src/pi/system-prompt.js";
-import { createCustomTools } from "../src/tools/index.js";
+import { resolve } from "node:path";
+import {
+  createBashTool,
+  createEditTool,
+  createReadTool,
+  createWriteTool,
+} from "@earendil-works/pi-agent-core";
+import { ReinsResourceLoader } from "../src/runtimes/resource-loader.js";
+import { buildReinsSystemPrompt } from "../src/runtimes/system-prompt.js";
+import { createTaskTool } from "../src/tools/create-task.js";
+import { createSearchTool } from "../src/tools/search.js";
+import { createExecuteTool } from "../src/tools/execute.js";
 
 interface CliArgs {
   cwd: string;
@@ -30,45 +38,30 @@ function parseArgs(argv: string[]): CliArgs {
 
 async function main() {
   const { cwd, taskTitle, taskDescription } = parseArgs(Bun.argv.slice(2));
-  const task = taskTitle
-    ? { title: taskTitle, description: taskDescription ?? null }
-    : null;
+  const resources = new ReinsResourceLoader({ cwd: resolve(cwd) });
+  resources.load();
 
-  const codingTools = createCodingTools(cwd);
-  const customTools = createCustomTools({
-    projectId: 0,
-    sessionId: "prompt-debug",
-    taskId: task ? 1 : null,
-    broadcast: () => {},
-    sessions: new Map(),
-    createSession: async () => {
-      throw new Error("createSession is not available in prompt debug script");
-    },
-    openSession: async () => {
-      throw new Error("openSession is not available in prompt debug script");
-    },
-  });
+  // Tool factories supply the same descriptions as production. No session,
+  // database, model, or agent run is needed just to render the prompt.
+  const sessions = new Map();
+  const broadcast = () => {};
+  const tools = [
+    createReadTool(),
+    createWriteTool(),
+    createEditTool(),
+    createBashTool(),
+    createTaskTool({ projectId: 0, broadcast, sessions }),
+    createSearchTool(),
+    createExecuteTool({ projectId: 0, sessionId: "prompt-debug", taskId: taskTitle ? 1 : null, broadcast, sessions }),
+  ];
 
-  const allTools = [...codingTools, ...customTools];
-  const resourceLoader = createPiResourceLoader({
-    cwd,
-    systemPromptOverride: () => buildReinsSystemPrompt({
-      tools: allTools,
-      task: task ?? undefined,
-      isScratchSession: !task,
-    }),
-  });
-  await resourceLoader.reload();
-
-  const { session } = await createAgentSession({
-    cwd,
-    tools: codingTools,
-    customTools,
-    sessionManager: SessionManager.inMemory(),
-    resourceLoader,
-  });
-
-  console.log(session.systemPrompt);
+  console.log(buildReinsSystemPrompt({
+    tools,
+    contextFiles: resources.contextFiles,
+    skills: resources.skills,
+    task: taskTitle ? { title: taskTitle, description: taskDescription ?? null } : undefined,
+    isScratchSession: !taskTitle,
+  }));
 }
 
 await main();
