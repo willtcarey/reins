@@ -273,25 +273,6 @@ A project is tied to the node that has its repo on disk. When a node connects, i
 | Frontend WS | Backend ↔ Frontend | Backend ↔ Frontend (unchanged) |
 | Session resume | Backend loads from SQLite, creates pi session | Backend loads from SQLite, sends messages to node, node creates pi session |
 
-## Earlier token-based registration sketch (superseded by enrollment proposal above)
-
-A node connects to the backend, not the other way around. This means the backend doesn't need to know the node's IP or network topology — the node just needs the backend's URL and a token.
-
-**Setup flow:**
-1. User generates a node token in the Reins UI (or CLI): `reins nodes create-token --name "Will's Mac"`
-2. Backend stores the token and associates it with the user
-3. User starts the node daemon on their machine: `reins-node --server https://reins.example.com --token <token> --projects ~/Workspaces/reins,~/Workspaces/other-project`
-4. Node opens a persistent WebSocket to the backend, authenticates with the token
-5. Node sends a registration message listing its available project directories (paths + metadata like git remote URL, current branch)
-6. Backend matches node projects to existing projects (by remote URL or path) or creates new project entries
-7. Node is now available — the backend can route session commands to it
-
-**Reconnection:** The node daemon auto-reconnects on disconnect. On reconnect it re-registers its projects. Active sessions are preserved in SQLite on the backend; the node resumes them by replaying messages from the backend.
-
-**Heartbeat:** The node sends periodic pings. If the backend doesn't hear from a node within a timeout, it marks the node's projects as offline. The UI shows them as unavailable but still browsable (history, old sessions).
-
-**Multiple nodes:** A user could have several nodes (Mac, Linux box, cloud VM). Each registers its own projects. The backend maps each project to exactly one node. If the same repo exists on two nodes (same remote URL), the user picks which node is authoritative — or the backend could allow either and route based on which is online.
-
 ## Cloud nodes (Fly Sprites)
 
 Fly Sprites are disposable, durable cloud computers that spin up in ~1 second and support checkpoint/restore. A Sprite is a natural node — clone a repo onto it, start the node daemon, connect to the Reins backend.
@@ -315,12 +296,12 @@ How a Sprite (or any cloud node) is provisioned, configured, or set up is outsid
 
 ## Open questions
 
-- **Authentication**: The token-based node flow above is superseded by the asymmetric enrollment proposal. Frontend account authentication and user-scoped authorization remain separate decisions; passkeys are a candidate, not a prerequisite for the internal-node slice.
+- **Authentication**: Frontend account authentication and user-scoped authorization remain separate decisions; passkeys are a candidate, not a prerequisite for the internal-node slice. External-node identity is described in the enrollment proposal above.
 - **Multiple nodes, same project**: What if the same repo exists on two machines? Allow both, or enforce single-node-per-project?
 - **Latency and direct connections**: A backend-relayed event stream adds a network hop. To minimize latency, use WebRTC data channels for direct frontend ↔ node streaming. The backend acts as the signaling server (it already has WS connections to both), brokering the WebRTC handshake. Agent events flow peer-to-peer with no relay hop. The node separately sends events to the backend over its existing WS for persistence. WebRTC handles NAT traversal via STUN/TURN, so it works across networks. Degrades gracefully — if direct connection fails, fall back to two-hop relay through the backend.
 - **Offline/disconnected**: What can the backend do while a node is offline? View history, browse old sessions — but not prompt or view current files.
 - **Node discovery**: Does the user configure node URLs in the backend, or do nodes discover/register with the backend?
 - **Migration path**: How to get from the current single-server architecture to this without a big bang rewrite? The node daemon could start as an optional mode — run Reins as today (all-in-one) or run backend + node separately.
-- **Privacy and trust**: Connecting a node gives the backend (and its operator) the ability to route prompts that execute on the user's machine. The backend also receives all events for persistence, including file contents and bash output. For self-hosted backends this is fine (you trust yourself). For a hosted multi-user service, this is a serious trust surface — a compromised or malicious backend could exfiltrate data or execute arbitrary commands via crafted prompts. Mitigations to explore: end-to-end encryption (backend persists encrypted blobs), node-side tool permissions and approval gates, audit logging of all backend-initiated commands, scoped node tokens. Self-hosted should remain the primary model.
+- **Privacy and trust**: Connecting a node gives the backend (and its operator) the ability to route prompts that execute on the user's machine. The backend also receives all events for persistence, including file contents and bash output. For self-hosted backends this is fine (you trust yourself). For a hosted multi-user service, this is a serious trust surface — a compromised or malicious backend could exfiltrate data or execute arbitrary commands via crafted prompts. Mitigations to explore: end-to-end encryption (backend persists encrypted blobs), node-side tool permissions and approval gates, audit logging of all backend-initiated commands, scoped node permissions. Self-hosted should remain the primary model.
 - **ACP (Agent Communication Protocol)**: Investigate whether [ACP](https://agentcommunicationprotocol.dev/) could serve as the protocol between backend and nodes (or between agents across nodes). May provide a standard for the command/event channel rather than building a bespoke WebSocket protocol.
 - **Development sandboxing**: This work requires a separate Reins instance — can't rip apart session/tool execution on the same copy being used for daily development. Run a second instance on a different port/DB for the node architecture work.
