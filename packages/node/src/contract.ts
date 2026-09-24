@@ -26,5 +26,10 @@ export const nodeResult = z.discriminatedUnion("ok", [
 /** An observation, not a second canonical transcript writer. */
 export const nodeEvent = z.object({ sessionId, kind: z.enum(["runtime", "lifecycle", "canonical_entry"]), payload: z.unknown() });
 export type NodeCommand = z.infer<typeof nodeCommand>;
+
+/** Delivery semantics for future transport; current internal adapter executes immediately. */
+export function deliveryPolicy(command: NodeCommand): "submit-work" | "request-now" {
+  return command.op === "session.open" && command.mode === "create" ? "submit-work" : "request-now";
+}
 export type NodeResult = z.infer<typeof nodeResult>;
 export type NodeEvent = z.infer<typeof nodeEvent>;
