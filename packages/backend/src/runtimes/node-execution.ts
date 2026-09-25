@@ -2,9 +2,10 @@ import type { ServerState } from "../state.js";
 import type { ClientPromptContent } from "../messages-store.js";
 import { getSession } from "../session-store.js";
 import { getSource, internalSource, type Source } from "../node-store.js";
-import { ensureSessionOpen } from "./session-manager.js";
+import { ensureSessionOpen, materializeRuntime } from "./session-manager.js";
+import type { NodeCommand, NodeResult } from "@reins/node/contract";
 
-/** Session commands resolve the immutable source binding before entering host execution. */
+/** Session commands resolve the current source before entering host execution. */
 export async function executeSessionCommand(
   state: ServerState,
   sessionId: string,
@@ -34,6 +35,11 @@ export function adapterFor(source: Source) {
 }
 
 const internalAdapter = {
+  async open(state: ServerState, command: NodeCommand, _commandId: string): Promise<NodeResult> {
+    if (command.op !== "session.open" || command.mode !== "create") throw new Error("Unsupported work command");
+    await materializeRuntime(state, command.sessionId);
+    return { ok: true, value: { kind: "opened", pendingOperation: false } };
+  },
   async command(state: ServerState, sessionId: string, command: "prompt" | "steer" | "abort" | "resumePending", content?: ClientPromptContent, clientId?: string, sourceSessionId?: string): Promise<void> {
   const { runtime } = await ensureSessionOpen(state, sessionId);
   const options = { reinsId: clientId, ...(sourceSessionId ? { metadata: { sourceSessionId } } : {}) };

@@ -8,12 +8,18 @@
 import type { ServerState } from "./state.js";
 import { buildRouter } from "./routes/index.js";
 import { installRuntimeHooks } from "./runtime-hooks.js";
+import { dispatcherFor } from "./models/node-command-dispatcher.js";
 import { serveStatic } from "./static.js";
 
 const router = buildRouter();
 
 export function install(state: ServerState): () => void {
-  return installRuntimeHooks(state);
+  const uninstallRuntimeHooks = installRuntimeHooks(state);
+  const dispatcher = dispatcherFor(state);
+  return () => {
+    dispatcher.stop();
+    uninstallRuntimeHooks();
+  };
 }
 
 export async function handleFetch(

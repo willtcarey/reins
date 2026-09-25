@@ -316,6 +316,19 @@ const MIGRATIONS: Migration[] = [
      CREATE TRIGGER internal_project_source_update AFTER UPDATE OF path ON projects
        BEGIN UPDATE sources SET path = NEW.path WHERE project_id = NEW.id AND node_id = 'internal' AND path = OLD.path; END;`,
   ],
+  [
+    "030_node_command_outbox",
+    `CREATE TABLE node_command_outbox (
+       id TEXT PRIMARY KEY,
+       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+       command_json TEXT NOT NULL CHECK(json_valid(command_json)),
+       state TEXT NOT NULL CHECK(state IN ('queued', 'dispatching', 'admitted', 'failed', 'unknown')),
+       result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)),
+       created_at TEXT NOT NULL DEFAULT (datetime('now'))
+     );
+     CREATE INDEX idx_node_command_outbox_state ON node_command_outbox(state, created_at);
+     CREATE UNIQUE INDEX idx_node_command_outbox_session_create ON node_command_outbox(session_id) WHERE json_extract(command_json, '$.op') = 'session.open' AND json_extract(command_json, '$.mode') = 'create';`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

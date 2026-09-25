@@ -1,7 +1,6 @@
 import type { ManagedSession, ServerState } from "../state.js";
 import {
   createSession as dbCreateSession,
-  deleteSession as dbDeleteSession,
   getSession as dbGetSession,
   updateSessionMeta,
 } from "../session-store.js";
@@ -9,6 +8,7 @@ import { loadMessages as dbLoadMessages, type ClientPromptContent } from "../mes
 import { getProject } from "../project-store.js";
 import { getSource } from "../node-store.js";
 import { adapterFor, selectCreationSource } from "./node-execution.js";
+import { scheduleWork, dispatcherFor, getWork } from "../models/node-command-dispatcher.js";
 import { touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { SessionInstance, type SessionCreationOptions } from "./session-instance.js";
@@ -225,35 +225,29 @@ async function createManagedSession(
     ? parseThinkingLevel(opts.thinkingLevel)
     : defaultModel?.thinkingLevel ?? null;
 
-  dbCreateSession(sessionId, projectId, {
-    modelProvider: selectedCreateModel?.provider,
-    modelId: selectedCreateModel?.modelId,
-    thinkingLevel: selectedCreateThinkingLevel ?? "off",
-    agentRuntimeType: runtimeType,
-    taskId: opts?.taskId,
-    parentSessionId: opts?.parentSessionId,
-    sourceId: source.id,
+  const commandId = crypto.randomUUID();
+  scheduleWork(commandId, { op: "session.open", mode: "create", sessionId, sourceId: source.id }, () => {
+    dbCreateSession(sessionId, projectId, {
+      modelProvider: selectedCreateModel?.provider,
+      modelId: selectedCreateModel?.modelId,
+      thinkingLevel: selectedCreateThinkingLevel ?? "off",
+      agentRuntimeType: runtimeType,
+      taskId: opts?.taskId,
+      parentSessionId: opts?.parentSessionId,
+      sourceId: source.id,
+    });
+    if (opts?.title !== undefined) updateSessionMeta(sessionId, { name: opts.title });
   });
 
-  if (opts?.title !== undefined) updateSessionMeta(sessionId, { name: opts.title });
-
-  let managed: ManagedSession;
-  try {
-    managed = await createManagedSessionRuntime({
-      manager,
-      runtimeType,
-      projectId,
-      projectDir,
-      sessionId,
-      taskId: opts?.taskId ?? null,
-      model: selectedCreateModel,
-      thinkingLevel: selectedCreateThinkingLevel,
-      resume: false,
-    });
-  } catch (err) {
-    dbDeleteSession(sessionId);
-    throw err;
-  }
+  const dispatcher = dispatcherFor(manager.state);
+  queueMicrotask(() => dispatcher.wake());
+  // The local browser create API still waits for the open result. The durable row
+  // exists before the wake; losing the wake cannot lose the command.
+  await dispatcher.wait(commandId);
+  const dispatched = getWork(commandId)!;
+  if (dispatcher.error(commandId)) throw dispatcher.error(commandId);
+  const managed = manager.sessions.get(sessionId);
+  if (dispatched.state !== "admitted" || !managed) throw new Error(`Session ${sessionId} open outcome: ${dispatched.state}`);
 
   if (opts?.taskId) {
     touchTask(opts.taskId);
@@ -278,6 +272,18 @@ export function createNewSession(
   options?: SessionCreationOptions,
 ): Promise<ManagedSession> {
   return new SessionManager(state).create(projectId, projectDir, options);
+}
+
+export async function materializeRuntime(state: ServerState, sessionId: string): Promise<ManagedSession> {
+  const row = dbGetSession(sessionId);
+  if (!row) throw new Error(`Session not found: ${sessionId}`);
+  const source = getSource(row.source_id);
+  if (!source || source.project_id !== row.project_id) throw new Error(`Execution source unavailable for session ${sessionId}`);
+  const model = row.model_provider && row.model_id ? { provider: row.model_provider, modelId: row.model_id } : undefined;
+  return createManagedSessionRuntime({ manager: new SessionManager(state), runtimeType: row.agent_runtime_type,
+    projectId: row.project_id, projectDir: source.path, sessionId, taskId: row.task_id,
+    model, thinkingLevel: row.thinking_level === "off" ? null : row.thinking_level ? parseThinkingLevel(row.thinking_level) : null,
+    resume: false });
 }
 
 async function openManagedSession(
