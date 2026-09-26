@@ -7,7 +7,7 @@ import {
   formatContextFilesForPrompt,
   formatSkillsForPrompt,
   type Skill,
-} from "../../runtimes/resource-loader.js";
+} from "./loader.js";
 
 let tempDir: string;
 

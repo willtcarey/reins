@@ -28,16 +28,32 @@ module.exports = {
     "node-import-boundary": {
       meta: {
         type: "problem",
-        docs: { description: "Server modules may import only the node contract export." },
-        messages: { forbidden: "Server code may import @reins/node/contract, not daemon implementation." },
+        docs: { description: "Server modules import the node package through its declared exports." },
+        messages: { forbidden: "Server code must use @reins/node package exports, not implementation paths." },
       },
       create(context) {
         const check = (node) => {
           const specifier = node.source?.value;
           if (typeof specifier === "string" && (
-            (specifier.startsWith("@reins/node") && specifier !== "@reins/node/contract")
+            (specifier.startsWith("@reins/node") && !["@reins/node/contract", "@reins/node/protocol", "@reins/node/node", "@reins/node/storage", "@reins/node/pi-storage", "@reins/node/resources", "@reins/node/prompt", "@reins/node/runtime", "@reins/node/pi-runtime", "@reins/node/host-tools", "@reins/node/runtime-build"].includes(specifier))
             || /(?:^|\/)node\/src\//.test(specifier)
           )) context.report({ node, messageId: "forbidden" });
+        };
+        return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
+      },
+    },
+    "node-implementation-isolation": {
+      meta: {
+        type: "problem",
+        docs: { description: "Node implementation cannot depend on backend implementation." },
+        messages: { forbidden: "Node code must not import backend state or tables." },
+      },
+      create(context) {
+        const check = (node) => {
+          const specifier = node.source?.value;
+          if (typeof specifier === "string" && (specifier.includes("backend") || specifier.startsWith("@backend"))) {
+            context.report({ node, messageId: "forbidden" });
+          }
         };
         return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
       },

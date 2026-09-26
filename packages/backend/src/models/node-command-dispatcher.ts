@@ -1,44 +1,31 @@
-import { deliveryPolicy, nodeCommand, nodeResult, type NodeCommand, type NodeResult } from "@reins/node/contract";
 import { getSession } from "../session-store.js";
 import { getSource } from "../node-store.js";
-import { adapterFor } from "../runtimes/node-execution.js";
-import { getCommand, insertCommandWithSession, claimCommand, settleCommand, blockInterruptedDispatches, queuedCommandIds, type CommandState } from "../node-command-store.js";
+import { getCommand, blockInterruptedDispatches, queuedCommands, hasBlockingPredecessor } from "../node-command-store.js";
+import { getWork, workForSession, registerCommandWake } from "./node-command-projection.js";
+import { deliverCommand } from "./node-command-transport.js";
+import { internalNodeFor, provisionForSession } from "../runtimes/internal-node.js";
+import { sendLegacySessionCommand } from "../runtimes/legacy-session-execution.js";
+import { onCommandDelivered } from "./node-command-notifications.js";
 import type { ServerState } from "../state.js";
 
 export { blockInterruptedDispatches };
-type Work = { id: string; sessionId: string; sourceId: number; state: CommandState; command: NodeCommand; result: NodeResult | null };
-
-export function getWork(id: string): Work | null {
-  const row = getCommand(id);
-  if (!row) return null;
-  const command = nodeCommand.parse({ ...JSON.parse(row.command_json), sessionId: row.session_id, sourceId: row.source_id });
-  return { id: row.id, sessionId: row.session_id, sourceId: row.source_id, state: row.state, command, result: row.result_json ? nodeResult.parse(JSON.parse(row.result_json)) : null };
-}
-
-export function scheduleWork(id: string, command: NodeCommand, create: () => void): Work {
-  if (deliveryPolicy(command) !== "submit-work" || command.op !== "session.open" || command.mode !== "create") throw new Error("Only submit-work commands may be scheduled");
-  nodeCommand.parse(command);
-  insertCommandWithSession(id, command.sessionId, JSON.stringify({ op: command.op, mode: command.mode }), create);
-  return getWork(id)!;
-}
-
-/** Unknown outcomes are never replayed without durable node-side admission proof. */
-export async function dispatchWork(id: string, send: (command: NodeCommand, id: string) => Promise<NodeResult>, available = true): Promise<Work> {
-  const work = getWork(id);
-  if (!work) throw new Error(`Unknown command: ${id}`);
-  if (work.state !== "queued" || !available) return work;
-  const session = getSession(work.sessionId);
-  const source = session && getSource(session.source_id);
-  if (!source || source.project_id !== session?.project_id) return work;
-  if (!claimCommand(id)) return getWork(id)!;
-  try {
-    const current = getWork(id)!;
-    const result = nodeResult.parse(await send(current.command, id));
-    settleCommand(id, result.ok ? "admitted" : "failed", JSON.stringify(result));
-  } catch {
-    settleCommand(id, "unknown");
+export async function waitForAdmission(state: ServerState, sessionId: string): Promise<void> {
+  const work = workForSession(sessionId);
+  if (!work) return; // pre-outbox sessions reopen normally
+  if (work.state === "admitted") return;
+  if (work.state === "failed") throw new Error(`Session open failed: ${work.result && !work.result.ok ? work.result.error.message : "unknown error"}`);
+  if (work.state === "unknown") throw new Error("Session open outcome unknown; manual reconciliation required");
+  if (work.state === "queued" && getSource(work.sourceId)?.node_id !== "internal") throw new Error("Execution source unavailable; session open queued");
+  // An input submitted immediately after create must not bypass or race open.
+  // Drain on demand when no server handler is installed (e.g. scripting tests).
+  const dispatcher = dispatcherForInput(state);
+  if (work.state === "queued") {
+    const waiting = dispatcher.wait(work.id);
+    dispatcher.wake();
+    await waiting;
   }
-  return getWork(id)!;
+  else await dispatcher.wait(work.id);
+  return waitForAdmission(state, sessionId);
 }
 
 /** Signal is only a hint: each pass queries SQLite again. */
@@ -47,25 +34,23 @@ export class NodeCommandDispatcher {
   private pending = false;
   private timer: ReturnType<typeof setInterval> | undefined;
   private waiters = new Map<string, Array<() => void>>();
-  private errors = new Map<string, unknown>();
-
-  error(id: string): unknown { return this.errors.get(id); }
-
   wait(id: string): Promise<void> {
     if (getWork(id)?.state !== "queued" && getWork(id)?.state !== "dispatching") return Promise.resolve();
     return new Promise(resolve => this.waiters.set(id, [...(this.waiters.get(id) ?? []), resolve]));
   }
 
-  constructor(private readonly state: ServerState) {}
+  constructor(private readonly state: ServerState) { registerCommandWake(state, () => this.wake()); }
 
   start(): void {
-    blockInterruptedDispatches();
+    // Recovery belongs to process startup, not handler installation: a previous
+    // hot-reload handler may still be dispatching against this database.
+    if (this.timer) return;
     this.timer ??= setInterval(() => this.wake(), 30_000);
     this.timer.unref?.();
     this.wake();
   }
 
-  stop(): void { if (this.timer) clearInterval(this.timer); this.timer = undefined; }
+  stop(): void { if (this.timer) clearInterval(this.timer); this.timer = undefined; dispatchers.delete(this.state); }
 
   wake(): void {
     if (this.running) { this.pending = true; return; }
@@ -78,27 +63,42 @@ export class NodeCommandDispatcher {
     try {
       do {
         this.pending = false;
-        for (const id of queuedCommandIds()) {
-          const work = getWork(id);
-          if (!work) continue;
-          const session = getSession(work.sessionId);
+        for (const row of queuedCommands()) {
+          if (hasBlockingPredecessor(row.id)) continue;
+          const session = getSession(row.session_id);
           const source = session && getSource(session.source_id);
-          if (!source || source.project_id !== session?.project_id || source.node_id !== "internal") continue;
-          await dispatchWork(id, async (command, commandId) => {
-            try { return await adapterFor(source).open(this.state, command, commandId); }
-            catch (error) { this.errors.set(id, error); throw error; }
+          if (!session || !source || source.project_id !== session.project_id || source.node_id !== "internal") continue;
+          await deliverCommand(row.id, () => {
+            const command = getWork(row.id)!.command;
+            if (session.storage_owner !== "internal-node") return sendLegacySessionCommand(this.state, command);
+            const provision = provisionForSession(session.id);
+            return internalNodeFor(this.state).send(command, provision.binding, row.id);
           });
-          for (const resolve of this.waiters.get(id) ?? []) resolve();
-          this.waiters.delete(id);
+          onCommandDelivered(this.state, row);
+          const outcome = getCommand(row.id)?.state;
+          if (outcome === "queued" || outcome === "dispatching") continue;
+          for (const resolve of this.waiters.get(row.id) ?? []) resolve();
+          this.waiters.delete(row.id);
         }
       } while (this.pending);
     } finally { this.running = false; }
   }
+
 }
 
 const dispatchers = new WeakMap<ServerState, NodeCommandDispatcher>();
-export function dispatcherFor(state: ServerState): NodeCommandDispatcher {
+export function wakeDispatcher(state: ServerState): void { dispatchers.get(state)?.wake(); }
+export function wakeOpenForInput(state: ServerState): void { dispatcherForInput(state).wake(); }
+export function recoverInterruptedNodeCommands(): void { blockInterruptedDispatches(); }
+
+function dispatcherForInput(state: ServerState): NodeCommandDispatcher {
   let dispatcher = dispatchers.get(state);
-  if (!dispatcher) { dispatcher = new NodeCommandDispatcher(state); dispatchers.set(state, dispatcher); dispatcher.start(); }
+  if (!dispatcher) { dispatcher = new NodeCommandDispatcher(state); dispatchers.set(state, dispatcher); }
+  return dispatcher;
+}
+
+export function dispatcherFor(state: ServerState): NodeCommandDispatcher {
+  const dispatcher = dispatcherForInput(state);
+  dispatcher.start();
   return dispatcher;
 }

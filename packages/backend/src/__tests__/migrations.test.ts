@@ -2,6 +2,10 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { runMigrations } from "../migrations.js";
+import { setDb, resetDb } from "../db.js";
+import { createProject } from "../project-store.js";
+import { createSession } from "../session-store.js";
+import { internalSource } from "../node-store.js";
 
 function createLegacySchema(db: Database): void {
   db.exec(`
@@ -96,6 +100,28 @@ function insertMessage(db: Database, seq: number, role: string, message: unknown
 }
 
 describe("migrations", () => {
+  test("fresh schema supports node-owned sessions without follow-up migrations", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      const applied = db.query<{ name: string }, []>("SELECT name FROM migrations WHERE name >= '030' ORDER BY name").all().map(row => row.name);
+      expect(applied).not.toContain("033_upgrade_node_open_commands");
+      expect(applied).not.toContain("034_session_storage_owner");
+      const index = db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_node_command_outbox_session_provision'").get();
+      expect(index?.name).toBe("idx_node_command_outbox_session_provision");
+
+      const project = createProject("Existing schema", "/tmp/existing-schema");
+      const created = createSession("new-node-session", project.id, {
+        sourceId: internalSource(project.id).id, agentRuntimeType: "pi", storageOwner: "internal-node",
+      });
+      expect(created.storage_owner).toBe("internal-node");
+    } finally {
+      resetDb();
+    }
+  });
+
   test("backfills linear message ancestry and enforces nullable per-session harness identities", () => {
     const db = new Database(":memory:");
     try {

@@ -34,7 +34,7 @@ import type { Broadcast } from "./broadcast.js";
 import { UploadedFile } from "./uploaded-file.js";
 import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
-import { getRuntimeAdapter } from "../runtimes/registry.js";
+import { getRuntimeAdapter, type AgentRuntime } from "../runtimes/registry.js";
 import {
   buildSessionContextSnapshot,
   type SessionContextSnapshot,
@@ -44,6 +44,8 @@ import { getDb } from "../db.js";
 import { readPendingPiOperation, type PendingPiOperation } from "../runtimes/pi/pending-operation.js";
 import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../runtimes/pi/model-catalog.js";
+import { workForSession } from "./node-command-projection.js";
+import { getSource } from "../node-store.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -91,6 +93,7 @@ export interface SessionView {
   createdAt: string;
   updatedAt: string;
   activityState: SessionRow["activity_state"];
+  scheduling?: { state: "queued" | "dispatching" | "admitted" | "failed" | "unknown"; available: boolean; error: string | null } | null;
   pinnedAt: string | null;
   archivedAt: string | null;
   pendingOperation?: PendingPiOperation | null;
@@ -143,6 +146,11 @@ function toSessionView(row: SessionRow): SessionView {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     activityState: row.activity_state,
+    scheduling: (() => {
+      const work = workForSession(row.id);
+      if (!work) return null;
+      return { state: work.state, available: getSource(work.sourceId)?.node_id === "internal", error: work.result && !work.result.ok ? work.result.error.message : work.state === "unknown" ? "Open outcome unknown; manual reconciliation required" : null };
+    })(),
     pinnedAt: row.pinned_at,
     archivedAt: row.archived_at,
   };
@@ -193,6 +201,7 @@ export class Sessions {
   constructor(
     private sessions: Map<string, ManagedSession>,
     private broadcast: Broadcast = () => {},
+    private nodeRuntimeFor?: (sessionId: string) => AgentRuntime | undefined,
   ) {}
 
   get(sessionId: string): SessionDetailView | null {
@@ -205,7 +214,7 @@ export class Sessions {
       ...toSessionView(row),
       messageCount,
       runtimeType: row.agent_runtime_type,
-      pendingOperation: row.agent_runtime_type === "pi" && !this.sessions.get(sessionId)?.runtime.isStreaming()
+      pendingOperation: row.agent_runtime_type === "pi" && row.activity_state !== "running" && !(this.sessions.get(sessionId)?.runtime ?? this.nodeRuntimeFor?.(sessionId))?.isStreaming()
         ? readPendingPiOperation(getDb(), sessionId)
         : null,
       state: {
@@ -335,8 +344,8 @@ export class Sessions {
     return listSessionsWithActivity().map((row) => {
       let activityState = row.activity_state;
       // Update persisted sessions with actual runtime data in case the server crashed mid-run.
-      if (activityState === "running") {
-        const runtime = this.sessions.get(row.id)?.runtime;
+      if (activityState === "running" && (row.storage_owner !== "internal-node" || this.nodeRuntimeFor)) {
+        const runtime = this.sessions.get(row.id)?.runtime ?? this.nodeRuntimeFor?.(row.id);
         if (!runtime?.isStreaming()) {
           updateActivityState(row.id, "finished");
           activityState = "finished";
@@ -356,6 +365,12 @@ export class Sessions {
    * Persist a server-authoritative activity state and notify clients so they
    * can reload the session/list rows that include activityState.
    */
+  notifyScheduling(sessionId: string): void {
+    const row = getSession(sessionId);
+    if (!row) throw new SessionNotFoundError();
+    this.broadcast({ type: "session_updated", sessionId, projectId: row.project_id });
+  }
+
   updateActivityState(sessionId: string, activityState: SessionRow["activity_state"]): void {
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();
@@ -413,6 +428,7 @@ export class Sessions {
     }
 
     const managed = this.sessions.get(params.sessionId);
+    const liveRuntime = managed?.runtime ?? this.nodeRuntimeFor?.(params.sessionId);
     const nextRuntimeType = params.runtimeType ?? sessionRow.agent_runtime_type;
     if (nextRuntimeType !== "pi") {
       throw new Error("Canonical sessions use the pi runtime");
@@ -424,7 +440,7 @@ export class Sessions {
       if (messageCount > 0) {
         throw new Error("Session runtime can only be changed before any messages are sent");
       }
-      if (managed?.runtime.isStreaming()) {
+      if (liveRuntime?.isStreaming()) {
         throw new Error("Session runtime cannot be changed while the session is streaming");
       }
     }
@@ -449,11 +465,12 @@ export class Sessions {
     const liveThinkingLevel = params.thinkingLevel ? parseThinkingLevel(params.thinkingLevel) : null;
     const thinkingLevel = liveThinkingLevel ?? sessionRow.thinking_level;
 
-    if (managed && isRuntimeSwitch) {
-      await managed.runtime.close();
+    if (liveRuntime && isRuntimeSwitch) {
+      if (sessionRow.storage_owner === "internal-node") throw new Error("Node-owned session runtime cannot be switched");
+      await liveRuntime.close();
       this.sessions.delete(params.sessionId);
-    } else if (managed) {
-      await managed.runtime.setModel({
+    } else if (liveRuntime) {
+      await liveRuntime.setModel({
         provider: params.provider,
         modelId: params.modelId,
         thinkingLevel: liveThinkingLevel,

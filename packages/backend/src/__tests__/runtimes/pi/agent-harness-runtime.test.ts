@@ -6,8 +6,8 @@ import { Type } from "@sinclair/typebox";
 import { getDb } from "../../../db.js";
 import { createProject } from "../../../project-store.js";
 import { createSession } from "../../session-fixture.js";
-import { storeSessionAttachment } from "../../../session-attachments-store.js";
-import { AgentHarnessPiRuntime, createAgentHarnessPiRuntime, createReinsInputMessage } from "../../../runtimes/pi/agent-harness-runtime.js";
+import { storeSessionAttachment, hydratePromptContent } from "../../../session-attachments-store.js";
+import { AgentHarnessPiRuntime, createAgentHarnessPiRuntime, createReinsInputMessage } from "@reins/node/pi-runtime";
 import type { AgentRuntimeEvent } from "../../../runtimes/registry.js";
 import { useTestDb } from "../../helpers/test-db.js";
 
@@ -467,6 +467,7 @@ describe("AgentHarnessPiRuntime", () => {
     models.setProvider(provider.provider);
     const runtime = await createAgentHarnessPiRuntime({
       db: getDb(), sessionId: "image-harness", createdAt: 1, cwd: "/tmp/image-harness",
+      hydratePrompt: hydratePromptContent,
       options: { models, model: provider.getModel(), tools: [], compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 20 } },
     });
 

@@ -7,6 +7,9 @@ import type { SessionManager } from "./session-manager.js";
 import type { ManagedSession } from "../state.js";
 import { Sessions } from "../models/sessions.js";
 import { executeSessionCommand } from "./node-execution.js";
+import { workForSession } from "../models/node-command-projection.js";
+import { hasPendingInput } from "../node-command-store.js";
+import { internalNodeFor } from "./internal-node.js";
 
 export interface SessionStartOptions {
   parentSessionId: "current" | null;
@@ -32,6 +35,8 @@ export interface SessionCreationOptions {
   model?: { provider: string; modelId: string };
   thinkingLevel?: string;
   sourceId?: number;
+  /** Legacy caller-directed sessions retain their existing execution owner. */
+  storageOwner?: "server" | "internal-node";
 }
 
 export function transcriptResult(
@@ -71,6 +76,10 @@ export class SessionInstance implements RuntimeLifecycleSink {
     this.sessionModel = new Sessions(manager.sessions, manager.broadcast);
   }
 
+  nodeRuntime(sessionId: string): AgentRuntime | undefined {
+    return internalNodeFor(this.manager.state).runtime(sessionId);
+  }
+
   async start(prompt: string, options: SessionStartOptions): Promise<{ sessionId: string }> {
     const caller = this.session(this.sessionId);
     const project = getProject(caller.project_id);
@@ -84,12 +93,13 @@ export class SessionInstance implements RuntimeLifecycleSink {
     const managed = await this.manager.create(caller.project_id, project.path, {
       taskId: caller.task_id ?? undefined,
       sourceId: caller.source_id,
+      storageOwner: caller.storage_owner,
       parentSessionId: options.parentSessionId === "current" ? caller.id : undefined,
       title: options.title,
       model: provider && modelId ? { provider, modelId } : undefined,
       thinkingLevel: options.thinkingLevel ?? (caller.thinking_level === "off" ? undefined : caller.thinking_level),
     });
-    await this.deliver(managed.id, prompt, "prompt", undefined, managed);
+    await this.deliver(managed.id, prompt, "prompt");
     return { sessionId: managed.id };
   }
 
@@ -97,8 +107,8 @@ export class SessionInstance implements RuntimeLifecycleSink {
     const caller = this.session(this.sessionId);
     const project = getProject(caller.project_id);
     if (!project) throw new Error("Project not found");
-    const managed = await this.manager.create(caller.project_id, project.path, { taskId, sourceId: caller.source_id });
-    await this.deliver(managed.id, prompt, "prompt", undefined, managed);
+    const managed = await this.manager.create(caller.project_id, project.path, { taskId, sourceId: caller.source_id, storageOwner: caller.storage_owner });
+    await this.deliver(managed.id, prompt, "prompt");
     return { sessionId: managed.id };
   }
 
@@ -114,9 +124,34 @@ export class SessionInstance implements RuntimeLifecycleSink {
       throw new Error("timeoutMs must be an integer between 0 and 30000");
     }
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    const managed = this.manager.sessions.get(sessionId);
-    if (!managed) return transcriptResult(sessionId, loadActiveMessages(sessionId));
+    const managedForWait = () => this.manager.sessions.get(sessionId) ?? (() => {
+      if (this.session(sessionId).storage_owner !== "internal-node") return undefined;
+      const runtime = internalNodeFor(this.manager.state).runtime(sessionId);
+      return runtime ? { id: sessionId, runtime, lastActivity: Date.now() } : undefined;
+    })();
+    let managed = managedForWait();
+    if (!managed) {
+      const work = workForSession(sessionId);
+      if (work?.state === "failed" || work?.state === "unknown") return { sessionId, status: "failed", result: null, error: work.state === "failed" ? "Session open failed" : "Session open outcome unknown" };
+      if (work && timeoutMs > 0) {
+        const deadline = Date.now() + timeoutMs;
+        while (!managed && Date.now() < deadline) {
+          await this.pauseForAdmission(Math.min(10, deadline - Date.now()), signal);
+          managed = managedForWait();
+          const current = workForSession(sessionId);
+          if (current?.state === "failed" || current?.state === "unknown") return { sessionId, status: "failed", result: null, error: `Session open ${current.state}` };
+        }
+      }
+      if (!managed) return work ? { sessionId, status: "timeout", result: null, error: null } : transcriptResult(sessionId, loadActiveMessages(sessionId));
+    }
     managed.lastActivity = Date.now();
+    if (hasPendingInput(sessionId)) {
+      const deadline = Date.now() + timeoutMs;
+      while (hasPendingInput(sessionId) && Date.now() < deadline) {
+        await this.pauseForAdmission(Math.min(10, deadline - Date.now()), signal);
+      }
+      if (hasPendingInput(sessionId)) return { sessionId, status: "timeout", result: null, error: null };
+    }
     if (timeoutMs === 0 && managed.runtime.isStreaming()) {
       return { sessionId, status: "timeout", result: null, error: null };
     }
@@ -204,13 +239,21 @@ export class SessionInstance implements RuntimeLifecycleSink {
     message: string,
     mode: "prompt" | "steer",
     sourceSessionId?: string,
-    _opened?: ManagedSession,
   ): Promise<{ sessionId: string }> {
     this.session(sessionId);
     const content = [{ type: "text" as const, text: message }];
     const clientId = crypto.randomUUID();
     await executeSessionCommand(this.manager.state, sessionId, mode, content, clientId, sourceSessionId);
     return { sessionId };
+  }
+
+  private pauseForAdmission(ms: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolve(); }, ms);
+      const abort = () => { clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); };
+      signal?.addEventListener("abort", abort, { once: true });
+    });
   }
 
   private async settledResult(managed: ManagedSession): Promise<SessionWaitResult> {

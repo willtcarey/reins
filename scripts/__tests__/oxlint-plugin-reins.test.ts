@@ -53,13 +53,15 @@ describe("reins/frontend-backend-imports-type-only", () => {
 });
 
 describe("reins/node-import-boundary", () => {
-  test("server can import only the contract export, not daemon implementation", () => {
-    for (const specifier of ["@reins/node", "@reins/node/runtime", "../../../node/src/runtime.js"]) {
+  test("server imports only declared node package exports, not implementation paths", () => {
+    for (const specifier of ["@reins/node", "@reins/node/unknown", "../../../node/src/runtime/context.js"]) {
       expect(runRule("node-import-boundary", "ImportDeclaration", { source: { value: specifier } })).toHaveLength(1);
     }
-    expect(runRule("node-import-boundary", "ImportDeclaration", { source: { value: "@reins/node/contract" } })).toHaveLength(0);
-    expect(runRule("node-import-boundary", "ImportExpression", { source: { value: "@reins/node/runtime" } })).toHaveLength(1);
-    expect(runRule("node-import-boundary", "ExportNamedDeclaration", { source: { value: "@reins/node/runtime" } })).toHaveLength(1);
+    for (const specifier of ["@reins/node/contract", "@reins/node/runtime", "@reins/node/pi-runtime", "@reins/node/host-tools", "@reins/node/runtime-build", "@reins/node/resources", "@reins/node/prompt"]) {
+      expect(runRule("node-import-boundary", "ImportDeclaration", { source: { value: specifier } })).toHaveLength(0);
+    }
+    expect(runRule("node-import-boundary", "ImportExpression", { source: { value: "../../../node/src/runtime/context.js" } })).toHaveLength(1);
+    expect(runRule("node-import-boundary", "ExportNamedDeclaration", { source: { value: "../../../node/src/runtime/context.js" } })).toHaveLength(1);
   });
 
   test("contract imports cannot depend on implementation", () => {

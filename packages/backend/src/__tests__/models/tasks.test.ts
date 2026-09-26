@@ -137,6 +137,16 @@ describe("createTaskWithBranch", () => {
     });
   });
 
+  test("does not delete a task while a node-owned session is running outside the server runtime map", async () => {
+    const task = createTask(projectId, "Running on node", null, "task/node-running");
+    createSession("node-active", projectId, { agentRuntimeType: "pi", taskId: task.id, storageOwner: "internal-node" });
+    updateActivityState("node-active", "running");
+
+    await expect(model.tasks().delete(task.id)).rejects.toThrow("currently running");
+    expect(getTask(task.id)).not.toBeNull();
+    expect(getSession("node-active")!.activity_state).toBe("running");
+  });
+
   test("adopts an existing local branch when branch_name is explicitly provided", async () => {
     // Create a branch manually from main
     await createBranch(repo.dir, "task/existing", "main");

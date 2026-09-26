@@ -1,11 +1,17 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { Database } from "bun:sqlite";
+import { executeSessionCommand } from "../../runtimes/node-execution.js";
+import { closeNodeDb, setNodeDb, initializeNodeStorage } from "@reins/node/storage";
 import { join } from "node:path";
 import { describe, test, expect, mock } from "bun:test";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { getDb } from "../../db.js";
+import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { createProject } from "../../project-store.js";
 import { createSession, getSession, updateSessionMetadata } from "../session-fixture.js";
 import { loadMessages } from "../../messages-store.js";
+import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { createTask } from "../../task-store.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
@@ -13,6 +19,7 @@ import { useTestRepo } from "../helpers/test-repo.js";
 import {
   createNewSession,
   ensureSessionOpen,
+  SessionManager,
 } from "../../runtimes/session-manager.js";
 import {
   clearRuntimeAdapters,
@@ -25,8 +32,11 @@ import { setSetting } from "../../settings-store.js";
 import type { WsClient } from "../../state.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
+import { install } from "../../handler.js";
+import { NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
 import { Sessions } from "../../models/sessions.js";
-import { registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/factory.js";
+import { registerPiProvider, unregisterPiProvider, createPiModelRuntime, createPiContext } from "../../runtimes/pi/factory.js";
+import { internalNodeFor, provisionForSession } from "../../runtimes/internal-node.js";
 
 function createCapturingWsClient() {
   const sent: any[] = [];
@@ -155,6 +165,120 @@ describe("runtime sessions manager", () => {
     }
   }, 15_000);
 
+  test("new internal session prompts in the node database, replicates history, and reopens after node restart", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "reins-node-spike-"));
+    const file = join(dir, "node.db");
+    closeNodeDb();
+    const node = new Database(file);
+    initializeNodeStorage(node);
+    setNodeDb(node);
+    const provider = fauxProvider({ provider: "node-spike-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }, { id: "other", contextWindow: 200_000, maxTokens: 1_000 }] });
+    provider.setResponses([fauxAssistantMessage("Node reply"), fauxAssistantMessage("After restart reply")]);
+    registerPiProvider(provider.provider);
+    setApiKeyCredential(provider.provider.id, "test-key");
+    expect((await createPiModelRuntime()).getModel("node-spike-faux", "fake")).toBeDefined();
+    const state = createServerState();
+    const client = createCapturingWsClient();
+    state.clients.add(client.client);
+    const stop = install(state);
+    const project = createProject("Node-backed", repo.dir);
+    expect((await createPiContext({ cwd: repo.dir })).modelRuntime.getModel("node-spike-faux", "fake")).toBeDefined();
+    try {
+      const created = createNewSession(state, project.id, repo.dir, {
+        model: { provider: provider.provider.id, modelId: "fake" },
+      });
+      expect(getSession(created.id)?.storage_owner).toBe("internal-node");
+      for (let i = 0; i < 100 && !node.query("SELECT 1 FROM sessions WHERE id = ?").get(created.id); i++) await Bun.sleep(10);
+      expect(node.query("SELECT 1 FROM sessions WHERE id = ?").get(created.id)).not.toBeNull();
+      expect(node.query<{ source_id: number; cwd: string; created_at: string }, [string]>(
+        "SELECT source_id,cwd,created_at FROM sessions WHERE id = ?",
+      ).get(created.id)).toEqual({
+        source_id: getSession(created.id)!.source_id,
+        cwd: repo.dir,
+        created_at: getSession(created.id)!.created_at,
+      });
+      await executeSessionCommand(state, created.id, "prompt", [{ type: "text", text: "Hello node" }], "node-client");
+      for (let i = 0; i < 100 && !internalNodeFor(state).hasRuntime(created.id); i++) await Bun.sleep(10);
+      expect(state.sessions.has(created.id)).toBe(false);
+      expect(internalNodeFor(state).hasRuntime(created.id)).toBe(true);
+      await expect(new SessionManager(state).open(created.id)).rejects.toThrow("Node-owned sessions open on the node");
+      await internalNodeFor(state).open(created.id, provisionForSession(created.id).binding).then(runtime => runtime.waitForIdle());
+      const serverEntries = getDb().query<{ seq: number; harness_id: string; message_json: string }, [string]>(
+        "SELECT seq,harness_id,message_json FROM session_messages WHERE session_id = ? ORDER BY seq",
+      ).all(created.id);
+      const nodeEntries = node.query<{ seq: number; harness_id: string; message_json: string }, [string]>(
+        "SELECT seq,harness_id,message_json FROM session_messages WHERE session_id = ? ORDER BY seq",
+      ).all(created.id);
+      expect(serverEntries).toEqual(nodeEntries);
+      for (const table of ["pi_values", "pi_lists", "pi_usage"] as const) {
+        const rows = (db: Database) => db.query(`SELECT * FROM ${table} WHERE session_id = ? ORDER BY seq`).all(created.id);
+        expect(rows(getDb())).toEqual(rows(node));
+      }
+      expect(loadMessages(created.id).some(m => JSON.stringify(m).includes("Node reply"))).toBe(true);
+      expect(client.sent.some(message => message.type === "event" && message.event.type === "agent_end" && message.sessionId === created.id)).toBe(true);
+      expect(getSession(created.id)?.activity_state).toBe("finished");
+      await new Sessions(state.sessions, undefined, id => internalNodeFor(state).runtime(id)).setModel({
+        sessionId: created.id, provider: provider.provider.id, modelId: "other",
+      });
+      expect(getSession(created.id)?.model_id).toBe("other");
+      expect((await internalNodeFor(state).open(created.id, provisionForSession(created.id).binding)).getSessionMetadata()?.model?.modelId).toBe("other");
+      await internalNodeFor(state).close(created.id);
+      stop();
+      closeNodeDb();
+      const reopenedDb = new Database(file);
+      initializeNodeStorage(reopenedDb);
+      setNodeDb(reopenedDb);
+      const stopRestarted = install(state);
+      try {
+        const reopened = await internalNodeFor(state).open(created.id, provisionForSession(created.id).binding);
+        expect(state.sessions.has(created.id)).toBe(false);
+        expect(JSON.stringify(await reopened.getMessages())).toContain("Node reply");
+        await executeSessionCommand(state, created.id, "steer", [{ type: "text", text: "After restart" }], "after-restart");
+        for (let i = 0; i < 100 && !getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND command_json LIKE '%after-restart%' AND state = 'admitted'").get(created.id); i++) await Bun.sleep(10);
+        expect(getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND command_json LIKE '%after-restart%' AND state = 'admitted'").get(created.id)).not.toBeNull();
+        await reopened.waitForIdle();
+        expect(JSON.stringify(await reopened.getMessages())).toContain("After restart");
+        expect(getDb().query<{ count: number }, [string]>("SELECT COUNT(*) count FROM session_messages WHERE session_id = ?").get(created.id)?.count)
+          .toBe(reopenedDb.query<{ count: number }, [string]>("SELECT COUNT(*) count FROM session_messages WHERE session_id = ?").get(created.id)?.count);
+        await internalNodeFor(state).close(created.id);
+      } finally { stopRestarted(); }
+    } finally {
+      stop();
+      unregisterPiProvider(provider.provider.id);
+      closeNodeDb();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  test("node-owned prompts retain attachment references and hydrate image bytes for Pi", async () => {
+    const nodeDb = new Database(":memory:");
+    initializeNodeStorage(nodeDb);
+    setNodeDb(nodeDb);
+    const provider = fauxProvider({ provider: "node-image-faux", models: [{ id: "fake", input: ["text", "image"], contextWindow: 200_000, maxTokens: 1_000 }] });
+    let providerContext: unknown;
+    provider.setResponses([(context) => { providerContext = structuredClone(context.messages); return fauxAssistantMessage("Image received"); }]);
+    registerPiProvider(provider.provider);
+    setApiKeyCredential(provider.provider.id, "test-key");
+    const state = createServerState();
+    const stop = install(state);
+    try {
+      const project = createProject("Node image", repo.dir);
+      const created = createNewSession(state, project.id, repo.dir, { model: { provider: provider.provider.id, modelId: "fake" } });
+      const attachment = storeSessionAttachment(created.id, { data: Buffer.from("node image bytes"), mimeType: "image/png", filename: "image.png" });
+      await executeSessionCommand(state, created.id, "prompt", [
+        { type: "text", text: "Inspect image" },
+        { type: "image", attachmentId: attachment.id, mimeType: attachment.mimeType, filename: attachment.filename, byteSize: attachment.byteSize, sha256: attachment.sha256 },
+      ], "node-image-client");
+      for (let i = 0; i < 100 && !internalNodeFor(state).hasRuntime(created.id); i++) await Bun.sleep(10);
+      const runtime = await internalNodeFor(state).open(created.id, provisionForSession(created.id).binding);
+      await runtime.waitForIdle();
+      expect(state.sessions.has(created.id)).toBe(false);
+      expect(JSON.stringify(providerContext)).toContain(Buffer.from("node image bytes").toString("base64"));
+      expect(JSON.stringify(loadMessages(created.id))).toContain(attachment.id);
+      await internalNodeFor(state).close(created.id);
+    } finally { stop(); unregisterPiProvider(provider.provider.id); closeNodeDb(); }
+  }, 15_000);
+
   test("createNewSession persists runtime metadata via sessions manager orchestration", async () => {
     const state = createServerState();
     const project = createProject("Reins", repo.dir);
@@ -163,7 +287,8 @@ describe("runtime sessions manager", () => {
     const row = getSession(managed.id);
 
     expect(row?.agent_runtime_type).toBe("pi");
-    expect(state.sessions.get(managed.id)).toBe(managed);
+    expect(managed.scheduling.state).toBe("queued");
+    expect(state.sessions.get(managed.id)).toBeUndefined();
   });
 
   test("createNewSession persists selected model + thinking level from create settings", async () => {
@@ -251,7 +376,7 @@ describe("runtime sessions manager", () => {
     expect(capturedPrompt[0].text.endsWith("/fixture-skill please")).toBe(true);
   });
 
-  test("ensureSessionOpen reopens persisted sessions and registers them in-memory", async () => {
+  test("ensureSessionOpen opens node-owned sessions without registering a server runtime", async () => {
     const state = createServerState();
     const project = createProject("Reins", repo.dir);
 
@@ -260,11 +385,14 @@ describe("runtime sessions manager", () => {
     const archivedAt = getSession(managed.id)!.archived_at;
     state.sessions.delete(managed.id);
 
+    await new NodeCommandDispatcher(state).drain();
     const reopened = await ensureSessionOpen(state, managed.id);
 
     expect(reopened.id).toBe(managed.id);
-    expect(state.sessions.get(managed.id)).toBe(reopened);
+    expect(state.sessions.has(managed.id)).toBe(false);
+    expect(internalNodeFor(state).hasRuntime(managed.id)).toBe(true);
     expect(getSession(managed.id)!.archived_at).toBe(archivedAt);
+    await internalNodeFor(state).close(managed.id);
   });
 
   test("ensureSessionOpen returns warm in-memory session and touches activity", async () => {

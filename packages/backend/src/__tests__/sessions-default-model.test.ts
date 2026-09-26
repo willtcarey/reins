@@ -6,6 +6,9 @@ import { createProject } from "../project-store.js";
 import { createSession, getSession } from "./session-fixture.js";
 import { setSetting, deleteSetting } from "../settings-store.js";
 import { createNewSession, ensureSessionOpen } from "../runtimes/session-manager.js";
+import { getWork } from "../models/node-command-projection.js";
+import { NodeCommandDispatcher } from "../models/node-command-dispatcher.js";
+import { internalNodeFor } from "../runtimes/internal-node.js";
 import { resolveModelSetting, resolveUtilityModel } from "../models/model-settings.js";
 
 describe("resolveModelSetting(default_model)", () => {
@@ -89,7 +92,10 @@ describe("canonical session model selection", () => {
     deleteSetting("default_model");
     const state = createServerState();
     const project = createProject("Test Project", repo.dir, "main");
-    await expect(createNewSession(state, project.id, repo.dir)).rejects.toThrow("requires an explicit model");
+    const created = createNewSession(state, project.id, repo.dir);
+    await new NodeCommandDispatcher(state).drain();
+    expect(getWork(created.scheduling.id)?.state).toBe("admitted");
+    await expect(ensureSessionOpen(state, created.id)).rejects.toThrow("requires an explicit model");
   });
 
   test("rejects a Claude-runtime default instead of routing it through Pi", async () => {
@@ -101,9 +107,7 @@ describe("canonical session model selection", () => {
     });
     const state = createServerState();
     const project = createProject("Test Project", repo.dir, "main");
-    await expect(createNewSession(state, project.id, repo.dir)).rejects.toThrow(
-      "Configured default_model uses unavailable runtime 'claude_agent_sdk'",
-    );
+    expect(() => createNewSession(state, project.id, repo.dir)).toThrow("Configured default_model uses unavailable runtime 'claude_agent_sdk'");
   });
 
   test("applies configured model and thinking to a new session", async () => {
@@ -111,16 +115,22 @@ describe("canonical session model selection", () => {
     const state = createServerState();
     const project = createProject("Test Project", repo.dir, "main");
     const managed = await createNewSession(state, project.id, repo.dir);
-    expect(managed.runtime.getSessionMetadata?.()).toEqual({ model: { provider: "anthropic", modelId: "claude-sonnet-4-5" }, thinkingLevel: "high" });
+    await new NodeCommandDispatcher(state).drain();
+    expect(state.sessions.has(managed.id)).toBe(false);
+    const opened = await ensureSessionOpen(state, managed.id);
+    expect(opened.runtime.getSessionMetadata?.()).toEqual({ model: { provider: "anthropic", modelId: "claude-sonnet-4-5" }, thinkingLevel: "high" });
     expect(getSession(managed.id)).toMatchObject({ agent_runtime_type: "pi", model_provider: "anthropic", model_id: "claude-sonnet-4-5", thinking_level: "high" });
-    await managed.runtime.close();
+    await internalNodeFor(state).close(managed.id);
   });
 
   test("reports an invalid configured model without fallback", async () => {
     setSetting("default_model", { provider: "anthropic", modelId: "does-not-exist", runtimeType: "pi", thinkingLevel: "high" });
     const state = createServerState();
     const project = createProject("Test Project", repo.dir, "main");
-    await expect(createNewSession(state, project.id, repo.dir)).rejects.toThrow("Configured default_model is invalid");
+    const created = createNewSession(state, project.id, repo.dir);
+    await new NodeCommandDispatcher(state).drain();
+    expect(getWork(created.scheduling.id)?.state).toBe("admitted");
+    await expect(ensureSessionOpen(state, created.id)).rejects.toThrow("Configured default_model is invalid");
   });
 
   test("resumes with persisted model identity and rejects unavailable identities", async () => {

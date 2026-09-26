@@ -10,6 +10,7 @@ import { beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { runMigrations } from "../../migrations.js";
 import { setDb, resetDb } from "../../db.js";
+import { initializeNodeStorage, setNodeDb, closeNodeDb } from "@reins/node/storage";
 
 let migratedTemplate: Buffer | null = null;
 
@@ -37,11 +38,15 @@ export function setupTestDb(): Database {
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   setDb(db);
+  const nodeDb = new Database(":memory:");
+  initializeNodeStorage(nodeDb);
+  setNodeDb(nodeDb);
   return db;
 }
 
 export function teardownTestDb(): void {
   resetDb();
+  closeNodeDb();
 }
 
 export function useTestDb() {

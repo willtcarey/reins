@@ -7,7 +7,7 @@ import {
   createReadTool,
   createWriteTool,
 } from "@earendil-works/pi-agent-core";
-import { ReinsResourceLoader } from "../src/runtimes/resource-loader.js";
+import { ReinsResourceLoader } from "@reins/node/resources";
 import { buildReinsSystemPrompt } from "../src/runtimes/system-prompt.js";
 import { createTaskTool } from "../src/tools/create-task.js";
 import { createSearchTool } from "../src/tools/search.js";

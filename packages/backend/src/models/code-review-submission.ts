@@ -2,6 +2,7 @@ import { acceptCodeReviewSubmission } from "../code-review-store.js";
 import { getSession } from "../session-store.js";
 import type { ServerState } from "../state.js";
 import { ensureSessionOpen } from "../runtimes/session-manager.js";
+import { waitForAdmission } from "./node-command-dispatcher.js";
 import type { Broadcast } from "./broadcast.js";
 import {
   CodeReviewError,
@@ -43,6 +44,7 @@ export class CodeReviewSubmission {
       throw new CodeReviewError("Session is currently running", "conflict");
     }
 
+    await waitForAdmission(this.state, command.sessionId);
     const managed = await ensureSessionOpen(this.state, command.sessionId);
     if (managed.runtime.isStreaming()) {
       throw new CodeReviewError("Session is currently running", "conflict");

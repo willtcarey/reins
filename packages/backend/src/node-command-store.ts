@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import type { ClientPromptContent } from "./messages-store.js";
 
 export type CommandState = "queued" | "dispatching" | "admitted" | "failed" | "unknown";
 export interface CommandRow {
@@ -8,6 +9,10 @@ export interface CommandRow {
   state: CommandState;
   command_json: string;
   result_json: string | null;
+}
+
+export function getCommandForSession(sessionId: string): { id: string } | null {
+  return getDb().query<{ id: string }, [string]>("SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.provision' LIMIT 1").get(sessionId) ?? null;
 }
 
 export function getCommand(id: string): CommandRow | null {
@@ -23,8 +28,15 @@ export function insertCommandWithSession(id: string, sessionId: string, commandJ
   })();
 }
 
-export function queuedCommandIds(): string[] {
-  return getDb().query<{ id: string }, []>("SELECT id FROM node_command_outbox WHERE state = 'queued' ORDER BY created_at, id").all().map(row => row.id);
+export function queuedCommands(): InputRow[] {
+  return getDb().query<InputRow, []>("SELECT id, session_id, command_json, state, result_json FROM node_command_outbox WHERE state = 'queued' ORDER BY rowid").all();
+}
+
+/** An unresolved predecessor fences this session, but not other sessions. */
+export function hasBlockingPredecessor(id: string): boolean {
+  return !!getDb().query<{ id: string }, [string]>(`SELECT earlier.id FROM node_command_outbox current
+    JOIN node_command_outbox earlier ON earlier.session_id = current.session_id AND earlier.rowid < current.rowid
+    WHERE current.id = ? AND earlier.state IN ('queued', 'dispatching', 'unknown') LIMIT 1`).get(id);
 }
 
 export function claimCommand(id: string): boolean {
@@ -37,4 +49,32 @@ export function settleCommand(id: string, state: "admitted" | "failed" | "unknow
 
 export function blockInterruptedDispatches(): void {
   getDb().query("UPDATE node_command_outbox SET state = 'unknown' WHERE state = 'dispatching'").run();
+}
+
+
+export interface InputRow {
+  id: string;
+  session_id: string;
+  command_json: string;
+  state: "queued" | "dispatching" | "admitted" | "failed" | "unknown";
+  result_json: string | null;
+}
+
+export function enqueueInput(sessionId: string, operation: "prompt" | "steer", content: ClientPromptContent, clientId: string, sourceSessionId?: string): string {
+  const db = getDb();
+  return db.transaction(() => {
+    const existing = db.query<InputRow, [string, string]>("SELECT * FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') = ?").get(sessionId, clientId);
+    const json = JSON.stringify({ op: `session.${operation}`, clientId, content, sourceSessionId: sourceSessionId ?? null });
+    if (existing) {
+      if (existing.command_json !== json) throw new Error("clientId already used for different input");
+      return existing.id;
+    }
+    const id = crypto.randomUUID();
+    db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, ?, ?, 'queued')").run(id, sessionId, json);
+    return id;
+  })();
+}
+
+export function hasPendingInput(sessionId: string): boolean {
+  return !!getDb().query<{ id: string }, [string]>("SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') IS NOT NULL AND state IN ('queued', 'dispatching') LIMIT 1").get(sessionId);
 }

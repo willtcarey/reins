@@ -314,6 +314,22 @@ describe("WebSocket handlers", () => {
       expect(observer.lastMessage()).toBeNull();
     });
 
+    test("reports an eventual admission failure only to the submitting socket", async () => {
+      const project = createProject("WS failure", "/tmp/ws-failure");
+      createSession("sess-failure", project.id, { agentRuntimeType: "pi" });
+      const stub = createRuntimeStub();
+      stub.runtime.steer = async () => { throw new Error("admission unavailable"); };
+      state.sessions.set("sess-failure", { id: "sess-failure", runtime: stub.runtime, lastActivity: 0 });
+      const sender = createMockWs();
+      const observer = createMockWs();
+      handleWsOpen(state, sender.ws);
+      handleWsOpen(state, observer.ws);
+      handleWsMessage(state, sender.ws, JSON.stringify({ type: "steer", sessionId: "sess-failure", clientId: "failure-id", message: [{ type: "text", text: "hello" }] }));
+      await Bun.sleep(20);
+      expect(sender.lastMessage()).toEqual({ type: "error", sessionId: "sess-failure", clientId: "failure-id", error: "steer failed: admission unavailable" });
+      expect(observer.lastMessage()).toBeNull();
+    });
+
     test("validates and forwards attachment refs to the runtime", async () => {
       const project = createProject("WS Multimodal", "/tmp/ws-multimodal");
       createSession("sess-ws", project.id, { agentRuntimeType: "pi" });

@@ -22,6 +22,7 @@ export interface CachedSession {
   firstMessage: string | null;
   messageCount: number | null;
   activityState: ActivityState;
+  scheduling?: SessionData["scheduling"];
   pinnedAt: string | null;
   archivedAt: string | null;
   pendingOperation: SessionData["pendingOperation"];
@@ -46,6 +47,7 @@ function emptyCachedSession(sessionId: string): CachedSession {
     firstMessage: null,
     messageCount: null,
     activityState: null,
+    scheduling: null,
     pinnedAt: null,
     archivedAt: null,
     pendingOperation: null,
@@ -65,6 +67,7 @@ function withoutUndefined(data: SessionPatch): SessionPatch {
   if (data.firstMessage !== undefined) result.firstMessage = data.firstMessage;
   if (data.messageCount !== undefined) result.messageCount = data.messageCount;
   if (data.activityState !== undefined) result.activityState = data.activityState;
+  if (data.scheduling !== undefined) result.scheduling = data.scheduling;
   if (data.pinnedAt !== undefined) result.pinnedAt = data.pinnedAt;
   if (data.archivedAt !== undefined) result.archivedAt = data.archivedAt;
   if (data.pendingOperation !== undefined) result.pendingOperation = data.pendingOperation;
@@ -83,6 +86,9 @@ function sessionEquals(a: CachedSession, b: CachedSession): boolean {
     a.firstMessage === b.firstMessage &&
     a.messageCount === b.messageCount &&
     a.activityState === b.activityState &&
+    a.scheduling?.state === b.scheduling?.state &&
+    a.scheduling?.available === b.scheduling?.available &&
+    a.scheduling?.error === b.scheduling?.error &&
     a.pinnedAt === b.pinnedAt &&
     a.archivedAt === b.archivedAt &&
     a.pendingOperation?.kind === b.pendingOperation?.kind &&
@@ -152,6 +158,7 @@ export class SessionCache {
       updatedAt: entry.updatedAt,
       runtimeType: entry.runtimeType ?? undefined,
       activityState: entry.activityState,
+      ...(entry.scheduling !== undefined ? { scheduling: entry.scheduling } : {}),
       pinnedAt: entry.pinnedAt,
       archivedAt: entry.archivedAt,
       pendingOperation: entry.pendingOperation,

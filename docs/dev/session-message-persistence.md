@@ -2,7 +2,7 @@
 
 ## Canonical ownership
 
-AgentHarness is the only transcript writer. `PiStorageAdapter` stores each public harness `Entry` in `session_messages`; Reins does not persist runtime snapshots or maintain a second replay transcript.
+AgentHarness is the only transcript writer. `PiStorageAdapter` stores each public harness `Entry` in `session_messages`; Reins does not persist runtime snapshots or maintain a second replay transcript. For pre-existing sessions server SQLite is canonical. Newly created internal-node sessions use `~/.reins/node/storage.db` as canonical AgentHarness storage (separate from the server data directory), with committed write batches replayed in order to server SQLite for history/tree readers. `storage_owner` selects the write authority per session; server-side normal commits reject node-owned sessions. Node outbox batches and server receipts make delivery durable and idempotent. Reads on the server may lag if replica delivery fails; runtime admission then fails closed until delivery resumes on node open/provision. Never reconstruct node state from the server display projection. See the active node architecture plan for unimplemented remote gates.
 
 - `session_messages.id` is the stable UI row identity.
 - `harness_id` is the exact AgentHarness entry identity.
@@ -11,7 +11,7 @@ AgentHarness is the only transcript writer. `PiStorageAdapter` stores each publi
 - `message_json` is the canonical PiStorageAdapter entry envelope.
 - `pi_values`, `pi_lists`, and `pi_usage` store the remaining harness contract state. `pi_usage` includes both assistant-linked provider calls and standalone structural calls and supports cumulative statistics. Current context occupancy instead uses usage embedded in valid assistant messages on the active branch, so structural requests cannot be mistaken for occupancy.
 
-Canonical readers do not accept legacy `RuntimeMessage` JSON. Process bootstrap checks existing databases read-only before application initialization or schema migrations. A fresh data directory proceeds normally; an unsupported legacy or invalid history format fails startup without modifying the database. The one-time legacy history importer has been retired.
+Canonical readers do not accept legacy `RuntimeMessage` JSON. Process bootstrap checks existing databases read-only before application initialization or schema migrations. A fresh data directory proceeds normally; an unsupported legacy or invalid history format fails startup without modifying the database. The one-time legacy history importer has been retired. The check permits a completely empty, unprovisioned node-owned server replica without lane values; a partially populated replica fails closed.
 
 ## Archive and active history
 

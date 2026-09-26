@@ -17,7 +17,7 @@ docker run -p 3100:3100 \
   reins
 ```
 
-The `-v reins-data:/data` mount persists the SQLite database across container restarts. Without it, all projects, tasks, and sessions are lost when the container stops.
+The `-v reins-data:/data` mount persists both the server database (`/data/reins.db`) and internal-node canonical storage (`/data/.reins/node/storage.db`, since the image sets `HOME=/data`). Back up both together. Without the volume, projects, tasks, and sessions are lost when the container stops.
 
 Mount your project directories so the server can access them:
 

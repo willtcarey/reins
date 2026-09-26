@@ -69,8 +69,13 @@ state.ts (types only)
 - Because the build bundles the full transitive dependency tree under `src/`,
   a change to *any* source file (e.g. `sessions.ts`, `router.ts`,
   `routes/projects.ts`) triggers a reload — not just `routes.ts` or `ws.ts`.
-- The Bun server, WebSocket connections, and agent sessions are never torn
-  down — only the handler *functions* are swapped.
+- The Bun server and WebSocket connections remain alive. `handler.install()` acquires
+  an in-process internal node before draining commands; the next handler acquires
+  the same node instance/node SQLite connection **before** the old handler releases
+  its lease. Node-owned Pi runs and the node runtime cache therefore survive a
+  server handler swap without closing or aborting active runs. Legacy server-owned
+  Pi runtimes remain in the stable `state.sessions` map. Node package code is
+  external to the server dev bundle and is **restart-required**, not hot-reloaded.
 
 ## Usage
 
@@ -87,8 +92,9 @@ bun packages/backend/src/index.ts
 
 ## Caveats
 
-- Changes to `index.ts` or `state.ts` still require a manual restart since
+- Changes to `index.ts`, `state.ts`, node package code, node storage schema or process-owner configuration require a manual restart since
   they own the process lifecycle and type definitions.
+- Schema migrations run when the process first opens the database, not on handler hot reload. Restart the backend after adding a migration; hot reload alone will not update an existing connection's schema.
 - If the `Bun.build()` step fails (e.g. syntax error), the reload fails
   gracefully and the previous handlers remain active (error is logged to
   console).

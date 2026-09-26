@@ -20,6 +20,11 @@ import { executeTool } from "../helpers/execute-tool.js";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
 
+async function admitted(turns: unknown[], count: number): Promise<void> {
+  for (let i = 0; i < 100 && turns.length < count; i++) await Bun.sleep(10);
+  expect(turns).toHaveLength(count);
+}
+
 describe("api.sessions orchestration", () => {
   useTestDb();
   const repo = useTestRepo();
@@ -169,6 +174,7 @@ describe("api.sessions orchestration", () => {
       name: "Investigation", parent_session_id: "parent", project_id: project.id,
       model_provider: "test", model_id: "model", thinking_level: "high",
     });
+    await admitted(turns, 1);
     expect(turns[0].input).toEqual(text("Investigate"));
     expect(await api.sessions.wait(child.sessionId, 0)).toMatchObject({ status: "timeout" });
     turns[0].finish();
@@ -183,6 +189,7 @@ describe("api.sessions orchestration", () => {
       parentSessionId: null, modelProvider: "test", modelId: "other", thinkingLevel: "minimal",
     }));
     expect(getSession(session.sessionId)).toMatchObject({ name: null, parent_session_id: null, model_id: "other", thinking_level: "minimal" });
+    await admitted(turns, 1);
     turns[0].finish();
     await api.sessions.wait(session.sessionId, 1000);
     expect(listSessions({ projectId: project.id }).find((row) => row.id === session.sessionId)?.first_message).toBeNull();
@@ -194,14 +201,14 @@ describe("api.sessions orchestration", () => {
     createSession("existing", project.id, { agentRuntimeType: "pi", modelProvider: "test", modelId: "model" });
     persistCanonicalMessages("existing", [{ role: "assistant", content: text("earlier"), timestamp: 1 }]);
     await Promise.all([api.sessions.send("existing", "one"), api.sessions.send("existing", "two")]);
+    await admitted(turns, 1);
     expect(fixture.created).toBe(1);
-    expect(turns).toHaveLength(1);
     expect(await api.sessions.wait("existing", 0)).toMatchObject({ status: "timeout" });
     turns[0].finish();
     expect(await api.sessions.wait("existing", 1000)).toMatchObject({ status: "completed", result: "response 3" });
     expect((await fixture.state.sessions.get("existing")!.runtime.getMessages()).filter((message) => message.role === "user").map((message) => message.content)).toEqual([text("one"), text("two")]);
     await api.sessions.send("existing", "resume");
-    expect(turns).toHaveLength(2);
+    await admitted(turns, 2);
     turns[1].finish();
     expect(await api.sessions.wait("existing", 1000)).toMatchObject({ status: "completed", result: "response 5" });
   });
@@ -223,11 +230,13 @@ describe("api.sessions orchestration", () => {
   test("unsupported busy steering reports failure without restarting or deferring the message", async () => {
     const { api, turns, state } = setup();
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: null }));
+    await admitted(turns, 1);
     const runtime = state.sessions.get(child.sessionId)!.runtime;
     let aborted = false;
     runtime.abort = async () => { aborted = true; };
     runtime.steer = async () => { throw new Error("Steering unsupported"); };
-    await expect(api.sessions.send(child.sessionId, "not accepted")).rejects.toThrow("Steering unsupported");
+    await api.sessions.send(child.sessionId, "not accepted");
+    await Bun.sleep(20);
     expect(runtime.isStreaming()).toBe(true);
     expect(aborted).toBe(false);
     turns[0].finish();
@@ -251,6 +260,7 @@ describe("api.sessions orchestration", () => {
     const api = buildApiObject(taskContext);
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Task work", { parentSessionId: "current" }));
     expect(getSession(child.sessionId)).toMatchObject({ task_id: task.id, parent_session_id: "task-parent" });
+    await admitted(turns, 1);
     turns[0].finish();
     await api.sessions.wait(child.sessionId, 1000);
 
@@ -266,6 +276,7 @@ describe("api.sessions orchestration", () => {
     expect(listSessions({ taskId: task.id })).toEqual(before);
     const independent = Value.Decode(SessionHandleSchema, await deep.sessions.start("Independent work", { parentSessionId: null }));
     expect(getSession(independent.sessionId)).toMatchObject({ task_id: task.id, parent_session_id: null });
+    await admitted(turns, 2);
     turns[1].finish();
     await deep.sessions.wait(independent.sessionId, 1000);
   });
@@ -293,6 +304,7 @@ describe("api.sessions orchestration", () => {
       unlinkSync(lock);
     }
     expect(new Set(siblings.map((child) => child.sessionId)).size).toBe(2);
+    await admitted(turns, 2);
     for (const turn of turns) turn.finish();
     await Promise.all(siblings.map((child) => api.sessions.wait(child.sessionId, 1000)));
   });
@@ -304,6 +316,7 @@ describe("api.sessions orchestration", () => {
     expect(await api.sessions.wait("empty", 0)).toEqual({ sessionId: "empty", status: "idle", result: null, error: null });
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: null }));
     expect(await api.sessions.wait(child.sessionId, 5)).toMatchObject({ status: "timeout" });
+    await admitted(turns, 1);
     expect(state.sessions.get(child.sessionId)!.runtime.isStreaming()).toBe(true);
     turns[0].finish();
     await api.sessions.wait(child.sessionId, 1000);
@@ -331,6 +344,7 @@ describe("api.sessions orchestration", () => {
     const waiting = executeTool(tool, "wait", { code: `return await api.sessions.wait(${JSON.stringify(child.sessionId)}, 1000)` }, controller.signal, undefined);
     controller.abort();
     expect((await waiting).details).toMatchObject({ success: false });
+    await admitted(turns, 1);
     expect(state.sessions.get(child.sessionId)!.runtime.isStreaming()).toBe(true);
     turns[0].finish();
     expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed" });

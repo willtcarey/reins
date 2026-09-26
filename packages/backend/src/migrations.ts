@@ -327,7 +327,22 @@ const MIGRATIONS: Migration[] = [
        created_at TEXT NOT NULL DEFAULT (datetime('now'))
      );
      CREATE INDEX idx_node_command_outbox_state ON node_command_outbox(state, created_at);
-     CREATE UNIQUE INDEX idx_node_command_outbox_session_create ON node_command_outbox(session_id) WHERE json_extract(command_json, '$.op') = 'session.open' AND json_extract(command_json, '$.mode') = 'create';`,
+     CREATE UNIQUE INDEX idx_node_command_outbox_session_provision ON node_command_outbox(session_id) WHERE json_extract(command_json, '$.op') = 'session.provision';`,
+  ],
+  [
+    "031_node_input_outbox",
+    `CREATE UNIQUE INDEX idx_node_command_client_id ON node_command_outbox(session_id, json_extract(command_json, '$.clientId'))
+       WHERE json_extract(command_json, '$.clientId') IS NOT NULL;`,
+  ],
+  [
+    "032_node_replica_receipts",
+    `ALTER TABLE sessions ADD COLUMN storage_owner TEXT NOT NULL DEFAULT 'server'
+       CHECK(storage_owner IN ('server', 'internal-node'));
+     CREATE TABLE node_replica_receipts (
+       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+       start_seq INTEGER NOT NULL, writes_json TEXT NOT NULL,
+       PRIMARY KEY(session_id, start_seq)
+     );`,
   ],
 ];
 

@@ -93,6 +93,12 @@ export class SessionListItem extends LitElement {
     const date = formatRelativeDate(s.updatedAt);
     const childCount = this.childSessions.length;
     const pinned = s.pinnedAt !== null;
+    const scheduling = s.scheduling && s.scheduling.state !== "admitted"
+      ? s.scheduling.state === "queued" && !s.scheduling.available ? "Source unavailable · queued"
+        : s.scheduling.state === "unknown" ? "Open outcome unknown"
+          : s.scheduling.state === "failed" ? `Open failed: ${s.scheduling.error ?? "unknown error"}`
+            : `Open ${s.scheduling.state}`
+      : null;
 
     return html`
       <info-card
@@ -105,7 +111,7 @@ export class SessionListItem extends LitElement {
             class="pointer-events-none block text-zinc-600"
           >${pinIcon("", 10)}</span>
         ` : nothing}
-        .subtitle=${`${date} · ${s.messageCount} messages`}
+        .subtitle=${scheduling ? `${scheduling} · ${date}` : `${date} · ${s.messageCount} messages`}
         .active=${this.active}
         .primaryLabel=${`Open session: ${label}`}
         .actions=${this.cardActions(pinned)}

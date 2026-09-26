@@ -8,7 +8,7 @@
 
 import type { RouterGroup } from "../router.js";
 import type { ProjectRouteContext } from "./index.js";
-import { ReinsResourceLoader, type Skill } from "../runtimes/resource-loader.js";
+import { ReinsResourceLoader, type Skill } from "@reins/node/resources";
 
 export type InjectedSkillInfo = Pick<Skill, "name" | "description">;
 

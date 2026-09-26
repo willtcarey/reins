@@ -15,6 +15,8 @@ import { getSession } from "./session-store.js";
 import { logger } from "./logger.js";
 import type { ClientPromptContent } from "./messages-store.js";
 import { parseClientPromptContent } from "./session-attachments-store.js";
+import { observeSubmission, forgetClient } from "./models/node-command-notifications.js";
+import { internalNodeFor } from "./runtimes/internal-node.js";
 
 /** Maps raw WebSocket objects to their WsClient wrappers. */
 const wsClientMap = new WeakMap<WebSocketLike, WsClient>();
@@ -76,6 +78,7 @@ async function handleWsCommand(
       }
       try {
         if (!getSession(sessionId)) { sendError("Session not found", clientId); return; }
+        observeSubmission(state, sessionId, clientId, client);
         await executeSessionCommand(state, sessionId, command, message, clientId);
         sendToWs(client.ws, { type: "ack", command, clientId });
       } catch (err: unknown) {
@@ -87,8 +90,10 @@ async function handleWsCommand(
 
     case "abort": {
       const managed = state.sessions.get(sessionId);
-      if (!managed) { sendError("Session not active"); return; }
-      managed.lastActivity = Date.now();
+      const nodeRuntime = getSession(sessionId)?.storage_owner === "internal-node"
+        ? internalNodeFor(state).runtime(sessionId) : undefined;
+      if (!managed && !nodeRuntime) { sendError("Session not active"); return; }
+      if (managed) managed.lastActivity = Date.now();
       sendToWs(client.ws, { type: "ack", command: "abort" });
       try {
         await executeSessionCommand(state, sessionId, "abort");
@@ -126,6 +131,7 @@ export function handleWsClose(state: ServerState, ws: WebSocketLike): void {
   const client = wsClientMap.get(ws);
   if (client) {
     state.clients.delete(client);
+    forgetClient(state, client);
   }
   logger.info(`WebSocket client disconnected (total: ${state.clients.size})`);
 }

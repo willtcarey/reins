@@ -16,6 +16,7 @@ export interface SessionRow {
   id: string;
   project_id: number;
   source_id: number;
+  storage_owner: "server" | "internal-node";
   name: string | null;
   created_at: string;
   updated_at: string;
@@ -84,13 +85,14 @@ export function createSession(
     taskId?: number;
     parentSessionId?: string;
     sourceId: number;
+    storageOwner?: "server" | "internal-node";
   },
 ): SessionRow {
   const db = getDb();
   return db
-    .query<SessionRow, [string, number, number, string | null, string | null, string, string, number | null, string | null]>(
-      `INSERT INTO sessions (id, project_id, source_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    .query<SessionRow, [string, number, number, string | null, string | null, string, string, number | null, string | null, string]>(
+      `INSERT INTO sessions (id, project_id, source_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, storage_owner, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
     )
     .get(
@@ -103,6 +105,7 @@ export function createSession(
       opts.agentRuntimeType,
       opts.taskId ?? null,
       opts.parentSessionId ?? null,
+      opts.storageOwner ?? "server",
     )!;
 }
 
@@ -386,8 +389,8 @@ export function clearFinishedActivityForTasks(taskIds: number[]): string[] {
 export function listSessionsWithActivity() {
   const db = getDb();
   return db
-    .query<{ id: string; activity_state: ActivityStateValue; project_id: number; task_id: number | null }, []>(
-      `SELECT s.id, s.activity_state, s.project_id, s.task_id
+    .query<{ id: string; activity_state: ActivityStateValue; project_id: number; task_id: number | null; storage_owner: string }, []>(
+      `SELECT s.id, s.activity_state, s.project_id, s.task_id, s.storage_owner
        FROM sessions s
        LEFT JOIN tasks t ON t.id = s.task_id
        WHERE s.activity_state IS NOT NULL AND (t.status IS NULL OR t.status != 'closed')`,

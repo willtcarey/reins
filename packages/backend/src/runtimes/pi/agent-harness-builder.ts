@@ -1,18 +1,15 @@
 import { readFile } from "node:fs/promises";
-import {
-  createBashTool,
-  createEditTool,
-  createReadTool,
-  createWriteTool,
-  type AgentHarnessTool,
-} from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
+import { createHostTools } from "@reins/node/host-tools";
 import { getDb } from "../../db.js";
 import { resolveModel } from "../../models/model-settings.js";
 import type { ReinsToolContext } from "../../tools/types.js";
 import { ModelNotFoundError, type CreateAgentRuntimeParams } from "../registry.js";
 import { buildReinsSystemPrompt } from "../system-prompt.js";
-import { createAgentHarnessPiRuntime, type AgentHarnessPiRuntime } from "./agent-harness-runtime.js";
+import { createAgentHarnessPiRuntime, type AgentHarnessPiRuntime } from "@reins/node/pi-runtime";
+import { PiStorageAdapter } from "./storage-adapter.js";
+import { hydratePromptContent } from "../../session-attachments-store.js";
+import { logger } from "../../logger.js";
 import { createPiContext } from "./factory.js";
 import { toPiThinkingLevel } from "./utility.js";
 
@@ -20,7 +17,6 @@ import { toPiThinkingLevel } from "./utility.js";
 export async function buildAgentHarnessPiRuntime(
   params: CreateAgentRuntimeParams,
 ): Promise<AgentHarnessPiRuntime> {
-  const builtinNames = new Set<string>(params.sessionTools?.builtins ?? ["read", "write", "edit", "bash"]);
   const customTools = params.sessionTools?.harnessTools ?? [];
   const { modelRuntime, resourceLoader, resources: reinsResources } = await createPiContext({ cwd: params.projectDir });
   const model = params.model
@@ -49,30 +45,19 @@ export async function buildAgentHarnessPiRuntime(
       content: prompt.content,
     })),
   };
-  const db = getDb();
-  const row = db.query<{ created_at: string; parent_session_id: string | null }, [string]>(
-    "SELECT created_at, parent_session_id FROM sessions WHERE id = ?",
+  const row = getDb().query<{ created_at: string; parent_session_id: string | null; storage_owner: string }, [string]>(
+    "SELECT created_at, parent_session_id, storage_owner FROM sessions WHERE id = ?",
   ).get(params.sessionId);
   if (!row) throw new Error(`Unknown session: ${params.sessionId}`);
+  if (row.storage_owner === "internal-node") throw new Error(`Node-owned sessions open on the node`);
 
-  const builtinTools: AgentHarnessTool<ReinsToolContext>[] = [
-    createReadTool<ReinsToolContext>(),
-    createWriteTool<ReinsToolContext>(),
-    createEditTool<ReinsToolContext>(),
-    createBashTool<ReinsToolContext>({
-      prepare: (execution) => {
-        execution.env.PI_SESSION_ID = params.sessionId;
-        execution.env.PI_PROVIDER = sessionEnvironment.provider;
-        execution.env.PI_MODEL = sessionEnvironment.modelId;
-        if (sessionEnvironment.thinkingLevel) {
-          execution.env.PI_REASONING_LEVEL = sessionEnvironment.thinkingLevel;
-        } else {
-          delete execution.env.PI_REASONING_LEVEL;
-        }
-      },
-    }),
-  ].filter((tool) => builtinNames.has(tool.name));
-  const tools: AgentHarnessTool<ReinsToolContext>[] = [...builtinTools, ...customTools];
+  const host = createHostTools({
+    cwd: params.projectDir,
+    sessionId: params.sessionId,
+    builtins: params.sessionTools?.builtins ?? ["read", "write", "edit", "bash"],
+    sessionEnvironment,
+  });
+  const tools: AgentHarnessTool<ReinsToolContext>[] = [...host.tools, ...customTools];
   const systemPrompt = buildReinsSystemPrompt({
     tools,
     contextFiles: reinsResources.contextFiles,
@@ -89,9 +74,9 @@ export async function buildAgentHarnessPiRuntime(
     resources,
     systemPrompt,
   };
-  const executionEnv = new NodeExecutionEnv({ cwd: params.projectDir });
+  const executionEnv = host.executionEnv;
   return await createAgentHarnessPiRuntime({
-    db,
+    storage: new PiStorageAdapter(getDb(), params.sessionId),
     sessionId: params.sessionId,
     createdAt: new Date(row.created_at).getTime(),
     cwd: params.projectDir,
@@ -100,5 +85,7 @@ export async function buildAgentHarnessPiRuntime(
     sessionEnvironment,
     executionEnv,
     lifecycle: params.lifecycle,
+    hydratePrompt: hydratePromptContent,
+    onError: (message, error) => logger.error(message, error),
   });
 }

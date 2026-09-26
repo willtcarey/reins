@@ -21,7 +21,7 @@ import {
   type TaskListOptions,
   type TaskStatus,
 } from "../task-store.js";
-import { clearFinishedActivityForTasks } from "../session-store.js";
+import { clearFinishedActivityForTasks, getSession } from "../session-store.js";
 import { slugifyBranchName } from "../branch-namer.js";
 import {
   branchExists,
@@ -247,8 +247,8 @@ export class ProjectTasks {
     const activeSessions: string[] = [];
     for (const sid of sessionIds) {
       const managed = this.sessions.get(sid);
-      if (!managed) continue;
-      if (managed.runtime.isStreaming()) {
+      const row = getSession(sid);
+      if (managed?.runtime.isStreaming() || (row?.storage_owner === "internal-node" && row.activity_state === "running")) {
         activeSessions.push(sid);
       }
     }

@@ -1,1 +1,1 @@
-{"compilerOptions":{"target":"ESNext","module":"ESNext","moduleResolution":"bundler","strict":true,"noEmit":true},"include":["src/contract.ts"]}
+{"compilerOptions":{"target":"ESNext","module":"ESNext","moduleResolution":"bundler","strict":true,"skipLibCheck":true,"noEmit":true},"include":["src/**/*.ts"]}

@@ -102,7 +102,7 @@ describe("SessionCache", () => {
 
     store.set("sess-1", detail);
 
-    expect(store.getDetail("sess-1")).toEqual(detail);
+    expect(store.getDetail("sess-1")).toEqual({ ...detail, scheduling: null });
   });
 
   test("does not synthesize detail from partial cached records", () => {

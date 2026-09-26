@@ -24,7 +24,7 @@ docker run -p 3100:3100 \
   reins
 ```
 
-The `-v reins-data:/data` mount persists the database across container restarts. Add projects using their paths inside the container (e.g. `/repos/my-project`). See [docs/dev/docker.md](docs/dev/docker.md) for more options.
+The `-v reins-data:/data` mount persists both the server database and internal-node session storage across container restarts. Add projects using their paths inside the container (e.g. `/repos/my-project`). See [docs/dev/docker.md](docs/dev/docker.md) for more options.
 
 ### Manual
 
@@ -62,7 +62,7 @@ The only required environment variable is an API key for your LLM provider (e.g.
 | Variable | Default | Description |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | API key for Anthropic models (required if using Anthropic) |
-| `REINS_DATA_DIR` | `.reins/` (cwd) | Directory for the SQLite database; set to a mounted volume path in Docker |
+| `REINS_DATA_DIR` | `.reins/` (cwd) | Directory for the server SQLite database; internal-node canonical storage lives separately at `~/.reins/node/storage.db` (both are under `/data` in Docker) |
 | `REINS_PORT` | `3100` | Server port |
 | `REINS_SECRET` | auto-generated | Hex-encoded 32-byte key for encrypting sensitive settings at rest |
 

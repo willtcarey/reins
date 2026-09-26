@@ -106,7 +106,6 @@ describe("SessionInstance", () => {
     const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "stale success" }] }] });
     const activity: string[] = [];
     const admission = Promise.withResolvers<void>();
-    const cleared = Promise.withResolvers<void>();
     const originalSteer = parent.runtime.steer;
     parent.runtime.steer = async (content, options) => {
       await admission.promise;
@@ -119,7 +118,6 @@ describe("SessionInstance", () => {
       if (event.type !== "session_updated") return;
       const current = getSession("child")?.activity_state ?? "null";
       activity.push(current);
-      if (current === "null") cleared.resolve();
     } });
     const instance = new SessionInstance(manager, "child");
 
@@ -131,11 +129,11 @@ describe("SessionInstance", () => {
     });
     await Bun.sleep(0);
 
-    expect(getSession("child")?.activity_state).toBe("running");
-    expect(activity).toEqual(["running"]);
+    expect(getSession("child")?.activity_state).toBeNull();
+    expect(activity).toEqual(["running", "null"]);
 
     admission.resolve();
-    await cleared.promise;
+    for (let i = 0; i < 100 && parent.steerCalls.length === 0; i++) await Bun.sleep(10);
 
     expect(activity).toEqual(["running", "null"]);
     expect(parent.steerCalls).toHaveLength(1);
@@ -202,19 +200,15 @@ describe("SessionInstance", () => {
     const parent = createRuntimeStub();
     parent.runtime.steer = async () => { throw new Error("parent unavailable"); };
     const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "Result" }] }] });
-    const finished = Promise.withResolvers<void>();
     const state = createServerState();
     state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: 0 });
     const manager = new SessionManager(state);
-    Object.defineProperty(manager, "broadcast", { value: (event: { type: string }) => {
-      if (event.type === "session_updated" && getSession("child")?.activity_state === "finished") finished.resolve();
-    } });
     const instance = new SessionInstance(manager, "child");
 
     instance.started("run-1");
     instance.settled(child.runtime, { runId: "run-1", status: "completed" });
-    await finished.promise;
+    for (let i = 0; i < 100 && getSession("child")?.activity_state !== null; i++) await Bun.sleep(10);
 
-    expect(getSession("child")?.activity_state).toBe("finished");
+    expect(getSession("child")?.activity_state).toBeNull();
   });
 });

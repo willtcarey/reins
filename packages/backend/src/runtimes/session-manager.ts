@@ -7,8 +7,8 @@ import {
 import { loadMessages as dbLoadMessages, type ClientPromptContent } from "../messages-store.js";
 import { getProject } from "../project-store.js";
 import { getSource } from "../node-store.js";
-import { adapterFor, selectCreationSource } from "./node-execution.js";
-import { scheduleWork, dispatcherFor, getWork } from "../models/node-command-dispatcher.js";
+import { selectCreationSource } from "./node-source.js";
+import { scheduleWork, getWork, wakeScheduledCommands, type Work } from "../models/node-command-projection.js";
 import { touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { SessionInstance, type SessionCreationOptions } from "./session-instance.js";
@@ -22,8 +22,10 @@ import {
 import { getSetting } from "../settings-store.js";
 import { parseThinkingLevel } from "../models/model-settings.js";
 import { attachRuntimeBroadcastObserver } from "./runtime-broadcast-observer.js";
-import { expandPrompt } from "./prompt.js";
+import { expandLocalPrompt } from "@reins/node/prompt";
 import type { AgentRuntime } from "./registry.js";
+import { internalNodeFor, provisionForSession } from "./internal-node.js";
+import { NodeModelNotFoundError } from "@reins/node/runtime-build";
 
 export class SessionManager {
   readonly sessions: Map<string, ManagedSession>;
@@ -38,7 +40,7 @@ export class SessionManager {
     return new SessionInstance(this, sessionId);
   }
 
-  create(projectId: number, projectDir: string, options?: SessionCreationOptions): Promise<ManagedSession> {
+  create(projectId: number, projectDir: string, options?: SessionCreationOptions): CreatedSession {
     return createManagedSession(this, projectId, projectDir, options);
   }
 
@@ -49,14 +51,14 @@ export class SessionManager {
 
 function attachPromptExpansion(params: {
   runtime: AgentRuntime;
-  sessionId: string;
+  cwd: string;
 }): void {
-  const { runtime, sessionId } = params;
+  const { runtime, cwd } = params;
   const originalPrompt = runtime.prompt.bind(runtime);
   const originalSteer = runtime.steer.bind(runtime);
 
   const expand = (content: ClientPromptContent): ClientPromptContent => {
-    const { expanded } = expandPrompt(content, sessionId);
+    const { expanded } = expandLocalPrompt(content, cwd);
     return expanded;
   };
 
@@ -156,7 +158,7 @@ async function createManagedSessionRuntime(params: {
     throw err;
   }
 
-  attachPromptExpansion({ runtime, sessionId });
+  attachPromptExpansion({ runtime, cwd: projectDir });
 
   const detachRuntimeBroadcastObserver = attachRuntimeBroadcastObserver({
     sessionId,
@@ -194,19 +196,21 @@ async function createManagedSessionRuntime(params: {
 /**
  * Create a brand-new session with runtime-agnostic persistence orchestration.
  */
-async function createManagedSession(
+export interface CreatedSession { id: string; scheduling: Work }
+
+function createManagedSession(
   manager: SessionManager,
   projectId: number,
   projectDir: string,
   opts?: SessionCreationOptions,
-): Promise<ManagedSession> {
+): CreatedSession {
   const project = getProject(projectId);
   if (!project) {
     throw new Error(`Project not found: ${projectId}`);
   }
 
   const source = selectCreationSource(projectId, opts?.sourceId);
-  if (source.path !== projectDir) throw new Error(`Project source path mismatch: ${projectId}`);
+  if (opts?.sourceId === undefined && source.path !== projectDir) throw new Error(`Project source path mismatch: ${projectId}`);
   const sessionId = crypto.randomUUID();
 
   const defaultModel = getSetting("default_model");
@@ -226,7 +230,7 @@ async function createManagedSession(
     : defaultModel?.thinkingLevel ?? null;
 
   const commandId = crypto.randomUUID();
-  scheduleWork(commandId, { op: "session.open", mode: "create", sessionId, sourceId: source.id }, () => {
+  scheduleWork(commandId, { op: "session.provision", sessionId, sourceId: source.id }, () => {
     dbCreateSession(sessionId, projectId, {
       modelProvider: selectedCreateModel?.provider,
       modelId: selectedCreateModel?.modelId,
@@ -235,19 +239,14 @@ async function createManagedSession(
       taskId: opts?.taskId,
       parentSessionId: opts?.parentSessionId,
       sourceId: source.id,
+      storageOwner: opts?.storageOwner ?? (source.node_id === "internal" ? "internal-node" : "server"),
     });
     if (opts?.title !== undefined) updateSessionMeta(sessionId, { name: opts.title });
   });
 
-  const dispatcher = dispatcherFor(manager.state);
-  queueMicrotask(() => dispatcher.wake());
-  // The local browser create API still waits for the open result. The durable row
-  // exists before the wake; losing the wake cannot lose the command.
-  await dispatcher.wait(commandId);
-  const dispatched = getWork(commandId)!;
-  if (dispatcher.error(commandId)) throw dispatcher.error(commandId);
-  const managed = manager.sessions.get(sessionId);
-  if (dispatched.state !== "admitted" || !managed) throw new Error(`Session ${sessionId} open outcome: ${dispatched.state}`);
+  // Wake only after committing the row and submission. The response never depends
+  // on Pi initialization; a missed wake is recovered by the dispatcher scan.
+  queueMicrotask(() => wakeScheduledCommands(manager.state));
 
   if (opts?.taskId) {
     touchTask(opts.taskId);
@@ -256,12 +255,12 @@ async function createManagedSession(
   manager.broadcast({
     type: "session_created",
     projectId,
-    sessionId: managed.id,
+    sessionId,
     taskId: opts?.taskId ?? null,
     parentSessionId: opts?.parentSessionId ?? null,
   });
 
-  return managed;
+  return { id: sessionId, scheduling: { ...getWork(commandId)! } };
 }
 
 /** Create a brand-new session using the process-scoped manager. */
@@ -270,20 +269,8 @@ export function createNewSession(
   projectId: number,
   projectDir: string,
   options?: SessionCreationOptions,
-): Promise<ManagedSession> {
+): CreatedSession {
   return new SessionManager(state).create(projectId, projectDir, options);
-}
-
-export async function materializeRuntime(state: ServerState, sessionId: string): Promise<ManagedSession> {
-  const row = dbGetSession(sessionId);
-  if (!row) throw new Error(`Session not found: ${sessionId}`);
-  const source = getSource(row.source_id);
-  if (!source || source.project_id !== row.project_id) throw new Error(`Execution source unavailable for session ${sessionId}`);
-  const model = row.model_provider && row.model_id ? { provider: row.model_provider, modelId: row.model_id } : undefined;
-  return createManagedSessionRuntime({ manager: new SessionManager(state), runtimeType: row.agent_runtime_type,
-    projectId: row.project_id, projectDir: source.path, sessionId, taskId: row.task_id,
-    model, thinkingLevel: row.thinking_level === "off" ? null : row.thinking_level ? parseThinkingLevel(row.thinking_level) : null,
-    resume: false });
 }
 
 async function openManagedSession(
@@ -310,7 +297,21 @@ async function openManagedSession(
 }
 
 /** Ensure a session is open using the process-scoped manager. */
-export function ensureSessionOpen(state: ServerState, sessionId: string): Promise<ManagedSession> {
+export async function ensureSessionOpen(state: ServerState, sessionId: string): Promise<ManagedSession> {
+  if (dbGetSession(sessionId)?.storage_owner === "internal-node") {
+    try {
+      const runtime = await internalNodeFor(state).open(sessionId, provisionForSession(sessionId).binding);
+      return { id: sessionId, runtime, lastActivity: Date.now() };
+    } catch (error) {
+      if (error instanceof NodeModelNotFoundError) {
+        const configured = getSetting("default_model");
+        const name = configured?.runtimeType === "pi" && configured.provider === error.provider && configured.modelId === error.modelId
+          ? "Configured default_model" : "Selected session model";
+        throw new Error(`${name} is invalid: ${error.provider}/${error.modelId}${name === "Configured default_model" ? ". Update it in Settings." : ""}`, { cause: error });
+      }
+      throw error;
+    }
+  }
   return new SessionManager(state).open(sessionId);
 }
 
@@ -319,6 +320,8 @@ async function reopenSession(manager: SessionManager, sessionId: string): Promis
   if (!row) {
     throw new Error(`Session not found: ${sessionId}`);
   }
+
+  if (row.storage_owner === "internal-node") throw new Error("Node-owned sessions open on the node");
 
   const project = getProject(row.project_id);
   if (!project) {
@@ -330,7 +333,7 @@ async function reopenSession(manager: SessionManager, sessionId: string): Promis
     throw new Error(`Execution source unavailable for session ${sessionId}`);
   }
 
-  adapterFor(source);
+  if (source.node_id !== "internal") throw new Error(`Execution source unavailable for source ${source.id}`);
   const defaultModel = getSetting("default_model");
   const selectedResumeModel = (row.model_provider && row.model_id)
     ? {

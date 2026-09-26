@@ -11,14 +11,18 @@ import {
   type Entry,
   type ExecutionEnv,
   type HarnessEvent,
+  type Storage,
 } from "@earendil-works/pi-agent-core";
 import type { Database } from "bun:sqlite";
 import type { Message, Models } from "@earendil-works/pi-ai";
-import { hydratePromptContent } from "../../session-attachments-store.js";
-import type { ClientPromptContent, ConversationEntry, RuntimeMessage } from "../../messages-store.js";
-import { logger } from "../../logger.js";
-import type { AgentRuntime, AgentRuntimeEvent, RuntimeLifecycleSink, RuntimePromptOptions, RuntimePromptSubmission, RuntimeRunOutcome, SetRuntimeModelParams } from "../registry.js";
-import { PiStorageAdapter } from "./storage-adapter.js";
+import type { ClientPromptContent, ConversationEntry, RuntimeMessage, AgentRuntimeEvent, RuntimeLifecycleSink, RuntimePromptOptions, RuntimePromptSubmission, RuntimeRunOutcome, SetRuntimeModelParams } from "./types.js";
+import { PiStorageAdapter } from "../pi-storage.js";
+
+type HydratePrompt = (sessionId: string, content: ClientPromptContent) => Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string; filename?: string; width?: number; height?: number }>;
+const noAttachmentHydration: HydratePrompt = (_sessionId, content) => {
+  if (content.some(block => block.type === "image")) throw new Error("Attachment hydration unavailable on node");
+  return content.filter((block): block is Extract<ClientPromptContent[number], { type: "text" }> => block.type === "text");
+};
 
 export interface ReinsInputMessage {
   role: "reinsInput";
@@ -155,15 +159,19 @@ export interface AgentHarnessPiRuntimeParams {
   sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null };
   executionEnv?: ExecutionEnv;
   lifecycle?: RuntimeLifecycleSink;
+  hydratePrompt?: HydratePrompt;
+  onError?: (message: string, error: unknown) => void;
 }
 
 /** Registered Pi runtime backed directly by AgentHarness. */
-export class AgentHarnessPiRuntime implements AgentRuntime {
+export class AgentHarnessPiRuntime {
   readonly harness: AgentHarnessInstance;
   readonly lane: AgentLane;
   private readonly openOperations: readonly { lane: string; operationId: string; kind: string; startedAt: number }[];
   private readonly executionEnv?: ExecutionEnv;
   private readonly sessionId?: string;
+  private readonly hydratePrompt: HydratePrompt;
+  private readonly onError: (message: string, error: unknown) => void;
   private readonly models?: Models;
   private readonly sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null };
   private readonly activeOperations = new Map<string, Promise<void>>();
@@ -179,6 +187,8 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     this.lane = params.lane;
     this.metadata = params.metadata ?? {};
     this.sessionId = params.sessionId;
+    this.hydratePrompt = params.hydratePrompt ?? noAttachmentHydration;
+    this.onError = params.onError ?? console.error;
     this.openOperations = params.openOperations ?? [];
     this.models = params.models;
     this.sessionEnvironment = params.sessionEnvironment;
@@ -196,9 +206,9 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     ] : [];
   }
 
-  static toProviderMessagesForSession(sessionId: string, messages: AgentMessage[]): Message[] {
+  static toProviderMessagesForSession(sessionId: string, messages: AgentMessage[], hydratePrompt: HydratePrompt = noAttachmentHydration): Message[] {
     return messages.flatMap((message) => message.role === "reinsInput"
-      ? convertToLlm([providerInput(message, hydratePromptContent(sessionId, message.content)) as never])
+      ? convertToLlm([providerInput(message, hydratePrompt(sessionId, message.content)) as never])
       : convertToLlm([message]));
   }
 
@@ -266,7 +276,7 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
     const operation = this.driveOperationToCompletion(operationId);
     const settled = operation.catch((error: unknown) => {
       if (error instanceof Error && error.name === "AbortError") return;
-      logger.error(`AgentHarness prompt operation ${operationId} failed:`, error);
+      this.onError(`AgentHarness prompt operation ${operationId} failed:`, error);
     });
     this.activeOperations.set(operationId, settled);
     void settled.finally(() => this.activeOperations.delete(operationId));
@@ -366,7 +376,7 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
       }
     })();
     const settled = start.catch((error: unknown) => {
-      logger.error("AgentHarness queued steering failed:", error);
+      this.onError("AgentHarness queued steering failed:", error);
     });
     this.pendingIdleStarts.add(settled);
     void settled.finally(() => this.pendingIdleStarts.delete(settled));
@@ -502,7 +512,8 @@ export class AgentHarnessPiRuntime implements AgentRuntime {
 }
 
 export interface CreateAgentHarnessPiRuntimeParams {
-  db: Database;
+  db?: Database;
+  storage?: Storage;
   sessionId: string;
   createdAt: number;
   cwd: string;
@@ -511,13 +522,16 @@ export interface CreateAgentHarnessPiRuntimeParams {
   sessionEnvironment?: { provider: string; modelId: string; thinkingLevel?: string | null };
   executionEnv?: ExecutionEnv;
   lifecycle?: RuntimeLifecycleSink;
+  hydratePrompt?: HydratePrompt;
+  onError?: (message: string, error: unknown) => void;
 }
 
 /** Attach AgentHarness to a canonical Reins session backed by PiStorageAdapter. */
 export async function createAgentHarnessPiRuntime(
   params: CreateAgentHarnessPiRuntimeParams,
 ): Promise<AgentHarnessPiRuntime> {
-  const storage = new PiStorageAdapter(params.db, params.sessionId);
+  const storage = params.storage ?? (params.db ? new PiStorageAdapter(params.db, params.sessionId) : undefined);
+  if (!storage) throw new Error(`Session storage unavailable: ${params.sessionId}`);
   const session = new StorageBackedSession({
     id: params.sessionId,
     createdAt: params.createdAt,
@@ -530,7 +544,7 @@ export async function createAgentHarnessPiRuntime(
     const made = await AgentHarness.create({
       ...params.options,
       session,
-      toProviderMessages: (messages) => AgentHarnessPiRuntime.toProviderMessagesForSession(params.sessionId, messages),
+      toProviderMessages: (messages) => AgentHarnessPiRuntime.toProviderMessagesForSession(params.sessionId, messages, params.hydratePrompt),
     }, BACKGROUND_CONTEXT);
     harness = made.harness;
     const lane = await harness.lane("main", BACKGROUND_CONTEXT);
@@ -562,6 +576,8 @@ export async function createAgentHarnessPiRuntime(
       sessionEnvironment: params.sessionEnvironment,
       executionEnv: params.executionEnv,
       lifecycle: params.lifecycle,
+      hydratePrompt: params.hydratePrompt,
+      onError: params.onError,
     });
   } catch (error) {
     try {

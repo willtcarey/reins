@@ -15,6 +15,7 @@ COPY . .
 RUN bun run build
 
 ENV REINS_DATA_DIR=/data
+ENV HOME=/data
 VOLUME /data
 
 EXPOSE 3100
