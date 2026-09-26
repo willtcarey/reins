@@ -1,6 +1,6 @@
 import { createCodingTools } from "@earendil-works/pi-coding-agent";
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { buildReinsSystemPrompt } from "../system-prompt.js";
+import { buildReinsSystemPrompt } from "@reins/node/system-prompt";
 import { ReinsResourceLoader } from "@reins/node/resources";
 import {
   type AvailabilitySourceType,

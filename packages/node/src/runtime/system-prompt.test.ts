@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { buildReinsSystemPrompt } from "../../runtimes/system-prompt.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { buildReinsSystemPrompt } from "./system-prompt.js";
 
 describe("buildReinsSystemPrompt", () => {
   test("includes REINS identity and tool list", () => {
@@ -108,5 +110,35 @@ describe("buildReinsSystemPrompt", () => {
 
     expect(prompt).not.toContain("# Project Context");
     expect(prompt).not.toContain("<available_skills>");
+  });
+});
+
+// Fixtures were rendered by the server's copy of this function before it moved to the node; the
+// node and legacy server paths must keep producing these bytes. `<REINS_ROOT>` is the repo root.
+describe("buildReinsSystemPrompt output is byte-identical to the pre-move server rendering", () => {
+  const root = fileURLToPath(new URL("../../../..", import.meta.url)).replace(/\/$/, "");
+  const expected = (name: string) => readFileSync(new URL(`./__fixtures__/system-prompt/${name}.txt`, import.meta.url), "utf8").replaceAll("<REINS_ROOT>", root);
+  const tools = [{ name: "read" }, { name: "write" }, { name: "edit" }, { name: "bash" },
+    { name: "execute", description: "Run a Reins script." }, { name: "search", description: "  Search the API.\n" }, { name: "create_task", description: "" }];
+  const contextFiles = [{ path: "/project/AGENTS.md", content: "Follow these rules." }, { path: "/home/u/.reins/AGENTS.md", content: "Global rules.\nLine 2." }];
+  const skills = [
+    { name: "test-skill", description: "A test skill.", filePath: "/skills/test-skill/SKILL.md", baseDir: "/skills/test-skill", source: "project", disableModelInvocation: false },
+    { name: "hidden", description: "Hidden <&>.", filePath: "/skills/hidden/SKILL.md", baseDir: "/skills/hidden", source: "user", disableModelInvocation: true },
+    { name: "esc", description: "Uses <xml> & \"quotes\".", filePath: "/skills/esc/SKILL.md", baseDir: "/skills/esc", source: "user", disableModelInvocation: false },
+  ];
+
+  test("task session with tools, context files and skills", () => {
+    expect(buildReinsSystemPrompt({ tools, contextFiles, skills, task: { title: "Fix login bug", description: "Users can't log in" }, isScratchSession: false }))
+      .toBe(expected("task"));
+  });
+  test("task session without a description, builtins only", () => {
+    expect(buildReinsSystemPrompt({ tools: tools.slice(0, 4), contextFiles: [], skills: [], task: { title: "T", description: null }, isScratchSession: false }))
+      .toBe(expected("task-no-description"));
+  });
+  test("scratch session with tools, context files and skills", () => {
+    expect(buildReinsSystemPrompt({ tools, contextFiles, skills, isScratchSession: true })).toBe(expected("scratch"));
+  });
+  test("scratch session, builtins only", () => {
+    expect(buildReinsSystemPrompt({ tools: tools.slice(0, 4), contextFiles: [], skills: [], isScratchSession: true })).toBe(expected("scratch-bare"));
   });
 });

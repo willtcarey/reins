@@ -11,7 +11,7 @@ AgentHarness is the only transcript writer. `PiStorageAdapter` stores each publi
 - `message_json` is the canonical PiStorageAdapter entry envelope.
 - `pi_values`, `pi_lists`, and `pi_usage` store the remaining harness contract state. `pi_usage` includes both assistant-linked provider calls and standalone structural calls and supports cumulative statistics. Current context occupancy instead uses usage embedded in valid assistant messages on the active branch, so structural requests cannot be mistaken for occupancy.
 
-Canonical readers do not accept legacy `RuntimeMessage` JSON. Process bootstrap checks existing databases read-only before application initialization or schema migrations. A fresh data directory proceeds normally; an unsupported legacy or invalid history format fails startup without modifying the database. The one-time legacy history importer has been retired. The check permits a completely empty, unprovisioned node-owned server replica without lane values; a partially populated replica fails closed.
+Canonical readers do not accept legacy `RuntimeMessage` JSON. The one-time legacy history importer and its startup format check have been retired; backend startup runs normal schema migrations without scanning existing AgentHarness history. An empty, unprovisioned node-owned server replica has no lane values until node writes are delivered.
 
 ## Archive and active history
 

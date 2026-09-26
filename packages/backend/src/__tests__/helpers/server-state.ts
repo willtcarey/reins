@@ -6,7 +6,7 @@
 
 import { randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
-import { registerBuiltinRuntimeAdapters } from "../../runtimes/register-builtins.js";
+import { installRuntimeHooks } from "../../runtime-hooks.js";
 import type { ServerState } from "../../state.js";
 
 /** Initialize the module-level encryption secret for tests. */
@@ -14,12 +14,12 @@ const TEST_SECRET = randomBytes(32);
 initEncryptionSecret(TEST_SECRET);
 
 export function createServerState(overrides?: Partial<ServerState>): ServerState {
-  registerBuiltinRuntimeAdapters();
-
-  return {
+  const state: ServerState = {
     sessions: new Map(),
     clients: new Set(),
     frontendDir: "/tmp/nonexistent",
     ...overrides,
   };
+  installRuntimeHooks(state);
+  return state;
 }

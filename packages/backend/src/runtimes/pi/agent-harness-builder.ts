@@ -5,7 +5,7 @@ import { getDb } from "../../db.js";
 import { resolveModel } from "../../models/model-settings.js";
 import type { ReinsToolContext } from "../../tools/types.js";
 import { ModelNotFoundError, type CreateAgentRuntimeParams } from "../registry.js";
-import { buildReinsSystemPrompt } from "../system-prompt.js";
+import { buildReinsSystemPrompt } from "@reins/node/system-prompt";
 import { createAgentHarnessPiRuntime, type AgentHarnessPiRuntime } from "@reins/node/pi-runtime";
 import { PiStorageAdapter } from "./storage-adapter.js";
 import { hydratePromptContent } from "../../session-attachments-store.js";

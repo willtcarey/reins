@@ -1,8 +1,8 @@
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { runMigrations } from "../../migrations.js";
 import { setDb } from "../../db.js";
-import { setNodeDb, closeNodeDb, initializeNodeStorage, nodeAdmissionReceipt } from "@reins/node/storage";
+import { setNodeDb, closeNodeDb, initializeNodeStorage, nodeAdmissionReceipt, nodeSessionBinding } from "@reins/node/storage";
 import { createProject } from "../../project-store.js";
 import { internalSource, createSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
@@ -12,6 +12,8 @@ import { Sessions } from "../../models/sessions.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { scheduleWork, getWork } from "../../models/node-command-projection.js";
 import { blockInterruptedDispatches, NodeCommandDispatcher, waitForAdmission } from "../../models/node-command-dispatcher.js";
+import { internalNodeFor, provisionForSession, provisionInternal, stopInternalNode } from "../../runtimes/internal-node.js";
+import { DeliveryDeferred } from "../../models/node-command-transport.js";
 
 const repo = useTestRepo();
 
@@ -39,6 +41,88 @@ test("normal session creation dispatches through the durable outbox", async () =
     expect(nodeAdmissionReceipt(nodeDb, row!.id)).toMatchObject({ sessionId: created.id, operation: "session.provision" });
     expect(state.sessions.has(created.id)).toBe(false);
   } finally { closeNodeDb(); setDb(new Database(":memory:")); db.close(); }
+});
+
+const nodeOwned = () => {
+  const { db, project, source } = setup();
+  const nodeDb = new Database(":memory:");
+  initializeNodeStorage(nodeDb);
+  setNodeDb(nodeDb);
+  scheduleWork("p", { op: "session.provision", sessionId: "s", sourceId: source.id }, () =>
+    createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" }));
+  const state = createServerState();
+  return { db, nodeDb, state, dispose: () => { stopInternalNode(state); closeNodeDb(); setDb(new Database(":memory:")); db.close(); } };
+};
+
+test("node-owned provision crosses the JSON-RPC wire and replays idempotently by command ID", async () => {
+  const { db, nodeDb, state, dispose } = nodeOwned();
+  try {
+    const { binding } = provisionForSession("s");
+    // Admitted on the node but the server never recorded it: replay must reuse the receipt.
+    await provisionInternal(state, { sessionId: "s", commandId: "p", binding });
+    const receipt = nodeAdmissionReceipt(nodeDb, "p");
+    await new NodeCommandDispatcher(state).drain();
+    expect(getWork("p")?.state).toBe("admitted");
+    expect(nodeSessionBinding(nodeDb, "s")).toEqual(binding);
+    expect(nodeAdmissionReceipt(nodeDb, "p")).toEqual(receipt!);
+    expect(db.query("SELECT COUNT(*) AS n FROM node_command_outbox").get()).toEqual({ n: 1 });
+    // A thrown node error crosses the wire as a non-retryable `internal` NodeResult.
+    expect(await provisionInternal(state, { sessionId: "s", commandId: "p", binding: { ...binding, cwd: "/elsewhere" } }))
+      .toEqual({ ok: false, error: { code: "internal", message: expect.stringContaining("mismatch"), retryable: false } });
+    // In-process values that do not survive JSON fail at the wire schema instead of leaking through.
+    const leaky = { ...binding };
+    Object.defineProperty(leaky, "cwd", { value: () => binding.cwd, enumerable: true });
+    await expect(provisionInternal(state, { sessionId: "s", commandId: "p", binding: leaky }))
+      .rejects.toMatchObject({ code: -32602 });
+  } finally { dispose(); }
+});
+
+test("a node's explicit provision rejection keeps its NodeResult error code", async () => {
+  const { db, state, dispose } = nodeOwned();
+  try {
+    // Failed rows are deleted after notification; capture the settled result as it is written.
+    db.exec(`CREATE TABLE settled (result_json TEXT);
+      CREATE TRIGGER capture AFTER UPDATE OF state ON node_command_outbox WHEN NEW.state = 'failed'
+      BEGIN INSERT INTO settled VALUES (NEW.result_json); END;`);
+    const error = { code: "invalid_request" as const, message: "bad binding", retryable: false };
+    spyOn(internalNodeFor(state), "send").mockResolvedValue({ ok: false, error });
+    await new NodeCommandDispatcher(state).drain();
+    expect(getWork("p")).toBeNull();
+    const settled = db.query<{ result_json: string }, []>("SELECT result_json FROM settled").all();
+    expect(settled.map(row => JSON.parse(row.result_json))).toEqual([{ ok: false, error }]);
+  } finally { dispose(); }
+});
+
+test("a timed-out provision has an unknown outcome and requeues", async () => {
+  const { state, dispose } = nodeOwned();
+  try {
+    spyOn(internalNodeFor(state), "send").mockReturnValue(new Promise(() => {}));
+    const { binding } = provisionForSession("s");
+    await expect(provisionInternal(state, { sessionId: "s", commandId: "p", binding }, 5)).rejects.toBeInstanceOf(DeliveryDeferred);
+  } finally { dispose(); }
+});
+
+test("a closed or unnegotiated node connection requeues provision instead of failing it", async () => {
+  const { nodeDb, state, dispose } = nodeOwned();
+  try {
+    const dispatcher = new NodeCommandDispatcher(state);
+    const unnegotiated = dispatcher.drain();
+    expect(getWork("p")?.state).toBe("dispatching");
+    stopInternalNode(state); // hot-reload uninstall closes the loopback before hello completes
+    await unnegotiated;
+    expect(getWork("p")?.state).toBe("queued");
+    expect(nodeAdmissionReceipt(nodeDb, "p")).toBeNull();
+
+    await provisionInternal(state, { sessionId: "other", commandId: "warm", binding: provisionForSession("s").binding }).catch(() => undefined);
+    const negotiated = dispatcher.drain();
+    stopInternalNode(state); // negotiated, but the provision frame cannot be sent: outcome unknown
+    await negotiated;
+    expect(getWork("p")?.state).toBe("queued");
+
+    await dispatcher.drain();
+    expect(getWork("p")?.state).toBe("admitted");
+    expect(nodeAdmissionReceipt(nodeDb, "p")).toMatchObject({ sessionId: "s", operation: "session.provision" });
+  } finally { dispose(); }
 });
 
 const setup = () => {

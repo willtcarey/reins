@@ -25,6 +25,7 @@ export const nodeCommand = z.discriminatedUnion("op", [
   z.object({ op: z.literal("session.abort"), sessionId }),
   z.object({ op: z.literal("session.resumePending"), sessionId }),
 ]);
+export const nodeErrorCode = z.enum(["unavailable", "unsupported", "invalid_request", "busy", "not_found", "internal"]);
 export const nodeResult = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), value: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("provisioned") }),
@@ -32,7 +33,7 @@ export const nodeResult = z.discriminatedUnion("ok", [
     z.object({ kind: z.literal("aborted"), aborted: z.boolean() }),
     z.object({ kind: z.literal("resumed"), started: z.boolean() }),
   ]) }),
-  z.object({ ok: z.literal(false), error: z.object({ code: z.enum(["unavailable", "unsupported", "invalid_request", "busy", "not_found", "internal"]), message: z.string(), retryable: z.boolean() }) }),
+  z.object({ ok: z.literal(false), error: z.object({ code: nodeErrorCode, message: z.string(), retryable: z.boolean() }) }),
 ]);
 /** An observation, not a second canonical transcript writer. */
 export const nodeEvent = z.object({ sessionId, kind: z.enum(["runtime", "lifecycle", "canonical_entry"]), payload: z.unknown() });

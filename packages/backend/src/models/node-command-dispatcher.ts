@@ -3,8 +3,7 @@ import { getSource } from "../node-store.js";
 import { getCommand, blockInterruptedDispatches, deleteFailedCommand, queuedCommands, hasBlockingPredecessor } from "../node-command-store.js";
 import { getWork, workForSession, registerCommandWake } from "./node-command-projection.js";
 import { deliverCommand } from "./node-command-transport.js";
-import { internalNodeFor, provisionForSession } from "../runtimes/internal-node.js";
-import { sendLegacySessionCommand } from "../runtimes/legacy-session-execution.js";
+import { executionTargetFor } from "../runtimes/execution-target.js";
 import { onCommandDelivered } from "./node-command-notifications.js";
 import type { ServerState } from "../state.js";
 
@@ -71,12 +70,7 @@ export class NodeCommandDispatcher {
           const session = getSession(row.session_id);
           const source = session && getSource(session.source_id);
           if (!session || !source || source.project_id !== session.project_id || source.node_id !== "internal") continue;
-          await deliverCommand(row.id, () => {
-            const command = getWork(row.id)!.command;
-            if (session.storage_owner !== "internal-node") return sendLegacySessionCommand(this.state, command);
-            const provision = provisionForSession(session.id);
-            return internalNodeFor(this.state).send(command, provision.binding, row.id);
-          });
+          await deliverCommand(row.id, () => executionTargetFor(this.state, session).send(getWork(row.id)!.command, row.id));
           onCommandDelivered(this.state, row);
           const outcome = getCommand(row.id)?.state;
           if (outcome === "queued" || outcome === "dispatching") continue;

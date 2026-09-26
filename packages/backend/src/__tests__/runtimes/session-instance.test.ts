@@ -211,4 +211,25 @@ describe("SessionInstance", () => {
 
     expect(getSession("child")?.activity_state).toBeNull();
   });
+
+  test("finishes a child without reporting to its parent when its final reply cannot be read", async () => {
+    const project = createProject("Unreadable reply", "/tmp/unreadable-reply-test");
+    createSession("parent", project.id, { agentRuntimeType: "pi" });
+    createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
+    const parent = createRuntimeStub();
+    const child = createRuntimeStub();
+    child.runtime.getMessages = async () => { throw new Error("transcript unavailable"); };
+    const state = createServerState();
+    state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: 0 });
+    const instance = new SessionInstance(new SessionManager(state), "child");
+
+    instance.started("run-1");
+    instance.settled(child.runtime, { runId: "run-1", status: "completed" });
+    for (let i = 0; i < 100 && getSession("child")?.activity_state !== "finished"; i++) await Bun.sleep(5);
+    await Bun.sleep(20);
+
+    expect(getSession("child")?.activity_state).toBe("finished");
+    expect(parent.steerCalls).toEqual([]);
+    expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
+  });
 });

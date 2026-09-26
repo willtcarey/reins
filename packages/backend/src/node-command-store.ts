@@ -47,6 +47,11 @@ export function settleCommand(id: string, state: "admitted" | "failed", resultJs
   getDb().query("UPDATE node_command_outbox SET state = ?, result_json = ? WHERE id = ? AND state = 'dispatching'").run(state, resultJson, id);
 }
 
+/** Only for adapters whose replay is idempotent by command ID (node provision receipts). */
+export function requeueCommand(id: string): void {
+  getDb().query("UPDATE node_command_outbox SET state = 'queued' WHERE id = ? AND state = 'dispatching'").run(id);
+}
+
 export function blockInterruptedDispatches(): void {
   getDb().query("UPDATE node_command_outbox SET state = 'unknown' WHERE state = 'dispatching'").run();
 }

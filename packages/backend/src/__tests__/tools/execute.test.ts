@@ -5,13 +5,12 @@ import { createProject, type Project } from "../../project-store.js";
 import { createTask, getTask } from "../../task-store.js";
 import { createSession as storeCreateSession } from "../session-fixture.js";
 import { getDb } from "../../db.js";
-import { createExecuteTool } from "../../tools/execute.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
 import { randomBytes } from "crypto";
 import { initEncryptionSecret } from "../../crypto.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
-import { executeTool } from "../helpers/execute-tool.js";
+import { executeTool, reinsTool } from "../helpers/execute-tool.js";
 
 
 // Initialize encryption secret for tests
@@ -24,7 +23,7 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
   return item.text;
 }
 
-describe("createExecuteTool", () => {
+describe("execute tool", () => {
   let project: Project;
   let broadcastSpy: ReturnType<typeof mock>;
   let broadcast: Broadcast;
@@ -41,7 +40,7 @@ describe("createExecuteTool", () => {
   });
 
   function makeTool(sessionId = "test-session", taskId: number | null = null) {
-    return createExecuteTool({
+    return reinsTool("execute", {
       projectId: project.id,
       sessionId,
       taskId,

@@ -10,13 +10,12 @@ import { loadMessages, type RuntimeMessage } from "../../messages-store.js";
 import { SessionManager } from "../../runtimes/session-manager.js";
 import { registerRuntimeAdapter } from "../../runtimes/registry.js";
 import { buildApiObject, searchFunctions, referencedTypes } from "../../scripting/api-registry.js";
-import { createExecuteTool } from "../../tools/execute.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createServerState } from "../helpers/server-state.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
-import { executeTool } from "../helpers/execute-tool.js";
+import { executeTool, reinsTool } from "../helpers/execute-tool.js";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
 
@@ -340,7 +339,7 @@ describe("api.sessions orchestration", () => {
     const { api, turns, context, state } = setup();
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: "current" }));
     const controller = new AbortController();
-    const tool = createExecuteTool(context);
+    const tool = reinsTool("execute", context);
     const waiting = executeTool(tool, "wait", { code: `return await api.sessions.wait(${JSON.stringify(child.sessionId)}, 1000)` }, controller.signal, undefined);
     controller.abort();
     expect((await waiting).details).toMatchObject({ success: false });

@@ -1,28 +1,18 @@
 /**
- * search Tool
+ * Server side of the `search` agent tool (`script.search`).
  *
- * Discovers available functions and types for scripting Reins via the
- * `execute` tool. The agent describes what it wants to do, and the tool
- * returns matching TypeScript documentation interfaces and domain types.
+ * Discovers available functions and types for scripting Reins via the `execute` tool. The agent
+ * describes what it wants to do, and the server returns matching TypeScript documentation
+ * interfaces and domain types from the scripting API registry.
  *
- * This keeps context lean — the agent only loads what it needs rather
- * than paying token cost for the full API spec on every call.
+ * This keeps context lean — the agent only loads what it needs rather than paying token cost for
+ * the full API spec on every call.
  */
 
-import { Type } from "@sinclair/typebox";
-import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
+import type { ScriptSearchResult } from "@reins/node/reins-tools";
 import { searchFunctions, referencedTypes, DOMAIN_TYPES } from "../scripting/api-registry.js";
 import type { ApiFunctionDef } from "../scripting/define-function.js";
 import { formatApiInterfaces, formatTypeDeclaration, type SchemaNameMap } from "../scripting/api-schema-formatter.js";
-import type { ReinsToolContext } from "./types.js";
-
-const parameters = Type.Object({
-  query: Type.String({
-    description:
-      "What you're looking for — a category, function name, or description. " +
-      "Use an empty string to inspect the full API surface.",
-  }),
-});
 
 /** Build a map from schema identity → display name for all domain types. */
 function buildNameMap(): SchemaNameMap {
@@ -63,29 +53,7 @@ function formatResults(fns: ApiFunctionDef[]): string {
   ].join("\n");
 }
 
-export function createSearchTool(): AgentHarnessTool<ReinsToolContext | undefined, typeof parameters> {
-  return {
-    name: "search",
-    label: "Search API",
-    description:
-      "Discover Reins internal API functions available to the `execute` tool. " +
-      "Returns documentation-only TypeScript interfaces for the existing `api` object " +
-      "and referenced domain types, filtered by query. " +
-      "Use this before writing `execute` scripts for Reins-managed data or UI state. " +
-      "Use an empty query to inspect the full API surface. " +
-      "In `execute` scripts, call methods on the provided `api` object; " +
-      "these interfaces are documentation only.",
-    parameters,
-    replay: "never",
-
-    async execute(_toolCallId, params, _onUpdate, _toolContext, _invocation, _context) {
-      const results = searchFunctions(params.query);
-      const text = formatResults(results);
-
-      return {
-        content: [{ type: "text" as const, text }],
-        details: { matchCount: results.length },
-      };
-    },
-  };
+export function searchScriptApi(query: string): ScriptSearchResult {
+  const results = searchFunctions(query);
+  return { text: formatResults(results), matchCount: results.length };
 }

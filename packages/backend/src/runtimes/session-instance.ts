@@ -1,15 +1,16 @@
 import { logger } from "../logger.js";
 import { getProject } from "../project-store.js";
 import { loadActiveMessages, type RuntimeMessage } from "../messages-store.js";
-import { getSession, updateSessionMeta, type SessionRow } from "../session-store.js";
+import { getSession, updateActivityState, updateSessionMeta, type SessionRow } from "../session-store.js";
+import { getDb } from "../db.js";
 import type { AgentRuntime, AgentRuntimeEvent, RuntimeLifecycleSink, RuntimeRunOutcome } from "./registry.js";
-import type { SessionManager } from "./session-manager.js";
-import type { ManagedSession } from "../state.js";
-import { Sessions } from "../models/sessions.js";
-import { executeSessionCommand } from "./node-execution.js";
+import type { ManagedSession, ServerState } from "../state.js";
+import type { Broadcast } from "../models/broadcast.js";
+import { enqueueSessionInput, executeSessionCommand, wakeSessionInput } from "./node-execution.js";
 import { workForSession } from "../models/node-command-projection.js";
 import { hasPendingInput } from "../node-command-store.js";
 import { internalNodeFor } from "./internal-node.js";
+import { finalReply, type FinalReply } from "@reins/node/runtime-build";
 
 export interface SessionStartOptions {
   parentSessionId: "current" | null;
@@ -39,15 +40,39 @@ export interface SessionCreationOptions {
   storageOwner?: "server" | "internal-node";
 }
 
+/** The manager capabilities a session instance uses (implemented by `SessionManager`). */
+export interface SessionInstanceHost {
+  readonly state: ServerState;
+  readonly sessions: Map<string, ManagedSession>;
+  readonly broadcast: Broadcast;
+  create(projectId: number, projectDir: string, options?: SessionCreationOptions): { id: string };
+}
+
+/** What settlement needs from a run, without the live runtime that produced it. */
+export interface RunSettlementFacts {
+  metadata?: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
+  /** The final assistant reply; read only for child sessions (null otherwise or when there is none). */
+  reply: FinalReply | null;
+  /** Set when a child's reply could not be read: the parent receives no report and the child is marked finished. */
+  replyError?: unknown;
+}
+/** Records a node lifecycle receipt inside the effect's transaction; false means an already applied replay. */
+export type LifecycleReceipt = () => boolean;
+
 export function transcriptResult(
   sessionId: string,
   messages: RuntimeMessage[],
   terminal?: Pick<AgentEndEvent, "status" | "error">,
 ): SessionWaitResult {
-  const last = messages.findLast((message) => message.role === "assistant");
-  const result = last && Array.isArray(last.content)
-    ? last.content.filter((block) => block.type === "text").map((block) => String(block.text)).join("\n")
-    : null;
+  return replyResult(sessionId, finalReply(messages), terminal);
+}
+
+export function replyResult(
+  sessionId: string,
+  last: FinalReply | null,
+  terminal?: Pick<AgentEndEvent, "status" | "error">,
+): SessionWaitResult {
+  const result = last?.text ?? null;
   if (terminal?.status === "failed") {
     return { sessionId, status: "failed", result: null, error: terminal.error?.message ?? "Runtime response failed" };
   }
@@ -60,21 +85,18 @@ export function transcriptResult(
     result,
     error: terminal?.status === "completed"
       ? null
-      : last?.stopReason === "error" ? String(last.errorMessage ?? "Runtime response failed") : null,
+      : last?.stopReason === "error" ? last.errorMessage ?? "Runtime response failed" : null,
   };
 }
 
 /** Caller-scoped session operations and runtime lifecycle effects. */
 export class SessionInstance implements RuntimeLifecycleSink {
-  private readonly sessionModel: Sessions;
   private activeRunId: string | null = null;
 
   constructor(
-    private readonly manager: SessionManager,
+    private readonly manager: SessionInstanceHost,
     private readonly sessionId: string,
-  ) {
-    this.sessionModel = new Sessions(manager.sessions, manager.broadcast);
-  }
+  ) {}
 
   nodeRuntime(sessionId: string): AgentRuntime | undefined {
     return internalNodeFor(this.manager.state).runtime(sessionId);
@@ -176,31 +198,73 @@ export class SessionInstance implements RuntimeLifecycleSink {
   started(runId: string): void {
     this.activeRunId = runId;
     try {
-      this.sessionModel.updateActivityState(this.sessionId, "running");
+      this.startedWith();
     } catch (error) {
       logger.error(`Failed to update runtime lifecycle for ${this.sessionId}:`, error);
     }
   }
 
   settled(runtime: AgentRuntime, outcome: RuntimeRunOutcome): void {
-    try {
-      this.persistRuntimeMetadata(runtime);
-      const session = this.session(this.sessionId);
-      if (!session.parent_session_id) {
-        this.sessionModel.updateActivityState(this.sessionId, "finished");
-        return;
+    const metadata = runtime.getSessionMetadata?.();
+    const apply = (facts: RunSettlementFacts) => {
+      try {
+        this.settledWith(outcome, facts);
+      } catch (error) {
+        logger.error(`Failed to update runtime lifecycle for ${this.sessionId}:`, error);
       }
+    };
+    // Only a parent consumes the final reply, so only child sessions read the transcript.
+    if (!getSession(this.sessionId)?.parent_session_id) return apply({ metadata, reply: null });
+    void runtime.getMessages().then(
+      (messages) => apply({ metadata, reply: finalReply(messages) }),
+      (replyError: unknown) => apply({ metadata, reply: null, replyError }),
+    );
+  }
 
-      void this.reportChildSettlement(runtime, outcome, session.parent_session_id).then(
-        () => this.finishRun(outcome.runId, null),
-        (error: unknown) => {
-          this.finishRun(outcome.runId, "finished");
-          logger.error(`Failed to report session ${this.sessionId} settlement:`, error);
-        },
-      );
-    } catch (error) {
-      logger.error(`Failed to update runtime lifecycle for ${this.sessionId}:`, error);
-    }
+  /** Marks the session running. With a node `receipt`, applies at most once and atomically with it; errors propagate. */
+  startedWith(receipt?: LifecycleReceipt): void {
+    const applied = getDb().transaction(() => {
+      if (receipt && !receipt()) return false;
+      updateActivityState(this.sessionId, "running");
+      return true;
+    })();
+    if (applied) this.notifyUpdated();
+  }
+
+  /**
+   * Shared by in-process runtimes and node `session.settled` reports. Persists runtime metadata,
+   * enqueues a child's report to its parent and updates activity in one transaction, together with a
+   * node `receipt` when given, so a replayed report can neither re-steer the parent nor re-flip state.
+   * A reply-read failure or an unreachable parent is logged and leaves the child `finished` without a
+   * misleading report. Errors outside those effects (e.g. receipt divergence) propagate.
+   */
+  settledWith(outcome: RuntimeRunOutcome, facts: RunSettlementFacts, receipt?: LifecycleReceipt): void {
+    let enqueued = false;
+    const applied = getDb().transaction(() => {
+      if (receipt && !receipt()) return false;
+      this.persistRuntimeMetadata(facts.metadata);
+      const session = this.session(this.sessionId);
+      let activityState: SessionRow["activity_state"] = "finished";
+      if (session.parent_session_id) {
+        if (facts.replyError !== undefined) {
+          logger.error(`Failed to read session ${this.sessionId} final reply; not reporting it to its parent:`, facts.replyError);
+        } else {
+          try {
+            this.reportChildSettlement(facts.reply, outcome, session.parent_session_id);
+            enqueued = true;
+            activityState = null;
+          } catch (error) {
+            logger.error(`Failed to report session ${this.sessionId} settlement:`, error);
+          }
+        }
+      }
+      // A late in-process settlement must not finish a newer run of the same instance.
+      if (this.activeRunId === null || this.activeRunId === outcome.runId) updateActivityState(this.sessionId, activityState);
+      return true;
+    })();
+    if (!applied) return;
+    this.notifyUpdated();
+    if (enqueued) wakeSessionInput(this.manager.state);
   }
 
   private session(sessionId: string): SessionRow {
@@ -282,8 +346,7 @@ export class SessionInstance implements RuntimeLifecycleSink {
     }
   }
 
-  private persistRuntimeMetadata(runtime: AgentRuntime): void {
-    const metadata = runtime.getSessionMetadata?.();
+  private persistRuntimeMetadata(metadata: RunSettlementFacts["metadata"]): void {
     if (!metadata?.model?.provider || !metadata.model.modelId) return;
     updateSessionMeta(this.sessionId, {
       modelProvider: metadata.model.provider,
@@ -292,25 +355,21 @@ export class SessionInstance implements RuntimeLifecycleSink {
     });
   }
 
-  private finishRun(runId: string, activityState: SessionRow["activity_state"]): void {
-    if (this.activeRunId !== runId) return;
-    try {
-      this.sessionModel.updateActivityState(this.sessionId, activityState);
-    } catch (error) {
-      logger.error(`Failed to update runtime lifecycle for ${this.sessionId}:`, error);
-    }
+  private notifyUpdated(): void {
+    const row = getSession(this.sessionId);
+    if (row) this.manager.broadcast({ type: "session_updated", sessionId: this.sessionId, projectId: row.project_id });
   }
 
-  private async reportChildSettlement(
-    runtime: AgentRuntime,
+  private reportChildSettlement(
+    reply: FinalReply | null,
     outcome: RuntimeRunOutcome,
     parentSessionId: string,
-  ): Promise<void> {
+  ): void {
     const parent = this.scopedSession(parentSessionId);
-    const result = transcriptResult(this.sessionId, await runtime.getMessages(), outcome);
+    const result = replyResult(this.sessionId, reply, outcome);
     const content = result.status === "completed"
       ? result.result ?? "Session completed."
       : result.error ? `Session ${result.status}: ${result.error}` : `Session ${result.status}.`;
-    await this.deliver(parent.id, content, "steer", this.sessionId);
+    enqueueSessionInput(parent.id, "steer", [{ type: "text", text: content }], crypto.randomUUID(), this.sessionId);
   }
 }

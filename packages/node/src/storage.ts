@@ -82,22 +82,45 @@ export function recordNodeAdmission(db: Database, commandId: string, sessionId: 
   })();
 }
 
-export type NodeCommitDelivery = (sessionId: string, startSeq: number, writesJson: string) => Promise<void> | void;
+export function pendingOutboxSessions(db: Database): string[] {
+  return db.query<{ session_id: string }, []>("SELECT DISTINCT session_id FROM session_outbox").all().map(row => row.session_id);
+}
+
+/** A durable node→server report. Commits carry `writesJson` byte-for-byte; lifecycle payloads are the report JSON without sessionId. */
+export type NodeOutboxItem = { kind: "committed"; startSeq: number; payload: string } | { kind: "started" | "settled"; payload: string };
+export type NodeOutboxDelivery = (sessionId: string, item: NodeOutboxItem) => Promise<void> | void;
+type OutboxRow = { id: number; kind: NodeOutboxItem["kind"]; start_seq: number | null; payload: string; ready: number };
+
+/** Appends a lifecycle report after everything already recorded for its session. An unready report
+ * blocks later ones until `completeNodeReport`. Returns the row ID. */
+export function recordNodeReport(db: Database, sessionId: string, kind: "started" | "settled", payload: string, ready = true): number {
+  return Number(db.query("INSERT INTO session_outbox(session_id,kind,payload,ready) VALUES(?,?,?,?)")
+    .run(sessionId, kind, payload, ready ? 1 : 0).lastInsertRowid);
+}
+export function completeNodeReport(db: Database, id: number, payload: string): void {
+  db.query("UPDATE session_outbox SET payload = ?, ready = 1 WHERE id = ? AND ready = 0").run(payload, id);
+}
+/** At node start, no reply read is in flight: release held settlements as reply-unavailable. */
+export function releaseUnreadReports(db: Database, replyError: string): void {
+  db.query("UPDATE session_outbox SET payload = json_set(payload, '$.replyError', ?), ready = 1 WHERE ready = 0").run(replyError);
+}
+
 const deliveries = new WeakMap<Database, Map<string, Promise<void>>>();
-/** Per-session serial drain; only an awaited successful server acknowledgement deletes a batch. */
-export function deliverNodeCommits(node: Database, sessionId: string, deliver: NodeCommitDelivery): Promise<void> {
+/** Per-session serial drain in record order; only an awaited successful server acknowledgement
+ * deletes a report, and an unready report stops the drain. */
+export function deliverNodeOutbox(node: Database, sessionId: string, deliver: NodeOutboxDelivery): Promise<void> {
   let sessions = deliveries.get(node);
   if (!sessions) { sessions = new Map(); deliveries.set(node, sessions); }
   const queue = sessions;
   const previous = queue.get(sessionId);
   const run = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
-    const rows = node.query<{ start_seq: number; writes_json: string }, [string]>(
-      "SELECT start_seq, writes_json FROM pending_commits WHERE session_id = ? ORDER BY start_seq",
+    const rows = node.query<OutboxRow, [string]>(
+      "SELECT id, kind, start_seq, payload, ready FROM session_outbox WHERE session_id = ? ORDER BY id",
     ).all(sessionId);
     for (const row of rows) {
-      await deliver(sessionId, row.start_seq, row.writes_json);
-      node.query("DELETE FROM pending_commits WHERE session_id = ? AND start_seq = ? AND writes_json = ?")
-        .run(sessionId, row.start_seq, row.writes_json);
+      if (!row.ready) return;
+      await deliver(sessionId, row.kind === "committed" ? { kind: row.kind, startSeq: row.start_seq!, payload: row.payload } : { kind: row.kind, payload: row.payload });
+      node.query("DELETE FROM session_outbox WHERE id = ?").run(row.id);
     }
   });
   queue.set(sessionId, run);
@@ -105,14 +128,15 @@ export function deliverNodeCommits(node: Database, sessionId: string, deliver: N
   return run;
 }
 
-export async function openNodeStorage(node: Database, sessionId: string, deliver: NodeCommitDelivery, now: () => number = Date.now): Promise<PiStorageAdapter> {
+export async function openNodeStorage(node: Database, sessionId: string, deliver: NodeOutboxDelivery, now: () => number = Date.now): Promise<PiStorageAdapter> {
   if (!nodeSessionBinding(node, sessionId)) throw new Error(`Node session not provisioned: ${sessionId}`);
   // Server unavailability cannot invalidate the node's already durable Pi commits.
-  await deliverNodeCommits(node, sessionId, deliver).catch(() => undefined);
+  await deliverNodeOutbox(node, sessionId, deliver).catch(() => undefined);
   return new PiStorageAdapter(node, sessionId, now, {
+    // Inside the Pi commit transaction, so a later lifecycle report is always ordered after it.
     record: (startSeq: number, writes: CommittedWrite[]) => node.query(
-      "INSERT INTO pending_commits(session_id,start_seq,writes_json) VALUES(?,?,?)",
+      "INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES(?,'committed',?,?)",
     ).run(sessionId, startSeq, JSON.stringify(writes)),
-    deliver: () => deliverNodeCommits(node, sessionId, deliver),
+    deliver: () => deliverNodeOutbox(node, sessionId, deliver),
   });
 }

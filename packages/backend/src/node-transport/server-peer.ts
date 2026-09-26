@@ -1,29 +1,157 @@
-import { createRpcPeer, RpcFailure, helloParams, readyResult, provisionResult, statusResult, protocolVersion, type Provision, type WireSocket } from "@reins/node/protocol";
+import { createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, provisionResult, statusResult, protocolVersion, nodeError, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, sessionConfigurationParams, sessionConfigurationResult, type SessionConfiguration, type SessionConfigurationRequest, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type PeerOptions, type Provision, type SessionCommitted, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket } from "@reins/node/protocol";
+
+/** `missed` counts seqs skipped since this connection's previous event for the session (0 for its first). */
+export type NodeSessionEvent = SessionEventReport & { missed: number };
+export interface ServerAttachment { data: Uint8Array; mimeType: string; byteSize: number; sha256: string; filename?: string; width?: number; height?: number }
+/** Server-owned capabilities a node may call. Injected so the transport imports no product stores. */
+export interface ServerHandlers {
+  committed(input: SessionCommitted): void | Promise<void>;
+  /** Durable run lifecycle: acknowledged only after it applied (or was already applied). */
+  started(input: SessionStarted): void | Promise<void>;
+  settled(input: SessionSettled): void | Promise<void>;
+  attachment(sessionId: string, attachmentId: string): ServerAttachment | null | Promise<ServerAttachment | null>;
+  event(input: NodeSessionEvent): void | Promise<void>;
+  /** Read-only: verifies the node's binding and returns the session's resolved runtime configuration. */
+  configuration(input: SessionConfigurationRequest): SessionConfiguration | Promise<SessionConfiguration>;
+  /** Agent tool calls, scoped by the handler from the server's own row for `sessionId`. `signal`
+   * aborts on `script.cancel` for this call or when the connection closes. */
+  scriptExecute(input: ScriptExecute, signal: AbortSignal): Promise<ScriptExecuteResult>;
+  scriptSearch(input: ScriptSearch): ScriptSearchResult | Promise<ScriptSearchResult>;
+  createTask(input: ProjectCreateTask): Promise<ProjectCreateTaskResult>;
+}
+const rejection = (error: unknown) => error instanceof RpcFailure ? error : new RpcFailure(APPLICATION_ERROR, error instanceof Error ? error.message : String(error));
 
 /** Not wired to an upgrade route. Authentication and source authorization must precede production use. */
-export function createServerTransport(socket: WireSocket) {
-  let ready: { epoch: string; capabilities: Array<"node.provision" | "node.status"> } | undefined;
+export function createServerTransport(socket: WireSocket, handlers: ServerHandlers, options: PeerOptions = {}) {
+  let ready: { epoch: string; capabilities: Capability[] } | undefined;
+  const eventSeqs = new Map<string, number>();
+  // In-flight scripts by callId; aborted by `script.cancel` from the same session or on close.
+  const scripts = new Map<string, { sessionId: string; controller: AbortController }>();
   const peer = createRpcPeer(socket, {
-    "node.hello": {
+    [methods.nodeHello]: {
       params: helloParams, result: readyResult,
       async handle(value) {
         if (ready) throw new RpcFailure(-32003, "Already negotiated");
         const hello = helloParams.parse(value);
         if (hello.minVersion > protocolVersion || hello.maxVersion < protocolVersion) throw new RpcFailure(-32001, "No common protocol version");
-        const capabilities = hello.capabilities.filter(item => item === "node.provision" || item === "node.status");
+        const capabilities = hello.capabilities.filter((item): item is Capability => capability.safeParse(item).success);
         ready = { epoch: crypto.randomUUID(), capabilities };
         return { version: 1, ...ready };
       },
     },
-  });
-  const authorized = (capability: "node.provision" | "node.status") => {
-    if (!ready?.capabilities.includes(capability)) throw new RpcFailure("unavailable", "Node capability not negotiated");
+    [methods.sessionCommitted]: {
+      params: sessionCommittedParams, result: sessionCommittedResult,
+      async handle(value) {
+        const { epoch, ...input } = sessionCommittedParams.parse(value);
+        issued(epoch);
+        try { await handlers.committed(input); } catch (error) { throw rejection(error); }
+        return { acknowledged: true };
+      },
+    },
+    [methods.sessionStarted]: {
+      params: sessionStartedParams, result: acknowledgedResult,
+      async handle(value) {
+        const { epoch, ...input } = sessionStartedParams.parse(value);
+        issued(epoch);
+        try { await handlers.started(input); } catch (error) { throw rejection(error); }
+        return { acknowledged: true };
+      },
+    },
+    [methods.sessionSettled]: {
+      params: sessionSettledParams, result: acknowledgedResult,
+      async handle(value) {
+        const { epoch, ...input } = sessionSettledParams.parse(value);
+        issued(epoch);
+        try { await handlers.settled(input); } catch (error) { throw rejection(error); }
+        return { acknowledged: true };
+      },
+    },
+    [methods.attachmentFetch]: {
+      params: attachmentFetchParams, result: attachmentFetchResult,
+      async handle(value) {
+        const { epoch, sessionId, attachmentId, offset } = attachmentFetchParams.parse(value);
+        issued(epoch);
+        let attachment;
+        try { attachment = await handlers.attachment(sessionId, attachmentId); } catch (error) { throw rejection(error); }
+        if (!attachment) return { attachment: null };
+        const { data, ...metadata } = attachment;
+        if (data.byteLength > MAX_ATTACHMENT_BYTES) throw new RpcFailure(APPLICATION_ERROR, `Attachment exceeds ${MAX_ATTACHMENT_BYTES} byte transfer limit: ${attachmentId}`);
+        if (offset > data.byteLength) throw new RpcFailure(APPLICATION_ERROR, `Attachment offset out of range: ${attachmentId}`);
+        return { attachment: { ...metadata, data: Buffer.from(data.subarray(offset, offset + ATTACHMENT_CHUNK_BYTES)).toString("base64") } };
+      },
+    },
+    [methods.sessionConfiguration]: {
+      params: sessionConfigurationParams, result: sessionConfigurationResult,
+      async handle(value) {
+        const { epoch, ...input } = sessionConfigurationParams.parse(value);
+        issued(epoch);
+        try { return await handlers.configuration(input); } catch (error) { throw rejection(error); }
+      },
+    },
+    [methods.scriptExecute]: {
+      params: scriptExecuteParams, result: scriptExecuteResult,
+      async handle(value) {
+        const { epoch, callId, ...input } = scriptExecuteParams.parse(value);
+        issued(epoch);
+        if (scripts.has(callId)) throw new RpcFailure(APPLICATION_ERROR, `Duplicate script call: ${callId}`);
+        const controller = new AbortController();
+        scripts.set(callId, { sessionId: input.sessionId, controller });
+        try { return await handlers.scriptExecute(input, controller.signal); } catch (error) { throw rejection(error); }
+        finally { scripts.delete(callId); }
+      },
+    },
+    [methods.scriptCancel]: {
+      params: scriptCancelParams,
+      notify(value) {
+        const { epoch, sessionId, callId } = scriptCancelParams.parse(value);
+        issued(epoch);
+        const script = scripts.get(callId);
+        if (script?.sessionId === sessionId) script.controller.abort();
+      },
+    },
+    [methods.scriptSearch]: {
+      params: scriptSearchParams, result: scriptSearchResult,
+      async handle(value) {
+        const { epoch, ...input } = scriptSearchParams.parse(value);
+        issued(epoch);
+        try { return await handlers.scriptSearch(input); } catch (error) { throw rejection(error); }
+      },
+    },
+    [methods.projectCreateTask]: {
+      params: projectCreateTaskParams, result: projectCreateTaskResult,
+      async handle(value) {
+        const { epoch, ...input } = projectCreateTaskParams.parse(value);
+        issued(epoch);
+        try { return await handlers.createTask(input); } catch (error) { throw rejection(error); }
+      },
+    },
+    [methods.sessionEvent]: {
+      params: sessionEventParams,
+      // Failures here drop only this notification (logged by the peer).
+      notify(value) {
+        const { epoch, ...input } = sessionEventParams.parse(value);
+        issued(epoch);
+        const last = eventSeqs.get(input.sessionId);
+        if (last !== undefined && input.seq <= last) throw new Error(`Out-of-order session event ${input.sessionId}#${input.seq} after #${last}`);
+        eventSeqs.set(input.sessionId, input.seq);
+        return handlers.event({ ...input, missed: last === undefined ? 0 : input.seq - last - 1 });
+      },
+    },
+  }, options);
+  // Node→server methods are base protocol: only the epoch this connection issued at hello is accepted.
+  function issued(epoch: string) { if (!ready || epoch !== ready.epoch) throw new RpcFailure(-32003, "Stale or unauthorized connection"); }
+  const authorized = (required: Capability) => {
+    if (!ready?.capabilities.includes(required)) throw new RpcFailure("unavailable", "Node capability not negotiated");
     return ready.epoch;
   };
   return {
     receive: peer.receive,
-    close: peer.close,
-    async provision(input: Provision) { return peer.call("node.provision", { ...input, epoch: authorized("node.provision") }, provisionResult); },
-    async status(sessionId: string) { return peer.call("node.status", { sessionId, epoch: authorized("node.status") }, statusResult); },
+    close() {
+      for (const { controller } of scripts.values()) controller.abort();
+      scripts.clear();
+      peer.close();
+    },
+    async provision(input: Provision, timeoutMs?: number) { return peer.call(methods.sessionProvision, { ...input, epoch: authorized(methods.sessionProvision) }, provisionResult, { errorData: nodeError, timeoutMs }); },
+    async status(sessionId: string) { return peer.call(methods.sessionStatus, { sessionId, epoch: authorized(methods.sessionStatus) }, statusResult); },
   };
 }

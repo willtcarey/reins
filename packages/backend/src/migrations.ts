@@ -344,6 +344,15 @@ const MIGRATIONS: Migration[] = [
        PRIMARY KEY(session_id, start_seq)
      );`,
   ],
+  [
+    "033_node_lifecycle_receipts",
+    `CREATE TABLE node_lifecycle_receipts (
+       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+       run_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('started', 'settled')),
+       payload_json TEXT NOT NULL,
+       PRIMARY KEY(session_id, run_id, kind)
+     );`,
+  ],
 ];
 
 export function runMigrations(db: Database): void {

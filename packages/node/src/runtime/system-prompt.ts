@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { formatContextFilesForPrompt, formatSkillsForPrompt, type ContextFile, type Skill } from "@reins/node/resources";
+import { formatContextFilesForPrompt, formatSkillsForPrompt, type ContextFile, type Skill } from "../resources/loader.js";
 
 const BUILTIN_TOOL_SNIPPETS: Record<string, string> = {
   read: "Read file contents",

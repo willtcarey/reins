@@ -31,6 +31,19 @@ const migrations = [
       attachment_id TEXT NOT NULL, mime_type TEXT NOT NULL, byte_size INTEGER NOT NULL, sha256 TEXT NOT NULL,
       filename TEXT, width INTEGER, height INTEGER, data BLOB NOT NULL,
       PRIMARY KEY(session_id, attachment_id))`],
+  // One ordered per-session outbox for durable node→server reports, so run lifecycle reports reach
+  // the server after the commits that preceded them. `ready = 0` holds a settlement (and every later
+  // report of its session) while the node reads a child's final reply.
+  ["003_session_outbox", `CREATE TABLE session_outbox (id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK(kind IN ('committed', 'started', 'settled')),
+      start_seq INTEGER, payload TEXT NOT NULL, ready INTEGER NOT NULL DEFAULT 1 CHECK(ready IN (0, 1)),
+      CHECK((kind = 'committed') = (start_seq IS NOT NULL)));
+    CREATE UNIQUE INDEX session_outbox_commit ON session_outbox(session_id, start_seq) WHERE kind = 'committed';
+    CREATE INDEX session_outbox_order ON session_outbox(session_id, id);
+    INSERT INTO session_outbox(session_id, kind, start_seq, payload)
+      SELECT session_id, 'committed', start_seq, writes_json FROM pending_commits ORDER BY session_id, start_seq;
+    DROP TABLE pending_commits`],
 ] as const;
 
 /** Runs before binding or opening a runtime. SQL and its ledger record commit together. */

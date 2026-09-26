@@ -57,7 +57,7 @@ describe("reins/node-import-boundary", () => {
     for (const specifier of ["@reins/node", "@reins/node/unknown", "../../../node/src/runtime/context.js"]) {
       expect(runRule("node-import-boundary", "ImportDeclaration", { source: { value: specifier } })).toHaveLength(1);
     }
-    for (const specifier of ["@reins/node/contract", "@reins/node/runtime", "@reins/node/pi-runtime", "@reins/node/host-tools", "@reins/node/runtime-build", "@reins/node/resources", "@reins/node/prompt"]) {
+    for (const specifier of ["@reins/node/contract", "@reins/node/runtime", "@reins/node/pi-runtime", "@reins/node/host-tools", "@reins/node/runtime-build", "@reins/node/reins-tools", "@reins/node/system-prompt", "@reins/node/resources", "@reins/node/prompt"]) {
       expect(runRule("node-import-boundary", "ImportDeclaration", { source: { value: specifier } })).toHaveLength(0);
     }
     expect(runRule("node-import-boundary", "ImportExpression", { source: { value: "../../../node/src/runtime/context.js" } })).toHaveLength(1);
