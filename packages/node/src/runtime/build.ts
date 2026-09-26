@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import type { Database } from "bun:sqlite";
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT, type AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import type { PiStorageAdapter } from "../pi-storage.js";
@@ -6,7 +7,8 @@ import type { NodeSessionBinding } from "../storage.js";
 import { createPiContext } from "./context.js";
 import { createHostTools, type HostToolContext } from "./tools.js";
 import { createAgentHarnessPiRuntime, type AgentHarnessPiRuntime } from "./pi-runtime.js";
-import type { AgentRuntimeEvent, ClientPromptContent, RuntimeLifecycleSink } from "./types.js";
+import type { AgentRuntimeEvent, RuntimeLifecycleSink } from "./types.js";
+import { hydrateCachedPrompt } from "./attachments.js";
 import { expandLocalPrompt } from "../resources/prompt.js";
 import type { ContextFile, Skill } from "../resources/loader.js";
 
@@ -16,7 +18,6 @@ export interface NodeRuntimePolicy {
   credentials: CredentialStore;
   customTools: AgentHarnessTool<HostToolContext>[];
   systemPrompt: (tools: AgentHarnessTool<HostToolContext>[], contextFiles: readonly ContextFile[], skills: readonly Skill[]) => string;
-  hydratePrompt: (sessionId: string, content: ClientPromptContent) => Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string; filename?: string; width?: number; height?: number }>;
   lifecycle: RuntimeLifecycleSink;
   observe: (event: AgentRuntimeEvent) => void;
   onError?: (message: string, error: unknown) => void;
@@ -33,7 +34,7 @@ const levels: Record<string, "minimal" | "low" | "medium" | "high" | "xhigh" | "
 };
 
 /** Node assembles and opens Pi from its canonical storage and bound host resources. */
-export async function buildNodeRuntime(sessionId: string, binding: NodeSessionBinding, storage: PiStorageAdapter, policy: NodeRuntimePolicy): Promise<AgentHarnessPiRuntime> {
+export async function buildNodeRuntime(sessionId: string, binding: NodeSessionBinding, storage: PiStorageAdapter, policy: NodeRuntimePolicy, db: Database): Promise<AgentHarnessPiRuntime> {
   const { modelRuntime, resourceLoader, resources: reinsResources } = await createPiContext({ cwd: binding.cwd, credentials: policy.credentials });
   const selected = policy.model;
   const model = selected ? modelRuntime.getModel(selected.provider, selected.modelId) : undefined;
@@ -64,7 +65,7 @@ export async function buildNodeRuntime(sessionId: string, binding: NodeSessionBi
         toolContext: { env: host.executionEnv },
       },
       sessionEnvironment, executionEnv: host.executionEnv, lifecycle: policy.lifecycle,
-      hydratePrompt: policy.hydratePrompt, onError: policy.onError,
+      hydratePrompt: (id, content) => hydrateCachedPrompt(db, id, content), onError: policy.onError,
     });
     const prompt = runtime.prompt.bind(runtime);
     const steer = runtime.steer.bind(runtime);

@@ -3,12 +3,14 @@ import type { NodeCommand, NodeResult } from "./contract.js";
 import { bindNodeSession, deliverNodeCommits, initializeNodeStorage, nodeAdmissionReceipt, nodeSessionBinding, openNodeStorage, recordNodeAdmission, type NodeCommitDelivery, type NodeSessionBinding } from "./storage.js";
 import { buildNodeRuntime, type NodeRuntimePolicy } from "./runtime/build.js";
 import type { AgentHarnessPiRuntime } from "./runtime/pi-runtime.js";
+import { AttachmentMaterializationError, materializePromptAttachments, type FetchAttachment } from "./runtime/attachments.js";
 
 /** Product policy is supplied in-process; Pi assembly, canonical storage and runtime handles remain node-owned. */
 export interface NodeDependencies {
   db: Database;
   deliver: NodeCommitDelivery;
   prepare: (sessionId: string, binding: NodeSessionBinding) => Promise<NodeRuntimePolicy>;
+  fetchAttachment?: FetchAttachment;
 }
 
 export interface Node {
@@ -25,10 +27,10 @@ export interface Node {
 
 const instances = new WeakMap<Database, { node: Node; update: (dependencies: NodeDependencies) => void; retain: () => void }>();
 
-export function startNode({ db, deliver, prepare }: NodeDependencies): Node {
+export function startNode({ db, deliver, prepare, fetchAttachment }: NodeDependencies): Node {
   const existing = instances.get(db);
   if (existing) {
-    existing.update({ db, deliver, prepare });
+    existing.update({ db, deliver, prepare, fetchAttachment });
     existing.retain();
     return existing.node;
   }
@@ -37,6 +39,7 @@ export function startNode({ db, deliver, prepare }: NodeDependencies): Node {
   let leases = 1;
   let currentDeliver = deliver;
   let currentPrepare = prepare;
+  let currentFetchAttachment: FetchAttachment = fetchAttachment ?? (async () => null);
   const runtimes = new Map<string, AgentHarnessPiRuntime>();
   const openings = new Map<string, Promise<AgentHarnessPiRuntime>>();
   const verify = (id: string, binding: NodeSessionBinding) => {
@@ -72,7 +75,7 @@ export function startNode({ db, deliver, prepare }: NodeDependencies): Node {
       const opening = (async () => {
         const policy = await currentPrepare(sessionId, stored);
         const runtime = await buildNodeRuntime(sessionId, stored,
-          await openNodeStorage(db, sessionId, (id, seq, writes) => currentDeliver(id, seq, writes)), policy);
+          await openNodeStorage(db, sessionId, (id, seq, writes) => currentDeliver(id, seq, writes)), policy, db);
         runtimes.set(sessionId, runtime);
         return runtime;
       })();
@@ -102,6 +105,15 @@ export function startNode({ db, deliver, prepare }: NodeDependencies): Node {
         if (input.op === "session.prompt" || input.op === "session.steer") return { ok: true, value: { kind: "admitted", inputId: input.clientId } };
         throw new Error(`Unsupported node admission receipt: ${input.op}`);
       }
+      if (input.op === "session.prompt" || input.op === "session.steer") {
+        try { await materializePromptAttachments(db, input.sessionId, input.content, currentFetchAttachment); }
+        catch (error) {
+          if (error instanceof AttachmentMaterializationError) return { ok: false, error: {
+            code: "invalid_request", message: error.message, retryable: false,
+          } };
+          throw error;
+        }
+      }
       const ready = await this.open(input.sessionId, binding);
       switch (input.op) {
         case "session.prompt":
@@ -126,7 +138,8 @@ export function startNode({ db, deliver, prepare }: NodeDependencies): Node {
   };
   instances.set(db, {
     node,
-    update: (dependencies) => { currentDeliver = dependencies.deliver; currentPrepare = dependencies.prepare; },
+    update: (dependencies) => { currentDeliver = dependencies.deliver; currentPrepare = dependencies.prepare;
+      currentFetchAttachment = dependencies.fetchAttachment ?? (async () => null); },
     retain: () => { leases++; },
   });
   return node;

@@ -274,6 +274,9 @@ describe("runtime sessions manager", () => {
       await runtime.waitForIdle();
       expect(state.sessions.has(created.id)).toBe(false);
       expect(JSON.stringify(providerContext)).toContain(Buffer.from("node image bytes").toString("base64"));
+      expect(nodeDb.query<{ data: Uint8Array }, [string, string]>(
+        "SELECT data FROM node_attachments WHERE session_id = ? AND attachment_id = ?",
+      ).get(created.id, attachment.id)?.data).toEqual(Buffer.from("node image bytes"));
       expect(JSON.stringify(loadMessages(created.id))).toContain(attachment.id);
       await internalNodeFor(state).close(created.id);
     } finally { stop(); unregisterPiProvider(provider.provider.id); closeNodeDb(); }

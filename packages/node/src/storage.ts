@@ -34,7 +34,11 @@ export function initializeNodeStorage(db: Database): void {
     CREATE TABLE IF NOT EXISTS pending_commits (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
       start_seq INTEGER NOT NULL, writes_json TEXT NOT NULL, PRIMARY KEY(session_id, start_seq));
     CREATE TABLE IF NOT EXISTS admission_receipts (command_id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
-      operation TEXT NOT NULL, payload TEXT NOT NULL);`);
+      operation TEXT NOT NULL, payload TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS node_attachments (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      attachment_id TEXT NOT NULL, mime_type TEXT NOT NULL, byte_size INTEGER NOT NULL, sha256 TEXT NOT NULL,
+      filename TEXT, width INTEGER, height INTEGER, data BLOB NOT NULL,
+      PRIMARY KEY(session_id, attachment_id));`);
 }
 
 export function nodeStoragePath(home: string = homedir()): string {

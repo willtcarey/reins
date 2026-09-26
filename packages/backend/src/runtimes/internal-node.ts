@@ -11,7 +11,7 @@ import { createBroadcast } from "../models/broadcast.js";
 import { externalizeRuntimeEventImages } from "./runtime-image-externalization.js";
 import { buildReinsSystemPrompt } from "./system-prompt.js";
 import { createDbCredentialStore } from "./pi/credential-store.js";
-import { hydratePromptContent } from "../session-attachments-store.js";
+import { getSessionAttachment } from "../session-attachments-store.js";
 import { getSetting } from "../settings-store.js";
 import { parseThinkingLevel } from "../models/model-settings.js";
 import { getTask } from "../task-store.js";
@@ -40,7 +40,14 @@ export function internalNodeFor(state: ServerState): Node {
     node = startNode({
       db: getNodeDb(),
       deliver: (id, seq, json) => applyNodeReplica(getDb(), id, seq, json),
-      // The server supplies only product policy and callbacks; the node builds and holds Pi.
+      fetchAttachment: async (id, attachmentId) => {
+        if (provisionForSession(id).storageOwner !== "internal-node") throw new Error(`Node session unavailable: ${id}`);
+        const row = getSessionAttachment(id, attachmentId);
+        return row?.data ? { data: row.data, mimeType: row.mime_type, byteSize: row.byte_size,
+          sha256: row.sha256, filename: row.filename ?? undefined,
+          width: row.width ?? undefined, height: row.height ?? undefined } : null;
+      },
+      // The server supplies product policy and attachment bytes; the node builds and holds Pi.
       prepare: async (id, binding) => {
         const current = provisionForSession(id);
         if (current.storageOwner !== "internal-node" || JSON.stringify(current.binding) !== JSON.stringify(binding)) {
@@ -69,7 +76,6 @@ export function internalNodeFor(state: ServerState): Node {
           systemPrompt: (tools, contextFiles, skills) => buildReinsSystemPrompt({
             tools, contextFiles, skills, task: task ?? undefined, isScratchSession: !task,
           }),
-          hydratePrompt: hydratePromptContent,
           lifecycle: instance,
           observe: event => broadcast({ type: "event", sessionId: id, projectId: row.project_id,
             event: externalizeRuntimeEventImages(id, event) }),
