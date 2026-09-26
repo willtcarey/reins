@@ -16,6 +16,7 @@ import {
 import type { Database } from "bun:sqlite";
 import type { Message, Models } from "@earendil-works/pi-ai";
 import type { ClientPromptContent, ConversationEntry, RuntimeMessage, AgentRuntimeEvent, RuntimeLifecycleSink, RuntimePromptOptions, RuntimePromptSubmission, RuntimeRunOutcome, SetRuntimeModelParams } from "./types.js";
+import { NodeModelNotFoundError } from "./types.js";
 import { PiStorageAdapter } from "../pi-storage.js";
 
 type HydratePrompt = (sessionId: string, content: ClientPromptContent) => Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string; filename?: string; width?: number; height?: number }>;
@@ -404,7 +405,7 @@ export class AgentHarnessPiRuntime {
 
   async setModel(params: SetRuntimeModelParams): Promise<void> {
     if (this.models && !this.models.getModel(params.provider, params.modelId)) {
-      throw new Error(`Model not found: ${params.provider}/${params.modelId}`);
+      throw new NodeModelNotFoundError(params.provider, params.modelId);
     }
     await this.lane.setModel({ provider: params.provider, modelId: params.modelId }, BACKGROUND_CONTEXT);
     this.metadata = { ...this.metadata, model: { provider: params.provider, modelId: params.modelId } };

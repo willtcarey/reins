@@ -9,7 +9,7 @@ import { getProject } from "../project-store.js";
 import { getSource } from "../node-store.js";
 import { selectCreationSource } from "./node-source.js";
 import { scheduleWork, getWork, wakeScheduledCommands, type Work } from "../models/node-command-projection.js";
-import { touchTask } from "../task-store.js";
+import { getTask, touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { SessionInstance, type SessionCreationOptions } from "./session-instance.js";
 import { createCustomTools } from "../tools/index.js";
@@ -229,8 +229,17 @@ function createManagedSession(
     ? parseThinkingLevel(opts.thinkingLevel)
     : defaultModel?.thinkingLevel ?? null;
 
+  // Frozen here: the provision command (and the row) carry the resolved model/thinking level and a
+  // task snapshot; later default_model or task edits do not reach existing sessions.
+  const task = opts?.taskId === undefined ? null : getTask(opts.taskId);
+  if (opts?.taskId !== undefined && !task) throw new Error(`Task not found: ${opts.taskId}`);
+  const configuration = {
+    model: selectedCreateModel ? { provider: selectedCreateModel.provider, modelId: selectedCreateModel.modelId } : null,
+    thinkingLevel: selectedCreateThinkingLevel ?? null, // the row's "off"
+    task: task ? { title: task.title, description: task.description, branchName: task.branch_name } : null,
+  };
   const commandId = crypto.randomUUID();
-  scheduleWork(commandId, { op: "session.provision", sessionId, sourceId: source.id }, () => {
+  scheduleWork(commandId, { op: "session.provision", sessionId, sourceId: source.id, configuration }, () => {
     dbCreateSession(sessionId, projectId, {
       modelProvider: selectedCreateModel?.provider,
       modelId: selectedCreateModel?.modelId,

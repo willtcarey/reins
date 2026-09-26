@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bindNodeSession, initializeNodeStorage, nodeAdmissionReceipt, nodeSessionBinding } from "./storage.js";
+import { bindNodeSession, initializeNodeStorage, nodeAdmissionReceipt, nodeSessionBinding, nodeSessionTask, provisionNodeSession } from "./storage.js";
 import { hydrateCachedPrompt } from "./runtime/attachments.js";
 
 const binding = { sourceId: 7, cwd: "/tmp/node", createdAt: "2026-04-01", parentSessionId: null };
@@ -35,10 +35,14 @@ const versionOne = `
   CREATE TABLE admission_receipts (command_id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
     operation TEXT NOT NULL, payload TEXT NOT NULL);`;
 
-test("fresh node storage initializes bindings, canonical state, receipts and attachments", () => {
+test("fresh node storage initializes bindings, task snapshots, canonical state, receipts and attachments", () => {
   const db = new Database(":memory:");
   initializeNodeStorage(db);
-  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox"]);
+  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task"]);
+  const task = { title: "T", description: null, branchName: "task/t" };
+  provisionNodeSession(db, "t", binding, task);
+  expect(nodeSessionTask(db, "t")).toEqual(task);
+  expect(() => db.query("UPDATE sessions SET task_json = 'not json' WHERE id = 't'").run()).toThrow();
   bindNodeSession(db, "s", binding);
   db.query("UPDATE sessions SET harness_next_seq=3 WHERE id='s'").run();
   db.query(`INSERT INTO session_messages(session_id,seq,harness_id,role,message_json,created_at)
@@ -51,6 +55,7 @@ test("fresh node storage initializes bindings, canonical state, receipts and att
   db.query(`INSERT INTO node_attachments VALUES ('s','img','image/png',1,'sha',NULL,NULL,NULL,x'00')`).run();
   initializeNodeStorage(db);
   expect(nodeSessionBinding(db, "s")).toEqual(binding);
+  expect(nodeSessionTask(db, "s")).toBeNull();
   expect(db.query("SELECT harness_next_seq FROM sessions WHERE id='s'").get()).toEqual({ harness_next_seq: 3 });
   expect(db.query("SELECT harness_id FROM session_messages").get()).toEqual({ harness_id: "root" });
   expect(db.query("SELECT value_json FROM pi_values").get()).toEqual({ value_json: '"root"' });
@@ -78,8 +83,9 @@ test("versioned node migrations add attachments and move pending commits into th
     upgraded.close();
     const reopened = new Database(path);
     initializeNodeStorage(reopened);
-    expect(applied(reopened)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox"]);
+    expect(applied(reopened)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task"]);
     expect(nodeSessionBinding(reopened, "s")).toEqual(binding);
+    expect(nodeSessionTask(reopened, "s")).toBeNull();
     expect(reopened.query("SELECT harness_next_seq FROM sessions WHERE id='s'").get()).toEqual({ harness_next_seq: 4 });
     expect(nodeAdmissionReceipt(reopened, "command")?.payload).toBe("payload");
     expect(reopened.query("SELECT kind, start_seq, payload, ready FROM session_outbox ORDER BY id").all()).toEqual([
@@ -90,6 +96,21 @@ test("versioned node migrations add attachments and move pending commits into th
     reopened.query(`INSERT INTO node_attachments VALUES ('s','img','image/png',1,'sha',NULL,NULL,NULL,x'00')`).run();
     reopened.close();
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("004_session_task adds a nullable, JSON-checked task snapshot to existing sessions", () => {
+  const db = new Database(":memory:");
+  initializeNodeStorage(db);
+  // Reconstruct the 003 schema: the ledger, not schema text, decides what runs.
+  db.exec("ALTER TABLE sessions DROP COLUMN task_json; DELETE FROM migrations WHERE name = '004_session_task'");
+  db.query("INSERT INTO sessions VALUES ('s',7,'/tmp/node','2026-04-01',NULL,4)").run();
+  initializeNodeStorage(db);
+  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task"]);
+  expect(nodeSessionBinding(db, "s")).toEqual(binding);
+  expect(nodeSessionTask(db, "s")).toBeNull();
+  expect(db.query("SELECT harness_next_seq FROM sessions WHERE id='s'").get()).toEqual({ harness_next_seq: 4 });
+  expect(() => db.query("UPDATE sessions SET task_json = 'not json' WHERE id = 's'").run()).toThrow();
+  db.close();
 });
 
 test("unversioned nonempty node databases fail closed even if they resemble the new schema", () => {
@@ -107,7 +128,7 @@ test("migration ledger, not reconstructed schema text, determines what runs", ()
   const db = new Database(":memory:");
   db.exec(versionOne + ledger + " CREATE TABLE unrelated_local_table (id INTEGER PRIMARY KEY)");
   initializeNodeStorage(db);
-  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox"]);
+  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task"]);
   expect(db.query("SELECT name FROM sqlite_master WHERE name='unrelated_local_table'").get())
     .toEqual({ name: "unrelated_local_table" });
   db.close();

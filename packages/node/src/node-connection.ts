@@ -13,9 +13,12 @@ const rejection = (error: NodeError) => {
 export function connectNode(node: Node, socket: WireSocket, instanceId: string, options: PeerOptions = {}) {
   const connection = createNodeConnection(socket, {
     instanceId, minVersion: protocolVersion, maxVersion: protocolVersion, capabilities: [methods.sessionProvision], ...options,
-    async provision({ sessionId, commandId, binding }) {
+    async provision({ sessionId, commandId, binding, configuration }) {
       let result;
-      try { result = await node.send({ op: "session.provision", sessionId, sourceId: binding.sourceId }, binding, commandId); }
+      // Rebuilt in the stored command's shape, so the receipt payload of a replay matches byte-for-byte.
+      const command = { op: "session.provision" as const, sessionId, sourceId: binding.sourceId,
+        configuration: { model: configuration.model, thinkingLevel: configuration.thinkingLevel, task: configuration.task } };
+      try { result = await node.send(command, binding, commandId); }
       catch (error) { throw rejection({ code: "internal", message: error instanceof Error ? error.message : String(error), retryable: false }); }
       if (!result.ok) throw rejection(result.error);
       return { provisioned: true };

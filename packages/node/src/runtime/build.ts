@@ -9,15 +9,22 @@ import { createHostTools, type HostToolContext } from "./tools.js";
 import { createReinsTools, type ReinsToolCalls } from "./reins-tools.js";
 import { createAgentHarnessPiRuntime, type AgentHarnessPiRuntime } from "./pi-runtime.js";
 import type { RuntimeLifecycleSink, RuntimeMessage } from "./types.js";
-import type { FinalReply, SessionConfiguration, SessionEvent, SessionSettled } from "../protocol/schema.js";
+import type { FinalReply, SessionEvent, SessionSettled } from "../protocol/schema.js";
+import type { NodeSessionTask } from "../storage.js";
+import { NodeModelNotFoundError } from "./types.js";
+import { piThinkingLevel, storedLaneModel } from "./lane.js";
 import { hydrateCachedPrompt } from "./attachments.js";
 import { expandLocalPrompt } from "../resources/prompt.js";
 import { buildReinsSystemPrompt } from "./system-prompt.js";
 
-/** What the node needs to build a session's runtime: the server-resolved `session.configuration`
- * (plain data) plus the credential store, the last in-process dependency (pending a credentials RPC). */
-export interface NodeRuntimePolicy extends SessionConfiguration {
+/** What the node needs to build a session's runtime: the provisioned task snapshot (null: scratch)
+ * and the credential store, the last in-process dependency (pending a credentials RPC). The model
+ * selection is Pi's own lane state; `model` only overrides it for this open (`session.setModel`
+ * validates and seeds with the new model, which the caller then persists through the runtime). */
+export interface NodeRuntimePolicy {
+  task: NodeSessionTask | null;
   credentials: CredentialStore;
+  model?: { provider: string; modelId: string; thinkingLevel?: string | null };
 }
 
 /** Receives this session's live runtime events in order (best effort). */
@@ -66,25 +73,20 @@ function lifecycleReports(binding: NodeSessionBinding, report: ReportLifecycle, 
   };
 }
 
-export class NodeModelNotFoundError extends Error {
-  constructor(readonly provider: string, readonly modelId: string) {
-    super(`Model not found: ${provider}/${modelId}`);
-  }
-}
-
-const levels: Record<string, "minimal" | "low" | "medium" | "high" | "xhigh" | "max"> = {
-  minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max",
-};
+export { NodeModelNotFoundError };
 
 /** Node assembles and opens Pi from its canonical storage and bound host resources. All agent tools
  * run here; Reins application tools reach the server only through the session-bound `calls`. */
 export async function buildNodeRuntime(sessionId: string, binding: NodeSessionBinding, storage: PiStorageAdapter, policy: NodeRuntimePolicy, db: Database, emit: EmitSessionEvent, report: ReportLifecycle, calls: ReinsToolCalls): Promise<AgentHarnessPiRuntime> {
   const { modelRuntime, resourceLoader, resources: reinsResources } = await createPiContext({ cwd: binding.cwd, credentials: policy.credentials });
-  const selected = policy.model;
-  const model = selected ? modelRuntime.getModel(selected.provider, selected.modelId) : undefined;
-  if (!model && selected) throw new NodeModelNotFoundError(selected.provider, selected.modelId);
-  if (!model) throw new Error("AgentHarness Pi runtime requires an explicit model");
-  const sessionEnvironment = { provider: model.provider, modelId: model.id, thinkingLevel: policy.thinkingLevel };
+  // Pi's lane (created at provision) owns the model selection; it is validated here before Pi opens.
+  const selected = policy.model ?? await storedLaneModel(storage);
+  if (!selected) throw new Error("AgentHarness Pi runtime requires an explicit model");
+  const model = modelRuntime.getModel(selected.provider, selected.modelId);
+  if (!model) throw new NodeModelNotFoundError(selected.provider, selected.modelId);
+  // Only seeds a lane Pi has not created yet; an existing lane's thinking level is restored.
+  const thinkingLevel = piThinkingLevel(selected.thinkingLevel);
+  const sessionEnvironment = { provider: model.provider, modelId: model.id, thinkingLevel: thinkingLevel === "off" ? null : thinkingLevel };
   const host = createHostTools({ cwd: binding.cwd, sessionId, builtins: ["read", "write", "edit", "bash"], sessionEnvironment });
   const tools: AgentHarnessTool<HostToolContext>[] = [...host.tools, ...createReinsTools(calls)];
   try {
@@ -98,8 +100,6 @@ export async function buildNodeRuntime(sessionId: string, binding: NodeSessionBi
         name: prompt.name, description: prompt.description, content: prompt.content,
       })),
     };
-    const thinkingLevel = policy.thinkingLevel ? levels[policy.thinkingLevel] : undefined;
-    if (policy.thinkingLevel && !thinkingLevel) throw new Error(`Invalid thinking level: ${policy.thinkingLevel}`);
     const runtime = await createAgentHarnessPiRuntime({
       storage, sessionId, createdAt: Date.parse(binding.createdAt), cwd: binding.cwd,
       ...(binding.parentSessionId ? { parentSessionId: binding.parentSessionId } : {}),

@@ -8,7 +8,7 @@ export const protocolVersion = 1;
 export const methods = {
   nodeHello: "node.hello", sessionProvision: "session.provision", sessionStatus: "session.status",
   sessionCommitted: "session.committed", sessionStarted: "session.started", sessionSettled: "session.settled",
-  attachmentFetch: "attachment.fetch", sessionConfiguration: "session.configuration", sessionEvent: "session.event",
+  attachmentFetch: "attachment.fetch", sessionEvent: "session.event",
   scriptExecute: "script.execute", scriptSearch: "script.search", scriptCancel: "script.cancel",
   projectCreateTask: "project.createTask",
 } as const;
@@ -26,9 +26,18 @@ export const binding = z.strictObject({
   sourceId: z.number().int().positive(), cwd: z.string().min(1).max(4096),
   createdAt: z.string().min(1).max(128), parentSessionId: z.string().min(1).nullable(),
 });
+const wireModel = z.strictObject({ provider: z.string().min(1).max(128), modelId: z.string().min(1).max(256) });
+/** The session's configuration, frozen by the server at creation: Pi's initial model/thinking level
+ * (null thinking: off) and the task snapshot for the system prompt and branch checkout (null: scratch).
+ * It is part of the provision command, so a replay carries the same bytes. */
+export const provisionConfiguration = z.strictObject({
+  model: wireModel.nullable(),
+  thinkingLevel: z.string().min(1).max(32).nullable(),
+  task: z.strictObject({ title: z.string(), description: z.string().nullable(), branchName: z.string().min(1).max(1024) }).nullable(),
+});
 export const provisionParams = z.strictObject({
   epoch: z.string().uuid(), sessionId: z.string().min(1).max(128),
-  commandId: z.string().min(1).max(128), binding,
+  commandId: z.string().min(1).max(128), binding, configuration: provisionConfiguration,
 });
 export const provisionResult = z.strictObject({ provisioned: z.literal(true) });
 export const statusParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128) });
@@ -57,16 +66,6 @@ export const attachmentFetchResult = z.strictObject({
     width: z.number().int().positive().optional(), height: z.number().int().positive().optional(),
   }).nullable(),
 });
-/** `session.configuration` is the read-only request a node makes when it opens a session's runtime:
- * the server verifies `binding` against its own row and storage owner, then returns the resolved
- * model/thinking selection and the task the system prompt and branch checkout need (null for a
- * scratch session). Plain data: the node renders the prompt and checks out the branch itself. */
-export const sessionConfigurationParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), binding });
-export const sessionConfigurationResult = z.strictObject({
-  model: z.strictObject({ provider: z.string().min(1).max(128), modelId: z.string().min(1).max(256) }).nullable(),
-  thinkingLevel: z.string().max(32).nullable(),
-  task: z.strictObject({ title: z.string(), description: z.string().nullable(), branchName: z.string().min(1).max(1024) }).nullable(),
-});
 const runId = z.string().min(1).max(128);
 /** Run lifecycle reports are durable like `session.committed`: the node stores each one in its
  * per-session outbox behind the commits that preceded it, replays it until acknowledged, and the
@@ -82,7 +81,7 @@ export const sessionSettledParams = z.strictObject({
   status: z.enum(["completed", "failed", "aborted"]),
   error: z.strictObject({ code: z.string().optional(), message: z.string() }).optional(),
   metadata: z.strictObject({
-    model: z.strictObject({ provider: z.string().min(1).max(128), modelId: z.string().min(1).max(256) }).nullable(),
+    model: wireModel.nullable(),
     thinkingLevel: z.string().max(32).nullable(),
   }),
   reply: finalReply.nullable(),
@@ -139,5 +138,4 @@ export type AttachmentChunk = NonNullable<z.infer<typeof attachmentFetchResult>[
 export type SessionStarted = Omit<z.infer<typeof sessionStartedParams>, "epoch">;
 export type SessionSettled = Omit<z.infer<typeof sessionSettledParams>, "epoch">;
 export type FinalReply = z.infer<typeof finalReply>;
-export type SessionConfiguration = z.infer<typeof sessionConfigurationResult>;
-export type SessionConfigurationRequest = Omit<z.infer<typeof sessionConfigurationParams>, "epoch">;
+export type ProvisionConfiguration = z.infer<typeof provisionConfiguration>;

@@ -37,6 +37,12 @@ export interface RuntimePromptOptions {
   timestamp?: number;
 }
 export interface RuntimePromptSubmission { messageId: string }
+/** The model a session selects is not in the node's model registry. */
+export class NodeModelNotFoundError extends Error {
+  constructor(readonly provider: string, readonly modelId: string) {
+    super(`Model not found: ${provider}/${modelId}`);
+  }
+}
 export interface SetRuntimeModelParams { provider: string; modelId: string; thinkingLevel?: string | null }
 export type AgentRuntimeEvent =
   | { type: "agent_start" }

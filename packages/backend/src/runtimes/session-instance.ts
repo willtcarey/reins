@@ -102,6 +102,11 @@ export class SessionInstance implements RuntimeLifecycleSink {
     return internalNodeFor(this.manager.state).runtime(sessionId);
   }
 
+  /** Wakes node command delivery after a caller queued work outside `send` (e.g. `session.setModel`). */
+  wakeNodeCommands(): void {
+    wakeSessionInput(this.manager.state);
+  }
+
   async start(prompt: string, options: SessionStartOptions): Promise<{ sessionId: string }> {
     const caller = this.session(this.sessionId);
     const project = getProject(caller.project_id);

@@ -27,5 +27,8 @@ async function sendLegacySessionCommand(state: ServerState, input: NodeCommand):
       if (!runtime.resumePendingOperation) throw new Error("Runtime does not support pending-operation resume");
       await runtime.resumePendingOperation();
       return { ok: true, value: { kind: "resumed", started: true } };
+    case "session.setModel":
+      await runtime.setModel({ provider: input.provider, modelId: input.modelId, thinkingLevel: input.thinkingLevel ?? null });
+      return { ok: true, value: { kind: "modelSet" } };
   }
 }

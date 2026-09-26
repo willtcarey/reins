@@ -3,7 +3,7 @@ import { createServerTransport } from "../../node-transport/server-peer.js";
 import { createNodeConnection } from "@reins/node/protocol";
 
 const unexpected = () => { throw new Error("unexpected"); };
-const noServer = { committed: unexpected, started: unexpected, settled: unexpected, configuration: unexpected, attachment: () => null, event: () => {}, scriptExecute: unexpected, scriptSearch: unexpected, createTask: unexpected };
+const noServer = { committed: unexpected, started: unexpected, settled: unexpected, attachment: () => null, event: () => {}, scriptExecute: unexpected, scriptSearch: unexpected, createTask: unexpected };
 
 test("private loopback WS negotiates and provisions then reports status", async () => {
   let serverPeer: ReturnType<typeof createServerTransport> | undefined;
@@ -37,7 +37,7 @@ test("private loopback WS negotiates and provisions then reports status", async 
     expect(ready.epoch).toBeString();
     const peer = serverPeer!;
     expect(await peer.status("s1")).toEqual({ provisioned: false });
-    expect(await peer.provision({ sessionId: "s1", commandId: "cmd-1", binding: { sourceId: 2, cwd: "/tmp/project", createdAt: "2026-01-01T00:00:00Z", parentSessionId: null } })).toEqual({ provisioned: true });
+    expect(await peer.provision({ sessionId: "s1", commandId: "cmd-1", binding: { sourceId: 2, cwd: "/tmp/project", createdAt: "2026-01-01T00:00:00Z", parentSessionId: null }, configuration: { model: null, thinkingLevel: null, task: null } })).toEqual({ provisioned: true });
     expect(await peer.status("s1")).toEqual({ provisioned: true });
   } finally {
     node?.close(); serverPeer?.close(); client.close(); server.stop(true);
@@ -51,6 +51,6 @@ test("server transport rejects operations before negotiation and incompatible ve
   peer.receive(JSON.stringify({ jsonrpc: "2.0", method: "node.hello", params: { minVersion: 2, maxVersion: 3, capabilities: ["session.provision"], instanceId: "x" }, id: 1 }));
   await Bun.sleep(0);
   expect(JSON.parse(sent[0]!)).toMatchObject({ jsonrpc: "2.0", id: 1, error: { code: -32001 } });
-  await expect(peer.provision({ sessionId: "s1", commandId: "c", binding: { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null } })).rejects.toMatchObject({ code: "unavailable" });
+  await expect(peer.provision({ sessionId: "s1", commandId: "c", binding: { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null }, configuration: { model: null, thinkingLevel: null, task: null } })).rejects.toMatchObject({ code: "unavailable" });
   peer.close();
 });

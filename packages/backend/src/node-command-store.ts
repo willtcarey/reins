@@ -82,6 +82,17 @@ export function enqueueInput(sessionId: string, operation: "prompt" | "steer", c
   })();
 }
 
+/** Queues a model change behind the session's earlier outbox work. Not deduplicated: each request is
+ * its own command and the last one delivered wins. Synchronous, so a caller can enqueue inside its own
+ * transaction. */
+export function enqueueSetModel(sessionId: string, model: { provider: string; modelId: string; thinkingLevel?: string }): string {
+  const id = crypto.randomUUID();
+  const json = JSON.stringify({ op: "session.setModel", provider: model.provider, modelId: model.modelId,
+    ...(model.thinkingLevel === undefined ? {} : { thinkingLevel: model.thinkingLevel }) });
+  getDb().query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, ?, ?, 'queued')").run(id, sessionId, json);
+  return id;
+}
+
 export function hasPendingInput(sessionId: string): boolean {
   return !!getDb().query<{ id: string }, [string]>("SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') IS NOT NULL AND state IN ('queued', 'dispatching') LIMIT 1").get(sessionId);
 }

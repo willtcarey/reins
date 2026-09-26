@@ -37,8 +37,10 @@ test("normal session creation dispatches through the durable outbox", async () =
     const dispatcher = new NodeCommandDispatcher(state);
     await dispatcher.drain();
     expect(getWork(row!.id)?.state).toBe("admitted");
-    expect(getWork(row!.id)?.command.op).toBe("session.provision");
-    expect(nodeAdmissionReceipt(nodeDb, row!.id)).toMatchObject({ sessionId: created.id, operation: "session.provision" });
+    expect(getWork(row!.id)?.command?.op).toBe("session.provision");
+    // The node rebuilds the wire command in the stored command's shape: its receipt is the same bytes.
+    expect(nodeAdmissionReceipt(nodeDb, row!.id)).toEqual({ sessionId: created.id, operation: "session.provision", payload: JSON.stringify(getWork(row!.id)!.command) });
+    expect(getWork(row!.id)?.command).toMatchObject({ configuration: { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } } });
     expect(state.sessions.has(created.id)).toBe(false);
   } finally { closeNodeDb(); setDb(new Database(":memory:")); db.close(); }
 });
@@ -48,7 +50,7 @@ const nodeOwned = () => {
   const nodeDb = new Database(":memory:");
   initializeNodeStorage(nodeDb);
   setNodeDb(nodeDb);
-  scheduleWork("p", { op: "session.provision", sessionId: "s", sourceId: source.id }, () =>
+  scheduleWork("p", { op: "session.provision", sessionId: "s", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }, () =>
     createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" }));
   const state = createServerState();
   return { db, nodeDb, state, dispose: () => { stopInternalNode(state); closeNodeDb(); setDb(new Database(":memory:")); db.close(); } };
@@ -59,7 +61,7 @@ test("node-owned provision crosses the JSON-RPC wire and replays idempotently by
   try {
     const { binding } = provisionForSession("s");
     // Admitted on the node but the server never recorded it: replay must reuse the receipt.
-    await provisionInternal(state, { sessionId: "s", commandId: "p", binding });
+    await provisionInternal(state, { sessionId: "s", commandId: "p", binding, configuration: { model: null, thinkingLevel: null, task: null } });
     const receipt = nodeAdmissionReceipt(nodeDb, "p");
     await new NodeCommandDispatcher(state).drain();
     expect(getWork("p")?.state).toBe("admitted");
@@ -67,12 +69,12 @@ test("node-owned provision crosses the JSON-RPC wire and replays idempotently by
     expect(nodeAdmissionReceipt(nodeDb, "p")).toEqual(receipt!);
     expect(db.query("SELECT COUNT(*) AS n FROM node_command_outbox").get()).toEqual({ n: 1 });
     // A thrown node error crosses the wire as a non-retryable `internal` NodeResult.
-    expect(await provisionInternal(state, { sessionId: "s", commandId: "p", binding: { ...binding, cwd: "/elsewhere" } }))
+    expect(await provisionInternal(state, { sessionId: "s", commandId: "p", binding: { ...binding, cwd: "/elsewhere" }, configuration: { model: null, thinkingLevel: null, task: null } }))
       .toEqual({ ok: false, error: { code: "internal", message: expect.stringContaining("mismatch"), retryable: false } });
     // In-process values that do not survive JSON fail at the wire schema instead of leaking through.
     const leaky = { ...binding };
     Object.defineProperty(leaky, "cwd", { value: () => binding.cwd, enumerable: true });
-    await expect(provisionInternal(state, { sessionId: "s", commandId: "p", binding: leaky }))
+    await expect(provisionInternal(state, { sessionId: "s", commandId: "p", binding: leaky, configuration: { model: null, thinkingLevel: null, task: null } }))
       .rejects.toMatchObject({ code: -32602 });
   } finally { dispose(); }
 });
@@ -98,7 +100,7 @@ test("a timed-out provision has an unknown outcome and requeues", async () => {
   try {
     spyOn(internalNodeFor(state), "send").mockReturnValue(new Promise(() => {}));
     const { binding } = provisionForSession("s");
-    await expect(provisionInternal(state, { sessionId: "s", commandId: "p", binding }, 5)).rejects.toBeInstanceOf(DeliveryDeferred);
+    await expect(provisionInternal(state, { sessionId: "s", commandId: "p", binding, configuration: { model: null, thinkingLevel: null, task: null } }, 5)).rejects.toBeInstanceOf(DeliveryDeferred);
   } finally { dispose(); }
 });
 
@@ -113,7 +115,7 @@ test("a closed or unnegotiated node connection requeues provision instead of fai
     expect(getWork("p")?.state).toBe("queued");
     expect(nodeAdmissionReceipt(nodeDb, "p")).toBeNull();
 
-    await provisionInternal(state, { sessionId: "other", commandId: "warm", binding: provisionForSession("s").binding }).catch(() => undefined);
+    await provisionInternal(state, { sessionId: "other", commandId: "warm", binding: provisionForSession("s").binding, configuration: { model: null, thinkingLevel: null, task: null } }).catch(() => undefined);
     const negotiated = dispatcher.drain();
     stopInternalNode(state); // negotiated, but the provision frame cannot be sent: outcome unknown
     await negotiated;
@@ -153,7 +155,7 @@ test("creation on unavailable source persists queued without constructing runtim
 test("production dispatcher resolves reassignment and settles explicit rejection once", async () => {
   const { db, project, source } = setup();
   try {
-    scheduleWork("x", { op: "session.provision", sessionId: "s", sourceId: source.id }, () => createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id }));
+    scheduleWork("x", { op: "session.provision", sessionId: "s", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }, () => createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id }));
     const alternate = createSource(project.id, "internal", "/tmp/alternate");
     db.query("UPDATE sessions SET source_id = ? WHERE id = 's'").run(alternate.id);
     const dispatcher = new NodeCommandDispatcher(createServerState());
@@ -169,7 +171,7 @@ test("production dispatcher resolves reassignment and settles explicit rejection
 test("startup scan recovers a missed wake and unavailable work stays queued", async () => {
   const { db, project, source } = setup();
   try {
-    scheduleWork("x", { op: "session.provision", sessionId: "s", sourceId: source.id }, () => createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id }));
+    scheduleWork("x", { op: "session.provision", sessionId: "s", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }, () => createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id }));
     db.query("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')").run();
     const alternate = createSource(project.id, "remote", "/tmp/remote");
     db.query("UPDATE sessions SET source_id = ? WHERE id = 's'").run(alternate.id);
@@ -188,7 +190,7 @@ test("startup scan recovers a missed wake and unavailable work stays queued", as
 test("existing startup handling retains interrupted dispatch outcome", () => {
   const { db, project, source } = setup();
   try {
-    scheduleWork("x", { op: "session.provision", sessionId: "s", sourceId: source.id }, () => createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id }));
+    scheduleWork("x", { op: "session.provision", sessionId: "s", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }, () => createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id }));
     db.query("UPDATE node_command_outbox SET state = 'dispatching' WHERE id = 'x'").run();
     blockInterruptedDispatches();
     expect(getWork("x")?.state).toBe("unknown");
@@ -198,7 +200,7 @@ test("existing startup handling retains interrupted dispatch outcome", () => {
 test("a removed failed provision never looks like a successful node open", async () => {
   const { db, project, source } = setup();
   try {
-    scheduleWork("failed-open", { op: "session.provision", sessionId: "s", sourceId: source.id }, () =>
+    scheduleWork("failed-open", { op: "session.provision", sessionId: "s", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }, () =>
       createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" }));
     db.query("DELETE FROM node_command_outbox WHERE id = 'failed-open'").run();
     const state = createServerState();
@@ -207,10 +209,29 @@ test("a removed failed provision never looks like a successful node open", async
   } finally { setDb(new Database(":memory:")); db.close(); }
 });
 
+test("a stored command that no longer parses reads as failed and is never delivered", async () => {
+  const { db, project, source } = setup();
+  try {
+    createSession("admitted", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
+    createSession("queued", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
+    // Provisions stored before the command carried its configuration.
+    db.query(`INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES
+      ('old-admitted', 'admitted', '{"op":"session.provision"}', 'admitted'), ('old-queued', 'queued', '{"op":"session.provision"}', 'queued')`).run();
+    const state = createServerState();
+    const sessions = new Sessions(state.sessions);
+    expect(sessions.get("admitted")?.scheduling).toMatchObject({ state: "failed", error: "Stored node command is invalid" });
+    await expect(waitForAdmission(state, "admitted")).rejects.toThrow("Session open failed: Stored node command is invalid");
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    try { await new NodeCommandDispatcher(state).drain(); } finally { errors.mockRestore(); }
+    expect(getWork("old-queued")).toBeNull();
+    expect(sessions.get("queued")?.scheduling).toMatchObject({ state: "failed", error: "Session open failed" });
+  } finally { setDb(new Database(":memory:")); db.close(); }
+});
+
 test("scheduling rolls back creation and rejects duplicate submission IDs", () => {
   const { db, project, source } = setup();
   try {
-    const command = { op: "session.provision" as const, sessionId: "s", sourceId: source.id };
+    const command = { op: "session.provision" as const, sessionId: "s", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } };
     expect(() => scheduleWork("x", command, () => { createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id }); throw new Error("fail"); })).toThrow("fail");
     expect(db.query("SELECT 1 FROM sessions WHERE id = 's'").get()).toBeNull();
     scheduleWork("x", command, () => createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id }));

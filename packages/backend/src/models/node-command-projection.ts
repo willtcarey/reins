@@ -1,7 +1,9 @@
 import { deliveryPolicy, nodeCommand, nodeResult, type NodeCommand, type NodeResult } from "@reins/node/contract";
 import { getCommand, getCommandForSession, insertCommandWithSession, type CommandState } from "../node-command-store.js";
 
-export type Work = { id: string; sessionId: string; sourceId: number; state: CommandState; command: NodeCommand; result: NodeResult | null };
+/** `command` is null for a stored command that no longer parses (e.g. a provision stored before it
+ * carried its configuration); such work reads as failed and is never delivered. */
+export type Work = { id: string; sessionId: string; sourceId: number; state: CommandState; command: NodeCommand | null; result: NodeResult | null };
 
 export function workForSession(sessionId: string): Work | null {
   const row = getCommandForSession(sessionId);
@@ -11,14 +13,19 @@ export function workForSession(sessionId: string): Work | null {
 export function getWork(id: string): Work | null {
   const row = getCommand(id);
   if (!row) return null;
-  const command = nodeCommand.parse({ ...JSON.parse(row.command_json), sessionId: row.session_id, sourceId: row.source_id });
-  return { id: row.id, sessionId: row.session_id, sourceId: row.source_id, state: row.state, command, result: row.result_json && row.state !== "unknown" ? nodeResult.parse(JSON.parse(row.result_json)) : null };
+  const command = nodeCommand.safeParse({ ...JSON.parse(row.command_json), sessionId: row.session_id, sourceId: row.source_id });
+  if (!command.success) return { id: row.id, sessionId: row.session_id, sourceId: row.source_id, state: "failed", command: null,
+    result: { ok: false, error: { code: "invalid_request", message: "Stored node command is invalid", retryable: false } } };
+  return { id: row.id, sessionId: row.session_id, sourceId: row.source_id, state: row.state, command: command.data, result: row.result_json && row.state !== "unknown" ? nodeResult.parse(JSON.parse(row.result_json)) : null };
 }
 
 export function scheduleWork(id: string, command: NodeCommand, create: () => void): Work {
-  if (deliveryPolicy(command) !== "submit-work" || command.op !== "session.provision") throw new Error("Only provision commands may be scheduled");
-  nodeCommand.parse(command);
-  insertCommandWithSession(id, command.sessionId, JSON.stringify({ op: command.op }), create);
+  const parsed = nodeCommand.parse(command);
+  if (deliveryPolicy(parsed) !== "submit-work" || parsed.op !== "session.provision") throw new Error("Only provision commands may be scheduled");
+  const { sessionId, sourceId: _sourceId, ...stored } = parsed;
+  // The session row supplies sessionId/sourceId on read; the stored configuration is the frozen payload
+  // every (re)delivery sends, so replays match the node's receipt byte-for-byte.
+  insertCommandWithSession(id, sessionId, JSON.stringify(stored), create);
   return getWork(id)!;
 }
 

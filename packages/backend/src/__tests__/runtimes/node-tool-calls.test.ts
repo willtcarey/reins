@@ -130,7 +130,8 @@ test("a node-owned session's model calls execute, search and create_task over th
   try {
     const node = internalNodeFor(state);
     const binding = provisionForSession("scratch").binding;
-    await node.send({ op: "session.provision", sessionId: "scratch", sourceId: binding.sourceId }, binding);
+    await node.send({ op: "session.provision", sessionId: "scratch", sourceId: binding.sourceId,
+      configuration: { model: { provider: "tool-chain-faux", modelId: "fake" }, thinkingLevel: null, task: null } }, binding);
     await node.send({ op: "session.prompt", sessionId: "scratch", clientId: "c", content: [{ type: "text", text: "Go" }] }, binding);
     const runtime = await node.open("scratch", binding);
     await runtime.waitForIdle();

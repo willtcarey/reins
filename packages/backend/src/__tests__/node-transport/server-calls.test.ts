@@ -20,7 +20,7 @@ import { dispatcherFor } from "../../models/node-command-dispatcher.js";
 import { getSession } from "../../session-store.js";
 
 const binding = { sourceId: 1, cwd: "/tmp/server-calls", createdAt: "2026-01-01", parentSessionId: null };
-const provision = { op: "session.provision" as const, sessionId: "s", sourceId: 1 };
+const provision = { op: "session.provision" as const, sessionId: "s", sourceId: 1, configuration: { model: null, thinkingLevel: null, task: null } };
 
 function link(node: Node, handlers: ServerHandlers) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
@@ -45,7 +45,7 @@ const until = async (done: () => boolean) => { for (let i = 0; i < 200 && !done(
 const pending = (db: Database) => db.query<{ n: number }, []>("SELECT COUNT(*) n FROM session_outbox").get()!.n;
 const unexpectedTool = () => { throw new Error("unexpected tool call"); };
 const noTools = { scriptExecute: unexpectedTool, scriptSearch: unexpectedTool, createTask: unexpectedTool };
-const noReports = { started: () => { throw new Error("unexpected report"); }, settled: () => { throw new Error("unexpected report"); }, configuration: () => { throw new Error("runtime opened"); }, ...noTools };
+const noReports = { started: () => { throw new Error("unexpected report"); }, settled: () => { throw new Error("unexpected report"); }, ...noTools };
 
 test("committed batches cross the wire byte-for-byte, survive a missing or lost link and are acknowledged idempotently", async () => {
   setupTestDb();
@@ -119,7 +119,7 @@ test("lifecycle reports cross the wire after preceding commits, stay pending wit
       const received: string[] = [];
       let loseAck = true;
       const live = link(node, {
-        committed: ({ startSeq }) => { received.push(`committed:${startSeq}`); }, attachment: () => null, event: () => {}, configuration: () => { throw new Error("runtime opened"); }, ...noTools,
+        committed: ({ startSeq }) => { received.push(`committed:${startSeq}`); }, attachment: () => null, event: () => {}, ...noTools,
         started: input => { received.push(`started:${input.runId}`); reports.started(input); },
         settled: input => {
           received.push(`settled:${input.runId}`);
@@ -173,7 +173,8 @@ test("attachment fetch transfers chunked base64 bytes that the node verifies bef
       if (id === "img") fetches++;
       return served;
     }, event: () => {}, ...noReports });
-    await expect(node.send(prompt("a", "img"), binding)).rejects.toThrow("runtime opened");
+    // Provisioned without a model, the open after caching stops before Pi.
+    await expect(node.send(prompt("a", "img"), binding)).rejects.toThrow("AgentHarness Pi runtime requires an explicit model");
     expect(fetches).toBe(3);
     expect(nodeDb.query("SELECT data, filename, width, height FROM node_attachments WHERE attachment_id = 'img'").get())
       .toEqual({ data: Buffer.from(bytes), filename: "a.png", width: 3, height: 4 });

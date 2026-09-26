@@ -5,21 +5,26 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFactory } from "@earendil-works/pi-ai";
 import { APPLICATION_ERROR } from "./protocol/errors.js";
 import { RpcFailure } from "./protocol/peer.js";
 import { startNode } from "./node.js";
-import { nodeAdmissionReceipt, setNodeDb } from "./storage.js";
+import { nodeAdmissionReceipt, nodeSessionBinding, setNodeDb } from "./storage.js";
 import { registerPiProvider, unregisterPiProvider } from "./runtime/context.js";
 import { NodeModelNotFoundError, type NodeRuntimePolicy } from "./runtime/build.js";
-import type { SessionConfiguration, SessionEventReport, SessionSettled, SessionStarted } from "./protocol/schema.js";
+import type { SessionEventReport, SessionSettled, SessionStarted } from "./protocol/schema.js";
+import type { SessionConfiguration } from "./contract.js";
 
 const noTools = {
   executeScript: async () => { throw new Error("unexpected tool call"); },
   searchScript: async () => { throw new Error("unexpected tool call"); },
   createTask: async () => { throw new Error("unexpected tool call"); },
 };
-const noReports = { started: async () => {}, settled: async () => {}, configuration: async (): Promise<never> => { throw new Error("runtime opened"); }, ...noTools };
+const noReports = { started: async () => {}, settled: async () => {}, ...noTools };
+const scratch: SessionConfiguration = { model: null, thinkingLevel: null, task: null };
+const provisionOf = (sessionId: string, configuration: SessionConfiguration = scratch) =>
+  ({ op: "session.provision" as const, sessionId, sourceId: 7, configuration });
+const NO_MODEL = "AgentHarness Pi runtime requires an explicit model";
 const credentials: NodeRuntimePolicy["credentials"] = {
   read: async () => ({ type: "api_key", key: "test" }), list: async () => [],
   modify: async () => ({ type: "api_key", key: "test" }), delete: async () => {},
@@ -32,7 +37,7 @@ test("node selects its own storage when no database is passed by the host", asyn
   try {
     node = startNode({ credentials });
     const binding = { sourceId: 7, cwd: "/tmp/node-owned", createdAt: "2026-01-01", parentSessionId: null };
-    expect(await node.send({ op: "session.provision", sessionId: "owned", sourceId: 7 }, binding)).toMatchObject({ ok: true });
+    expect(await node.send(provisionOf("owned"), binding)).toMatchObject({ ok: true });
     expect(db.query("SELECT id, cwd FROM sessions WHERE id = 'owned'").get()).toEqual({ id: "owned", cwd: "/tmp/node-owned" });
   } finally { node?.stop(); setNodeDb(); db.close(); }
 });
@@ -70,14 +75,15 @@ test("opening a session does not fetch attachments from past inputs", async () =
   node.attach({ committed: async () => {}, fetchAttachment: async () => { throw new Error("historical fetch"); }, event: () => {}, ...noReports });
   const binding = { sourceId: 7, cwd: "/tmp/reins-node-owner", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
   try {
-    await node.send({ op: "session.provision", sessionId: "s", sourceId: 7 }, binding);
+    await node.send(provisionOf("s"), binding);
     db.query(`INSERT INTO session_messages(session_id,seq,harness_id,role,message_json,created_at)
       VALUES(?,?,?,?,?,?)`).run("s", 1, "entry-1", "reinsInput", JSON.stringify({
         type: "message", message: { role: "reinsInput", content: [
           { type: "image", attachmentId: "old", mimeType: "image/png", byteSize: 1 },
         ] },
       }), binding.createdAt);
-    await expect(node.open("s", binding)).rejects.toThrow("runtime opened");
+    // Scratch provision without a model: the open stops before Pi, after reading history.
+    await expect(node.open("s", binding)).rejects.toThrow(NO_MODEL);
     expect(db.query("SELECT 1 FROM node_attachments").get()).toBeNull();
   } finally { node.stop(); setNodeDb(); db.close(); }
 });
@@ -99,14 +105,64 @@ test("the newest attached server connection fetches attachments across handler r
   detachStale();
   const binding = { sourceId: 7, cwd: "/tmp/reins-node-owner", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
   try {
-    expect(await reinstalled.send({ op: "session.provision", sessionId: "s", sourceId: 7 }, binding)).toMatchObject({ ok: true });
+    expect(await reinstalled.send(provisionOf("s"), binding)).toMatchObject({ ok: true });
     await expect(reinstalled.send({ op: "session.prompt", sessionId: "s", clientId: "image", content: [
       { type: "image", attachmentId: "new-image", mimeType: "image/png", byteSize: bytes.length },
-    ] }, binding)).rejects.toThrow("runtime opened");
+    ] }, binding)).rejects.toThrow(NO_MODEL);
     expect(fetches).toBe(1);
     expect(db.query("SELECT data FROM node_attachments WHERE session_id = ? AND attachment_id = ?").get("s", "new-image"))
       .toEqual({ data: bytes });
   } finally { first.stop(); reinstalled.stop(); setNodeDb(); db.close(); }
+});
+
+test("provision has Pi create the lane before recording its receipt, so a replay after a crash in between converges", async () => {
+  const db = new Database(":memory:");
+  const provider = fauxProvider({ provider: "node-provision-faux", models: [{ id: "fake" }] });
+  registerPiProvider(provider.provider);
+  setNodeDb(db);
+  const node = startNode({ credentials });
+  const replicated: number[] = [];
+  node.attach({ ...noReports, committed: async ({ startSeq }) => { replicated.push(startSeq); }, fetchAttachment: async () => null, event: () => {} });
+  const binding = { sourceId: 7, cwd: "/tmp/reins-node-provision", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
+  const piState = (sessionId: string) => ({
+    values: db.query("SELECT namespace, key, seq, value_json FROM pi_values WHERE session_id = ? ORDER BY namespace, key").all(sessionId),
+    nextSeq: db.query("SELECT harness_next_seq FROM sessions WHERE id = ?").get(sessionId),
+  });
+  const provision = provisionOf("s", { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: "high", task: null });
+  try {
+    // A crash after Pi created the lane but before the receipt: the server sees no receipt and replays.
+    db.exec("CREATE TRIGGER reject_receipt BEFORE INSERT ON admission_receipts BEGIN SELECT RAISE(ABORT, 'receipt unavailable'); END");
+    await expect(node.send(provision, binding, "provision")).rejects.toThrow("receipt unavailable");
+    db.exec("DROP TRIGGER reject_receipt");
+    expect(nodeAdmissionReceipt(db, "provision")).toBeNull();
+    const created = piState("s");
+    expect(created.values.length).toBeGreaterThan(0);
+
+    // The replay converges: the lane exists, so nothing is written again, and the receipt is recorded.
+    expect(await node.send(provision, binding, "provision")).toEqual({ ok: true, value: { kind: "provisioned" } });
+    expect(nodeAdmissionReceipt(db, "provision")?.payload).toBe(JSON.stringify(provision));
+    expect(piState("s")).toEqual(created);
+    // A replay of the receipted command is a no-op.
+    expect(await node.send(provision, binding, "provision")).toEqual({ ok: true, value: { kind: "provisioned" } });
+    expect(piState("s")).toEqual(created);
+    // Pi's lane commit replicated to the server once, through the normal commit path.
+    expect(replicated).toEqual([1]);
+    // Pi's lane API reads the provisioned selection.
+    expect((await node.open("s", binding)).getSessionMetadata()).toEqual({ model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: "high" });
+    await node.close("s");
+
+    // No resolved model: no lane until session.setModel.
+    expect(await node.send(provisionOf("scratch"), binding, "scratch")).toEqual({ ok: true, value: { kind: "provisioned" } });
+    expect(piState("scratch").values).toEqual([]);
+    await expect(node.open("scratch", binding)).rejects.toThrow(NO_MODEL);
+
+    // A model the node's registry does not know is rejected before anything is stored.
+    const unknown = provisionOf("unknown", { model: { provider: provider.provider.id, modelId: "missing" }, thinkingLevel: null, task: null });
+    expect(await node.send(unknown, binding, "unknown")).toEqual({ ok: false, error: {
+      code: "invalid_request", message: `Model not found: ${provider.provider.id}/missing`, retryable: false } });
+    expect(nodeAdmissionReceipt(db, "unknown")).toBeNull();
+    expect(nodeSessionBinding(db, "unknown")).toBeNull();
+  } finally { node.stop(); unregisterPiProvider(provider.provider.id); setNodeDb(); db.close(); }
 });
 
 test("node provisions an immutable binding, executes Pi and reopens from canonical storage without product tables", async () => {
@@ -122,13 +178,12 @@ test("node provisions an immutable binding, executes Pi and reopens from canonic
     event: ({ seq, event }: SessionEventReport) => { seqs.push(seq); events.push(event.type); },
     started: async ({ runId }: SessionStarted) => { reports.push(`started:${runId}`); },
     settled: async ({ runId, status }: SessionSettled) => { reports.push(`settled:${runId}:${status}`); },
-    configuration: async () => ({ model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null }),
     ...noTools,
   };
   setNodeDb(db);
   const dependencies = { credentials: { ...credentials, list: async () => [{ providerId: provider.provider.id, type: "api_key" as const }] } };
   const binding = { sourceId: 7, cwd: "/tmp/reins-node-owner", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
-  const provision = { op: "session.provision" as const, sessionId: "s", sourceId: 7 };
+  const provision = provisionOf("s", { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null });
   try {
     const node = startNode(dependencies);
     const detach = node.attach(recorder);
@@ -178,11 +233,8 @@ test("node provisions an immutable binding, executes Pi and reopens from canonic
     const delivered = events.length;
     const reported = reports.length;
     const steer = { op: "session.steer" as const, sessionId: "s", clientId: "d", content: [{ type: "text" as const, text: "again" }] };
-    // Opening needs the server's session configuration: with no connection the open fails clearly.
-    await expect(restarted.send(steer, binding)).rejects.toThrow("Session configuration unavailable: Server connection unavailable");
-    // A connection that only answers configuration: events are dropped and reports stay pending.
-    const detachOffline = restarted.attach({ ...recorder, event: () => {},
-      committed: async () => { throw new Error("offline"); }, started: async () => { throw new Error("offline"); }, settled: async () => { throw new Error("offline"); } });
+    // Opening needs no server: with no connection attached the node reopens Pi from its own storage;
+    // events are dropped and reports stay pending.
     expect(await restarted.send(steer, binding))
       .toEqual({ ok: true, value: { kind: "admitted", inputId: "d" } });
     const reopened = await restarted.open("s", binding);
@@ -194,7 +246,6 @@ test("node provisions an immutable binding, executes Pi and reopens from canonic
     const pending = db.query<{ kind: string }, []>("SELECT kind FROM session_outbox ORDER BY id").all().map(row => row.kind);
     expect(pending.indexOf("started")).toBeGreaterThan(pending.indexOf("committed"));
     expect(pending.at(-1)).toBe("settled");
-    detachOffline();
     restarted.attach(recorder);
     for (let i = 0; i < 100 && db.query("SELECT 1 FROM session_outbox").get(); i++) await Bun.sleep(5);
     expect(reports.slice(reported).map(report => report.split(":")[0])).toEqual(pending);
@@ -215,17 +266,17 @@ function childNode(db: Database, providerName: string, responses: string[]) {
     committed: async ({ startSeq }) => { received.push({ kind: "committed", startSeq }); }, fetchAttachment: async () => null, event: () => {},
     started: async ({ runId }) => { received.push({ kind: "started", runId }); },
     settled: async settled => { received.push({ kind: "settled", settled }); }, ...noTools,
-    configuration: async () => ({ model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null }),
   });
   const binding = { sourceId: 7, cwd: "/tmp/reins-node-child", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: "parent" };
   const cleanup = () => { node.stop(); unregisterPiProvider(provider.provider.id); setNodeDb(); db.close(); };
-  return { node, binding, received, provider, cleanup };
+  const provision = provisionOf("child", { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null });
+  return { node, binding, received, provider, provision, cleanup };
 }
 
 test("a child session's durable settlement carries its model and final reply after the run's commits, before the next run starts", async () => {
-  const { node, binding, received, provider, cleanup } = childNode(new Database(":memory:"), "node-child-faux", ["child answer", "second answer"]);
+  const { node, binding, received, provider, provision, cleanup } = childNode(new Database(":memory:"), "node-child-faux", ["child answer", "second answer"]);
   try {
-    await node.send({ op: "session.provision", sessionId: "child", sourceId: 7 }, binding);
+    await node.send(provision, binding);
     await node.send({ op: "session.prompt", sessionId: "child", clientId: "c", content: [{ type: "text", text: "go" }] }, binding);
     const runtime = await node.open("child", binding);
     await runtime.waitForIdle();
@@ -252,10 +303,10 @@ test("a child session's durable settlement carries its model and final reply aft
 });
 
 test("a child whose final reply cannot be read settles with replyError instead of a reply", async () => {
-  const { node, binding, received, cleanup } = childNode(new Database(":memory:"), "node-child-reply-faux", ["unread answer"]);
+  const { node, binding, received, provision, cleanup } = childNode(new Database(":memory:"), "node-child-reply-faux", ["unread answer"]);
   const errors = spyOn(console, "error").mockImplementation(() => {});
   try {
-    await node.send({ op: "session.provision", sessionId: "child", sourceId: 7 }, binding);
+    await node.send(provision, binding);
     const runtime = await node.open("child", binding);
     runtime.getMessages = async () => { throw new Error("transcript unavailable"); };
     await node.send({ op: "session.prompt", sessionId: "child", clientId: "c", content: [{ type: "text", text: "go" }] }, binding);
@@ -285,7 +336,6 @@ test("Reins tools run on the node and call the attached server for the calling s
   const node = startNode({ credentials });
   const detach = node.attach({
     committed: async () => {}, fetchAttachment: async () => null, event: () => {}, started: async () => {}, settled: async () => {},
-    configuration: async () => ({ model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null }),
     executeScript: async input => { calls.push(["execute", input]); return { ok: true, text: "1" }; },
     searchScript: async input => { calls.push(["search", input]); throw new RpcFailure(APPLICATION_ERROR, "Node session unavailable: s"); },
     createTask: async input => { calls.push(["createTask", input]); throw new RpcFailure("unavailable", "Call timed out after 60000ms; outcome unknown", "unknown"); },
@@ -295,7 +345,7 @@ test("Reins tools run on the node and call the attached server for the calling s
     .map(message => [message.toolCallId, (message.content ?? []).map(block => block.type === "text" ? block.text : "").join("")]));
   let runtime!: Awaited<ReturnType<typeof node.open>>;
   try {
-    await node.send({ op: "session.provision", sessionId: "s", sourceId: 7 }, binding);
+    await node.send(provisionOf("s", { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null }), binding);
     await node.send({ op: "session.prompt", sessionId: "s", clientId: "a", content: [{ type: "text", text: "go" }] }, binding);
     runtime = await node.open("s", binding);
     await runtime.waitForIdle();
@@ -318,7 +368,7 @@ test("Reins tools run on the node and call the attached server for the calling s
   } finally { node.stop(); unregisterPiProvider(provider.provider.id); setNodeDb(); db.close(); }
 });
 
-test("opening a task session checks out its branch on the node before building Pi; a server rejection fails the open", async () => {
+test("opening a task session checks out its provisioned branch on the node before building Pi, with no server attached", async () => {
   const db = new Database(":memory:");
   const repo = mkdtempSync(join(tmpdir(), "reins-node-checkout-"));
   const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
@@ -327,29 +377,104 @@ test("opening a task session checks out its branch on the node before building P
   git("branch", "task/feature");
   setNodeDb(db);
   const node = startNode({ credentials });
-  // An unknown model stops the open right after checkout, so no Pi provider is needed.
-  let answer: SessionConfiguration | Error = { model: { provider: "none", modelId: "missing" }, thinkingLevel: null,
-    task: { title: "Feature", description: null, branchName: "task/feature" } };
-  const requests: unknown[] = [];
-  node.attach({ ...noReports, committed: async () => {}, fetchAttachment: async () => null, event: () => {},
-    configuration: async input => { requests.push(input); if (answer instanceof Error) throw answer; return answer; } });
   const binding = { sourceId: 7, cwd: repo, createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
   const checkouts = () => git("reflog").split("\n").filter(line => line.includes("checkout:")).length;
   try {
-    await node.send({ op: "session.provision", sessionId: "s", sourceId: 7 }, binding);
-    await expect(node.open("s", binding)).rejects.toBeInstanceOf(NodeModelNotFoundError);
-    expect(requests).toEqual([{ sessionId: "s", binding }]);
+    // No model stops the open right after checkout, so no Pi provider is needed.
+    await node.send(provisionOf("s", { model: null, thinkingLevel: null,
+      task: { title: "Feature", description: null, branchName: "task/feature" } }), binding);
+    await expect(node.open("s", binding)).rejects.toThrow(NO_MODEL);
     expect(git("rev-parse", "--abbrev-ref", "HEAD")).toBe("task/feature");
     const before = checkouts();
-    await expect(node.open("s", binding)).rejects.toBeInstanceOf(NodeModelNotFoundError);
+    await expect(node.open("s", binding)).rejects.toThrow(NO_MODEL);
     expect(checkouts()).toBe(before); // Already on the branch: no checkout.
 
-    answer = { model: null, thinkingLevel: null, task: { title: "Gone", description: null, branchName: "task/missing" } };
-    await expect(node.open("s", binding)).rejects.toThrow(/git checkout failed \(exit 1\):.*task\/missing/);
+    await node.send(provisionOf("gone", { model: null, thinkingLevel: null, task: { title: "Gone", description: null, branchName: "task/missing" } }), binding);
+    await expect(node.open("gone", binding)).rejects.toThrow(/git checkout failed \(exit 1\):.*task\/missing/);
     expect(git("rev-parse", "--abbrev-ref", "HEAD")).toBe("task/feature");
-    expect(node.hasRuntime("s")).toBe(false);
-
-    answer = new RpcFailure(APPLICATION_ERROR, "Node session binding mismatch: s");
-    await expect(node.open("s", binding)).rejects.toThrow(/^Node session binding mismatch: s$/);
+    expect(node.hasRuntime("gone")).toBe(false);
   } finally { node.stop(); setNodeDb(); db.close(); rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("the provisioned model lives in Pi's lane: open needs no server, setModel persists through Pi and reopen uses Pi's stored values", async () => {
+  const db = new Database(":memory:");
+  const repo = mkdtempSync(join(tmpdir(), "reins-node-model-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+  git("init", "-q", "-b", "main");
+  git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init");
+  git("branch", "task/frozen");
+  const provider = fauxProvider({ provider: "node-model-faux", models: [{ id: "fake" }, { id: "other" }] });
+  const seen: Array<{ model: string; systemPrompt?: string }> = [];
+  const reply = (text: string): FauxResponseFactory => (context, _options, _state, model) => {
+    seen.push({ model: model.id, systemPrompt: context.systemPrompt });
+    return fauxAssistantMessage(text);
+  };
+  provider.setResponses([reply("one"), reply("two")]);
+  registerPiProvider(provider.provider);
+  setNodeDb(db);
+  const dependencies = { credentials: { ...credentials, list: async () => [{ providerId: provider.provider.id, type: "api_key" as const }] } };
+  const binding = { sourceId: 7, cwd: repo, createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
+  const task = { title: "Frozen task", description: "From the snapshot", branchName: "task/frozen" };
+  const laneConfig = (sessionId: string) => db.query<{ seq: number; value_json: string }, [string]>(
+    "SELECT seq, value_json FROM pi_values WHERE session_id = ? AND namespace = 'pi.lane.config'").get(sessionId);
+  const setModel = (modelId: string, thinkingLevel?: string) => ({ op: "session.setModel" as const, sessionId: "s", provider: provider.provider.id, modelId, ...(thinkingLevel ? { thinkingLevel } : {}) });
+  let node = startNode(dependencies);
+  try {
+    // No server connection is ever attached in this test.
+    const provision = provisionOf("s", { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: "high", task });
+    expect(await node.send(provision, binding, "provision")).toEqual({ ok: true, value: { kind: "provisioned" } });
+    expect(nodeAdmissionReceipt(db, "provision")?.payload).toBe(JSON.stringify(provision));
+    expect(JSON.parse(laneConfig("s")!.value_json)).toMatchObject({ model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: "high" });
+    // The configuration is not part of the binding.
+    expect(nodeSessionBinding(db, "s")).toEqual(binding);
+
+    expect(await node.send({ op: "session.prompt", sessionId: "s", clientId: "a", content: [{ type: "text", text: "go" }] }, binding))
+      .toMatchObject({ ok: true });
+    let runtime = await node.open("s", binding);
+    await runtime.waitForIdle();
+    expect(git("rev-parse", "--abbrev-ref", "HEAD")).toBe("task/frozen");
+    expect(runtime.getSessionMetadata()).toEqual({ model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: "high" });
+    expect(seen[0]?.model).toBe("fake");
+    expect(seen[0]?.systemPrompt).toContain("Frozen task");
+    expect(seen[0]?.systemPrompt).toContain("From the snapshot");
+
+    // Applied to the open runtime and persisted in Pi's lane; a replay by command ID applies nothing.
+    expect(await node.send(setModel("other", "low"), binding, "model-1")).toEqual({ ok: true, value: { kind: "modelSet" } });
+    expect(runtime.getSessionMetadata()).toEqual({ model: { provider: provider.provider.id, modelId: "other" }, thinkingLevel: "low" });
+    const applied = laneConfig("s");
+    expect(JSON.parse(applied!.value_json)).toMatchObject({ model: { modelId: "other" }, thinkingLevel: "low" });
+    expect(await node.send(setModel("other", "low"), binding, "model-1")).toEqual({ ok: true, value: { kind: "modelSet" } });
+    expect(laneConfig("s")).toEqual(applied);
+    await expect(node.send(setModel("fake"), binding, "model-1")).rejects.toThrow("Node admission receipt mismatch: model-1");
+
+    // An unknown model is an explicit rejection, without a receipt or a lane change.
+    expect(await node.send(setModel("missing"), binding, "model-missing")).toEqual({ ok: false, error: {
+      code: "invalid_request", message: `Model not found: ${provider.provider.id}/missing`, retryable: false } });
+    expect(nodeAdmissionReceipt(db, "model-missing")).toBeNull();
+    expect(laneConfig("s")).toEqual(applied);
+
+    // Applied while the runtime is closed: a restarted node reopens with Pi's stored selection.
+    await node.close("s");
+    expect(await node.send(setModel("fake"), binding, "model-2")).toMatchObject({ ok: true });
+    await node.close("s");
+    node.stop();
+    node = startNode(dependencies);
+    runtime = await node.open("s", binding);
+    // No thinking level in the command keeps Pi's current one.
+    expect(runtime.getSessionMetadata()).toEqual({ model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: "low" });
+    await node.send({ op: "session.prompt", sessionId: "s", clientId: "b", content: [{ type: "text", text: "again" }] }, binding);
+    await runtime.waitForIdle();
+    expect(seen.map(entry => entry.model)).toEqual(["fake", "fake"]);
+    await node.close("s");
+
+    // A lane whose stored model is gone cannot open, but setModel repairs it.
+    const removed = fauxProvider({ provider: "node-model-removed-faux", models: [{ id: "gone" }] });
+    registerPiProvider(removed.provider);
+    await node.send(provisionOf("stale", { model: { provider: removed.provider.id, modelId: "gone" }, thinkingLevel: null, task: null }), binding);
+    unregisterPiProvider(removed.provider.id);
+    await expect(node.open("stale", binding)).rejects.toBeInstanceOf(NodeModelNotFoundError);
+    expect(await node.send({ ...setModel("fake"), sessionId: "stale" }, binding)).toMatchObject({ ok: true });
+    expect((await node.open("stale", binding)).getSessionMetadata().model).toEqual({ provider: provider.provider.id, modelId: "fake" });
+    await node.close("stale");
+  } finally { node.stop(); unregisterPiProvider(provider.provider.id); setNodeDb(); db.close(); rmSync(repo, { recursive: true, force: true }); }
 });

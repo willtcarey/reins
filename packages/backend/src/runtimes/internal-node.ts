@@ -1,6 +1,6 @@
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
-import { createLoopbackPair, RpcFailure, type Provision, type SessionConfiguration, type SessionConfigurationRequest } from "@reins/node/protocol";
+import { createLoopbackPair, RpcFailure, type Provision } from "@reins/node/protocol";
 import { createServerTransport, type ServerHandlers } from "../node-transport/server-peer.js";
 import { provisionOutcome } from "../node-transport/provision.js";
 import type { NodeResult } from "@reins/node/contract";
@@ -12,11 +12,8 @@ import type { ServerState } from "../state.js";
 import { applyNodeReplica } from "../node-replica.js";
 import { createDbCredentialStore } from "./pi/credential-store.js";
 import { getSessionAttachment } from "../session-attachments-store.js";
-import { getSetting } from "../settings-store.js";
-import { parseThinkingLevel } from "../models/model-settings.js";
-import { getTask } from "../task-store.js";
 
-/** Product identity/path/config resolution stays server-side. No server DB handle reaches node code. */
+/** Product identity/path resolution stays server-side. No server DB handle reaches node code. */
 export function provisionForSession(sessionId: string): { binding: NodeSessionBinding; storageOwner: string } {
   const row = getSession(sessionId);
   if (!row) throw new Error(`Session not found: ${sessionId}`);
@@ -51,31 +48,6 @@ const owned = (sessionId: string) => {
   if (provisionForSession(sessionId).storageOwner !== "internal-node") throw new Error(`Node session unavailable: ${sessionId}`);
 };
 
-/** `session.configuration`: the node opening a runtime asks for its session's model selection and task.
- * The node's binding must match the server's current product row for an internal-node-owned session. */
-function sessionConfiguration({ sessionId, binding }: SessionConfigurationRequest): SessionConfiguration {
-  const current = provisionForSession(sessionId);
-  if (current.storageOwner !== "internal-node" || JSON.stringify(current.binding) !== JSON.stringify(binding)) {
-    throw new Error(`Node session binding mismatch: ${sessionId}`);
-  }
-  const row = getSession(sessionId)!;
-  const defaultModel = getSetting("default_model");
-  const model = row.model_provider && row.model_id
-    ? { provider: row.model_provider, modelId: row.model_id }
-    : defaultModel?.runtimeType === row.agent_runtime_type
-      ? { provider: defaultModel.provider, modelId: defaultModel.modelId }
-      : null;
-  const thinkingLevel = row.thinking_level === "off" ? null : row.thinking_level
-    ? parseThinkingLevel(row.thinking_level)
-    : defaultModel?.runtimeType === row.agent_runtime_type ? defaultModel.thinkingLevel : null;
-  const task = row.task_id ? getTask(row.task_id) : null;
-  if (row.task_id && !task) throw new Error(`Task not found: ${row.task_id}`);
-  return {
-    model, thinkingLevel: thinkingLevel ?? null,
-    task: task ? { title: task.title, description: task.description, branchName: task.branch_name } : null,
-  };
-}
-
 /** Node→server calls run only here, as protocol handlers; the storage owner check authorizes the session
  * (unknown or server-owned sessions are rejected) before any product service runs. */
 export const internalNodeServer = (state: ServerState): ServerHandlers => ({
@@ -92,7 +64,6 @@ export const internalNodeServer = (state: ServerState): ServerHandlers => ({
       sha256: row.sha256, filename: row.filename ?? undefined,
       width: row.width ?? undefined, height: row.height ?? undefined } : null;
   },
-  configuration: sessionConfiguration,
   event: input => {
     owned(input.sessionId);
     return services.get(state)?.event(input);
@@ -139,8 +110,8 @@ export function installedInternalNode(state: ServerState): Node | undefined { re
 export function internalNodeFor(state: ServerState): Node {
   let node = nodes.get(state);
   if (!node) {
-    // Session configuration crosses the link (`session.configuration`); only the credential store
-    // is still an in-process dependency, pending a credentials RPC.
+    // Session configuration travels with `session.provision`; only the credential store is still an
+    // in-process dependency, pending a credentials RPC.
     node = startNode({ credentials: createDbCredentialStore() });
     nodes.set(state, node);
   }

@@ -45,6 +45,7 @@ import { readPendingPiOperation, type PendingPiOperation } from "../runtimes/pi/
 import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../runtimes/pi/model-catalog.js";
 import { workForSession } from "./node-command-projection.js";
+import { enqueueSetModel } from "../node-command-store.js";
 import { getSource } from "../node-store.js";
 
 export interface SetSessionModelParams {
@@ -205,6 +206,9 @@ export class Sessions {
     private sessions: Map<string, ManagedSession>,
     private broadcast: Broadcast = () => {},
     private nodeRuntimeFor?: (sessionId: string) => AgentRuntime | undefined,
+    /** Wakes the node command dispatcher after a queued `session.setModel` commits (the periodic scan
+     * recovers a missing wake). */
+    private wakeNodeCommands?: () => void,
   ) {}
 
   get(sessionId: string): SessionDetailView | null {
@@ -420,9 +424,12 @@ export class Sessions {
   /**
    * Change the AI model for a session.
    *
-   * If the session is currently open in memory, the change is applied live
-   * for the next LLM turn. All session metadata changes broadcast a generic
-   * session_updated event so clients can reload the canonical session state.
+   * The model is validated against the server's catalog and stored on the row. A legacy server-owned
+   * session that is open in memory applies it live for the next LLM turn. A node-owned session queues
+   * `session.setModel` in the node command outbox behind its earlier work and returns without waiting;
+   * the node applies it to Pi's lane asynchronously and a node rejection surfaces as a command failure.
+   * All session metadata changes broadcast a generic session_updated event so clients can reload the
+   * canonical session state.
    */
   async setModel(params: SetSessionModelParams): Promise<SessionRow> {
     const sessionRow = getSession(params.sessionId);
@@ -430,8 +437,8 @@ export class Sessions {
       throw new SessionNotFoundError();
     }
 
-    const managed = this.sessions.get(params.sessionId);
-    const liveRuntime = managed?.runtime ?? this.nodeRuntimeFor?.(params.sessionId);
+    const nodeOwned = sessionRow.storage_owner === "internal-node";
+    const liveRuntime = nodeOwned ? undefined : this.sessions.get(params.sessionId)?.runtime;
     const nextRuntimeType = params.runtimeType ?? sessionRow.agent_runtime_type;
     if (nextRuntimeType !== "pi") {
       throw new Error("Canonical sessions use the pi runtime");
@@ -440,6 +447,7 @@ export class Sessions {
     const messageCount = countMessages(params.sessionId);
 
     if (isRuntimeSwitch) {
+      if (nodeOwned) throw new Error("Node-owned session runtime cannot be switched");
       if (messageCount > 0) {
         throw new Error("Session runtime can only be changed before any messages are sent");
       }
@@ -469,7 +477,6 @@ export class Sessions {
     const thinkingLevel = liveThinkingLevel ?? sessionRow.thinking_level;
 
     if (liveRuntime && isRuntimeSwitch) {
-      if (sessionRow.storage_owner === "internal-node") throw new Error("Node-owned session runtime cannot be switched");
       await liveRuntime.close();
       this.sessions.delete(params.sessionId);
     } else if (liveRuntime) {
@@ -480,12 +487,26 @@ export class Sessions {
       });
     }
 
-    updateSessionMeta(params.sessionId, {
+    const meta = {
       modelProvider: params.provider,
       modelId: params.modelId,
       thinkingLevel,
       agentRuntimeType: nextRuntimeType,
-    });
+    };
+    if (nodeOwned) {
+      // The row and the queued command commit together; the node applies it in outbox order.
+      getDb().transaction(() => {
+        updateSessionMeta(params.sessionId, meta);
+        enqueueSetModel(params.sessionId, {
+          provider: params.provider,
+          modelId: params.modelId,
+          ...(liveThinkingLevel ? { thinkingLevel: liveThinkingLevel } : {}),
+        });
+      })();
+      this.wakeNodeCommands?.();
+    } else {
+      updateSessionMeta(params.sessionId, meta);
+    }
 
     this.broadcast({
       type: "session_updated",

@@ -8,9 +8,16 @@ test("version ranges and capabilities are validated at the wire boundary", () =>
   expect(readyResult.safeParse({ version: 1, capabilities: ["arbitrary.command"], epoch: crypto.randomUUID() }).success).toBe(false);
 });
 
-test("provision only accepts a scoped binding and stable command ID", () => {
-  expect(provisionParams.safeParse({ epoch: crypto.randomUUID(), sessionId: "s", commandId: "c", binding: { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null }, shell: "rm -rf /" }).success).toBe(false);
-  expect(provisionParams.safeParse({ epoch: crypto.randomUUID(), sessionId: "s", commandId: "c", binding: { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null } }).success).toBe(true);
+test("provision only accepts a scoped binding, stable command ID and the session's frozen configuration", () => {
+  const binding = { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null };
+  const configuration = { model: { provider: "p", modelId: "m" }, thinkingLevel: "high", task: { title: "T", description: null, branchName: "task/t" } };
+  const provision = { epoch: crypto.randomUUID(), sessionId: "s", commandId: "c", binding, configuration };
+  expect(provisionParams.safeParse({ ...provision, shell: "rm -rf /" }).success).toBe(false);
+  expect(provisionParams.safeParse(provision).success).toBe(true);
+  expect(provisionParams.safeParse({ ...provision, configuration: { model: null, thinkingLevel: null, task: null } }).success).toBe(true);
+  expect(provisionParams.safeParse({ epoch: provision.epoch, sessionId: "s", commandId: "c", binding }).success).toBe(false);
+  expect(provisionParams.safeParse({ ...provision, configuration: { ...configuration, task: { ...configuration.task, projectId: 2 } } }).success).toBe(false);
+  expect(Object.values(methods)).not.toContain("session.configuration");
 });
 
 test("run lifecycle is a durable report, not a session event", () => {

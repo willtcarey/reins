@@ -126,11 +126,15 @@ describe("canonical session model selection", () => {
   test("reports an invalid configured model without fallback", async () => {
     setSetting("default_model", { provider: "anthropic", modelId: "does-not-exist", runtimeType: "pi", thinkingLevel: "high" });
     const state = createServerState();
+    const sent: Array<{ type: string; sessionId?: string; error?: string }> = [];
+    state.clients.add({ ws: { send: (data: string) => { sent.push(JSON.parse(data)); return 0; } } });
     const project = createProject("Test Project", repo.dir, "main");
     const created = createNewSession(state, project.id, repo.dir);
     await new NodeCommandDispatcher(state).drain();
-    expect(getWork(created.scheduling.id)?.state).toBe("admitted");
-    await expect(ensureSessionOpen(state, created.id)).rejects.toThrow("Configured default_model is invalid");
+    // The node rejects the provision: Pi cannot create the session's lane with a model it does not know.
+    expect(sent).toContainEqual({ type: "error", sessionId: created.id, error: "Session open failed: Model not found: anthropic/does-not-exist" });
+    expect(getWork(created.scheduling.id)).toBeNull();
+    await expect(ensureSessionOpen(state, created.id)).rejects.toThrow("This session's node data is missing");
   });
 
   test("resumes with persisted model identity and rejects unavailable identities", async () => {

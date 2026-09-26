@@ -44,6 +44,10 @@ const migrations = [
     INSERT INTO session_outbox(session_id, kind, start_seq, payload)
       SELECT session_id, 'committed', start_seq, writes_json FROM pending_commits ORDER BY session_id, start_seq;
     DROP TABLE pending_commits`],
+  // `task_json`: the task snapshot (title, description, branch) from the session's provision, used for
+  // the system prompt and branch checkout at every open; NULL is a scratch session.
+  ["004_session_task", `ALTER TABLE sessions ADD COLUMN task_json TEXT
+      CHECK(task_json IS NULL OR json_valid(task_json))`],
 ] as const;
 
 /** Runs before binding or opening a runtime. SQL and its ledger record commit together. */

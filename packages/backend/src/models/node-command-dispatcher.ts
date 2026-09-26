@@ -70,7 +70,11 @@ export class NodeCommandDispatcher {
           const session = getSession(row.session_id);
           const source = session && getSource(session.source_id);
           if (!session || !source || source.project_id !== session.project_id || source.node_id !== "internal") continue;
-          await deliverCommand(row.id, () => executionTargetFor(this.state, session).send(getWork(row.id)!.command, row.id));
+          await deliverCommand(row.id, async () => {
+            const command = getWork(row.id)?.command;
+            if (!command) throw new Error("Stored node command is invalid");
+            return executionTargetFor(this.state, session).send(command, row.id);
+          });
           onCommandDelivered(this.state, row);
           const outcome = getCommand(row.id)?.state;
           if (outcome === "queued" || outcome === "dispatching") continue;

@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import type { CommittedWrite } from "@earendil-works/pi-agent-core";
 import { PiStorageAdapter } from "./pi-storage.js";
 import { runNodeMigrations } from "./migrations.js";
+import type { SessionConfiguration } from "./contract.js";
 
 export interface NodeSessionBinding {
   sourceId: number;
@@ -51,6 +52,27 @@ export function bindNodeSession(db: Database, sessionId: string, binding: NodeSe
   }
   db.query("INSERT INTO sessions(id,source_id,cwd,created_at,parent_session_id) VALUES(?,?,?,?,?)")
     .run(sessionId, binding.sourceId, binding.cwd, binding.createdAt, binding.parentSessionId);
+}
+
+/** The task snapshot a session was provisioned with; null for a scratch session. */
+export type NodeSessionTask = NonNullable<SessionConfiguration["task"]>;
+
+/** Step 1 of provision: stores the session's immutable binding and, on first bind, its task snapshot.
+ * A repeat with an equal binding changes nothing (the first provision's task stands); a different
+ * binding rejects. */
+export function provisionNodeSession(db: Database, sessionId: string, binding: NodeSessionBinding, task: NodeSessionTask | null): void {
+  db.transaction(() => {
+    const existing = nodeSessionBinding(db, sessionId);
+    bindNodeSession(db, sessionId, binding);
+    if (existing || !task) return;
+    db.query("UPDATE sessions SET task_json = ? WHERE id = ?").run(JSON.stringify(task), sessionId);
+  })();
+}
+
+export function nodeSessionTask(db: Database, sessionId: string): NodeSessionTask | null {
+  const row = db.query<{ task_json: string | null }, [string]>("SELECT task_json FROM sessions WHERE id = ?").get(sessionId);
+  if (!row) throw new Error(`Node session not provisioned: ${sessionId}`);
+  return row.task_json ? JSON.parse(row.task_json) : null;
 }
 
 export function nodeSessionBinding(db: Database, sessionId: string): NodeSessionBinding | null {

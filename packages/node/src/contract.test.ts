@@ -2,15 +2,22 @@ import { test, expect } from "bun:test";
 import { contractVersion, nodeCommand, nodeResult, nodeEvent, deliveryPolicy } from "./contract.js";
 
 test("delivery policy belongs to the operation, not to arbitrary caller requests", () => {
-  expect(deliveryPolicy({ op: "session.provision", sessionId: "s", sourceId: 1 })).toBe("submit-work");
+  const configuration = { model: { provider: "p", modelId: "m" }, thinkingLevel: null, task: null };
+  expect(deliveryPolicy({ op: "session.provision", sessionId: "s", sourceId: 1, configuration })).toBe("submit-work");
+  expect(nodeCommand.safeParse({ op: "session.provision", sessionId: "s", sourceId: 1 }).success).toBe(false);
   expect(nodeCommand.safeParse({ op: "session.provision", sessionId: "s", sourceId: 1, mode: "reopen" }).success).toBe(false);
   expect(nodeCommand.safeParse({ op: "session.open", sessionId: "s", sourceId: 1, mode: "create" }).success).toBe(false);
   expect(deliveryPolicy({ op: "session.prompt", sessionId: "s", clientId: "c", content: [] })).toBe("submit-work");
+  // A model change is ordered with the session's queued work, not applied immediately.
+  expect(deliveryPolicy({ op: "session.setModel", sessionId: "s", provider: "p", modelId: "m" })).toBe("submit-work");
   expect(deliveryPolicy({ op: "session.abort", sessionId: "s" })).toBe("request-now");
 });
 
 test("semantic contract validates commands, results and observations without transport framing", () => {
-  expect(contractVersion).toBe(3);
+  expect(contractVersion).toBe(4);
+  expect(nodeCommand.parse({ op: "session.setModel", sessionId: "s", provider: "p", modelId: "m", thinkingLevel: "high" })).toMatchObject({ thinkingLevel: "high" });
+  expect(nodeCommand.safeParse({ op: "session.setModel", sessionId: "s", provider: "", modelId: "m" }).success).toBe(false);
+  expect(nodeResult.safeParse({ ok: true, value: { kind: "modelSet" } }).success).toBe(true);
   expect(nodeCommand.parse({ op: "session.steer", sessionId: "s", clientId: "c", content: [{ type: "text", text: "hi" }] }).op).toBe("session.steer");
   expect(nodeCommand.parse({ op: "session.prompt", sessionId: "s", clientId: "c", sourceSessionId: "child", content: [{ type: "image", attachmentId: "a", mimeType: "image/png", byteSize: 4 }] })).toMatchObject({ sourceSessionId: "child", content: [{ attachmentId: "a" }] });
   expect(nodeCommand.safeParse({ op: "session.shell", sessionId: "s" }).success).toBe(false);

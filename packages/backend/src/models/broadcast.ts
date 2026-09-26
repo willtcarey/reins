@@ -23,7 +23,9 @@ export type ServerMessage =
   | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number }
   | { type: "code_review_updated"; projectId: number; taskId: number | null; reviewId: string; revision: number }
-  | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number };
+  | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
+  /** A session command failed with no single submitting client to notify (e.g. a node model change). */
+  | { type: "error"; sessionId: string; error: string };
 
 // ---------------------------------------------------------------------------
 // Broadcast function

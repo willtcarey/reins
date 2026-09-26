@@ -1,4 +1,4 @@
-import { createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, provisionResult, statusResult, protocolVersion, nodeError, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, sessionConfigurationParams, sessionConfigurationResult, type SessionConfiguration, type SessionConfigurationRequest, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type PeerOptions, type Provision, type SessionCommitted, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket } from "@reins/node/protocol";
+import { createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, provisionResult, statusResult, protocolVersion, nodeError, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type PeerOptions, type Provision, type SessionCommitted, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket } from "@reins/node/protocol";
 
 /** `missed` counts seqs skipped since this connection's previous event for the session (0 for its first). */
 export type NodeSessionEvent = SessionEventReport & { missed: number };
@@ -11,8 +11,6 @@ export interface ServerHandlers {
   settled(input: SessionSettled): void | Promise<void>;
   attachment(sessionId: string, attachmentId: string): ServerAttachment | null | Promise<ServerAttachment | null>;
   event(input: NodeSessionEvent): void | Promise<void>;
-  /** Read-only: verifies the node's binding and returns the session's resolved runtime configuration. */
-  configuration(input: SessionConfigurationRequest): SessionConfiguration | Promise<SessionConfiguration>;
   /** Agent tool calls, scoped by the handler from the server's own row for `sessionId`. `signal`
    * aborts on `script.cancel` for this call or when the connection closes. */
   scriptExecute(input: ScriptExecute, signal: AbortSignal): Promise<ScriptExecuteResult>;
@@ -78,14 +76,6 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
         if (data.byteLength > MAX_ATTACHMENT_BYTES) throw new RpcFailure(APPLICATION_ERROR, `Attachment exceeds ${MAX_ATTACHMENT_BYTES} byte transfer limit: ${attachmentId}`);
         if (offset > data.byteLength) throw new RpcFailure(APPLICATION_ERROR, `Attachment offset out of range: ${attachmentId}`);
         return { attachment: { ...metadata, data: Buffer.from(data.subarray(offset, offset + ATTACHMENT_CHUNK_BYTES)).toString("base64") } };
-      },
-    },
-    [methods.sessionConfiguration]: {
-      params: sessionConfigurationParams, result: sessionConfigurationResult,
-      async handle(value) {
-        const { epoch, ...input } = sessionConfigurationParams.parse(value);
-        issued(epoch);
-        try { return await handlers.configuration(input); } catch (error) { throw rejection(error); }
       },
     },
     [methods.scriptExecute]: {

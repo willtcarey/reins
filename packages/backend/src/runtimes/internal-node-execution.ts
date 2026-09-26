@@ -10,7 +10,7 @@ export function internalNodeExecutionTarget(state: ServerState): SessionExecutio
       const { binding } = provisionForSession(command.sessionId);
       if (command.op !== "session.provision") return internalNodeFor(state).send(command, binding, commandId);
       if (!commandId) throw new Error("Provision requires an outbox command ID");
-      return provisionInternal(state, { sessionId: command.sessionId, commandId, binding });
+      return provisionInternal(state, { sessionId: command.sessionId, commandId, binding, configuration: command.configuration });
     },
   };
 }

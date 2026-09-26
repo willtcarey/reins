@@ -14,7 +14,7 @@ import { SessionNotFoundError, Sessions } from "../models/sessions.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { parseDisplayCursor } from "../messages-store.js";
 import { parseBody } from "./validate.js";
-import { executeSessionCommand } from "../runtimes/node-execution.js";
+import { executeSessionCommand, wakeSessionInput } from "../runtimes/node-execution.js";
 import { withSessionNotFound } from "./session-errors.js";
 import { installedInternalNode } from "../runtimes/internal-node.js";
 
@@ -62,7 +62,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     const body = await parseBody(SessionModelBody, ctx.req);
 
     try {
-      const sessions = new Sessions(ctx.state.sessions, undefined, id => installedInternalNode(ctx.state)?.runtime(id));
+      const sessions = new Sessions(ctx.state.sessions, undefined, id => installedInternalNode(ctx.state)?.runtime(id), () => wakeSessionInput(ctx.state));
       const updated = await sessions.setModel({ sessionId, ...body });
       return Response.json(updated);
     } catch (err: unknown) {

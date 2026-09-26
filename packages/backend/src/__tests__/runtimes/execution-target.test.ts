@@ -4,7 +4,9 @@ import type { NodeCommand, NodeResult } from "@reins/node/contract";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../../project-store.js";
-import { createSession } from "../../session-store.js";
+import { createSession, getSession } from "../../session-store.js";
+import { getDb } from "../../db.js";
+import { Sessions } from "../../models/sessions.js";
 import { internalSource } from "../../node-store.js";
 import { enqueueInput } from "../../node-command-store.js";
 import { scheduleWork, getWork } from "../../models/node-command-projection.js";
@@ -24,6 +26,7 @@ function recordingTarget() {
         case "session.prompt": case "session.steer": return { ok: true, value: { kind: "admitted", inputId: command.clientId } };
         case "session.abort": return { ok: true, value: { kind: "aborted", aborted: true } };
         case "session.resumePending": return { ok: true, value: { kind: "resumed", started: true } };
+        case "session.setModel": return { ok: true, value: { kind: "modelSet" } };
       }
     },
   };
@@ -62,7 +65,7 @@ test("installed legacy target admits provision without opening a runtime", withD
   createSession("legacy", projectId, { agentRuntimeType: "pi", sourceId, storageOwner: "server" });
   const state = createServerState();
   return executionTargetFor(state, { id: "legacy", storage_owner: "server" })
-    .send({ op: "session.provision", sessionId: "legacy", sourceId }, "p")
+    .send({ op: "session.provision", sessionId: "legacy", sourceId, configuration: { model: null, thinkingLevel: null, task: null } }, "p")
     .then(result => {
       expect(result).toEqual({ ok: true, value: { kind: "provisioned" } });
       expect(state.sessions.has("legacy")).toBe(false);
@@ -71,7 +74,7 @@ test("installed legacy target admits provision without opening a runtime", withD
 
 test("dispatcher delivers provision, prompt and steer for both owners through their targets with outbox receipts", withDb(async (projectId, sourceId) => {
   for (const [id, storageOwner] of [["node", "internal-node"], ["legacy", "server"]] as const) {
-    scheduleWork(`${id}-provision`, { op: "session.provision", sessionId: id, sourceId }, () =>
+    scheduleWork(`${id}-provision`, { op: "session.provision", sessionId: id, sourceId, configuration: { model: null, thinkingLevel: null, task: null } }, () =>
       createSession(id, projectId, { agentRuntimeType: "pi", sourceId, storageOwner }));
   }
   const state = createServerState();
@@ -93,4 +96,61 @@ test("dispatcher delivers provision, prompt and steer for both owners through th
   await executeSessionCommand(state, "legacy", "resumePending");
   expect(node.sent.at(-1)).toEqual([{ op: "session.abort", sessionId: "node" }, undefined]);
   expect(server.sent.at(-1)).toEqual([{ op: "session.resumePending", sessionId: "legacy" }, undefined]);
+}));
+
+test("a node-owned model change is queued in outbox order: after earlier input, before later input; legacy sessions change the row directly", withDb(async (projectId, sourceId) => {
+  for (const [id, storageOwner] of [["node", "internal-node"], ["legacy", "server"]] as const) {
+    scheduleWork(`${id}-provision`, { op: "session.provision", sessionId: id, sourceId, configuration: { model: null, thinkingLevel: null, task: null } }, () =>
+      createSession(id, projectId, { agentRuntimeType: "pi", sourceId, storageOwner, modelProvider: "anthropic", modelId: "claude-sonnet-4-5" }));
+  }
+  const state = createServerState();
+  const node = recordingTarget();
+  registerExecutionTargets(state, { "internal-node": node.target, server: recordingTarget().target });
+  const content = [{ type: "text" as const, text: "hi" }];
+  const before = enqueueInput("node", "prompt", content, "before");
+  let wakes = 0;
+  const sessions = new Sessions(state.sessions, undefined, undefined, () => { wakes++; });
+  // Returns the updated row at once; the node applies the change when the command is delivered.
+  const row = await sessions.setModel({ sessionId: "node", provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "high" });
+  expect(row).toMatchObject({ model_provider: "anthropic", model_id: "claude-haiku-4-5", thinking_level: "high" });
+  expect(wakes).toBe(1);
+  const after = enqueueInput("node", "steer", content, "after");
+  await new NodeCommandDispatcher(state).drain();
+  expect(node.sent.map(([command]) => command)).toEqual([
+    { op: "session.provision", sessionId: "node", sourceId, configuration: { model: null, thinkingLevel: null, task: null } },
+    expect.objectContaining({ op: "session.prompt", clientId: "before" }),
+    { op: "session.setModel", sessionId: "node", provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "high" },
+    expect.objectContaining({ op: "session.steer", clientId: "after" }),
+  ]);
+  expect([getWork(before)?.state, getWork(after)?.state]).toEqual(["admitted", "admitted"]);
+
+  // Without a thinking level the command leaves Pi's level alone.
+  await sessions.setModel({ sessionId: "node", provider: "anthropic", modelId: "claude-sonnet-4-5" });
+  await new NodeCommandDispatcher(state).drain();
+  expect(node.sent.at(-1)?.[0]).toEqual({ op: "session.setModel", sessionId: "node", provider: "anthropic", modelId: "claude-sonnet-4-5" });
+
+  await sessions.setModel({ sessionId: "legacy", provider: "anthropic", modelId: "claude-haiku-4-5" });
+  expect(wakes).toBe(2);
+  expect(getSession("legacy")?.model_id).toBe("claude-haiku-4-5");
+  expect(getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = 'legacy' AND json_extract(command_json, '$.op') = 'session.setModel'").get()).toBeNull();
+}));
+
+test("a node's model change rejection is a failed command, reported to every client viewing the session", withDb(async (projectId, sourceId) => {
+  scheduleWork("provision", { op: "session.provision", sessionId: "node", sourceId, configuration: { model: null, thinkingLevel: null, task: null } }, () =>
+    createSession("node", projectId, { agentRuntimeType: "pi", sourceId, storageOwner: "internal-node" }));
+  const state = createServerState();
+  const sent: Array<{ type: string; sessionId?: string; error?: string }> = [];
+  state.clients.add({ ws: { send: data => { sent.push(JSON.parse(data)); return 0; } } });
+  const rejecting: SessionExecutionTarget = {
+    async send(command) {
+      if (command.op === "session.setModel") return { ok: false, error: { code: "invalid_request", message: `Model not found: ${command.provider}/${command.modelId}`, retryable: false } };
+      return { ok: true, value: { kind: "provisioned" } };
+    },
+  };
+  registerExecutionTargets(state, { "internal-node": rejecting, server: recordingTarget().target });
+  await new Sessions(state.sessions).setModel({ sessionId: "node", provider: "anthropic", modelId: "claude-haiku-4-5" });
+  await new NodeCommandDispatcher(state).drain();
+  expect(sent).toContainEqual({ type: "error", sessionId: "node", error: "Model change failed: Model not found: anthropic/claude-haiku-4-5" });
+  // Like other failed commands, it is removed after notification so later work can proceed.
+  expect(getDb().query("SELECT 1 FROM node_command_outbox WHERE json_extract(command_json, '$.op') = 'session.setModel'").get()).toBeNull();
 }));

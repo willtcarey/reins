@@ -1,18 +1,22 @@
 import type { Database } from "bun:sqlite";
-import type { NodeCommand, NodeResult } from "./contract.js";
-import { bindNodeSession, completeNodeReport, deliverNodeOutbox, getNodeDb, initializeNodeStorage, nodeAdmissionReceipt, nodeSessionBinding, openNodeStorage, pendingOutboxSessions, recordNodeAdmission, recordNodeReport, releaseUnreadReports, type NodeOutboxDelivery, type NodeSessionBinding } from "./storage.js";
-import { buildNodeRuntime, type EmitSessionEvent, type NodeRuntimePolicy, type ReportLifecycle } from "./runtime/build.js";
+import type { NodeCommand, NodeResult, SessionConfiguration } from "./contract.js";
+import { completeNodeReport, deliverNodeOutbox, getNodeDb, initializeNodeStorage, nodeAdmissionReceipt, nodeSessionBinding, nodeSessionTask, openNodeStorage, pendingOutboxSessions, provisionNodeSession, recordNodeAdmission, recordNodeReport, releaseUnreadReports, type NodeOutboxDelivery, type NodeSessionBinding } from "./storage.js";
+import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type ReportLifecycle } from "./runtime/build.js";
 import type { CredentialStore } from "@earendil-works/pi-ai";
-import type { ProjectCreateTask, ProjectCreateTaskResult, ScriptExecute, ScriptExecuteResult, ScriptSearch, ScriptSearchResult, SessionConfiguration, SessionConfigurationRequest, SessionEvent, SessionEventReport, SessionSettled, SessionStarted } from "./protocol/schema.js";
+import type { ProjectCreateTask, ProjectCreateTaskResult, ScriptExecute, ScriptExecuteResult, ScriptSearch, ScriptSearchResult, SessionEvent, SessionEventReport, SessionSettled, SessionStarted } from "./protocol/schema.js";
 import { ToolCallNotRun, ToolCallOutcomeUnknown, type ReinsToolCalls } from "./runtime/reins-tools.js";
 import type { AgentHarnessPiRuntime } from "./runtime/pi-runtime.js";
 import { APPLICATION_ERROR } from "./protocol/errors.js";
 import { RpcFailure } from "./protocol/peer.js";
 import { ensureBranchCheckedOut } from "./runtime/git.js";
+import { createMainLane, storedLaneModel } from "./runtime/lane.js";
+import { createPiModelRuntime } from "./runtime/context.js";
+import { PiStorageAdapter } from "./pi-storage.js";
+import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { AttachmentMaterializationError, materializePromptAttachments, type FetchAttachment } from "./runtime/attachments.js";
 
-/** In-process host dependencies. Session configuration arrives over the connection
- * (`session.configuration`); credentials are the last in-process seam, pending a credentials RPC. */
+/** In-process host dependencies. Session configuration arrives with `session.provision` and opening
+ * a runtime needs no server; credentials are the last in-process seam, pending a credentials RPC. */
 export interface NodeDependencies {
   credentials: CredentialStore;
 }
@@ -23,8 +27,6 @@ export interface NodeServer {
   started(input: SessionStarted): Promise<void>;
   settled(input: SessionSettled): Promise<void>;
   fetchAttachment: FetchAttachment;
-  /** Read-only; the server verifies the binding and resolves model, thinking level and task. */
-  configuration(input: SessionConfigurationRequest): Promise<SessionConfiguration>;
   event(input: SessionEventReport): void;
   /** Agent tool calls for one session; never retried automatically (execute and createTask have side effects). */
   executeScript(input: ScriptExecute, signal?: AbortSignal): Promise<ScriptExecuteResult>;
@@ -50,6 +52,7 @@ const instances = new WeakMap<Database, { node: Node; update: (dependencies: Nod
 const MISSING_SESSION_MESSAGE = "This session's node data is missing. Start a new session.";
 
 class ServerCallFailed extends Error {}
+type NodeRejection = Extract<NodeResult, { ok: false }>["error"];
 
 export function startNode(dependencies: NodeDependencies): Node {
   const db = getNodeDb();
@@ -94,15 +97,6 @@ export function startNode(dependencies: NodeDependencies): Node {
       throw error instanceof RpcFailure && error.code === APPLICATION_ERROR ? new AttachmentMaterializationError(message) : new ServerCallFailed(message);
     }
   };
-  // A server rejection is definitive; other failures say whether the server may have run the call.
-  // Opening a runtime needs the server's answer: without it the open fails (nothing is cached).
-  const configuration = async (sessionId: string, binding: NodeSessionBinding): Promise<SessionConfiguration> => {
-    try { return await server().configuration({ sessionId, binding }); }
-    catch (error) {
-      if (error instanceof RpcFailure && error.code === APPLICATION_ERROR) throw new Error(error.message, { cause: error });
-      throw new Error(`Session configuration unavailable: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    }
-  };
   const toolCall = async <T>(call: (connection: NodeServer) => Promise<T>): Promise<T> => {
     const connection = servers.at(-1);
     if (!connection) throw new ToolCallNotRun("Reins server connection unavailable");
@@ -127,6 +121,15 @@ export function startNode(dependencies: NodeDependencies): Node {
     eventSeqs.set(sessionId, seq);
     servers.at(-1)?.event({ sessionId, seq, event });
   };
+  // Pi's storage has no cross-harness conflict detection: provision's lane creation and runtime opening
+  // for one session never overlap.
+  const tails = new Map<string, Promise<unknown>>();
+  const serialized = <T>(sessionId: string, work: () => Promise<T>): Promise<T> => {
+    const run = (tails.get(sessionId) ?? Promise.resolve()).catch(() => undefined).then(work);
+    tails.set(sessionId, run);
+    void run.finally(() => { if (tails.get(sessionId) === run) tails.delete(sessionId); }).catch(() => undefined);
+    return run;
+  };
   const runtimes = new Map<string, AgentHarnessPiRuntime>();
   const openings = new Map<string, Promise<AgentHarnessPiRuntime>>();
   const verify = (id: string, binding: NodeSessionBinding) => {
@@ -135,6 +138,55 @@ export function startNode(dependencies: NodeDependencies): Node {
     if (JSON.stringify(stored) !== JSON.stringify(binding)) throw new Error(`Node session binding mismatch: ${id}`);
     return stored;
   };
+  /** Opens from node storage alone: the provisioned task snapshot and Pi's lane (model selection);
+   * no server call. `model` validates and seeds a model the caller is about to set (`session.setModel`). */
+  const openRuntime = async (sessionId: string, binding: NodeSessionBinding, model?: NodeRuntimePolicy["model"]): Promise<AgentHarnessPiRuntime> => {
+    if (!running) throw new Error("Node stopped");
+    const stored = verify(sessionId, binding);
+    const cached = runtimes.get(sessionId);
+    if (cached) return cached;
+    const pending = openings.get(sessionId);
+    if (pending) return pending;
+    const opening = serialized(sessionId, async () => {
+      const task = nodeSessionTask(db, sessionId);
+      // The session's task branch is checked out in the bound workspace before Pi is built.
+      if (task) await ensureBranchCheckedOut(stored.cwd, task.branchName);
+      const policy: NodeRuntimePolicy = { task, credentials: installed.credentials, ...(model ? { model } : {}) };
+      const runtime = await buildNodeRuntime(sessionId, stored,
+        await openNodeStorage(db, sessionId, deliver), policy, db, emitter(sessionId), reporter(sessionId), toolCalls(sessionId));
+      runtimes.set(sessionId, runtime);
+      return runtime;
+    });
+    openings.set(sessionId, opening);
+    try { return await opening; }
+    finally { openings.delete(sessionId); }
+  };
+  /**
+   * Provision invariant: idempotency comes from ordering, not one transaction. (1) The binding and
+   * task snapshot are stored (an equal binding is a no-op, a different one rejects); (2) unless the
+   * main lane already exists, Pi creates it with the provisioned model through its storage adapter;
+   * (3) the caller records the admission receipt last. A crash before the receipt leaves no receipt,
+   * so the server replays the same command, and each step converges: the binding matches, the lane
+   * exists (no second write). A model the node's registry does not know is rejected before step 1,
+   * so a rejection leaves nothing behind. Returns a rejection, or null once the session is provisioned.
+   */
+  const provision = (sessionId: string, binding: NodeSessionBinding, configuration: SessionConfiguration) => serialized(sessionId, async (): Promise<NodeRejection | null> => {
+    const selected = configuration.model;
+    const models = selected ? await createPiModelRuntime({ credentials: installed.credentials }) : undefined;
+    const model = selected && models?.getModel(selected.provider, selected.modelId);
+    // A replay whose lane already exists has converged even if the model has since become unknown.
+    if (selected && !model && !(nodeSessionBinding(db, sessionId) && await storedLaneModel(new PiStorageAdapter(db, sessionId)))) {
+      return { code: "invalid_request", message: new NodeModelNotFoundError(selected.provider, selected.modelId).message, retryable: false };
+    }
+    provisionNodeSession(db, sessionId, binding, configuration.task);
+    // No resolved model: no lane; opening fails "requires an explicit model" until session.setModel.
+    if (!models || !model) return null;
+    const storage = await openNodeStorage(db, sessionId, deliver);
+    try {
+      if (!await storedLaneModel(storage)) await createMainLane(storage, sessionId, binding, models, model, configuration.thinkingLevel);
+      return null;
+    } finally { await storage.close(BACKGROUND_CONTEXT); }
+  });
   const node: Node = {
     stop(): void {
       if (--leases > 0) return;
@@ -158,26 +210,8 @@ export function startNode(dependencies: NodeDependencies): Node {
       try { await runtime.close(); }
       finally { runtimes.delete(sessionId); }
     },
-    async open(sessionId: string, binding: NodeSessionBinding): Promise<AgentHarnessPiRuntime> {
-      if (!running) throw new Error("Node stopped");
-      const stored = verify(sessionId, binding);
-      const cached = runtimes.get(sessionId);
-      if (cached) return cached;
-      const pending = openings.get(sessionId);
-      if (pending) return pending;
-      const opening = (async () => {
-        const config = await configuration(sessionId, stored);
-        // The session's task branch is checked out in the bound workspace before Pi is built.
-        if (config.task) await ensureBranchCheckedOut(stored.cwd, config.task.branchName);
-        const policy: NodeRuntimePolicy = { ...config, credentials: installed.credentials };
-        const runtime = await buildNodeRuntime(sessionId, stored,
-          await openNodeStorage(db, sessionId, deliver), policy, db, emitter(sessionId), reporter(sessionId), toolCalls(sessionId));
-        runtimes.set(sessionId, runtime);
-        return runtime;
-      })();
-      openings.set(sessionId, opening);
-      try { return await opening; }
-      finally { openings.delete(sessionId); }
+    open(sessionId: string, binding: NodeSessionBinding): Promise<AgentHarnessPiRuntime> {
+      return openRuntime(sessionId, binding);
     },
     async send(input: NodeCommand, binding: NodeSessionBinding, commandId?: string): Promise<NodeResult> {
       if (!running) throw new Error("Node stopped");
@@ -188,8 +222,11 @@ export function startNode(dependencies: NodeDependencies): Node {
       }
       if (input.op === "session.provision") {
         if (input.sourceId !== binding.sourceId) throw new Error(`Node source mismatch: ${input.sessionId}`);
-        if (commandId) recordNodeAdmission(db, commandId, input.sessionId, input.op, payload, () => bindNodeSession(db, input.sessionId, binding));
-        else bindNodeSession(db, input.sessionId, binding);
+        if (!receipt) {
+          const rejected = await provision(input.sessionId, binding, input.configuration);
+          if (rejected) return { ok: false, error: rejected };
+          if (commandId) recordNodeAdmission(db, commandId, input.sessionId, input.op, payload, () => {});
+        }
         verify(input.sessionId, binding);
         // Replication unavailability does not invalidate the durable local admission.
         await deliverNodeOutbox(db, input.sessionId, deliver).catch(() => undefined);
@@ -202,7 +239,23 @@ export function startNode(dependencies: NodeDependencies): Node {
       if (receipt) {
         // A positive receipt is safe to query; an absent receipt is NOT proof that Pi did not admit.
         if (input.op === "session.prompt" || input.op === "session.steer") return { ok: true, value: { kind: "admitted", inputId: input.clientId } };
+        if (input.op === "session.setModel") return { ok: true, value: { kind: "modelSet" } };
         throw new Error(`Unsupported node admission receipt: ${input.op}`);
+      }
+      if (input.op === "session.setModel") {
+        const model = { provider: input.provider, modelId: input.modelId, thinkingLevel: input.thinkingLevel ?? null };
+        try {
+          // Opening validates the new model and seeds a lane Pi has not created yet, so a lane whose
+          // stored model is no longer available can still be repaired.
+          const runtime = runtimes.get(input.sessionId) ?? await openRuntime(input.sessionId, binding, model);
+          await runtime.setModel(model);
+        } catch (error) {
+          if (error instanceof NodeModelNotFoundError) return { ok: false, error: { code: "invalid_request", message: error.message, retryable: false } };
+          throw error;
+        }
+        // Like prompt/steer, the receipt follows Pi's lane write non-atomically.
+        if (commandId) recordNodeAdmission(db, commandId, input.sessionId, input.op, payload, () => {});
+        return { ok: true, value: { kind: "modelSet" } };
       }
       if (input.op === "session.prompt" || input.op === "session.steer") {
         try { await materializePromptAttachments(db, input.sessionId, input.content, fetchAttachment); }
@@ -214,7 +267,7 @@ export function startNode(dependencies: NodeDependencies): Node {
           throw error;
         }
       }
-      const ready = await this.open(input.sessionId, binding);
+      const ready = await openRuntime(input.sessionId, binding);
       switch (input.op) {
         case "session.prompt":
         case "session.steer": {

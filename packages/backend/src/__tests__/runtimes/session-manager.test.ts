@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Database } from "bun:sqlite";
-import { executeSessionCommand } from "../../runtimes/node-execution.js";
+import { executeSessionCommand, wakeSessionInput } from "../../runtimes/node-execution.js";
 import { closeNodeDb, setNodeDb, initializeNodeStorage } from "@reins/node/storage";
 import { join } from "node:path";
 import { describe, test, expect, mock } from "bun:test";
@@ -219,10 +219,13 @@ describe("runtime sessions manager", () => {
       expect(loadMessages(created.id).some(m => JSON.stringify(m).includes("Node reply"))).toBe(true);
       expect(client.sent.some(message => message.type === "event" && message.event.type === "agent_end" && message.sessionId === created.id)).toBe(true);
       expect(getSession(created.id)?.activity_state).toBe("finished");
-      await new Sessions(state.sessions, undefined, id => internalNodeFor(state).runtime(id)).setModel({
+      // Node-owned: the row changes at once; the node applies the queued session.setModel to Pi's lane.
+      await new Sessions(state.sessions, undefined, id => internalNodeFor(state).runtime(id), () => wakeSessionInput(state)).setModel({
         sessionId: created.id, provider: provider.provider.id, modelId: "other",
       });
       expect(getSession(created.id)?.model_id).toBe("other");
+      const modelSet = () => getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.setModel' AND state = 'admitted'").get(created.id);
+      for (let i = 0; i < 100 && !modelSet(); i++) await Bun.sleep(10);
       expect((await internalNodeFor(state).open(created.id, provisionForSession(created.id).binding)).getSessionMetadata()?.model?.modelId).toBe("other");
       await internalNodeFor(state).close(created.id);
       stop();
