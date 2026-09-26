@@ -122,7 +122,7 @@ if (IS_DEV) {
   watch(SRC_DIR, { recursive: true }, (_event, filename) => {
     if (!filename?.endsWith(".ts")) return;
     // Bootstrap and process-owner modules require a full process restart.
-    if (["index.ts", "server-process.ts", "startup-history-upgrade.ts", "state.ts"].includes(filename)) return;
+    if (["index.ts", "server-process.ts", "startup-history-check.ts", "state.ts"].includes(filename)) return;
 
     if (debounce) clearTimeout(debounce);
     debounce = setTimeout(async () => {

@@ -27,5 +27,4 @@
 | [runtime-adapter-contract.md](runtime-adapter-contract.md) | backend | Minimum viable runtime adapter contract: adapter methods, runtime methods, events, messages, tools, and resume expectations |
 | [manual-agent-harness-pi.md](manual-agent-harness-pi.md) | backend | Isolated fake-provider launcher for the AgentHarness Pi runtime |
 | [session-message-persistence.md](session-message-persistence.md) | backend | Canonical AgentHarness entries, archive/active projections, provider normalization, and lifecycle ordering |
-| [offline-agent-harness-history-import.md](offline-agent-harness-history-import.md) | backend | Offline legacy-history import and independent validation procedure |
 

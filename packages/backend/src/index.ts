@@ -1,9 +1,9 @@
 /**
- * Process bootstrap. No application database imports, listeners, intervals,
- * handler builds, watchers, runtime hooks, or server sockets may move above
- * this one-time history gate.
+ * Process bootstrap. Check existing history before any schema migrations or
+ * application DB initialization; unsupported legacy formats fail without changes.
  */
-import { prepareCanonicalHistoryBeforeStartup } from "./startup-history-upgrade.js";
+import { resolveDataDir } from "./db.js";
+import { assertCanonicalHistoryBeforeStartup } from "./startup-history-check.js";
 
-await prepareCanonicalHistoryBeforeStartup();
+assertCanonicalHistoryBeforeStartup(resolveDataDir());
 await import("./server-process.js");
