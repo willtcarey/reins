@@ -7,6 +7,32 @@ import { nodeAdmissionReceipt } from "./storage.js";
 import { registerPiProvider, unregisterPiProvider } from "./runtime/context.js";
 import type { NodeRuntimePolicy } from "./runtime/build.js";
 
+test("node startup fails synchronously on an unsupported database before admitting commands", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE old_node_data(id TEXT); INSERT INTO old_node_data VALUES ('keep')");
+  let prepared = false;
+  expect(() => startNode({ db, deliver: () => {}, prepare: async () => { prepared = true; throw new Error("unexpected"); } }))
+    .toThrow(/unversioned/i);
+  expect(prepared).toBe(false);
+  expect(db.query("SELECT id FROM old_node_data").all()).toEqual([{ id: "keep" }]);
+  expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 0 });
+  db.close();
+});
+
+test("a session missing from node storage rejects input without an ambiguous admission", async () => {
+  const db = new Database(":memory:");
+  const node = startNode({ db, deliver: () => {}, prepare: async () => { throw new Error("must not open Pi"); } });
+  const binding = { sourceId: 7, cwd: "/tmp/reins-node-owner", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
+  try {
+    expect(await node.send({ op: "session.prompt", sessionId: "lost", clientId: "input", content: [{ type: "text", text: "hello" }] }, binding, "command"))
+      .toEqual({ ok: false, error: { code: "not_found", message: "This session's node data is missing. Start a new session.", retryable: false } });
+    expect(nodeAdmissionReceipt(db, "command")).toBeNull();
+    await expect(node.open("lost", binding)).rejects.toThrow("This session's node data is missing. Start a new session.");
+    expect(await node.send({ op: "session.resumePending", sessionId: "lost" }, binding))
+      .toMatchObject({ ok: false, error: { code: "not_found", retryable: false } });
+  } finally { node.stop(); db.close(); }
+});
+
 test("opening a session does not fetch attachments from past inputs", async () => {
   const db = new Database(":memory:");
   const node = startNode({ db, deliver: () => {}, prepare: async () => { throw new Error("runtime opened"); },

@@ -11,7 +11,7 @@ import { createServerState } from "../helpers/server-state.js";
 import { Sessions } from "../../models/sessions.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { scheduleWork, getWork } from "../../models/node-command-projection.js";
-import { blockInterruptedDispatches, NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
+import { blockInterruptedDispatches, NodeCommandDispatcher, waitForAdmission } from "../../models/node-command-dispatcher.js";
 
 const repo = useTestRepo();
 
@@ -101,13 +101,25 @@ test("startup scan recovers a missed wake and unavailable work stays queued", as
   } finally { setDb(new Database(":memory:")); db.close(); }
 });
 
-test("interrupted dispatch remains blocked after restart reconciliation", () => {
+test("existing startup handling retains interrupted dispatch outcome", () => {
   const { db, project, source } = setup();
   try {
     scheduleWork("x", { op: "session.provision", sessionId: "s", sourceId: source.id }, () => createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id }));
     db.query("UPDATE node_command_outbox SET state = 'dispatching' WHERE id = 'x'").run();
     blockInterruptedDispatches();
     expect(getWork("x")?.state).toBe("unknown");
+  } finally { setDb(new Database(":memory:")); db.close(); }
+});
+
+test("a removed failed provision never looks like a successful node open", async () => {
+  const { db, project, source } = setup();
+  try {
+    scheduleWork("failed-open", { op: "session.provision", sessionId: "s", sourceId: source.id }, () =>
+      createSession("s", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" }));
+    db.query("DELETE FROM node_command_outbox WHERE id = 'failed-open'").run();
+    const state = createServerState();
+    expect(new Sessions(state.sessions).get("s")?.scheduling).toMatchObject({ state: "failed" });
+    await expect(waitForAdmission(state, "s")).rejects.toThrow("Session open failed");
   } finally { setDb(new Database(":memory:")); db.close(); }
 });
 

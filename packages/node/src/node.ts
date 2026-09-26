@@ -26,6 +26,7 @@ export interface Node {
 }
 
 const instances = new WeakMap<Database, { node: Node; update: (dependencies: NodeDependencies) => void; retain: () => void }>();
+const MISSING_SESSION_MESSAGE = "This session's node data is missing. Start a new session.";
 
 export function startNode({ db, deliver, prepare, fetchAttachment }: NodeDependencies): Node {
   const existing = instances.get(db);
@@ -44,7 +45,8 @@ export function startNode({ db, deliver, prepare, fetchAttachment }: NodeDepende
   const openings = new Map<string, Promise<AgentHarnessPiRuntime>>();
   const verify = (id: string, binding: NodeSessionBinding) => {
     const stored = nodeSessionBinding(db, id);
-    if (!stored || JSON.stringify(stored) !== JSON.stringify(binding)) throw new Error(`Node session binding mismatch: ${id}`);
+    if (!stored) throw new Error(MISSING_SESSION_MESSAGE);
+    if (JSON.stringify(stored) !== JSON.stringify(binding)) throw new Error(`Node session binding mismatch: ${id}`);
     return stored;
   };
   const node: Node = {
@@ -99,6 +101,9 @@ export function startNode({ db, deliver, prepare, fetchAttachment }: NodeDepende
         await deliverNodeCommits(db, input.sessionId, (id, seq, writes) => currentDeliver(id, seq, writes)).catch(() => undefined);
         return { ok: true, value: { kind: "provisioned" } };
       }
+      if (!nodeSessionBinding(db, input.sessionId)) return { ok: false, error: {
+        code: "not_found", message: MISSING_SESSION_MESSAGE, retryable: false,
+      } };
       verify(input.sessionId, binding);
       if (receipt) {
         // A positive receipt is safe to query; an absent receipt is NOT proof that Pi did not admit.

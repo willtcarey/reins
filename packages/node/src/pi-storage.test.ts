@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { BACKGROUND_CONTEXT, setValue, value } from "@earendil-works/pi-agent-core";
-import { bindNodeSession, openNodeStorage } from "./storage.js";
+import { bindNodeSession, initializeNodeStorage, openNodeStorage } from "./storage.js";
 
 test("Pi commits locally before async delivery and retries pending writes after server acknowledgement failure", async () => {
   const db = new Database(":memory:");
+  initializeNodeStorage(db);
   bindNodeSession(db, "s", { sourceId: 1, cwd: "/tmp/node", createdAt: "2026-01-01", parentSessionId: null });
   let ack!: () => void;
   const storage = await openNodeStorage(db, "s", async () => new Promise<void>(resolve => { ack = resolve; }));

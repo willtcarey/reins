@@ -441,6 +441,28 @@ describe("ActiveSessionStore command helpers", () => {
     }
   });
 
+  test("a rejected prompt restores server activity instead of leaving a streaming spinner", async () => {
+    const client = new StubClient();
+    const sessionCache = new SessionCache();
+    sessionCache.set("sess-1", makeSessionData({ activityState: null }));
+    const conversations = new ConversationsStore({ eventSource: client });
+    const store = new ActiveSessionStore("sess-1", client, sessionCache, conversations);
+    mockFetch((url) => {
+      if (url === "/api/sessions/sess-1") return jsonResponse(makeSessionData({ activityState: null }));
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    try {
+      const entry = store.prompt([{ type: "text", text: "hello" }]);
+      expect(sessionCache.get("sess-1")?.activityState).toBe("running");
+      client.fireMessage({ type: "error", sessionId: "sess-1", clientId: entry!.clientId!,
+        error: "prompt failed: Session execution data unavailable on this node" });
+      await Bun.sleep(0);
+      expect(sessionCache.get("sess-1")?.activityState).toBeNull();
+      expect(store.conversation.errorMessage).toContain("Session execution data unavailable");
+      expect(rawMessages(store)).toEqual([]);
+    } finally { store.dispose(); conversations.dispose(); restoreFetch(); }
+  });
+
   test("prompt optimistically marks cached activityState running", () => {
     const client = new StubClient();
     client.prompt = mock(() => {});

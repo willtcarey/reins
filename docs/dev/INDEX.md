@@ -4,6 +4,7 @@
 |---|---|---|
 | [hot-reload.md](hot-reload.md) | backend | How backend hot-reload works in dev mode |
 | [node-contract.md](node-contract.md) | backend/node | Internal source routing, isolated node contract export and remote limitations |
+| [node-migrations.md](node-migrations.md) | node | How to add append-only node SQLite migrations and test upgrades |
 | [backend-architecture.md](backend-architecture.md) | backend | Backend layering: routes, tools, models, stores, utilities |
 | [router.md](router.md) | backend | Router API, adding routes, error handling |
 | [logging.md](logging.md) | backend | Logger levels, test behavior, and runtime verbosity configuration |

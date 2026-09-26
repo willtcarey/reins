@@ -1,0 +1,14 @@
+# Node SQLite migrations
+
+The node owns `~/.reins/node/storage.db` (unless a test injects a different connection). Its schema history is **`packages/node/src/migrations.ts`**, separate from the backend's `migrations.ts`. Both use explicitly named, numbered migrations and a local `migrations` table (`name`, `applied_at`). The node stores canonical AgentHarness state and a disposable attachment cache; the server DB is not a substitute for the node DB when resuming a session.
+
+## Add a migration
+
+1. **Append** a new `[name, SQL]` entry (for example, name `003_descriptive_name`) after the existing entries, using the next number and a meaningful name. **Never edit, remove, reorder, or squash a migration after it reaches `master`**. An existing DB tracks which names have run; editing historical SQL will not rerun it on that DB.
+2. Preserve existing data. If SQLite requires rebuilding a table, explicitly copy and validate its records in the new migration. Do not quietly replace a database just because the earlier experimental DB was disposable. Node-owned sessions cannot resume after losing their node DB.
+3. First add a failing test in `packages/node/src/migrations.test.ts` that creates the previous version on an in-memory or temporary-file DB, inserts representative canonical records and migration records, calls `initializeNodeStorage()`, and checks both the new schema and preserved records. For risky SQL, test that failed upgrades do not record the migration. Never test against the user's default node DB.
+4. Append the migration, then run the focused test, `bun test`, `bun run typecheck`, `bun run lint`, and `bun run --filter @reins/node build`.
+
+`runNodeMigrations()` enables foreign keys and applies each missing migration together with its ledger insert **in a transaction**. It does not compare the actual schema to a reconstructed historical schema: the ledger determines which migrations have run. A nonempty DB without the ledger, an unknown migration name, or failed SQL stops node initialization; there is no automatic reset or deletion. When a standalone daemon exists, startup failure should make that process exit nonzero. Today it throws during node startup in the backend process.
+
+**Restart the backend process** after changing node migrations. Dev handler hot reload does not reload the external node package or replace its open SQLite connection. A database created by the earlier `PRAGMA user_version` runner has no migration ledger; this version will reject it rather than silently mark it migrated. If you choose to discard it, stop the backend first, then remove `storage.db` and its `-wal` and `-shm` files before restarting. Server history/images remain readable, but node-owned sessions in that DB cannot resume.

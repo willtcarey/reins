@@ -1,6 +1,6 @@
 import { getSession } from "../session-store.js";
 import { getSource } from "../node-store.js";
-import { getCommand, blockInterruptedDispatches, queuedCommands, hasBlockingPredecessor } from "../node-command-store.js";
+import { getCommand, blockInterruptedDispatches, deleteFailedCommand, queuedCommands, hasBlockingPredecessor } from "../node-command-store.js";
 import { getWork, workForSession, registerCommandWake } from "./node-command-projection.js";
 import { deliverCommand } from "./node-command-transport.js";
 import { internalNodeFor, provisionForSession } from "../runtimes/internal-node.js";
@@ -11,10 +11,13 @@ import type { ServerState } from "../state.js";
 export { blockInterruptedDispatches };
 export async function waitForAdmission(state: ServerState, sessionId: string): Promise<void> {
   const work = workForSession(sessionId);
-  if (!work) return; // pre-outbox sessions reopen normally
+  if (!work) {
+    if (getSession(sessionId)?.storage_owner === "internal-node") throw new Error("Session open failed");
+    return; // pre-outbox server-owned sessions reopen normally
+  }
   if (work.state === "admitted") return;
   if (work.state === "failed") throw new Error(`Session open failed: ${work.result && !work.result.ok ? work.result.error.message : "unknown error"}`);
-  if (work.state === "unknown") throw new Error("Session open outcome unknown; manual reconciliation required");
+  if (work.state === "unknown") throw new Error("Session open outcome unknown after restart");
   if (work.state === "queued" && getSource(work.sourceId)?.node_id !== "internal") throw new Error("Execution source unavailable; session open queued");
   // An input submitted immediately after create must not bypass or race open.
   // Drain on demand when no server handler is installed (e.g. scripting tests).
@@ -77,6 +80,7 @@ export class NodeCommandDispatcher {
           onCommandDelivered(this.state, row);
           const outcome = getCommand(row.id)?.state;
           if (outcome === "queued" || outcome === "dispatching") continue;
+          if (outcome === "failed") deleteFailedCommand(row.id);
           for (const resolve of this.waiters.get(row.id) ?? []) resolve();
           this.waiters.delete(row.id);
         }

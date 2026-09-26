@@ -6,6 +6,7 @@ import { createProject } from "../project-store.js";
 import { createSession } from "./session-fixture.js";
 import { storeSessionAttachment } from "../session-attachments-store.js";
 import { createRuntimeStub } from "./helpers/test-runtime-stub.js";
+import { getDb } from "../db.js";
 import type { ServerState } from "../state.js";
 
 /**
@@ -328,6 +329,8 @@ describe("WebSocket handlers", () => {
       await Bun.sleep(20);
       expect(sender.lastMessage()).toEqual({ type: "error", sessionId: "sess-failure", clientId: "failure-id", error: "steer failed: admission unavailable" });
       expect(observer.lastMessage()).toBeNull();
+      expect(getDb().query("SELECT id FROM node_command_outbox WHERE session_id = 'sess-failure' AND json_extract(command_json, '$.clientId') = 'failure-id'").get())
+        .toBeNull();
     });
 
     test("validates and forwards attachment refs to the runtime", async () => {

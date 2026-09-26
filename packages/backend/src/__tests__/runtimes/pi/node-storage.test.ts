@@ -7,7 +7,7 @@ import { createProject } from "../../../project-store.js";
 import { createSession } from "../../session-fixture.js";
 import { setupTestDb, teardownTestDb } from "../../helpers/test-db.js";
 import { openNodeStorage, deliverNodeCommits } from "../../../runtimes/pi/node-storage.js";
-import { bindNodeSession, nodeStoragePath } from "@reins/node/storage";
+import { bindNodeSession, initializeNodeStorage, nodeStoragePath } from "@reins/node/storage";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -20,6 +20,7 @@ import { PiStorageAdapter } from "../../../runtimes/pi/storage-adapter.js";
 test("node commits retain exact entries, values and lists across delivery and reopen", async () => {
   setupTestDb();
   const node = new Database(":memory:");
+  initializeNodeStorage(node);
   try {
     const project = createProject("Node", "/tmp/node");
     createSession("node-session", project.id, { agentRuntimeType: "pi" });
@@ -54,6 +55,7 @@ test("node commits retain exact entries, values and lists across delivery and re
 test("failed replica delivery leaves a durable batch and replay acknowledges it exactly once", async () => {
   setupTestDb();
   const node = new Database(":memory:");
+  initializeNodeStorage(node);
   try {
     const project = createProject("Failure", "/tmp/failure");
     createSession("node-session", project.id, { agentRuntimeType: "pi" });

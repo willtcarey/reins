@@ -93,7 +93,7 @@ export interface SessionView {
   createdAt: string;
   updatedAt: string;
   activityState: SessionRow["activity_state"];
-  scheduling?: { state: "queued" | "dispatching" | "admitted" | "failed" | "unknown"; available: boolean; error: string | null } | null;
+  scheduling?: { state: "queued" | "dispatching" | "admitted" | "failed"; available: boolean; error: string | null } | null;
   pinnedAt: string | null;
   archivedAt: string | null;
   pendingOperation?: PendingPiOperation | null;
@@ -148,8 +148,11 @@ function toSessionView(row: SessionRow): SessionView {
     activityState: row.activity_state,
     scheduling: (() => {
       const work = workForSession(row.id);
-      if (!work) return null;
-      return { state: work.state, available: getSource(work.sourceId)?.node_id === "internal", error: work.result && !work.result.ok ? work.result.error.message : work.state === "unknown" ? "Open outcome unknown; manual reconciliation required" : null };
+      if (!work) return row.storage_owner === "internal-node"
+        ? { state: "failed" as const, available: false, error: "Session open failed" } : null;
+      return { state: work.state === "unknown" ? "failed" as const : work.state,
+        available: getSource(work.sourceId)?.node_id === "internal",
+        error: work.state === "unknown" ? "Session open interrupted" : work.result && !work.result.ok ? work.result.error.message : null };
     })(),
     pinnedAt: row.pinned_at,
     archivedAt: row.archived_at,

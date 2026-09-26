@@ -132,6 +132,12 @@ export class ActiveSessionStore {
           || message.event.type === "compaction_end"
         ) this.scheduleContextRefresh();
       },
+      error: (message) => {
+        if (message.sessionId === this.sessionId && message.clientId) {
+          // A failed admission has no run lifecycle event to undo optimistic activity.
+          void this._sessionCache.fetchDetail(this.sessionId);
+        }
+      },
     }) ?? null;
   }
 

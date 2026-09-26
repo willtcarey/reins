@@ -5,8 +5,7 @@ import { runMigrations } from "../../migrations.js";
 import { createProject } from "../../project-store.js";
 import { createSession } from "../../session-store.js";
 import { internalSource } from "../../node-store.js";
-import { enqueueInput, blockInterruptedDispatches } from "../../node-command-store.js";
-import { scheduleWork } from "../../models/node-command-projection.js";
+import { enqueueInput } from "../../node-command-store.js";
 import { NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
 import { createServerState } from "../helpers/server-state.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
@@ -38,14 +37,13 @@ test("malformed persisted input and reopen commands fail closed before Pi admiss
     expect(stub.steerCalls).toEqual([]);
     expect(promptStub.promptCalls).toEqual([]);
     expect(state.sessions.has("bad-open")).toBe(false);
-    expect(db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE id = ?").get("invalid-input")?.state).toBe("unknown");
-    expect(db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE id = ?").get("reopen")?.state).toBe("unknown");
-    expect(db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE id = ?").get("legacy")?.state).toBe("unknown");
-    expect(db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE id = ?").get("missing-content")?.state).toBe("unknown");
+    for (const id of ["invalid-input", "reopen", "legacy", "missing-content"]) {
+      expect(db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE id = ?").get(id)).toBeNull();
+    }
   } finally { setDb(new Database(":memory:")); db.close(); }
 });
 
-test("one outbox scan orders input, deduplicates clientId and fences unknown only within its session", async () => {
+test("one outbox scan orders input, deduplicates clientId and removes failed commands", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
   try {
@@ -69,22 +67,19 @@ test("one outbox scan orders input, deduplicates clientId and fences unknown onl
     await dispatcher.drain();
     expect(firstRuntime.promptCalls).toEqual([[{ type: "text", text: "one" }]]);
     expect(firstRuntime.steerCalls).toEqual([[{ type: "text", text: "two" }]]);
+    const originalPrompt = firstRuntime.runtime.prompt.bind(firstRuntime.runtime);
+    firstRuntime.runtime.prompt = async (content, options) => {
+      if (content.some(block => block.type === "text" && block.text === "three")) throw new Error("delivery failed");
+      return originalPrompt(content, options);
+    };
     const third = enqueueInput("s", "prompt", [{ type: "text", text: "three" }], "c");
-    db.query("UPDATE node_command_outbox SET state = 'dispatching' WHERE id = ?").run(third);
-    blockInterruptedDispatches();
     enqueueInput("s", "prompt", [{ type: "text", text: "four" }], "d");
     enqueueInput("other", "prompt", [{ type: "text", text: "independent" }], "e");
     await dispatcher.drain();
-    expect(firstRuntime.promptCalls).toHaveLength(1);
+    expect(firstRuntime.promptCalls).toEqual([[{ type: "text", text: "one" }], [{ type: "text", text: "four" }]]);
     expect(otherRuntime.promptCalls).toEqual([[{ type: "text", text: "independent" }]]);
-    expect(db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE id = ?").get(third)?.state).toBe("unknown");
+    expect(db.query("SELECT id FROM node_command_outbox WHERE id = ?").get(third)).toBeNull();
     expect(db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE id = ?").get(first)?.state).toBe("admitted");
-    scheduleWork("open-blocked", { op: "session.provision", sessionId: "blocked", sourceId }, () =>
-      createSession("blocked", project.id, { agentRuntimeType: "pi", sourceId }));
-    db.query("UPDATE node_command_outbox SET state = 'unknown' WHERE id = 'open-blocked'").run();
-    const waiting = enqueueInput("blocked", "prompt", [{ type: "text", text: "later" }], "later");
-    await dispatcher.drain();
-    expect(db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE id = ?").get(waiting)?.state).toBe("queued");
     const afterFence = enqueueInput("other", "steer", [{ type: "text", text: "still works" }], "f");
     await dispatcher.drain();
     expect(otherRuntime.steerCalls).toEqual([[{ type: "text", text: "still works" }]]);

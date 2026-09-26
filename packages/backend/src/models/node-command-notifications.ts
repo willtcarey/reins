@@ -33,7 +33,7 @@ export function onCommandDelivered(state: ServerState, row: InputRow): void {
   if (payload.op === "session.provision") {
     const session = getSession(row.session_id);
     if (session) createBroadcast(state.clients)({ type: "session_updated", sessionId: row.session_id, projectId: session.project_id });
-  } else if ((payload.op === "session.prompt" || payload.op === "session.steer") && (outcome.state === "failed" || outcome.state === "unknown") && "clientId" in payload && typeof payload.clientId === "string") {
+  } else if ((payload.op === "session.prompt" || payload.op === "session.steer") && outcome.state === "failed" && "clientId" in payload && typeof payload.clientId === "string") {
     const result: unknown = outcome.result_json && JSON.parse(outcome.result_json);
     const error = result && typeof result === "object" && "error" in result ? result.error : null;
     const message = typeof error === "string" ? error : error && typeof error === "object" && "message" in error ? String(error.message) : "unknown error";

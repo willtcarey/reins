@@ -95,9 +95,8 @@ export class SessionListItem extends LitElement {
     const pinned = s.pinnedAt !== null;
     const scheduling = s.scheduling && s.scheduling.state !== "admitted"
       ? s.scheduling.state === "queued" && !s.scheduling.available ? "Source unavailable · queued"
-        : s.scheduling.state === "unknown" ? "Open outcome unknown"
-          : s.scheduling.state === "failed" ? `Open failed: ${s.scheduling.error ?? "unknown error"}`
-            : `Open ${s.scheduling.state}`
+        : s.scheduling.state === "failed" ? `Open failed: ${s.scheduling.error ?? "unknown error"}`
+          : `Open ${s.scheduling.state}`
       : null;
 
     return html`

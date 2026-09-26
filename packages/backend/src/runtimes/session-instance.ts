@@ -132,14 +132,16 @@ export class SessionInstance implements RuntimeLifecycleSink {
     let managed = managedForWait();
     if (!managed) {
       const work = workForSession(sessionId);
-      if (work?.state === "failed" || work?.state === "unknown") return { sessionId, status: "failed", result: null, error: work.state === "failed" ? "Session open failed" : "Session open outcome unknown" };
+      if (work?.state === "failed" || work?.state === "unknown" || (!work && this.session(sessionId).storage_owner === "internal-node"))
+        return { sessionId, status: "failed", result: null, error: "Session open failed" };
       if (work && timeoutMs > 0) {
         const deadline = Date.now() + timeoutMs;
         while (!managed && Date.now() < deadline) {
           await this.pauseForAdmission(Math.min(10, deadline - Date.now()), signal);
           managed = managedForWait();
           const current = workForSession(sessionId);
-          if (current?.state === "failed" || current?.state === "unknown") return { sessionId, status: "failed", result: null, error: `Session open ${current.state}` };
+          if (current?.state === "failed" || current?.state === "unknown" || (!current && this.session(sessionId).storage_owner === "internal-node"))
+            return { sessionId, status: "failed", result: null, error: "Session open failed" };
         }
       }
       if (!managed) return work ? { sessionId, status: "timeout", result: null, error: null } : transcriptResult(sessionId, loadActiveMessages(sessionId));

@@ -34,9 +34,11 @@ import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { install } from "../../handler.js";
 import { NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
+import { enqueueInput, getCommand } from "../../node-command-store.js";
+import { observeSubmission } from "../../models/node-command-notifications.js";
 import { Sessions } from "../../models/sessions.js";
 import { registerPiProvider, unregisterPiProvider, createPiModelRuntime, createPiContext } from "../../runtimes/pi/factory.js";
-import { internalNodeFor, provisionForSession } from "../../runtimes/internal-node.js";
+import { internalNodeFor, provisionForSession, stopInternalNode } from "../../runtimes/internal-node.js";
 
 function createCapturingWsClient() {
   const sent: any[] = [];
@@ -249,6 +251,35 @@ describe("runtime sessions manager", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 15_000);
+
+  test("lost node storage rejects a resumed prompt and notifies its submitting client", async () => {
+    const firstDb = new Database(":memory:");
+    initializeNodeStorage(firstDb);
+    setNodeDb(firstDb);
+    const state = createServerState();
+    const dispatcher = new NodeCommandDispatcher(state);
+    try {
+      const project = createProject("Lost node storage", repo.dir);
+      const created = createNewSession(state, project.id, repo.dir);
+      await dispatcher.drain();
+      expect(getSession(created.id)?.storage_owner).toBe("internal-node");
+      expect(firstDb.query("SELECT id FROM sessions WHERE id = ?").get(created.id)).toEqual({ id: created.id });
+      stopInternalNode(state);
+      closeNodeDb();
+      const replacement = new Database(":memory:");
+      initializeNodeStorage(replacement);
+      setNodeDb(replacement);
+      const client = createCapturingWsClient();
+      state.clients.add(client.client);
+      observeSubmission(state, created.id, "lost-input", client.client);
+      const commandId = enqueueInput(created.id, "prompt", [{ type: "text", text: "Can we continue?" }], "lost-input");
+      await dispatcher.drain();
+      expect(getCommand(commandId)).toBeNull();
+      expect(client.sent).toContainEqual({ type: "error", sessionId: created.id, clientId: "lost-input",
+        error: "prompt failed: This session's node data is missing. Start a new session." });
+      expect(replacement.query("SELECT id FROM sessions WHERE id = ?").get(created.id)).toBeNull();
+    } finally { stopInternalNode(state); closeNodeDb(); }
+  });
 
   test("node-owned prompts retain attachment references and hydrate image bytes for Pi", async () => {
     const nodeDb = new Database(":memory:");

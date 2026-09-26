@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import { bindNodeSession, openNodeStorage } from "../storage.js";
+import { bindNodeSession, initializeNodeStorage, openNodeStorage } from "../storage.js";
 import { createAgentHarnessPiRuntime } from "./pi-runtime.js";
 
 test("node-owned Pi executes and reopens against node SQLite without product tables", async () => {
   const node = new Database(":memory:");
+  initializeNodeStorage(node);
   const binding = { sourceId: 1, cwd: "/tmp/local-node-runtime", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
   bindNodeSession(node, "node-pi", binding);
   const provider = fauxProvider({ models: [{ id: "fake", contextWindow: 20_000, maxTokens: 100 }] });

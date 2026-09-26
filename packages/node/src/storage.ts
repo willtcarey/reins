@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { CommittedWrite } from "@earendil-works/pi-agent-core";
 import { PiStorageAdapter } from "./pi-storage.js";
+import { runNodeMigrations } from "./migrations.js";
 
 export interface NodeSessionBinding {
   sourceId: number;
@@ -13,32 +14,7 @@ export interface NodeSessionBinding {
 }
 
 export function initializeNodeStorage(db: Database): void {
-  db.exec(`PRAGMA foreign_keys = ON;
-    CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, source_id INTEGER NOT NULL,
-      cwd TEXT NOT NULL, created_at TEXT NOT NULL, parent_session_id TEXT,
-      harness_next_seq INTEGER NOT NULL DEFAULT 1);
-    CREATE TABLE IF NOT EXISTS session_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      seq INTEGER NOT NULL, parent_id INTEGER REFERENCES session_messages(id) ON DELETE SET NULL,
-      harness_id TEXT NOT NULL, role TEXT NOT NULL, message_json TEXT NOT NULL, created_at TEXT NOT NULL,
-      UNIQUE(session_id, seq), UNIQUE(session_id, harness_id));
-    CREATE TABLE IF NOT EXISTS pi_values (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      namespace TEXT NOT NULL, key TEXT NOT NULL, seq INTEGER NOT NULL, value_json TEXT NOT NULL,
-      PRIMARY KEY(session_id, namespace, key));
-    CREATE TABLE IF NOT EXISTS pi_lists (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      namespace TEXT NOT NULL, key TEXT NOT NULL, seq INTEGER NOT NULL, value_json TEXT NOT NULL,
-      PRIMARY KEY(session_id, namespace, key, seq));
-    CREATE TABLE IF NOT EXISTS pi_usage (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      id TEXT NOT NULL, seq INTEGER NOT NULL, entry_id TEXT, adjustment INTEGER NOT NULL,
-      usage_json TEXT NOT NULL, details_json TEXT, PRIMARY KEY(session_id, id), UNIQUE(session_id, seq));
-    CREATE TABLE IF NOT EXISTS pending_commits (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      start_seq INTEGER NOT NULL, writes_json TEXT NOT NULL, PRIMARY KEY(session_id, start_seq));
-    CREATE TABLE IF NOT EXISTS admission_receipts (command_id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
-      operation TEXT NOT NULL, payload TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS node_attachments (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      attachment_id TEXT NOT NULL, mime_type TEXT NOT NULL, byte_size INTEGER NOT NULL, sha256 TEXT NOT NULL,
-      filename TEXT, width INTEGER, height INTEGER, data BLOB NOT NULL,
-      PRIMARY KEY(session_id, attachment_id));`);
+  runNodeMigrations(db);
 }
 
 export function nodeStoragePath(home: string = homedir()): string {
@@ -54,15 +30,20 @@ export function getNodeDb(): Database {
   if (!nodeDb) {
     const path = nodeStoragePath();
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    nodeDb = new Database(path);
-    nodeDb.exec("PRAGMA journal_mode = WAL");
-    initializeNodeStorage(nodeDb);
+    const db = new Database(path);
+    try {
+      db.exec("PRAGMA journal_mode = WAL");
+      initializeNodeStorage(db);
+      nodeDb = db;
+    } catch (error) {
+      db.close();
+      throw error;
+    }
   }
   return nodeDb;
 }
 
 export function bindNodeSession(db: Database, sessionId: string, binding: NodeSessionBinding): void {
-  initializeNodeStorage(db);
   const row = nodeSessionBinding(db, sessionId);
   if (row) {
     if (JSON.stringify(row) !== JSON.stringify(binding)) throw new Error(`Node session binding mismatch: ${sessionId}`);
