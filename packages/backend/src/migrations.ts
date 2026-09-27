@@ -383,6 +383,23 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_session_attachments_content ON session_attachments(session_id, sha256, mime_type);
     `))(),
   ],
+  [
+    // Replay detection moves from append-only receipts to per-session watermarks: a committed batch is
+    // already applied when it starts below `sessions.harness_next_seq` (the last batch's start and hash
+    // detect a divergent replay of it), and a lifecycle report when it is the last one applied (its
+    // run, kind and payload hash). `settlement_count`/`settlement_json` order and describe the latest
+    // settlement for waits. No backfill: existing sessions start without a last batch or report.
+    "035_node_session_watermarks",
+    (db: Database) => db.transaction(() => db.exec(`CREATE TABLE node_session_watermarks (
+       session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+       commit_start_seq INTEGER, commit_sha256 TEXT,
+       report_run_id TEXT, report_kind TEXT CHECK(report_kind IN ('started', 'settled')), report_sha256 TEXT,
+       settlement_count INTEGER NOT NULL DEFAULT 0,
+       settlement_json TEXT CHECK(settlement_json IS NULL OR json_valid(settlement_json))
+     );
+     DROP TABLE node_replica_receipts;
+     DROP TABLE node_lifecycle_receipts;`))(),
+  ],
 ];
 
 export function runMigrations(db: Database): void {

@@ -319,4 +319,38 @@ describe("migrations", () => {
       resetDb();
     }
   });
+  test("035 replaces the node receipt tables with per-session watermarks, keeping sessions and their sequence", () => {
+    const db = new Database(":memory:");
+    setDb(db);
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db);
+      // Reconstruct the 034 schema: the ledger decides what runs.
+      db.exec(`DROP TABLE node_session_watermarks; DELETE FROM migrations WHERE name = '035_node_session_watermarks';
+        CREATE TABLE node_replica_receipts (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          start_seq INTEGER NOT NULL, writes_json TEXT NOT NULL, PRIMARY KEY(session_id, start_seq));
+        CREATE TABLE node_lifecycle_receipts (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          run_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('started', 'settled')), payload_json TEXT NOT NULL,
+          PRIMARY KEY(session_id, run_id, kind));`);
+      const project = createProject("Receipts", "/tmp/receipts-035");
+      createSession("s", project.id, { sourceId: internalSource(project.id).id, agentRuntimeType: "pi", storageOwner: "internal-node" });
+      db.exec(`UPDATE sessions SET harness_next_seq = 7, activity_state = 'running' WHERE id = 's';
+        INSERT INTO node_replica_receipts VALUES ('s', 1, '[]');
+        INSERT INTO node_lifecycle_receipts VALUES ('s', 'r1', 'started', '{"runId":"r1"}')`);
+
+      runMigrations(db);
+      expect(db.query("SELECT name FROM sqlite_master WHERE name IN ('node_replica_receipts', 'node_lifecycle_receipts')").all()).toEqual([]);
+      expect(db.query("SELECT harness_next_seq, activity_state, storage_owner FROM sessions WHERE id = 's'").get())
+        .toEqual({ harness_next_seq: 7, activity_state: "running", storage_owner: "internal-node" });
+      // No backfill: watermarks start empty and are written as batches and reports are applied.
+      expect(db.query("SELECT COUNT(*) n FROM node_session_watermarks").get()).toEqual({ n: 0 });
+      db.exec("INSERT INTO node_session_watermarks(session_id, commit_start_seq, commit_sha256) VALUES ('s', 6, 'hash')");
+      expect(() => db.exec("INSERT INTO node_session_watermarks(session_id, report_kind) VALUES ('missing', 'started')")).toThrow();
+      expect(() => db.exec("UPDATE node_session_watermarks SET report_kind = 'other' WHERE session_id = 's'")).toThrow();
+      db.exec("DELETE FROM sessions WHERE id = 's'");
+      expect(db.query("SELECT COUNT(*) n FROM node_session_watermarks").get()).toEqual({ n: 0 });
+    } finally {
+      resetDb();
+    }
+  });
 });

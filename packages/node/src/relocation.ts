@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import type { NodeResult } from "./contract.js";
 import { piSnapshotSummary, samePiSnapshot, summarizePiSnapshot, writePiSnapshot, type PiSnapshotRow, type PiSnapshotSummary } from "./pi-storage.js";
-import { nodeAdmissionReceipt, nodeSessionBinding, provisionNodeSession, type NodeSessionBinding, type NodeSessionTask } from "./storage.js";
+import { nodeSessionBinding, provisionNodeSession, type NodeSessionBinding, type NodeSessionTask } from "./storage.js";
 import type { SessionSnapshot } from "./protocol/schema.js";
 import type { AttachmentBytes } from "./runtime/attachments.js";
 import { APPLICATION_ERROR } from "./protocol/errors.js";
@@ -14,7 +14,7 @@ export interface RelocationServer {
   snapshot(sessionId: string, fromSeq: number): Promise<SessionSnapshot>;
   fetchAttachment(sessionId: string, attachmentId: string): Promise<AttachmentBytes | null>;
 }
-export interface HydrateRequest { sessionId: string; commandId: string; binding: NodeSessionBinding; task: NodeSessionTask | null; snapshot: PiSnapshotSummary }
+export interface HydrateRequest { sessionId: string; binding: NodeSessionBinding; task: NodeSessionTask | null; snapshot: PiSnapshotSummary }
 
 const rejected = (code: NodeRejection["code"], message: string, retryable = false): NodeRejection => ({ code, message, retryable });
 /** An explicit server rejection is definitive; a transport failure may succeed when the command is replayed. */
@@ -51,18 +51,12 @@ function verifyAttachment(ref: ImageRef, attachment: AttachmentBytes): string | 
   return null;
 }
 
-const receiptPayload = (request: HydrateRequest) => JSON.stringify({ binding: request.binding, task: request.task, snapshot: request.snapshot });
-function recordReceipt(db: Database, commandId: string, sessionId: string, operation: string, payload: string): void {
-  if (nodeAdmissionReceipt(db, commandId)) return;
-  db.query("INSERT INTO admission_receipts(command_id,session_id,operation,payload) VALUES(?,?,?,?)").run(commandId, sessionId, operation, payload);
-}
-
 /**
- * `session.hydrate` on the node. Converges by content, not by receipt: a node that already holds this
- * session answers at once when its copy (binding and snapshot summary) is identical and rejects a
- * different one. Otherwise it pulls the server's copy page by page and every attachment it references,
+ * `session.hydrate` on the node. Converges by content: a node that already holds this session (a
+ * replay after a lost acknowledgement, even after a node restart) answers at once when its copy
+ * (binding and snapshot summary) is identical and rejects a different one. Otherwise it pulls the server's copy page by page and every attachment it references,
  * then in one transaction binds the session (with its task snapshot), writes the rows verbatim, caches
- * the attachments, recomputes the summary from what it stored and records the receipt; any mismatch
+ * the attachments and recomputes the summary from what it stored; any mismatch
  * rolls everything back. Nothing is stored before that transaction, so a node that restarts or loses its
  * connection mid-pull starts over when the command is replayed. The caller serializes per session.
  */
@@ -73,7 +67,6 @@ export async function hydrateNodeSession(db: Database, server: RelocationServer,
     if (JSON.stringify(existing) !== JSON.stringify(request.binding) || !samePiSnapshot(piSnapshotSummary(db, sessionId), snapshot)) {
       return rejected("invalid_request", `Node already holds a different copy of session ${sessionId}`);
     }
-    recordReceipt(db, request.commandId, sessionId, "session.hydrate", receiptPayload(request));
     return null;
   }
   const rows: PiSnapshotRow[] = [];
@@ -108,7 +101,6 @@ export async function hydrateNodeSession(db: Database, server: RelocationServer,
         VALUES(?,?,?,?,?,?,?,?,?)`).run(sessionId, attachmentId, attachment.mimeType, attachment.byteSize, attachment.sha256,
         attachment.filename ?? null, attachment.width ?? null, attachment.height ?? null, Buffer.from(attachment.data));
       if (!samePiSnapshot(piSnapshotSummary(db, sessionId), snapshot)) throw new Error(`Hydration verification failed for session ${sessionId}: stored copy does not match the snapshot`);
-      recordReceipt(db, request.commandId, sessionId, "session.hydrate", receiptPayload(request));
     })();
   } catch (error) {
     return rejected("invalid_request", error instanceof Error ? error.message : String(error));
@@ -116,21 +108,14 @@ export async function hydrateNodeSession(db: Database, server: RelocationServer,
   return null;
 }
 
-/** A release already applied under this command ID: the summary it reported. */
-export function releasedSnapshot(db: Database, commandId: string, sessionId: string): PiSnapshotSummary | null {
-  const receipt = nodeAdmissionReceipt(db, commandId);
-  if (!receipt) return null;
-  if (receipt.sessionId !== sessionId || receipt.operation !== "session.release") throw new Error(`Node admission receipt mismatch: ${commandId}`);
-  return JSON.parse(receipt.payload);
-}
-
 /**
  * The storage half of `session.release`, once the caller closed the session's runtime and drained its
  * outbox: refuses while reports are still pending, confirms the server's copy matches the local one,
- * then deletes everything the node holds for the session (binding, Pi rows, outbox, attachment cache,
- * receipts) and records the release receipt in the same transaction.
+ * then deletes everything the node holds for the session (binding, Pi rows, outbox, attachment cache)
+ * in one transaction. Nothing is kept: a replay finds no session and answers `not_found`, which the
+ * server treats as released (its copy is all that is left, and it matched this one).
  */
-export async function releaseNodeSession(db: Database, server: RelocationServer, sessionId: string, commandId: string): Promise<{ snapshot: PiSnapshotSummary } | NodeRejection> {
+export async function releaseNodeSession(db: Database, server: RelocationServer, sessionId: string): Promise<{ snapshot: PiSnapshotSummary } | NodeRejection> {
   if (db.query("SELECT 1 FROM session_outbox WHERE session_id = ? LIMIT 1").get(sessionId)) {
     return rejected("unavailable", `Session ${sessionId} still has reports the server has not acknowledged`, true);
   }
@@ -140,11 +125,10 @@ export async function releaseNodeSession(db: Database, server: RelocationServer,
   catch (error) { return serverFailure(error, "Session snapshot failed"); }
   if (!samePiSnapshot(remote.summary, local)) return rejected("internal", `Server copy of session ${sessionId} differs from the node's; release refused`);
   db.transaction(() => {
-    for (const table of ["session_outbox", "node_attachments", "pi_usage", "pi_lists", "pi_values", "session_messages", "admission_receipts"]) {
+    for (const table of ["session_outbox", "node_attachments", "pi_usage", "pi_lists", "pi_values", "session_messages"]) {
       db.query(`DELETE FROM ${table} WHERE session_id = ?`).run(sessionId);
     }
     db.query("DELETE FROM sessions WHERE id = ?").run(sessionId);
-    recordReceipt(db, commandId, sessionId, "session.release", JSON.stringify(local));
   })();
   return { snapshot: local };
 }

@@ -9,7 +9,7 @@ import { logger } from "../logger.js";
 /** Internal node reports. Live `session.event`s are broadcast to browsers as sent (best effort; their
  * images are already attachment references). Durable
  * `session.started`/`session.settled` drive the same SessionInstance effects as in-process runtimes,
- * each applied at most once, atomically with its (session, run, kind) receipt. The node delivers a
+ * each applied at most once, atomically with the session's lifecycle watermark. The node delivers a
  * session's reports in occurrence order and only after the previous one was acknowledged, so a
  * settlement never overtakes a newer run's start and no per-session instance needs to be kept. */
 export function nodeSessionReports(state: ServerState): NodeSessionReports {

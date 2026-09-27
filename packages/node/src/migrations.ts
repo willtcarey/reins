@@ -67,6 +67,9 @@ const migrations = [
   // Converting an inline image reuses a cached attachment with the same content (session, sha256, MIME
   // type) instead of storing and uploading it again under a new ID.
   ["006_node_attachment_content", `CREATE INDEX node_attachments_content ON node_attachments(session_id, sha256, mime_type)`],
+  // Commands converge on their own state (binding and lane, Pi's durable input IDs, absolute model
+  // selection, the stored copy's summary, a released session's absence), so per-command receipts go.
+  ["007_drop_admission_receipts", `DROP TABLE admission_receipts`],
 ] as const;
 
 /** Runs before binding or opening a runtime. SQL and its ledger record commit together. */

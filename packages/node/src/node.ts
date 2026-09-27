@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { NodeCommand, NodeResult, SessionConfiguration } from "./contract.js";
-import { completeNodeReport, deliverNodeOutbox, getNodeDb, initializeNodeStorage, nodeAdmissionReceipt, nodeSessionBinding, nodeSessionTask, openNodeStorage, pendingOutboxSessions, provisionNodeSession, recordNodeAdmission, recordNodeReport, releaseUnreadReports, type NodeOutboxDelivery, type NodeSessionBinding } from "./storage.js";
+import { completeNodeReport, deliverNodeOutbox, getNodeDb, initializeNodeStorage, nodeSessionBinding, nodeSessionTask, openNodeStorage, pendingOutboxSessions, provisionNodeSession, recordNodeReport, releaseUnreadReports, type NodeOutboxDelivery, type NodeSessionBinding } from "./storage.js";
 import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type ReportLifecycle } from "./runtime/build.js";
 import { createRemoteCredentialStore, type CredentialServer } from "./credentials.js";
 import { sessionEvent, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEvent, type SessionEventReport, type SessionSettled, type SessionStarted } from "./protocol/schema.js";
@@ -17,7 +17,7 @@ import { AttachmentMaterializationError, materializePromptAttachments, type Fetc
 import { mapContentImages } from "./protocol/event-images.js";
 import type { AgentRuntimeEvent } from "./runtime/types.js";
 import type { SessionSnapshot } from "./protocol/schema.js";
-import { hydrateNodeSession, releasedSnapshot, releaseNodeSession, type HydrateRequest, type RelocationServer } from "./relocation.js";
+import { hydrateNodeSession, releaseNodeSession, type HydrateRequest, type RelocationServer } from "./relocation.js";
 
 /** Server-owned calls over a connection; calls may wait for negotiation and reject if it fails.
  * Provider credentials are served by the server too (`credentials.*`): a node needs no credential
@@ -47,12 +47,14 @@ export interface Node {
    * regardless of leases. Close the connection first and the node database after.
    */
   shutdown(): Promise<void>;
-  send(input: NodeCommand, binding: NodeSessionBinding, commandId?: string): Promise<NodeResult>;
+  /** Replays converge on each command's own state, not a per-command receipt (see node-contract.md). */
+  send(input: NodeCommand, binding: NodeSessionBinding): Promise<NodeResult>;
   /** `session.hydrate`: copies the server's copy of a session into node storage and binds it (see `hydrateNodeSession`). */
   hydrate(input: Omit<HydrateRequest, "binding">, binding: NodeSessionBinding): Promise<NodeResult>;
   /** `session.release`: refuses while a run is active; otherwise delivers the session's outbox, confirms
-   * the server's copy is complete and drops the local copy. */
-  release(sessionId: string, binding: NodeSessionBinding, commandId: string): Promise<NodeResult>;
+   * the server's copy is complete and drops the local copy. A node holding nothing for the session (a
+   * replay of a completed release) answers `not_found`, which the server treats as released. */
+  release(sessionId: string, binding: NodeSessionBinding): Promise<NodeResult>;
   /** The newest attached connection serves server calls; detach when it closes. Attaching replays pending reports. */
   attach(server: NodeServer): () => void;
 }
@@ -209,10 +211,9 @@ export function startNode(): Node {
   /**
    * Provision invariant: idempotency comes from ordering, not one transaction. (1) The binding and
    * task snapshot are stored (an equal binding is a no-op, a different one rejects); (2) unless the
-   * main lane already exists, Pi creates it with the provisioned model through its storage adapter;
-   * (3) the caller records the admission receipt last. A crash before the receipt leaves no receipt,
-   * so the server replays the same command, and each step converges: the binding matches, the lane
-   * exists (no second write). A model the node's registry does not know is rejected before step 1,
+   * main lane already exists, Pi creates it with the provisioned model through its storage adapter.
+   * There is no receipt: a replay (after a crash between the steps, a lost reply, or success) runs
+   * again, and each step converges: the binding matches, the lane exists (no second write). A model the node's registry does not know is rejected before step 1,
    * so a rejection leaves nothing behind. Returns a rejection, or null once the session is provisioned.
    */
   const provision = (sessionId: string, binding: NodeSessionBinding, configuration: SessionConfiguration) => serialized(sessionId, async (): Promise<NodeRejection | null> => {
@@ -246,11 +247,9 @@ export function startNode(): Node {
         return rejected ? { ok: false, error: rejected } : { ok: true, value: { kind: "hydrated" } };
       });
     },
-    release(sessionId, binding, commandId) {
+    release(sessionId, binding) {
       if (!running) throw new Error("Node stopped");
       return serialized(sessionId, async (): Promise<NodeResult> => {
-        const done = releasedSnapshot(db, commandId, sessionId);
-        if (done) return { ok: true, value: { kind: "released", snapshot: done } };
         if (!nodeSessionBinding(db, sessionId)) return { ok: false, error: { code: "not_found", message: MISSING_SESSION_MESSAGE, retryable: false } };
         verify(sessionId, binding);
         const live = runtimes.get(sessionId);
@@ -260,7 +259,7 @@ export function startNode(): Node {
           await live.close();
         }
         await deliverNodeOutbox(db, sessionId, deliver).catch(() => undefined);
-        const released = await releaseNodeSession(db, relocationServer, sessionId, commandId);
+        const released = await releaseNodeSession(db, relocationServer, sessionId);
         if ("code" in released) return { ok: false, error: released };
         eventSeqs.delete(sessionId);
         return { ok: true, value: { kind: "released", snapshot: released.snapshot } };
@@ -292,20 +291,12 @@ export function startNode(): Node {
         if (index >= 0) servers.splice(index, 1);
       };
     },
-    async send(input: NodeCommand, binding: NodeSessionBinding, commandId?: string): Promise<NodeResult> {
+    async send(input: NodeCommand, binding: NodeSessionBinding): Promise<NodeResult> {
       if (!running) throw new Error("Node stopped");
-      const payload = JSON.stringify(input);
-      const receipt = commandId ? nodeAdmissionReceipt(db, commandId) : null;
-      if (receipt && (receipt.sessionId !== input.sessionId || receipt.operation !== input.op || receipt.payload !== payload)) {
-        throw new Error(`Node admission receipt mismatch: ${commandId}`);
-      }
       if (input.op === "session.provision") {
         if (input.sourceId !== binding.sourceId) throw new Error(`Node source mismatch: ${input.sessionId}`);
-        if (!receipt) {
-          const rejected = await provision(input.sessionId, binding, input.configuration);
-          if (rejected) return { ok: false, error: rejected };
-          if (commandId) recordNodeAdmission(db, commandId, input.sessionId, input.op, payload, () => {});
-        }
+        const rejected = await provision(input.sessionId, binding, input.configuration);
+        if (rejected) return { ok: false, error: rejected };
         verify(input.sessionId, binding);
         // Replication unavailability does not invalidate the durable local admission.
         await deliverNodeOutbox(db, input.sessionId, deliver).catch(() => undefined);
@@ -318,12 +309,6 @@ export function startNode(): Node {
         code: "not_found", message: MISSING_SESSION_MESSAGE, retryable: false,
       } };
       verify(input.sessionId, binding);
-      if (receipt) {
-        // A positive receipt is safe to query; an absent receipt is NOT proof that Pi did not admit.
-        if (input.op === "session.prompt" || input.op === "session.steer") return { ok: true, value: { kind: "admitted", inputId: input.clientId } };
-        if (input.op === "session.setModel") return { ok: true, value: { kind: "modelSet" } };
-        throw new Error(`Unsupported node admission receipt: ${input.op}`);
-      }
       if (input.op === "session.setModel") {
         const model = { provider: input.provider, modelId: input.modelId, thinkingLevel: input.thinkingLevel ?? null };
         try {
@@ -335,8 +320,7 @@ export function startNode(): Node {
           if (error instanceof NodeModelNotFoundError) return { ok: false, error: { code: "invalid_request", message: error.message, retryable: false } };
           throw error;
         }
-        // Like prompt/steer, the receipt follows Pi's lane write non-atomically.
-        if (commandId) recordNodeAdmission(db, commandId, input.sessionId, input.op, payload, () => {});
+        // The selection is absolute: a replay applies the same value again.
         return { ok: true, value: { kind: "modelSet" } };
       }
       if (input.op === "session.prompt" || input.op === "session.steer") {
@@ -364,9 +348,7 @@ export function startNode(): Node {
           const options = { reinsId: input.clientId, ...(input.sourceSessionId ? { metadata: { sourceSessionId: input.sourceSessionId } } : {}) };
           if (input.op === "session.prompt") await ready.prompt(input.content, options);
           else await ready.steer(input.content, options);
-          // Pi admission and this insert are separate transactions. Never infer non-admission
-          // from a missing receipt after an interrupted send; server unknown remains fenced.
-          if (commandId) recordNodeAdmission(db, commandId, input.sessionId, input.op, payload, () => {});
+          // A replay is recognized by Pi's durable reinsId (`findAdmitted`) and answered, not re-admitted.
           return { ok: true, value: { kind: "admitted", inputId: input.clientId } };
         }
         case "session.resumePending":

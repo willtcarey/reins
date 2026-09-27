@@ -81,9 +81,9 @@ test("a node process client on the local Unix socket negotiates, provisions and 
   // Reconnect after 300–600ms so the dropped run finishes while the node is offline.
   const client = connectLocalNode(node, { path: listener.path, backoff: { initialMs: 600, maxMs: 600 } });
   const target = executionTargetFor(state, { id: "s", storage_owner: "internal-node" });
-  const settled = () => db.query<{ n: number }, []>("SELECT COUNT(*) n FROM node_lifecycle_receipts WHERE session_id = 's' AND kind = 'settled'").get()!.n;
+  const settled = () => db.query<{ n: number }, []>("SELECT COALESCE(MAX(settlement_count), 0) n FROM node_session_watermarks WHERE session_id = 's'").get()!.n;
   const replica = () => JSON.stringify(db.query("SELECT message_json FROM session_messages WHERE session_id = 's'").all());
-  /** Submitted work is requeued while no connection is negotiated; a replay converges on the node's receipt. */
+  /** Submitted work is requeued while no connection is negotiated; a replay converges on the node's state. */
   const deliver = async (command: NodeCommand, commandId: string) => {
     for (let i = 0; ; i++) {
       try { return await target.send(command, commandId); }

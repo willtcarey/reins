@@ -74,7 +74,7 @@ test("installed legacy target admits provision without opening a runtime", withD
     });
 }));
 
-test("dispatcher delivers provision, prompt and steer for both owners through their targets with outbox receipts", withDb(async (projectId, sourceId) => {
+test("dispatcher delivers provision, prompt and steer for both owners through their targets with outbox command IDs", withDb(async (projectId, sourceId) => {
   for (const [id, storageOwner] of [["node", "internal-node"], ["legacy", "server"]] as const) {
     scheduleWork(`${id}-provision`, { op: "session.provision", sessionId: id, sourceId, configuration: { model: null, thinkingLevel: null, task: null } }, () =>
       createSession(id, projectId, { agentRuntimeType: "pi", sourceId, storageOwner }));
@@ -93,7 +93,7 @@ test("dispatcher delivers provision, prompt and steer for both owners through th
   expect(delivered(node.sent)).toEqual([["session.provision", "node-provision"], ["session.prompt", ids[0]], ["session.steer", ids[1]]]);
   expect(delivered(server.sent)).toEqual([["session.provision", "legacy-provision"], ["session.prompt", ids[2]], ["session.steer", ids[3]]]);
 
-  // Immediate controls resolve the same target after admission, without an outbox receipt.
+  // Immediate controls resolve the same target after admission, without an outbox command ID.
   await executeSessionCommand(state, "node", "abort");
   await executeSessionCommand(state, "legacy", "resumePending");
   expect(node.sent.at(-1)).toEqual([{ op: "session.abort", sessionId: "node" }, undefined]);

@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bindNodeSession, initializeNodeStorage, nodeAdmissionReceipt, nodeSessionBinding, nodeSessionTask, provisionNodeSession } from "./storage.js";
+import { bindNodeSession, initializeNodeStorage, nodeSessionBinding, nodeSessionTask, provisionNodeSession } from "./storage.js";
 import { hydrateCachedPrompt } from "./runtime/attachments.js";
 
 const binding = { sourceId: 7, cwd: "/tmp/node", createdAt: "2026-04-01", parentSessionId: null };
@@ -35,10 +35,10 @@ const versionOne = `
   CREATE TABLE admission_receipts (command_id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
     operation TEXT NOT NULL, payload TEXT NOT NULL);`;
 
-test("fresh node storage initializes bindings, task snapshots, canonical state, receipts and attachments", () => {
+test("fresh node storage initializes bindings, task snapshots, canonical state and attachments, without admission receipts", () => {
   const db = new Database(":memory:");
   initializeNodeStorage(db);
-  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task", "005_attachment_uploads", "006_node_attachment_content"]);
+  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task", "005_attachment_uploads", "006_node_attachment_content", "007_drop_admission_receipts"]);
   const task = { title: "T", description: null, branchName: "task/t" };
   provisionNodeSession(db, "t", binding, task);
   expect(nodeSessionTask(db, "t")).toEqual(task);
@@ -51,7 +51,6 @@ test("fresh node storage initializes bindings, task snapshots, canonical state, 
   db.query(`INSERT INTO pi_lists VALUES ('s','inbox','items',2,'{"id":1}')`).run();
   db.query(`INSERT INTO pi_usage VALUES ('s','usage',2,'root',0,'{"input":1}',NULL)`).run();
   db.query(`INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES ('s','committed',1,'["write"]')`).run();
-  db.query(`INSERT INTO admission_receipts VALUES ('command','s','provision','payload')`).run();
   db.query(`INSERT INTO node_attachments VALUES ('s','img','image/png',1,'sha',NULL,NULL,NULL,x'00')`).run();
   initializeNodeStorage(db);
   expect(nodeSessionBinding(db, "s")).toEqual(binding);
@@ -62,13 +61,13 @@ test("fresh node storage initializes bindings, task snapshots, canonical state, 
   expect(db.query("SELECT value_json FROM pi_lists").get()).toEqual({ value_json: '{"id":1}' });
   expect(db.query("SELECT usage_json FROM pi_usage").get()).toEqual({ usage_json: '{"input":1}' });
   expect(db.query("SELECT payload FROM session_outbox").get()).toEqual({ payload: '["write"]' });
-  expect(nodeAdmissionReceipt(db, "command")?.payload).toBe("payload");
+  expect(db.query("SELECT name FROM sqlite_master WHERE name = 'admission_receipts'").get()).toBeNull();
   expect(hydrateCachedPrompt(db, "s", [{ type: "image", attachmentId: "img", mimeType: "image/png", byteSize: 1, sha256: "sha" }]))
     .toEqual([{ type: "image", data: "AA==", mimeType: "image/png" }]);
   db.close();
 });
 
-test("versioned node migrations add attachments and move pending commits into the ordered outbox without changing canonical records", () => {
+test("versioned node migrations add attachments, move pending commits into the ordered outbox and drop admission receipts without changing canonical records", () => {
   const dir = mkdtempSync(join(tmpdir(), "reins-node-migration-"));
   try {
     const path = join(dir, "storage.db");
@@ -83,11 +82,12 @@ test("versioned node migrations add attachments and move pending commits into th
     upgraded.close();
     const reopened = new Database(path);
     initializeNodeStorage(reopened);
-    expect(applied(reopened)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task", "005_attachment_uploads", "006_node_attachment_content"]);
+    expect(applied(reopened)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task", "005_attachment_uploads", "006_node_attachment_content", "007_drop_admission_receipts"]);
     expect(nodeSessionBinding(reopened, "s")).toEqual(binding);
     expect(nodeSessionTask(reopened, "s")).toBeNull();
     expect(reopened.query("SELECT harness_next_seq FROM sessions WHERE id='s'").get()).toEqual({ harness_next_seq: 4 });
-    expect(nodeAdmissionReceipt(reopened, "command")?.payload).toBe("payload");
+    // Commands converge on their own state: the receipts are dropped with the table.
+    expect(reopened.query("SELECT name FROM sqlite_master WHERE name = 'admission_receipts'").get()).toBeNull();
     expect(reopened.query("SELECT kind, start_seq, payload, ready FROM session_outbox ORDER BY id").all()).toEqual([
       { kind: "committed", start_seq: 1, payload: '["write"]', ready: 1 },
       { kind: "committed", start_seq: 2, payload: '["second"]', ready: 1 },
@@ -105,7 +105,7 @@ test("004_session_task adds a nullable, JSON-checked task snapshot to existing s
   db.exec("ALTER TABLE sessions DROP COLUMN task_json; DELETE FROM migrations WHERE name = '004_session_task'");
   db.query("INSERT INTO sessions VALUES ('s',7,'/tmp/node','2026-04-01',NULL,4)").run();
   initializeNodeStorage(db);
-  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task", "005_attachment_uploads", "006_node_attachment_content"]);
+  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task", "005_attachment_uploads", "006_node_attachment_content", "007_drop_admission_receipts"]);
   expect(nodeSessionBinding(db, "s")).toEqual(binding);
   expect(nodeSessionTask(db, "s")).toBeNull();
   expect(db.query("SELECT harness_next_seq FROM sessions WHERE id='s'").get()).toEqual({ harness_next_seq: 4 });
@@ -176,7 +176,7 @@ test("migration ledger, not reconstructed schema text, determines what runs", ()
   const db = new Database(":memory:");
   db.exec(versionOne + ledger + " CREATE TABLE unrelated_local_table (id INTEGER PRIMARY KEY)");
   initializeNodeStorage(db);
-  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task", "005_attachment_uploads", "006_node_attachment_content"]);
+  expect(applied(db)).toEqual(["001_canonical_node_storage", "002_node_attachments", "003_session_outbox", "004_session_task", "005_attachment_uploads", "006_node_attachment_content", "007_drop_admission_receipts"]);
   expect(db.query("SELECT name FROM sqlite_master WHERE name='unrelated_local_table'").get())
     .toEqual({ name: "unrelated_local_table" });
   db.close();

@@ -84,28 +84,6 @@ export function nodeSessionBinding(db: Database, sessionId: string): NodeSession
   return row ? { sourceId: row.source_id, cwd: row.cwd, createdAt: row.created_at, parentSessionId: row.parent_session_id } : null;
 }
 
-export interface NodeAdmissionReceipt { sessionId: string; operation: string; payload: string }
-export function nodeAdmissionReceipt(db: Database, commandId: string): NodeAdmissionReceipt | null {
-  const row = db.query<{ session_id: string; operation: string; payload: string }, [string]>(
-    "SELECT session_id, operation, payload FROM admission_receipts WHERE command_id = ?",
-  ).get(commandId);
-  return row ? { sessionId: row.session_id, operation: row.operation, payload: row.payload } : null;
-}
-
-/** Caller controls the admission action. Atomicity is guaranteed only if it writes on this same SQLite connection synchronously. */
-export function recordNodeAdmission(db: Database, commandId: string, sessionId: string, operation: string, payload: string, admit: () => void): void {
-  db.transaction(() => {
-    const prior = nodeAdmissionReceipt(db, commandId);
-    if (prior) {
-      if (prior.sessionId !== sessionId || prior.operation !== operation || prior.payload !== payload) throw new Error(`Node admission receipt mismatch: ${commandId}`);
-      return;
-    }
-    admit();
-    db.query("INSERT INTO admission_receipts(command_id,session_id,operation,payload) VALUES(?,?,?,?)")
-      .run(commandId, sessionId, operation, payload);
-  })();
-}
-
 export function pendingOutboxSessions(db: Database): string[] {
   return db.query<{ session_id: string }, []>("SELECT DISTINCT session_id FROM session_outbox").all().map(row => row.session_id);
 }

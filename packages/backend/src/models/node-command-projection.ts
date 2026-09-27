@@ -25,7 +25,7 @@ export function scheduleWork(id: string, command: NodeCommand, create: () => voi
   if (deliveryPolicy(parsed) !== "submit-work" || parsed.op !== "session.provision") throw new Error("Only provision commands may be scheduled");
   const { sessionId, sourceId: _sourceId, ...stored } = parsed;
   // The session row supplies sessionId/sourceId on read; the stored configuration is the frozen payload
-  // every (re)delivery sends, so replays match the node's receipt byte-for-byte.
+  // every (re)delivery sends, so a replay carries the same configuration.
   insertCommandWithSession(id, sessionId, JSON.stringify(stored), create);
   return getWork(id)!;
 }

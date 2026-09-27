@@ -1,12 +1,21 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runMigrations } from "../migrations.js";
+import { resetDb, setDb } from "../db.js";
+import { getSession } from "../session-store.js";
+import { nodeSessionReports } from "../runtimes/node-session-events.js";
+import { dispatcherFor } from "../models/node-command-dispatcher.js";
+import { createServerState } from "./helpers/server-state.js";
 import { BACKGROUND_CONTEXT, setValue, value, appendList, list } from "@earendil-works/pi-agent-core";
 import { insertEntry, insertUsage } from "@earendil-works/pi-agent-core/harness/session";
 import { getDb } from "../db.js";
 import { createProject } from "../project-store.js";
 import { createSession } from "./session-fixture.js";
 import { setupTestDb, teardownTestDb } from "./helpers/test-db.js";
-import { applyNodeReplica } from "../node-replica.js";
+import { applyNodeReplica, latestNodeSettlement } from "../node-replica.js";
 import { openNodeStorage, deliverNodeOutbox, bindNodeSession, initializeNodeStorage, type NodeOutboxItem } from "@reins/node/storage";
 import { PiStorageAdapter } from "../runtimes/pi/storage-adapter.js";
 
@@ -73,4 +82,108 @@ test("failed replica delivery leaves a durable batch and replay acknowledges it 
     expect(server.query<{ count: number }, []>("SELECT COUNT(*) count FROM session_messages").get()?.count).toBe(1);
     await storage.close(BACKGROUND_CONTEXT);
   } finally { node.close(); teardownTestDb(); }
+});
+
+/** A file-backed server database, so a test can restart the server: a fresh connection with no memory. */
+function serverDatabase() {
+  const dir = mkdtempSync(join(tmpdir(), "reins-server-restart-"));
+  const path = join(dir, "reins.db");
+  const open = () => {
+    const db = new Database(path);
+    db.exec("PRAGMA foreign_keys = ON");
+    runMigrations(db);
+    setDb(db);
+    return db;
+  };
+  let db = open();
+  return {
+    get db() { return db; },
+    restart() { resetDb(); db.close(); db = open(); return db; },
+    dispose() { resetDb(); db.close(); rmSync(dir, { recursive: true, force: true }); },
+  };
+}
+
+test("replica batches are applied by sequence watermark: after a server restart, replays are acknowledged without applying, a gap is rejected and a divergent replay of the last batch is detected", async () => {
+  const server = serverDatabase();
+  const node = new Database(":memory:");
+  initializeNodeStorage(node);
+  try {
+    const project = createProject("Watermark", "/tmp/watermark");
+    createSession("n", project.id, { agentRuntimeType: "pi" });
+    bindNodeSession(node, "n", { sourceId: 1, cwd: "/tmp/watermark", createdAt: "2026-01-01", parentSessionId: null });
+    // The node's batches, as its outbox delivers them (not applied yet).
+    const batches: Array<{ startSeq: number; payload: string }> = [];
+    const storage = await openNodeStorage(node, "n", (_id, item) => { if (item.kind === "committed") batches.push(item); }, () => 42);
+    await storage.commit([insertEntry({ id: "a1", parentId: null, type: "custom", customType: "note" }), insertEntry({ id: "a2", parentId: "a1", type: "custom", customType: "note" })], BACKGROUND_CONTEXT);
+    await storage.commit([insertEntry({ id: "b", parentId: "a2", type: "custom", customType: "note" })], BACKGROUND_CONTEXT);
+    await storage.commit([insertEntry({ id: "c", parentId: "b", type: "custom", customType: "note" })], BACKGROUND_CONTEXT);
+    await storage.commit([insertEntry({ id: "d", parentId: "c", type: "custom", customType: "note" })], BACKGROUND_CONTEXT);
+    await storage.close(BACKGROUND_CONTEXT);
+    expect(batches.map(batch => batch.startSeq)).toEqual([1, 3, 4, 5]);
+    const [a, b, c, d] = [0, 1, 2, 3].map(index => batches[index]!);
+    applyNodeReplica(server.db, "n", a.startSeq, a.payload);
+    applyNodeReplica(server.db, "n", b.startSeq, b.payload);
+
+    const db = server.restart();
+    const replica = () => ({
+      rows: db.query("SELECT seq, harness_id FROM session_messages WHERE session_id = 'n' ORDER BY seq").all(),
+      next: db.query("SELECT harness_next_seq FROM sessions WHERE id = 'n'").get(),
+    });
+    const applied = replica();
+    expect(applied).toEqual({ rows: [{ seq: 1, harness_id: "a1" }, { seq: 2, harness_id: "a2" }, { seq: 3, harness_id: "b" }], next: { harness_next_seq: 4 } });
+    // Replays below the watermark (the last batch, compared by hash, and an older one) apply nothing.
+    applyNodeReplica(db, "n", b.startSeq, b.payload);
+    applyNodeReplica(db, "n", a.startSeq, a.payload);
+    expect(replica()).toEqual(applied);
+    // A different string for the last batch is divergence.
+    expect(() => applyNodeReplica(db, "n", b.startSeq, JSON.stringify(JSON.parse(b.payload), null, 2))).toThrow("Replica divergence: n");
+    // A batch past the watermark is a gap: rejected, so it stays pending on the node.
+    expect(() => applyNodeReplica(db, "n", d.startSeq, d.payload)).toThrow("Replica gap: n expects seq 4, got 5");
+    // A batch straddling the watermark cannot come from the node's history.
+    const straddling = JSON.stringify([...JSON.parse(b.payload), ...JSON.parse(c.payload)]);
+    expect(() => applyNodeReplica(db, "n", b.startSeq, straddling)).toThrow("Replica divergence: n batch at 3 overlaps seq 4");
+    expect(replica()).toEqual(applied);
+    // Continuing at the watermark applies in order.
+    applyNodeReplica(db, "n", c.startSeq, c.payload);
+    applyNodeReplica(db, "n", d.startSeq, d.payload);
+    expect(replica().next).toEqual({ harness_next_seq: 6 });
+  } finally { node.close(); server.dispose(); }
+});
+
+test("a replayed lifecycle report after a server restart applies nothing: no second parent steer or state change; a divergent payload is rejected", () => {
+  const server = serverDatabase();
+  let state = createServerState(undefined, { loopbackNode: false });
+  try {
+    const project = createProject("Lifecycle restart", "/tmp/lifecycle-restart");
+    createSession("parent", project.id, { agentRuntimeType: "pi" });
+    createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent", storageOwner: "internal-node" });
+    const steers = () => server.db.query<{ n: number }, []>("SELECT COUNT(*) n FROM node_command_outbox WHERE session_id = 'parent' AND json_extract(command_json, '$.op') = 'session.steer'").get()!.n;
+    const settled = { sessionId: "child", runId: "r1", status: "completed" as const, metadata: { model: null, thinkingLevel: null },
+      reply: { text: "Done", stopReason: "stop", errorMessage: null } };
+    nodeSessionReports(state).started({ sessionId: "child", runId: "r1" });
+    expect(getSession("child")?.activity_state).toBe("running");
+    nodeSessionReports(state).settled(settled);
+    expect(steers()).toBe(1);
+    expect(getSession("child")?.activity_state).toBeNull();
+    expect(latestNodeSettlement(server.db, "child")).toEqual({ seq: 1, status: "completed" });
+
+    // The acknowledgement was lost and the server restarted: the node replays the settlement.
+    dispatcherFor(state).stop();
+    server.restart();
+    state = createServerState(undefined, { loopbackNode: false });
+    const updated = getSession("child")!.updated_at;
+    nodeSessionReports(state).settled(settled);
+    // Pi re-reports `started` for a run that already settled (a resumed run): also already applied.
+    nodeSessionReports(state).started({ sessionId: "child", runId: "r1" });
+    expect(steers()).toBe(1);
+    expect(getSession("child")).toMatchObject({ activity_state: null, updated_at: updated });
+    expect(latestNodeSettlement(server.db, "child")).toEqual({ seq: 1, status: "completed" });
+    // The same report with a different payload is divergence: rejected with no effects.
+    expect(() => nodeSessionReports(state).settled({ ...settled, status: "failed", error: { message: "rewritten" } })).toThrow("Lifecycle divergence: child settled r1");
+    expect(steers()).toBe(1);
+    expect(latestNodeSettlement(server.db, "child")).toEqual({ seq: 1, status: "completed" });
+    // The next run applies.
+    nodeSessionReports(state).started({ sessionId: "child", runId: "r2" });
+    expect(getSession("child")?.activity_state).toBe("running");
+  } finally { dispatcherFor(state).stop(); server.dispose(); }
 });

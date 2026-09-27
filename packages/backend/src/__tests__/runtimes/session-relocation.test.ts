@@ -49,7 +49,7 @@ const laneValue = (db: Database, sessionId: string) => {
   return row ? JSON.parse(row.value_json) : null;
 };
 const settledRuns = (sessionId: string) => getDb().query<{ n: number }, [string]>(
-  "SELECT COUNT(*) n FROM node_lifecycle_receipts WHERE session_id = ? AND kind = 'settled'").get(sessionId)!.n;
+  "SELECT COALESCE(MAX(settlement_count), 0) n FROM node_session_watermarks WHERE session_id = ?").get(sessionId)!.n;
 async function until(condition: () => boolean, message = "condition"): Promise<void> {
   for (let i = 0; i < 600 && !condition(); i++) await Bun.sleep(5);
   if (!condition()) throw new Error(`Timed out waiting for ${message}`);
@@ -234,13 +234,14 @@ describe("session relocation", () => {
       await until(() => !!nodeDb.query("SELECT 1 FROM sessions WHERE id = 'legacy'").get(), "the node to finish hydrating");
       expect(getSession("legacy")?.storage_owner).toBe("server");
 
-      // The replay finds the identical copy and is acknowledged at once; the owner flips once.
+      // The node process restarts before the replay, which finds the identical copy by content and is
+      // acknowledged at once; the owner flips once.
+      node.restart();
       await dispatcher.drain();
       expect(getCommand(id)?.state).toBe("admitted");
       expect(pages).toBe(2);
       expect(getSession("legacy")?.storage_owner).toBe("internal-node");
       expect(samePiSnapshot(piSnapshotSummary(nodeDb, "legacy"), summary)).toBe(true);
-      expect(nodeDb.query("SELECT operation FROM admission_receipts WHERE session_id = 'legacy'").all()).toEqual([{ operation: "session.hydrate" }]);
     } finally { node.stop(); }
   }, 20_000);
 
@@ -270,7 +271,12 @@ describe("session relocation", () => {
   }, 20_000);
 
   test("release: a node-owned session is handed back complete, its node copy dropped, and its next use hydrates it again", async () => {
-    const node = wrappableNode(state);
+    let slowSnapshot = false;
+    // A slow server snapshot makes a release outlast its call, so its acknowledgement is lost.
+    const node = wrappableNode(state, handlers => ({ ...handlers, snapshot: async (sessionId, fromSeq) => {
+      if (slowSnapshot) { slowSnapshot = false; await Bun.sleep(30); }
+      return handlers.snapshot(sessionId, fromSeq);
+    } }));
     try {
       const project = createProject("Release", dir);
       responses.push(fauxAssistantMessage("First on the node"));
@@ -284,15 +290,24 @@ describe("session relocation", () => {
       const before = entries(getDb(), id);
 
       expect(requestSessionMove(id, null)).toEqual({ state: "releasing", nodeId: "internal" });
+      // The node releases, but its acknowledgement is lost (the call times out) and the node process
+      // restarts before the replay: the node keeps nothing for the session, answers `not_found`, and the
+      // server takes that as released with its own (matching) copy.
+      const releaseId = getDb().query<{ id: string }, [string]>("SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.release'").get(id)!.id;
+      slowSnapshot = true;
+      const hasty = internalNodeExecutionTarget(state, { ...NODE_COMMAND_TIMEOUTS, release: 5 });
+      await expect(hasty.send(getWork(releaseId)!.command!, releaseId)).rejects.toBeInstanceOf(DeliveryDeferred);
+      await until(() => !nodeDb.query("SELECT 1 FROM sessions WHERE id = ?").get(id), "the node to drop its copy");
+      expect(getSession(id)?.storage_owner).toBe("internal-node");
+      node.restart();
       await dispatcher.drain();
       expect(moves(id)).toEqual([{ op: "session.release", state: "admitted" }]);
       expect(getSession(id)?.storage_owner).toBe("server");
-      // The server's copy is complete; the node holds nothing for the session but the release receipt.
+      // The server's copy is complete; the node holds nothing for the session.
       expect(samePiSnapshot(piSnapshotSummary(getDb(), id), nodeCopy)).toBe(true);
       for (const table of ["sessions", "session_messages", "pi_values", "pi_lists", "pi_usage", "node_attachments", "session_outbox"]) {
         expect(nodeDb.query(`SELECT COUNT(*) n FROM ${table} WHERE ${table === "sessions" ? "id" : "session_id"} = ?`).get(id)).toEqual({ n: 0 });
       }
-      expect(nodeDb.query("SELECT operation FROM admission_receipts WHERE session_id = ?").all(id)).toEqual([{ operation: "session.release" }]);
 
       // Fencing: the node no longer owns the session, so a stale report from it is rejected.
       const handlers = internalNodeServer(state);

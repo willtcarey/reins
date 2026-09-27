@@ -57,8 +57,8 @@ export interface RunSettlementFacts {
   /** Set when a child's reply could not be read: the parent receives no report and the child is marked finished. */
   replyError?: unknown;
 }
-/** Records a node lifecycle receipt inside the effect's transaction; false means an already applied replay. */
-export type LifecycleReceipt = () => boolean;
+/** Advances the node lifecycle watermark inside the effect's transaction; false means an already applied replay. */
+export type LifecycleWatermark = () => boolean;
 
 export function transcriptResult(
   sessionId: string,
@@ -207,10 +207,10 @@ export class SessionInstance implements RuntimeLifecycleSink {
     );
   }
 
-  /** Marks the session running. With a node `receipt`, applies at most once and atomically with it; errors propagate. */
-  startedWith(receipt?: LifecycleReceipt): void {
+  /** Marks the session running. With a node `watermark`, applies at most once and atomically with it; errors propagate. */
+  startedWith(watermark?: LifecycleWatermark): void {
     const applied = getDb().transaction(() => {
-      if (receipt && !receipt()) return false;
+      if (watermark && !watermark()) return false;
       updateActivityState(this.sessionId, "running");
       return true;
     })();
@@ -220,14 +220,14 @@ export class SessionInstance implements RuntimeLifecycleSink {
   /**
    * Shared by in-process runtimes and node `session.settled` reports. Persists runtime metadata,
    * enqueues a child's report to its parent and updates activity in one transaction, together with a
-   * node `receipt` when given, so a replayed report can neither re-steer the parent nor re-flip state.
+   * node lifecycle `watermark` when given, so a replayed report can neither re-steer the parent nor re-flip state.
    * A reply-read failure or an unreachable parent is logged and leaves the child `finished` without a
-   * misleading report. Errors outside those effects (e.g. receipt divergence) propagate.
+   * misleading report. Errors outside those effects (e.g. lifecycle divergence) propagate.
    */
-  settledWith(outcome: RuntimeRunOutcome, facts: RunSettlementFacts, receipt?: LifecycleReceipt): void {
+  settledWith(outcome: RuntimeRunOutcome, facts: RunSettlementFacts, watermark?: LifecycleWatermark): void {
     let enqueued = false;
     const applied = getDb().transaction(() => {
-      if (receipt && !receipt()) return false;
+      if (watermark && !watermark()) return false;
       this.persistRuntimeMetadata(facts.metadata);
       const session = this.session(this.sessionId);
       let activityState: SessionRow["activity_state"] = "finished";
@@ -310,7 +310,7 @@ export class SessionInstance implements RuntimeLifecycleSink {
 
   /**
    * Node-owned sessions settle durably: this reads only server projections (provision work, the
-   * command outbox, `activity_state` from `session.started`/`session.settled`, the lifecycle receipts
+   * command outbox, `activity_state` from `session.started`/`session.settled`, the latest settlement
    * and the replica transcript), polling every 10ms. It resolves once no observed input is still
    * queued or being delivered, the session is not running, and every input the node admitted during
    * the wait is covered by a settlement newer than the wait's start (closing the gap between the

@@ -71,7 +71,8 @@ test("internal node fetches attachments only for sessions it owns or would host,
     nodeDb.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('legacy','committed',1,'[]')").run();
     await node.send({ op: "session.provision", sessionId: "legacy", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }, provisionForSession("legacy").binding);
     expect(nodeDb.query("SELECT COUNT(*) n FROM session_outbox").get()).toEqual({ n: 1 });
-    expect(db.query("SELECT COUNT(*) n FROM node_replica_receipts").get()).toEqual({ n: 0 });
+    expect(db.query("SELECT harness_next_seq FROM sessions WHERE id = 'legacy'").get()).toEqual({ harness_next_seq: 1 });
+    expect(db.query("SELECT COUNT(*) n FROM node_session_watermarks").get()).toEqual({ n: 0 });
   } finally { stopInternalNode(state); setNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); }
 });
 
@@ -96,7 +97,9 @@ test("internal link delivers committed batches larger than a 1 MiB frame byte-fo
 
     await provision(); // delivery attempt over the live link
     expect(nodeDb.query("SELECT COUNT(*) n FROM session_outbox").get()).toEqual({ n: 0 });
-    expect(db.query("SELECT writes_json FROM node_replica_receipts WHERE session_id = 'owned'").get()).toEqual({ writes_json: exact });
+    // The watermark remembers the applied batch's start and the hash of its exact bytes.
+    expect(db.query("SELECT commit_start_seq, commit_sha256 FROM node_session_watermarks WHERE session_id = 'owned'").get())
+      .toEqual({ commit_start_seq: 1, commit_sha256: createHash("sha256").update(exact).digest("hex") });
   } finally { stopInternalNode(state); setNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); }
 });
 
@@ -137,7 +140,7 @@ test("node session events reach browsers and durable lifecycle reports drive act
     for (let i = 0; i < 100 && getSession("child")?.activity_state !== null; i++) await Bun.sleep(5);
     expect(getSession("child")).toMatchObject({ activity_state: null, model_provider: provider.provider.id, model_id: "fake", thinking_level: "off" });
     for (let i = 0; i < 100 && db.query("SELECT 1 FROM node_command_outbox").get(); i++) await Bun.sleep(5);
-    expect(db.query("SELECT kind FROM node_lifecycle_receipts WHERE session_id = 'child' ORDER BY kind").all()).toEqual([{ kind: "settled" }, { kind: "started" }]);
+    expect(db.query("SELECT report_kind, settlement_count FROM node_session_watermarks WHERE session_id = 'child'").get()).toEqual({ report_kind: "settled", settlement_count: 1 });
     expect(nodeDb.query("SELECT COUNT(*) n FROM session_outbox").get()).toEqual({ n: 0 });
     expect(parentInputs()).toHaveLength(1);
     await nodeRuntimesForTesting(node).close("child");

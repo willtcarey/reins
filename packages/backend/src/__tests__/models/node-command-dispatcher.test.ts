@@ -3,7 +3,7 @@ import type { NodeCommand, NodeResult } from "@reins/node/contract";
 import { Database } from "bun:sqlite";
 import { runMigrations } from "../../migrations.js";
 import { setDb } from "../../db.js";
-import { setNodeDb, closeNodeDb, initializeNodeStorage, nodeAdmissionReceipt, nodeSessionBinding } from "@reins/node/storage";
+import { setNodeDb, closeNodeDb, initializeNodeStorage, nodeSessionBinding } from "@reins/node/storage";
 import { createProject } from "../../project-store.js";
 import { internalSource, createSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
@@ -46,8 +46,7 @@ test("normal session creation dispatches through the durable outbox", async () =
     await dispatcher.drain();
     expect(getWork(row!.id)?.state).toBe("admitted");
     expect(getWork(row!.id)?.command?.op).toBe("session.provision");
-    // The node rebuilds the wire command in the stored command's shape: its receipt is the same bytes.
-    expect(nodeAdmissionReceipt(nodeDb, row!.id)).toEqual({ sessionId: created.id, operation: "session.provision", payload: JSON.stringify(getWork(row!.id)!.command) });
+    expect(nodeSessionBinding(nodeDb, created.id)).toEqual(provisionForSession(created.id).binding);
     expect(getWork(row!.id)?.command).toMatchObject({ configuration: { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } } });
     expect(state.sessions.has(created.id)).toBe(false);
   } finally { closeNodeDb(); setDb(new Database(":memory:")); db.close(); }
@@ -64,17 +63,17 @@ const nodeOwned = () => {
   return { db, nodeDb, state, dispose: () => { stopInternalNode(state); closeNodeDb(); setDb(new Database(":memory:")); db.close(); } };
 };
 
-test("node-owned provision crosses the JSON-RPC wire and replays idempotently by command ID", async () => {
+test("node-owned provision crosses the JSON-RPC wire and replays idempotently by its binding", async () => {
   const { db, nodeDb, state, dispose } = nodeOwned();
   try {
     const { binding } = provisionForSession("s");
-    // Admitted on the node but the server never recorded it: replay must reuse the receipt.
+    // Admitted on the node but the server never recorded it: the replay finds the equal binding.
     await sendInternal(state, provisionOf("s"), binding, "p");
-    const receipt = nodeAdmissionReceipt(nodeDb, "p");
+    const stored = nodeDb.query("SELECT * FROM sessions").all();
     await new NodeCommandDispatcher(state).drain();
     expect(getWork("p")?.state).toBe("admitted");
     expect(nodeSessionBinding(nodeDb, "s")).toEqual(binding);
-    expect(nodeAdmissionReceipt(nodeDb, "p")).toEqual(receipt!);
+    expect(nodeDb.query("SELECT * FROM sessions").all()).toEqual(stored);
     expect(db.query("SELECT COUNT(*) AS n FROM node_command_outbox").get()).toEqual({ n: 1 });
     // A thrown node error crosses the wire as a non-retryable `internal` NodeResult.
     expect(await sendInternal(state, provisionOf("s"), { ...binding, cwd: "/elsewhere" }, "p"))
@@ -121,7 +120,7 @@ test("a closed or unnegotiated node connection requeues provision instead of fai
     stopInternalNode(state); // hot-reload uninstall closes the loopback before hello completes
     await unnegotiated;
     expect(getWork("p")?.state).toBe("queued");
-    expect(nodeAdmissionReceipt(nodeDb, "p")).toBeNull();
+    expect(nodeSessionBinding(nodeDb, "s")).toBeNull();
 
     await sendInternal(state, provisionOf("other"), provisionForSession("s").binding, "warm").catch(() => undefined);
     const negotiated = dispatcher.drain();
@@ -131,7 +130,7 @@ test("a closed or unnegotiated node connection requeues provision instead of fai
 
     await dispatcher.drain();
     expect(getWork("p")?.state).toBe("admitted");
-    expect(nodeAdmissionReceipt(nodeDb, "p")).toMatchObject({ sessionId: "s", operation: "session.provision" });
+    expect(nodeSessionBinding(nodeDb, "s")).toEqual(provisionForSession("s").binding);
   } finally { dispose(); }
 });
 

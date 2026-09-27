@@ -4,7 +4,7 @@
  * Stands in for the node behind both execution targets, for tests of the server logic above them
  * (session instances, scripting, WS admission) that need runs without a Pi runtime. It answers every
  * session command as a node would and reports runs through the server's real report services with
- * durable receipts (`session.started`/`session.settled`), writing each run's transcript into the
+ * durable reports (`session.started`/`session.settled`), writing each run's transcript into the
  * server's replica, so waits and activity read the same projections as with a real node. Moves are
  * acknowledged at once (hydrate) or with the server's own copy (release), so the outbox flips the owner
  * as it would. Each prompt (or steer on an idle session) starts a run the test finishes explicitly.

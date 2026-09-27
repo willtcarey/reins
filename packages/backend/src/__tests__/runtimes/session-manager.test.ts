@@ -266,7 +266,7 @@ describe("runtime sessions manager", () => {
     setApiKeyCredential(provider.provider.id, "test-key");
     const state = createServerState();
     const dispatcher = new NodeCommandDispatcher(state);
-    const settled = (sessionId: string) => getDb().query<{ n: number }, [string]>("SELECT COUNT(*) n FROM node_lifecycle_receipts WHERE session_id = ? AND kind = 'settled'").get(sessionId)!.n;
+    const settled = (sessionId: string) => getDb().query<{ n: number }, [string]>("SELECT COALESCE(MAX(settlement_count), 0) n FROM node_session_watermarks WHERE session_id = ?").get(sessionId)!.n;
     try {
       const project = createProject("Lost node storage", repo.dir);
       const created = createNewSession(state, project.id, repo.dir, { model: { provider: provider.provider.id, modelId: "fake" } });

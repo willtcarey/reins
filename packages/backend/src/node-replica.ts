@@ -1,48 +1,90 @@
 import type { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import type { CommittedWrite } from "@earendil-works/pi-agent-core";
 import { PiStorageAdapter } from "@reins/node/pi-storage";
 
-/** Apply node-committed writes to the server's readable replica, idempotently. */
+const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+
+interface Watermark {
+  commit_start_seq: number | null; commit_sha256: string | null;
+  report_run_id: string | null; report_kind: "started" | "settled" | null; report_sha256: string | null;
+  settlement_count: number; settlement_json: string | null;
+}
+function watermark(server: Database, sessionId: string): Watermark | null {
+  return server.query<Watermark, [string]>(`SELECT commit_start_seq, commit_sha256, report_run_id, report_kind, report_sha256,
+    settlement_count, settlement_json FROM node_session_watermarks WHERE session_id = ?`).get(sessionId);
+}
+function ensureWatermark(server: Database, sessionId: string): void {
+  server.query("INSERT INTO node_session_watermarks(session_id) VALUES(?) ON CONFLICT(session_id) DO NOTHING").run(sessionId);
+}
+
+/**
+ * Apply a node-committed batch to the server's readable replica, idempotently, by sequence watermark.
+ * A batch covers seqs `[startSeq, startSeq + writes.length)`; the node records batches contiguously
+ * from its `harness_next_seq`, so they never partially overlap. Against the server's `harness_next_seq`:
+ * `startSeq` equal applies it (and remembers its start and hash); greater is a gap and rejects (the
+ * batch stays pending on the node); smaller is a replay of an applied batch and is acknowledged
+ * without applying. A replay of the last applied batch is compared by hash (a different string is
+ * divergence and rejects); an older replay cannot be checked and is acknowledged. A batch that
+ * straddles the watermark cannot come from the node's own history and rejects as divergence.
+ */
 export function applyNodeReplica(server: Database, sessionId: string, startSeq: number, writesJson: string): void {
   server.transaction(() => {
-    const receipt = server.query<{ writes_json: string }, [string, number]>(
-      "SELECT writes_json FROM node_replica_receipts WHERE session_id = ? AND start_seq = ?",
-    ).get(sessionId, startSeq);
-    if (receipt) {
-      if (receipt.writes_json !== writesJson) throw new Error(`Replica divergence: ${sessionId}`);
+    const session = server.query<{ harness_next_seq: number }, [string]>("SELECT harness_next_seq FROM sessions WHERE id = ?").get(sessionId);
+    if (!session) throw new Error(`Unknown session: ${sessionId}`);
+    const next = session.harness_next_seq;
+    const writes: CommittedWrite[] = JSON.parse(writesJson);
+    if (!writes.length) throw new Error(`Empty replica batch: ${sessionId}@${startSeq}`);
+    if (startSeq > next) throw new Error(`Replica gap: ${sessionId} expects seq ${next}, got ${startSeq}`);
+    if (startSeq < next) {
+      if (startSeq + writes.length > next) throw new Error(`Replica divergence: ${sessionId} batch at ${startSeq} overlaps seq ${next}`);
+      const last = watermark(server, sessionId);
+      if (last?.commit_start_seq === startSeq && last.commit_sha256 !== sha256(writesJson)) throw new Error(`Replica divergence: ${sessionId}`);
       return;
     }
-    const writes: CommittedWrite[] = JSON.parse(writesJson);
     new PiStorageAdapter(server, sessionId).applyReplicaWrites(startSeq, writes);
-    server.query("INSERT INTO node_replica_receipts(session_id,start_seq,writes_json) VALUES(?,?,?)")
-      .run(sessionId, startSeq, writesJson);
+    ensureWatermark(server, sessionId);
+    server.query("UPDATE node_session_watermarks SET commit_start_seq = ?, commit_sha256 = ? WHERE session_id = ?")
+      .run(startSeq, sha256(writesJson), sessionId);
   })();
 }
 
-/** Records a node run lifecycle report inside the caller's transaction, so the receipt commits with
- * its effects. True the first time; false for an identical replay (apply nothing); a different
- * payload for the same (session, run, kind) is divergence and throws, leaving the report pending. */
+/**
+ * Records a node run lifecycle report inside the caller's transaction, so the watermark commits with
+ * its effects. The node delivers a session's reports in order and deletes each only after its
+ * acknowledgement, so the only report that can be replayed is the last one applied: the watermark is
+ * that report's `(runId, kind)` and payload hash. True means apply; false means an already applied
+ * report (apply nothing): the last report again, or a `started` for the run that last settled (Pi
+ * re-emits `started` for a resumed run). The same key with a different payload is divergence and
+ * throws, leaving the report pending. Settlements also count up and keep their outcome for waits.
+ */
 export function recordNodeLifecycle(server: Database, sessionId: string, runId: string, kind: "started" | "settled", payloadJson: string): boolean {
-  const receipt = server.query<{ payload_json: string }, [string, string, string]>(
-    "SELECT payload_json FROM node_lifecycle_receipts WHERE session_id = ? AND run_id = ? AND kind = ?",
-  ).get(sessionId, runId, kind);
-  if (receipt) {
-    if (receipt.payload_json !== payloadJson) throw new Error(`Lifecycle divergence: ${sessionId} ${kind} ${runId}`);
-    return false;
+  const last = watermark(server, sessionId);
+  const hash = sha256(payloadJson);
+  if (last?.report_run_id === runId) {
+    if (last.report_kind === kind) {
+      if (last.report_sha256 !== hash) throw new Error(`Lifecycle divergence: ${sessionId} ${kind} ${runId}`);
+      return false;
+    }
+    if (kind === "started") return false;
   }
-  server.query("INSERT INTO node_lifecycle_receipts(session_id,run_id,kind,payload_json) VALUES(?,?,?,?)")
-    .run(sessionId, runId, kind, payloadJson);
+  ensureWatermark(server, sessionId);
+  server.query("UPDATE node_session_watermarks SET report_run_id = ?, report_kind = ?, report_sha256 = ? WHERE session_id = ?")
+    .run(runId, kind, hash, sessionId);
+  if (kind === "settled") {
+    const { status, error }: Omit<NodeSettlement, "seq"> = JSON.parse(payloadJson);
+    server.query("UPDATE node_session_watermarks SET settlement_count = settlement_count + 1, settlement_json = ? WHERE session_id = ?")
+      .run(JSON.stringify({ status, ...(error ? { error } : {}) }), sessionId);
+  }
   return true;
 }
 
-/** The session's most recently applied node settlement: `seq` orders receipts (SQLite rowid), so a
- * caller can tell whether a settlement arrived after an earlier observation. */
+/** The session's most recently applied node settlement: `seq` counts applied settlements, so a caller
+ * can tell whether a settlement arrived after an earlier observation. */
 export function latestNodeSettlement(server: Database, sessionId: string): NodeSettlement | null {
-  const row = server.query<{ seq: number; payload_json: string }, [string]>(
-    "SELECT rowid AS seq, payload_json FROM node_lifecycle_receipts WHERE session_id = ? AND kind = 'settled' ORDER BY rowid DESC LIMIT 1",
-  ).get(sessionId);
-  if (!row) return null;
-  const report: Omit<NodeSettlement, "seq"> = JSON.parse(row.payload_json);
-  return { seq: row.seq, status: report.status, ...(report.error ? { error: report.error } : {}) };
+  const row = watermark(server, sessionId);
+  if (!row?.settlement_json) return null;
+  const report: Omit<NodeSettlement, "seq"> = JSON.parse(row.settlement_json);
+  return { seq: row.settlement_count, status: report.status, ...(report.error ? { error: report.error } : {}) };
 }
 export interface NodeSettlement { seq: number; status: "completed" | "failed" | "aborted"; error?: { code?: string; message: string } }

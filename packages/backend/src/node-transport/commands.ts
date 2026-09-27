@@ -41,8 +41,9 @@ export async function commandOutcome(replayable: boolean, call: () => Promise<Ex
   }
 }
 
-/** Sends one semantic command over the wire. Submitted work requires its outbox command ID (the node's
- * admission receipt); immediate controls carry none. */
+/** Sends one semantic command over the wire. Submitted work requires its outbox command ID (the wire
+ * `commandId`, for correlation: the node keeps no per-command state and a replay converges on the
+ * command's own state); immediate controls carry none. */
 export function sendNodeCommand(connect: () => Promise<NodeCommandClient>, command: NodeCommand, binding: NodeSessionBinding, commandId: string | undefined, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
   const submitted = deliveryPolicy(command) === "submit-work";
   if (submitted && !commandId) throw new Error(`${command.op} requires an outbox command ID`);

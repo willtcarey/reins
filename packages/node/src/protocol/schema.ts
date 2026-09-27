@@ -111,8 +111,9 @@ const promptImage = z.strictObject({
 export const promptContent = z.array(z.union([
   z.strictObject({ type: z.literal("text"), text: z.string().max(MAX_PROMPT_TEXT) }), promptImage,
 ])).max(MAX_PROMPT_BLOCKS);
-/** Submitted work (`session.prompt`, `session.steer`, `session.setModel`) carries the outbox command ID
- * as the node's admission receipt, so a replay after an unknown outcome is answered, not re-applied. */
+/** Submitted work (`session.prompt`, `session.steer`, `session.setModel`) carries the server's outbox
+ * command ID for correlation; the node keeps no per-command state: a replay after an unknown outcome
+ * converges on the command's own state (Pi's durable input ID, the absolute model selection). */
 const sessionCommand = { epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), commandId: z.string().min(1).max(128), binding };
 export const sessionInputParams = z.strictObject({
   ...sessionCommand, clientId: z.string().min(1).max(128), content: promptContent, sourceSessionId: z.string().min(1).max(128).nullable(),
@@ -172,8 +173,9 @@ export const attachmentStoreResult = z.union([
 const runId = z.string().min(1).max(128);
 /** Run lifecycle reports are durable like `session.committed`: the node stores each one in its
  * per-session outbox behind the commits that preceded it, replays it until acknowledged, and the
- * server applies it once per (sessionId, runId, kind). A resumed run reports `started` again with
- * the same runId; the server treats an identical report as a replay. */
+ * server applies it once: an identical replay of the last applied report (or a `started` for the run
+ * that last settled) is acknowledged without effects. A resumed run reports `started` again with the
+ * same runId, which the server treats as a replay. */
 export const sessionStartedParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), runId });
 export const finalReply = z.strictObject({ text: z.string().nullable(), stopReason: z.string().max(128).nullable(), errorMessage: z.string().nullable() });
 /** `metadata` is the runtime's model selection at settlement. `reply` is the final assistant reply,

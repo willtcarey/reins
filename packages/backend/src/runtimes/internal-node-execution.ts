@@ -6,7 +6,7 @@ import type { NodeCommandTimeouts } from "../node-transport/commands.js";
 import { hydrateForDelivery, hydrateSession, releaseSession } from "./session-relocation.js";
 
 /** Node-owned sessions: every command crosses the JSON-RPC link with the binding resolved from product
- * rows; submitted work carries its outbox command ID as the node's admission receipt. Moves
+ * rows; submitted work carries its outbox command ID (replays converge on node state, not the ID). Moves
  * (`session.hydrate`/`session.release`) go through session relocation. When the node answers `not_found`
  * to submitted work (its data for the session is missing), the session is re-hydrated onto it from the
  * server's replica and the command is sent once more. */

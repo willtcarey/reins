@@ -3,7 +3,7 @@ import { claimCommand, getCommand, requeueCommand, settleCommand } from "../node
 import { logger } from "../logger.js";
 import { getDb } from "../db.js";
 
-/** Thrown by an adapter whose replay is idempotent (a durable node receipt keyed by command ID)
+/** Thrown by an adapter whose replay is idempotent (each node command converges on its own state)
  * when the outcome is unknown or delivery never happened: the command returns to the queue. */
 export class DeliveryDeferred extends Error {}
 

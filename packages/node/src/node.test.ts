@@ -10,7 +10,7 @@ import { APPLICATION_ERROR } from "./protocol/errors.js";
 import { RpcFailure } from "./protocol/peer.js";
 import { nodeRuntimesForTesting as runtimes, startNode } from "./node.js";
 import { contentImages } from "./protocol/event-images.js";
-import { nodeAdmissionReceipt, nodeSessionBinding, setNodeDb } from "./storage.js";
+import { nodeSessionBinding, setNodeDb } from "./storage.js";
 import { registerPiProvider, unregisterPiProvider } from "./runtime/context.js";
 import { NodeModelNotFoundError } from "./runtime/build.js";
 import type { SessionEventReport, SessionSettled, SessionStarted } from "./protocol/schema.js";
@@ -77,9 +77,9 @@ test("a session missing from node storage rejects input without an ambiguous adm
   const node = startNode();
   const binding = { sourceId: 7, cwd: "/tmp/reins-node-owner", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
   try {
-    expect(await node.send({ op: "session.prompt", sessionId: "lost", clientId: "input", content: [{ type: "text", text: "hello" }] }, binding, "command"))
+    expect(await node.send({ op: "session.prompt", sessionId: "lost", clientId: "input", content: [{ type: "text", text: "hello" }] }, binding))
       .toEqual({ ok: false, error: { code: "not_found", message: "This session's node data is missing. Start a new session.", retryable: false } });
-    expect(nodeAdmissionReceipt(db, "command")).toBeNull();
+    expect(nodeSessionBinding(db, "lost")).toBeNull();
     await expect(runtimes(node).open("lost", binding)).rejects.toThrow("This session's node data is missing. Start a new session.");
     expect(await node.send({ op: "session.resumePending", sessionId: "lost" }, binding))
       .toMatchObject({ ok: false, error: { code: "not_found", retryable: false } });
@@ -132,7 +132,7 @@ test("the newest attached server connection fetches attachments across handler r
   } finally { first.stop(); reinstalled.stop(); setNodeDb(); db.close(); }
 });
 
-test("provision has Pi create the lane before recording its receipt, so a replay after a crash in between converges", async () => {
+test("provision converges on replay by state: a crash between binding and lane, a lost reply", async () => {
   const db = new Database(":memory:");
   const provider = fauxProvider({ provider: "node-provision-faux", models: [{ id: "fake" }] });
   registerPiProvider(provider.provider);
@@ -147,20 +147,19 @@ test("provision has Pi create the lane before recording its receipt, so a replay
   });
   const provision = provisionOf("s", { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: "high", task: null });
   try {
-    // A crash after Pi created the lane but before the receipt: the server sees no receipt and replays.
-    db.exec("CREATE TRIGGER reject_receipt BEFORE INSERT ON admission_receipts BEGIN SELECT RAISE(ABORT, 'receipt unavailable'); END");
-    await expect(node.send(provision, binding, "provision")).rejects.toThrow("receipt unavailable");
-    db.exec("DROP TRIGGER reject_receipt");
-    expect(nodeAdmissionReceipt(db, "provision")).toBeNull();
+    // A crash after the binding was stored but before Pi created the lane: the server replays.
+    db.exec("CREATE TRIGGER reject_lane BEFORE INSERT ON pi_values BEGIN SELECT RAISE(ABORT, 'lane unavailable'); END");
+    await expect(node.send(provision, binding)).rejects.toThrow();
+    db.exec("DROP TRIGGER reject_lane");
+    expect(nodeSessionBinding(db, "s")).toEqual(binding);
+    expect(piState("s").values).toEqual([]);
+
+    // The replay converges: the binding matches and Pi creates the lane.
+    expect(await node.send(provision, binding)).toEqual({ ok: true, value: { kind: "provisioned" } });
     const created = piState("s");
     expect(created.values.length).toBeGreaterThan(0);
-
-    // The replay converges: the lane exists, so nothing is written again, and the receipt is recorded.
-    expect(await node.send(provision, binding, "provision")).toEqual({ ok: true, value: { kind: "provisioned" } });
-    expect(nodeAdmissionReceipt(db, "provision")?.payload).toBe(JSON.stringify(provision));
-    expect(piState("s")).toEqual(created);
-    // A replay of the receipted command is a no-op.
-    expect(await node.send(provision, binding, "provision")).toEqual({ ok: true, value: { kind: "provisioned" } });
+    // A replay after success (its reply lost) is a no-op: the lane exists and is not written again.
+    expect(await node.send(provision, binding)).toEqual({ ok: true, value: { kind: "provisioned" } });
     expect(piState("s")).toEqual(created);
     // Pi's lane commit replicated to the server once, through the normal commit path.
     expect(replicated).toEqual([1]);
@@ -169,15 +168,14 @@ test("provision has Pi create the lane before recording its receipt, so a replay
     await runtimes(node).close("s");
 
     // No resolved model: no lane until session.setModel.
-    expect(await node.send(provisionOf("scratch"), binding, "scratch")).toEqual({ ok: true, value: { kind: "provisioned" } });
+    expect(await node.send(provisionOf("scratch"), binding)).toEqual({ ok: true, value: { kind: "provisioned" } });
     expect(piState("scratch").values).toEqual([]);
     await expect(runtimes(node).open("scratch", binding)).rejects.toThrow(NO_MODEL);
 
     // A model the node's registry does not know is rejected before anything is stored.
     const unknown = provisionOf("unknown", { model: { provider: provider.provider.id, modelId: "missing" }, thinkingLevel: null, task: null });
-    expect(await node.send(unknown, binding, "unknown")).toEqual({ ok: false, error: {
+    expect(await node.send(unknown, binding)).toEqual({ ok: false, error: {
       code: "invalid_request", message: `Model not found: ${provider.provider.id}/missing`, retryable: false } });
-    expect(nodeAdmissionReceipt(db, "unknown")).toBeNull();
     expect(nodeSessionBinding(db, "unknown")).toBeNull();
   } finally { node.stop(); unregisterPiProvider(provider.provider.id); setNodeDb(); db.close(); }
 });
@@ -203,40 +201,36 @@ test("node provisions an immutable binding, executes Pi and reopens from canonic
   try {
     const node = startNode();
     const detach = node.attach(recorder);
-    expect(await node.send(provision, binding, "provision-command")).toEqual({ ok: true, value: { kind: "provisioned" } });
-    expect(nodeAdmissionReceipt(db, "provision-command")).toEqual({ sessionId: "s", operation: "session.provision", payload: JSON.stringify(provision) });
-    expect(await node.send(provision, binding, "provision-command")).toEqual({ ok: true, value: { kind: "provisioned" } });
+    expect(await node.send(provision, binding)).toEqual({ ok: true, value: { kind: "provisioned" } });
+    expect(await node.send(provision, binding)).toEqual({ ok: true, value: { kind: "provisioned" } });
     expect(db.query("SELECT name FROM sqlite_master WHERE name IN ('projects', 'sources', 'node_command_outbox')").all()).toEqual([]);
     await expect(node.send(provision, { ...binding, cwd: "/wrong" })).rejects.toThrow("binding mismatch");
     expect(await node.send({ op: "session.prompt", sessionId: "s", clientId: "missing-image", content: [
       { type: "image", attachmentId: "missing", mimeType: "image/png", byteSize: 1 },
-    ] }, binding, "missing-image-command")).toMatchObject({ ok: false, error: { code: "invalid_request", retryable: false } });
-    expect(nodeAdmissionReceipt(db, "missing-image-command")).toBeNull();
+    ] }, binding)).toMatchObject({ ok: false, error: { code: "invalid_request", retryable: false } });
     detach();
     expect(await node.send({ op: "session.prompt", sessionId: "s", clientId: "unlinked-image", content: [
       { type: "image", attachmentId: "missing", mimeType: "image/png", byteSize: 1 },
-    ] }, binding, "unlinked-image-command")).toEqual({ ok: false, error: {
+    ] }, binding)).toEqual({ ok: false, error: {
       code: "unavailable", message: "Attachment fetch failed: Server connection unavailable", retryable: true } });
-    expect(nodeAdmissionReceipt(db, "unlinked-image-command")).toBeNull();
     node.attach(recorder);
     const input = { op: "session.prompt" as const, sessionId: "s", clientId: "c", content: [{ type: "text" as const, text: "hello" }] };
-    expect(await node.send(input, binding, "input-command"))
+    expect(await node.send(input, binding))
       .toEqual({ ok: true, value: { kind: "admitted", inputId: "c" } });
-    expect(nodeAdmissionReceipt(db, "input-command")).toEqual({ sessionId: "s", operation: "session.prompt", payload: JSON.stringify(input) });
-    expect(await node.send(input, binding, "input-command")).toEqual({ ok: true, value: { kind: "admitted", inputId: "c" } });
+    // A replay (its reply lost) is recognized by Pi's durable input ID, not re-admitted.
+    expect(await node.send(input, binding)).toEqual({ ok: true, value: { kind: "admitted", inputId: "c" } });
     const runtime = await runtimes(node).open("s", binding);
     const reinstalled = startNode(); // Server handler reload keeps the node process/runtime owner.
     node.stop();
     expect(await runtimes(reinstalled).open("s", binding)).toBe(runtime);
     await runtime.waitForIdle();
     expect((await runtime.getMessages()).map(message => message.role)).toEqual(["user", "assistant"]);
-    db.exec("CREATE TRIGGER reject_receipt BEFORE INSERT ON admission_receipts BEGIN SELECT RAISE(ABORT, 'receipt unavailable'); END");
+    // A steer whose reply was lost is replayed on a reinstalled handler: Pi finds it and admits it once.
     const interrupted = { op: "session.steer" as const, sessionId: "s", clientId: "interrupted", content: [{ type: "text" as const, text: "unacknowledged" }] };
-    await expect(reinstalled.send(interrupted, binding, "interrupted-command")).rejects.toThrow("receipt unavailable");
-    expect(nodeAdmissionReceipt(db, "interrupted-command")).toBeNull();
-    expect((await runtime.getMessages()).some(message => message.role === "user" && JSON.stringify(message.content).includes("unacknowledged"))).toBe(true);
-    db.exec("DROP TRIGGER reject_receipt");
+    expect(await reinstalled.send(interrupted, binding)).toEqual({ ok: true, value: { kind: "admitted", inputId: "interrupted" } });
+    expect(await reinstalled.send(interrupted, binding)).toEqual({ ok: true, value: { kind: "admitted", inputId: "interrupted" } });
     await runtime.waitForIdle();
+    expect((await runtime.getMessages()).filter(message => message.role === "user" && JSON.stringify(message.content).includes("unacknowledged"))).toHaveLength(1);
     expect(events).toContain("agent_end");
     for (let i = 0; i < 100 && db.query("SELECT 1 FROM session_outbox").get(); i++) await Bun.sleep(5);
     expect(reports.some(report => report.startsWith("started:"))).toBe(true);
@@ -580,8 +574,7 @@ test("the provisioned model lives in Pi's lane: open needs no server, setModel p
     // Only credentials cross: no configuration, commit or report is delivered to a server in this test.
     node.attach(credentialsOnly);
     const provision = provisionOf("s", { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: "high", task });
-    expect(await node.send(provision, binding, "provision")).toEqual({ ok: true, value: { kind: "provisioned" } });
-    expect(nodeAdmissionReceipt(db, "provision")?.payload).toBe(JSON.stringify(provision));
+    expect(await node.send(provision, binding)).toEqual({ ok: true, value: { kind: "provisioned" } });
     expect(JSON.parse(laneConfig("s")!.value_json)).toMatchObject({ model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: "high" });
     // The configuration is not part of the binding.
     expect(nodeSessionBinding(db, "s")).toEqual(binding);
@@ -596,24 +589,23 @@ test("the provisioned model lives in Pi's lane: open needs no server, setModel p
     expect(seen[0]?.systemPrompt).toContain("Frozen task");
     expect(seen[0]?.systemPrompt).toContain("From the snapshot");
 
-    // Applied to the open runtime and persisted in Pi's lane; a replay by command ID applies nothing.
-    expect(await node.send(setModel("other", "low"), binding, "model-1")).toEqual({ ok: true, value: { kind: "modelSet" } });
+    // Applied to the open runtime and persisted in Pi's lane; a replay applies the same absolute selection.
+    expect(await node.send(setModel("other", "low"), binding)).toEqual({ ok: true, value: { kind: "modelSet" } });
     expect(runtime.getSessionMetadata()).toEqual({ model: { provider: provider.provider.id, modelId: "other" }, thinkingLevel: "low" });
     const applied = laneConfig("s");
     expect(JSON.parse(applied!.value_json)).toMatchObject({ model: { modelId: "other" }, thinkingLevel: "low" });
-    expect(await node.send(setModel("other", "low"), binding, "model-1")).toEqual({ ok: true, value: { kind: "modelSet" } });
-    expect(laneConfig("s")).toEqual(applied);
-    await expect(node.send(setModel("fake"), binding, "model-1")).rejects.toThrow("Node admission receipt mismatch: model-1");
+    expect(await node.send(setModel("other", "low"), binding)).toEqual({ ok: true, value: { kind: "modelSet" } });
+    expect(JSON.parse(laneConfig("s")!.value_json)).toEqual(JSON.parse(applied!.value_json));
+    expect(runtime.getSessionMetadata()).toEqual({ model: { provider: provider.provider.id, modelId: "other" }, thinkingLevel: "low" });
 
-    // An unknown model is an explicit rejection, without a receipt or a lane change.
-    expect(await node.send(setModel("missing"), binding, "model-missing")).toEqual({ ok: false, error: {
+    // An unknown model is an explicit rejection, without a lane change.
+    expect(await node.send(setModel("missing"), binding)).toEqual({ ok: false, error: {
       code: "invalid_request", message: `Model not found: ${provider.provider.id}/missing`, retryable: false } });
-    expect(nodeAdmissionReceipt(db, "model-missing")).toBeNull();
-    expect(laneConfig("s")).toEqual(applied);
+    expect(JSON.parse(laneConfig("s")!.value_json)).toEqual(JSON.parse(applied!.value_json));
 
     // Applied while the runtime is closed: a restarted node reopens with Pi's stored selection.
     await runtimes(node).close("s");
-    expect(await node.send(setModel("fake"), binding, "model-2")).toMatchObject({ ok: true });
+    expect(await node.send(setModel("fake"), binding)).toMatchObject({ ok: true });
     await runtimes(node).close("s");
     node.stop();
     node = startNode();
@@ -636,4 +628,63 @@ test("the provisioned model lives in Pi's lane: open needs no server, setModel p
     expect((await runtimes(node).open("stale", binding)).getSessionMetadata().model).toEqual({ provider: provider.provider.id, modelId: "fake" });
     await runtimes(node).close("stale");
   } finally { node.stop(); unregisterPiProvider(provider.provider.id); setNodeDb(); db.close(); rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("after a node restart (a new process on the same storage, no memory), replays of provision, prompt, steer and setModel converge without a duplicate effect", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "reins-node-restart-"));
+  const provider = fauxProvider({ provider: "node-restart-faux", models: [{ id: "fake" }, { id: "other" }] });
+  const replies: string[] = [];
+  const reply = (text: string): FauxResponseFactory => () => { replies.push(text); return fauxAssistantMessage(text); };
+  provider.setResponses([reply("one"), reply("two")]);
+  registerPiProvider(provider.provider);
+  const path = join(dir, "storage.db");
+  const binding = { sourceId: 7, cwd: dir, createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
+  const provision = provisionOf("s", { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null });
+  const prompt = { op: "session.prompt" as const, sessionId: "s", clientId: "p1", content: [{ type: "text" as const, text: "go" }] };
+  const steer = { op: "session.steer" as const, sessionId: "s", clientId: "s1", content: [{ type: "text" as const, text: "and then" }] };
+  const setModel = { op: "session.setModel" as const, sessionId: "s", provider: provider.provider.id, modelId: "other", thinkingLevel: "low" };
+  const state = (db: Database) => ({
+    entries: db.query<{ seq: number; harness_id: string; role: string }, []>("SELECT seq, harness_id, role FROM session_messages WHERE session_id = 's' ORDER BY seq").all(),
+    lane: db.query<{ value_json: string }, []>("SELECT value_json FROM pi_values WHERE session_id = 's' AND namespace = 'pi.lane.config'").get()?.value_json,
+    binding: nodeSessionBinding(db, "s"),
+  });
+  let db = new Database(path);
+  setNodeDb(db);
+  let node = startNode();
+  try {
+    node.attach(credentialsOnly);
+    expect(await node.send(provision, binding)).toEqual({ ok: true, value: { kind: "provisioned" } });
+    expect(await node.send(prompt, binding)).toEqual({ ok: true, value: { kind: "admitted", inputId: "p1" } });
+    await (await runtimes(node).open("s", binding)).waitForIdle();
+    expect(await node.send(steer, binding)).toEqual({ ok: true, value: { kind: "admitted", inputId: "s1" } });
+    await (await runtimes(node).open("s", binding)).waitForIdle();
+    expect(await node.send(setModel, binding)).toEqual({ ok: true, value: { kind: "modelSet" } });
+    const before = state(db);
+    expect(before.entries.map(row => row.role)).toEqual(["reinsInput", "assistant", "reinsInput", "assistant"]);
+    expect(replies).toEqual(["one", "two"]);
+
+    // Every reply was lost; the node process restarts on the same storage and the server replays all four.
+    await node.shutdown();
+    setNodeDb(); db.close();
+    db = new Database(path);
+    setNodeDb(db);
+    node = startNode();
+    node.attach(credentialsOnly);
+    expect(await node.send(provision, binding)).toEqual({ ok: true, value: { kind: "provisioned" } });
+    expect(await node.send(prompt, binding)).toEqual({ ok: true, value: { kind: "admitted", inputId: "p1" } });
+    expect(await node.send(steer, binding)).toEqual({ ok: true, value: { kind: "admitted", inputId: "s1" } });
+    expect(await node.send(setModel, binding)).toEqual({ ok: true, value: { kind: "modelSet" } });
+    await (await runtimes(node).open("s", binding)).waitForIdle();
+    // No second input, run or model write: the replays converged on the stored state.
+    const after = state(db);
+    expect(after.entries).toEqual(before.entries);
+    expect(JSON.parse(after.lane!)).toEqual(JSON.parse(before.lane!));
+    expect(after.binding).toEqual(binding);
+    expect(replies).toEqual(["one", "two"]);
+  } finally {
+    await node.shutdown();
+    setNodeDb(); db.close();
+    unregisterPiProvider(provider.provider.id);
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

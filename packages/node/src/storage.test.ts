@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { BACKGROUND_CONTEXT, insertEntry, setValue, value } from "@earendil-works/pi-agent-core";
 import { toolImageReferences } from "./runtime/tool-images.js";
 import { join } from "node:path";
-import { bindNodeSession, completeNodeReport, deliverNodeOutbox, initializeNodeStorage, nodeAdmissionReceipt, nodeStoragePath, openNodeStorage, recordNodeAdmission, recordNodeReport, releaseUnreadReports, type NodeOutboxItem } from "./storage.js";
+import { bindNodeSession, completeNodeReport, deliverNodeOutbox, initializeNodeStorage, nodeSessionBinding, nodeSessionTask, nodeStoragePath, openNodeStorage, provisionNodeSession, recordNodeReport, releaseUnreadReports, type NodeOutboxItem } from "./storage.js";
 
 const binding = { sourceId: 1, cwd: "/tmp/node", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
 
@@ -14,18 +14,15 @@ test("node storage uses the user's node directory, independent of the server dat
   expect(nodeStoragePath("/tmp/home")).toBe("/tmp/home/.reins/node/storage.db");
 });
 
-test("provision receipt and immutable binding are committed together", () => {
+test("provision stores an immutable binding: an equal repeat is a no-op, a different one rejects", () => {
   const db = new Database(":memory:");
   initializeNodeStorage(db);
-  recordNodeAdmission(db, "command-1", "s", "provision", "payload-1", () => bindNodeSession(db, "s", binding));
-  expect(nodeAdmissionReceipt(db, "command-1")).toEqual({ sessionId: "s", operation: "provision", payload: "payload-1" });
-  expect(() => recordNodeAdmission(db, "command-2", "other", "provision", "payload-2", () => {
-    bindNodeSession(db, "other", binding);
-    throw new Error("admission failed");
-  })).toThrow("admission failed");
-  expect(db.query("SELECT id FROM sessions WHERE id = 'other'").get()).toBeNull();
-  expect(nodeAdmissionReceipt(db, "command-2")).toBeNull();
-  expect(() => recordNodeAdmission(db, "command-1", "s", "provision", "different", () => {})).toThrow("receipt mismatch");
+  const task = { title: "T", description: null, branchName: "task/t" };
+  provisionNodeSession(db, "s", binding, task);
+  provisionNodeSession(db, "s", binding, { ...task, title: "Later" });
+  expect(nodeSessionBinding(db, "s")).toEqual(binding);
+  expect(nodeSessionTask(db, "s")).toEqual(task);
+  expect(() => provisionNodeSession(db, "s", { ...binding, cwd: "/elsewhere" }, task)).toThrow("binding mismatch");
   db.close();
 });
 

@@ -244,7 +244,7 @@ export class AgentHarnessPiRuntime {
       throw new Error("Cannot hydrate prompt attachments without a Reins session id");
     }
     const message = createReinsInputMessage(content, options.reinsId, options.metadata, options.timestamp);
-    // A replay of an input Pi already admitted (e.g. its receipt or reply was lost) is answered, not re-admitted.
+    // A replay of an input Pi already admitted (e.g. its reply was lost, even across a node restart) is answered, not re-admitted.
     const existing = await this.findAdmitted(message.reinsId);
     if (existing?.queued) return { messageId: existing.id };
     if (existing) {

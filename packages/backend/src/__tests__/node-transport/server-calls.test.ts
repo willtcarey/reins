@@ -55,7 +55,7 @@ test("committed batches cross the wire byte-for-byte, survive a missing or lost 
       const storage = await openNodeStorage(nodeDb, "s", async () => { throw new Error("offline"); });
       await storage.commit([insertEntry({ id: "root", parentId: null, type: "custom", customType: "note", data: { text: "é \"quoted\"" } })], BACKGROUND_CONTEXT);
       await storage.close(BACKGROUND_CONTEXT);
-      // Formatting a re-serialization would not preserve; the server compares receipts by exact string.
+      // Formatting a re-serialization would not preserve; the server compares the last batch by exact bytes (hash).
       const exact = JSON.stringify(JSON.parse(nodeDb.query<{ payload: string }, []>("SELECT payload FROM session_outbox").get()!.payload), null, 2);
       nodeDb.query("UPDATE session_outbox SET payload = ?").run(exact);
 
@@ -75,7 +75,8 @@ test("committed batches cross the wire byte-for-byte, survive a missing or lost 
       await until(() => pending(nodeDb) === 0);
       expect(pending(nodeDb)).toBe(0);
       expect(received).toEqual([exact]);
-      expect(getDb().query("SELECT writes_json FROM node_replica_receipts").get()).toEqual({ writes_json: exact });
+      expect(getDb().query("SELECT commit_start_seq, commit_sha256 FROM node_session_watermarks").get())
+        .toEqual({ commit_start_seq: 1, commit_sha256: createHash("sha256").update(exact).digest("hex") });
 
       nodeDb.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('s','committed',1,?)").run(exact);
       await node.send(provision, binding);
@@ -139,12 +140,6 @@ test("lifecycle reports cross the wire after preceding commits, stay pending wit
       await Bun.sleep(20);
       expect(steers()).toEqual(["r1 answer"]);
 
-      recordNodeReport(nodeDb, "s", "settled", settled("r1", { status: "failed", error: { message: "rewritten" } }));
-      await node.send(provision, binding);
-      expect(pending(nodeDb)).toBe(1); // divergence is rejected and stays pending, without effects
-      expect(getSession("s")?.activity_state).toBe("running");
-      nodeDb.query("DELETE FROM session_outbox").run();
-
       // A child whose reply could not be read is finished without a misleading report to its parent.
       recordNodeReport(nodeDb, "s", "settled", settled("r2", { reply: null, replyError: "transcript unavailable" }));
       await node.send(provision, binding);
@@ -152,9 +147,17 @@ test("lifecycle reports cross the wire after preceding commits, stay pending wit
       expect(getSession("s")?.activity_state).toBe("finished");
       await Bun.sleep(20);
       expect(steers()).toEqual(["r1 answer"]);
-      expect(getDb().query("SELECT run_id, kind FROM node_lifecycle_receipts WHERE session_id = 's' ORDER BY run_id, kind").all()).toEqual([
-        { run_id: "r1", kind: "settled" }, { run_id: "r1", kind: "started" }, { run_id: "r2", kind: "settled" }, { run_id: "r2", kind: "started" },
-      ]);
+
+      // A different payload for the last applied report is divergence: rejected, left pending, no effects.
+      recordNodeReport(nodeDb, "s", "settled", settled("r2", { status: "failed", error: { message: "rewritten" } }));
+      await node.send(provision, binding);
+      expect(pending(nodeDb)).toBe(1);
+      expect(getSession("s")?.activity_state).toBe("finished");
+      nodeDb.query("DELETE FROM session_outbox").run();
+      expect(getDb().query("SELECT report_run_id, report_kind, settlement_count FROM node_session_watermarks WHERE session_id = 's'").get())
+        .toEqual({ report_run_id: "r2", report_kind: "settled", settlement_count: 2 });
+      await Bun.sleep(20);
+      expect(steers()).toEqual(["r1 answer"]);
       live.close();
     });
   } finally { errors.mockRestore(); dispatcherFor(state).stop(); teardownTestDb(); }

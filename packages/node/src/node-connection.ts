@@ -14,8 +14,8 @@ type Admitted = Extract<NodeResult, { ok: true }>["value"];
  * Rejections and thrown errors are application errors whose data is the NodeResult error.
  * The connection serves the node's server calls from creation (calls await negotiation) until closed. */
 export function connectNode(node: Node, socket: WireSocket, instanceId: string, options: LinkOptions = {}) {
-  /** Commands are rebuilt through the contract schema, so the receipt payload of a replay (the same wire
-   * params) matches the first delivery byte-for-byte. */
+  /** Commands are rebuilt through the contract schema. The wire `commandId` (the server's outbox row ID)
+   * is not used here: a replay converges on the command's own state on the node. */
   const call = async (send: () => Promise<NodeResult>): Promise<NodeResult> => {
     try { return await send(); }
     catch (error) { throw rejection({ code: "internal", message: error instanceof Error ? error.message : String(error), retryable: false }); }
@@ -25,33 +25,33 @@ export function connectNode(node: Node, socket: WireSocket, instanceId: string, 
     if (result.value.kind !== kind) throw rejection({ code: "internal", message: `Unexpected node result: ${result.value.kind}`, retryable: false });
     return result.value as Extract<Admitted, { kind: K }>; // eslint-disable-line typescript-eslint/consistent-type-assertions -- narrowed by the kind check above
   };
-  const execute = async <K extends Admitted["kind"]>(command: NodeCommand, binding: NodeSessionBinding, kind: K, commandId?: string): Promise<Extract<Admitted, { kind: K }>> =>
-    settle(await call(() => node.send(nodeCommand.parse(command), binding, commandId)), kind);
-  const input = (op: "session.prompt" | "session.steer") => async ({ sessionId, commandId, binding, clientId, content, sourceSessionId }: SessionInput) =>
-    ({ inputId: (await execute({ op, sessionId, clientId, content, sourceSessionId }, binding, "admitted", commandId)).inputId });
+  const execute = async <K extends Admitted["kind"]>(command: NodeCommand, binding: NodeSessionBinding, kind: K): Promise<Extract<Admitted, { kind: K }>> =>
+    settle(await call(() => node.send(nodeCommand.parse(command), binding)), kind);
+  const input = (op: "session.prompt" | "session.steer") => async ({ sessionId, binding, clientId, content, sourceSessionId }: SessionInput) =>
+    ({ inputId: (await execute({ op, sessionId, clientId, content, sourceSessionId }, binding, "admitted")).inputId });
   const connection = createNodeConnection(socket, {
     instanceId, minVersion: protocolVersion, maxVersion: protocolVersion, ...options,
     capabilities: [methods.sessionProvision, methods.sessionPrompt, methods.sessionSteer, methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending,
       methods.sessionHydrate, methods.sessionRelease],
-    async provision({ sessionId, commandId, binding, configuration }) {
+    async provision({ sessionId, binding, configuration }) {
       await execute({ op: "session.provision", sessionId, sourceId: binding.sourceId,
-        configuration: { model: configuration.model, thinkingLevel: configuration.thinkingLevel, task: configuration.task } }, binding, "provisioned", commandId);
+        configuration: { model: configuration.model, thinkingLevel: configuration.thinkingLevel, task: configuration.task } }, binding, "provisioned");
       return { provisioned: true };
     },
     prompt: input("session.prompt"),
     steer: input("session.steer"),
-    async setModel({ sessionId, commandId, binding, provider, modelId, thinkingLevel }) {
-      await execute({ op: "session.setModel", sessionId, provider, modelId, ...(thinkingLevel === undefined ? {} : { thinkingLevel }) }, binding, "modelSet", commandId);
+    async setModel({ sessionId, binding, provider, modelId, thinkingLevel }) {
+      await execute({ op: "session.setModel", sessionId, provider, modelId, ...(thinkingLevel === undefined ? {} : { thinkingLevel }) }, binding, "modelSet");
       return { modelSet: true };
     },
     async abort({ sessionId, binding }) { return { aborted: (await execute({ op: "session.abort", sessionId }, binding, "aborted")).aborted }; },
     async resumePending({ sessionId, binding }) { return { started: (await execute({ op: "session.resumePending", sessionId }, binding, "resumed")).started }; },
-    async hydrate({ sessionId, commandId, binding, task, snapshot }) {
-      settle(await call(() => node.hydrate({ sessionId, commandId, task, snapshot }, binding)), "hydrated");
+    async hydrate({ sessionId, binding, task, snapshot }) {
+      settle(await call(() => node.hydrate({ sessionId, task, snapshot }, binding)), "hydrated");
       return { hydrated: true };
     },
-    async release({ sessionId, commandId, binding }) {
-      return { released: true, snapshot: settle(await call(() => node.release(sessionId, binding, commandId)), "released").snapshot };
+    async release({ sessionId, binding }) {
+      return { released: true, snapshot: settle(await call(() => node.release(sessionId, binding)), "released").snapshot };
     },
     async status() { throw new RpcFailure(-32601, "Method not found"); },
   });
