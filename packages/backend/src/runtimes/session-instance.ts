@@ -3,9 +3,9 @@ import { getProject } from "../project-store.js";
 import { loadActiveMessages, type RuntimeMessage } from "../messages-store.js";
 import { getSession, updateActivityState, updateSessionMeta, type SessionRow } from "../session-store.js";
 import { getDb } from "../db.js";
-import type { ServerState } from "../state.js";
+import type { NodeHub, ServerState } from "../state.js";
 import type { Broadcast } from "../models/broadcast.js";
-import { enqueueSessionInput, executeSessionCommand, wakeSessionInput } from "./node-execution.js";
+import { enqueueSessionInput, executeSessionCommand } from "./node-execution.js";
 import { pendingInputs } from "../node-command-store.js";
 import { latestNodeSettlement, replicaInput } from "../node-replica.js";
 import { finalReply, type FinalReply } from "@reins/node/runtime-build";
@@ -46,7 +46,7 @@ export interface SessionCreationOptions {
 export interface SessionInstanceHost {
   readonly state: ServerState;
   readonly broadcast: Broadcast;
-  create(projectId: number, projectDir: string, options?: SessionCreationOptions): { id: string };
+  create(projectId: number, options?: SessionCreationOptions): { id: string };
 }
 
 /** What settlement needs from a run, without the live runtime that produced it. */
@@ -97,22 +97,21 @@ export class SessionInstance {
     private readonly sessionId: string,
   ) {}
 
-  /** Wakes node command delivery after a caller queued work outside `send` (e.g. `session.setModel`). */
-  wakeNodeCommands(): void {
-    wakeSessionInput(this.manager.state);
+  /** The node hub: session models wake delivery after queueing work (e.g. `session.setModel`). */
+  get nodes(): NodeHub {
+    return this.manager.state.nodes;
   }
 
   async start(prompt: string, options: SessionStartOptions): Promise<{ sessionId: string }> {
     const caller = this.session(this.sessionId);
-    const project = getProject(caller.project_id);
-    if (!project) throw new Error("Project not found");
+    if (!getProject(caller.project_id)) throw new Error("Project not found");
     if (!!options.modelProvider !== !!options.modelId) throw new Error("Both modelProvider and modelId are required for a model override");
     if (options.title !== undefined && !options.title.trim()) throw new Error("Title must not be blank");
     if (options.parentSessionId === "current") this.assertChildDepth(caller);
 
     const provider = options.modelProvider ?? caller.model_provider;
     const modelId = options.modelId ?? caller.model_id;
-    const managed = await this.manager.create(caller.project_id, project.path, {
+    const managed = await this.manager.create(caller.project_id, {
       taskId: caller.task_id ?? undefined,
       sourceId: caller.source_id,
       parentSessionId: options.parentSessionId === "current" ? caller.id : undefined,
@@ -126,9 +125,8 @@ export class SessionInstance {
 
   async startTaskSession(taskId: number, prompt: string): Promise<{ sessionId: string }> {
     const caller = this.session(this.sessionId);
-    const project = getProject(caller.project_id);
-    if (!project) throw new Error("Project not found");
-    const managed = await this.manager.create(caller.project_id, project.path, { taskId, sourceId: caller.source_id });
+    if (!getProject(caller.project_id)) throw new Error("Project not found");
+    const managed = await this.manager.create(caller.project_id, { taskId, sourceId: caller.source_id });
     await this.deliver(managed.id, prompt, "prompt");
     return { sessionId: managed.id };
   }
@@ -151,10 +149,10 @@ export class SessionInstance {
     return this.waitForNodeSettlement(sessionId, timeoutMs, signal);
   }
 
-  /** Marks the session running. With a node `watermark`, applies at most once and atomically with it; errors propagate. */
-  startedWith(watermark?: LifecycleWatermark): void {
+  /** Marks the session running, at most once and atomically with the node lifecycle `watermark`; errors propagate. */
+  startedWith(watermark: LifecycleWatermark): void {
     const applied = getDb().transaction(() => {
-      if (watermark && !watermark()) return false;
+      if (!watermark()) return false;
       updateActivityState(this.sessionId, "running");
       return true;
     })();
@@ -163,15 +161,15 @@ export class SessionInstance {
 
   /**
    * Applies a node `session.settled` report. Persists runtime metadata,
-   * enqueues a child's report to its parent and updates activity in one transaction, together with a
-   * node lifecycle `watermark` when given, so a replayed report can neither re-steer the parent nor re-flip state.
+   * enqueues a child's report to its parent and updates activity in one transaction, together with the
+   * node lifecycle `watermark`, so a replayed report can neither re-steer the parent nor re-flip state.
    * A reply-read failure or an unreachable parent is logged and leaves the child `finished` without a
    * misleading report. Errors outside those effects (e.g. lifecycle divergence) propagate.
    */
-  settledWith(outcome: RuntimeRunOutcome, facts: RunSettlementFacts, watermark?: LifecycleWatermark): void {
+  settledWith(outcome: RuntimeRunOutcome, facts: RunSettlementFacts, watermark: LifecycleWatermark): void {
     let enqueued = false;
     const applied = getDb().transaction(() => {
-      if (watermark && !watermark()) return false;
+      if (!watermark()) return false;
       this.persistRuntimeMetadata(facts.metadata);
       const session = this.session(this.sessionId);
       let activityState: SessionRow["activity_state"] = "finished";
@@ -193,7 +191,7 @@ export class SessionInstance {
     })();
     if (!applied) return;
     this.notifyUpdated();
-    if (enqueued) wakeSessionInput(this.manager.state);
+    if (enqueued) void this.nodes.wake();
   }
 
   private session(sessionId: string): SessionRow {
@@ -242,7 +240,8 @@ export class SessionInstance {
     return { sessionId };
   }
 
-  private pauseForAdmission(ms: number, signal?: AbortSignal): Promise<void> {
+  /** Sleeps between polls; rejects when `signal` aborts. */
+  private pollDelay(ms: number, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolve(); }, ms);
@@ -286,7 +285,7 @@ export class SessionInstance {
         || [...inputs].some(([id, clientId]) => pending.has(id) || awaitingRun(clientId));
       if (!busy) return transcriptResult(sessionId, loadActiveMessages(sessionId), settlement ?? undefined);
       if (Date.now() >= deadline) return { sessionId, status: "timeout", result: null, error: null };
-      await this.pauseForAdmission(Math.min(10, deadline - Date.now()), signal);
+      await this.pollDelay(Math.min(10, deadline - Date.now()), signal);
     }
   }
 

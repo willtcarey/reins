@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
+import { createServerState } from "../helpers/server-state.js";
 import { getDb } from "../../db.js";
 import { createProject, type Project } from "../../project-store.js";
 import { createSession, getSession } from "../session-fixture.js";
@@ -46,7 +47,7 @@ describe("Sessions.setModel", () => {
     project = createProject("Test Project", "/tmp/test-project", "main");
     broadcastSpy = mock<(msg: ServerMessage) => void>();
     broadcast = broadcastSpy;
-    model = new Sessions(broadcast);
+    model = new Sessions(createServerState().nodes, broadcast);
   });
 
   test("queues the change of a session at rest behind its move to its node, persists metadata, and broadcasts a session update", async () => {
@@ -180,7 +181,7 @@ describe("Sessions.uploadAttachments", () => {
 
   beforeEach(() => {
     project = createProject("Attachment Model Project", "/tmp/attachment-model-project", "main");
-    model = new Sessions();
+    model = new Sessions(createServerState().nodes);
   });
 
   test("reads file bytes after validating the session and stores measured dimensions", async () => {

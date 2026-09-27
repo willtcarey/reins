@@ -38,14 +38,20 @@ export interface ServerHandlers {
 const MAX_PARTIAL_UPLOADS = 8;
 const rejection = (error: unknown) => error instanceof RpcFailure ? error : new RpcFailure(APPLICATION_ERROR, error instanceof Error ? error.message : String(error));
 
+/** A negotiated connection: the hello reply and the node ID the node announced. */
+export type Negotiated = Ready & { nodeId: string };
+/** Resolves the handlers serving a node's calls from the node ID it announced in `node.hello`; throws to
+ * refuse the node (the hello is rejected and the connection serves nothing). */
+export type ServeNode = (nodeId: string) => ServerHandlers;
+
 /** Server half of one node connection. Local nodes reach it over the permission-protected Unix socket
  * (`local-socket.ts`); a remote node must be enrolled and authenticated before it is exposed to one.
  * `negotiated` resolves once `node.hello` succeeds and rejects if the connection closes (or the hello
  * timeout expires) first. */
-export function createServerTransport(socket: WireSocket, handlers: ServerHandlers, options: LinkOptions = {}) {
-  let ready: { epoch: string; capabilities: Capability[] } | undefined;
-  let settleNegotiation!: { resolve(value: Ready): void; reject(reason: Error): void };
-  const negotiated = new Promise<Ready>((resolve, reject) => { settleNegotiation = { resolve, reject }; });
+export function createServerTransport(socket: WireSocket, serve: ServeNode, options: LinkOptions = {}) {
+  let ready: { epoch: string; capabilities: Capability[]; handlers: ServerHandlers } | undefined;
+  let settleNegotiation!: { resolve(value: Negotiated): void; reject(reason: Error): void };
+  const negotiated = new Promise<Negotiated>((resolve, reject) => { settleNegotiation = { resolve, reject }; });
   negotiated.catch(() => undefined);
   const eventSeqs = new Map<string, number>();
   // In-flight scripts by callId; aborted by `script.cancel` from the same session or on close.
@@ -59,11 +65,13 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
         if (ready) throw new RpcFailure(-32003, "Already negotiated");
         const hello = helloParams.parse(value);
         if (hello.minVersion > protocolVersion || hello.maxVersion < protocolVersion) throw new RpcFailure(-32001, "No common protocol version");
+        let handlers: ServerHandlers;
+        try { handlers = serve(hello.nodeId); } catch (error) { throw new RpcFailure(-32003, error instanceof Error ? error.message : String(error)); }
         const capabilities = hello.capabilities.filter((item): item is Capability => capability.safeParse(item).success);
-        ready = { epoch: crypto.randomUUID(), capabilities };
-        const result = { version: 1 as const, ...ready };
+        ready = { epoch: crypto.randomUUID(), capabilities, handlers };
+        const result = { version: 1 as const, epoch: ready.epoch, capabilities };
         if (helloTimer !== undefined) timers.clearTimeout(helloTimer);
-        settleNegotiation.resolve(result);
+        settleNegotiation.resolve({ ...result, nodeId: hello.nodeId });
         return result;
       },
     },
@@ -71,7 +79,7 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
       params: sessionCommittedParams, result: sessionCommittedResult,
       async handle(value) {
         const { epoch, ...input } = sessionCommittedParams.parse(value);
-        issued(epoch);
+        const handlers = issued(epoch);
         try { await handlers.committed(input); } catch (error) { throw rejection(error); }
         return { acknowledged: true };
       },
@@ -80,7 +88,7 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
       params: sessionStartedParams, result: acknowledgedResult,
       async handle(value) {
         const { epoch, ...input } = sessionStartedParams.parse(value);
-        issued(epoch);
+        const handlers = issued(epoch);
         try { await handlers.started(input); } catch (error) { throw rejection(error); }
         return { acknowledged: true };
       },
@@ -89,7 +97,7 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
       params: sessionSettledParams, result: acknowledgedResult,
       async handle(value) {
         const { epoch, ...input } = sessionSettledParams.parse(value);
-        issued(epoch);
+        const handlers = issued(epoch);
         try { await handlers.settled(input); } catch (error) { throw rejection(error); }
         return { acknowledged: true };
       },
@@ -98,7 +106,7 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
       params: attachmentFetchParams, result: attachmentFetchResult,
       async handle(value) {
         const { epoch, sessionId, attachmentId, offset } = attachmentFetchParams.parse(value);
-        issued(epoch);
+        const handlers = issued(epoch);
         let attachment;
         try { attachment = await handlers.attachment(sessionId, attachmentId); } catch (error) { throw rejection(error); }
         if (!attachment) return { attachment: null };
@@ -112,7 +120,7 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
       params: attachmentStoreParams, result: attachmentStoreResult,
       async handle(value) {
         const { epoch, sessionId, attachmentId, offset, data, ...metadata } = attachmentStoreParams.parse(value);
-        issued(epoch);
+        const handlers = issued(epoch);
         const key = JSON.stringify([sessionId, attachmentId]);
         let existing;
         try { existing = await handlers.findAttachment(sessionId, attachmentId); } catch (error) { throw rejection(error); }
@@ -153,7 +161,7 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
       params: sessionSnapshotParams, result: sessionSnapshotResult,
       async handle(value) {
         const { epoch, sessionId, fromSeq } = sessionSnapshotParams.parse(value);
-        issued(epoch);
+        const handlers = issued(epoch);
         try { return await handlers.snapshot(sessionId, fromSeq); } catch (error) { throw rejection(error); }
       },
     },
@@ -161,7 +169,7 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
       params: scriptExecuteParams, result: scriptExecuteResult,
       async handle(value) {
         const { epoch, callId, ...input } = scriptExecuteParams.parse(value);
-        issued(epoch);
+        const handlers = issued(epoch);
         if (scripts.has(callId)) throw new RpcFailure(APPLICATION_ERROR, `Duplicate script call: ${callId}`);
         const controller = new AbortController();
         scripts.set(callId, { sessionId: input.sessionId, controller });
@@ -182,7 +190,7 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
       params: scriptSearchParams, result: scriptSearchResult,
       async handle(value) {
         const { epoch, ...input } = scriptSearchParams.parse(value);
-        issued(epoch);
+        const handlers = issued(epoch);
         try { return await handlers.scriptSearch(input); } catch (error) { throw rejection(error); }
       },
     },
@@ -190,7 +198,7 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
       params: projectCreateTaskParams, result: projectCreateTaskResult,
       async handle(value) {
         const { epoch, ...input } = projectCreateTaskParams.parse(value);
-        issued(epoch);
+        const handlers = issued(epoch);
         try { return await handlers.createTask(input); } catch (error) { throw rejection(error); }
       },
     },
@@ -200,7 +208,7 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
       params: credentialsParams, result: credentialResult,
       async handle(value) {
         const { epoch, providerId } = credentialsParams.parse(value);
-        issued(epoch);
+        const handlers = issued(epoch);
         try { return { credential: await handlers.readCredential(providerId) }; } catch (error) { throw rejection(error); }
       },
     },
@@ -208,14 +216,14 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
       params: credentialsParams, result: credentialResult,
       async handle(value) {
         const { epoch, providerId } = credentialsParams.parse(value);
-        issued(epoch);
+        const handlers = issued(epoch);
         try { return { credential: await handlers.refreshCredential(providerId) }; } catch (error) { throw rejection(error); }
       },
     },
     [methods.credentialsList]: {
       params: credentialsListParams, result: credentialsListResult,
       async handle(value) {
-        issued(credentialsListParams.parse(value).epoch);
+        const handlers = issued(credentialsListParams.parse(value).epoch);
         try { return { credentials: await handlers.listCredentials() }; } catch (error) { throw rejection(error); }
       },
     },
@@ -224,7 +232,7 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
       // Failures here drop only this notification (logged by the peer).
       notify(value) {
         const { epoch, ...input } = sessionEventParams.parse(value);
-        issued(epoch);
+        const handlers = issued(epoch);
         const last = eventSeqs.get(input.sessionId);
         if (last !== undefined && input.seq <= last) throw new Error(`Out-of-order session event ${input.sessionId}#${input.seq} after #${last}`);
         eventSeqs.set(input.sessionId, input.seq);
@@ -245,7 +253,11 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
     peer.close();
   }
   // Node→server methods are base protocol: only the epoch this connection issued at hello is accepted.
-  function issued(epoch: string) { if (!ready || epoch !== ready.epoch) throw new RpcFailure(-32003, "Stale or unauthorized connection"); }
+  // Returns the handlers serving the node this connection negotiated for.
+  function issued(epoch: string): ServerHandlers {
+    if (!ready || epoch !== ready.epoch) throw new RpcFailure(-32003, "Stale or unauthorized connection");
+    return ready.handlers;
+  }
   const authorized = (required: Capability) => {
     if (!ready?.capabilities.includes(required)) throw new RpcFailure("unavailable", "Node capability not negotiated");
     return ready.epoch;

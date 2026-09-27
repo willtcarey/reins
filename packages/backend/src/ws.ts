@@ -13,7 +13,6 @@ import { getSession } from "./session-store.js";
 import { logger } from "./logger.js";
 import type { ClientPromptContent } from "./messages-store.js";
 import { parseClientPromptContent } from "./session-attachments-store.js";
-import { observeSubmission, forgetClient } from "./models/node-command-notifications.js";
 
 /** Maps raw WebSocket objects to their WsClient wrappers. */
 const wsClientMap = new WeakMap<WebSocketLike, WsClient>();
@@ -75,7 +74,7 @@ async function handleWsCommand(
       }
       try {
         if (!getSession(sessionId)) { sendError("Session not found", clientId); return; }
-        observeSubmission(state, sessionId, clientId, client);
+        state.nodes.observeSubmission(sessionId, clientId, client);
         await executeSessionCommand(state, sessionId, command, message, clientId);
         sendToWs(client.ws, { type: "ack", command, clientId });
       } catch (err: unknown) {
@@ -127,7 +126,7 @@ export function handleWsClose(state: ServerState, ws: WebSocketLike): void {
   const client = wsClientMap.get(ws);
   if (client) {
     state.clients.delete(client);
-    forgetClient(state, client);
+    state.nodes.forgetClient(client);
   }
   logger.info(`WebSocket client disconnected (total: ${state.clients.size})`);
 }

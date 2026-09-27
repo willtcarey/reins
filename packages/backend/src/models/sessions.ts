@@ -43,6 +43,7 @@ import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../runtimes/pi/model-catalog.js";
 import { enqueueSetModel } from "../node-command-store.js";
 import { getNode, getSource } from "../node-store.js";
+import type { NodeHub } from "../state.js";
 import { nodeSessionActivity } from "./node-session-activity.js";
 import { queueHydrationForUse, requestSessionMove, sessionLocation, sessionMoveTargets, type SessionMoveTarget } from "./session-ownership.js";
 
@@ -100,8 +101,8 @@ export interface SessionView {
 /**
  * Where the session lives (`placement_status`) and a failure's reason. `nodeId`/`nodeName`: the node of
  * its source — the one it is on, being provisioned on or moving to, or, at rest on the server, the one
- * its next use hydrates it onto. `available` is false while its source is not on a node that can be
- * reached (queued provisioning or moves wait).
+ * its next use hydrates it onto. `available` is whether that node is connected (queued provisioning or
+ * moves wait while it is not).
  */
 export interface SessionPlacementView {
   status: PlacementStatus;
@@ -111,12 +112,15 @@ export interface SessionPlacementView {
   nodeName: string;
 }
 
-function toPlacementView(row: SessionRow): SessionPlacementView {
+/** What session views and changes need from the node hub. */
+export type SessionNodes = Pick<NodeHub, "connected" | "wake">;
+
+function toPlacementView(row: SessionRow, nodes: SessionNodes): SessionPlacementView {
   const nodeId = getSource(row.source_id)?.node_id ?? "unknown";
   return {
     status: row.placement_status,
     error: row.status_error,
-    available: nodeId === "internal",
+    available: nodes.connected(nodeId),
     nodeId,
     nodeName: getNode(nodeId)?.name ?? nodeId,
   };
@@ -153,7 +157,7 @@ function isTextBlock(value: unknown): value is TextBlock {
   return "type" in value && value.type === "text" && "text" in value && typeof value.text === "string";
 }
 
-function toSessionView(row: SessionRow): SessionView {
+function toSessionView(row: SessionRow, nodes: SessionNodes): SessionView {
   return {
     id: row.id,
     projectId: row.project_id,
@@ -163,15 +167,15 @@ function toSessionView(row: SessionRow): SessionView {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     activityState: row.activity_state,
-    placement: toPlacementView(row),
+    placement: toPlacementView(row, nodes),
     pinnedAt: row.pinned_at,
     archivedAt: row.archived_at,
   };
 }
 
-function toSessionListView(row: SessionRow): SessionListView {
+function toSessionListView(row: SessionRow, nodes: SessionNodes): SessionListView {
   return {
-    ...toSessionView(row),
+    ...toSessionView(row, nodes),
     messageCount: row.message_count ?? 0,
     firstMessage: row.first_message ?? null,
   };
@@ -203,11 +207,12 @@ function stripPersistedUserSkillBlocks(msg: PersistedMessage): PersistedMessage 
 
 export class Sessions {
   constructor(
+    /** Views report whether a session's node is connected; queued model changes and moves wake delivery. */
+    private readonly nodes: SessionNodes,
     private broadcast: Broadcast = () => {},
-    /** Wakes the node command dispatcher after a queued `session.setModel` commits (the periodic scan
-     * recovers a missing wake). */
-    private wakeNodeCommands?: () => void,
   ) {}
+
+  private listView = (row: SessionRow) => toSessionListView(row, this.nodes);
 
 
   get(sessionId: string): SessionDetailView | null {
@@ -217,7 +222,7 @@ export class Sessions {
     const messageCount = countMessages(sessionId);
 
     return {
-      ...toSessionView(row),
+      ...toSessionView(row, this.nodes),
       messageCount,
       runtimeType: row.agent_runtime_type,
       pendingOperation: row.agent_runtime_type === "pi" && nodeSessionActivity(row) === "idle"
@@ -314,7 +319,7 @@ export class Sessions {
   }
 
   listByProject(projectId: number): SessionListView[] {
-    return listSessions({ projectId, taskId: null }).map(toSessionListView);
+    return listSessions({ projectId, taskId: null }).map(this.listView);
   }
 
   listArchivedByProject(
@@ -327,11 +332,11 @@ export class Sessions {
       archived: "only",
       orderBy: "archived",
       ...options,
-    }).map(toSessionListView);
+    }).map(this.listView);
   }
 
   listByTask(taskId: number, archived: "exclude" | "include" = "exclude"): SessionListView[] {
-    return listSessions({ taskId, archived }).map(toSessionListView);
+    return listSessions({ taskId, archived }).map(this.listView);
   }
 
   /** Sessions with a non-null activity_state, for initial activity snapshots. Activity is
@@ -371,7 +376,7 @@ export class Sessions {
       sessionId,
       projectId: row.project_id,
     });
-    return toSessionView(updated);
+    return toSessionView(updated, this.nodes);
   }
 
   /** Set an idle session's unread state without disturbing active work. */
@@ -403,11 +408,11 @@ export class Sessions {
    */
   move(sessionId: string, nodeId: string): SessionPlacementView {
     if (!requestSessionMove(sessionId, nodeId)) throw new SessionNotFoundError();
-    this.wakeNodeCommands?.();
+    void this.nodes.wake();
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();
     this.broadcast({ type: "session_updated", sessionId, projectId: row.project_id });
-    return toPlacementView(row);
+    return toPlacementView(row, this.nodes);
   }
 
   /**
@@ -461,7 +466,7 @@ export class Sessions {
         ...(liveThinkingLevel ? { thinkingLevel: liveThinkingLevel } : {}),
       });
     })();
-    this.wakeNodeCommands?.();
+    void this.nodes.wake();
 
     this.broadcast({
       type: "session_updated",

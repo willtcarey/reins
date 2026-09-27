@@ -18,7 +18,7 @@ export type DeliveryOutcome =
 /** Claim once; other delivery exceptions are terminal failures, never automatically retried. `commit`
  * runs in the settling transaction for every recorded result, success or failure (a session's
  * placement changes there), and returns the result to record. */
-export async function deliverCommand(id: string, send: () => Promise<NodeResult>, commit?: (result: NodeResult) => NodeResult): Promise<DeliveryOutcome> {
+export async function deliverCommand(id: string, send: () => Promise<NodeResult>, commit: (result: NodeResult) => NodeResult): Promise<DeliveryOutcome> {
   if (!claimCommand(id)) return { claimed: false };
   let result: NodeResult;
   try {
@@ -33,7 +33,7 @@ export async function deliverCommand(id: string, send: () => Promise<NodeResult>
     result = { ok: false, error: { code: "internal", message: error instanceof Error ? error.message : String(error), retryable: false } };
   }
   const recorded = getDb().transaction(() => {
-    const value = commit ? commit(result) : result;
+    const value = commit(result);
     settleCommand(id, value.ok ? "admitted" : "failed", JSON.stringify(value));
     return value;
   })();

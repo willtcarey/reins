@@ -46,7 +46,7 @@ export const nodeCommand = z.discriminatedUnion("op", [
 ]);
 /** `not_owner`: the server refused a node→server write because the sending node no longer owns the
  * session (it was moved elsewhere); definite, never retried. */
-export const nodeErrorCode = z.enum(["unavailable", "unsupported", "invalid_request", "busy", "not_found", "not_owner", "internal"]);
+export const nodeErrorCode = z.enum(["unavailable", "invalid_request", "busy", "not_found", "not_owner", "internal"]);
 export const nodeResult = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), value: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("provisioned") }),

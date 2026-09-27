@@ -2,7 +2,7 @@ import { nodeRuntimesForTesting } from "@reins/node/node";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { Database } from "bun:sqlite";
-import { executeSessionCommand, wakeSessionInput } from "../../runtimes/node-execution.js";
+import { executeSessionCommand } from "../../runtimes/node-execution.js";
 import { openNodeDb } from "@reins/node/storage";
 import { join } from "node:path";
 import { describe, test, expect, spyOn } from "bun:test";
@@ -18,14 +18,22 @@ import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createNewSession, SessionManager } from "../../runtimes/session-manager.js";
 import { install } from "../../handler.js";
-import { NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
 import { enqueueInput, getCommand } from "../../node-command-store.js";
 import { replicaInput } from "../../node-replica.js";
 import { Sessions } from "../../models/sessions.js";
 import { registerPiProvider, unregisterPiProvider, createPiModelRuntime, createPiContext } from "../../runtimes/pi/factory.js";
-import { provisionForSession } from "../../runtimes/internal-node.js";
-import { internalNodeFor, stopInternalNode } from "../helpers/loopback-node.js";
+import { sessionBinding } from "../../runtimes/node-source.js";
+import { connectLoopbackNode, drainCommands, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
+import type { ServerState } from "../../state.js";
 import { useFakeNode } from "../helpers/fake-node.js";
+
+/** Installs the handler as the process owner does (its hub replaces the state's and starts delivery) and
+ * connects the loopback node to it, as the node process would dial in; returns the uninstall. */
+function installWithNode(state: ServerState): () => void {
+  const { uninstall } = install(state);
+  connectLoopbackNode(state);
+  return uninstall;
+}
 
 function createCapturingWsClient() {
   const sent: any[] = [];
@@ -52,14 +60,14 @@ describe("runtime sessions manager", () => {
     const project = createProject("Reports", repo.dir);
     createSession("parent", project.id, { agentRuntimeType: "pi", placementStatus: "provisioned" });
     createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent", placementStatus: "provisioned" });
-    const steers = () => node.sent.flatMap(([command]) => command.op === "session.steer" && command.sessionId === "parent" ? [command] : []);
+    const steers = () => node.sent.flatMap((command) => command.op === "session.steer" && command.sessionId === "parent" ? [command] : []);
     const child = new SessionManager(state).forSession("child");
-    child.settledWith({ runId: "run-1", status: "completed" }, { reply: { text: "First result", stopReason: "stop", errorMessage: null } });
+    child.settledWith({ runId: "run-1", status: "completed" }, { reply: { text: "First result", stopReason: "stop", errorMessage: null } }, () => true);
     for (let i = 0; i < 100 && steers().length < 1; i++) await Bun.sleep(5);
-    expect(node.sent.some(([command]) => command.op === "session.prompt")).toBe(false);
+    expect(node.sent.some((command) => command.op === "session.prompt")).toBe(false);
     expect(steers()).toHaveLength(1);
     expect(JSON.stringify(steers())).toContain("First result");
-    child.settledWith({ runId: "run-2", status: "completed" }, { reply: { text: "Follow-up result", stopReason: "stop", errorMessage: null } });
+    child.settledWith({ runId: "run-2", status: "completed" }, { reply: { text: "Follow-up result", stopReason: "stop", errorMessage: null } }, () => true);
     for (let i = 0; i < 100 && steers().length < 2; i++) await Bun.sleep(5);
     expect(steers()).toHaveLength(2);
     expect(JSON.stringify(steers()[1])).toContain("Follow-up result");
@@ -68,7 +76,7 @@ describe("runtime sessions manager", () => {
   test("automatic child settlement moves a parent at rest onto its node and retains its source in canonical parent history", async () => {
     const nodeDb = openNodeDb(":memory:");
     setTestNodeDb(nodeDb);
-    const state = createServerState();
+    const state = createServerState(undefined, { loopbackNode: true });
     const project = createProject("Canonical reports", repo.dir);
     const provider = fauxProvider({
       models: [{ id: "settlement-report-model", contextWindow: 200_000, maxTokens: 100 }],
@@ -89,7 +97,7 @@ describe("runtime sessions manager", () => {
 
     try {
       new SessionManager(state).forSession("child")
-        .settledWith({ runId: "settled-run", status: "completed" }, { reply: { text: "Canonical result", stopReason: "stop", errorMessage: null } });
+        .settledWith({ runId: "settled-run", status: "completed" }, { reply: { text: "Canonical result", stopReason: "stop", errorMessage: null } }, () => true);
       await parentResponded.promise;
       // The parent was at rest on the server: it was hydrated onto the node, whose Pi lane was seeded
       // from the row's model, and the report was admitted there and replicated back.
@@ -103,13 +111,13 @@ describe("runtime sessions manager", () => {
         content: [{ type: "text", text: "Canonical result" }],
         metadata: { sourceSessionId: "child" },
       });
-      expect(new Sessions().getMessagePage("parent", 10)?.items[0]?.message).toMatchObject({
+      expect(new Sessions(state.nodes).getMessagePage("parent", 10)?.items[0]?.message).toMatchObject({
         role: "user",
         content: [{ type: "text", text: "Canonical result" }],
         metadata: { sourceSessionId: "child" },
       });
     } finally {
-      await stopInternalNode(state);
+      await stopLoopbackNode(state);
       unregisterPiProvider(provider.provider.id);
       setTestNodeDb();
       nodeDb.close();
@@ -130,11 +138,11 @@ describe("runtime sessions manager", () => {
     const state = createServerState();
     const client = createCapturingWsClient();
     state.clients.add(client.client);
-    const stop = install(state);
+    const stop = installWithNode(state);
     const project = createProject("Node-backed", repo.dir);
     expect((await createPiContext({ cwd: repo.dir })).modelRuntime.getModel("node-spike-faux", "fake")).toBeDefined();
     try {
-      const created = createNewSession(state, project.id, repo.dir, {
+      const created = createNewSession(state, project.id, {
         model: { provider: provider.provider.id, modelId: "fake" },
       });
       expect(getSession(created.id)?.placement_status).toBe("provisioning");
@@ -167,23 +175,23 @@ describe("runtime sessions manager", () => {
       expect(client.sent.some(message => message.type === "event" && message.event.type === "agent_end" && message.sessionId === created.id)).toBe(true);
       expect(getSession(created.id)?.activity_state).toBe("finished");
       // Node-owned: the row changes at once; the node applies the queued session.setModel to Pi's lane.
-      await new Sessions(undefined, () => wakeSessionInput(state)).setModel({
+      await new Sessions(state.nodes).setModel({
         sessionId: created.id, provider: provider.provider.id, modelId: "other",
       });
       expect(getSession(created.id)?.model_id).toBe("other");
       // Delivered commands leave the outbox.
       const modelSet = () => !getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.setModel'").get(created.id);
       for (let i = 0; i < 100 && !modelSet(); i++) await Bun.sleep(10);
-      expect((await nodeRuntimesForTesting(internalNodeFor(state)).open(created.id, provisionForSession(created.id).binding)).getSessionMetadata()?.model?.modelId).toBe("other");
-      await nodeRuntimesForTesting(internalNodeFor(state)).close(created.id);
+      expect((await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, sessionBinding(created.id).binding)).getSessionMetadata()?.model?.modelId).toBe("other");
+      await nodeRuntimesForTesting(loopbackNodeFor(state)).close(created.id);
       stop();
-      await stopInternalNode(state); // the node process restarts with its disk intact
+      await stopLoopbackNode(state); // the node process restarts with its disk intact
       closeTestNodeDb();
       const reopenedDb = openNodeDb(file);
       setTestNodeDb(reopenedDb);
-      const stopRestarted = install(state);
+      const stopRestarted = installWithNode(state);
       try {
-        const reopened = await nodeRuntimesForTesting(internalNodeFor(state)).open(created.id, provisionForSession(created.id).binding);
+        const reopened = await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, sessionBinding(created.id).binding);
         expect(JSON.stringify(await reopened.getMessages())).toContain("Node reply");
         await executeSessionCommand(state, created.id, "steer", [{ type: "text", text: "After restart" }], "after-restart");
         // Admission is proven by the replica: the node committed the input before answering.
@@ -193,7 +201,7 @@ describe("runtime sessions manager", () => {
         expect(JSON.stringify(await reopened.getMessages())).toContain("After restart");
         expect(getDb().query<{ count: number }, [string]>("SELECT COUNT(*) count FROM session_messages WHERE session_id = ?").get(created.id)?.count)
           .toBe(reopenedDb.query<{ count: number }, [string]>("SELECT COUNT(*) count FROM session_messages WHERE session_id = ?").get(created.id)?.count);
-        await nodeRuntimesForTesting(internalNodeFor(state)).close(created.id);
+        await nodeRuntimesForTesting(loopbackNodeFor(state)).close(created.id);
       } finally { stopRestarted(); }
     } finally {
       stop();
@@ -210,23 +218,23 @@ describe("runtime sessions manager", () => {
     provider.setResponses([fauxAssistantMessage("Before the loss"), fauxAssistantMessage("After re-hydration")]);
     registerPiProvider(provider.provider);
     setApiKeyCredential(provider.provider.id, "test-key");
-    const state = createServerState();
-    const dispatcher = new NodeCommandDispatcher(state);
+    const state = createServerState(undefined, { loopbackNode: true });
     const settled = (sessionId: string) => getDb().query<{ n: number }, [string]>("SELECT COALESCE(MAX(settlement_count), 0) n FROM node_session_watermarks WHERE session_id = ?").get(sessionId)!.n;
     try {
       const project = createProject("Lost node storage", repo.dir);
-      const created = createNewSession(state, project.id, repo.dir, { model: { provider: provider.provider.id, modelId: "fake" } });
+      const created = createNewSession(state, project.id, { model: { provider: provider.provider.id, modelId: "fake" } });
       enqueueInput(created.id, "prompt", [{ type: "text", text: "First" }], "first-input");
-      await dispatcher.drain();
+      await drainCommands(state);
       for (let i = 0; i < 200 && settled(created.id) < 1; i++) await Bun.sleep(5);
       for (let i = 0; i < 200 && firstDb.query("SELECT 1 FROM session_outbox").get(); i++) await Bun.sleep(5);
       const before = getDb().query<{ harness_next_seq: number }, [string]>("SELECT harness_next_seq FROM sessions WHERE id = ?").get(created.id)!.harness_next_seq;
-      await stopInternalNode(state);
+      await stopLoopbackNode(state);
       closeTestNodeDb();
       const replacement = openNodeDb(":memory:");
       setTestNodeDb(replacement);
+      connectLoopbackNode(state); // the node restarts on empty storage and dials in again
       const commandId = enqueueInput(created.id, "prompt", [{ type: "text", text: "Can we continue?" }], "lost-input");
-      await dispatcher.drain();
+      await drainCommands(state);
       expect(getCommand(commandId!)).toBeNull();
       expect(replicaInput(getDb(), created.id, "lost-input")).not.toBeNull();
       expect(getSession(created.id)?.placement_status).toBe("provisioned");
@@ -242,7 +250,7 @@ describe("runtime sessions manager", () => {
         ["assistant", JSON.stringify([{ type: "text", text: "After re-hydration" }])],
       ]);
       expect(getSession(created.id)?.placement_status).toBe("provisioned");
-    } finally { await stopInternalNode(state); closeTestNodeDb(); unregisterPiProvider(provider.provider.id); }
+    } finally { await stopLoopbackNode(state); closeTestNodeDb(); unregisterPiProvider(provider.provider.id); }
   }, 15_000);
 
   test("node-owned prompts retain attachment references and hydrate image bytes for Pi", async () => {
@@ -256,18 +264,18 @@ describe("runtime sessions manager", () => {
     const state = createServerState();
     const client = createCapturingWsClient();
     state.clients.add(client.client);
-    const stop = install(state);
+    const stop = installWithNode(state);
     const warn = spyOn(console, "warn");
     try {
       const project = createProject("Node image", repo.dir);
-      const created = createNewSession(state, project.id, repo.dir, { model: { provider: provider.provider.id, modelId: "fake" } });
+      const created = createNewSession(state, project.id, { model: { provider: provider.provider.id, modelId: "fake" } });
       const attachment = storeSessionAttachment(created.id, { data: Buffer.from("node image bytes"), mimeType: "image/png", filename: "image.png" });
       await executeSessionCommand(state, created.id, "prompt", [
         { type: "text", text: "Inspect image" },
         { type: "image", attachmentId: attachment.id, mimeType: attachment.mimeType, filename: attachment.filename, byteSize: attachment.byteSize, sha256: attachment.sha256 },
       ], "node-image-client");
-      for (let i = 0; i < 100 && !nodeRuntimesForTesting(internalNodeFor(state)).has(created.id); i++) await Bun.sleep(10);
-      const runtime = await nodeRuntimesForTesting(internalNodeFor(state)).open(created.id, provisionForSession(created.id).binding);
+      for (let i = 0; i < 100 && !nodeRuntimesForTesting(loopbackNodeFor(state)).has(created.id); i++) await Bun.sleep(10);
+      const runtime = await nodeRuntimesForTesting(loopbackNodeFor(state)).open(created.id, sessionBinding(created.id).binding);
       await runtime.waitForIdle();
       expect(JSON.stringify(providerContext)).toContain(Buffer.from("node image bytes").toString("base64"));
       expect(nodeDb.query<{ data: Uint8Array }, [string, string]>(
@@ -280,7 +288,7 @@ describe("runtime sessions manager", () => {
       const promptEvents = client.sent.filter(message => message.type === "event" && message.sessionId === created.id
         && JSON.stringify(message.event).includes(attachment.id)).map(message => message.event.type);
       expect(promptEvents).toEqual(["message_start", "message_end", "entry_added"]);
-      await nodeRuntimesForTesting(internalNodeFor(state)).close(created.id);
+      await nodeRuntimesForTesting(loopbackNodeFor(state)).close(created.id);
     } finally { warn.mockRestore(); stop(); unregisterPiProvider(provider.provider.id); closeTestNodeDb(); }
   }, 15_000);
 
@@ -288,7 +296,7 @@ describe("runtime sessions manager", () => {
     const state = createServerState();
     const project = createProject("Reins", repo.dir);
 
-    const managed = await createNewSession(state, project.id, repo.dir, { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } });
+    const managed = await createNewSession(state, project.id, { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } });
     const row = getSession(managed.id);
 
     expect(row?.agent_runtime_type).toBe("pi");
@@ -299,7 +307,7 @@ describe("runtime sessions manager", () => {
     const state = createServerState();
     const project = createProject("Reins", repo.dir);
 
-    const managed = await createNewSession(state, project.id, repo.dir, {
+    const managed = await createNewSession(state, project.id, {
       model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
       thinkingLevel: "high",
     });

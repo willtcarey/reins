@@ -13,7 +13,7 @@ test("private loopback WS negotiates and provisions then reports status", async 
       if (new URL(request.url).pathname !== "/test-only" || !instance.upgrade(request)) return new Response("Forbidden", { status: 403 });
     },
     websocket: {
-      open(ws) { serverPeer = createServerTransport({ send: data => ws.send(data), close: () => ws.close() }, noServer); },
+      open(ws) { serverPeer = createServerTransport({ send: data => ws.send(data), close: () => ws.close() }, () => noServer); },
       message(_ws, message) { serverPeer?.receive(message); },
       close() { serverPeer?.close(); },
     },
@@ -24,7 +24,7 @@ test("private loopback WS negotiates and provisions then reports status", async 
   try {
     await new Promise<void>((resolve, reject) => { client.addEventListener("open", () => resolve(), { once: true }); client.addEventListener("error", () => reject(new Error("WebSocket failed")), { once: true }); });
     node = createNodeConnection({ send: data => client.send(data), close: () => client.close() }, {
-      instanceId: "test-node", minVersion: 1, maxVersion: 2, capabilities: ["session.provision", "session.abort", "future.optional"],
+      nodeId: "test-node", minVersion: 1, maxVersion: 2, capabilities: ["session.provision", "session.abort", "future.optional"],
       provision: async ({ sessionId, binding }) => { sessions.set(sessionId, binding.sourceId); return { provisioned: true }; },
       abort: async ({ sessionId }) => ({ aborted: sessions.has(sessionId) }),
     });
@@ -47,10 +47,10 @@ test("private loopback WS negotiates and provisions then reports status", async 
 
 test("server transport rejects operations before negotiation and incompatible versions", async () => {
   const sent: string[] = [];
-  const peer = createServerTransport({ send: data => sent.push(data), close: () => {} }, noServer);
+  const peer = createServerTransport({ send: data => sent.push(data), close: () => {} }, () => noServer);
   const binding = { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null };
   await expect(peer.abort({ sessionId: "s1", binding })).rejects.toMatchObject({ code: "unavailable" });
-  peer.receive(JSON.stringify({ jsonrpc: "2.0", method: "node.hello", params: { minVersion: 2, maxVersion: 3, capabilities: ["session.provision"], instanceId: "x" }, id: 1 }));
+  peer.receive(JSON.stringify({ jsonrpc: "2.0", method: "node.hello", params: { minVersion: 2, maxVersion: 3, capabilities: ["session.provision"], nodeId: "x" }, id: 1 }));
   await Bun.sleep(0);
   expect(JSON.parse(sent[0]!)).toMatchObject({ jsonrpc: "2.0", id: 1, error: { code: -32001 } });
   await expect(peer.provision({ sessionId: "s1", binding, configuration: { model: null, thinkingLevel: null, task: null } })).rejects.toMatchObject({ code: "unavailable" });
@@ -61,7 +61,7 @@ test("a command the server sends right behind its hello reply (same read) is ser
   const EPOCH = crypto.randomUUID();
   const sent: Array<{ id?: number | string; method?: string; result?: unknown; error?: { code: number } }> = [];
   const node = createNodeConnection({ send: data => sent.push(JSON.parse(data)), close: () => {} }, {
-    instanceId: "n", minVersion: 1, maxVersion: 1, capabilities: ["session.provision"],
+    nodeId: "n", minVersion: 1, maxVersion: 1, capabilities: ["session.provision"],
     provision: async () => ({ provisioned: true }),
   });
   const hello = sent.find(frame => frame.method === "node.hello")!;

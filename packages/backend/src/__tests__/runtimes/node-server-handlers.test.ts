@@ -3,24 +3,23 @@ import { createHash } from "node:crypto";
 import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
 import { createLoopbackPair, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES } from "@reins/node/protocol";
-import { createServerTransport } from "../../node-transport/server-peer.js";
 import { Database } from "bun:sqlite";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../../project-store.js";
-import { createSource, internalSource } from "../../node-store.js";
+import { createSource, defaultSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { createOutboxDrain, nodeSessionTask, openNodeDb, openNodeStorage } from "@reins/node/storage";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
 import { createServerState } from "../helpers/server-state.js";
-import { internalNodeServer, provisionForSession } from "../../runtimes/internal-node.js";
-import { internalNodeFor, stopInternalNode } from "../helpers/loopback-node.js";
+import { sessionBinding } from "../../runtimes/node-source.js";
+import { drainCommands, loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { setTestNodeDb } from "../helpers/test-db.js";
 import { createTask, updateTask } from "../../task-store.js";
 import { createNewSession } from "../../runtimes/session-manager.js";
-import { getWork } from "../../models/node-command-projection.js";
+import { getNodeCommand } from "../../node-command-store.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,9 +28,8 @@ import { registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/fact
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
 import { getSession } from "../../session-store.js";
-import { dispatcherFor, NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
 
-test("internal node fetches attachments only for sessions it owns or would host, and reports commits only for sessions it owns", async () => {
+test("a node fetches attachments only for sessions it owns or would host, and reports commits only for sessions it owns", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
   const nodeDb = openNodeDb(":memory:");
@@ -39,18 +37,18 @@ test("internal node fetches attachments only for sessions it owns or would host,
   const state = createServerState();
   try {
     const project = createProject("a", "/tmp/a");
-    const source = internalSource(project.id);
+    const source = defaultSource(project.id)!;
     createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
     createSession("legacy", project.id, { agentRuntimeType: "pi", sourceId: source.id });
-    const node = internalNodeFor(state);
+    const node = loopbackNodeFor(state);
     const image = (sessionId: string) => {
       const stored = storeSessionAttachment(sessionId, { data: new Uint8Array([1, 2, 3]), mimeType: "image/png" });
       return { type: "image" as const, attachmentId: stored.id, mimeType: "image/png" as const, byteSize: 3, sha256: stored.sha256 };
     };
     const prompt = (sessionId: string, content: ReturnType<typeof image>[]) =>
-      node.prompt({ binding: provisionForSession(sessionId).binding, sessionId, clientId: `input-${sessionId}`, content, sourceSessionId: null });
+      node.prompt({ binding: sessionBinding(sessionId).binding, sessionId, clientId: `input-${sessionId}`, content, sourceSessionId: null });
     for (const sessionId of ["owned", "legacy"]) {
-      await node.provision({ binding: provisionForSession(sessionId).binding, sessionId, configuration: { model: null, thinkingLevel: null, task: null } });
+      await node.provision({ binding: sessionBinding(sessionId).binding, sessionId, configuration: { model: null, thinkingLevel: null, task: null } });
     }
 
     const owned = image("owned");
@@ -70,17 +68,17 @@ test("internal node fetches attachments only for sessions it owns or would host,
       .rejects.toMatchObject({ error: { code: "invalid_request", message: "Attachment fetch failed: Node session unavailable: foreign" } });
 
     nodeDb.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('legacy','committed',1,'[]')").run();
-    await node.provision({ binding: provisionForSession("legacy").binding, sessionId: "legacy", configuration: { model: null, thinkingLevel: null, task: null } });
+    await node.provision({ binding: sessionBinding("legacy").binding, sessionId: "legacy", configuration: { model: null, thinkingLevel: null, task: null } });
     // Refused as not_owner: the node drops the report with its copy instead of retrying it.
     for (let i = 0; i < 200 && nodeDb.query("SELECT 1 FROM sessions WHERE id = 'legacy'").get(); i++) await Bun.sleep(5);
     expect(nodeDb.query("SELECT COUNT(*) n FROM session_outbox").get()).toEqual({ n: 0 });
     expect(nodeDb.query("SELECT 1 FROM sessions WHERE id = 'legacy'").get()).toBeNull();
     expect(db.query("SELECT harness_next_seq FROM sessions WHERE id = 'legacy'").get()).toEqual({ harness_next_seq: 1 });
     expect(db.query("SELECT COUNT(*) n FROM node_session_watermarks").get()).toEqual({ n: 0 });
-  } finally { await stopInternalNode(state); setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); }
+  } finally { await stopLoopbackNode(state); setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); }
 });
 
-test("internal link delivers committed batches larger than a 1 MiB frame byte-for-byte", async () => {
+test("a node link delivers committed batches larger than a 1 MiB frame byte-for-byte", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
   const nodeDb = openNodeDb(":memory:");
@@ -88,10 +86,10 @@ test("internal link delivers committed batches larger than a 1 MiB frame byte-fo
   const state = createServerState();
   try {
     const project = createProject("a", "/tmp/a");
-    const source = internalSource(project.id);
+    const source = defaultSource(project.id)!;
     createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
-    const node = internalNodeFor(state);
-    const provision = () => node.provision({ binding: provisionForSession("owned").binding, sessionId: "owned", configuration: { model: null, thinkingLevel: null, task: null } });
+    const node = loopbackNodeFor(state);
+    const provision = () => node.provision({ binding: sessionBinding("owned").binding, sessionId: "owned", configuration: { model: null, thinkingLevel: null, task: null } });
     await provision();
     const storage = await openNodeStorage(nodeDb, "owned", createOutboxDrain(nodeDb, async () => { throw new Error("offline"); }));
     await storage.commit([insertEntry({ id: "root", parentId: null, type: "custom", customType: "note", data: { text: "é".repeat(700_000) } })], BACKGROUND_CONTEXT);
@@ -104,7 +102,7 @@ test("internal link delivers committed batches larger than a 1 MiB frame byte-fo
     // The watermark remembers the applied batch's start and the hash of its exact bytes.
     expect(db.query("SELECT commit_start_seq, commit_sha256 FROM node_session_watermarks WHERE session_id = 'owned'").get())
       .toEqual({ commit_start_seq: 1, commit_sha256: createHash("sha256").update(exact).digest("hex") });
-  } finally { await stopInternalNode(state); setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); }
+  } finally { await stopLoopbackNode(state); setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close(); }
 });
 
 test("node session events reach browsers and durable lifecycle reports drive activity, reporting a child to its parent once", async () => {
@@ -126,11 +124,11 @@ test("node session events reach browsers and durable lifecycle reports drive act
     .map(row => JSON.parse(row.message_json).message);
   try {
     const project = createProject("Events", dir);
-    const source = internalSource(project.id);
+    const source = defaultSource(project.id)!;
     createSession("parent", project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: provider.provider.id, modelId: "fake" });
     createSession("child", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned", parentSessionId: "parent" });
-    const node = internalNodeFor(state);
-    const binding = provisionForSession("child").binding;
+    const node = loopbackNodeFor(state);
+    const binding = sessionBinding("child").binding;
     await node.provision({ binding, sessionId: "child", configuration: { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null } });
     await node.prompt({ binding, sessionId: "child", clientId: "c", content: [{ type: "text", text: "Go" }], sourceSessionId: null });
     await (await nodeRuntimesForTesting(node).open("child", binding)).waitForIdle();
@@ -150,12 +148,12 @@ test("node session events reach browsers and durable lifecycle reports drive act
     for (let i = 0; i < 400 && getSession("parent")?.activity_state === "running"; i++) await Bun.sleep(5);
     await nodeRuntimesForTesting(node).close("parent");
   } finally {
-    dispatcherFor(state).stop(); await stopInternalNode(state); unregisterPiProvider(provider.provider.id); setTestNodeDb(); nodeDb.close();
+    state.nodes.close(); await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id); setTestNodeDb(); nodeDb.close();
     setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true });
   }
 }, 15_000);
 
-test("tool-result images are committed and reach browsers over the internal link as references to one server attachment under the node's ID", async () => {
+test("tool-result images are committed and reach browsers over the node link as references to one server attachment under the node's ID", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
   const nodeDb = openNodeDb(":memory:");
@@ -177,10 +175,10 @@ test("tool-result images are committed and reach browsers over the internal link
       CREATE TEMP TRIGGER attachment_applied AFTER INSERT ON session_attachments BEGIN INSERT INTO applied(what) VALUES ('attachment:' || NEW.id); END;
       CREATE TEMP TRIGGER message_applied AFTER INSERT ON session_messages BEGIN INSERT INTO applied(what) VALUES ('message:' || NEW.message_json); END;`);
     const project = createProject("Tool image", dir);
-    const source = internalSource(project.id);
+    const source = defaultSource(project.id)!;
     createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
-    const node = internalNodeFor(state);
-    const binding = provisionForSession("owned").binding;
+    const node = loopbackNodeFor(state);
+    const binding = sessionBinding("owned").binding;
     await node.provision({ binding, sessionId: "owned", configuration: { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null } });
     await node.prompt({ binding, sessionId: "owned", clientId: "c", content: [{ type: "text", text: "Read it" }], sourceSessionId: null });
     await (await nodeRuntimesForTesting(node).open("owned", binding)).waitForIdle();
@@ -209,7 +207,7 @@ test("tool-result images are committed and reach browsers over the internal link
     expect(transcript).not.toContain(rows[0]!.data.toString("base64"));
     await nodeRuntimesForTesting(node).close("owned");
   } finally {
-    warn.mockRestore(); await stopInternalNode(state); unregisterPiProvider(provider.provider.id); setTestNodeDb(); nodeDb.close();
+    warn.mockRestore(); await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id); setTestNodeDb(); nodeDb.close();
     setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true });
   }
 }, 15_000);
@@ -221,15 +219,16 @@ test("attachment.store over a 1 MiB-capped link uploads chunks the server verifi
   const state = createServerState();
   const node = startNode(nodeDb);
   const [serverEnd, nodeEnd] = createLoopbackPair();
-  const server = createServerTransport(serverEnd, internalNodeServer(state));
-  const connection = connectNode(node, nodeEnd, "capped");
+  // Through the hub's accept path with the transport's default (1 MiB) frame cap.
+  state.nodes.accept(serverEnd, {});
+  const connection = connectNode(node, nodeEnd, "internal");
   const calls: number[] = [];
-  serverEnd.onmessage = data => { if (String(data).includes("attachment.store")) calls.push(1); server.receive(data); };
-  serverEnd.onclose = server.close;
+  const serve = serverEnd.onmessage!;
+  serverEnd.onmessage = data => { if (String(data).includes("attachment.store")) calls.push(1); serve(data); };
   nodeEnd.onmessage = connection.receive; nodeEnd.onclose = connection.close;
   try {
     const project = createProject("Store", "/tmp/store");
-    const source = internalSource(project.id);
+    const source = defaultSource(project.id)!;
     createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
     createSession("legacy", project.id, { agentRuntimeType: "pi", sourceId: source.id });
     createSession("owned-2", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
@@ -281,22 +280,22 @@ test("session creation freezes model, thinking level and task into the provision
   // Pi creates the lane at provision, so the node's model registry must know the frozen models.
   const providers = [fauxProvider({ provider: "default-provider", models: [{ id: "default-model" }] }), fauxProvider({ provider: "p", models: [{ id: "m" }] })];
   for (const provider of providers) registerPiProvider(provider.provider);
-  const state = createServerState();
+  const state = createServerState(undefined, { loopbackNode: true });
   try {
     const project = createProject("Config", "/tmp/config");
     const task = createTask(project.id, "Fix login", "Users can't log in", "task/fix-login");
     // Created before any default exists: no model is resolved, and none is filled in later.
-    const unresolved = createNewSession(state, project.id, project.path);
+    const unresolved = createNewSession(state, project.id);
     setSetting("default_model", { provider: "default-provider", modelId: "default-model", runtimeType: "pi", thinkingLevel: "low" });
-    const defaulted = createNewSession(state, project.id, project.path, { taskId: task.id });
-    const override = createNewSession(state, project.id, project.path, { model: { provider: "p", modelId: "m" }, thinkingLevel: "high" });
+    const defaulted = createNewSession(state, project.id, { taskId: task.id });
+    const override = createNewSession(state, project.id, { model: { provider: "p", modelId: "m" }, thinkingLevel: "high" });
 
     setSetting("default_model", { provider: "later-provider", modelId: "later-model", runtimeType: "pi", thinkingLevel: "max" });
     updateTask(task.id, { title: "Renamed", description: "Edited later" });
 
     // The queued provision carries the configuration frozen at creation.
     const configuration = (created: { provisionCommandId: string }) => {
-      const command = getWork(created.provisionCommandId)?.command;
+      const command = getNodeCommand(created.provisionCommandId)?.command;
       return command?.op === "session.provision" ? command.configuration : undefined;
     };
     expect(configuration(unresolved)).toEqual({ model: null, thinkingLevel: null, task: null });
@@ -307,9 +306,9 @@ test("session creation freezes model, thinking level and task into the provision
     expect(getSession(defaulted.id)).toMatchObject({ model_provider: "default-provider", model_id: "default-model", thinking_level: "low" });
     expect(getSession(unresolved.id)).toMatchObject({ model_provider: null, model_id: null, thinking_level: "off" });
 
-    await new NodeCommandDispatcher(state).drain();
+    await drainCommands(state);
     for (const created of [unresolved, defaulted, override]) {
-      expect(getWork(created.provisionCommandId)).toBeNull();
+      expect(getNodeCommand(created.provisionCommandId)).toBeNull();
       expect(getSession(created.id)?.placement_status).toBe("provisioned");
     }
     // The node stores the task snapshot with its session and the model in Pi's lane (replicated to the server).
@@ -322,6 +321,6 @@ test("session creation freezes model, thinking level and task into the provision
     expect(lane(db, defaulted.id)).toEqual(lane(nodeDb, defaulted.id));
   } finally {
     for (const provider of providers) unregisterPiProvider(provider.provider.id);
-    await stopInternalNode(state); setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close();
+    await stopLoopbackNode(state); setTestNodeDb(); nodeDb.close(); setDb(new Database(":memory:")); db.close();
   }
 });

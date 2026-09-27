@@ -7,10 +7,16 @@ import { LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, ndjsonSocketHandler, systemTimers, t
 export interface Backoff { initialMs: number; maxMs: number }
 export const RECONNECT_BACKOFF: Backoff = { initialMs: 100, maxMs: 5_000 };
 
+/** The node ID a local node announces in `node.hello` unless configured otherwise (`REINS_NODE_ID`): the
+ * ID of the node row the server's migrations seed for this machine. The server has no notion of a local
+ * node; it serves any connection whose ID names one of its nodes. */
+export const DEFAULT_LOCAL_NODE_ID = "internal";
+
 export interface LocalNodeClientOptions extends LinkOptions {
   /** The server's Unix socket. */
   path: string;
-  instanceId?: string;
+  /** Announced in `node.hello`; `DEFAULT_LOCAL_NODE_ID` by default. */
+  nodeId?: string;
   backoff?: Backoff;
   /** Injectable for tests; `Math.random` by default. */
   random?: () => number;
@@ -30,7 +36,7 @@ export interface LocalNodeClient {
  * pending outbox and drops its credential cache (see node-contract.md *Transport*).
  */
 export function connectLocalNode(node: Node, options: LocalNodeClientOptions): LocalNodeClient {
-  const { path, instanceId = "internal", backoff = RECONNECT_BACKOFF, random = Math.random, onStatus, ...overrides } = options;
+  const { path, nodeId = DEFAULT_LOCAL_NODE_ID, backoff = RECONNECT_BACKOFF, random = Math.random, onStatus, ...overrides } = options;
   const link: LinkOptions = { ...LOCAL_LINK, ...overrides };
   const timers = link.timers ?? systemTimers;
   let stopped = false;
@@ -51,7 +57,7 @@ export function connectLocalNode(node: Node, options: LocalNodeClientOptions): L
         // Wired synchronously on open, before any frame can arrive.
         socket: ndjsonSocketHandler(link.maxFrameBytes ?? LOCAL_MAX_FRAME_BYTES, wire => {
           if (stopped) { wire.close(); return; }
-          const connection = connectNode(node, wire, instanceId, link);
+          const connection = connectNode(node, wire, nodeId, link);
           current = connection;
           let negotiated = false;
           wire.onmessage = connection.receive;

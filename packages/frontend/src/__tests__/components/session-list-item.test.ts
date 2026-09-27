@@ -135,13 +135,13 @@ describe("SessionListItem", () => {
     item.session = { ...session(null), placement: { status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" } };
 
     const move = infoCardActions(item).find((action) => action.label === "Move to node…");
-    expect(move).toMatchObject({ detail: "On Internal", disabled: false });
+    expect(move).toMatchObject({ detail: "Node: Internal", disabled: false });
     await move?.run();
     expect(moveRequests).toEqual(["session-1"]);
 
     // At rest on the server it still names the node it will run on.
     item.session = session(null);
-    expect(infoCardActions(item).find((action) => action.label === "Move to node…")?.detail).toBe("On Laptop");
+    expect(infoCardActions(item).find((action) => action.label === "Move to node…")?.detail).toBe("Node: Laptop");
   });
 
   test("disables the move only while the session runs or moves", () => {
@@ -156,7 +156,7 @@ describe("SessionListItem", () => {
     expect(templateToString(infoCardBinding(item, "subtitle"))).toContain("Moving to Internal…");
 
     item.session = { ...session("finished"), placement: { status: "provisioned", error: null, available: true, nodeId: "internal", nodeName: "Internal" } };
-    expect(moveAction()).toMatchObject({ disabled: false, detail: "On Internal" });
+    expect(moveAction()).toMatchObject({ disabled: false, detail: "Node: Internal" });
   });
 
   test("shows provisioning and move states from the session's placement instead of its message count", () => {

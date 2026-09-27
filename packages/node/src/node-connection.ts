@@ -18,14 +18,14 @@ const served = <I, O>(handle: (input: I) => Promise<O>) => async (input: I): Pro
 /** Node half of the wire protocol: every server→node session command is served by the `Node` method of
  * the same name. Rejections are application errors whose data is the `NodeError`. The connection serves
  * the node's server calls from creation (calls await negotiation) until closed. */
-export function connectNode(node: Node, socket: WireSocket, instanceId: string, options: LinkOptions = {}) {
+export function connectNode(node: Node, socket: WireSocket, nodeId: string, options: LinkOptions = {}) {
   const handlers: NodeCommandHandlers = {
     provision: served(input => node.provision(input)), prompt: served(input => node.prompt(input)), steer: served(input => node.steer(input)),
     setModel: served(input => node.setModel(input)), abort: served(input => node.abort(input)),
     resumePending: served(input => node.resumePending(input)), hydrate: served(input => node.hydrate(input)),
   };
   const connection = createNodeConnection(socket, {
-    instanceId, minVersion: protocolVersion, maxVersion: protocolVersion, ...options,
+    nodeId, minVersion: protocolVersion, maxVersion: protocolVersion, ...options,
     capabilities: [methods.sessionProvision, methods.sessionPrompt, methods.sessionSteer, methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending,
       methods.sessionHydrate],
     ...handlers,

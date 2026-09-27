@@ -11,9 +11,16 @@ test("node implementation cannot import server state, DB, session or source tabl
     const text = await Bun.file(new URL(file, nodeDir)).text();
     expect(text).not.toMatch(/from\s+["'][^"']*(?:backend|server-state|session-store|node-store|\/db\.)/);
   }
-  const [handler, dispatcher] = await Promise.all([source("handler.ts"), source("models/node-command-dispatcher.ts")]);
-  expect(handler).not.toContain("new SessionManager");
-  expect(dispatcher).not.toContain("internal-node-adapter");
+  expect(await source("handler.ts")).not.toContain("new SessionManager");
+});
+
+test("no server code singles out a node: the seeded node's ID is data (its migration), never a branch", async () => {
+  const files = (await readdir(root, { recursive: true }))
+    .filter(name => name.endsWith(".ts") && !name.startsWith("__tests__/") && !name.endsWith(".test.ts") && name !== "migrations.ts");
+  for (const file of files) {
+    const text = await source(file);
+    expect({ file, special: text.match(/INTERNAL_NODE_ID|node_id\s*=\s*'internal'|(?:===|!==|==)\s*["']internal["']|["']internal["']\s*(?:===|!==|==)|nodeId:\s*["']internal["']/g) }).toEqual({ file, special: null });
+  }
 });
 
 test("server code never starts a node or opens node storage (only tests link an in-process node)", async () => {

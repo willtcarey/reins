@@ -30,9 +30,9 @@ test("server-only and node-only processes link over the socket, provision and pr
   expect(node.count(CONNECTED)).toBe(0);
   const server = track(await startServer(dirs));
   await node.waitFor(CONNECTED);
-  await server.waitFor(/Internal node connected/);
+  await server.waitFor(/Node internal connected/);
   const api = new ServerApi(server.port);
-  expect(await api.health()).toMatchObject({ status: "ok", internalNode: { connected: true } });
+  expect(await api.health()).toMatchObject({ status: "ok", nodes: [{ id: "internal", name: "Internal", connected: true }] });
 
   const { projectId } = await api.setUp(dirs.repo.dir);
   const sessionId = await api.createSession(projectId);
@@ -68,7 +68,7 @@ test("a node killed mid-run restarts with its disk intact, reconnects, and the s
   await api.prompt(sessionId, "slow", "Two [slow:3000]");
   await api.waitForTranscript(sessionId, ["user: Two [slow:3000]"]);
   await node.stop("SIGKILL");
-  await until(async () => !(await api.health()).internalNode.connected, "server sees the node gone");
+  await until(async () => !(await api.localNodeConnected()), "server sees the node gone");
 
   node = track(startNodeProcess(dirs));
   await node.waitFor(CONNECTED);

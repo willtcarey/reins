@@ -8,10 +8,9 @@ import { openNodeDb } from "@reins/node/storage";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../../project-store.js";
-import { internalSource } from "../../node-store.js";
+import { defaultSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
-import { createServerTransport } from "../../node-transport/server-peer.js";
-import { internalNodeServer, provisionForSession } from "../../runtimes/internal-node.js";
+import { sessionBinding } from "../../runtimes/node-source.js";
 import { registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/factory.js";
 import { createDbCredentialStore } from "../../runtimes/pi/credential-store.js";
 import { deleteAllAuthCredentials, setApiKeyCredential, setOAuthCredential } from "../../auth-credentials-store.js";
@@ -21,15 +20,15 @@ import { setTestNodeDb, testNodeDb } from "../helpers/test-db.js";
 const REFRESH_SECRET = "refresh-secret-never-on-the-wire";
 const ROTATED_SECRET = "rotated-refresh-secret-never-on-the-wire";
 
-/** A node attached to the server's real handlers over its own loopback link, recording every frame. */
+/** A node connected to the server's hub over its own loopback link, recording every frame. */
 function linkedNode(state: ReturnType<typeof createServerState>, frames: string[]) {
   const node = startNode(testNodeDb());
   const connect = () => {
     const [serverEnd, nodeEnd] = createLoopbackPair();
-    const server = createServerTransport(serverEnd, internalNodeServer(state));
-    const connection = connectNode(node, nodeEnd, "credentials-test");
-    serverEnd.onmessage = data => { frames.push(String(data)); server.receive(data); };
-    serverEnd.onclose = server.close;
+    state.nodes.accept(serverEnd, {});
+    const connection = connectNode(node, nodeEnd, "internal");
+    const serve = serverEnd.onmessage!;
+    serverEnd.onmessage = data => { frames.push(String(data)); serve(data); };
     nodeEnd.onmessage = data => { frames.push(String(data)); connection.receive(data); };
     nodeEnd.onclose = connection.close;
     return { connection, close: () => serverEnd.close() };
@@ -145,10 +144,10 @@ test("a node-owned session runs on credentials served over the link: one refresh
   registerPiProvider(keyedProvider);
   try {
     const project = createProject("Credentials", "/tmp/credentials");
-    const source = internalSource(project.id);
+    const source = defaultSource(project.id)!;
     const start = async (sessionId: string, providerId: string) => {
       createSession(sessionId, project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
-      const binding = provisionForSession(sessionId).binding;
+      const binding = sessionBinding(sessionId).binding;
       expect(await node.provision({ binding, sessionId, configuration: { model: { provider: providerId, modelId: "fake" }, thinkingLevel: null, task: null } })).toEqual({ provisioned: true });
       return binding;
     };

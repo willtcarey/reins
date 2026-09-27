@@ -34,7 +34,7 @@ test("the start supervisor launches server and node, restarts a crashed node wit
   const [, port] = await supervisor.waitFor(/listening on http:\/\/localhost:(\d+)/);
   await supervisor.waitFor(/\[node\] connected to server/);
   const api = new ServerApi(Number(port));
-  expect(await api.health()).toMatchObject({ internalNode: { connected: true } });
+  expect(await api.localNodeConnected()).toBe(true);
 
   // A crashed node is restarted and reconnects.
   const [, pid] = await supervisor.waitFor(/started node \(pid (\d+)\)/);
@@ -43,7 +43,7 @@ test("the start supervisor launches server and node, restarts a crashed node wit
   await supervisor.waitFor(new RegExp(`node restarting in ${NODE_RESTART.initialMs}ms`));
   await supervisor.waitFor(/started node \(pid (\d+)\)/, 2);
   await supervisor.waitFor(/\[node\] connected to server/, 2);
-  await until(async () => (await api.health()).internalNode.connected, "node reconnected");
+  await until(() => api.localNodeConnected(), "node reconnected");
 
   // Node code changes do not restart a running node (node dev reload is deferred).
   writeFileSync(NODE_ENTRY, readFileSync(NODE_ENTRY));

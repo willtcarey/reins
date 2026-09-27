@@ -5,7 +5,7 @@ import { runMigrations } from "../migrations.js";
 import { setDb, resetDb } from "../db.js";
 import { createProject } from "../project-store.js";
 import { createSession } from "../session-store.js";
-import { internalSource } from "../node-store.js";
+import { defaultSource } from "../node-store.js";
 
 function createLegacySchema(db: Database): void {
   db.exec(`
@@ -132,7 +132,7 @@ describe("migrations", () => {
 
       const project = createProject("Existing schema", "/tmp/existing-schema");
       const created = createSession("new-node-session", project.id, {
-        sourceId: internalSource(project.id).id, agentRuntimeType: "pi", placementStatus: "provisioning",
+        sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi", placementStatus: "provisioning",
       });
       expect(created.placement_status).toBe("provisioning");
       expect(created).not.toHaveProperty("storage_owner");
@@ -315,7 +315,7 @@ describe("migrations", () => {
           FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE, UNIQUE (session_id, sha256, mime_type));
         CREATE INDEX idx_session_attachments_session ON session_attachments(session_id, created_at DESC);`);
       const project = createProject("Attachments", "/tmp/attachments-034");
-      createSession("s", project.id, { sourceId: internalSource(project.id).id, agentRuntimeType: "pi" });
+      createSession("s", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi" });
       db.exec(`INSERT INTO session_attachments VALUES ('att_old','s','image','image/png','a.png',3,'sha',x'010203','2026-01-01T00:00:00.000Z',NULL,4,5);
         INSERT INTO session_attachments VALUES ('att_pruned','s','image','image/gif',NULL,1,'sha2',NULL,'2026-01-02T00:00:00.000Z','2026-01-03T00:00:00.000Z',NULL,NULL)`);
       expect(() => db.exec("INSERT INTO session_attachments(id,session_id,kind,mime_type,byte_size,sha256) VALUES ('att_new','s','image','image/png',3,'sha')")).toThrow();
@@ -352,7 +352,7 @@ describe("migrations", () => {
           run_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('started', 'settled')), payload_json TEXT NOT NULL,
           PRIMARY KEY(session_id, run_id, kind));`);
       const project = createProject("Receipts", "/tmp/receipts-035");
-      createSession("s", project.id, { sourceId: internalSource(project.id).id, agentRuntimeType: "pi", placementStatus: "provisioned" });
+      createSession("s", project.id, { sourceId: defaultSource(project.id)!.id, agentRuntimeType: "pi", placementStatus: "provisioned" });
       db.exec(`UPDATE sessions SET harness_next_seq = 7, activity_state = 'running' WHERE id = 's';
         INSERT INTO node_replica_receipts VALUES ('s', 1, '[]');
         INSERT INTO node_lifecycle_receipts VALUES ('s', 'r1', 'started', '{"runId":"r1"}')`);
@@ -386,7 +386,7 @@ describe("migrations", () => {
         ALTER TABLE sessions ADD COLUMN storage_owner TEXT NOT NULL DEFAULT 'server' CHECK(storage_owner IN ('server', 'internal-node'));
         ALTER TABLE node_session_watermarks DROP COLUMN settlement_next_seq;`);
       const project = createProject("Placement", "/tmp/placement-036");
-      const source = internalSource(project.id).id;
+      const source = defaultSource(project.id)!.id;
       db.query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
       const other = db.query<{ id: number }, [number]>("INSERT INTO sources (project_id, node_id, path) VALUES (?, 'other', '/elsewhere') RETURNING id").get(project.id)!.id;
       const session = (id: string, owner: "server" | "internal-node") =>
@@ -447,7 +447,7 @@ describe("migrations", () => {
         ALTER TABLE sessions ADD COLUMN placement_status TEXT NOT NULL DEFAULT 'server'
           CHECK(placement_status IN ('server', 'provisioning', 'provisioned', 'provision_failed', 'moving', 'move_failed'));`);
       const project = createProject("Drop owner", "/tmp/drop-owner-037");
-      const source = internalSource(project.id).id;
+      const source = defaultSource(project.id)!.id;
       const session = (id: string, owner: string, status: string, error: string | null = null, parent: string | null = null) =>
         db.query(`INSERT INTO sessions (id, project_id, source_id, agent_runtime_type, storage_owner, placement_status, status_error, name,
             model_provider, model_id, thinking_level, harness_next_seq, activity_state, parent_session_id, pinned_at)
@@ -525,7 +525,7 @@ describe("migrations", () => {
       runMigrations(db);
       db.exec("DELETE FROM migrations WHERE name = '038_clear_stale_server_running'");
       const project = createProject("Stale running", "/tmp/stale-running-038");
-      const source = internalSource(project.id).id;
+      const source = defaultSource(project.id)!.id;
       const session = (id: string, status: string, activity: string | null) =>
         db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type, placement_status, activity_state) VALUES (?, ?, ?, 'pi', ?, ?)")
           .run(id, project.id, source, status, activity);
@@ -557,7 +557,7 @@ describe("migrations", () => {
       runMigrations(db);
       restoreOutboxBefore039(db);
       const project = createProject("Outbox", "/tmp/outbox-039");
-      const source = internalSource(project.id).id;
+      const source = defaultSource(project.id)!.id;
       for (const id of ["a", "b"]) db.query("INSERT INTO sessions (id, project_id, source_id, agent_runtime_type, placement_status) VALUES (?, ?, ?, 'pi', 'provisioned')").run(id, project.id, source);
       const command = (id: string, sessionId: string, state: string, json: unknown, result: unknown = null) =>
         db.query("INSERT INTO node_command_outbox (id, session_id, command_json, state, result_json, created_at) VALUES (?, ?, ?, ?, ?, '2026-01-01 00:00:00')")

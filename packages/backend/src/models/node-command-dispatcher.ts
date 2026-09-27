@@ -1,37 +1,19 @@
+import type { NodeCommand, NodeResult } from "@reins/node/contract";
 import { getSession } from "../session-store.js";
 import { logger } from "../logger.js";
-import { getSource } from "../node-store.js";
-import { deleteFailedCommand, queuedCommands, hasBlockingPredecessor, isCommandPending, pendingPlacementCommand, type InputRow } from "../node-command-store.js";
-import { getWork, registerCommandWake } from "./node-command-projection.js";
-import { deliverCommand } from "./node-command-transport.js";
-import { executionTargetFor } from "../runtimes/execution-target.js";
-import { onCommandDelivered } from "./node-command-notifications.js";
+import { deleteFailedCommand, getNodeCommand, queuedCommands, hasBlockingPredecessor, isCommandPending, type InputRow } from "../node-command-store.js";
+import { deliverCommand } from "./node-command-delivery.js";
 import { commitPlacement } from "./session-ownership.js";
-import type { ServerState } from "../state.js";
+import { resolveSessionSource } from "../runtimes/node-source.js";
 
-/**
- * Resolves once the session is placed where commands can reach it, from its `placement_status`: at
- * once when it is at rest on the server (its next command hydrates it) or provisioned (also after a
- * failed move returned it there); after its pending provision or move is delivered when it is
- * provisioning or moving (so an input submitted right after creation cannot bypass or race provisioning); rejects when its
- * provisioning failed or its pending work waits on an unavailable source.
- */
-export async function waitUntilProvisioned(state: ServerState, sessionId: string): Promise<void> {
-  const row = getSession(sessionId);
-  if (!row) return;
-  if (row.placement_status === "provision_failed") throw new Error(`Session provisioning failed: ${row.status_error ?? "unknown error"}`);
-  if (row.placement_status !== "provisioning" && row.placement_status !== "moving") return;
-  const pending = pendingPlacementCommand(sessionId);
-  if (!pending) return;
-  if (pending.state === "queued" && getSource(row.source_id)?.node_id !== "internal") {
-    throw new Error(`Execution source unavailable; session ${row.placement_status === "moving" ? "move" : "provisioning"} queued`);
-  }
-  // Drain on demand when no server handler is installed (e.g. scripting tests).
-  const dispatcher = dispatcherForInput(state);
-  const waiting = dispatcher.wait(pending.id);
-  if (pending.state === "queued") dispatcher.wake();
-  await waiting;
-  return waitUntilProvisioned(state, sessionId);
+/** Where the dispatcher delivers: the node hub. */
+export interface DispatchTarget {
+  /** Whether a negotiated connection of the node is open. */
+  connected(nodeId: string): boolean;
+  /** Delivers one command to the node of its session's source. */
+  send(command: NodeCommand): Promise<NodeResult>;
+  /** After a command settled (its placement change already committed). */
+  delivered(row: InputRow, outcome: { state: "admitted" | "failed"; result: NodeResult }): void;
 }
 
 /** Sessions delivering at once; each has at most one command in flight. Bounds the node requests
@@ -40,9 +22,11 @@ export const MAX_CONCURRENT_SESSIONS = 16;
 
 /**
  * Delivers queued outbox commands: one chain per session, strictly in outbox order and one command at a
- * time, with different sessions delivering concurrently (up to `maxConcurrentSessions`). A wake is only
- * a hint: each scan queries SQLite again, and the claim (`claimCommand`) is the guard against two
- * commands of one session in flight, including across dispatcher instances during a handler reload.
+ * time, with different sessions delivering concurrently (up to `maxConcurrentSessions`). A session's
+ * commands are delivered only while its source is valid and that source's node is connected; the rest
+ * wait until a wake finds the node connected. A wake is only a hint: each scan queries SQLite again, and
+ * the claim (`claimCommand`) is the guard against two commands of one session in flight, including
+ * across dispatcher instances during a handler reload.
  */
 export class NodeCommandDispatcher {
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -63,18 +47,17 @@ export class NodeCommandDispatcher {
     return new Promise(resolve => this.waiters.set(id, [...(this.waiters.get(id) ?? []), resolve]));
   }
 
-  constructor(private readonly state: ServerState, options: { maxConcurrentSessions?: number } = {}) {
+  constructor(private readonly target: DispatchTarget, options: { maxConcurrentSessions?: number } = {}) {
     this.maxConcurrentSessions = options.maxConcurrentSessions ?? MAX_CONCURRENT_SESSIONS;
-    registerCommandWake(state, () => this.wake());
   }
 
   /** Scans now and every 30 seconds. Startup recovery is not the dispatcher's: it runs once per
    * process when the database opens (`openDb`), as a previous handler may still be delivering. */
   start(): void {
     if (this.timer || this.stopped) return;
-    this.timer = setInterval(() => this.wake(), 30_000);
+    this.timer = setInterval(() => void this.wake(), 30_000);
     this.timer.unref?.();
-    this.wake();
+    void this.wake();
   }
 
   /** Starts no further deliveries; chains finish the command they are delivering. */
@@ -82,18 +65,13 @@ export class NodeCommandDispatcher {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
-    if (dispatchers.get(this.state) === this) dispatchers.delete(this.state);
   }
 
-  wake(): void {
+  /** Scans now; resolves once no session chain is delivering. */
+  async wake(): Promise<void> {
     this.generation++;
     this.deferred.clear();
     this.scan();
-  }
-
-  /** Wakes, then resolves once no session chain is delivering. */
-  async drain(): Promise<void> {
-    this.wake();
     while (this.chains.size) await Promise.all(this.chains.values());
   }
 
@@ -121,8 +99,8 @@ export class NodeCommandDispatcher {
   private deliverable(row: InputRow): boolean {
     if (this.deferred.get(row.id) === this.generation || hasBlockingPredecessor(row.id)) return false;
     const session = getSession(row.session_id);
-    const source = session && getSource(session.source_id);
-    return !!session && !!source && source.project_id === session.project_id && source.node_id === "internal";
+    const placed = session && resolveSessionSource(session);
+    return !!placed && this.target.connected(placed.nodeId);
   }
 
   /** Must claim synchronously (no await before `deliverCommand`): scans rely on it to see the chain's work. */
@@ -132,9 +110,9 @@ export class NodeCommandDispatcher {
       if (!this.deliverable(row)) return;
       const generation = this.generation;
       const outcome = await deliverCommand(row.id, async () => {
-        const work = getWork(row.id);
-        if (!work) throw new Error(`Command ${row.id} is no longer in the outbox`);
-        return executionTargetFor(this.state).send(work.command, row.id);
+        const stored = getNodeCommand(row.id);
+        if (!stored) throw new Error(`Command ${row.id} is no longer in the outbox`);
+        return this.target.send(stored.command);
       }, result => commitPlacement(row.session_id, row.command_json, result));
       if (!outcome.claimed) return; // another dispatcher owns it
       if (outcome.state === "queued") {
@@ -143,7 +121,7 @@ export class NodeCommandDispatcher {
         if (generation !== this.generation) this.rescan = true;
         return;
       }
-      onCommandDelivered(this.state, row, outcome);
+      this.target.delivered(row, outcome);
       if (outcome.state === "failed") deleteFailedCommand(row.id);
       this.resolveWaiters(row.id);
     }
@@ -158,19 +136,4 @@ export class NodeCommandDispatcher {
   private resolveSettledWaiters(): void {
     for (const id of this.waiters.keys()) if (!isCommandPending(id)) this.resolveWaiters(id);
   }
-}
-
-const dispatchers = new WeakMap<ServerState, NodeCommandDispatcher>();
-export function wakeForInput(state: ServerState): void { dispatcherForInput(state).wake(); }
-
-function dispatcherForInput(state: ServerState): NodeCommandDispatcher {
-  let dispatcher = dispatchers.get(state);
-  if (!dispatcher) { dispatcher = new NodeCommandDispatcher(state); dispatchers.set(state, dispatcher); }
-  return dispatcher;
-}
-
-export function dispatcherFor(state: ServerState): NodeCommandDispatcher {
-  const dispatcher = dispatcherForInput(state);
-  dispatcher.start();
-  return dispatcher;
 }

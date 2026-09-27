@@ -3,7 +3,7 @@ import { getSession } from "../session-store.js";
 import { getDb } from "../db.js";
 import type { ServerState } from "../state.js";
 import type { Broadcast } from "./broadcast.js";
-import { enqueueSessionInput, wakeSessionInput } from "../runtimes/node-execution.js";
+import { enqueueSessionInput } from "../runtimes/node-execution.js";
 import {
   CodeReviewError,
   type CodeReview,
@@ -49,7 +49,7 @@ export class CodeReviewSubmission {
       acceptCodeReviewSubmission(review, command.sessionId, feedback);
       enqueueSessionInput(command.sessionId, "prompt", message, reinsId);
     })();
-    wakeSessionInput(this.state);
+    void this.state.nodes.wake();
     this.broadcastReview(review);
     return { messageId: reinsId };
   }

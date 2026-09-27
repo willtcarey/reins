@@ -4,14 +4,15 @@ import { connectNode } from "@reins/node/node-connection";
 import { createLoopbackPair } from "@reins/node/protocol";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { createServerTransport } from "../../node-transport/server-peer.js";
-import { internalNodeServer, provisionForSession } from "../../runtimes/internal-node.js";
-import { internalNodeFor, stopInternalNode } from "../helpers/loopback-node.js";
-import { dispatcherFor } from "../../models/node-command-dispatcher.js";
+import { nodeServerHandlers } from "../../runtimes/node-server-handlers.js";
+import { nodeServerServices } from "../../runtimes/node-hub.js";
+import { sessionBinding } from "../../runtimes/node-source.js";
+import { loopbackNodeFor, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/factory.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
 import { createProject } from "../../project-store.js";
-import { internalSource } from "../../node-store.js";
+import { defaultSource } from "../../node-store.js";
 import { createTask, getTask, listTasks } from "../../task-store.js";
 import { createSession, getSession, listSessions } from "../session-fixture.js";
 import { setupTestDb, teardownTestDb, testNodeDb } from "../helpers/test-db.js";
@@ -32,26 +33,25 @@ async function fixture(providerName: string, responses: Parameters<ReturnType<ty
   const state = createServerState();
   const project = createProject("Scoped", repo.dir, "main");
   const other = createProject("Other", otherRepo.dir, "main");
-  const source = internalSource(project.id);
+  const source = defaultSource(project.id)!;
   const task = createTask(project.id, "Current task", null, "main");
   createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned", taskId: task.id });
   createSession("scratch", project.id, { agentRuntimeType: "pi", sourceId: source.id, placementStatus: "provisioned" });
   createSession("legacy", project.id, { agentRuntimeType: "pi", sourceId: source.id });
-  createSession("elsewhere", other.id, { agentRuntimeType: "pi", sourceId: internalSource(other.id).id, placementStatus: "provisioned" });
+  createSession("elsewhere", other.id, { agentRuntimeType: "pi", sourceId: defaultSource(other.id)!.id, placementStatus: "provisioned" });
   const cleanup = async () => {
-    dispatcherFor(state).stop(); await stopInternalNode(state); unregisterPiProvider(provider.provider.id);
+    state.nodes.close(); await stopLoopbackNode(state); unregisterPiProvider(provider.provider.id);
     teardownTestDb(); repo.cleanup(); otherRepo.cleanup();
   };
   return { state, project, other, task, cleanup };
 }
 
-/** The node half of a link served by the production handlers, as a remote node would see it. */
+/** The node half of a link through the hub, as a node process would see it. */
 function nodeLink(state: ReturnType<typeof createServerState>) {
   const node = startNode(testNodeDb());
   const [serverEnd, nodeEnd] = createLoopbackPair();
-  const server = createServerTransport(serverEnd, internalNodeServer(state));
-  const connection = connectNode(node, nodeEnd, "test");
-  serverEnd.onmessage = server.receive; serverEnd.onclose = server.close;
+  state.nodes.accept(serverEnd, {});
+  const connection = connectNode(node, nodeEnd, "internal");
   nodeEnd.onmessage = connection.receive; nodeEnd.onclose = connection.close;
   return { connection, serverEnd, close: async () => { serverEnd.close(); await node.shutdown(); } };
 }
@@ -106,9 +106,10 @@ test("tool calls for unknown sessions or sessions at rest on the server are reje
 test("a node cannot widen scope by sending project or task fields", async () => {
   const { state, cleanup } = await fixture("tool-widen-faux", []);
   const frames: Array<{ id?: number; result?: { epoch: string }; error?: { code: number } }> = [];
-  const server = createServerTransport({ send: data => frames.push(JSON.parse(data)), close: () => {} }, internalNodeServer(state));
+  const services = nodeServerServices(state);
+  const server = createServerTransport({ send: data => frames.push(JSON.parse(data)), close: () => {} }, nodeId => nodeServerHandlers(nodeId, services));
   try {
-    server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: 1, maxVersion: 1, capabilities: [], instanceId: "n" } }));
+    server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: 1, maxVersion: 1, capabilities: [], nodeId: "n" } }));
     await Bun.sleep(1);
     const epoch = frames[0]!.result!.epoch;
     server.receive(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "script.execute", params: { epoch, sessionId: "owned", callId: "c", code: "return 1", projectId: 999 } }));
@@ -119,7 +120,7 @@ test("a node cannot widen scope by sending project or task fields", async () => 
   } finally { server.close(); await cleanup(); }
 });
 
-test("a node-owned session's model calls execute, search and create_task over the internal link", async () => {
+test("a node-owned session's model calls execute, search and create_task over the node link", async () => {
   const { state, project, cleanup } = await fixture("tool-chain-faux", [
     fauxAssistantMessage([
       fauxToolCall("execute", { code: "return api.projects.current().name" }, { id: "exec" }),
@@ -129,8 +130,8 @@ test("a node-owned session's model calls execute, search and create_task over th
     fauxAssistantMessage("done"),
   ]);
   try {
-    const node = internalNodeFor(state);
-    const binding = provisionForSession("scratch").binding;
+    const node = loopbackNodeFor(state);
+    const binding = sessionBinding("scratch").binding;
     await node.provision({ binding, sessionId: "scratch", configuration: { model: { provider: "tool-chain-faux", modelId: "fake" }, thinkingLevel: null, task: null } });
     await node.prompt({ binding, sessionId: "scratch", clientId: "c", content: [{ type: "text", text: "Go" }], sourceSessionId: null });
     const runtime = await nodeRuntimesForTesting(node).open("scratch", binding);

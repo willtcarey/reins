@@ -10,7 +10,7 @@
  * their runtimes (each run settles durably into the outbox, bounded by SHUTDOWN_TIMEOUT_MS), close the
  * node database and exit 0. See node-contract.md *Process model*.
  */
-import { connectLocalNode } from "./local-link.js";
+import { connectLocalNode, DEFAULT_LOCAL_NODE_ID } from "./local-link.js";
 import { startNode } from "./node.js";
 import { nodeStoragePath, openNodeDb } from "./storage.js";
 import { defaultLocalNodeSocketPath } from "./protocol/local-link.js";
@@ -20,6 +20,8 @@ const SHUTDOWN_TIMEOUT_MS = 5_000;
 
 const log = (message: string) => console.log(`[node] ${message}`);
 const socketPath = process.env.REINS_NODE_SOCKET?.trim() || defaultLocalNodeSocketPath();
+/** The node this process is: the server serves the connection only if it has a node with this ID. */
+const nodeId = process.env.REINS_NODE_ID?.trim() || DEFAULT_LOCAL_NODE_ID;
 
 // TEST HOOK ONLY (see testing/faux-provider.ts): lets process-level tests drive a scripted model.
 const testFauxProvider = process.env.REINS_NODE_TEST_FAUX_PROVIDER?.trim();
@@ -35,9 +37,10 @@ log(`storage: ${storagePath}`);
 const node = startNode(db);
 const client = connectLocalNode(node, {
   path: socketPath,
+  nodeId,
   onStatus: status => log(status === "connected" ? `connected to server at ${socketPath}` : "disconnected from server; redialing"),
 });
-log(`dialing server at ${socketPath}`);
+log(`dialing server at ${socketPath} as node ${nodeId}`);
 
 let stopping = false;
 async function shutdown(signal: string): Promise<void> {

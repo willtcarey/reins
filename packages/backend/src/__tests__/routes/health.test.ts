@@ -6,6 +6,8 @@ import { useTestDb } from "../helpers/test-db.js";
 import { createProject } from "../../project-store.js";
 import { updateActivityState } from "../../session-store.js";
 import { createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
+import { useFakeNode } from "../helpers/fake-node.js";
+import { getDb } from "../../db.js";
 
 describe("GET /api/health", () => {
   useTestDb();
@@ -36,5 +38,14 @@ describe("GET /api/health", () => {
     const body = await res!.json();
     expect(body.activeSessions).toBe(2);
     expect(body.streaming).toBe(true);
+  });
+
+  test("lists every node with whether it is connected", async () => {
+    getDb().exec("INSERT INTO nodes VALUES ('remote', 'Remote')");
+    const state = createServerState();
+    const health = async () => (await (await buildRouter().handle(makeRequest("GET", "/api/health"), state))!.json()).nodes;
+    expect(await health()).toEqual([{ id: "internal", name: "Internal", connected: false }, { id: "remote", name: "Remote", connected: false }]);
+    await useFakeNode(state, "remote").link.ready();
+    expect(await health()).toEqual([{ id: "internal", name: "Internal", connected: false }, { id: "remote", name: "Remote", connected: true }]);
   });
 });

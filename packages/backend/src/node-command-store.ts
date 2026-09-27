@@ -1,3 +1,5 @@
+import { deliveryPolicy, nodeCommand, type NodeCommand } from "@reins/node/contract";
+import { z } from "zod";
 import { getDb } from "./db.js";
 import type { ClientPromptContent } from "./messages-store.js";
 import { replicaInput } from "./node-replica.js";
@@ -29,11 +31,32 @@ export function getCommand(id: string): CommandRow | null {
     JOIN sessions s ON s.id = o.session_id WHERE o.id = ?`).get(id) ?? null;
 }
 
-export function insertCommandWithSession(id: string, sessionId: string, commandJson: string, createSession: () => void): void {
+/** A command still in the outbox (settled commands are deleted). A session's placement is its
+ * `placement_status` column, not its outbox rows. */
+export type StoredNodeCommand = { id: string; sessionId: string; command: NodeCommand };
+
+/** The stored command, parsed strictly with the session's current IDs. Every writer stores a
+ * `nodeCommand` payload, so one that does not parse is an invalid command: this throws, and its
+ * delivery fails like any other. */
+export function getNodeCommand(id: string): StoredNodeCommand | null {
+  const row = getCommand(id);
+  if (!row) return null;
+  const command = nodeCommand.safeParse({ ...JSON.parse(row.command_json), sessionId: row.session_id, sourceId: row.source_id });
+  if (!command.success) throw new Error(`Stored node command is invalid: ${z.prettifyError(command.error)}`);
+  return { id: row.id, sessionId: row.session_id, command: command.data };
+}
+
+/** Stores a new session (`createSession` sets `placement_status = 'provisioning'`) and its provision
+ * command in one transaction. The session row supplies sessionId/sourceId on read; the stored
+ * configuration is the frozen payload every (re)delivery sends, so a replay carries the same configuration. */
+export function createSessionWithProvision(id: string, command: NodeCommand, createSession: () => void): void {
+  const parsed = nodeCommand.parse(command);
+  if (deliveryPolicy(parsed) !== "submit-work" || parsed.op !== "session.provision") throw new Error("Only a provision command is stored with a new session");
+  const { sessionId, sourceId: _sourceId, ...stored } = parsed;
   getDb().transaction(() => {
     createSession();
     getDb().query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, ?, ?, 'queued')")
-      .run(id, sessionId, commandJson);
+      .run(id, sessionId, JSON.stringify(stored));
   })();
 }
 

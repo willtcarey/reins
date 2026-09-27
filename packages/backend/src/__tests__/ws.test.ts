@@ -7,8 +7,6 @@ import { createSession } from "./session-fixture.js";
 import { storeSessionAttachment } from "../session-attachments-store.js";
 import { getDb } from "../db.js";
 import type { ServerState } from "../state.js";
-import type { NodeCommand, NodeResult } from "@reins/node/contract";
-import { registerExecutionTarget, type SessionExecutionTarget } from "../runtimes/execution-target.js";
 import { createProvisionedNodeSession } from "./helpers/node-session.js";
 import { useFakeNode, type FakeNode } from "./helpers/fake-node.js";
 
@@ -24,7 +22,7 @@ function replies(socket: ReturnType<typeof createMockWs>) {
 }
 /** Inputs the fake node received, as [op, clientId, content]. */
 function deliveredInputs(node: FakeNode): Array<[string, string, unknown]> {
-  return node.sent.flatMap(([command]): Array<[string, string, unknown]> => command.op === "session.prompt" || command.op === "session.steer" ? [[command.op, command.clientId, command.content]] : []);
+  return node.sent.flatMap((command): Array<[string, string, unknown]> => command.op === "session.prompt" || command.op === "session.steer" ? [[command.op, command.clientId, command.content]] : []);
 }
 
 function createMockWs() {
@@ -185,22 +183,16 @@ describe("WebSocket handlers", () => {
     test("forwards abort without a live runtime lookup and acknowledges", async () => {
       const project = createProject("Node abort", "/tmp/node-abort");
       createProvisionedNodeSession("node-session", project.id);
-      const sent: NodeCommand[] = [];
-      const target: SessionExecutionTarget = {
-        async send(command): Promise<NodeResult> {
-          sent.push(command);
-          // The node answers `aborted: false` when no run is live.
-          return { ok: true, value: { kind: "aborted", aborted: false } };
-        },
-      };
-      registerExecutionTarget(state, target);
+      const node = useFakeNode(state);
+      await node.link.ready();
       const mock = createMockWs();
       handleWsOpen(state, mock.ws);
 
       handleWsMessage(state, mock.ws, JSON.stringify({ type: "abort", sessionId: "node-session" }));
-      for (let i = 0; i < 100 && sent.length === 0; i++) await Bun.sleep(5);
+      for (let i = 0; i < 100 && node.sent.length === 0; i++) await Bun.sleep(5);
 
-      expect(sent).toEqual([{ op: "session.abort", sessionId: "node-session" }]);
+      // The node answers `aborted: false` when no run is live.
+      expect(node.sent).toEqual([{ op: "session.abort", sessionId: "node-session" }]);
       expect(mock.allMessages()).toEqual([{ type: "ack", command: "abort" }]);
     });
   });
@@ -353,7 +345,7 @@ describe("WebSocket handlers", () => {
       await until(() => deliveredInputs(node).length > 0);
 
       expect(replies(sender)).toEqual({ type: "ack", command: "steer", clientId: "submission-steer" });
-      expect(node.sent.map(([command]) => command.op)).toEqual(["session.hydrate", "session.steer"]);
+      expect(node.sent.map((command) => command.op)).toEqual(["session.hydrate", "session.steer"]);
       expect(deliveredInputs(node)).toEqual([["session.steer", "submission-steer", message]]);
       expect(getDb().query("SELECT placement_status FROM sessions WHERE id = 'sess-steer'").get()).toEqual({ placement_status: "provisioned" });
       // Session updates for the move go to every viewer; the acknowledgement only to the sender.

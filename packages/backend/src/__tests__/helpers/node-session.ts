@@ -1,5 +1,4 @@
-import { scheduleWork } from "../../models/node-command-projection.js";
-import { claimCommand, enqueueInput, getCommand, settleCommand } from "../../node-command-store.js";
+import { claimCommand, createSessionWithProvision, enqueueInput, getCommand, settleCommand } from "../../node-command-store.js";
 import { persistCanonicalMessages } from "./canonical-messages.js";
 import { selectCreationSource } from "../../runtimes/node-source.js";
 import { createSession } from "../session-fixture.js";
@@ -13,7 +12,7 @@ export function createProvisionedNodeSession(
 ): void {
   const sourceId = selectCreationSource(projectId).id;
   const provisionId = `${id}-provision`;
-  scheduleWork(provisionId, { op: "session.provision", sessionId: id, sourceId, configuration: { model: null, thinkingLevel: null, task: null } },
+  createSessionWithProvision(provisionId, { op: "session.provision", sessionId: id, sourceId, configuration: { model: null, thinkingLevel: null, task: null } },
     () => createSession(id, projectId, { agentRuntimeType: "pi", ...opts, sourceId, placementStatus: "provisioned" }));
   claimCommand(provisionId);
   settleCommand(provisionId, "admitted", JSON.stringify({ ok: true, value: { kind: "provisioned" } }));

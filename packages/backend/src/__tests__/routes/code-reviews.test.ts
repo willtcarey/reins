@@ -8,16 +8,14 @@ import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import type { WsClient } from "../../state.js";
-import type { NodeCommand, NodeResult } from "@reins/node/contract";
-import { registerExecutionTarget, type SessionExecutionTarget } from "../../runtimes/execution-target.js";
 import { getDb } from "../../db.js";
 import { createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
 import { useFakeNode, type FakeNode } from "../helpers/fake-node.js";
-import { createSource } from "../../node-store.js";
+import { enqueueInput } from "../../node-command-store.js";
 
 /** The prompt contents the fake node received for a session, once `count` arrived. */
 async function promptsTo(node: FakeNode, sessionId: string, count: number): Promise<unknown[]> {
-  const prompts = () => node.sent.flatMap(([command]) => command.op === "session.prompt" && command.sessionId === sessionId ? [command.content] : []);
+  const prompts = () => node.sent.flatMap((command) => command.op === "session.prompt" && command.sessionId === sessionId ? [command.content] : []);
   for (let i = 0; i < 100 && prompts().length < count; i++) await Bun.sleep(5);
   return prompts();
 }
@@ -210,7 +208,7 @@ describe("code review routes", () => {
       state,
     ))!.json()).toBeNull();
     const prompts = await promptsTo(node, "session-1", 1);
-    expect(node.sent[0]?.[0].op).toBe("session.hydrate");
+    expect(node.sent[0]?.op).toBe("session.hydrate");
     const submittedPrompt: unknown = prompts[0];
     const text = Array.isArray(submittedPrompt) && submittedPrompt[0]?.type === "text"
       ? String(submittedPrompt[0].text)
@@ -273,15 +271,15 @@ describe("code review routes", () => {
   });
 
   test("keeps the review when durable prompt acceptance fails", async () => {
-    // A session whose source is on a node this server cannot deliver to: queuing its input fails.
-    getDb().query("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')").run();
-    createSession("session-1", projectId, { agentRuntimeType: "pi", taskId, sourceId: createSource(projectId, "remote", "/remote/checkout").id });
+    createSession("session-1", projectId, { agentRuntimeType: "pi", taskId });
     const created = await router.handle(makeRequest(
       "POST",
       `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
       { comment },
     ), state);
     const review = await created!.json();
+    // Other input already holds the prompt's client ID: queuing the review prompt fails.
+    enqueueInput("session-1", "prompt", [{ type: "text", text: "other" }], `code-review:${review.id}:${review.revision}`);
 
     const response = await router.handle(makeRequest(
       "POST",
@@ -342,16 +340,7 @@ describe("code review routes", () => {
 
   test("delivers a node-owned session's review prompt through the command outbox, never a live runtime", async () => {
     createProvisionedNodeSession("node-session", projectId, { taskId });
-    const delivered: NodeCommand[] = [];
-    const target: SessionExecutionTarget = {
-      async send(command): Promise<NodeResult> {
-        delivered.push(command);
-        return command.op === "session.prompt"
-          ? { ok: true, value: { kind: "admitted", inputId: command.clientId } }
-          : { ok: false, error: { code: "invalid_request", message: "unexpected", retryable: false } };
-      },
-    };
-    registerExecutionTarget(state, target);
+    const delivered = useFakeNode(state).sent;
     const created = await router.handle(makeRequest(
       "POST",
       `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,

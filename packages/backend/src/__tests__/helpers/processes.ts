@@ -110,7 +110,9 @@ export class ServerApi {
     const value: T = text ? JSON.parse(text) : undefined;
     return value;
   }
-  health() { return this.json<{ status: string; internalNode: { connected: boolean } }>("GET", "/api/health"); }
+  health() { return this.json<{ status: string; nodes: Array<{ id: string; name: string; connected: boolean }> }>("GET", "/api/health"); }
+  /** Whether the server reports the local node (the seeded node the node process connects as) connected. */
+  async localNodeConnected() { return (await this.health()).nodes.some(node => node.id === "internal" && node.connected); }
   /** API key for the faux provider, faux default model and a project on `repo`. */
   async setUp(repo: string): Promise<{ projectId: number }> {
     await this.json("PUT", `/api/auth/api-keys/${FAUX_PROVIDER}`, { apiKey: "test-key" });

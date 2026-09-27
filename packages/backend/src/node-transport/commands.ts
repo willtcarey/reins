@@ -1,7 +1,7 @@
 import { APPLICATION_ERROR, nodeError, RpcFailure, type SessionHydrate } from "@reins/node/protocol";
 import { deliveryPolicy, type NodeCommand, type NodeResult } from "@reins/node/contract";
 import type { NodeSessionBinding } from "@reins/node/storage";
-import { DeliveryDeferred } from "../models/node-command-transport.js";
+import { DeliveryDeferred } from "../models/node-command-delivery.js";
 import type { createServerTransport } from "./server-peer.js";
 
 export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "provision" | "prompt" | "steer" | "setModel" | "abort" | "resumePending" | "hydrate">;
@@ -12,6 +12,11 @@ export type NodeCommandClient = Pick<ReturnType<typeof createServerTransport>, "
  * leaves the outcome unknown: submitted work is requeued and its replay converges; controls fail.
  */
 export interface NodeCommandTimeouts { provision: number; input: number; setModel: number; abort: number; resumePending: number; hydrate: number }
+/** The open links of connected nodes, by node ID, and the per-call bounds (the node hub). */
+export interface NodeLinks {
+  link(nodeId: string): NodeCommandClient | undefined;
+  readonly timeouts: NodeCommandTimeouts;
+}
 /** Hydration pulls the whole session (each snapshot page and attachment chunk its own 30s call), so it
  * gets 10 minutes. */
 export const NODE_COMMAND_TIMEOUTS: NodeCommandTimeouts = { provision: 30_000, input: 120_000, setModel: 60_000, abort: 30_000, resumePending: 60_000, hydrate: 600_000 };
@@ -41,15 +46,19 @@ export async function commandOutcome(replayable: boolean, call: () => Promise<Ex
   }
 }
 
-/** Sends one semantic command over the wire. Submitted work must come from an outbox row (`commandId`);
- * the ID is not sent: the node keeps no per-command state and a replay converges on the command's own
- * state. Immediate controls have none. */
-export function sendNodeCommand(connect: () => Promise<NodeCommandClient>, command: NodeCommand, binding: NodeSessionBinding, commandId: string | undefined, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
-  const submitted = deliveryPolicy(command) === "submit-work";
-  if (submitted && !commandId) throw new Error(`${command.op} requires an outbox command ID`);
+/** The node's link is not open: nothing was sent (submitted work is deferred, a control is unavailable). */
+function linked(client: NodeCommandClient | undefined): NodeCommandClient {
+  if (!client) throw new RpcFailure("unavailable", "Node not connected");
+  return client;
+}
+
+/** Sends one semantic command over the node's link (`undefined` when it has none). Submitted work
+ * carries no outbox ID: the node keeps no per-command state and a replay converges on the command's own
+ * state. */
+export function sendNodeCommand(link: NodeCommandClient | undefined, command: NodeCommand, binding: NodeSessionBinding, timeouts: NodeCommandTimeouts): Promise<NodeResult> {
   const { sessionId } = command;
-  return commandOutcome(submitted, async () => {
-    const client = await connect();
+  return commandOutcome(deliveryPolicy(command) === "submit-work", async () => {
+    const client = linked(link);
     switch (command.op) {
       case "session.provision":
         await client.provision({ sessionId, binding, configuration: command.configuration }, timeouts.provision);
@@ -78,13 +87,12 @@ export function sendNodeCommand(connect: () => Promise<NodeCommandClient>, comma
 export type HydrationPayload = Pick<SessionHydrate, "task" | "snapshot">;
 /**
  * Sends `session.hydrate`. It is submitted work (replays converge by content on the node), so an unknown
- * outcome throws DeliveryDeferred; a node rejection is returned as its NodeResult. `commandId` (its outbox
- * row) is not sent, as for other submitted work.
+ * outcome (or no link) throws DeliveryDeferred; a node rejection is returned as its NodeResult.
  */
-export function sendRelocationCommand(connect: () => Promise<NodeCommandClient>, command: Extract<NodeCommand, { op: "session.hydrate" }>, binding: NodeSessionBinding, _commandId: string, hydration: HydrationPayload, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
+export function sendRelocationCommand(link: NodeCommandClient | undefined, command: Extract<NodeCommand, { op: "session.hydrate" }>, binding: NodeSessionBinding, hydration: HydrationPayload, timeouts: NodeCommandTimeouts): Promise<NodeResult> {
   const { sessionId } = command;
   return commandOutcome(true, async () => {
-    const client = await connect();
+    const client = linked(link);
     await client.hydrate({ sessionId, binding, ...hydration }, timeouts.hydrate);
     return { kind: "hydrated" };
   });

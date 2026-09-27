@@ -5,30 +5,33 @@
  * handles WebSocket upgrades, and serves static files.
  */
 
-import type { ServerState } from "./state.js";
+import type { NodeSocket, ProcessState, ServerState } from "./state.js";
 import { buildRouter } from "./routes/index.js";
-import { installRuntimeHooks } from "./runtime-hooks.js";
-import { dispatcherFor } from "./models/node-command-dispatcher.js";
-import { acceptInternalNodeConnection, closeInternalNodeLink } from "./runtimes/internal-node.js";
+import { installNodeHub } from "./runtimes/node-hub.js";
 import { serveStatic } from "./static.js";
 
 const router = buildRouter();
 
-export function install(state: ServerState): () => void {
-  const uninstallRuntimeHooks = installRuntimeHooks(state);
-  // The server never starts a node: the node process dials the process owner's listener, which routes
-  // the connection here (`acceptNodeConnection`). Until then submitted work waits in the outbox.
-  const dispatcher = dispatcherFor(state);
-  return () => {
-    dispatcher.stop();
-    // Hot reload: the node redials and reaches the newly installed handler; its runs are untouched.
-    closeInternalNodeLink(state);
-    uninstallRuntimeHooks();
-  };
+/** The handler's state (the process state with this install's node hub) and its uninstall. */
+export interface InstalledHandler { state: ServerState; uninstall(): void }
+
+/**
+ * Gives the process state this handler's node hub and starts delivery. The server never starts a node:
+ * nodes dial the process owner's listener, which routes each connection to the installed handler
+ * (`acceptNodeConnection`). Until a session's node connects, its submitted work waits in the outbox.
+ */
+export function install(process: ProcessState): InstalledHandler {
+  const state = installNodeHub(process);
+  const hub = state.nodes;
+  hub.start();
+  // Hot reload: the nodes redial and reach the newly installed handler's hub; their runs are untouched.
+  return { state, uninstall: () => hub.close() };
 }
 
-/** Local node socket connections, routed here by the process owner so each reaches the current handler. */
-export const acceptNodeConnection = acceptInternalNodeConnection;
+/** Node socket connections, routed here by the process owner so each reaches the installed handler. */
+export function acceptNodeConnection(state: ServerState, socket: NodeSocket): void {
+  state.nodes.accept(socket);
+}
 
 export async function handleFetch(
   state: ServerState,

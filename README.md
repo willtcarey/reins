@@ -24,7 +24,7 @@ docker run -p 3100:3100 \
   reins
 ```
 
-The container runs the server and the internal node as two supervised processes (see *Processes* below). The `-v reins-data:/data` mount persists both the server database and internal-node session storage across container restarts. Add projects using their paths inside the container (e.g. `/repos/my-project`). See [docs/dev/docker.md](docs/dev/docker.md) for more options.
+The container runs the server and the local node as two supervised processes (see *Processes* below). The `-v reins-data:/data` mount persists both the server database and local-node session storage across container restarts. Add projects using their paths inside the container (e.g. `/repos/my-project`). See [docs/dev/docker.md](docs/dev/docker.md) for more options.
 
 ### Manual
 

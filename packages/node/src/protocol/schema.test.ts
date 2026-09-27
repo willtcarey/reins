@@ -2,8 +2,8 @@ import { test, expect } from "bun:test";
 import { attachmentFetchParams, helloParams, readyResult, provisionParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, MAX_ATTACHMENT_BYTES, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT } from "./schema.js";
 
 test("version ranges and capabilities are validated at the wire boundary", () => {
-  expect(helloParams.safeParse({ minVersion: 3, maxVersion: 1, instanceId: "n", capabilities: ["session.prompt"] }).success).toBe(false);
-  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, instanceId: "n", capabilities: ["session.prompt", "future.optional"] }).success).toBe(true);
+  expect(helloParams.safeParse({ minVersion: 3, maxVersion: 1, nodeId: "n", capabilities: ["session.prompt"] }).success).toBe(false);
+  expect(helloParams.safeParse({ minVersion: 1, maxVersion: 2, nodeId: "n", capabilities: ["session.prompt", "future.optional"] }).success).toBe(true);
   expect(readyResult.safeParse({ version: 2, capabilities: ["session.prompt"], epoch: crypto.randomUUID() }).success).toBe(false);
   expect(readyResult.safeParse({ version: 1, capabilities: ["arbitrary.command"], epoch: crypto.randomUUID() }).success).toBe(false);
 });

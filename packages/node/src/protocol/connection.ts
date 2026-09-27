@@ -33,7 +33,7 @@ export interface NodeConnectionOptions extends Hello, LinkOptions, Partial<NodeC
 
 /** Test/integration seam: no socket creation, key material, storage, or process lifecycle. */
 export function createNodeConnection(socket: WireSocket, options: NodeConnectionOptions) {
-  const hello = helloParams.parse({ instanceId: options.instanceId, minVersion: options.minVersion, maxVersion: options.maxVersion, capabilities: options.capabilities });
+  const hello = helloParams.parse({ nodeId: options.nodeId, minVersion: options.minVersion, maxVersion: options.maxVersion, capabilities: options.capabilities });
   let negotiated: Ready | undefined;
   /** The server sends commands as soon as it has answered hello (a reconnect replays queued work at
    * once), so a command can arrive in the same read as the reply, before this side has processed it:

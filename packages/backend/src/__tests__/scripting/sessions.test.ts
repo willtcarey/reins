@@ -47,7 +47,7 @@ describe("api.sessions orchestration", () => {
       broadcast,
       instance: instanceFor("parent"),
     };
-    const hydrations = (sessionId: string) => node.sent.filter(([command]) => command.op === "session.hydrate" && command.sessionId === sessionId).length;
+    const hydrations = (sessionId: string) => node.sent.filter((command) => command.op === "session.hydrate" && command.sessionId === sessionId).length;
     return { state, node, project, turns, broadcasts, context, instanceFor, hydrations, api: buildApiObject(context) };
   }
 
@@ -202,7 +202,7 @@ describe("api.sessions orchestration", () => {
     await api.sessions.send(child.sessionId, "not accepted");
     await Bun.sleep(20);
     expect(getSession(child.sessionId)?.activity_state).toBe("running");
-    expect(node.sent.some(([command]) => command.op === "session.abort")).toBe(false);
+    expect(node.sent.some((command) => command.op === "session.abort")).toBe(false);
     turns[0].finish();
     await api.sessions.wait(child.sessionId, 1000);
     expect(turns).toHaveLength(1);
@@ -234,9 +234,10 @@ describe("api.sessions orchestration", () => {
       sessionId: "level-three",
       instance: instanceFor("level-three"),
     });
-    const before = listSessions({ taskId: task.id });
+    const ids = () => listSessions({ taskId: task.id }).map(session => session.id);
+    const before = ids();
     await expect(deep.sessions.start("Too deep", { parentSessionId: "current" })).rejects.toThrow("depth");
-    expect(listSessions({ taskId: task.id })).toEqual(before);
+    expect(ids()).toEqual(before);
     const independent = Value.Decode(SessionHandleSchema, await deep.sessions.start("Independent work", { parentSessionId: null }));
     expect(getSession(independent.sessionId)).toMatchObject({ task_id: task.id, parent_session_id: null });
     // The first child's report also started a run on its parent.

@@ -27,7 +27,9 @@ export const capability = z.enum([methods.sessionProvision, methods.sessionPromp
 export type Capability = z.infer<typeof capability>;
 export const helloParams = z.strictObject({
   minVersion: z.number().int().positive(), maxVersion: z.number().int().positive(),
-  capabilities: z.array(z.string().min(1).max(128)).max(16), instanceId: z.string().min(1).max(128),
+  capabilities: z.array(z.string().min(1).max(128)).max(16),
+  /** The connecting node's ID: the server serves the connection only for a node it knows (a `nodes` row). */
+  nodeId: z.string().min(1).max(128),
 }).refine(value => value.minVersion <= value.maxVersion);
 export const readyResult = z.strictObject({
   version: z.literal(1), capabilities: z.array(capability).max(16), epoch: z.string().uuid(),

@@ -14,7 +14,7 @@ import { claimCommand, deleteFailedCommand, settleCommand } from "../../node-com
 import { useFakeNode, type FakeNode } from "../helpers/fake-node.js";
 
 /** Steers the fake node received for a session (sessions at rest on the server are moved onto it first). */
-const steersTo = (node: FakeNode, sessionId: string) => node.sent.flatMap(([command]) => command.op === "session.steer" && command.sessionId === sessionId ? [command] : []);
+const steersTo = (node: FakeNode, sessionId: string) => node.sent.flatMap((command) => command.op === "session.steer" && command.sessionId === sessionId ? [command] : []);
 async function until(condition: () => boolean): Promise<void> {
   for (let i = 0; i < 200 && !condition(); i++) await Bun.sleep(5);
 }
@@ -40,7 +40,7 @@ describe("SessionInstance", () => {
 
     expect(await instance.send("target", "First")).toEqual({ sessionId: "target" });
     await until(() => steersTo(node, "target").length > 0);
-    expect(node.sent.map(([command]) => command.op)).toEqual(["session.hydrate", "session.steer"]);
+    expect(node.sent.map((command) => command.op)).toEqual(["session.hydrate", "session.steer"]);
     expect(steersTo(node, "target")).toEqual([{ op: "session.steer", sessionId: "target", clientId: expect.any(String),
       content: [{ type: "text", text: "First" }], sourceSessionId: "source" }]);
     expect(broadcasts).toEqual([]);
@@ -91,7 +91,7 @@ describe("SessionInstance", () => {
     }
     expect(getSession(child.sessionId)?.parent_session_id).toBe("caller");
     expect(getSession(taskSession.sessionId)?.task_id).toBe(task.id);
-    const opsFor = (sessionId: string) => node.sent.filter(([command]) => command.sessionId === sessionId).map(([command]) => command.op);
+    const opsFor = (sessionId: string) => node.sent.filter((command) => command.sessionId === sessionId).map((command) => command.op);
     await until(() => [child, taskSession].every(({ sessionId }) => getSession(sessionId)?.placement_status === "provisioned" && opsFor(sessionId).length === 2));
     expect(opsFor(child.sessionId)).toEqual(["session.provision", "session.prompt"]);
     expect(opsFor(taskSession.sessionId)).toEqual(["session.provision", "session.prompt"]);
@@ -121,10 +121,10 @@ describe("SessionInstance", () => {
     const manager = new SessionManager(createServerState());
     const instance = new SessionInstance(manager, "session");
 
-    instance.startedWith();
+    instance.startedWith(() => true);
     instance.settledWith({ runId: "run-1", status: "completed" }, {
       metadata: { model: { provider: "faux", modelId: "model" }, thinkingLevel: "high" }, reply: null,
-    });
+    }, () => true);
 
     expect(getDb().query<{ message_json: string }, []>("SELECT message_json FROM session_messages").get()!.message_json).toBe(original);
     expect(getSession("session")).toMatchObject({ activity_state: "finished", model_provider: "faux", model_id: "model", thinking_level: "high" });
@@ -145,12 +145,12 @@ describe("SessionInstance", () => {
     } });
     const instance = new SessionInstance(manager, "child");
 
-    instance.startedWith();
+    instance.startedWith(() => true);
     instance.settledWith({
       runId: "run-1",
       status: "failed",
       error: { code: "provider_error", message: "Provider unavailable" },
-    }, { reply: { text: "stale success", stopReason: "stop", errorMessage: null } });
+    }, { reply: { text: "stale success", stopReason: "stop", errorMessage: null } }, () => true);
     await Bun.sleep(0);
 
     expect(getSession("child")?.activity_state).toBeNull();
@@ -175,8 +175,8 @@ describe("SessionInstance", () => {
     } });
     const instance = new SessionInstance(manager, "child");
 
-    instance.startedWith();
-    instance.settledWith({ runId: "run-1", status: "completed" }, { reply: { text: "Result", stopReason: "stop", errorMessage: null } });
+    instance.startedWith(() => true);
+    instance.settledWith({ runId: "run-1", status: "completed" }, { reply: { text: "Result", stopReason: "stop", errorMessage: null } }, () => true);
     await finished.promise;
 
     expect(getSession("child")?.activity_state).toBe("finished");
@@ -192,8 +192,8 @@ describe("SessionInstance", () => {
     const manager = new SessionManager(state);
     const instance = new SessionInstance(manager, "child");
 
-    instance.startedWith();
-    instance.settledWith({ runId: "run-1", status: "completed" }, { reply: { text: "Result", stopReason: "stop", errorMessage: null } });
+    instance.startedWith(() => true);
+    instance.settledWith({ runId: "run-1", status: "completed" }, { reply: { text: "Result", stopReason: "stop", errorMessage: null } }, () => true);
     for (let i = 0; i < 100 && getSession("child")?.activity_state !== null; i++) await Bun.sleep(10);
 
     expect(getSession("child")?.activity_state).toBeNull();
@@ -207,8 +207,8 @@ describe("SessionInstance", () => {
     const node = useFakeNode(state);
     const instance = new SessionInstance(new SessionManager(state), "child");
 
-    instance.startedWith();
-    instance.settledWith({ runId: "run-1", status: "completed" }, { reply: null, replyError: new Error("transcript unavailable") });
+    instance.startedWith(() => true);
+    instance.settledWith({ runId: "run-1", status: "completed" }, { reply: null, replyError: new Error("transcript unavailable") }, () => true);
     for (let i = 0; i < 100 && getSession("child")?.activity_state !== "finished"; i++) await Bun.sleep(5);
     await Bun.sleep(20);
 

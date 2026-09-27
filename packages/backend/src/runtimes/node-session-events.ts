@@ -1,12 +1,12 @@
 import type { ServerState } from "../state.js";
-import type { NodeSessionReports } from "./internal-node.js";
+import type { NodeSessionReports } from "./node-server-handlers.js";
 import { SessionManager } from "./session-manager.js";
 import { getSession } from "../session-store.js";
 import { getDb } from "../db.js";
 import { recordNodeLifecycle } from "../node-replica.js";
 import { logger } from "../logger.js";
 
-/** Internal node reports. Live `session.event`s are broadcast to browsers as sent (best effort; their
+/** Node reports. Live `session.event`s are broadcast to browsers as sent (best effort; their
  * images are already attachment references). Durable
  * `session.started`/`session.settled` drive the session's SessionInstance lifecycle effects (activity,
  * metadata, child settlement), each applied at most once, atomically with the session's lifecycle

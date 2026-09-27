@@ -1,20 +1,23 @@
 /**
  * Fake node: TEST UTILITY ONLY.
  *
- * Stands in for the node behind the execution target, for tests of the server logic above them
- * (session instances, scripting, WS admission) that need runs without a Pi runtime. It answers every
- * session command as a node would and reports runs through the server's real report services with
- * durable reports (`session.started`/`session.settled`), writing each run's transcript into the
- * server's replica, so waits and activity read the same projections as with a real node. Moves
- * (hydrate) are acknowledged at once, so the outbox settles the placement as it would. Each prompt (or steer on an idle session) starts a run the test finishes explicitly.
+ * A scripted node connected to the hub over the in-memory loopback (`connectScriptedNode`, through the
+ * hub's real `accept` path and wire protocol), for tests of the server logic above it (session
+ * instances, scripting, WS admission) that need runs without a Pi runtime. It answers every session
+ * command as a node would and reports runs through the server's real report services with durable
+ * reports (`session.started`/`session.settled`), writing each run's transcript into the server's
+ * replica, so waits and activity read the same projections as with a real node. Moves (hydrate) are
+ * acknowledged at once, so the outbox settles the placement as it would. Each prompt (or steer on an
+ * idle session) starts a run the test finishes explicitly.
  */
-import type { NodeCommand, NodeResult } from "@reins/node/contract";
+import type { NodeCommand } from "@reins/node/contract";
+import { APPLICATION_ERROR, RpcFailure, type NodeError, type SessionInput } from "@reins/node/protocol";
 import { getSession } from "../../session-store.js";
-import { registerExecutionTarget } from "../../runtimes/execution-target.js";
 import { nodeSessionReports } from "../../runtimes/node-session-events.js";
 import type { ServerState } from "../../state.js";
 import type { ClientPromptContent } from "../../messages-store.js";
 import { persistCanonicalMessages } from "./canonical-messages.js";
+import { connectScriptedNode, SEEDED_NODE_ID, stopLoopbackNode, type LoopbackLink } from "./loopback-node.js";
 
 export interface FakeTurn {
   sessionId: string;
@@ -26,8 +29,10 @@ export interface FakeTurn {
 export interface FakeNode {
   /** Runs started, in order. */
   turns: FakeTurn[];
-  /** Every command the fake node received, with its outbox command ID. */
-  sent: Array<[NodeCommand, string | undefined]>;
+  /** Every command the fake node received, as the semantic command. */
+  sent: NodeCommand[];
+  /** Its loopback link (e.g. `ready()` before an immediate control right after connecting). */
+  link: LoopbackLink;
   /** Makes the node reject a command (e.g. a steer it cannot admit) with this message; null stops rejecting. */
   reject(op: NodeCommand["op"], message: string | null): void;
   /** Rejects commands the predicate names a message for. */
@@ -36,10 +41,13 @@ export interface FakeNode {
 
 const text = (content: ClientPromptContent) => content.flatMap(block => block.type === "text" ? [block] : []);
 
-export function useFakeNode(state: ServerState): FakeNode {
+/** Connects a fake node to `state` as `nodeId` (the seeded node by default), replacing a loopback node
+ * connected as that node. */
+export function useFakeNode(state: ServerState, nodeId = SEEDED_NODE_ID): FakeNode {
+  void stopLoopbackNode(state, nodeId);
   const reports = nodeSessionReports(state);
   const turns: FakeTurn[] = [];
-  const sent: Array<[NodeCommand, string | undefined]> = [];
+  const sent: NodeCommand[] = [];
   const rejections = new Map<string, string>();
   let predicate: ((command: NodeCommand) => string | null) | undefined;
   const running = new Map<string, string>();
@@ -69,35 +77,39 @@ export function useFakeNode(state: ServerState): FakeNode {
     });
   };
 
-  const target = {
-    async send(command: NodeCommand, commandId?: string): Promise<NodeResult> {
-      sent.push([command, commandId]);
-      const rejection = rejections.get(command.op) ?? predicate?.(command);
-      if (rejection) return { ok: false, error: { code: "invalid_request", message: rejection, retryable: false } };
-      switch (command.op) {
-        case "session.provision": return { ok: true, value: { kind: "provisioned" } };
-        case "session.hydrate": return { ok: true, value: { kind: "hydrated" } };
-        case "session.setModel": return { ok: true, value: { kind: "modelSet" } };
-        case "session.abort": return { ok: true, value: { kind: "aborted", aborted: running.has(command.sessionId) } };
-        case "session.resumePending": return { ok: true, value: { kind: "resumed", started: true } };
-        case "session.prompt":
-        case "session.steer":
-          input(command.sessionId, command.content, command.clientId, command.sourceSessionId);
-          if (!running.has(command.sessionId)) {
-            // As on a node, the run reports after the admission is answered.
-            running.set(command.sessionId, "starting");
-            setTimeout(() => {
-              // The test (and its database) may be gone by now.
-              try { if (getSession(command.sessionId)) start(command.sessionId, command.content); } catch { /* torn down */ }
-            }, 0);
-          }
-          return { ok: true, value: { kind: "admitted", inputId: command.clientId } };
-      }
-    },
+  /** Records the command; a scripted rejection is the node's definite `invalid_request`. */
+  const receive = (command: NodeCommand) => {
+    sent.push(command);
+    const rejection = rejections.get(command.op) ?? predicate?.(command);
+    if (rejection) throw new RpcFailure(APPLICATION_ERROR, rejection, undefined, { code: "invalid_request", message: rejection, retryable: false } satisfies NodeError);
   };
-  registerExecutionTarget(state, target);
+  const admit = (op: "session.prompt" | "session.steer", { sessionId, clientId, content, sourceSessionId }: SessionInput) => {
+    receive({ op, sessionId, clientId, content, sourceSessionId });
+    input(sessionId, content, clientId, sourceSessionId);
+    if (!running.has(sessionId)) {
+      // As on a node, the run reports after the admission is answered.
+      running.set(sessionId, "starting");
+      setTimeout(() => {
+        // The test (and its database) may be gone by now.
+        try { if (getSession(sessionId)) start(sessionId, content); } catch { /* torn down */ }
+      }, 0);
+    }
+    return { inputId: clientId };
+  };
+  const link = connectScriptedNode(state, nodeId, {
+    async provision({ sessionId, binding, configuration }) { receive({ op: "session.provision", sessionId, sourceId: binding.sourceId, configuration }); return { provisioned: true }; },
+    async hydrate({ sessionId, binding }) { receive({ op: "session.hydrate", sessionId, targetSourceId: binding.sourceId }); return { hydrated: true }; },
+    async setModel({ sessionId, provider, modelId, thinkingLevel }) {
+      receive({ op: "session.setModel", sessionId, provider, modelId, ...(thinkingLevel === undefined ? {} : { thinkingLevel }) });
+      return { modelSet: true };
+    },
+    async abort({ sessionId }) { receive({ op: "session.abort", sessionId }); return { aborted: running.has(sessionId) }; },
+    async resumePending({ sessionId }) { receive({ op: "session.resumePending", sessionId }); return { started: true }; },
+    async prompt(request) { return admit("session.prompt", request); },
+    async steer(request) { return admit("session.steer", request); },
+  });
   return {
-    turns, sent,
+    turns, sent, link,
     reject(op, message) { if (message === null) rejections.delete(op); else rejections.set(op, message); },
     rejectWhen(next) { predicate = next; },
   };

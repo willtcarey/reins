@@ -7,7 +7,6 @@ import { runMigrations } from "../migrations.js";
 import { resetDb, setDb } from "../db.js";
 import { getSession } from "../session-store.js";
 import { nodeSessionReports } from "../runtimes/node-session-events.js";
-import { dispatcherFor } from "../models/node-command-dispatcher.js";
 import { createServerState } from "./helpers/server-state.js";
 import { BACKGROUND_CONTEXT, setValue, value, appendList, list } from "@earendil-works/pi-agent-core";
 import { insertEntry, insertUsage } from "@earendil-works/pi-agent-core/harness/session";
@@ -146,7 +145,7 @@ test("replica batches are applied by sequence watermark: after a server restart,
 
 test("a replayed lifecycle report after a server restart applies nothing: no second parent steer or state change; a divergent payload is rejected", () => {
   const server = serverDatabase();
-  let state = createServerState(undefined, { loopbackNode: false });
+  let state = createServerState();
   try {
     const project = createProject("Lifecycle restart", "/tmp/lifecycle-restart");
     createSession("parent", project.id, { agentRuntimeType: "pi" });
@@ -162,9 +161,9 @@ test("a replayed lifecycle report after a server restart applies nothing: no sec
     expect(latestNodeSettlement(server.db, "child")).toEqual({ seq: 1, nextSeq: 1, status: "completed" });
 
     // The acknowledgement was lost and the server restarted: the node replays the settlement.
-    dispatcherFor(state).stop();
+    state.nodes.close();
     server.restart();
-    state = createServerState(undefined, { loopbackNode: false });
+    state = createServerState();
     const updated = getSession("child")!.updated_at;
     nodeSessionReports(state).settled(settled);
     // Pi re-reports `started` for a run that already settled (a resumed run): also already applied.
@@ -179,5 +178,5 @@ test("a replayed lifecycle report after a server restart applies nothing: no sec
     // The next run applies.
     nodeSessionReports(state).started({ sessionId: "child", runId: "r2" });
     expect(getSession("child")?.activity_state).toBe("running");
-  } finally { dispatcherFor(state).stop(); server.dispose(); }
+  } finally { state.nodes.close(); server.dispose(); }
 });

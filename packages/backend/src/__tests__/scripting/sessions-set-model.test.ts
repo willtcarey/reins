@@ -10,6 +10,8 @@ import { createSession, getSession } from "../session-fixture.js";
 import { SESSION_FUNCTIONS, sessionsSetModelFunction } from "../../scripting/sessions.js";
 import type { ApiContext } from "../../scripting/define-function.js";
 import type { ServerMessage } from "../../models/broadcast.js";
+import { SessionManager } from "../../runtimes/session-manager.js";
+import { createServerState } from "../helpers/server-state.js";
 
 /** Commands queued for the node, oldest first. */
 const queued = (sessionId: string) => getDb().query<{ command_json: string }, [string]>(
@@ -35,6 +37,7 @@ describe("sessions.setModel", () => {
       sessionId: "ctx-session",
       taskId: null,
       broadcast,
+      instance: new SessionManager(createServerState()).forSession("ctx-session"),
       ...overrides,
     };
   }

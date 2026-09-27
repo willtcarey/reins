@@ -2,7 +2,7 @@ import type { ServerState } from "../state.js";
 import { createSession as dbCreateSession, updateSessionMeta } from "../session-store.js";
 import { getProject } from "../project-store.js";
 import { selectCreationSource } from "./node-source.js";
-import { scheduleWork, wakeScheduledCommands } from "../models/node-command-projection.js";
+import { createSessionWithProvision } from "../node-command-store.js";
 import { getTask, touchTask } from "../task-store.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { SessionInstance, type SessionCreationOptions } from "./session-instance.js";
@@ -22,18 +22,18 @@ export class SessionManager {
     return new SessionInstance(this, sessionId);
   }
 
-  create(projectId: number, projectDir: string, options?: SessionCreationOptions): CreatedSession {
-    return createManagedSession(this, projectId, projectDir, options);
+  create(projectId: number, options?: SessionCreationOptions): CreatedSession {
+    return createManagedSession(this, projectId, options);
   }
 }
 
 /** The new session and its queued provision command (the session is `provisioning` until it settles). */
 export interface CreatedSession { id: string; provisionCommandId: string }
 
+/** Placed on `opts.sourceId`, else on the project's default source (`selectCreationSource`). */
 function createManagedSession(
   manager: SessionManager,
   projectId: number,
-  projectDir: string,
   opts?: SessionCreationOptions,
 ): CreatedSession {
   const project = getProject(projectId);
@@ -42,7 +42,6 @@ function createManagedSession(
   }
 
   const source = selectCreationSource(projectId, opts?.sourceId);
-  if (opts?.sourceId === undefined && source.path !== projectDir) throw new Error(`Project source path mismatch: ${projectId}`);
   const sessionId = crypto.randomUUID();
 
   const defaultModel = getSetting("default_model");
@@ -71,7 +70,7 @@ function createManagedSession(
     task: task ? { title: task.title, description: task.description, branchName: task.branch_name } : null,
   };
   const commandId = crypto.randomUUID();
-  scheduleWork(commandId, { op: "session.provision", sessionId, sourceId: source.id, configuration }, () => {
+  createSessionWithProvision(commandId, { op: "session.provision", sessionId, sourceId: source.id, configuration }, () => {
     dbCreateSession(sessionId, projectId, {
       modelProvider: selectedCreateModel?.provider,
       modelId: selectedCreateModel?.modelId,
@@ -87,7 +86,7 @@ function createManagedSession(
 
   // Wake only after committing the row and submission. The response never depends
   // on Pi initialization; a missed wake is recovered by the dispatcher scan.
-  queueMicrotask(() => wakeScheduledCommands(manager.state));
+  queueMicrotask(() => void manager.state.nodes.wake());
 
   if (opts?.taskId) {
     touchTask(opts.taskId);
@@ -108,8 +107,7 @@ function createManagedSession(
 export function createNewSession(
   state: ServerState,
   projectId: number,
-  projectDir: string,
   options?: SessionCreationOptions,
 ): CreatedSession {
-  return new SessionManager(state).create(projectId, projectDir, options);
+  return new SessionManager(state).create(projectId, options);
 }

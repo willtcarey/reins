@@ -7,23 +7,21 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFact
 import { laneConfig } from "@earendil-works/pi-agent-core";
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
-import { createLoopbackPair, RpcFailure } from "@reins/node/protocol";
+import { sessionSnapshotResult, type LoopbackSocket } from "@reins/node/protocol";
 import { piSnapshotSummary, samePiSnapshot } from "@reins/node/pi-storage";
 import { getDb } from "../../db.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { createProject } from "../../project-store.js";
-import { createSource, internalSource } from "../../node-store.js";
+import { createSource, defaultSource } from "../../node-store.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { enqueueInput, enqueueSetModel, getCommand } from "../../node-command-store.js";
-import { dispatcherFor, type NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
-import { deliverCommand, DeliveryDeferred } from "../../models/node-command-transport.js";
+import { deliverCommand } from "../../models/node-command-delivery.js";
 import { commitPlacement, requestSessionMove } from "../../models/session-ownership.js";
-import { getWork } from "../../models/node-command-projection.js";
+import { getNodeCommand } from "../../node-command-store.js";
 import { executeSessionCommand } from "../../runtimes/node-execution.js";
-import { internalNodeExecutionTarget } from "../../runtimes/internal-node-execution.js";
-import { createServerTransport } from "../../node-transport/server-peer.js";
-import { internalNodeServer, setInternalNodeConnectorForTesting, closeInternalNodeLink, type InternalLink } from "../../runtimes/internal-node.js";
+import { nodeServerHandlers } from "../../runtimes/node-server-handlers.js";
+import { nodeServerServices } from "../../runtimes/node-hub.js";
 import { NODE_COMMAND_TIMEOUTS } from "../../node-transport/commands.js";
 import { createPiContext, registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/factory.js";
 import { createAgentHarnessPiRuntime } from "@reins/node/pi-runtime";
@@ -35,8 +33,8 @@ import { createNewSession } from "../../runtimes/session-manager.js";
 import { loadMessages } from "../../messages-store.js";
 import { createServerState } from "../helpers/server-state.js";
 import { setupTestDb, teardownTestDb, testNodeDb } from "../helpers/test-db.js";
-import type { ServerHandlers } from "../../node-transport/server-peer.js";
-import type { ServerState } from "../../state.js";
+import { dialLoopback, drainCommands, type LoopbackLink } from "../helpers/loopback-node.js";
+import type { NodeSocket, ServerState } from "../../state.js";
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const text = (value: string) => [{ type: "text" as const, text: value }];
@@ -59,11 +57,11 @@ async function until(condition: () => boolean, message = "condition"): Promise<v
 const moves = (sessionId: string) => getDb().query<{ op: string; state: string }, [string]>(
   "SELECT json_extract(command_json, '$.op') op, state FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.hydrate' ORDER BY rowid").all(sessionId);
 const hydrateCommand = (id: string) => {
-  const command = getWork(id)!.command!;
+  const command = getNodeCommand(id)!.command!;
   if (command.op !== "session.hydrate") throw new Error(`Not a hydrate: ${command.op}`);
   return command;
 };
-/** Stands in for another node acknowledging the session's queued hydrate (tests reach only the internal node). */
+/** Stands in for another node acknowledging the session's queued hydrate (only the seeded node is connected). */
 const acknowledgeOn = (sessionId: string) => {
   const id = getDb().query<{ id: string }, [string]>(
     "SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.hydrate' AND state = 'queued'").get(sessionId)!.id;
@@ -82,36 +80,72 @@ const otherNode = (projectId: number) => {
   return createSource(projectId, "other", "/elsewhere");
 };
 
-/**
- * A node on an in-memory link whose server handlers the test can wrap (to lose a connection mid-pull
- * or corrupt a page) and that can be restarted over the same node database, as a node process would.
- */
-function wrappableNode(state: ServerState, wrap: (handlers: ServerHandlers, link: () => InternalLink) => ServerHandlers = handlers => handlers) {
-  let node: Node | undefined;
-  let current: InternalLink | undefined;
-  const connect = (): InternalLink => {
-    node ??= startNode(testNodeDb());
-    const [serverEnd, nodeEnd] = createLoopbackPair();
-    const uncapped = { maxFrameBytes: Infinity };
-    const server = createServerTransport(serverEnd, wrap(internalNodeServer(state), () => current!), uncapped);
-    const connection = connectNode(node, nodeEnd, "internal", uncapped);
-    serverEnd.onmessage = server.receive; serverEnd.onclose = server.close;
-    nodeEnd.onmessage = connection.receive; nodeEnd.onclose = connection.close;
-    const ready = connection.ready.catch((error: unknown) => { throw new RpcFailure("unavailable", String(error)); });
-    ready.catch(() => undefined);
-    current = { closed: () => serverEnd.closed, close: () => serverEnd.close(), async client() { await ready; return server; } };
-    return current;
+/** A JSON-RPC frame on the link. */
+type Frame = { id?: number | string; method?: string; params?: Record<string, unknown>; result?: Record<string, unknown>; error?: { code: number; message: string; data?: unknown } };
+/** Frame-level interception between the node and the hub (the hub serves the link with its real handlers). */
+interface Intercept {
+  /** A node→server frame; return false to keep it from the hub (the test answers with `reply` or `close`s the link). */
+  inbound?(frame: Frame, link: { reply(frame: Frame): void; close(): void }): boolean | Promise<boolean>;
+  /** A server→node frame, with the node request it answers; returns the frame to deliver. */
+  outbound?(frame: Frame, request: Frame | undefined): Frame;
+}
+
+/** The hub's view of `serverEnd`, passing every frame through `intercept`. */
+function intercepted(serverEnd: LoopbackSocket, intercept: Intercept): NodeSocket {
+  const requests = new Map<number | string, Frame>();
+  const proxy: NodeSocket = {
+    get closed() { return serverEnd.closed; },
+    send(data) {
+      const frame: Frame = JSON.parse(data);
+      const request = frame.method === undefined && frame.id !== undefined ? requests.get(frame.id) : undefined;
+      if (request) requests.delete(frame.id!);
+      serverEnd.send(intercept.outbound ? JSON.stringify(intercept.outbound(frame, request)) : data);
+    },
+    close: () => serverEnd.close(),
   };
-  setInternalNodeConnectorForTesting(state, connect);
+  const link = { reply: (frame: Frame) => serverEnd.send(JSON.stringify({ jsonrpc: "2.0", ...frame })), close: () => serverEnd.close() };
+  serverEnd.onmessage = async data => {
+    const frame: Frame = JSON.parse(data);
+    if (frame.method !== undefined && frame.id !== undefined) requests.set(frame.id, frame);
+    if (!intercept.inbound || await intercept.inbound(frame, link)) proxy.onmessage?.(data);
+  };
+  serverEnd.onclose = () => proxy.onclose?.();
+  return proxy;
+}
+
+/**
+ * The seeded node on an in-memory link to the hub whose frames the test can intercept (to lose a
+ * connection mid-pull, delay or corrupt a page, or refuse a report), and that can be restarted over the
+ * same node database, as a node process would. It dials only when told to (no automatic redial).
+ */
+function wrappableNode(state: ServerState, intercept: Intercept = {}) {
+  let node: Node | undefined;
+  let link: LoopbackLink | undefined;
+  const connect = () => {
+    const current = node ??= startNode(testNodeDb());
+    link = dialLoopback(state, socket => connectNode(current, socket, "internal", { maxFrameBytes: Infinity }),
+      { redial: false, serverSocket: serverEnd => intercepted(serverEnd, intercept) });
+  };
+  const stop = async () => { link?.stop(); const stopped = node; node = undefined; await stopped?.shutdown(); };
+  connect();
   return {
     get node() { return node!; },
+    /** Resolves once the current connection negotiated. */
+    ready: () => link!.ready(),
     /** The connection drops and the same node redials now (attaching replays its pending reports). */
-    relink() { closeInternalNodeLink(state); setInternalNodeConnectorForTesting(state, connect, { linkNow: true }); },
-    /** The node process stops: its connection closes and a new instance starts on the next command. */
-    async restart() { closeInternalNodeLink(state); const stopped = node; node = undefined; await stopped?.shutdown(); },
-    async stop() { closeInternalNodeLink(state); const stopped = node; node = undefined; await stopped?.shutdown(); },
+    relink() { link!.redial(); },
+    /** The node process restarts: its connection closes, a new instance starts and dials in. */
+    async restart() { await stop(); connect(); await link!.ready(); },
+    stop,
   };
 }
+
+/** A snapshot page's reply with the assistant's "Seen" forged, so the rows differ from the summary. */
+const forged = (frame: Frame, request: Frame | undefined): Frame => {
+  if (request?.method !== "session.snapshot" || !frame.result) return frame;
+  const page = sessionSnapshotResult.parse(frame.result);
+  return { ...frame, result: { ...page, rows: page.rows.map(row => row.table === "entry" && row.role === "assistant" ? { ...row, messageJson: row.messageJson.replace("Seen", "Forged") } : row) } };
+};
 
 describe("session relocation", () => {
   let nodeDb: Database;
@@ -122,7 +156,6 @@ describe("session relocation", () => {
   /** The model and reasoning level of every provider request. */
   let requests: Array<{ model: string; reasoning: unknown }>;
   let state: ServerState;
-  let dispatcher: NodeCommandDispatcher;
 
   beforeEach(() => {
     setupTestDb();
@@ -144,13 +177,10 @@ describe("session relocation", () => {
     providerId = provider.provider.id;
     registerPiProvider(provider.provider);
     setApiKeyCredential(providerId, "test-key");
-    state = createServerState(undefined, { loopbackNode: false });
-    // The dispatcher input submission wakes, so draining it covers work the test submitted.
-    dispatcher = dispatcherFor(state);
+    state = createServerState();
   });
   afterEach(() => {
-    dispatcher.stop();
-    closeInternalNodeLink(state);
+    state.nodes.close();
     unregisterPiProvider(providerId);
     rmSync(dir, { recursive: true, force: true });
     teardownTestDb();
@@ -162,7 +192,7 @@ describe("session relocation", () => {
    * and thinking level). */
   async function legacySession(sessionId = "legacy") {
     const project = createProject("Relocation", dir);
-    const row = createSession(sessionId, project.id, { agentRuntimeType: "pi", sourceId: internalSource(project.id).id, modelProvider: providerId, modelId: "fake", thinkingLevel: "high" });
+    const row = createSession(sessionId, project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id, modelProvider: providerId, modelId: "fake", thinkingLevel: "high" });
     const attachment = storeSessionAttachment(sessionId, { data: new Uint8Array(PNG), mimeType: "image/png", filename: "prompt.png" });
     const image = { type: "image" as const, attachmentId: attachment.id, mimeType: "image/png" as const, byteSize: PNG.byteLength, sha256: attachment.sha256 };
     responses.push(fauxAssistantMessage([fauxToolCall("read", { path: "pixel.png" }, { id: "read-1" })], { stopReason: "toolUse" }), fauxAssistantMessage("Seen on the server"));
@@ -204,7 +234,7 @@ describe("session relocation", () => {
       expect(getDb().query("SELECT json_extract(command_json, '$.op') op FROM node_command_outbox WHERE session_id = 'legacy' ORDER BY rowid").all())
         .toEqual([{ op: "session.hydrate" }, { op: "session.prompt" }]);
       expect(getSession("legacy")).toMatchObject({ placement_status: "moving" });
-      await dispatcher.drain();
+      await drainCommands(state);
       await until(() => settledRuns("legacy") === 1, "the node run to settle");
       await until(() => !nodeDb.query("SELECT 1 FROM session_outbox").get(), "the node outbox to drain");
 
@@ -239,44 +269,43 @@ describe("session relocation", () => {
   test("hydrate replays converge: a node that dies mid-pull and a lost acknowledgement", async () => {
     await legacySession();
     const summary = piSnapshotSummary(getDb(), "legacy");
+    // Hydrate calls are bounded at 100ms here, so a pull delayed beyond it loses its acknowledgement.
+    state.nodes.close();
+    state = createServerState(undefined, { hub: { timeouts: { ...NODE_COMMAND_TIMEOUTS, hydrate: 100 } } });
     let pages = 0;
     let dieOnFetch = true;
-    const node = wrappableNode(state, (handlers, link) => ({
-      ...handlers,
-      snapshot: async (sessionId, fromSeq) => {
+    const node = wrappableNode(state, {
+      async inbound(frame, link) {
         // The second attempt's pull outlasts its call, so its acknowledgement is lost.
-        if (++pages === 2) await Bun.sleep(30);
-        return handlers.snapshot(sessionId, fromSeq);
+        if (frame.method === "session.snapshot" && ++pages === 2) await Bun.sleep(250);
+        // The node process dies after pulling the rows, while fetching the attachment they reference.
+        if (frame.method === "attachment.fetch" && dieOnFetch) { dieOnFetch = false; link.close(); return false; }
+        return true;
       },
-      // The node process dies after pulling the rows, while fetching the attachment they reference.
-      attachment: (sessionId, attachmentId) => {
-        if (dieOnFetch) { dieOnFetch = false; link().close(); throw new Error("node gone"); }
-        return handlers.attachment(sessionId, attachmentId);
-      },
-    }));
+    });
     try {
+      await node.ready();
       expect(requestSessionMove("legacy", "internal")).toEqual({ state: "moving", nodeId: "internal" });
       const id = getDb().query<{ id: string }, []>("SELECT id FROM node_command_outbox WHERE json_extract(command_json, '$.op') = 'session.hydrate'").get()!.id;
-      const command = hydrateCommand(id);
       // First attempt: the link closes mid-pull; the outcome is unknown, so the hydrate is requeued and
       // the node stored nothing.
-      await deliverCommand(id, () => internalNodeExecutionTarget(state).send(command, id), result => commitPlacement("legacy", getCommand(id)!.command_json, result));
+      await state.nodes.wake();
       expect(pages).toBe(1);
       expect(getCommand(id)?.state).toBe("queued");
       expect(nodeDb.query("SELECT 1 FROM sessions WHERE id = 'legacy'").get()).toBeNull();
       expect(getSession("legacy")).toMatchObject({ placement_status: "moving" });
-      await node.restart();
 
-      // Second attempt: the node finishes, but its acknowledgement is lost (the call times out).
-      const hasty = internalNodeExecutionTarget(state, { ...NODE_COMMAND_TIMEOUTS, hydrate: 1 });
-      await expect(hasty.send(command, id)).rejects.toBeInstanceOf(DeliveryDeferred);
+      // Second attempt, once the restarted node dials in: the node finishes, but its acknowledgement is
+      // lost (the call times out) and the hydrate is requeued.
+      await node.restart();
       await until(() => !!nodeDb.query("SELECT 1 FROM sessions WHERE id = 'legacy'").get(), "the node to finish hydrating");
+      await until(() => pages === 2 && getCommand(id)?.state === "queued", "the hydrate to be requeued");
       expect(getSession("legacy")?.placement_status).toBe("moving");
 
       // The node process restarts before the replay, which finds the identical copy by content and is
       // acknowledged at once; the session is placed once.
       await node.restart();
-      await dispatcher.drain();
+      await drainCommands(state);
       expect(getCommand(id)).toBeNull();
       expect(pages).toBe(2);
       expect(getSession("legacy")).toMatchObject({ placement_status: "provisioned" });
@@ -289,17 +318,11 @@ describe("session relocation", () => {
     const history = entries(getDb(), "legacy");
     const events: Array<{ type: string; sessionId?: string; error?: string }> = [];
     state.clients.add({ ws: { send: data => { events.push(JSON.parse(data)); return 0; } } });
-    const node = wrappableNode(state, handlers => ({
-      ...handlers,
-      // A page whose rows differ from the summary the hydrate carries.
-      snapshot: async (sessionId, fromSeq) => {
-        const page = await handlers.snapshot(sessionId, fromSeq);
-        return { ...page, rows: page.rows.map(row => row.table === "entry" && row.role === "assistant" ? { ...row, messageJson: row.messageJson.replace("Seen", "Forged") } : row) };
-      },
-    }));
+    // A page whose rows differ from the summary the hydrate carries.
+    const node = wrappableNode(state, { outbound: forged });
     try {
       await executeSessionCommand(state, "legacy", "prompt", text("Again"), "after-forgery");
-      await dispatcher.drain();
+      await drainCommands(state);
       // A failed move returns the session to rest on the server, with the reason; its history is untouched.
       expect(getSession("legacy")).toMatchObject({ placement_status: "server",
         status_error: expect.stringContaining("Hydration verification failed") });
@@ -317,17 +340,11 @@ describe("session relocation", () => {
   test("work reaching a session at rest with no move queued ahead hydrates it outside the outbox: its placement follows the outcome", async () => {
     await legacySession();
     let forge = true;
-    const node = wrappableNode(state, handlers => ({
-      ...handlers,
-      snapshot: async (sessionId, fromSeq) => {
-        const page = await handlers.snapshot(sessionId, fromSeq);
-        return forge ? { ...page, rows: page.rows.map(row => row.table === "entry" && row.role === "assistant" ? { ...row, messageJson: row.messageJson.replace("Seen", "Forged") } : row) } : page;
-      },
-    }));
+    const node = wrappableNode(state, { outbound: (frame, request) => forge ? forged(frame, request) : frame });
     try {
       // Input stored without the lazy trigger (as if its queued move was interrupted by a restart).
       enqueueInput("legacy", "prompt", text("First"), "direct-1");
-      await dispatcher.drain();
+      await drainCommands(state);
       expect(getSession("legacy")).toMatchObject({ placement_status: "server",
         status_error: expect.stringContaining("Hydration verification failed") });
       expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
@@ -335,21 +352,21 @@ describe("session relocation", () => {
       forge = false;
       responses.push(fauxAssistantMessage("Ran after the move"));
       enqueueInput("legacy", "prompt", text("Second"), "direct-2");
-      await dispatcher.drain();
+      await drainCommands(state);
       await until(() => settledRuns("legacy") === 1, "the node run");
       expect(getSession("legacy")).toMatchObject({ placement_status: "provisioned", status_error: null });
       expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
     } finally { await node.stop(); }
   }, 20_000);
 
-  /** A node-owned session that ran once on the internal node, with a prompt image. */
+  /** A node-owned session that ran once on the seeded node, with a prompt image. */
   async function nodeSession(name: string) {
     const project = createProject(name, dir);
     responses.push(fauxAssistantMessage("First on the node"));
-    const { id } = createNewSession(state, project.id, dir, { model: { provider: providerId, modelId: "fake" } });
+    const { id } = createNewSession(state, project.id, { model: { provider: providerId, modelId: "fake" } });
     const attachment = storeSessionAttachment(id, { data: new Uint8Array(PNG), mimeType: "image/png" });
     await executeSessionCommand(state, id, "prompt", [...text("Hello"), { type: "image", attachmentId: attachment.id, mimeType: "image/png", byteSize: PNG.byteLength, sha256: attachment.sha256 }], "first");
-    await dispatcher.drain();
+    await drainCommands(state);
     await until(() => settledRuns(id) === 1, "the first run");
     await until(() => !nodeDb.query("SELECT 1 FROM session_outbox").get(), "the node outbox");
     return { project, id, attachment };
@@ -358,14 +375,17 @@ describe("session relocation", () => {
   test("moving an idle node-owned session re-points it at once and tells the old node nothing; the old node's late commit is refused (not_owner), dropped with its copy, never retried", async () => {
     let offline = false;
     const refusals: string[] = [];
-    const node = wrappableNode(state, handlers => ({
-      ...handlers,
-      committed: input => {
-        if (offline) throw new Error("server unreachable");
-        try { return handlers.committed(input); }
-        catch (error) { refusals.push(error instanceof RpcFailure ? JSON.stringify(error.data) : String(error)); throw error; }
+    const node = wrappableNode(state, {
+      inbound(frame, link) {
+        if (frame.method !== "session.committed" || !offline) return true;
+        link.reply({ id: frame.id, error: { code: -32000, message: "server unreachable" } });
+        return false;
       },
-    }));
+      outbound(frame, request) {
+        if (request?.method === "session.committed" && frame.error) refusals.push(JSON.stringify(frame.error.data));
+        return frame;
+      },
+    });
     try {
       const { project, id, attachment } = await nodeSession("Move");
       const before = entries(getDb(), id);
@@ -373,7 +393,7 @@ describe("session relocation", () => {
       // the session moves: the accepted loss of a move.
       offline = true;
       enqueueSetModel(id, { provider: providerId, modelId: "fake", thinkingLevel: "low" });
-      await dispatcher.drain();
+      await drainCommands(state);
       const late = nodeDb.query<{ kind: string }, [string]>("SELECT kind FROM session_outbox WHERE session_id = ?").all(id);
       expect(late.length).toBeGreaterThan(0);
       expect(late.every(row => row.kind === "committed")).toBe(true);
@@ -383,10 +403,10 @@ describe("session relocation", () => {
       // It was re-pointed in the same transaction; the old node is fenced at once and was sent nothing:
       // it still holds its copy and its undelivered commit.
       expect(getSession(id)).toMatchObject({ source_id: other.id, placement_status: "moving" });
-      await dispatcher.drain();
+      await drainCommands(state);
       expect(moves(id).at(-1)).toEqual({ op: "session.hydrate", state: "queued" });
       expect(nodeDb.query("SELECT 1 FROM sessions WHERE id = ?").get(id)).not.toBeNull();
-      const handlers = internalNodeServer(state);
+      const handlers = nodeServerHandlers("internal", nodeServerServices(state));
       const notOwner = { code: "not_owner", message: `Node session unavailable: ${id}`, retryable: false };
       for (const write of [
         () => handlers.committed({ sessionId: id, startSeq: 99, writesJson: "[]" }),
@@ -408,17 +428,17 @@ describe("session relocation", () => {
       expect(refusals).toHaveLength(1);
       expect(entries(getDb(), id)).toEqual(before);
 
-      // Node "other" hydrates it; moving it back hydrates the internal node again and the next prompt
+      // Node "other" hydrates it; moving it back hydrates the seeded node again and the next prompt
       // runs there on the server's history, without the lost model change.
       await acknowledgeOn(id);
       expect(getSession(id)?.placement_status).toBe("provisioned");
       expect(requestSessionMove(id, "internal")).toEqual({ state: "moving", nodeId: "internal" });
       responses.push(fauxAssistantMessage("Back on the node"));
       await executeSessionCommand(state, id, "prompt", text("Still there?"), "second");
-      await dispatcher.drain();
+      await drainCommands(state);
       await until(() => settledRuns(id) === 2, "the second run");
       await until(() => !nodeDb.query("SELECT 1 FROM session_outbox").get(), "the node outbox");
-      expect(getSession(id)).toMatchObject({ placement_status: "provisioned", source_id: internalSource(project.id).id });
+      expect(getSession(id)).toMatchObject({ placement_status: "provisioned", source_id: defaultSource(project.id)!.id });
       const after = entries(getDb(), id);
       expect(after.slice(0, before.length)).toEqual(before);
       expect(after.slice(before.length).map(row => row.role)).toEqual(["reinsInput", "assistant"]);
@@ -444,7 +464,7 @@ describe("session relocation", () => {
       expect(entries(getDb(), id)).toEqual(before);
       responses.push(fauxAssistantMessage("Still on the first node"));
       await executeSessionCommand(state, id, "prompt", text("Still there?"), "after-failed-move");
-      await dispatcher.drain();
+      await drainCommands(state);
       await until(() => settledRuns(id) === 2, "the run on the previous node");
       expect(loadMessages(id).at(-1)?.content).toEqual(text("Still on the first node"));
       // A later move clears the old failure.
@@ -460,7 +480,7 @@ describe("session relocation", () => {
       otherNode(project.id);
       expect(requestSessionMove(id, "other")).toEqual({ state: "moving", nodeId: "other" });
       await acknowledgeOn(id);
-      // Node "other" moves the session on (a value it committed), so the internal node's copy is stale.
+      // Node "other" moves the session on (a value it committed), so the seeded node's copy is stale.
       const next = getDb().query<{ n: number }, [string]>("SELECT harness_next_seq n FROM sessions WHERE id = ?").get(id)!.n;
       getDb().query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES (?, 'test', 'fromOther', ?, '1')").run(id, next);
       getDb().query("UPDATE sessions SET harness_next_seq = ? WHERE id = ?").run(next + 1, id);
@@ -471,7 +491,7 @@ describe("session relocation", () => {
       const replayed = hydrateCommand(replay);
       responses.push(fauxAssistantMessage("On the replaced copy"));
       await executeSessionCommand(state, id, "prompt", text("Again"), "second");
-      await dispatcher.drain();
+      await drainCommands(state);
       await until(() => settledRuns(id) === 2, "the run on the replaced copy");
       await until(() => !nodeDb.query("SELECT 1 FROM session_outbox").get(), "the node outbox");
       expect(moves(id)).toEqual([]);
@@ -482,7 +502,7 @@ describe("session relocation", () => {
       expect(entries(nodeDb, id)).toEqual(entries(getDb(), id));
 
       // A replay of that hydrate finds the identical copy and is acknowledged without a pull.
-      expect(await internalNodeExecutionTarget(state).send(replayed, replay)).toEqual({ ok: true, value: { kind: "hydrated" } });
+      expect(await state.nodes.send(replayed)).toEqual({ ok: true, value: { kind: "hydrated" } });
       expect(samePiSnapshot(piSnapshotSummary(nodeDb, id), piSnapshotSummary(getDb(), id))).toBe(true);
     } finally { await node.stop(); }
   }, 20_000);
@@ -494,11 +514,11 @@ describe("session relocation", () => {
       otherNode(project.id);
       let finish: (() => void) | undefined;
       responses.push(() => new Promise(resolve => { finish = () => resolve(fauxAssistantMessage("Done")); }));
-      const { id } = createNewSession(state, project.id, dir, { model: { provider: providerId, modelId: "fake" } });
+      const { id } = createNewSession(state, project.id, { model: { provider: providerId, modelId: "fake" } });
       await executeSessionCommand(state, id, "prompt", text("Work"), "busy");
       // Queued input ahead of the move.
       expect(() => requestSessionMove(id, "other")).toThrow("Session has an active run or pending input");
-      await dispatcher.drain();
+      await drainCommands(state);
       await until(() => getSession(id)?.activity_state === "running" && finish !== undefined, "the run to reach its provider");
       expect(() => requestSessionMove(id, "other")).toThrow("Session has an active run or pending input");
       finish!();
@@ -506,7 +526,7 @@ describe("session relocation", () => {
       // Other queued work (a model change) blocks it too.
       enqueueSetModel(id, { provider: providerId, modelId: "fake" });
       expect(() => requestSessionMove(id, "other")).toThrow("Session has pending work");
-      await dispatcher.drain();
+      await drainCommands(state);
       const internal = getSession(id)!.source_id;
       expect(requestSessionMove(id, "other")).toEqual({ state: "moving", nodeId: "other" });
       // Repeating the move is idempotent; moving elsewhere while it is under way conflicts.

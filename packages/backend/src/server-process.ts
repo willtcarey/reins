@@ -16,7 +16,7 @@
 import { watch } from "fs";
 import { resolve, join } from "path";
 import { mkdirSync, existsSync, readdirSync, rmSync } from "fs";
-import type { ServerState, WsClient } from "./state.js";
+import type { ProcessState, ServerState, WsClient } from "./state.js";
 
 // We import the handler types but load via dynamic import so we can reload
 import type * as ServerModule from "./server.js";
@@ -38,10 +38,12 @@ if (IS_DEV) logger.info(`  Hot reload: enabled`);
 // 1. Long-lived state (survives hot reloads)
 // ---------------------------------------------------------------------------
 
-const state: ServerState = {
+const processState: ProcessState = {
   clients: new Set<WsClient>(),
   frontendDir: new URL("../../frontend/", import.meta.url).pathname,
 };
+/** The process state with the installed handler's node hub (the same object; each install replaces the hub). */
+let state: ServerState;
 
 const db = openDb();
 
@@ -54,7 +56,7 @@ const SERVER_ENTRY_PATH = resolve(SRC_DIR, "server.ts");
 
 let routes: typeof ServerModule.routes;
 let ws: typeof ServerModule.ws;
-let uninstallRuntimeHooks: (() => void) | null = null;
+let uninstallHandler: (() => void) | null = null;
 
 /**
  * Dev build output directory — placed under packages/backend/ so that
@@ -66,11 +68,12 @@ const DEV_BUILD_ROOT = resolve(SRC_DIR, "../.dev-build");
  * each other's half-written bundles. */
 const DEV_BUILD_DIR = join(DEV_BUILD_ROOT, String(process.pid));
 
-// Install the current handler module's runtime hooks and replace the previous cleanup.
+// Install the current handler module (its node hub replaces the previous one), then uninstall the previous.
 function installRoutes(): void {
-  const nextUninstall = routes.install(state);
-  uninstallRuntimeHooks?.();
-  uninstallRuntimeHooks = nextUninstall;
+  const installed = routes.install(processState);
+  uninstallHandler?.();
+  uninstallHandler = installed.uninstall;
+  state = installed.state;
 }
 
 async function loadHandlers(): Promise<void> {
@@ -156,7 +159,7 @@ function removeStaleDevBuilds(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * The internal node runs in its own process (`packages/node/src/main.ts`) and dials this listener. The
+ * The local node runs in its own process (`packages/node/src/main.ts`) and dials this listener. The
  * listener belongs to this process owner, not to a handler, so it survives handler hot reload; every
  * connection is routed to the handler installed when it arrives. This process never starts a node or
  * opens node storage.

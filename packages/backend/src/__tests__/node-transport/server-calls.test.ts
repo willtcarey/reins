@@ -15,7 +15,6 @@ import { createSession } from "../session-fixture.js";
 import { setupTestDb, teardownTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
 import { nodeSessionReports } from "../../runtimes/node-session-events.js";
-import { dispatcherFor } from "../../models/node-command-dispatcher.js";
 import { getSession } from "../../session-store.js";
 import { useFakeNode } from "../helpers/fake-node.js";
 
@@ -24,7 +23,7 @@ const provision = { sessionId: "s", binding, configuration: { model: null, think
 
 function link(node: Node, handlers: ServerHandlers) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
-  const server = createServerTransport(serverEnd, handlers);
+  const server = createServerTransport(serverEnd, () => handlers);
   const connection = connectNode(node, nodeEnd, "test");
   serverEnd.onmessage = server.receive; serverEnd.onclose = server.close;
   nodeEnd.onmessage = connection.receive; nodeEnd.onclose = connection.close;
@@ -97,7 +96,7 @@ const settled = (runId: string, extra: Record<string, unknown> = {}) => JSON.str
 
 test("lifecycle reports cross the wire after preceding commits, stay pending without a link, and apply exactly once across a lost ack", async () => {
   setupTestDb();
-  const state = createServerState(undefined, { loopbackNode: false });
+  const state = createServerState();
   // The parent's report is delivered to a stand-in node; only the child's reports cross this test's link.
   const parentNode = useFakeNode(state);
   const errors = spyOn(console, "error").mockImplementation(() => {});
@@ -106,7 +105,7 @@ test("lifecycle reports cross the wire after preceding commits, stay pending wit
     createSession("parent", project.id, { agentRuntimeType: "pi" });
     createSession("s", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
     const reports = nodeSessionReports(state);
-    const steers = () => parentNode.sent.flatMap(([command]) => command.op === "session.steer" ? [command.content.map(block => block.type === "text" ? block.text : "").join("")] : []);
+    const steers = () => parentNode.sent.flatMap((command) => command.op === "session.steer" ? [command.content.map(block => block.type === "text" ? block.text : "").join("")] : []);
     await withNode(async (node, nodeDb) => {
       recordNodeReport(nodeDb, "s", "started", JSON.stringify({ runId: "r1" }));
       nodeDb.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('s','committed',1,'[]')").run();
@@ -159,7 +158,7 @@ test("lifecycle reports cross the wire after preceding commits, stay pending wit
       expect(steers()).toEqual(["r1 answer"]);
       live.close();
     });
-  } finally { errors.mockRestore(); dispatcherFor(state).stop(); teardownTestDb(); }
+  } finally { errors.mockRestore(); state.nodes.close(); teardownTestDb(); }
 });
 
 test("attachment fetch transfers chunked base64 bytes that the node verifies before caching", async () => {
@@ -195,9 +194,9 @@ test("attachment fetch transfers chunked base64 bytes that the node verifies bef
 
 test("server rejects node calls with malformed params or an epoch it did not issue", async () => {
   const sent: Array<{ id: number; error?: { code: number } }> = [];
-  const server = createServerTransport({ send: data => sent.push(JSON.parse(data)), close: () => {} }, {
+  const server = createServerTransport({ send: data => sent.push(JSON.parse(data)), close: () => {} }, () => ({
     committed: () => { throw new Error("must not apply"); }, attachment: () => { throw new Error("must not read"); }, event: () => { throw new Error("must not observe"); }, ...noReports,
-  });
+  }));
   const frame = (id: number, method: string, params: unknown) => server.receive(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
   const epoch = crypto.randomUUID();
   frame(1, "session.committed", { epoch, sessionId: "s", startSeq: 1, writesJson: "[]" });
@@ -214,14 +213,14 @@ test("server rejects node calls with malformed params or an epoch it did not iss
 test("attachment.store resumes from the server's contiguous prefix and stores only verified bytes under the node's ID", async () => {
   const sent: Array<{ id?: number; result?: any; error?: { code: number; message: string } }> = [];
   const stored = new Map<string, ServerAttachment>();
-  const server = createServerTransport({ send: data => sent.push(JSON.parse(data)), close: () => {} }, {
+  const server = createServerTransport({ send: data => sent.push(JSON.parse(data)), close: () => {} }, () => ({
     committed: () => {}, attachment: () => null, event: () => {}, ...noReports,
     findAttachment: (_sessionId, attachmentId) => {
       const held = stored.get(attachmentId);
       return held ? { attachmentId, mimeType: held.mimeType, byteSize: held.byteSize, sha256: held.sha256 } : null;
     },
     storeAttachment: (_sessionId, attachmentId, attachment) => { stored.set(attachmentId, attachment); },
-  });
+  }));
   let id = 1;
   const call = async (method: string, params: unknown) => {
     const request = ++id;
@@ -229,7 +228,7 @@ test("attachment.store resumes from the server's contiguous prefix and stores on
     await Bun.sleep(1);
     return sent.find(reply => reply.id === request)!;
   };
-  server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: 1, maxVersion: 1, capabilities: [], instanceId: "n" } }));
+  server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: 1, maxVersion: 1, capabilities: [], nodeId: "n" } }));
   await Bun.sleep(1);
   const epoch = sent[0]!.result.epoch;
   const bytes = Buffer.alloc(ATTACHMENT_CHUNK_BYTES + 10, 7);
@@ -262,12 +261,12 @@ test("attachment.store resumes from the server's contiguous prefix and stores on
 test("session events reach the handler only for the issued epoch, in order, with gaps counted and no replies", async () => {
   const sent: Array<{ id?: number; result?: { epoch: string } }> = [];
   const received: NodeSessionEvent[] = [];
-  const server = createServerTransport({ send: data => sent.push(JSON.parse(data)), close: () => {} }, {
+  const server = createServerTransport({ send: data => sent.push(JSON.parse(data)), close: () => {} }, () => ({
     committed: () => {}, attachment: () => null, event: input => { received.push(input); }, ...noReports,
-  });
+  }));
   const warn = spyOn(console, "warn").mockImplementation(() => {});
   try {
-    server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: 1, maxVersion: 1, capabilities: [], instanceId: "n" } }));
+    server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: 1, maxVersion: 1, capabilities: [], nodeId: "n" } }));
     await Bun.sleep(1);
     const epoch = sent[0]!.result!.epoch;
     const event = (params: Record<string, unknown>) => server.receive(JSON.stringify({ jsonrpc: "2.0", method: "session.event", params: { epoch, sessionId: "s", ...params } }));
