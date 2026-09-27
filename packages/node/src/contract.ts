@@ -52,7 +52,8 @@ export const nodeEvent = z.object({ sessionId, kind: z.enum(["runtime", "lifecyc
 export type NodeCommand = z.infer<typeof nodeCommand>;
 export type SessionConfiguration = z.infer<typeof sessionConfiguration>;
 
-/** Delivery semantics for future transport; current internal adapter executes immediately. */
+/** Delivery semantics: submitted work goes through the server outbox (requeued when its delivery outcome
+ * is unknown); request-now controls are sent immediately and fail to their caller. */
 export function deliveryPolicy(command: NodeCommand): "submit-work" | "request-now" {
   return command.op === "session.abort" || command.op === "session.resumePending" ? "request-now" : "submit-work";
 }

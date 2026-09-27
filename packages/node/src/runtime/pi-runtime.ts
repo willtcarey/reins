@@ -244,15 +244,15 @@ export class AgentHarnessPiRuntime {
       throw new Error("Cannot hydrate prompt attachments without a Reins session id");
     }
     const message = createReinsInputMessage(content, options.reinsId, options.metadata, options.timestamp);
-    const existing = (await this.lane.findEntries(undefined, BACKGROUND_CONTEXT)).find((entry) =>
-      entry.type === "message" && entry.message.role === "reinsInput" && entry.message.reinsId === message.reinsId
-    );
+    // A replay of an input Pi already admitted (e.g. its receipt or reply was lost) is answered, not re-admitted.
+    const existing = await this.findAdmitted(message.reinsId);
+    if (existing?.queued) return { messageId: existing.id };
     if (existing) {
       const recoverable = this.openOperations.filter((operation) => operation.lane === this.lane.name && operation.kind === "prompt");
       if (recoverable.length > 1) {
         throw new Error(`Accepted prompt ${message.reinsId} has no unique recoverable operation`);
       }
-      if (recoverable[0]) this.driveInBackground(recoverable[0].operationId);
+      if (recoverable[0] && !this.activeOperations.has(recoverable[0].operationId)) this.driveInBackground(recoverable[0].operationId);
       return { messageId: existing.id };
     }
 
@@ -345,23 +345,26 @@ export class AgentHarnessPiRuntime {
   }
 
   private async admitSteering(message: ReinsInputMessage): Promise<void> {
-    const existing = (await this.lane.findEntries(undefined, BACKGROUND_CONTEXT)).some((entry) => (
-      entry.type === "message"
-      && entry.message.role === "reinsInput"
-      && entry.message.reinsId === message.reinsId
-    ));
-    if (existing) return;
+    if (await this.findAdmitted(message.reinsId)) return;
+    await this.enqueueSteering(message);
+  }
 
+  /**
+   * An input Pi already admitted durably: still queued (steering) or an entry. Pi moves a queued input
+   * into an entry in one commit, so checking the queue first and the entries second cannot miss an
+   * input that moves in between.
+   */
+  private async findAdmitted(reinsId: string): Promise<{ id: string; queued: boolean } | undefined> {
     const watch = await this.lane.watch(BACKGROUND_CONTEXT);
-    const queued = watch.snapshot.queues.some((item) => (
-      item.type === "message"
-      && item.message.role === "reinsInput"
-      && item.message.reinsId === message.reinsId
+    const queued = watch.snapshot.queues.find((item) => (
+      item.type === "message" && item.message.role === "reinsInput" && item.message.reinsId === reinsId
     ));
     watch.unsubscribe();
-    if (queued) return;
-
-    await this.enqueueSteering(message);
+    if (queued) return { id: queued.entryId, queued: true };
+    const entry = (await this.lane.findEntries(undefined, BACKGROUND_CONTEXT)).find((candidate) => (
+      candidate.type === "message" && candidate.message.role === "reinsInput" && candidate.message.reinsId === reinsId
+    ));
+    return entry ? { id: entry.id, queued: false } : undefined;
   }
 
   private enqueueSteering(message: ReinsInputMessage): Promise<string> {

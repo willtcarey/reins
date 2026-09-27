@@ -8,8 +8,8 @@ import type { ManagedSession, ServerState } from "../state.js";
 import type { Broadcast } from "../models/broadcast.js";
 import { enqueueSessionInput, executeSessionCommand, wakeSessionInput } from "./node-execution.js";
 import { workForSession } from "../models/node-command-projection.js";
-import { hasPendingInput } from "../node-command-store.js";
-import { internalNodeFor } from "./internal-node.js";
+import { commandState, hasPendingInput, pendingInputIds } from "../node-command-store.js";
+import { latestNodeSettlement } from "../node-replica.js";
 import { finalReply, type FinalReply } from "@reins/node/runtime-build";
 
 export interface SessionStartOptions {
@@ -98,10 +98,6 @@ export class SessionInstance implements RuntimeLifecycleSink {
     private readonly sessionId: string,
   ) {}
 
-  nodeRuntime(sessionId: string): AgentRuntime | undefined {
-    return internalNodeFor(this.manager.state).runtime(sessionId);
-  }
-
   /** Wakes node command delivery after a caller queued work outside `send` (e.g. `session.setModel`). */
   wakeNodeCommands(): void {
     wakeSessionInput(this.manager.state);
@@ -151,24 +147,19 @@ export class SessionInstance implements RuntimeLifecycleSink {
       throw new Error("timeoutMs must be an integer between 0 and 30000");
     }
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    const managedForWait = () => this.manager.sessions.get(sessionId) ?? (() => {
-      if (this.session(sessionId).storage_owner !== "internal-node") return undefined;
-      const runtime = internalNodeFor(this.manager.state).runtime(sessionId);
-      return runtime ? { id: sessionId, runtime, lastActivity: Date.now() } : undefined;
-    })();
+    if (this.session(sessionId).storage_owner === "internal-node") return this.waitForNodeSettlement(sessionId, timeoutMs, signal);
+    const managedForWait = () => this.manager.sessions.get(sessionId);
     let managed = managedForWait();
     if (!managed) {
       const work = workForSession(sessionId);
-      if (work?.state === "failed" || work?.state === "unknown" || (!work && this.session(sessionId).storage_owner === "internal-node"))
-        return { sessionId, status: "failed", result: null, error: "Session open failed" };
+      if (work?.state === "failed" || work?.state === "unknown") return { sessionId, status: "failed", result: null, error: "Session open failed" };
       if (work && timeoutMs > 0) {
         const deadline = Date.now() + timeoutMs;
         while (!managed && Date.now() < deadline) {
           await this.pauseForAdmission(Math.min(10, deadline - Date.now()), signal);
           managed = managedForWait();
           const current = workForSession(sessionId);
-          if (current?.state === "failed" || current?.state === "unknown" || (!current && this.session(sessionId).storage_owner === "internal-node"))
-            return { sessionId, status: "failed", result: null, error: "Session open failed" };
+          if (current?.state === "failed" || current?.state === "unknown") return { sessionId, status: "failed", result: null, error: "Session open failed" };
         }
       }
       if (!managed) return work ? { sessionId, status: "timeout", result: null, error: null } : transcriptResult(sessionId, loadActiveMessages(sessionId));
@@ -325,6 +316,37 @@ export class SessionInstance implements RuntimeLifecycleSink {
       const abort = () => { clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); };
       signal?.addEventListener("abort", abort, { once: true });
     });
+  }
+
+  /**
+   * Node-owned sessions settle durably: this reads only server projections (provision work, the
+   * command outbox, `activity_state` from `session.started`/`session.settled`, the lifecycle receipts
+   * and the replica transcript), polling every 10ms. It resolves once no observed input is still
+   * queued or being delivered, the session is not running, and every input the node admitted during
+   * the wait is covered by a settlement newer than the wait's start (closing the gap between the
+   * node admitting a prompt and its `session.started` arriving). The result is the replica
+   * transcript's final reply with the latest settlement's status/error as the terminal outcome, the
+   * same shape an in-process runtime yields. An input that failed (removed from the outbox) expects no
+   * run. Limit: an input admitted before the wait began whose `session.started` is still in flight
+   * reads as idle.
+   */
+  private async waitForNodeSettlement(sessionId: string, timeoutMs: number, signal?: AbortSignal): Promise<SessionWaitResult> {
+    const deadline = Date.now() + timeoutMs;
+    const baseline = latestNodeSettlement(getDb(), sessionId)?.seq ?? 0;
+    const inputs = new Set<string>();
+    for (;;) {
+      const work = workForSession(sessionId);
+      if (!work || work.state === "failed" || work.state === "unknown") return { sessionId, status: "failed", result: null, error: "Session open failed" };
+      for (const id of pendingInputIds(sessionId)) inputs.add(id);
+      const states = [...inputs].map(commandState);
+      const settlement = latestNodeSettlement(getDb(), sessionId);
+      const busy = this.session(sessionId).activity_state === "running"
+        || states.some(state => state === "queued" || state === "dispatching")
+        || (states.includes("admitted") && (settlement?.seq ?? 0) <= baseline);
+      if (!busy) return transcriptResult(sessionId, loadActiveMessages(sessionId), settlement ?? undefined);
+      if (Date.now() >= deadline) return { sessionId, status: "timeout", result: null, error: null };
+      await this.pauseForAdmission(Math.min(10, deadline - Date.now()), signal);
+    }
   }
 
   private async settledResult(managed: ManagedSession): Promise<SessionWaitResult> {

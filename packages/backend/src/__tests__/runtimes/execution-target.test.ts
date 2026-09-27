@@ -109,7 +109,7 @@ test("a node-owned model change is queued in outbox order: after earlier input, 
   const content = [{ type: "text" as const, text: "hi" }];
   const before = enqueueInput("node", "prompt", content, "before");
   let wakes = 0;
-  const sessions = new Sessions(state.sessions, undefined, undefined, () => { wakes++; });
+  const sessions = new Sessions(state.sessions, undefined, () => { wakes++; });
   // Returns the updated row at once; the node applies the change when the command is delivered.
   const row = await sessions.setModel({ sessionId: "node", provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "high" });
   expect(row).toMatchObject({ model_provider: "anthropic", model_id: "claude-haiku-4-5", thinking_level: "high" });

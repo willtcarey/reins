@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { startNode } from "@reins/node/node";
+import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
 import { createLoopbackPair } from "@reins/node/protocol";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
@@ -133,7 +133,7 @@ test("a node-owned session's model calls execute, search and create_task over th
     await node.send({ op: "session.provision", sessionId: "scratch", sourceId: binding.sourceId,
       configuration: { model: { provider: "tool-chain-faux", modelId: "fake" }, thinkingLevel: null, task: null } }, binding);
     await node.send({ op: "session.prompt", sessionId: "scratch", clientId: "c", content: [{ type: "text", text: "Go" }] }, binding);
-    const runtime = await node.open("scratch", binding);
+    const runtime = await nodeRuntimesForTesting(node).open("scratch", binding);
     await runtime.waitForIdle();
     const results = Object.fromEntries((await runtime.getMessages()).filter(message => message.role === "toolResult")
       .map(message => [message.toolCallId, { text: (message.content ?? []).map(block => block.type === "text" ? block.text : "").join(""), details: message.details }]));
@@ -142,6 +142,6 @@ test("a node-owned session's model calls execute, search and create_task over th
     const created = JSON.parse(results.task!.text);
     expect(created).toMatchObject({ title: "From the model", project_id: project.id });
     expect(results.task!.details).toEqual(created);
-    await node.close("scratch");
+    await nodeRuntimesForTesting(node).close("scratch");
   } finally { cleanup(); }
 }, 20_000);

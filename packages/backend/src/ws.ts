@@ -16,7 +16,6 @@ import { logger } from "./logger.js";
 import type { ClientPromptContent } from "./messages-store.js";
 import { parseClientPromptContent } from "./session-attachments-store.js";
 import { observeSubmission, forgetClient } from "./models/node-command-notifications.js";
-import { internalNodeFor } from "./runtimes/internal-node.js";
 
 /** Maps raw WebSocket objects to their WsClient wrappers. */
 const wsClientMap = new WeakMap<WebSocketLike, WsClient>();
@@ -90,9 +89,10 @@ async function handleWsCommand(
 
     case "abort": {
       const managed = state.sessions.get(sessionId);
-      const nodeRuntime = getSession(sessionId)?.storage_owner === "internal-node"
-        ? internalNodeFor(state).runtime(sessionId) : undefined;
-      if (!managed && !nodeRuntime) { sendError("Session not active"); return; }
+      // Node-owned sessions always forward abort: the node aborts a live run and answers
+      // `aborted: false` when none is running. Only legacy sessions need an open server runtime.
+      const nodeOwned = getSession(sessionId)?.storage_owner === "internal-node";
+      if (!managed && !nodeOwned) { sendError("Session not active"); return; }
       if (managed) managed.lastActivity = Date.now();
       sendToWs(client.ws, { type: "ack", command: "abort" });
       try {

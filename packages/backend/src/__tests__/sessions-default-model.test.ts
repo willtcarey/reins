@@ -1,3 +1,4 @@
+import { nodeRuntimesForTesting } from "@reins/node/node";
 import { describe, test, expect } from "bun:test";
 import { useTestDb } from "./helpers/test-db.js";
 import { useTestRepo } from "./helpers/test-repo.js";
@@ -8,7 +9,12 @@ import { setSetting, deleteSetting } from "../settings-store.js";
 import { createNewSession, ensureSessionOpen } from "../runtimes/session-manager.js";
 import { getWork } from "../models/node-command-projection.js";
 import { NodeCommandDispatcher } from "../models/node-command-dispatcher.js";
-import { internalNodeFor } from "../runtimes/internal-node.js";
+import { internalNodeFor, provisionForSession } from "../runtimes/internal-node.js";
+import type { ServerState } from "../state.js";
+
+/** Test seam: the node opens its runtime on command; tests observe what that open does. */
+const openOnNode = (state: ServerState, sessionId: string) =>
+  nodeRuntimesForTesting(internalNodeFor(state)).open(sessionId, provisionForSession(sessionId).binding);
 import { resolveModelSetting, resolveUtilityModel } from "../models/model-settings.js";
 
 describe("resolveModelSetting(default_model)", () => {
@@ -95,7 +101,7 @@ describe("canonical session model selection", () => {
     const created = createNewSession(state, project.id, repo.dir);
     await new NodeCommandDispatcher(state).drain();
     expect(getWork(created.scheduling.id)?.state).toBe("admitted");
-    await expect(ensureSessionOpen(state, created.id)).rejects.toThrow("requires an explicit model");
+    await expect(openOnNode(state, created.id)).rejects.toThrow("requires an explicit model");
   });
 
   test("rejects a Claude-runtime default instead of routing it through Pi", async () => {
@@ -117,10 +123,10 @@ describe("canonical session model selection", () => {
     const managed = await createNewSession(state, project.id, repo.dir);
     await new NodeCommandDispatcher(state).drain();
     expect(state.sessions.has(managed.id)).toBe(false);
-    const opened = await ensureSessionOpen(state, managed.id);
-    expect(opened.runtime.getSessionMetadata?.()).toEqual({ model: { provider: "anthropic", modelId: "claude-sonnet-4-5" }, thinkingLevel: "high" });
+    const opened = await openOnNode(state, managed.id);
+    expect(opened.getSessionMetadata()).toEqual({ model: { provider: "anthropic", modelId: "claude-sonnet-4-5" }, thinkingLevel: "high" });
     expect(getSession(managed.id)).toMatchObject({ agent_runtime_type: "pi", model_provider: "anthropic", model_id: "claude-sonnet-4-5", thinking_level: "high" });
-    await internalNodeFor(state).close(managed.id);
+    await nodeRuntimesForTesting(internalNodeFor(state)).close(managed.id);
   });
 
   test("reports an invalid configured model without fallback", async () => {
@@ -134,7 +140,7 @@ describe("canonical session model selection", () => {
     // The node rejects the provision: Pi cannot create the session's lane with a model it does not know.
     expect(sent).toContainEqual({ type: "error", sessionId: created.id, error: "Session open failed: Model not found: anthropic/does-not-exist" });
     expect(getWork(created.scheduling.id)).toBeNull();
-    await expect(ensureSessionOpen(state, created.id)).rejects.toThrow("This session's node data is missing");
+    await expect(openOnNode(state, created.id)).rejects.toThrow("This session's node data is missing");
   });
 
   test("resumes with persisted model identity and rejects unavailable identities", async () => {

@@ -1,3 +1,4 @@
+import { nodeRuntimesForTesting } from "@reins/node/node";
 import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Database } from "bun:sqlite";
@@ -200,11 +201,12 @@ describe("runtime sessions manager", () => {
         created_at: getSession(created.id)!.created_at,
       });
       await executeSessionCommand(state, created.id, "prompt", [{ type: "text", text: "Hello node" }], "node-client");
-      for (let i = 0; i < 100 && !internalNodeFor(state).hasRuntime(created.id); i++) await Bun.sleep(10);
+      // The server waits on its projections (outbox, durable lifecycle reports, replica transcript).
+      createSession("caller", project.id, { agentRuntimeType: "pi" });
+      expect(await new SessionManager(state).forSession("caller").wait(created.id, 10_000))
+        .toEqual({ sessionId: created.id, status: "completed", result: "Node reply", error: null });
       expect(state.sessions.has(created.id)).toBe(false);
-      expect(internalNodeFor(state).hasRuntime(created.id)).toBe(true);
       await expect(new SessionManager(state).open(created.id)).rejects.toThrow("Node-owned sessions open on the node");
-      await internalNodeFor(state).open(created.id, provisionForSession(created.id).binding).then(runtime => runtime.waitForIdle());
       const serverEntries = getDb().query<{ seq: number; harness_id: string; message_json: string }, [string]>(
         "SELECT seq,harness_id,message_json FROM session_messages WHERE session_id = ? ORDER BY seq",
       ).all(created.id);
@@ -220,14 +222,14 @@ describe("runtime sessions manager", () => {
       expect(client.sent.some(message => message.type === "event" && message.event.type === "agent_end" && message.sessionId === created.id)).toBe(true);
       expect(getSession(created.id)?.activity_state).toBe("finished");
       // Node-owned: the row changes at once; the node applies the queued session.setModel to Pi's lane.
-      await new Sessions(state.sessions, undefined, id => internalNodeFor(state).runtime(id), () => wakeSessionInput(state)).setModel({
+      await new Sessions(state.sessions, undefined, () => wakeSessionInput(state)).setModel({
         sessionId: created.id, provider: provider.provider.id, modelId: "other",
       });
       expect(getSession(created.id)?.model_id).toBe("other");
       const modelSet = () => getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.setModel' AND state = 'admitted'").get(created.id);
       for (let i = 0; i < 100 && !modelSet(); i++) await Bun.sleep(10);
-      expect((await internalNodeFor(state).open(created.id, provisionForSession(created.id).binding)).getSessionMetadata()?.model?.modelId).toBe("other");
-      await internalNodeFor(state).close(created.id);
+      expect((await nodeRuntimesForTesting(internalNodeFor(state)).open(created.id, provisionForSession(created.id).binding)).getSessionMetadata()?.model?.modelId).toBe("other");
+      await nodeRuntimesForTesting(internalNodeFor(state)).close(created.id);
       stop();
       closeNodeDb();
       const reopenedDb = new Database(file);
@@ -235,7 +237,7 @@ describe("runtime sessions manager", () => {
       setNodeDb(reopenedDb);
       const stopRestarted = install(state);
       try {
-        const reopened = await internalNodeFor(state).open(created.id, provisionForSession(created.id).binding);
+        const reopened = await nodeRuntimesForTesting(internalNodeFor(state)).open(created.id, provisionForSession(created.id).binding);
         expect(state.sessions.has(created.id)).toBe(false);
         expect(JSON.stringify(await reopened.getMessages())).toContain("Node reply");
         await executeSessionCommand(state, created.id, "steer", [{ type: "text", text: "After restart" }], "after-restart");
@@ -245,7 +247,7 @@ describe("runtime sessions manager", () => {
         expect(JSON.stringify(await reopened.getMessages())).toContain("After restart");
         expect(getDb().query<{ count: number }, [string]>("SELECT COUNT(*) count FROM session_messages WHERE session_id = ?").get(created.id)?.count)
           .toBe(reopenedDb.query<{ count: number }, [string]>("SELECT COUNT(*) count FROM session_messages WHERE session_id = ?").get(created.id)?.count);
-        await internalNodeFor(state).close(created.id);
+        await nodeRuntimesForTesting(internalNodeFor(state)).close(created.id);
       } finally { stopRestarted(); }
     } finally {
       stop();
@@ -306,8 +308,8 @@ describe("runtime sessions manager", () => {
         { type: "text", text: "Inspect image" },
         { type: "image", attachmentId: attachment.id, mimeType: attachment.mimeType, filename: attachment.filename, byteSize: attachment.byteSize, sha256: attachment.sha256 },
       ], "node-image-client");
-      for (let i = 0; i < 100 && !internalNodeFor(state).hasRuntime(created.id); i++) await Bun.sleep(10);
-      const runtime = await internalNodeFor(state).open(created.id, provisionForSession(created.id).binding);
+      for (let i = 0; i < 100 && !nodeRuntimesForTesting(internalNodeFor(state)).has(created.id); i++) await Bun.sleep(10);
+      const runtime = await nodeRuntimesForTesting(internalNodeFor(state)).open(created.id, provisionForSession(created.id).binding);
       await runtime.waitForIdle();
       expect(state.sessions.has(created.id)).toBe(false);
       expect(JSON.stringify(providerContext)).toContain(Buffer.from("node image bytes").toString("base64"));
@@ -321,7 +323,7 @@ describe("runtime sessions manager", () => {
       const promptEvents = client.sent.filter(message => message.type === "event" && message.sessionId === created.id
         && JSON.stringify(message.event).includes(attachment.id)).map(message => message.event.type);
       expect(promptEvents).toEqual(["message_start", "message_end", "entry_added"]);
-      await internalNodeFor(state).close(created.id);
+      await nodeRuntimesForTesting(internalNodeFor(state)).close(created.id);
     } finally { warn.mockRestore(); stop(); unregisterPiProvider(provider.provider.id); closeNodeDb(); }
   }, 15_000);
 
@@ -422,23 +424,20 @@ describe("runtime sessions manager", () => {
     expect(capturedPrompt[0].text.endsWith("/fixture-skill please")).toBe(true);
   });
 
-  test("ensureSessionOpen opens node-owned sessions without registering a server runtime", async () => {
+  test("ensureSessionOpen never opens node-owned sessions on the server (the node opens on command)", async () => {
     const state = createServerState();
     const project = createProject("Reins", repo.dir);
 
     const managed = await createNewSession(state, project.id, repo.dir, { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } });
     updateSessionMetadata(managed.id, { archived: true });
     const archivedAt = getSession(managed.id)!.archived_at;
-    state.sessions.delete(managed.id);
 
     await new NodeCommandDispatcher(state).drain();
-    const reopened = await ensureSessionOpen(state, managed.id);
+    await expect(ensureSessionOpen(state, managed.id)).rejects.toThrow("Node-owned sessions open on the node");
 
-    expect(reopened.id).toBe(managed.id);
     expect(state.sessions.has(managed.id)).toBe(false);
-    expect(internalNodeFor(state).hasRuntime(managed.id)).toBe(true);
+    expect(nodeRuntimesForTesting(internalNodeFor(state)).has(managed.id)).toBe(false);
     expect(getSession(managed.id)!.archived_at).toBe(archivedAt);
-    await internalNodeFor(state).close(managed.id);
   });
 
   test("ensureSessionOpen returns warm in-memory session and touches activity", async () => {

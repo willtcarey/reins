@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFactory } from "@earendil-works/pi-ai";
 import { APPLICATION_ERROR } from "./protocol/errors.js";
 import { RpcFailure } from "./protocol/peer.js";
-import { startNode } from "./node.js";
+import { nodeRuntimesForTesting as runtimes, startNode } from "./node.js";
 import { contentImages } from "./protocol/event-images.js";
 import { nodeAdmissionReceipt, nodeSessionBinding, setNodeDb } from "./storage.js";
 import { registerPiProvider, unregisterPiProvider } from "./runtime/context.js";
@@ -64,7 +64,7 @@ test("a session missing from node storage rejects input without an ambiguous adm
     expect(await node.send({ op: "session.prompt", sessionId: "lost", clientId: "input", content: [{ type: "text", text: "hello" }] }, binding, "command"))
       .toEqual({ ok: false, error: { code: "not_found", message: "This session's node data is missing. Start a new session.", retryable: false } });
     expect(nodeAdmissionReceipt(db, "command")).toBeNull();
-    await expect(node.open("lost", binding)).rejects.toThrow("This session's node data is missing. Start a new session.");
+    await expect(runtimes(node).open("lost", binding)).rejects.toThrow("This session's node data is missing. Start a new session.");
     expect(await node.send({ op: "session.resumePending", sessionId: "lost" }, binding))
       .toMatchObject({ ok: false, error: { code: "not_found", retryable: false } });
   } finally { node.stop(); setNodeDb(); db.close(); }
@@ -85,7 +85,7 @@ test("opening a session does not fetch attachments from past inputs", async () =
         ] },
       }), binding.createdAt);
     // Scratch provision without a model: the open stops before Pi, after reading history.
-    await expect(node.open("s", binding)).rejects.toThrow(NO_MODEL);
+    await expect(runtimes(node).open("s", binding)).rejects.toThrow(NO_MODEL);
     expect(db.query("SELECT 1 FROM node_attachments").get()).toBeNull();
   } finally { node.stop(); setNodeDb(); db.close(); }
 });
@@ -150,13 +150,13 @@ test("provision has Pi create the lane before recording its receipt, so a replay
     // Pi's lane commit replicated to the server once, through the normal commit path.
     expect(replicated).toEqual([1]);
     // Pi's lane API reads the provisioned selection.
-    expect((await node.open("s", binding)).getSessionMetadata()).toEqual({ model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: "high" });
-    await node.close("s");
+    expect((await runtimes(node).open("s", binding)).getSessionMetadata()).toEqual({ model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: "high" });
+    await runtimes(node).close("s");
 
     // No resolved model: no lane until session.setModel.
     expect(await node.send(provisionOf("scratch"), binding, "scratch")).toEqual({ ok: true, value: { kind: "provisioned" } });
     expect(piState("scratch").values).toEqual([]);
-    await expect(node.open("scratch", binding)).rejects.toThrow(NO_MODEL);
+    await expect(runtimes(node).open("scratch", binding)).rejects.toThrow(NO_MODEL);
 
     // A model the node's registry does not know is rejected before anything is stored.
     const unknown = provisionOf("unknown", { model: { provider: provider.provider.id, modelId: "missing" }, thinkingLevel: null, task: null });
@@ -210,10 +210,10 @@ test("node provisions an immutable binding, executes Pi and reopens from canonic
       .toEqual({ ok: true, value: { kind: "admitted", inputId: "c" } });
     expect(nodeAdmissionReceipt(db, "input-command")).toEqual({ sessionId: "s", operation: "session.prompt", payload: JSON.stringify(input) });
     expect(await node.send(input, binding, "input-command")).toEqual({ ok: true, value: { kind: "admitted", inputId: "c" } });
-    const runtime = await node.open("s", binding);
+    const runtime = await runtimes(node).open("s", binding);
     const reinstalled = startNode(dependencies); // Server handler reload keeps the node process/runtime owner.
     node.stop();
-    expect(await reinstalled.open("s", binding)).toBe(runtime);
+    expect(await runtimes(reinstalled).open("s", binding)).toBe(runtime);
     await runtime.waitForIdle();
     expect((await runtime.getMessages()).map(message => message.role)).toEqual(["user", "assistant"]);
     db.exec("CREATE TRIGGER reject_receipt BEFORE INSERT ON admission_receipts BEGIN SELECT RAISE(ABORT, 'receipt unavailable'); END");
@@ -228,7 +228,7 @@ test("node provisions an immutable binding, executes Pi and reopens from canonic
     expect(reports.some(report => report.startsWith("started:"))).toBe(true);
     expect(reports.at(-1)).toMatch(/^settled:.*:completed$/);
     expect(seqs).toEqual(seqs.map((_, index) => index + 1));
-    await reinstalled.close("s");
+    await runtimes(reinstalled).close("s");
     reinstalled.stop();
 
     const restarted = startNode(dependencies);
@@ -239,7 +239,7 @@ test("node provisions an immutable binding, executes Pi and reopens from canonic
     // events are dropped and reports stay pending.
     expect(await restarted.send(steer, binding))
       .toEqual({ ok: true, value: { kind: "admitted", inputId: "d" } });
-    const reopened = await restarted.open("s", binding);
+    const reopened = await runtimes(restarted).open("s", binding);
     await reopened.waitForIdle();
     expect((await reopened.getMessages()).map(message => message.role)).toEqual(["user", "assistant", "user", "assistant", "user", "assistant"]);
     expect(events.length).toBe(delivered);
@@ -252,7 +252,7 @@ test("node provisions an immutable binding, executes Pi and reopens from canonic
     for (let i = 0; i < 100 && db.query("SELECT 1 FROM session_outbox").get(); i++) await Bun.sleep(5);
     expect(reports.slice(reported).map(report => report.split(":")[0])).toEqual(pending);
     await expect(restarted.send({ op: "session.abort", sessionId: "s" }, { ...binding, cwd: "/other" })).rejects.toThrow("binding mismatch");
-    await restarted.close("s");
+    await runtimes(restarted).close("s");
     restarted.stop();
   } finally { unregisterPiProvider(provider.provider.id); setNodeDb(); db.close(); }
 });
@@ -280,7 +280,7 @@ test("a child session's durable settlement carries its model and final reply aft
   try {
     await node.send(provision, binding);
     await node.send({ op: "session.prompt", sessionId: "child", clientId: "c", content: [{ type: "text", text: "go" }] }, binding);
-    const runtime = await node.open("child", binding);
+    const runtime = await runtimes(node).open("child", binding);
     await runtime.waitForIdle();
     for (let i = 0; i < 100 && !received.some(input => input.kind === "settled"); i++) await Bun.sleep(5);
     await node.send({ op: "session.prompt", sessionId: "child", clientId: "d", content: [{ type: "text", text: "again" }] }, binding);
@@ -300,7 +300,7 @@ test("a child session's durable settlement carries its model and final reply aft
     expect(kinds.slice(secondStarted, secondSettled)).toContain("committed");
     expect(received[secondStarted]!.runId).toBe(settled[1]!.settled!.runId);
     expect(received.find(input => input.kind === "started")).toEqual({ kind: "started", runId: settled[0]!.settled!.runId });
-    await node.close("child");
+    await runtimes(node).close("child");
   } finally { cleanup(); }
 });
 
@@ -309,13 +309,13 @@ test("a child whose final reply cannot be read settles with replyError instead o
   const errors = spyOn(console, "error").mockImplementation(() => {});
   try {
     await node.send(provision, binding);
-    const runtime = await node.open("child", binding);
+    const runtime = await runtimes(node).open("child", binding);
     runtime.getMessages = async () => { throw new Error("transcript unavailable"); };
     await node.send({ op: "session.prompt", sessionId: "child", clientId: "c", content: [{ type: "text", text: "go" }] }, binding);
     await runtime.waitForIdle();
     for (let i = 0; i < 100 && !received.some(input => input.kind === "settled"); i++) await Bun.sleep(5);
     expect(received.find(input => input.kind === "settled")?.settled).toMatchObject({ status: "completed", reply: null, replyError: "transcript unavailable" });
-    await node.close("child");
+    await runtimes(node).close("child");
   } finally { errors.mockRestore(); cleanup(); }
 });
 
@@ -345,11 +345,11 @@ test("Reins tools run on the node and call the attached server for the calling s
   const binding = { sourceId: 7, cwd: "/tmp/reins-node-tools", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
   const results = async () => Object.fromEntries((await runtime.getMessages()).filter(message => message.role === "toolResult")
     .map(message => [message.toolCallId, (message.content ?? []).map(block => block.type === "text" ? block.text : "").join("")]));
-  let runtime!: Awaited<ReturnType<typeof node.open>>;
+  let runtime!: Awaited<ReturnType<ReturnType<typeof runtimes>["open"]>>;
   try {
     await node.send(provisionOf("s", { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null }), binding);
     await node.send({ op: "session.prompt", sessionId: "s", clientId: "a", content: [{ type: "text", text: "go" }] }, binding);
-    runtime = await node.open("s", binding);
+    runtime = await runtimes(node).open("s", binding);
     await runtime.waitForIdle();
     expect(calls).toEqual([
       ["execute", { sessionId: "s", code: "return 1" }],
@@ -366,7 +366,7 @@ test("Reins tools run on the node and call the attached server for the calling s
     await runtime.waitForIdle();
     expect((await results()).offline).toBe("Error: Reins server connection unavailable. The script did not run.");
     expect(calls).toHaveLength(3);
-    await node.close("s");
+    await runtimes(node).close("s");
   } finally { node.stop(); unregisterPiProvider(provider.provider.id); setNodeDb(); db.close(); }
 });
 
@@ -404,10 +404,10 @@ test("tool-result images are referenced offline under node IDs, uploaded before 
     await runtime.waitForIdle();
     return received.slice(from).map(({ event }) => event);
   };
-  let runtime!: Awaited<ReturnType<typeof node.open>>;
+  let runtime!: Awaited<ReturnType<ReturnType<typeof runtimes>["open"]>>;
   try {
     await node.send(provisionOf("s", { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null }), binding);
-    runtime = await node.open("s", binding);
+    runtime = await runtimes(node).open("s", binding);
     // No server connection at all: the hook needs none.
     await run("a");
     const first = await imageOf("read-0");
@@ -453,7 +453,7 @@ test("tool-result images are referenced offline under node IDs, uploaded before 
     expect(contexts[1]).toContain(pngs[1]);
     expect(calls.every(call => call.kind === "store" || !call.writesJson.includes(pngs[1]!.slice(0, 40)))).toBe(true);
     expect(errors).not.toHaveBeenCalled();
-    await node.close("s");
+    await runtimes(node).close("s");
   } finally { errors.mockRestore(); node.stop(); unregisterPiProvider(provider.provider.id); setNodeDb(); db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -472,16 +472,16 @@ test("opening a task session checks out its provisioned branch on the node befor
     // No model stops the open right after checkout, so no Pi provider is needed.
     await node.send(provisionOf("s", { model: null, thinkingLevel: null,
       task: { title: "Feature", description: null, branchName: "task/feature" } }), binding);
-    await expect(node.open("s", binding)).rejects.toThrow(NO_MODEL);
+    await expect(runtimes(node).open("s", binding)).rejects.toThrow(NO_MODEL);
     expect(git("rev-parse", "--abbrev-ref", "HEAD")).toBe("task/feature");
     const before = checkouts();
-    await expect(node.open("s", binding)).rejects.toThrow(NO_MODEL);
+    await expect(runtimes(node).open("s", binding)).rejects.toThrow(NO_MODEL);
     expect(checkouts()).toBe(before); // Already on the branch: no checkout.
 
     await node.send(provisionOf("gone", { model: null, thinkingLevel: null, task: { title: "Gone", description: null, branchName: "task/missing" } }), binding);
-    await expect(node.open("gone", binding)).rejects.toThrow(/git checkout failed \(exit 1\):.*task\/missing/);
+    await expect(runtimes(node).open("gone", binding)).rejects.toThrow(/git checkout failed \(exit 1\):.*task\/missing/);
     expect(git("rev-parse", "--abbrev-ref", "HEAD")).toBe("task/feature");
-    expect(node.hasRuntime("gone")).toBe(false);
+    expect(runtimes(node).has("gone")).toBe(false);
   } finally { node.stop(); setNodeDb(); db.close(); rmSync(repo, { recursive: true, force: true }); }
 });
 
@@ -519,7 +519,7 @@ test("the provisioned model lives in Pi's lane: open needs no server, setModel p
 
     expect(await node.send({ op: "session.prompt", sessionId: "s", clientId: "a", content: [{ type: "text", text: "go" }] }, binding))
       .toMatchObject({ ok: true });
-    let runtime = await node.open("s", binding);
+    let runtime = await runtimes(node).open("s", binding);
     await runtime.waitForIdle();
     expect(git("rev-parse", "--abbrev-ref", "HEAD")).toBe("task/frozen");
     expect(runtime.getSessionMetadata()).toEqual({ model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: "high" });
@@ -543,27 +543,27 @@ test("the provisioned model lives in Pi's lane: open needs no server, setModel p
     expect(laneConfig("s")).toEqual(applied);
 
     // Applied while the runtime is closed: a restarted node reopens with Pi's stored selection.
-    await node.close("s");
+    await runtimes(node).close("s");
     expect(await node.send(setModel("fake"), binding, "model-2")).toMatchObject({ ok: true });
-    await node.close("s");
+    await runtimes(node).close("s");
     node.stop();
     node = startNode(dependencies);
-    runtime = await node.open("s", binding);
+    runtime = await runtimes(node).open("s", binding);
     // No thinking level in the command keeps Pi's current one.
     expect(runtime.getSessionMetadata()).toEqual({ model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: "low" });
     await node.send({ op: "session.prompt", sessionId: "s", clientId: "b", content: [{ type: "text", text: "again" }] }, binding);
     await runtime.waitForIdle();
     expect(seen.map(entry => entry.model)).toEqual(["fake", "fake"]);
-    await node.close("s");
+    await runtimes(node).close("s");
 
     // A lane whose stored model is gone cannot open, but setModel repairs it.
     const removed = fauxProvider({ provider: "node-model-removed-faux", models: [{ id: "gone" }] });
     registerPiProvider(removed.provider);
     await node.send(provisionOf("stale", { model: { provider: removed.provider.id, modelId: "gone" }, thinkingLevel: null, task: null }), binding);
     unregisterPiProvider(removed.provider.id);
-    await expect(node.open("stale", binding)).rejects.toBeInstanceOf(NodeModelNotFoundError);
+    await expect(runtimes(node).open("stale", binding)).rejects.toBeInstanceOf(NodeModelNotFoundError);
     expect(await node.send({ ...setModel("fake"), sessionId: "stale" }, binding)).toMatchObject({ ok: true });
-    expect((await node.open("stale", binding)).getSessionMetadata().model).toEqual({ provider: provider.provider.id, modelId: "fake" });
-    await node.close("stale");
+    expect((await runtimes(node).open("stale", binding)).getSessionMetadata().model).toEqual({ provider: provider.provider.id, modelId: "fake" });
+    await runtimes(node).close("stale");
   } finally { node.stop(); unregisterPiProvider(provider.provider.id); setNodeDb(); db.close(); rmSync(repo, { recursive: true, force: true }); }
 });

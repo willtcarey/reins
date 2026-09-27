@@ -10,8 +10,9 @@ import type { ServerState } from "../state.js";
 export interface SessionExecutionTarget {
   /**
    * Delivers one semantic command. `commandId` is the outbox row ID: it is the node's idempotency
-   * receipt and is required for `session.provision`. Provision may throw `DeliveryDeferred` when the
-   * target may not have received or may have admitted it; the outbox requeues it.
+   * receipt and is required for submitted work (provision, prompt, steer, setModel), which may throw
+   * `DeliveryDeferred` when the target may not have received or may have admitted it; the outbox
+   * requeues it. Immediate controls (abort, resumePending) carry no ID and are never requeued.
    */
   send(command: NodeCommand, commandId?: string): Promise<NodeResult>;
 }

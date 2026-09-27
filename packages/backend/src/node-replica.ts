@@ -34,3 +34,15 @@ export function recordNodeLifecycle(server: Database, sessionId: string, runId: 
     .run(sessionId, runId, kind, payloadJson);
   return true;
 }
+
+/** The session's most recently applied node settlement: `seq` orders receipts (SQLite rowid), so a
+ * caller can tell whether a settlement arrived after an earlier observation. */
+export function latestNodeSettlement(server: Database, sessionId: string): NodeSettlement | null {
+  const row = server.query<{ seq: number; payload_json: string }, [string]>(
+    "SELECT rowid AS seq, payload_json FROM node_lifecycle_receipts WHERE session_id = ? AND kind = 'settled' ORDER BY rowid DESC LIMIT 1",
+  ).get(sessionId);
+  if (!row) return null;
+  const report: Omit<NodeSettlement, "seq"> = JSON.parse(row.payload_json);
+  return { seq: row.seq, status: report.status, ...(report.error ? { error: report.error } : {}) };
+}
+export interface NodeSettlement { seq: number; status: "completed" | "failed" | "aborted"; error?: { code?: string; message: string } }

@@ -7,6 +7,16 @@ import { createSession, getSession } from "../session-fixture.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 import { createServerState } from "../helpers/server-state.js";
+import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
+import { admitInput, createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
+import { nodeSessionReports } from "../../runtimes/node-session-events.js";
+import { claimCommand, deleteFailedCommand, settleCommand } from "../../node-command-store.js";
+
+const reply = (text: string) => ({ role: "assistant", content: [{ type: "text" as const, text }], timestamp: 2 });
+const settled = (runId: string, status: "completed" | "failed" | "aborted", error?: string) => ({
+  sessionId: "node", runId, status, ...(error ? { error: { message: error } } : {}),
+  metadata: { model: null, thinkingLevel: null }, reply: null,
+});
 
 describe("SessionInstance", () => {
   useTestDb();
@@ -231,5 +241,80 @@ describe("SessionInstance", () => {
     expect(getSession("child")?.activity_state).toBe("finished");
     expect(parent.steerCalls).toEqual([]);
     expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
+  });
+
+  describe("wait for a node-owned session (durable settlement, no node runtime)", () => {
+    function setup() {
+      const project = createProject("Node wait", "/tmp/node-wait-test");
+      createSession("caller", project.id, { agentRuntimeType: "pi" });
+      createProvisionedNodeSession("node", project.id);
+      const state = createServerState();
+      return { state, reports: nodeSessionReports(state), caller: new SessionInstance(new SessionManager(state), "caller") };
+    }
+
+    test("resolves on the durable settlement of queued work, bridging admission before the started report", async () => {
+      const { reports, caller } = setup();
+      const command = queuePrompt("node", "client-1");
+      expect(await caller.wait("node", 0)).toEqual({ sessionId: "node", status: "timeout", result: null, error: null });
+      let done = false;
+      const waiting = caller.wait("node", 2000).finally(() => { done = true; });
+      admitInput(command, "client-1");
+      await Bun.sleep(30);
+      // Admitted, but `session.started` has not arrived: still waiting.
+      expect(done).toBe(false);
+      reports.started({ sessionId: "node", runId: "run-1" });
+      await Bun.sleep(30);
+      expect(done).toBe(false);
+      persistCanonicalMessages("node", [{ role: "user", content: [{ type: "text", text: "Work" }], timestamp: 1 }, reply("Node result")]);
+      reports.settled(settled("run-1", "completed"));
+      expect(await waiting).toEqual({ sessionId: "node", status: "completed", result: "Node result", error: null });
+      // Already settled: resolves at once from projections.
+      expect(await caller.wait("node", 0)).toEqual({ sessionId: "node", status: "completed", result: "Node result", error: null });
+    });
+
+    test("returns failed and cancelled settlements and times out while running", async () => {
+      const { reports, caller } = setup();
+      persistCanonicalMessages("node", [reply("partial")]);
+      reports.started({ sessionId: "node", runId: "run-1" });
+      expect(await caller.wait("node", 20)).toEqual({ sessionId: "node", status: "timeout", result: null, error: null });
+      reports.settled(settled("run-1", "failed", "Provider failed"));
+      expect(await caller.wait("node", 0)).toEqual({ sessionId: "node", status: "failed", result: null, error: "Provider failed" });
+      reports.started({ sessionId: "node", runId: "run-2" });
+      reports.settled(settled("run-2", "aborted", "Aborted"));
+      expect(await caller.wait("node", 0)).toEqual({ sessionId: "node", status: "cancelled", result: null, error: "Aborted" });
+    });
+
+    test("an input that failed delivery expects no run; a lost provision is a failed open", async () => {
+      const { caller } = setup();
+      persistCanonicalMessages("node", []);
+      const command = queuePrompt("node", "client-1");
+      const waiting = caller.wait("node", 2000);
+      claimCommand(command);
+      settleCommand(command, "failed", JSON.stringify({ ok: false, error: { code: "invalid_request", message: "rejected", retryable: false } }));
+      deleteFailedCommand(command);
+      expect(await waiting).toEqual({ sessionId: "node", status: "idle", result: null, error: null });
+      getDb().query("DELETE FROM node_command_outbox WHERE session_id = 'node'").run();
+      expect(await caller.wait("node", 0)).toEqual({ sessionId: "node", status: "failed", result: null, error: "Session open failed" });
+    });
+
+    test("a child resolves with its settlement after reporting to its parent", async () => {
+      const project = createProject("Node child wait", "/tmp/node-child-wait-test");
+      createSession("parent", project.id, { agentRuntimeType: "pi" });
+      createProvisionedNodeSession("node", project.id, { parentSessionId: "parent" });
+      const parent = createRuntimeStub();
+      const state = createServerState();
+      state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: 0 });
+      const reports = nodeSessionReports(state);
+      const command = queuePrompt("node", "client-1");
+      const waiting = new SessionInstance(new SessionManager(state), "parent").wait("node", 2000);
+      admitInput(command, "client-1");
+      reports.started({ sessionId: "node", runId: "run-1" });
+      persistCanonicalMessages("node", [reply("Child result")]);
+      reports.settled({ ...settled("run-1", "completed"), reply: { text: "Child result", stopReason: "stop", errorMessage: null } });
+      expect(await waiting).toEqual({ sessionId: "node", status: "completed", result: "Child result", error: null });
+      expect(getSession("node")?.activity_state).toBeNull();
+      for (let i = 0; i < 100 && parent.steerCalls.length === 0; i++) await Bun.sleep(5);
+      expect(parent.steerCalls).toEqual([[{ type: "text", text: "Child result" }]]);
+    });
   });
 });

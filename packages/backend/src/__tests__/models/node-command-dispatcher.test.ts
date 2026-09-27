@@ -12,8 +12,12 @@ import { Sessions } from "../../models/sessions.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { scheduleWork, getWork } from "../../models/node-command-projection.js";
 import { blockInterruptedDispatches, NodeCommandDispatcher, waitForAdmission } from "../../models/node-command-dispatcher.js";
-import { internalNodeFor, provisionForSession, provisionInternal, stopInternalNode } from "../../runtimes/internal-node.js";
+import { internalNodeFor, provisionForSession, sendInternal, stopInternalNode } from "../../runtimes/internal-node.js";
 import { DeliveryDeferred } from "../../models/node-command-transport.js";
+import { NODE_COMMAND_TIMEOUTS } from "../../node-transport/commands.js";
+
+const scratch = { model: null, thinkingLevel: null, task: null };
+const provisionOf = (sessionId: string) => ({ op: "session.provision" as const, sessionId, sourceId: provisionForSession("s").binding.sourceId, configuration: scratch });
 
 const repo = useTestRepo();
 
@@ -61,7 +65,7 @@ test("node-owned provision crosses the JSON-RPC wire and replays idempotently by
   try {
     const { binding } = provisionForSession("s");
     // Admitted on the node but the server never recorded it: replay must reuse the receipt.
-    await provisionInternal(state, { sessionId: "s", commandId: "p", binding, configuration: { model: null, thinkingLevel: null, task: null } });
+    await sendInternal(state, provisionOf("s"), binding, "p");
     const receipt = nodeAdmissionReceipt(nodeDb, "p");
     await new NodeCommandDispatcher(state).drain();
     expect(getWork("p")?.state).toBe("admitted");
@@ -69,12 +73,12 @@ test("node-owned provision crosses the JSON-RPC wire and replays idempotently by
     expect(nodeAdmissionReceipt(nodeDb, "p")).toEqual(receipt!);
     expect(db.query("SELECT COUNT(*) AS n FROM node_command_outbox").get()).toEqual({ n: 1 });
     // A thrown node error crosses the wire as a non-retryable `internal` NodeResult.
-    expect(await provisionInternal(state, { sessionId: "s", commandId: "p", binding: { ...binding, cwd: "/elsewhere" }, configuration: { model: null, thinkingLevel: null, task: null } }))
+    expect(await sendInternal(state, provisionOf("s"), { ...binding, cwd: "/elsewhere" }, "p"))
       .toEqual({ ok: false, error: { code: "internal", message: expect.stringContaining("mismatch"), retryable: false } });
     // In-process values that do not survive JSON fail at the wire schema instead of leaking through.
     const leaky = { ...binding };
     Object.defineProperty(leaky, "cwd", { value: () => binding.cwd, enumerable: true });
-    await expect(provisionInternal(state, { sessionId: "s", commandId: "p", binding: leaky, configuration: { model: null, thinkingLevel: null, task: null } }))
+    await expect(sendInternal(state, provisionOf("s"), leaky, "p"))
       .rejects.toMatchObject({ code: -32602 });
   } finally { dispose(); }
 });
@@ -100,7 +104,7 @@ test("a timed-out provision has an unknown outcome and requeues", async () => {
   try {
     spyOn(internalNodeFor(state), "send").mockReturnValue(new Promise(() => {}));
     const { binding } = provisionForSession("s");
-    await expect(provisionInternal(state, { sessionId: "s", commandId: "p", binding, configuration: { model: null, thinkingLevel: null, task: null } }, 5)).rejects.toBeInstanceOf(DeliveryDeferred);
+    await expect(sendInternal(state, provisionOf("s"), binding, "p", { ...NODE_COMMAND_TIMEOUTS, provision: 5 })).rejects.toBeInstanceOf(DeliveryDeferred);
   } finally { dispose(); }
 });
 
@@ -115,7 +119,7 @@ test("a closed or unnegotiated node connection requeues provision instead of fai
     expect(getWork("p")?.state).toBe("queued");
     expect(nodeAdmissionReceipt(nodeDb, "p")).toBeNull();
 
-    await provisionInternal(state, { sessionId: "other", commandId: "warm", binding: provisionForSession("s").binding, configuration: { model: null, thinkingLevel: null, task: null } }).catch(() => undefined);
+    await sendInternal(state, provisionOf("other"), provisionForSession("s").binding, "warm").catch(() => undefined);
     const negotiated = dispatcher.drain();
     stopInternalNode(state); // negotiated, but the provision frame cannot be sent: outcome unknown
     await negotiated;

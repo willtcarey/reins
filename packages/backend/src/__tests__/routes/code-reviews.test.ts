@@ -10,6 +10,10 @@ import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import type { WsClient } from "../../state.js";
+import type { NodeCommand, NodeResult } from "@reins/node/contract";
+import { registerExecutionTargets, type SessionExecutionTarget } from "../../runtimes/execution-target.js";
+import { getDb } from "../../db.js";
+import { createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
 
 function reviewRuntime(
   prompts: unknown[],
@@ -358,6 +362,71 @@ describe("code review routes", () => {
     expect(response?.status).toBe(409);
     expect(await loaded!.json()).toMatchObject({ id: review.id });
     expect(loadMessages("running-session")).toEqual([]);
+  });
+
+  test("delivers a node-owned session's review prompt through the command outbox, never a live runtime", async () => {
+    createProvisionedNodeSession("node-session", projectId, { taskId });
+    const delivered: NodeCommand[] = [];
+    const target: SessionExecutionTarget = {
+      async send(command): Promise<NodeResult> {
+        delivered.push(command);
+        return command.op === "session.prompt"
+          ? { ok: true, value: { kind: "admitted", inputId: command.clientId } }
+          : { ok: false, error: { code: "invalid_request", message: "unexpected", retryable: false } };
+      },
+    };
+    registerExecutionTargets(state, { "internal-node": target, server: target });
+    const created = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
+      { comment },
+    ), state);
+    const review = await created!.json();
+    const clientId = `code-review:${review.id}:${review.revision}`;
+
+    const response = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/submissions?taskId=${taskId}`,
+      { reviewId: review.id, expectedRevision: review.revision, sessionId: "node-session" },
+    ), state);
+
+    expect(response?.status).toBe(200);
+    expect(await response!.json()).toEqual({ messageId: clientId });
+    // The review was consumed in the same transaction that queued the prompt.
+    expect(await (await router.handle(
+      makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`), state,
+    ))!.json()).toBeNull();
+    for (let i = 0; i < 100 && delivered.length === 0; i++) await Bun.sleep(5);
+    expect(delivered).toEqual([{
+      op: "session.prompt", sessionId: "node-session", clientId,
+      content: [{ type: "text", text: expect.stringContaining("You: Please explain this.") }], sourceSessionId: null,
+    }]);
+    expect(getDb().query("SELECT state FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') = ?")
+      .get("node-session", clientId)).toEqual({ state: "admitted" });
+  });
+
+  test("rejects submission to a node-owned session with queued input and keeps the review", async () => {
+    createProvisionedNodeSession("node-session", projectId, { taskId });
+    queuePrompt("node-session", "earlier");
+    const created = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
+      { comment },
+    ), state);
+    const review = await created!.json();
+
+    const response = await router.handle(makeRequest(
+      "POST",
+      `/api/projects/${projectId}/code-review/submissions?taskId=${taskId}`,
+      { reviewId: review.id, expectedRevision: review.revision, sessionId: "node-session" },
+    ), state);
+
+    expect(response?.status).toBe(409);
+    expect(await (await router.handle(
+      makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`), state,
+    ))!.json()).toMatchObject({ id: review.id });
+    expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') IS NOT NULL")
+      .get("node-session")).toEqual({ n: 1 });
   });
 
   test("rejects a task from another project scope", async () => {

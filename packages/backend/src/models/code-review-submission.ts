@@ -1,9 +1,12 @@
 import { acceptCodeReviewSubmission } from "../code-review-store.js";
 import { getSession } from "../session-store.js";
+import { getDb } from "../db.js";
 import type { ServerState } from "../state.js";
 import { ensureSessionOpen } from "../runtimes/session-manager.js";
 import { waitForAdmission } from "./node-command-dispatcher.js";
 import type { Broadcast } from "./broadcast.js";
+import { enqueueSessionInput, wakeSessionInput } from "../runtimes/node-execution.js";
+import { nodeSessionActivity } from "./node-session-activity.js";
 import {
   CodeReviewError,
   type CodeReview,
@@ -45,15 +48,32 @@ export class CodeReviewSubmission {
     }
 
     await waitForAdmission(this.state, command.sessionId);
+    const feedback = this.compileFeedback(review.annotations);
+    const message = [{ type: "text" as const, text: feedback }];
+    const reinsId = `code-review:${review.id}:${review.revision}`;
+    if (session.storage_owner === "internal-node") {
+      // Node-owned: the prompt goes through the command outbox like any input, atomically with
+      // consuming the review; the node admits it asynchronously. A session that is running or already
+      // has queued input is busy.
+      if (nodeSessionActivity(getSession(command.sessionId) ?? session) !== "idle") {
+        throw new CodeReviewError("Session is currently running", "conflict");
+      }
+      getDb().transaction(() => {
+        acceptCodeReviewSubmission(review, command.sessionId, feedback);
+        enqueueSessionInput(command.sessionId, "prompt", message, reinsId);
+      })();
+      wakeSessionInput(this.state);
+      this.broadcastReview(review);
+      return { messageId: reinsId };
+    }
+
     const managed = await ensureSessionOpen(this.state, command.sessionId);
     if (managed.runtime.isStreaming()) {
       throw new CodeReviewError("Session is currently running", "conflict");
     }
 
-    const feedback = this.compileFeedback(review.annotations);
-    const message = [{ type: "text" as const, text: feedback }];
     const submitted = await managed.runtime.prompt(message, {
-      reinsId: `code-review:${review.id}:${review.revision}`,
+      reinsId,
       metadata: { source: "code-review", reviewId: review.id, revision: review.revision },
     });
     acceptCodeReviewSubmission(review, command.sessionId, feedback);

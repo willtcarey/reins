@@ -40,16 +40,28 @@ export interface NodeServer {
 
 export interface Node {
   stop(): void;
-  hasRuntime(sessionId: string): boolean;
-  runtimeCount(): number;
-  anyStreaming(): boolean;
-  runtime(sessionId: string): AgentHarnessPiRuntime | undefined;
-  isStreaming(sessionId: string): boolean;
-  close(sessionId: string): Promise<void>;
-  open(sessionId: string, binding: NodeSessionBinding): Promise<AgentHarnessPiRuntime>;
   send(input: NodeCommand, binding: NodeSessionBinding, commandId?: string): Promise<NodeResult>;
   /** The newest attached connection serves server calls; detach when it closes. Attaching replays pending reports. */
   attach(server: NodeServer): () => void;
+}
+
+/**
+ * TEST SEAM ONLY: live runtime access for node-package and backend tests. The server never holds or
+ * calls a node runtime; it reads session state from its own projections (activity from durable
+ * lifecycle reports, its command outbox, the replica transcript), so it works unchanged with the node
+ * in another process. Production code must not import this.
+ */
+export interface NodeRuntimesForTesting {
+  has(sessionId: string): boolean;
+  open(sessionId: string, binding: NodeSessionBinding): Promise<AgentHarnessPiRuntime>;
+  close(sessionId: string): Promise<void>;
+}
+const testSeams = new WeakMap<Node, NodeRuntimesForTesting>();
+/** See `NodeRuntimesForTesting`: tests only. */
+export function nodeRuntimesForTesting(node: Node): NodeRuntimesForTesting {
+  const seam = testSeams.get(node);
+  if (!seam) throw new Error("Not a started node");
+  return seam;
 }
 
 const IMAGE_UNAVAILABLE = { type: "text", text: "[Image attachment unavailable]" } as const;
@@ -217,21 +229,6 @@ export function startNode(dependencies: NodeDependencies): Node {
       for (const sessionId of pendingOutboxSessions(db)) drain(sessionId);
       return () => { const index = servers.indexOf(connection); if (index >= 0) servers.splice(index, 1); };
     },
-    hasRuntime(sessionId: string): boolean { return runtimes.has(sessionId); },
-    runtimeCount(): number { return runtimes.size; },
-    anyStreaming(): boolean { return [...runtimes.values()].some(runtime => runtime.isStreaming()); },
-    runtime(sessionId: string): AgentHarnessPiRuntime | undefined { return runtimes.get(sessionId); },
-    isStreaming(sessionId: string): boolean { return runtimes.get(sessionId)?.isStreaming() ?? false; },
-    async close(sessionId: string): Promise<void> {
-      const runtime = runtimes.get(sessionId);
-      if (!runtime) return;
-      if (runtime.isStreaming()) throw new Error(`Cannot close active node runtime: ${sessionId}`);
-      try { await runtime.close(); }
-      finally { runtimes.delete(sessionId); }
-    },
-    open(sessionId: string, binding: NodeSessionBinding): Promise<AgentHarnessPiRuntime> {
-      return openRuntime(sessionId, binding);
-    },
     async send(input: NodeCommand, binding: NodeSessionBinding, commandId?: string): Promise<NodeResult> {
       if (!running) throw new Error("Node stopped");
       const payload = JSON.stringify(input);
@@ -286,6 +283,14 @@ export function startNode(dependencies: NodeDependencies): Node {
           throw error;
         }
       }
+      if (input.op === "session.abort") {
+        // Only a live runtime can have a run to abort: never open Pi (or check out a branch) to abort.
+        // `aborted` reports whether the runtime was busy when the abort arrived.
+        const live = runtimes.get(input.sessionId);
+        const busy = live?.isStreaming() ?? false;
+        await live?.abort();
+        return { ok: true, value: { kind: "aborted", aborted: busy } };
+      }
       const ready = await openRuntime(input.sessionId, binding);
       switch (input.op) {
         case "session.prompt":
@@ -298,9 +303,6 @@ export function startNode(dependencies: NodeDependencies): Node {
           if (commandId) recordNodeAdmission(db, commandId, input.sessionId, input.op, payload, () => {});
           return { ok: true, value: { kind: "admitted", inputId: input.clientId } };
         }
-        case "session.abort":
-          await ready.abort();
-          return { ok: true, value: { kind: "aborted", aborted: true } };
         case "session.resumePending":
           if (!ready.resumePendingOperation) throw new Error("Runtime does not support pending-operation resume");
           await ready.resumePendingOperation();
@@ -308,6 +310,17 @@ export function startNode(dependencies: NodeDependencies): Node {
       }
     },
   };
+  testSeams.set(node, {
+    has: sessionId => runtimes.has(sessionId),
+    open: (sessionId, binding) => openRuntime(sessionId, binding),
+    async close(sessionId) {
+      const runtime = runtimes.get(sessionId);
+      if (!runtime) return;
+      if (runtime.isStreaming()) throw new Error(`Cannot close active node runtime: ${sessionId}`);
+      try { await runtime.close(); }
+      finally { runtimes.delete(sessionId); }
+    },
+  });
   instances.set(db, {
     node,
     update: (next) => { installed = next; },

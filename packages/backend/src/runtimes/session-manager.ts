@@ -24,8 +24,6 @@ import { parseThinkingLevel } from "../models/model-settings.js";
 import { attachRuntimeBroadcastObserver } from "./runtime-broadcast-observer.js";
 import { expandLocalPrompt } from "@reins/node/prompt";
 import type { AgentRuntime } from "./registry.js";
-import { internalNodeFor, provisionForSession } from "./internal-node.js";
-import { NodeModelNotFoundError } from "@reins/node/runtime-build";
 
 export class SessionManager {
   readonly sessions: Map<string, ManagedSession>;
@@ -305,22 +303,9 @@ async function openManagedSession(
   }
 }
 
-/** Ensure a session is open using the process-scoped manager. */
+/** Ensure a legacy server-owned session is open using the process-scoped manager. Node-owned sessions
+ * are never opened by the server: the node opens them on command, and this rejects them. */
 export async function ensureSessionOpen(state: ServerState, sessionId: string): Promise<ManagedSession> {
-  if (dbGetSession(sessionId)?.storage_owner === "internal-node") {
-    try {
-      const runtime = await internalNodeFor(state).open(sessionId, provisionForSession(sessionId).binding);
-      return { id: sessionId, runtime, lastActivity: Date.now() };
-    } catch (error) {
-      if (error instanceof NodeModelNotFoundError) {
-        const configured = getSetting("default_model");
-        const name = configured?.runtimeType === "pi" && configured.provider === error.provider && configured.modelId === error.modelId
-          ? "Configured default_model" : "Selected session model";
-        throw new Error(`${name} is invalid: ${error.provider}/${error.modelId}${name === "Configured default_model" ? ". Update it in Settings." : ""}`, { cause: error });
-      }
-      throw error;
-    }
-  }
   return new SessionManager(state).open(sessionId);
 }
 

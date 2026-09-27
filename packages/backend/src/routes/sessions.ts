@@ -16,7 +16,6 @@ import { parseDisplayCursor } from "../messages-store.js";
 import { parseBody } from "./validate.js";
 import { executeSessionCommand, wakeSessionInput } from "../runtimes/node-execution.js";
 import { withSessionNotFound } from "./session-errors.js";
-import { installedInternalNode } from "../runtimes/internal-node.js";
 
 export interface MessagePageQuery { before?: string; after?: string; limit?: number }
 export interface ActivitySnapshotItem {
@@ -54,7 +53,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
   // List all sessions with non-null activity_state — for initial page-load
   // reconciliation without needing to expand every project first.
   router.get("/activity", (ctx) => {
-    return Response.json(new Sessions(ctx.state.sessions, undefined, id => installedInternalNode(ctx.state)?.runtime(id)).activeSessions());
+    return Response.json(new Sessions(ctx.state.sessions).activeSessions());
   });
 
   router.put("/:sessionId/model", withSessionNotFound(async (ctx) => {
@@ -62,7 +61,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     const body = await parseBody(SessionModelBody, ctx.req);
 
     try {
-      const sessions = new Sessions(ctx.state.sessions, undefined, id => installedInternalNode(ctx.state)?.runtime(id), () => wakeSessionInput(ctx.state));
+      const sessions = new Sessions(ctx.state.sessions, undefined, () => wakeSessionInput(ctx.state));
       const updated = await sessions.setModel({ sessionId, ...body });
       return Response.json(updated);
     } catch (err: unknown) {

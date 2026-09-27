@@ -40,6 +40,7 @@ import {
 import type { Broadcast } from "./broadcast.js";
 import type { ManagedSession } from "../state.js";
 import { logger } from "../logger.js";
+import { nodeSessionActivity } from "./node-session-activity.js";
 
 // ---------------------------------------------------------------------------
 // Domain errors
@@ -248,7 +249,7 @@ export class ProjectTasks {
     for (const sid of sessionIds) {
       const managed = this.sessions.get(sid);
       const row = getSession(sid);
-      if (managed?.runtime.isStreaming() || (row?.storage_owner === "internal-node" && row.activity_state === "running")) {
+      if (managed?.runtime.isStreaming() || (row?.storage_owner === "internal-node" && nodeSessionActivity(row) !== "idle")) {
         activeSessions.push(sid);
       }
     }

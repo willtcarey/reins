@@ -34,7 +34,7 @@ import type { Broadcast } from "./broadcast.js";
 import { UploadedFile } from "./uploaded-file.js";
 import type { ManagedSession } from "../state.js";
 import { parseThinkingLevel } from "./model-settings.js";
-import { getRuntimeAdapter, type AgentRuntime } from "../runtimes/registry.js";
+import { getRuntimeAdapter } from "../runtimes/registry.js";
 import {
   buildSessionContextSnapshot,
   type SessionContextSnapshot,
@@ -47,6 +47,7 @@ import { findPiModel } from "../runtimes/pi/model-catalog.js";
 import { workForSession } from "./node-command-projection.js";
 import { enqueueSetModel } from "../node-command-store.js";
 import { getSource } from "../node-store.js";
+import { nodeSessionActivity } from "./node-session-activity.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -205,11 +206,16 @@ export class Sessions {
   constructor(
     private sessions: Map<string, ManagedSession>,
     private broadcast: Broadcast = () => {},
-    private nodeRuntimeFor?: (sessionId: string) => AgentRuntime | undefined,
     /** Wakes the node command dispatcher after a queued `session.setModel` commits (the periodic scan
      * recovers a missing wake). */
     private wakeNodeCommands?: () => void,
   ) {}
+
+  /** Node-owned sessions read activity from projections; legacy sessions also consult their live runtime. */
+  private isActive(row: SessionRow): boolean {
+    if (row.storage_owner === "internal-node") return nodeSessionActivity(row) !== "idle";
+    return row.activity_state === "running" || !!this.sessions.get(row.id)?.runtime.isStreaming();
+  }
 
   get(sessionId: string): SessionDetailView | null {
     const row = getSession(sessionId);
@@ -221,7 +227,7 @@ export class Sessions {
       ...toSessionView(row),
       messageCount,
       runtimeType: row.agent_runtime_type,
-      pendingOperation: row.agent_runtime_type === "pi" && row.activity_state !== "running" && !(this.sessions.get(sessionId)?.runtime ?? this.nodeRuntimeFor?.(sessionId))?.isStreaming()
+      pendingOperation: row.agent_runtime_type === "pi" && !this.isActive(row)
         ? readPendingPiOperation(getDb(), sessionId)
         : null,
       state: {
@@ -344,16 +350,17 @@ export class Sessions {
 
   /**
    * List sessions with non-null activity_state for initial activity snapshots.
-   * Persisted running states are reconciled against in-memory runtime state so
-   * sessions left running by a backend restart surface as finished, not active.
+   * Legacy server-owned running states are reconciled against in-memory runtime state so
+   * sessions left running by a backend restart surface as finished, not active. Node-owned
+   * activity is authoritative from the node's durable lifecycle reports and is not reconciled here
+   * (the server holds no node runtime to compare against).
    */
   activeSessions() {
     return listSessionsWithActivity().map((row) => {
       let activityState = row.activity_state;
       // Update persisted sessions with actual runtime data in case the server crashed mid-run.
-      if (activityState === "running" && (row.storage_owner !== "internal-node" || this.nodeRuntimeFor)) {
-        const runtime = this.sessions.get(row.id)?.runtime ?? this.nodeRuntimeFor?.(row.id);
-        if (!runtime?.isStreaming()) {
+      if (activityState === "running" && row.storage_owner !== "internal-node") {
+        if (!this.sessions.get(row.id)?.runtime.isStreaming()) {
           updateActivityState(row.id, "finished");
           activityState = "finished";
         }

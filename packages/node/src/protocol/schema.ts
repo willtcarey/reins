@@ -8,13 +8,16 @@ export const protocolVersion = 1;
  * imperatives, requests name the resource, durable reports are past tense; `node.` is connection-level. */
 export const methods = {
   nodeHello: "node.hello", sessionProvision: "session.provision", sessionStatus: "session.status",
+  sessionPrompt: "session.prompt", sessionSteer: "session.steer", sessionSetModel: "session.setModel",
+  sessionAbort: "session.abort", sessionResumePending: "session.resumePending",
   sessionCommitted: "session.committed", sessionStarted: "session.started", sessionSettled: "session.settled",
   attachmentFetch: "attachment.fetch", attachmentStore: "attachment.store", sessionEvent: "session.event",
   scriptExecute: "script.execute", scriptSearch: "script.search", scriptCancel: "script.cancel",
   projectCreateTask: "project.createTask",
 } as const;
 /** Server→node methods are negotiated capabilities. */
-export const capability = z.enum([methods.sessionProvision, methods.sessionStatus]);
+export const capability = z.enum([methods.sessionProvision, methods.sessionStatus, methods.sessionPrompt, methods.sessionSteer,
+  methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending]);
 export type Capability = z.infer<typeof capability>;
 export const helloParams = z.strictObject({
   minVersion: z.number().int().positive(), maxVersion: z.number().int().positive(),
@@ -74,7 +77,8 @@ const attachmentMetadata = {
   width: z.number().int().positive().optional(), height: z.number().int().positive().optional(),
 };
 /** Image MIME types an attachment may have; the node checks these limits before it references an image. */
-export const ATTACHMENT_IMAGE_MIME_TYPES: readonly string[] = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+const imageMimeType = z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+export const ATTACHMENT_IMAGE_MIME_TYPES: readonly string[] = imageMimeType.options;
 /** Attachment IDs appear in URLs and transcripts; node-assigned ones are `att_<uuid>`. */
 const attachmentId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_.-]+$/);
 /** Node-created image bytes (e.g. a tool result reading a PNG) cross as a durable, idempotent upload
@@ -90,6 +94,32 @@ export const attachmentStoreParams = z.strictObject({
   offset: z.number().int().min(0).max(MAX_ATTACHMENT_BYTES),
   data: z.string().max(Math.ceil(ATTACHMENT_CHUNK_BYTES / 3) * 4).regex(/^[A-Za-z0-9+/]*={0,2}$/),
 });
+/** Prompt/steer content: text and server attachment references only (the node fetches the bytes
+ * with `attachment.fetch`), never inline bytes. */
+export const MAX_PROMPT_BLOCKS = 64;
+export const MAX_PROMPT_TEXT = 4 * 1024 * 1024;
+const promptImage = z.strictObject({
+  type: z.literal("image"), attachmentId: z.string().min(1).max(128),
+  mimeType: imageMimeType,
+  byteSize: z.number().min(0).max(MAX_ATTACHMENT_BYTES), sha256: z.string().max(128).optional(), filename: z.string().max(4096).optional(),
+  width: z.number().int().positive().optional(), height: z.number().int().positive().optional(),
+}).refine(value => (value.width === undefined) === (value.height === undefined));
+export const promptContent = z.array(z.union([
+  z.strictObject({ type: z.literal("text"), text: z.string().max(MAX_PROMPT_TEXT) }), promptImage,
+])).max(MAX_PROMPT_BLOCKS);
+/** Submitted work (`session.prompt`, `session.steer`, `session.setModel`) carries the outbox command ID
+ * as the node's admission receipt, so a replay after an unknown outcome is answered, not re-applied. */
+const sessionCommand = { epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), commandId: z.string().min(1).max(128), binding };
+export const sessionInputParams = z.strictObject({
+  ...sessionCommand, clientId: z.string().min(1).max(128), content: promptContent, sourceSessionId: z.string().min(1).max(128).nullable(),
+});
+export const sessionInputResult = z.strictObject({ inputId: z.string().min(1) });
+export const sessionSetModelParams = z.strictObject({ ...sessionCommand, ...wireModel.shape, thinkingLevel: z.string().min(1).max(32).optional() });
+export const sessionSetModelResult = z.strictObject({ modelSet: z.literal(true) });
+/** Immediate controls: never queued or replayed, so no command ID. */
+export const sessionControlParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), binding });
+export const sessionAbortResult = z.strictObject({ aborted: z.boolean() });
+export const sessionResumeResult = z.strictObject({ started: z.boolean() });
 /** The reference that replaces the inline block in session events. */
 export const imageReference = z.strictObject({
   type: z.literal("image"), attachmentId: z.string().min(1).max(128), mimeType: z.string().min(1).max(128),
@@ -168,6 +198,9 @@ export type ProjectCreateTask = Omit<z.infer<typeof projectCreateTaskParams>, "e
 export type ProjectCreateTaskResult = z.infer<typeof projectCreateTaskResult>;
 export type SessionEventReport = Omit<z.infer<typeof sessionEventParams>, "epoch">;
 export type Provision = Omit<z.infer<typeof provisionParams>, "epoch">;
+export type SessionInput = Omit<z.infer<typeof sessionInputParams>, "epoch">;
+export type SessionSetModel = Omit<z.infer<typeof sessionSetModelParams>, "epoch">;
+export type SessionControl = Omit<z.infer<typeof sessionControlParams>, "epoch">;
 export type Ready = z.infer<typeof readyResult>;
 export type Hello = z.infer<typeof helloParams>;
 export type Status = z.infer<typeof statusResult>;

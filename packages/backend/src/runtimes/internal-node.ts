@@ -1,9 +1,9 @@
 import { startNode, type Node } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
-import { createLoopbackPair, RpcFailure, type Provision } from "@reins/node/protocol";
+import { createLoopbackPair, RpcFailure } from "@reins/node/protocol";
 import { createServerTransport, type ServerHandlers } from "../node-transport/server-peer.js";
-import { provisionOutcome } from "../node-transport/provision.js";
-import type { NodeResult } from "@reins/node/contract";
+import { NODE_COMMAND_TIMEOUTS, sendNodeCommand, type NodeCommandClient, type NodeCommandTimeouts } from "../node-transport/commands.js";
+import type { NodeCommand, NodeResult } from "@reins/node/contract";
 import type { NodeSessionBinding } from "@reins/node/storage";
 import { getDb } from "../db.js";
 import { getSession } from "../session-store.js";
@@ -86,8 +86,8 @@ export const internalNodeServer = (state: ServerState): ServerHandlers => ({
   createTask: async input => { owned(input.sessionId); return installed(state).createTask(input); },
 });
 
-/** Internal provision crosses the same JSON-RPC schemas and handlers a remote node uses, over an
- * in-memory socket; prompt/steer/abort/resume and open() still call `Node` directly. */
+/** Every server→node session command crosses the same JSON-RPC schemas and handlers a remote node
+ * uses, over an in-memory socket; the server never calls `Node.send` directly. */
 function connectInternal(state: ServerState, node: Node) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
   // In-process frames are uncapped: committed batches are never split.
@@ -103,23 +103,22 @@ function connectInternal(state: ServerState, node: Node) {
   return {
     closed: () => serverEnd.closed,
     close: () => serverEnd.close(),
-    async provision(input: Provision, timeoutMs: number) { await ready; return server.provision(input, timeoutMs); },
+    async client(): Promise<NodeCommandClient> { await ready; return server; },
   };
 }
 
 const nodes = new WeakMap<ServerState, Node>();
 const links = new WeakMap<ServerState, ReturnType<typeof connectInternal>>();
-const PROVISION_TIMEOUT_MS = 30_000;
-/** Throws DeliveryDeferred when the node did not receive, or may have admitted, the command. */
-export function provisionInternal(state: ServerState, input: Provision, timeoutMs = PROVISION_TIMEOUT_MS): Promise<NodeResult> {
-  const node = internalNodeFor(state);
-  let link = links.get(state);
-  if (!link || link.closed()) { link = connectInternal(state, node); links.set(state, link); }
-  const current = link;
-  return provisionOutcome(() => current.provision(input, timeoutMs));
+/** Delivers one command over the internal link (recreated when closed). Submitted work throws
+ * DeliveryDeferred when the node did not receive, or may have admitted, it; immediate controls return
+ * `unavailable` instead. */
+export function sendInternal(state: ServerState, command: NodeCommand, binding: NodeSessionBinding, commandId?: string, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
+  const { link } = started(state);
+  return sendNodeCommand(() => link.client(), command, binding, commandId, timeouts);
 }
-export function installedInternalNode(state: ServerState): Node | undefined { return nodes.get(state); }
-export function internalNodeFor(state: ServerState): Node {
+/** Starts the node on first use and keeps a live link: replica delivery, attachment fetch and lifecycle
+ * reports need one even when no command has recreated it. */
+function started(state: ServerState) {
   let node = nodes.get(state);
   if (!node) {
     // Session configuration travels with `session.provision`; only the credential store is still an
@@ -127,11 +126,11 @@ export function internalNodeFor(state: ServerState): Node {
     node = startNode({ credentials: createDbCredentialStore() });
     nodes.set(state, node);
   }
-  // Replica delivery and attachment fetch need a live link even when no provision has recreated it.
-  const link = links.get(state);
-  if (!link || link.closed()) links.set(state, connectInternal(state, node));
-  return node;
+  let link = links.get(state);
+  if (!link || link.closed()) { link = connectInternal(state, node); links.set(state, link); }
+  return { node, link };
 }
+export function internalNodeFor(state: ServerState): Node { return started(state).node; }
 export function stopInternalNode(state: ServerState): void {
   links.get(state)?.close();
   links.delete(state);

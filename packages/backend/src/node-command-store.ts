@@ -96,3 +96,13 @@ export function enqueueSetModel(sessionId: string, model: { provider: string; mo
 export function hasPendingInput(sessionId: string): boolean {
   return !!getDb().query<{ id: string }, [string]>("SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') IS NOT NULL AND state IN ('queued', 'dispatching') LIMIT 1").get(sessionId);
 }
+
+/** IDs of the session's prompt/steer inputs still queued or being delivered. */
+export function pendingInputIds(sessionId: string): string[] {
+  return getDb().query<{ id: string }, [string]>("SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') IS NOT NULL AND state IN ('queued', 'dispatching') ORDER BY rowid").all(sessionId).map(row => row.id);
+}
+
+/** A command's delivery state; null once a failed command was removed. */
+export function commandState(id: string): CommandState | null {
+  return getDb().query<{ state: CommandState }, [string]>("SELECT state FROM node_command_outbox WHERE id = ?").get(id)?.state ?? null;
+}

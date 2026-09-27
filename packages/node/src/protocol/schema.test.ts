@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { helloParams, readyResult, provisionParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, MAX_ATTACHMENT_BYTES, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods } from "./schema.js";
+import { helloParams, readyResult, provisionParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, MAX_ATTACHMENT_BYTES, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods, capability, sessionInputParams, sessionSetModelParams, sessionControlParams, MAX_PROMPT_BLOCKS, MAX_PROMPT_TEXT } from "./schema.js";
 
 test("version ranges and capabilities are validated at the wire boundary", () => {
   expect(helloParams.safeParse({ minVersion: 3, maxVersion: 1, instanceId: "n", capabilities: ["session.status"] }).success).toBe(false);
@@ -18,6 +18,37 @@ test("provision only accepts a scoped binding, stable command ID and the session
   expect(provisionParams.safeParse({ epoch: provision.epoch, sessionId: "s", commandId: "c", binding }).success).toBe(false);
   expect(provisionParams.safeParse({ ...provision, configuration: { ...configuration, task: { ...configuration.task, projectId: 2 } } }).success).toBe(false);
   expect(Object.values(methods)).not.toContain("session.configuration");
+});
+
+test("every session command is a negotiated capability; inputs carry text and bounded image references only", () => {
+  for (const method of [methods.sessionPrompt, methods.sessionSteer, methods.sessionAbort, methods.sessionResumePending, methods.sessionSetModel]) {
+    expect(capability.safeParse(method).success).toBe(true);
+  }
+  expect(capability.safeParse(methods.sessionCommitted).success).toBe(false);
+  const binding = { sourceId: 1, cwd: "/tmp", createdAt: "now", parentSessionId: null };
+  const image = { type: "image", attachmentId: "att_1", mimeType: "image/png", byteSize: 3, sha256: "a".repeat(64), width: 2, height: 1 };
+  const input = { epoch: crypto.randomUUID(), sessionId: "s", commandId: "c", binding, clientId: "client", content: [{ type: "text", text: "hi" }, image], sourceSessionId: null };
+  const valid = (value: unknown) => sessionInputParams.safeParse(value).success;
+  expect(valid(input)).toBe(true);
+  expect(valid({ ...input, sourceSessionId: "parent" })).toBe(true);
+  expect(valid({ ...input, commandId: undefined })).toBe(false);
+  // Inline bytes, other block types, unsupported MIME types, unpaired dimensions and oversize claims are rejected.
+  expect(valid({ ...input, content: [{ ...image, data: "AAAA" }] })).toBe(false);
+  expect(valid({ ...input, content: [{ type: "image", data: "AAAA", mimeType: "image/png" }] })).toBe(false);
+  expect(valid({ ...input, content: [{ type: "toolCall", id: "t", name: "bash", arguments: {} }] })).toBe(false);
+  expect(valid({ ...input, content: [{ ...image, mimeType: "image/tiff" }] })).toBe(false);
+  expect(valid({ ...input, content: [{ ...image, height: undefined }] })).toBe(false);
+  expect(valid({ ...input, content: [{ ...image, byteSize: MAX_ATTACHMENT_BYTES + 1 }] })).toBe(false);
+  expect(valid({ ...input, content: Array.from({ length: MAX_PROMPT_BLOCKS + 1 }, () => ({ type: "text", text: "x" })) })).toBe(false);
+  expect(valid({ ...input, content: [{ type: "text", text: "x".repeat(MAX_PROMPT_TEXT + 1) }] })).toBe(false);
+  expect(valid({ ...input, projectId: 1 })).toBe(false);
+  const setModel = { epoch: input.epoch, sessionId: "s", commandId: "c", binding, provider: "p", modelId: "m" };
+  expect(sessionSetModelParams.safeParse(setModel).success).toBe(true);
+  expect(sessionSetModelParams.safeParse({ ...setModel, thinkingLevel: "high" }).success).toBe(true);
+  expect(sessionSetModelParams.safeParse({ ...setModel, commandId: undefined }).success).toBe(false);
+  // Immediate controls carry no command ID: they are never queued or replayed.
+  expect(sessionControlParams.safeParse({ epoch: input.epoch, sessionId: "s", binding }).success).toBe(true);
+  expect(sessionControlParams.safeParse({ epoch: input.epoch, sessionId: "s", binding, commandId: "c" }).success).toBe(false);
 });
 
 test("run lifecycle is a durable report, not a session event", () => {

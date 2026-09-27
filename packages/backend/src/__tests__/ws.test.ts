@@ -8,6 +8,9 @@ import { storeSessionAttachment } from "../session-attachments-store.js";
 import { createRuntimeStub } from "./helpers/test-runtime-stub.js";
 import { getDb } from "../db.js";
 import type { ServerState } from "../state.js";
+import type { NodeCommand, NodeResult } from "@reins/node/contract";
+import { registerExecutionTargets, type SessionExecutionTarget } from "../runtimes/execution-target.js";
+import { createProvisionedNodeSession } from "./helpers/node-session.js";
 
 /**
  * Minimal mock WebSocket that captures sent messages.
@@ -161,6 +164,33 @@ describe("WebSocket handlers", () => {
         sessionId: "nonexistent-session",
         error: "Session not active",
       });
+    });
+  });
+
+  describe("handleWsMessage — abort for node-owned sessions", () => {
+    useTestDb();
+
+    test("forwards abort without a live runtime lookup and acknowledges", async () => {
+      const project = createProject("Node abort", "/tmp/node-abort");
+      createProvisionedNodeSession("node-session", project.id);
+      const sent: NodeCommand[] = [];
+      const target: SessionExecutionTarget = {
+        async send(command): Promise<NodeResult> {
+          sent.push(command);
+          // The node answers `aborted: false` when no run is live.
+          return { ok: true, value: { kind: "aborted", aborted: false } };
+        },
+      };
+      registerExecutionTargets(state, { "internal-node": target, server: target });
+      const mock = createMockWs();
+      handleWsOpen(state, mock.ws);
+
+      handleWsMessage(state, mock.ws, JSON.stringify({ type: "abort", sessionId: "node-session" }));
+      for (let i = 0; i < 100 && sent.length === 0; i++) await Bun.sleep(5);
+
+      expect(state.sessions.has("node-session")).toBe(false);
+      expect(sent).toEqual([{ op: "session.abort", sessionId: "node-session" }]);
+      expect(mock.allMessages()).toEqual([{ type: "ack", command: "abort" }]);
     });
   });
 

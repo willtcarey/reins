@@ -1,6 +1,6 @@
 import { test, expect, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
-import { startNode } from "@reins/node/node";
+import { nodeRuntimesForTesting, startNode } from "@reins/node/node";
 import { connectNode } from "@reins/node/node-connection";
 import { createLoopbackPair, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES } from "@reins/node/protocol";
 import { createServerTransport } from "../../node-transport/server-peer.js";
@@ -120,7 +120,7 @@ test("node session events reach browsers and durable lifecycle reports drive act
     await node.send({ op: "session.provision", sessionId: "child", sourceId: source.id,
       configuration: { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null } }, binding);
     await node.send({ op: "session.prompt", sessionId: "child", clientId: "c", content: [{ type: "text", text: "Go" }] }, binding);
-    await (await node.open("child", binding)).waitForIdle();
+    await (await nodeRuntimesForTesting(node).open("child", binding)).waitForIdle();
     for (let i = 0; i < 200 && parent.steerCalls.length === 0; i++) await Bun.sleep(5);
 
     expect(parent.steerCalls).toEqual([[{ type: "text", text: "Child answer" }]]);
@@ -133,7 +133,7 @@ test("node session events reach browsers and durable lifecycle reports drive act
     expect(db.query("SELECT kind FROM node_lifecycle_receipts WHERE session_id = 'child' ORDER BY kind").all()).toEqual([{ kind: "settled" }, { kind: "started" }]);
     expect(nodeDb.query("SELECT COUNT(*) n FROM session_outbox").get()).toEqual({ n: 0 });
     expect(parent.steerCalls).toHaveLength(1);
-    await node.close("child");
+    await nodeRuntimesForTesting(node).close("child");
   } finally {
     dispatcherFor(state).stop(); stopInternalNode(state); unregisterPiProvider(provider.provider.id); setNodeDb(); nodeDb.close();
     setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true });
@@ -169,7 +169,7 @@ test("tool-result images are committed and reach browsers over the internal link
     await node.send({ op: "session.provision", sessionId: "owned", sourceId: source.id,
       configuration: { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null } }, binding);
     await node.send({ op: "session.prompt", sessionId: "owned", clientId: "c", content: [{ type: "text", text: "Read it" }] }, binding);
-    await (await node.open("owned", binding)).waitForIdle();
+    await (await nodeRuntimesForTesting(node).open("owned", binding)).waitForIdle();
     for (let i = 0; i < 200 && !sent.some(message => message.event?.type === "agent_end"); i++) await Bun.sleep(5);
     for (let i = 0; i < 100 && nodeDb.query("SELECT 1 FROM session_outbox").get(); i++) await Bun.sleep(5);
 
@@ -193,7 +193,7 @@ test("tool-result images are committed and reach browsers over the internal link
     const transcript = JSON.stringify(db.query("SELECT message_json FROM session_messages WHERE session_id = 'owned'").all());
     expect(transcript).toContain(rows[0]!.id);
     expect(transcript).not.toContain(rows[0]!.data.toString("base64"));
-    await node.close("owned");
+    await nodeRuntimesForTesting(node).close("owned");
   } finally {
     warn.mockRestore(); stopInternalNode(state); unregisterPiProvider(provider.provider.id); setNodeDb(); nodeDb.close();
     setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true });
