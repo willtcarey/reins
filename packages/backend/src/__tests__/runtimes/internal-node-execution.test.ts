@@ -21,6 +21,8 @@ import { NODE_COMMAND_TIMEOUTS } from "../../node-transport/commands.js";
 import { registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/factory.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { createServerState } from "../helpers/server-state.js";
+import { Sessions } from "../../models/sessions.js";
+import { executeSessionCommand } from "../../runtimes/node-execution.js";
 
 /** A node-owned session on the internal link, with a faux model whose replies the test scripts. */
 function nodeSession(name: string, responses: FauxResponseStep[] = []) {
@@ -92,6 +94,22 @@ test("prompt with an image reference, steer, setModel, abort and resumePending c
     expect(getSession("s")?.storage_owner).toBe("internal-node");
     expect(db.query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
   } finally { send.mockRestore(); dispose(); }
+}, 15_000);
+
+test("a session whose admitted provision was stored in an older format still opens and runs its input", async () => {
+  const { db, state, target, provision, untilSettled, replies, dispose } = nodeSession("legacy-provision", [fauxAssistantMessage("Hello")]);
+  try {
+    expect(await target.send(provision, "provision")).toEqual({ ok: true, value: { kind: "provisioned" } });
+    // The server's record of that admitted provision predates the configuration payload.
+    db.query(`INSERT INTO node_command_outbox (id, session_id, command_json, state, result_json)
+      VALUES ('old', 's', '{"op":"session.provision"}', 'admitted', '{"ok":true,"value":{"kind":"provisioned"}}')`).run();
+    expect(getWork("old")).toMatchObject({ state: "admitted", command: null });
+    expect(new Sessions(state.sessions).get("s")?.scheduling).toEqual({ state: "admitted", available: true, error: null });
+    await executeSessionCommand(state, "s", "prompt", text("Hi"), "c1");
+    await untilSettled(1);
+    expect(replies()).toBe(1);
+    expect(db.query("SELECT state FROM node_command_outbox WHERE id != 'old'").all()).toEqual([{ state: "admitted" }]);
+  } finally { dispose(); }
 }, 15_000);
 
 test("abort of a running node run crosses the link and stops it", async () => {

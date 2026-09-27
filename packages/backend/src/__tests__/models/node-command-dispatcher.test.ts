@@ -233,20 +233,21 @@ test("a removed failed provision never looks like a successful node open", async
   } finally { setDb(new Database(":memory:")); db.close(); }
 });
 
-test("a stored command that no longer parses reads as failed and is never delivered", async () => {
+test("a queued command that no longer parses fails cleanly and is never delivered", async () => {
   const { db, project, source } = setup();
   try {
-    createSession("admitted", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
     createSession("queued", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
-    // Provisions stored before the command carried its configuration.
-    db.query(`INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES
-      ('old-admitted', 'admitted', '{"op":"session.provision"}', 'admitted'), ('old-queued', 'queued', '{"op":"session.provision"}', 'queued')`).run();
+    db.query(`INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES ('old-queued', 'queued', '{"op":"session.provision"}', 'queued')`).run();
     const state = createServerState();
     const sessions = new Sessions(state.sessions);
-    expect(sessions.get("admitted")?.scheduling).toMatchObject({ state: "failed", error: "Stored node command is invalid" });
-    await expect(waitForAdmission(state, "admitted")).rejects.toThrow("Session open failed: Stored node command is invalid");
+    expect(sessions.get("queued")?.scheduling).toMatchObject({ state: "failed", error: "Stored node command is invalid" });
+    await expect(waitForAdmission(state, "queued")).rejects.toThrow("Session open failed: Stored node command is invalid");
+    const sent: string[] = [];
+    const target: SessionExecutionTarget = { send: async (command, id) => { sent.push(id!); return resultFor(command, id!); } };
+    registerExecutionTargets(state, { "internal-node": target, server: target });
     const errors = spyOn(console, "error").mockImplementation(() => {});
     try { await new NodeCommandDispatcher(state).drain(); } finally { errors.mockRestore(); }
+    expect(sent).toEqual([]);
     expect(getWork("old-queued")).toBeNull();
     expect(sessions.get("queued")?.scheduling).toMatchObject({ state: "failed", error: "Session open failed" });
   } finally { setDb(new Database(":memory:")); db.close(); }
