@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { fauxProvider, type Credential, type Provider } from "@earendil-works/pi-ai";
-import { createRemoteCredentialStore, CREDENTIAL_CACHE_TTL_MS, NO_SERVER_MESSAGE, OAUTH_MIN_VALIDITY_MS, type CredentialServer } from "./credentials.js";
+import { createRemoteCredentialStore, NO_SERVER_MESSAGE, OAUTH_MIN_VALIDITY_MS, type CredentialServer } from "./credentials.js";
 import { createPiModelRuntime, registerPiProvider, unregisterPiProvider } from "./runtime/context.js";
 import type { NodeCredential } from "./protocol/schema.js";
 
@@ -23,7 +23,7 @@ function fakeServer(initial: Record<string, NodeCredential>) {
   return server;
 }
 
-test("reads cache per provider in memory until the TTL or an invalidation, and fail clearly with no connection", async () => {
+test("reads cache per provider in memory for the life of the connection, re-read on invalidation, and fail clearly with no connection", async () => {
   let time = 1_000;
   const server = fakeServer({ keyed: { type: "api_key", key: "sk-one", env: { REGION: "eu" } } });
   let connected: CredentialServer | undefined = server;
@@ -37,35 +37,47 @@ test("reads cache per provider in memory until the TTL or an invalidation, and f
   expect(await store.read("missing")).toBeUndefined();
   expect(server.calls).toEqual(["get:keyed", "get:missing", "get:missing"]);
 
-  // A server-side change is picked up after the TTL...
+  // An API key is not re-read on a timer: a server-side change is not seen on the same connection...
   server.stored.set("keyed", { type: "api_key", key: "sk-two" });
-  time += CREDENTIAL_CACHE_TTL_MS - 1;
+  time += 24 * 60 * 60_000;
   expect(await store.read("keyed")).toMatchObject({ key: "sk-one" });
-  time += 1;
+  expect(server.calls).toEqual(["get:keyed", "get:missing", "get:missing"]);
+  // ...until an invalidation (the node invalidates when a connection attaches).
+  store.invalidate();
   expect(await store.read("keyed")).toMatchObject({ key: "sk-two" });
-  // ...or at once after an invalidation (the node invalidates on every attach and detach).
+
+  // Detached: cached credentials keep serving; anything needing the server fails clearly.
+  connected = undefined;
+  expect(await store.read("keyed")).toMatchObject({ key: "sk-two" });
+  await expect(store.read("missing")).rejects.toThrow(NO_SERVER_MESSAGE);
+  await expect(store.list()).rejects.toThrow(NO_SERVER_MESSAGE);
+  await expect(store.modify("keyed", async () => undefined)).rejects.toThrow(NO_SERVER_MESSAGE);
+
+  connected = server;
   server.stored.delete("keyed");
   store.invalidate();
   expect(await store.read("keyed")).toBeUndefined();
-
   expect(await store.list()).toEqual([]);
-  connected = undefined;
-  store.invalidate();
-  await expect(store.read("keyed")).rejects.toThrow(NO_SERVER_MESSAGE);
-  await expect(store.list()).rejects.toThrow(NO_SERVER_MESSAGE);
-  await expect(store.modify("keyed", async () => undefined)).rejects.toThrow(NO_SERVER_MESSAGE);
 });
 
-test("an OAuth token inside Pi's refresh window is not served from the cache", async () => {
+test("an OAuth token is cached until it enters Pi's refresh window, then re-read, and needs the server to refresh", async () => {
   let time = 0;
-  const server = fakeServer({ login: { type: "oauth", access: "a1", expires: OAUTH_MIN_VALIDITY_MS + 60_000 } });
-  const store = createRemoteCredentialStore(() => server, () => time);
-  expect(await store.read("login")).toEqual({ type: "oauth", access: "a1", expires: OAUTH_MIN_VALIDITY_MS + 60_000, refresh: "" });
+  const expires = OAUTH_MIN_VALIDITY_MS + 60_000;
+  const server = fakeServer({ login: { type: "oauth", access: "a1", expires } });
+  let connected: CredentialServer | undefined = server;
+  const store = createRemoteCredentialStore(() => connected, () => time);
+  expect(await store.read("login")).toEqual({ type: "oauth", access: "a1", expires, refresh: "" });
+  time = 59_999;
   await store.read("login");
   expect(server.calls).toEqual(["get:login"]);
   time = 60_000;
   await store.read("login");
   expect(server.calls).toEqual(["get:login", "get:login"]);
+
+  // Detached with the token inside the window: not served from the cache, and no refresh is possible.
+  connected = undefined;
+  await expect(store.read("login")).rejects.toThrow(NO_SERVER_MESSAGE);
+  await expect(store.modify("login", async () => undefined)).rejects.toThrow(NO_SERVER_MESSAGE);
 });
 
 test("modify asks the server to refresh once for concurrent callers, never runs a refresh on the node, and rejects logins and logouts", async () => {

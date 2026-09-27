@@ -225,11 +225,12 @@ export function startNode(): Node {
     attach(connection: NodeServer): () => void {
       servers.push(connection);
       // A new connection may be a different server view (logout, rotated key): re-read credentials.
+      // Not on detach: a run keeps its cached credentials through a dropped link.
       credentials.invalidate();
       for (const sessionId of pendingOutboxSessions(db)) drain(sessionId);
       return () => {
         const index = servers.indexOf(connection);
-        if (index >= 0) { servers.splice(index, 1); credentials.invalidate(); }
+        if (index >= 0) servers.splice(index, 1);
       };
     },
     async send(input: NodeCommand, binding: NodeSessionBinding, commandId?: string): Promise<NodeResult> {

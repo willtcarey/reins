@@ -8,17 +8,15 @@ export interface CredentialServer {
   listCredentials(signal?: AbortSignal): Promise<CredentialInfo[]>;
 }
 
-/** A cached credential is re-read from the server after this, so a server-side logout or key change
- * reaches a long-lived connection within this bound. */
-export const CREDENTIAL_CACHE_TTL_MS = 30_000;
-/** Pi refreshes an OAuth token with less than this validity left (`DEFAULT_OAUTH_MINIMUM_VALIDITY_MS`
- * in pi-ai's `resolveStoredOAuth`); such a token is not served from the cache. */
+/** Mirrors pi-ai's `DEFAULT_OAUTH_MINIMUM_VALIDITY_MS` (not exported; `auth/resolve.ts`): Pi refreshes
+ * an OAuth token with less than this validity left in `resolveStoredOAuth`, so such a token is not
+ * served from the cache. Keep in step with pi-ai. */
 export const OAUTH_MIN_VALIDITY_MS = 5 * 60_000;
 export const NO_SERVER_MESSAGE = "Credentials unavailable: no Reins server connection";
 const MANAGED_BY_SERVER = "Credentials are managed by the Reins server";
 
 export interface RemoteCredentialStore extends CredentialStore {
-  /** Drops every cached credential (called when a connection attaches or detaches). */
+  /** Drops every cached credential (called when a connection attaches, so a reconnect re-reads). */
   invalidate(): void;
 }
 
@@ -26,22 +24,20 @@ export interface RemoteCredentialStore extends CredentialStore {
  * Pi's `CredentialStore` over the server connection. The server is the sole credential holder and
  * the sole OAuth refresher: an OAuth credential here has no refresh token (`refresh` is empty), so
  * `modify` never runs Pi's refresh on the node; it asks the server with `credentials.refresh`.
- * Credentials are cached in memory only (never in node storage), per provider, until the TTL, until
- * an OAuth token enters Pi's refresh window, or until `invalidate()`.
+ * Credentials are cached in memory only (never in node storage), per provider, until they are no
+ * longer usable as-is (an OAuth token entering Pi's refresh window) or until `invalidate()`; there is
+ * no TTL, so a server-side logout or key change reaches the node on its next attach. The cache
+ * survives a detach: a cached credential keeps serving while no connection is attached.
  */
 export function createRemoteCredentialStore(server: () => CredentialServer | undefined, now: () => number = Date.now): RemoteCredentialStore {
   let generation = 0;
-  const cache = new Map<string, { credential: Credential; at: number }>();
+  const cache = new Map<string, Credential>();
   const reads = new Map<string, Promise<Credential | undefined>>();
   const refreshes = new Map<string, Promise<Credential | undefined>>();
   const fresh = (providerId: string) => {
-    const entry = cache.get(providerId);
-    if (!entry) return undefined;
-    const time = now();
-    const expired = time - entry.at >= CREDENTIAL_CACHE_TTL_MS
-      || (entry.credential.type === "oauth" && time + OAUTH_MIN_VALIDITY_MS >= entry.credential.expires);
-    if (expired) { cache.delete(providerId); return undefined; }
-    return entry.credential;
+    const credential = cache.get(providerId);
+    if (credential?.type === "oauth" && now() + OAUTH_MIN_VALIDITY_MS >= credential.expires) { cache.delete(providerId); return undefined; }
+    return credential;
   };
   const connection = () => {
     const current = server();
@@ -58,7 +54,7 @@ export function createRemoteCredentialStore(server: () => CredentialServer | und
       const credential = fromWire(await call(connection()));
       // A result that raced an invalidation belongs to the previous connection: not cached.
       if (started === generation) {
-        if (credential) cache.set(providerId, { credential, at: now() });
+        if (credential) cache.set(providerId, credential);
         else cache.delete(providerId);
       }
       return credential;

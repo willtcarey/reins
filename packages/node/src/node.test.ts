@@ -271,6 +271,57 @@ test("node provisions an immutable binding, executes Pi and reopens from canonic
   } finally { unregisterPiProvider(provider.provider.id); setNodeDb(); db.close(); }
 });
 
+test("a detached node keeps serving cached credentials to runs and fails clearly on a credential it never read", async () => {
+  const db = new Database(":memory:");
+  setNodeDb(db);
+  const keys: Array<string | undefined> = [];
+  const reply: FauxResponseFactory = (_context, options) => { keys.push(options?.apiKey); return fauxAssistantMessage("ok"); };
+  const registered: string[] = [];
+  const register = (id: string) => {
+    const faux = fauxProvider({ provider: id, models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
+    faux.setResponses([reply, reply]);
+    // Requires a stored API key: no ambient fallback.
+    registerPiProvider({ ...faux.provider, auth: { apiKey: { name: "Test key",
+      resolve: async ({ credential }) => credential?.key ? { auth: { apiKey: credential.key } } : undefined } } });
+    registered.push(id);
+    return id;
+  };
+  const reads: string[] = [];
+  const node = startNode();
+  const binding = { sourceId: 7, cwd: "/tmp/reins-node-credentials", createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
+  const start = async (provider: string) => {
+    await node.send(provisionOf(provider, { model: { provider, modelId: "fake" }, thinkingLevel: null, task: null }), binding);
+  };
+  const prompt = async (sessionId: string, clientId: string) => {
+    await node.send({ op: "session.prompt", sessionId, clientId, content: [{ type: "text", text: "go" }] }, binding);
+    const runtime = await runtimes(node).open(sessionId, binding);
+    await runtime.waitForIdle();
+    return (await runtime.getMessages()).at(-1);
+  };
+  try {
+    const cached = register("node-cred-cached");
+    const detach = node.attach({ ...credentialsOnly, getCredential: async (providerId: string) => { reads.push(providerId); return { type: "api_key" as const, key: `sk-${providerId}` }; } });
+    await start(cached);
+    expect(await prompt(cached, "a")).toMatchObject({ role: "assistant", stopReason: "stop" });
+    expect(reads).toContain(cached);
+    const before = reads.length;
+    detach();
+    // The link dropped: the run keeps using the credential it already read, with no server call.
+    expect(await prompt(cached, "b")).toMatchObject({ role: "assistant", stopReason: "stop" });
+    expect(keys).toEqual([`sk-${cached}`, `sk-${cached}`]);
+    expect(reads.length).toBe(before);
+    // A credential never read cannot be fetched while detached.
+    const uncached = register("node-cred-uncached");
+    await start(uncached);
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    const failed = await prompt(uncached, "c").finally(() => errors.mockRestore());
+    expect(failed).toMatchObject({ role: "assistant", stopReason: "error" });
+    expect(JSON.stringify(failed)).toContain("Credentials unavailable: no Reins server connection");
+    expect(reads.length).toBe(before);
+    for (const sessionId of registered) await runtimes(node).close(sessionId);
+  } finally { node.stop(); for (const id of registered) unregisterPiProvider(id); setNodeDb(); db.close(); }
+});
+
 function childNode(db: Database, providerName: string, responses: string[]) {
   const provider = fauxProvider({ provider: providerName, models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
   provider.setResponses(responses.map(text => fauxAssistantMessage(text)));
