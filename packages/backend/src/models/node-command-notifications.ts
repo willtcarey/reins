@@ -42,6 +42,17 @@ export function onCommandDelivered(state: ServerState, row: InputRow): void {
       broadcast({ type: "error", sessionId: row.session_id, error: message });
     }
     if (session) broadcast({ type: "session_updated", sessionId: row.session_id, projectId: session.project_id });
+  } else if (payload.op === "session.hydrate" || payload.op === "session.release") {
+    // A move changes where the session lives: every viewer refreshes; a failure (the session stays
+    // where it was) is also reported to every viewer, as nobody in particular submitted it.
+    const session = getSession(row.session_id);
+    const broadcast = createBroadcast(state.clients);
+    if (outcome.state === "failed") {
+      const message = `Session move failed: ${failureMessage(outcome.result_json)}`;
+      logger.warn(`${message} (${row.session_id})`);
+      broadcast({ type: "error", sessionId: row.session_id, error: message });
+    }
+    if (session) broadcast({ type: "session_updated", sessionId: row.session_id, projectId: session.project_id });
   } else if (payload.op === "session.setModel" && outcome.state === "failed") {
     // No submitting client is registered for a model change: every client viewing the session sees the
     // error, and a refresh shows the row. The row keeps the requested model until the next settlement

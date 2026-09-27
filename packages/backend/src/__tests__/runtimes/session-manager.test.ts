@@ -36,11 +36,11 @@ import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { install } from "../../handler.js";
 import { NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
 import { enqueueInput, getCommand } from "../../node-command-store.js";
-import { observeSubmission } from "../../models/node-command-notifications.js";
 import { Sessions } from "../../models/sessions.js";
 import { registerPiProvider, unregisterPiProvider, createPiModelRuntime, createPiContext } from "../../runtimes/pi/factory.js";
 import { provisionForSession } from "../../runtimes/internal-node.js";
 import { internalNodeFor, stopInternalNode } from "../helpers/loopback-node.js";
+import { useFakeNode } from "../helpers/fake-node.js";
 
 function createCapturingWsClient() {
   const sent: any[] = [];
@@ -63,20 +63,11 @@ describe("runtime sessions manager", () => {
 
   test("child completion reports through native steering regardless of parent activity, not on open", async () => {
     const state = createServerState();
+    const node = useFakeNode(state);
     const project = createProject("Reports", repo.dir);
     createSession("parent", project.id, { agentRuntimeType: "pi" });
     createSession("child", project.id, { agentRuntimeType: "report-test", parentSessionId: "parent" });
-    const parent = createRuntimeStub();
-    const firstSteered = Promise.withResolvers<void>();
-    const secondSteered = Promise.withResolvers<void>();
-    const steer = parent.runtime.steer.bind(parent.runtime);
-    parent.runtime.steer = async (content) => {
-      await steer(content);
-      if (parent.steerCalls.length === 1) firstSteered.resolve();
-      if (parent.steerCalls.length === 2) secondSteered.resolve();
-    };
-    parent.runtime.isStreaming = () => { throw new Error("activity must not choose report delivery"); };
-    state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: Date.now() });
+    const steers = () => node.sent.flatMap(([command]) => command.op === "session.steer" && command.sessionId === "parent" ? [command] : []);
     const messages = [{ role: "assistant", content: [{ type: "text" as const, text: "First result" }], timestamp: 1 }];
     const child = createRuntimeStub({ messages });
     let lifecycle: RuntimeLifecycleSink | undefined;
@@ -90,20 +81,24 @@ describe("runtime sessions manager", () => {
       },
     });
     await ensureSessionOpen(state, "child");
-    expect(parent.steerCalls).toEqual([]);
+    await Bun.sleep(10);
+    expect(node.sent).toEqual([]);
     lifecycle!.settled(child.runtime, { runId: "run-1", status: "completed" });
-    await firstSteered.promise;
-    expect(parent.promptCalls).toEqual([]);
-    expect(parent.steerCalls).toHaveLength(1);
-    expect(JSON.stringify(parent.steerCalls)).toContain("First result");
+    for (let i = 0; i < 100 && steers().length < 1; i++) await Bun.sleep(5);
+    expect(node.sent.some(([command]) => command.op === "session.prompt")).toBe(false);
+    expect(steers()).toHaveLength(1);
+    expect(JSON.stringify(steers())).toContain("First result");
     messages.push({ role: "assistant", content: [{ type: "text", text: "Follow-up result" }], timestamp: 2 });
     lifecycle!.settled(child.runtime, { runId: "run-2", status: "completed" });
-    await secondSteered.promise;
-    expect(parent.steerCalls).toHaveLength(2);
-    expect(JSON.stringify(parent.steerCalls)).toContain("Follow-up result");
+    for (let i = 0; i < 100 && steers().length < 2; i++) await Bun.sleep(5);
+    expect(steers()).toHaveLength(2);
+    expect(JSON.stringify(steers()[1])).toContain("Follow-up result");
   });
 
-  test("automatic child settlement retains its source in canonical parent history after reopening", async () => {
+  test("automatic child settlement moves a parent at rest onto its node and retains its source in canonical parent history", async () => {
+    const nodeDb = new Database(":memory:");
+    initializeNodeStorage(nodeDb);
+    setNodeDb(nodeDb);
     const state = createServerState();
     const project = createProject("Canonical reports", repo.dir);
     const provider = fauxProvider({
@@ -115,6 +110,7 @@ describe("runtime sessions manager", () => {
       return fauxAssistantMessage("Report received");
     }]);
     registerPiProvider(provider.provider);
+    setApiKeyCredential(provider.provider.id, "test-key");
 
     const child = createRuntimeStub({
       messages: [{ role: "assistant", content: [{ type: "text", text: "Canonical result" }], timestamp: 1 }],
@@ -141,18 +137,17 @@ describe("runtime sessions manager", () => {
 
     try {
       await ensureSessionOpen(state, "child");
-      expect(state.sessions.has("parent")).toBe(false);
-
       lifecycle!.settled(child.runtime, { runId: "settled-run", status: "completed" });
       await parentResponded.promise;
-      const parent = state.sessions.get("parent");
-      if (!parent) throw new Error("Expected the settlement report to reopen the parent");
-      await parent.runtime.waitForIdle();
-
-      const stored = getDb().query<{ message_json: string }, [string]>(
+      // The parent never opened on the server: it was hydrated onto the node, whose Pi lane was seeded
+      // from the row's model, and the report was admitted there and replicated back.
+      expect(state.sessions.has("parent")).toBe(false);
+      expect(getSession("parent")?.storage_owner).toBe("internal-node");
+      const stored = () => getDb().query<{ message_json: string }, [string]>(
         "SELECT message_json FROM session_messages WHERE session_id = ? AND role = 'reinsInput'",
       ).get("parent");
-      expect(JSON.parse(stored!.message_json).message).toMatchObject({
+      for (let i = 0; i < 200 && !stored(); i++) await Bun.sleep(5);
+      expect(JSON.parse(stored()!.message_json).message).toMatchObject({
         role: "reinsInput",
         content: [{ type: "text", text: "Canonical result" }],
         metadata: { sourceSessionId: "child" },
@@ -163,9 +158,11 @@ describe("runtime sessions manager", () => {
         metadata: { sourceSessionId: "child" },
       });
     } finally {
-      await state.sessions.get("parent")?.runtime.close();
       await state.sessions.get("child")?.runtime.close();
+      stopInternalNode(state);
       unregisterPiProvider(provider.provider.id);
+      setNodeDb();
+      nodeDb.close();
     }
   }, 15_000);
 
@@ -259,34 +256,47 @@ describe("runtime sessions manager", () => {
     }
   }, 15_000);
 
-  test("lost node storage rejects a resumed prompt and notifies its submitting client", async () => {
+  test("lost node storage: the node answers not_found, the server re-hydrates the session from its replica and the prompt runs", async () => {
     const firstDb = new Database(":memory:");
     initializeNodeStorage(firstDb);
     setNodeDb(firstDb);
+    const provider = fauxProvider({ provider: "lost-storage-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
+    provider.setResponses([fauxAssistantMessage("Before the loss"), fauxAssistantMessage("After re-hydration")]);
+    registerPiProvider(provider.provider);
+    setApiKeyCredential(provider.provider.id, "test-key");
     const state = createServerState();
     const dispatcher = new NodeCommandDispatcher(state);
+    const settled = (sessionId: string) => getDb().query<{ n: number }, [string]>("SELECT COUNT(*) n FROM node_lifecycle_receipts WHERE session_id = ? AND kind = 'settled'").get(sessionId)!.n;
     try {
       const project = createProject("Lost node storage", repo.dir);
-      const created = createNewSession(state, project.id, repo.dir);
+      const created = createNewSession(state, project.id, repo.dir, { model: { provider: provider.provider.id, modelId: "fake" } });
+      enqueueInput(created.id, "prompt", [{ type: "text", text: "First" }], "first-input");
       await dispatcher.drain();
-      expect(getSession(created.id)?.storage_owner).toBe("internal-node");
-      expect(firstDb.query("SELECT id FROM sessions WHERE id = ?").get(created.id)).toEqual({ id: created.id });
+      for (let i = 0; i < 200 && settled(created.id) < 1; i++) await Bun.sleep(5);
+      for (let i = 0; i < 200 && firstDb.query("SELECT 1 FROM session_outbox").get(); i++) await Bun.sleep(5);
+      const before = getDb().query<{ harness_next_seq: number }, [string]>("SELECT harness_next_seq FROM sessions WHERE id = ?").get(created.id)!.harness_next_seq;
       stopInternalNode(state);
       closeNodeDb();
       const replacement = new Database(":memory:");
       initializeNodeStorage(replacement);
       setNodeDb(replacement);
-      const client = createCapturingWsClient();
-      state.clients.add(client.client);
-      observeSubmission(state, created.id, "lost-input", client.client);
       const commandId = enqueueInput(created.id, "prompt", [{ type: "text", text: "Can we continue?" }], "lost-input");
       await dispatcher.drain();
-      expect(getCommand(commandId)).toBeNull();
-      expect(client.sent).toContainEqual({ type: "error", sessionId: created.id, clientId: "lost-input",
-        error: "prompt failed: This session's node data is missing. Start a new session." });
-      expect(replacement.query("SELECT id FROM sessions WHERE id = ?").get(created.id)).toBeNull();
-    } finally { stopInternalNode(state); closeNodeDb(); }
-  });
+      expect(getCommand(commandId)?.state).toBe("admitted");
+      // The replacement node holds the server's copy again and continues from its sequence.
+      expect(replacement.query<{ harness_next_seq: number }, [string]>("SELECT harness_next_seq FROM sessions WHERE id = ?").get(created.id)?.harness_next_seq)
+        .toBeGreaterThanOrEqual(before);
+      for (let i = 0; i < 200 && settled(created.id) < 2; i++) await Bun.sleep(5);
+      for (let i = 0; i < 200 && replacement.query("SELECT 1 FROM session_outbox").get(); i++) await Bun.sleep(5);
+      expect(loadMessages(created.id).map(message => [message.role, JSON.stringify(message.content)])).toEqual([
+        ["user", JSON.stringify([{ type: "text", text: "First" }])],
+        ["assistant", JSON.stringify([{ type: "text", text: "Before the loss" }])],
+        ["user", JSON.stringify([{ type: "text", text: "Can we continue?" }])],
+        ["assistant", JSON.stringify([{ type: "text", text: "After re-hydration" }])],
+      ]);
+      expect(getSession(created.id)?.storage_owner).toBe("internal-node");
+    } finally { stopInternalNode(state); closeNodeDb(); unregisterPiProvider(provider.provider.id); }
+  }, 15_000);
 
   test("node-owned prompts retain attachment references and hydrate image bytes for Pi", async () => {
     const nodeDb = new Database(":memory:");

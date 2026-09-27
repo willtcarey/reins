@@ -4,6 +4,7 @@
 
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
+import { getDb } from "../../db.js";
 import { createServerState } from "../helpers/server-state.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 import { createProject, type Project } from "../../project-store.js";
@@ -12,6 +13,10 @@ import { SESSION_FUNCTIONS, sessionsSetModelFunction } from "../../scripting/ses
 import type { ApiContext } from "../../scripting/define-function.js";
 import type { ServerMessage } from "../../models/broadcast.js";
 import type { ManagedSession } from "../../state.js";
+
+/** Commands queued for the node, oldest first. */
+const queued = (sessionId: string) => getDb().query<{ command_json: string }, [string]>(
+  "SELECT command_json FROM node_command_outbox WHERE session_id = ? AND state = 'queued' ORDER BY rowid").all(sessionId).map(row => JSON.parse(row.command_json));
 
 async function createMockManagedSession(sessionId: string): Promise<ManagedSession> {
   const managed = await createTestManagedSession(sessionId);
@@ -74,10 +79,8 @@ describe("sessions.setModel", () => {
     expect(result.model_id).toBe("claude-sonnet-4-5");
   });
 
-  test("calls pi SDK setModel", async () => {
+  test("queues the model change for the node, after moving a session at rest onto it", async () => {
     createSession("sess-2", project.id, { agentRuntimeType: "pi" });
-    const managed = await createMockManagedSession("sess-2");
-    sessions.set("sess-2", managed);
 
     const ctx = makeCtx();
     await sessionsSetModelFunction.execute(
@@ -85,17 +88,14 @@ describe("sessions.setModel", () => {
       ctx,
     );
 
-    expect(managed.runtime.setModel).toHaveBeenCalledWith({
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
-      thinkingLevel: null,
-    });
+    expect(queued("sess-2")).toEqual([
+      { op: "session.hydrate", targetSourceId: expect.any(Number) },
+      { op: "session.setModel", provider: "anthropic", modelId: "claude-sonnet-4-5" },
+    ]);
   });
 
   test("sets thinking level when provided", async () => {
     createSession("sess-3", project.id, { agentRuntimeType: "pi" });
-    const managed = await createMockManagedSession("sess-3");
-    sessions.set("sess-3", managed);
 
     const ctx = makeCtx();
     await sessionsSetModelFunction.execute(
@@ -103,11 +103,7 @@ describe("sessions.setModel", () => {
       ctx,
     );
 
-    expect(managed.runtime.setModel).toHaveBeenCalledWith({
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
-      thinkingLevel: "high",
-    });
+    expect(queued("sess-3").at(-1)).toEqual({ op: "session.setModel", provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "high" });
 
     const updated = getSession("sess-3");
     expect(updated!.thinking_level).toBe("high");
@@ -115,8 +111,6 @@ describe("sessions.setModel", () => {
 
   test("thinkingLevel is optional — uses session's current level", async () => {
     createSession("sess-4", project.id, {  agentRuntimeType: "pi",thinkingLevel: "medium" });
-    const managed = await createMockManagedSession("sess-4");
-    sessions.set("sess-4", managed);
 
     const ctx = makeCtx();
     await sessionsSetModelFunction.execute(
@@ -124,12 +118,8 @@ describe("sessions.setModel", () => {
       ctx,
     );
 
-    // setThinkingLevel should NOT be called since no level was provided
-    expect(managed.runtime.setModel).toHaveBeenCalledWith({
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
-      thinkingLevel: null,
-    });
+    // No level in the command: the node keeps Pi's current level.
+    expect(queued("sess-4").at(-1)).toEqual({ op: "session.setModel", provider: "anthropic", modelId: "claude-sonnet-4-5" });
 
     // DB should keep the session's current thinking level
     const updated = getSession("sess-4");

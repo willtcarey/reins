@@ -12,6 +12,7 @@ export const methods = {
   nodeHello: "node.hello", nodePing: HEARTBEAT_METHOD, sessionProvision: "session.provision", sessionStatus: "session.status",
   sessionPrompt: "session.prompt", sessionSteer: "session.steer", sessionSetModel: "session.setModel",
   sessionAbort: "session.abort", sessionResumePending: "session.resumePending",
+  sessionHydrate: "session.hydrate", sessionRelease: "session.release", sessionSnapshot: "session.snapshot",
   sessionCommitted: "session.committed", sessionStarted: "session.started", sessionSettled: "session.settled",
   attachmentFetch: "attachment.fetch", attachmentStore: "attachment.store", sessionEvent: "session.event",
   scriptExecute: "script.execute", scriptSearch: "script.search", scriptCancel: "script.cancel",
@@ -20,7 +21,7 @@ export const methods = {
 } as const;
 /** Server→node methods are negotiated capabilities. */
 export const capability = z.enum([methods.sessionProvision, methods.sessionStatus, methods.sessionPrompt, methods.sessionSteer,
-  methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending]);
+  methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending, methods.sessionHydrate, methods.sessionRelease]);
 export type Capability = z.infer<typeof capability>;
 export const helloParams = z.strictObject({
   minVersion: z.number().int().positive(), maxVersion: z.number().int().positive(),
@@ -123,6 +124,40 @@ export const sessionSetModelResult = z.strictObject({ modelSet: z.literal(true) 
 export const sessionControlParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), binding });
 export const sessionAbortResult = z.strictObject({ aborted: z.boolean() });
 export const sessionResumeResult = z.strictObject({ started: z.boolean() });
+/** Session relocation (see node-contract.md *Session relocation*). A copy of a session is identified by
+ * its next harness seq, per-table row counts and a sha256 over every row in snapshot order. */
+export const snapshotSummary = z.strictObject({
+  harnessNextSeq: z.number().int().positive(),
+  rowCounts: z.strictObject({ entries: z.number().int().min(0), values: z.number().int().min(0), lists: z.number().int().min(0), usage: z.number().int().min(0) }),
+  digest: z.string().regex(/^[0-9a-f]{64}$/),
+});
+/** `session.hydrate`: the node pulls the server's copy (`session.snapshot`) and the attachments it
+ * references, writes it verbatim, checks it against `snapshot`, binds the session with `task`, then
+ * answers. Replays converge: a node already holding an identical copy answers at once, a different one
+ * is rejected. */
+export const sessionHydrateParams = z.strictObject({
+  ...sessionCommand, task: provisionConfiguration.shape.task, snapshot: snapshotSummary,
+});
+export const sessionHydrateResult = z.strictObject({ hydrated: z.literal(true) });
+/** `session.release`: the node delivers the session's outbox, confirms the server's copy matches its
+ * own, drops its local copy and answers with that copy's summary. */
+export const sessionReleaseParams = z.strictObject(sessionCommand);
+export const sessionReleaseResult = z.strictObject({ released: z.literal(true), snapshot: snapshotSummary });
+const snapshotText = z.string().max(64 * 1024 * 1024);
+export const snapshotRow = z.discriminatedUnion("table", [
+  z.strictObject({ table: z.literal("entry"), seq: z.number().int().min(0), harnessId: z.string().min(1), parentHarnessId: z.string().min(1).nullable(),
+    role: z.string().min(1), messageJson: snapshotText, createdAt: z.string().min(1) }),
+  z.strictObject({ table: z.literal("value"), seq: z.number().int().min(0), namespace: z.string(), key: z.string(), valueJson: snapshotText }),
+  z.strictObject({ table: z.literal("list"), seq: z.number().int().min(0), namespace: z.string(), key: z.string(), valueJson: snapshotText }),
+  z.strictObject({ table: z.literal("usage"), seq: z.number().int().min(0), id: z.string().min(1), entryId: z.string().nullable(), adjustment: z.number().int(),
+    usageJson: snapshotText, detailsJson: snapshotText.nullable() }),
+]);
+/** Node→server request: one page of the server's copy of a session from `fromSeq` (bounded rows and
+ * bytes, never splitting a seq; `nextSeq` null after the last page), with the copy's current summary. */
+export const sessionSnapshotParams = z.strictObject({ epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), fromSeq: z.number().int().min(0) });
+export const sessionSnapshotResult = z.strictObject({
+  summary: snapshotSummary, rows: z.array(snapshotRow), nextSeq: z.number().int().min(0).nullable(),
+});
 /** The reference that replaces the inline block in session events. */
 export const imageReference = z.strictObject({
   type: z.literal("image"), attachmentId: z.string().min(1).max(128), mimeType: z.string().min(1).max(128),
@@ -167,7 +202,7 @@ export const sessionEvent = z.custom<AgentRuntimeEvent<ImageReferenceBlock>>(val
 /** `session.event` is a live notification: best effort, never replayed. `seq` increases by one per
  * session event the node emits (dropped ones included), so a receiver can detect gaps. */
 export const sessionEventParams = z.strictObject({
-  epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), seq: z.number().int().positive(), event: sessionEvent,
+  epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), seq: z.number().int().min(0), event: sessionEvent,
 });
 /** Agent tool calls the server serves for the calling session (`sessionId`). The server derives the
  * project/task scope from its own session row and never accepts scope from the node; strict params
@@ -236,6 +271,10 @@ export type Provision = Omit<z.infer<typeof provisionParams>, "epoch">;
 export type SessionInput = Omit<z.infer<typeof sessionInputParams>, "epoch">;
 export type SessionSetModel = Omit<z.infer<typeof sessionSetModelParams>, "epoch">;
 export type SessionControl = Omit<z.infer<typeof sessionControlParams>, "epoch">;
+export type SessionHydrate = Omit<z.infer<typeof sessionHydrateParams>, "epoch">;
+export type SessionRelease = Omit<z.infer<typeof sessionReleaseParams>, "epoch">;
+export type SessionSnapshot = z.infer<typeof sessionSnapshotResult>;
+export type SnapshotSummary = z.infer<typeof snapshotSummary>;
 export type Ready = z.infer<typeof readyResult>;
 export type Hello = z.infer<typeof helloParams>;
 export type Status = z.infer<typeof statusResult>;

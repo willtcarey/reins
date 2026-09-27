@@ -8,7 +8,7 @@ import { Database } from "bun:sqlite";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
 import { createProject } from "../../project-store.js";
-import { internalSource } from "../../node-store.js";
+import { createSource, internalSource } from "../../node-store.js";
 import { createSession } from "../../session-store.js";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { nodeSessionTask, openNodeStorage, setNodeDb } from "@reins/node/storage";
@@ -28,10 +28,9 @@ import { registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/fact
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
 import { getSession } from "../../session-store.js";
-import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 import { dispatcherFor, NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
 
-test("internal node fetches attachments and reports commits over its link only for node-owned sessions", async () => {
+test("internal node fetches attachments only for sessions it owns or would host, and reports commits only for sessions it owns", async () => {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
   const nodeDb = new Database(":memory:");
@@ -60,8 +59,14 @@ test("internal node fetches attachments and reports commits over its link only f
     expect(nodeDb.query("SELECT data FROM node_attachments WHERE attachment_id = ?").get(owned.attachmentId))
       .toEqual({ data: Buffer.from([1, 2, 3]) });
 
-    expect(await prompt("legacy", [image("legacy")])).toMatchObject({ ok: false, error: {
-      code: "invalid_request", message: "Attachment fetch failed: Node session unavailable: legacy" } });
+    // A session another node owns is not readable by this one.
+    db.query("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')").run();
+    const remote = createSource(project.id, "remote", "/tmp/remote-a");
+    createSession("foreign", project.id, { agentRuntimeType: "pi", sourceId: remote.id, storageOwner: "internal-node" });
+    const foreignBinding = { sourceId: remote.id, cwd: "/tmp/remote-a", createdAt: getSession("foreign")!.created_at, parentSessionId: null };
+    await node.send({ op: "session.provision", sessionId: "foreign", sourceId: remote.id, configuration: { model: null, thinkingLevel: null, task: null } }, foreignBinding);
+    expect(await node.send({ op: "session.prompt", sessionId: "foreign", clientId: "input-foreign", content: [image("foreign")] }, foreignBinding))
+      .toMatchObject({ ok: false, error: { code: "invalid_request", message: "Attachment fetch failed: Node session unavailable: foreign" } });
 
     nodeDb.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('legacy','committed',1,'[]')").run();
     await node.send({ op: "session.provision", sessionId: "legacy", sourceId: source.id, configuration: { model: null, thinkingLevel: null, task: null } }, provisionForSession("legacy").binding);
@@ -102,19 +107,20 @@ test("node session events reach browsers and durable lifecycle reports drive act
   setNodeDb(nodeDb);
   const dir = mkdtempSync(join(tmpdir(), "reins-node-events-"));
   const provider = fauxProvider({ provider: "node-events-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
-  provider.setResponses([fauxAssistantMessage("Child answer")]);
+  provider.setResponses([fauxAssistantMessage("Child answer"), fauxAssistantMessage("Parent heard")]);
   registerPiProvider(provider.provider);
   setApiKeyCredential(provider.provider.id, "test-key");
   setSetting("default_model", { provider: provider.provider.id, modelId: "fake", runtimeType: "pi", thinkingLevel: "low" });
   const state = createServerState();
   const sent: Array<{ type: string; sessionId?: string; event?: { type: string } }> = [];
   state.clients.add({ ws: { send: data => { sent.push(JSON.parse(data)); return 0; } } });
-  const parent = createRuntimeStub();
+  // The parent is at rest on the server: the child's report moves it onto the node, where it is steered.
+  const parentInputs = () => db.query<{ message_json: string }, []>("SELECT message_json FROM session_messages WHERE session_id = 'parent' AND role = 'reinsInput'").all()
+    .map(row => JSON.parse(row.message_json).message);
   try {
     const project = createProject("Events", dir);
     const source = internalSource(project.id);
-    createSession("parent", project.id, { agentRuntimeType: "pi", sourceId: source.id });
-    state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: 0 });
+    createSession("parent", project.id, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: provider.provider.id, modelId: "fake" });
     createSession("child", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node", parentSessionId: "parent" });
     const node = internalNodeFor(state);
     const binding = provisionForSession("child").binding;
@@ -122,10 +128,10 @@ test("node session events reach browsers and durable lifecycle reports drive act
       configuration: { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null } }, binding);
     await node.send({ op: "session.prompt", sessionId: "child", clientId: "c", content: [{ type: "text", text: "Go" }] }, binding);
     await (await nodeRuntimesForTesting(node).open("child", binding)).waitForIdle();
-    for (let i = 0; i < 200 && parent.steerCalls.length === 0; i++) await Bun.sleep(5);
+    for (let i = 0; i < 400 && parentInputs().length === 0; i++) await Bun.sleep(5);
 
-    expect(parent.steerCalls).toEqual([[{ type: "text", text: "Child answer" }]]);
-    expect(parent.steerOptions).toEqual([{ reinsId: expect.any(String), metadata: { sourceSessionId: "child" } }]);
+    expect(parentInputs()).toEqual([expect.objectContaining({ content: [{ type: "text", text: "Child answer" }], reinsId: expect.any(String), metadata: { sourceSessionId: "child" } })]);
+    expect(getSession("parent")?.storage_owner).toBe("internal-node");
     expect(sent.some(message => message.type === "event" && message.sessionId === "child" && message.event?.type === "agent_end")).toBe(true);
     expect(sent.filter(message => message.type === "session_updated" && message.sessionId === "child").length).toBeGreaterThanOrEqual(1);
     for (let i = 0; i < 100 && getSession("child")?.activity_state !== null; i++) await Bun.sleep(5);
@@ -133,8 +139,10 @@ test("node session events reach browsers and durable lifecycle reports drive act
     for (let i = 0; i < 100 && db.query("SELECT 1 FROM node_command_outbox").get(); i++) await Bun.sleep(5);
     expect(db.query("SELECT kind FROM node_lifecycle_receipts WHERE session_id = 'child' ORDER BY kind").all()).toEqual([{ kind: "settled" }, { kind: "started" }]);
     expect(nodeDb.query("SELECT COUNT(*) n FROM session_outbox").get()).toEqual({ n: 0 });
-    expect(parent.steerCalls).toHaveLength(1);
+    expect(parentInputs()).toHaveLength(1);
     await nodeRuntimesForTesting(node).close("child");
+    for (let i = 0; i < 400 && getSession("parent")?.activity_state === "running"; i++) await Bun.sleep(5);
+    await nodeRuntimesForTesting(node).close("parent");
   } finally {
     dispatcherFor(state).stop(); stopInternalNode(state); unregisterPiProvider(provider.provider.id); setNodeDb(); nodeDb.close();
     setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true });

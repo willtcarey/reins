@@ -16,19 +16,23 @@ type Admitted = Extract<NodeResult, { ok: true }>["value"];
 export function connectNode(node: Node, socket: WireSocket, instanceId: string, options: LinkOptions = {}) {
   /** Commands are rebuilt through the contract schema, so the receipt payload of a replay (the same wire
    * params) matches the first delivery byte-for-byte. */
-  const execute = async <K extends Admitted["kind"]>(command: NodeCommand, binding: NodeSessionBinding, kind: K, commandId?: string): Promise<Extract<Admitted, { kind: K }>> => {
-    let result;
-    try { result = await node.send(nodeCommand.parse(command), binding, commandId); }
+  const call = async (send: () => Promise<NodeResult>): Promise<NodeResult> => {
+    try { return await send(); }
     catch (error) { throw rejection({ code: "internal", message: error instanceof Error ? error.message : String(error), retryable: false }); }
+  };
+  const settle = <K extends Admitted["kind"]>(result: NodeResult, kind: K): Extract<Admitted, { kind: K }> => {
     if (!result.ok) throw rejection(result.error);
     if (result.value.kind !== kind) throw rejection({ code: "internal", message: `Unexpected node result: ${result.value.kind}`, retryable: false });
     return result.value as Extract<Admitted, { kind: K }>; // eslint-disable-line typescript-eslint/consistent-type-assertions -- narrowed by the kind check above
   };
+  const execute = async <K extends Admitted["kind"]>(command: NodeCommand, binding: NodeSessionBinding, kind: K, commandId?: string): Promise<Extract<Admitted, { kind: K }>> =>
+    settle(await call(() => node.send(nodeCommand.parse(command), binding, commandId)), kind);
   const input = (op: "session.prompt" | "session.steer") => async ({ sessionId, commandId, binding, clientId, content, sourceSessionId }: SessionInput) =>
     ({ inputId: (await execute({ op, sessionId, clientId, content, sourceSessionId }, binding, "admitted", commandId)).inputId });
   const connection = createNodeConnection(socket, {
     instanceId, minVersion: protocolVersion, maxVersion: protocolVersion, ...options,
-    capabilities: [methods.sessionProvision, methods.sessionPrompt, methods.sessionSteer, methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending],
+    capabilities: [methods.sessionProvision, methods.sessionPrompt, methods.sessionSteer, methods.sessionSetModel, methods.sessionAbort, methods.sessionResumePending,
+      methods.sessionHydrate, methods.sessionRelease],
     async provision({ sessionId, commandId, binding, configuration }) {
       await execute({ op: "session.provision", sessionId, sourceId: binding.sourceId,
         configuration: { model: configuration.model, thinkingLevel: configuration.thinkingLevel, task: configuration.task } }, binding, "provisioned", commandId);
@@ -42,6 +46,13 @@ export function connectNode(node: Node, socket: WireSocket, instanceId: string, 
     },
     async abort({ sessionId, binding }) { return { aborted: (await execute({ op: "session.abort", sessionId }, binding, "aborted")).aborted }; },
     async resumePending({ sessionId, binding }) { return { started: (await execute({ op: "session.resumePending", sessionId }, binding, "resumed")).started }; },
+    async hydrate({ sessionId, commandId, binding, task, snapshot }) {
+      settle(await call(() => node.hydrate({ sessionId, commandId, task, snapshot }, binding)), "hydrated");
+      return { hydrated: true };
+    },
+    async release({ sessionId, commandId, binding }) {
+      return { released: true, snapshot: settle(await call(() => node.release(sessionId, binding, commandId)), "released").snapshot };
+    },
     async status() { throw new RpcFailure(-32601, "Method not found"); },
   });
   const detach = node.attach(connection);

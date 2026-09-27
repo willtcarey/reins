@@ -5,16 +5,28 @@ import { useTestDb } from "./helpers/test-db.js";
 import { createProject } from "../project-store.js";
 import { createSession } from "./session-fixture.js";
 import { storeSessionAttachment } from "../session-attachments-store.js";
-import { createRuntimeStub } from "./helpers/test-runtime-stub.js";
 import { getDb } from "../db.js";
 import type { ServerState } from "../state.js";
 import type { NodeCommand, NodeResult } from "@reins/node/contract";
 import { registerExecutionTargets, type SessionExecutionTarget } from "../runtimes/execution-target.js";
 import { createProvisionedNodeSession } from "./helpers/node-session.js";
+import { useFakeNode, type FakeNode } from "./helpers/fake-node.js";
 
 /**
  * Minimal mock WebSocket that captures sent messages.
  */
+async function until(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !condition(); i++) await Bun.sleep(5);
+}
+/** Every viewer also gets session updates for a move; a sender's replies are the rest. */
+function replies(socket: ReturnType<typeof createMockWs>) {
+  return socket.allMessages().filter(sent => sent.type !== "session_updated").at(-1);
+}
+/** Inputs the fake node received, as [op, clientId, content]. */
+function deliveredInputs(node: FakeNode): Array<[string, string, unknown]> {
+  return node.sent.flatMap(([command]): Array<[string, string, unknown]> => command.op === "session.prompt" || command.op === "session.steer" ? [[command.op, command.clientId, command.content]] : []);
+}
+
 function createMockWs() {
   const sent: string[] = [];
   return {
@@ -321,11 +333,12 @@ describe("WebSocket handlers", () => {
   describe("handleWsMessage — request-keyed admission", () => {
     useTestDb();
 
-    test("acknowledges a steer by client id without duplicating AgentHarness delivery", async () => {
+    // Sessions at rest on the server are moved onto their node before input is delivered there.
+
+    test("acknowledges a steer by client id and delivers it once, after moving the session onto its node", async () => {
       const project = createProject("WS Steer", "/tmp/ws-steer");
       createSession("sess-steer", project.id, { agentRuntimeType: "pi" });
-      const stub = createRuntimeStub();
-      state.sessions.set("sess-steer", { id: "sess-steer", runtime: stub.runtime, lastActivity: 0 });
+      const node = useFakeNode(state);
       const sender = createMockWs();
       const observer = createMockWs();
       handleWsOpen(state, sender.ws);
@@ -338,32 +351,34 @@ describe("WebSocket handlers", () => {
         clientId: "submission-steer",
         message,
       }));
-      await Bun.sleep(10);
+      await until(() => deliveredInputs(node).length > 0);
 
-      expect(sender.lastMessage()).toEqual({ type: "ack", command: "steer", clientId: "submission-steer" });
-      expect(stub.steerOptions).toEqual([{ reinsId: "submission-steer" }]);
-      expect(observer.lastMessage()).toBeNull();
+      expect(replies(sender)).toEqual({ type: "ack", command: "steer", clientId: "submission-steer" });
+      expect(node.sent.map(([command]) => command.op)).toEqual(["session.hydrate", "session.steer"]);
+      expect(deliveredInputs(node)).toEqual([["session.steer", "submission-steer", message]]);
+      expect(getDb().query("SELECT storage_owner FROM sessions WHERE id = 'sess-steer'").get()).toEqual({ storage_owner: "internal-node" });
+      // Session updates for the move go to every viewer; the acknowledgement only to the sender.
+      expect(observer.allMessages().some(sent => sent.type === "ack")).toBe(false);
     });
 
     test("reports an eventual admission failure only to the submitting socket", async () => {
       const project = createProject("WS failure", "/tmp/ws-failure");
       createSession("sess-failure", project.id, { agentRuntimeType: "pi" });
-      const stub = createRuntimeStub();
-      stub.runtime.steer = async () => { throw new Error("admission unavailable"); };
-      state.sessions.set("sess-failure", { id: "sess-failure", runtime: stub.runtime, lastActivity: 0 });
+      const node = useFakeNode(state);
+      node.reject("session.steer", "admission unavailable");
       const sender = createMockWs();
       const observer = createMockWs();
       handleWsOpen(state, sender.ws);
       handleWsOpen(state, observer.ws);
       handleWsMessage(state, sender.ws, JSON.stringify({ type: "steer", sessionId: "sess-failure", clientId: "failure-id", message: [{ type: "text", text: "hello" }] }));
-      await Bun.sleep(20);
-      expect(sender.lastMessage()).toEqual({ type: "error", sessionId: "sess-failure", clientId: "failure-id", error: "steer failed: admission unavailable" });
-      expect(observer.lastMessage()).toBeNull();
+      await until(() => replies(sender)?.type === "error");
+      expect(replies(sender)).toEqual({ type: "error", sessionId: "sess-failure", clientId: "failure-id", error: "steer failed: admission unavailable" });
+      expect(observer.allMessages().some(sent => sent.type === "error")).toBe(false);
       expect(getDb().query("SELECT id FROM node_command_outbox WHERE session_id = 'sess-failure' AND json_extract(command_json, '$.clientId') = 'failure-id'").get())
         .toBeNull();
     });
 
-    test("validates and forwards attachment refs to the runtime", async () => {
+    test("validates and forwards attachment refs to the node", async () => {
       const project = createProject("WS Multimodal", "/tmp/ws-multimodal");
       createSession("sess-ws", project.id, { agentRuntimeType: "pi" });
       const imageData = Buffer.from("runtime image bytes");
@@ -387,8 +402,7 @@ describe("WebSocket handlers", () => {
           height: attachment.height,
         },
       ];
-      const stub = createRuntimeStub();
-      state.sessions.set("sess-ws", { id: "sess-ws", runtime: stub.runtime, lastActivity: 0 });
+      const node = useFakeNode(state);
 
       const sender = createMockWs();
       const observer = createMockWs();
@@ -402,11 +416,11 @@ describe("WebSocket handlers", () => {
         message,
       }));
 
-      await Bun.sleep(10);
+      await until(() => deliveredInputs(node).length > 0);
 
-      expect(sender.lastMessage()).toEqual({ type: "ack", command: "prompt", clientId: "submission-prompt" });
-      expect(stub.promptOptions).toEqual([{ reinsId: "submission-prompt" }]);
-      expect(observer.lastMessage()).toBeNull();
+      expect(replies(sender)).toEqual({ type: "ack", command: "prompt", clientId: "submission-prompt" });
+      expect(deliveredInputs(node)).toEqual([["session.prompt", "submission-prompt", message]]);
+      expect(observer.allMessages().some(sent => sent.type === "ack")).toBe(false);
     });
   });
 });

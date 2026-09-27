@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { logger } from "../logger.js";
-import { credentialsParams, credentialResult, credentialsListParams, credentialsListResult, type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, provisionResult, statusResult, protocolVersion, nodeError, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, type StoredAttachment, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type Provision, type SessionInput, type SessionSetModel, type SessionControl, sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult, type SessionCommitted, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Ready, systemTimers } from "@reins/node/protocol";
+import { credentialsParams, credentialResult, credentialsListParams, credentialsListResult, type NodeCredential, type CredentialInfo, createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, provisionResult, statusResult, protocolVersion, nodeError, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, type StoredAttachment, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type Provision, type SessionInput, type SessionSetModel, type SessionControl, sessionInputResult, sessionSetModelResult, sessionAbortResult, sessionResumeResult, sessionHydrateResult, sessionReleaseResult, sessionSnapshotParams, sessionSnapshotResult, type SessionHydrate, type SessionRelease, type SessionSnapshot, type SessionCommitted, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket, type LinkOptions, type Ready, systemTimers } from "@reins/node/protocol";
 
 /** `missed` counts seqs skipped since this connection's previous event for the session (0 for its first). */
 export type NodeSessionEvent = SessionEventReport & { missed: number };
@@ -30,6 +30,9 @@ export interface ServerHandlers {
   readCredential(providerId: string): Promise<NodeCredential | null>;
   refreshCredential(providerId: string): Promise<NodeCredential | null>;
   listCredentials(): Promise<CredentialInfo[]>;
+  /** `session.snapshot`: one page of the server's copy of a session from `fromSeq`, with its summary.
+   * Read-only; the handler authorizes the calling node for the session. */
+  snapshot(sessionId: string, fromSeq: number): SessionSnapshot | Promise<SessionSnapshot>;
 }
 /** Partial `attachment.store` uploads buffered per connection; the oldest is evicted (and restarts from 0). */
 const MAX_PARTIAL_UPLOADS = 8;
@@ -146,6 +149,14 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
         return { stored: true };
       },
     },
+    [methods.sessionSnapshot]: {
+      params: sessionSnapshotParams, result: sessionSnapshotResult,
+      async handle(value) {
+        const { epoch, sessionId, fromSeq } = sessionSnapshotParams.parse(value);
+        issued(epoch);
+        try { return await handlers.snapshot(sessionId, fromSeq); } catch (error) { throw rejection(error); }
+      },
+    },
     [methods.scriptExecute]: {
       params: scriptExecuteParams, result: scriptExecuteResult,
       async handle(value) {
@@ -250,6 +261,8 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
     async setModel(input: SessionSetModel, timeoutMs?: number) { return peer.call(methods.sessionSetModel, { ...input, epoch: authorized(methods.sessionSetModel) }, sessionSetModelResult, { errorData: nodeError, timeoutMs }); },
     async abort(input: SessionControl, timeoutMs?: number) { return peer.call(methods.sessionAbort, { ...input, epoch: authorized(methods.sessionAbort) }, sessionAbortResult, { errorData: nodeError, timeoutMs }); },
     async resumePending(input: SessionControl, timeoutMs?: number) { return peer.call(methods.sessionResumePending, { ...input, epoch: authorized(methods.sessionResumePending) }, sessionResumeResult, { errorData: nodeError, timeoutMs }); },
+    async hydrate(input: SessionHydrate, timeoutMs?: number) { return peer.call(methods.sessionHydrate, { ...input, epoch: authorized(methods.sessionHydrate) }, sessionHydrateResult, { errorData: nodeError, timeoutMs }); },
+    async release(input: SessionRelease, timeoutMs?: number) { return peer.call(methods.sessionRelease, { ...input, epoch: authorized(methods.sessionRelease) }, sessionReleaseResult, { errorData: nodeError, timeoutMs }); },
     async status(sessionId: string) { return peer.call(methods.sessionStatus, { sessionId, epoch: authorized(methods.sessionStatus) }, statusResult); },
   };
 }

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** Semantic vocabulary only. No transport framing, correlation or replay guarantee yet. */
-export const contractVersion = 4 as const;
+export const contractVersion = 5 as const;
 const sessionId = z.string().min(1);
 const model = z.object({ provider: z.string().min(1), modelId: z.string().min(1) });
 /** Frozen at session creation: the model/thinking level Pi's lane starts with (null model: none
@@ -35,7 +35,21 @@ export const nodeCommand = z.discriminatedUnion("op", [
   z.object({ op: z.literal("session.resumePending"), sessionId }),
   /** Changes the model (and thinking level when given) Pi's lane uses from its next LLM turn. */
   z.object({ op: z.literal("session.setModel"), sessionId, provider: z.string().min(1), modelId: z.string().min(1), thinkingLevel: z.string().min(1).optional() }),
+  /** Moves the session's canonical state from the server onto the node of `targetSourceId`: the node pulls
+   * the server's copy row for row (see node-contract.md *Session relocation*). The binding, task snapshot
+   * and snapshot summary are resolved when the command is delivered, not stored with it. */
+  z.object({ op: z.literal("session.hydrate"), sessionId, targetSourceId: z.number().int().positive() }),
+  /** Hands the session back to the server: the owning node delivers its outbox, checks the server's copy
+   * is complete, then drops its local copy. */
+  z.object({ op: z.literal("session.release"), sessionId }),
 ]);
+/** A session copy's identity: next harness seq, per-table row counts and a digest over every row
+ * (`summarizePiSnapshot` in `@reins/node/pi-storage`). */
+export const snapshotSummary = z.object({
+  harnessNextSeq: z.number().int().positive(),
+  rowCounts: z.object({ entries: z.number().int().min(0), values: z.number().int().min(0), lists: z.number().int().min(0), usage: z.number().int().min(0) }),
+  digest: z.string().regex(/^[0-9a-f]{64}$/),
+});
 export const nodeErrorCode = z.enum(["unavailable", "unsupported", "invalid_request", "busy", "not_found", "internal"]);
 export const nodeResult = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), value: z.discriminatedUnion("kind", [
@@ -44,6 +58,9 @@ export const nodeResult = z.discriminatedUnion("ok", [
     z.object({ kind: z.literal("aborted"), aborted: z.boolean() }),
     z.object({ kind: z.literal("resumed"), started: z.boolean() }),
     z.object({ kind: z.literal("modelSet") }),
+    z.object({ kind: z.literal("hydrated") }),
+    /** The released copy's summary, which the server compares with its own before taking the session back. */
+    z.object({ kind: z.literal("released"), snapshot: snapshotSummary }),
   ]) }),
   z.object({ ok: z.literal(false), error: z.object({ code: nodeErrorCode, message: z.string(), retryable: z.boolean() }) }),
 ]);

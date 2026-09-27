@@ -6,6 +6,7 @@ import { getWork, workForSession, registerCommandWake } from "./node-command-pro
 import { deliverCommand } from "./node-command-transport.js";
 import { executionTargetFor } from "../runtimes/execution-target.js";
 import { onCommandDelivered } from "./node-command-notifications.js";
+import { commitMove } from "./session-ownership.js";
 import type { ServerState } from "../state.js";
 
 export { blockInterruptedDispatches };
@@ -129,11 +130,11 @@ export class NodeCommandDispatcher {
       const session = this.deliverable(row);
       if (!session) return;
       const generation = this.generation;
+      const command = getWork(row.id)?.command ?? null;
       const claimed = await deliverCommand(row.id, async () => {
-        const command = getWork(row.id)?.command;
         if (!command) throw new Error("Stored node command is invalid");
         return executionTargetFor(this.state, session).send(command, row.id);
-      });
+      }, command && (command.op === "session.hydrate" || command.op === "session.release") ? result => commitMove(row.session_id, command, result) : undefined);
       if (!claimed) return; // another dispatcher owns it
       onCommandDelivered(this.state, row);
       const outcome = getCommand(row.id)?.state;

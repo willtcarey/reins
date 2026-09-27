@@ -1,6 +1,6 @@
 import { LOCAL_LINK, RpcFailure, type LinkOptions, type WireSocket } from "@reins/node/protocol";
 import { createServerTransport, type ServerHandlers } from "../node-transport/server-peer.js";
-import { NODE_COMMAND_TIMEOUTS, sendNodeCommand, type NodeCommandClient, type NodeCommandTimeouts } from "../node-transport/commands.js";
+import { NODE_COMMAND_TIMEOUTS, sendNodeCommand, sendRelocationCommand, type HydrationPayload, type NodeCommandClient, type NodeCommandTimeouts } from "../node-transport/commands.js";
 import type { NodeCommand, NodeResult } from "@reins/node/contract";
 import type { NodeSessionBinding } from "@reins/node/storage";
 import { getDb } from "../db.js";
@@ -13,12 +13,18 @@ import { wakeScheduledCommands } from "../models/node-command-projection.js";
 import { logger } from "../logger.js";
 import { getSessionAttachment, storeSessionAttachment } from "../session-attachments-store.js";
 import type { StoredAttachment } from "@reins/node/protocol";
+import { piSnapshotSummary, readPiSnapshotPage } from "@reins/node/pi-storage";
+import { nodeMayReadSession, nodeOwnsSession } from "../models/session-ownership.js";
 
-/** Product identity/path resolution stays server-side. No server DB handle reaches node code. */
-export function provisionForSession(sessionId: string): { binding: NodeSessionBinding; storageOwner: string } {
+/** The node ID of the internal node's link: every node→server call on it acts for this node. */
+export const INTERNAL_NODE_ID = "internal";
+
+/** Product identity/path resolution stays server-side. No server DB handle reaches node code. `sourceId`
+ * binds the session to another source of its project (the target of a hydrate) instead of its current one. */
+export function provisionForSession(sessionId: string, sourceId?: number): { binding: NodeSessionBinding; storageOwner: string } {
   const row = getSession(sessionId);
   if (!row) throw new Error(`Session not found: ${sessionId}`);
-  const source = getSource(row.source_id);
+  const source = getSource(sourceId ?? row.source_id);
   if (!source || source.project_id !== row.project_id || source.node_id !== "internal") {
     throw new Error(`Execution source unavailable for session ${sessionId}`);
   }
@@ -45,13 +51,22 @@ const installed = (state: ServerState) => {
   if (!sink) throw new Error("Node server services unavailable");
   return sink;
 };
+/** Fencing: reports, uploads and tool calls are accepted only for sessions this node owns, so a node that
+ * released a session (or has not finished hydrating it) cannot write to it. */
 const owned = (sessionId: string) => {
-  if (provisionForSession(sessionId).storageOwner !== "internal-node") throw new Error(`Node session unavailable: ${sessionId}`);
+  if (!getSession(sessionId)) throw new Error(`Session not found: ${sessionId}`);
+  if (!nodeOwnsSession(sessionId, INTERNAL_NODE_ID)) throw new Error(`Node session unavailable: ${sessionId}`);
+};
+/** Reads are also open while the session is at rest on the server and this node is its destination. */
+const readable = (sessionId: string) => {
+  if (!getSession(sessionId)) throw new Error(`Session not found: ${sessionId}`);
+  if (!nodeMayReadSession(sessionId, INTERNAL_NODE_ID)) throw new Error(`Node session unavailable: ${sessionId}`);
 };
 
-/** Node→server calls run only here, as protocol handlers; the storage owner check authorizes the session
- * (unknown or server-owned sessions are rejected) before any product service runs. Credentials are not
- * per session: the transport serves them to any negotiated connection. */
+/** Node→server calls run only here, as protocol handlers; the ownership check authorizes the session
+ * (unknown sessions, sessions another node owns, and sessions at rest on the server for writes are
+ * rejected) before any product service runs. Credentials are not per session: the transport serves them
+ * to any negotiated connection. */
 export const internalNodeServer = (state: ServerState): ServerHandlers => ({
   ...createNodeCredentialService(),
   committed: ({ sessionId, startSeq, writesJson }) => {
@@ -61,7 +76,7 @@ export const internalNodeServer = (state: ServerState): ServerHandlers => ({
   started: input => { owned(input.sessionId); return installed(state).started(input); },
   settled: input => { owned(input.sessionId); return installed(state).settled(input); },
   attachment: (sessionId, attachmentId) => {
-    owned(sessionId);
+    readable(sessionId);
     const row = getSessionAttachment(sessionId, attachmentId);
     return row?.data ? { data: row.data, mimeType: row.mime_type, byteSize: row.byte_size,
       sha256: row.sha256, filename: row.filename ?? undefined,
@@ -77,6 +92,12 @@ export const internalNodeServer = (state: ServerState): ServerHandlers => ({
   storeAttachment: (sessionId, attachmentId, { data, mimeType, filename, width, height }) => {
     owned(sessionId);
     storeSessionAttachment(sessionId, { id: attachmentId, data, mimeType, filename, width, height });
+  },
+  // A page of the server's copy with the copy's current summary: a hydrating node pulls it, a releasing
+  // node compares its own copy with it.
+  snapshot: (sessionId, fromSeq) => {
+    readable(sessionId);
+    return { summary: piSnapshotSummary(getDb(), sessionId), ...readPiSnapshotPage(getDb(), sessionId, fromSeq) };
   },
   event: input => {
     owned(input.sessionId);
@@ -131,6 +152,10 @@ export function acceptInternalNodeConnection(state: ServerState, socket: Interna
  * immediate controls return `unavailable` instead. */
 export function sendInternal(state: ServerState, command: NodeCommand, binding: NodeSessionBinding, commandId?: string, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
   return sendNodeCommand(() => currentLink(state).client(), command, binding, commandId, timeouts);
+}
+/** Delivers `session.hydrate` or `session.release` over the internal node's current link (see `sendRelocationCommand`). */
+export function sendInternalRelocation(state: ServerState, command: Extract<NodeCommand, { op: "session.hydrate" | "session.release" }>, binding: NodeSessionBinding, commandId: string, hydration: HydrationPayload | null, timeouts: NodeCommandTimeouts = NODE_COMMAND_TIMEOUTS): Promise<NodeResult> {
+  return sendRelocationCommand(() => currentLink(state).client(), command, binding, commandId, hydration, timeouts);
 }
 function openLink(state: ServerState): InternalLink | undefined {
   const link = links.get(state);

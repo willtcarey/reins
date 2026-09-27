@@ -21,6 +21,7 @@ const serverCredentials = {
   getCredential: async () => ({ type: "api_key" as const, key: "test" }),
   refreshCredential: async () => ({ type: "api_key" as const, key: "test" }),
   listCredentials: async () => [],
+  snapshot: async () => { throw new Error("unexpected session snapshot"); },
 };
 const noTools = {
   ...serverCredentials,

@@ -9,6 +9,7 @@ import type { Broadcast } from "../models/broadcast.js";
 import { enqueueSessionInput, executeSessionCommand, wakeSessionInput } from "./node-execution.js";
 import { workForSession } from "../models/node-command-projection.js";
 import { commandState, hasPendingInput, pendingInputIds } from "../node-command-store.js";
+import { pendingMove } from "../models/session-ownership.js";
 import { latestNodeSettlement } from "../node-replica.js";
 import { finalReply, type FinalReply } from "@reins/node/runtime-build";
 
@@ -147,23 +148,12 @@ export class SessionInstance implements RuntimeLifecycleSink {
       throw new Error("timeoutMs must be an integer between 0 and 30000");
     }
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    if (this.session(sessionId).storage_owner === "internal-node") return this.waitForNodeSettlement(sessionId, timeoutMs, signal);
-    const managedForWait = () => this.manager.sessions.get(sessionId);
-    let managed = managedForWait();
-    if (!managed) {
-      const work = workForSession(sessionId);
-      if (work?.state === "failed" || work?.state === "unknown") return { sessionId, status: "failed", result: null, error: "Session open failed" };
-      if (work && timeoutMs > 0) {
-        const deadline = Date.now() + timeoutMs;
-        while (!managed && Date.now() < deadline) {
-          await this.pauseForAdmission(Math.min(10, deadline - Date.now()), signal);
-          managed = managedForWait();
-          const current = workForSession(sessionId);
-          if (current?.state === "failed" || current?.state === "unknown") return { sessionId, status: "failed", result: null, error: "Session open failed" };
-        }
-      }
-      if (!managed) return work ? { sessionId, status: "timeout", result: null, error: null } : transcriptResult(sessionId, loadActiveMessages(sessionId));
-    }
+    // Node-owned sessions, and sessions moving onto a node (their input waits behind the move), settle
+    // durably on the node. A session at rest on the server runs nowhere: it is idle, unless a legacy
+    // runtime the server still holds is live.
+    if (this.session(sessionId).storage_owner === "internal-node" || pendingMove(sessionId)) return this.waitForNodeSettlement(sessionId, timeoutMs, signal);
+    const managed = this.manager.sessions.get(sessionId);
+    if (!managed) return transcriptResult(sessionId, loadActiveMessages(sessionId));
     managed.lastActivity = Date.now();
     if (hasPendingInput(sessionId)) {
       const deadline = Date.now() + timeoutMs;

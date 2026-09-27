@@ -5,6 +5,7 @@ import { getCommand, getCommandForSession, insertCommandWithSession, type Comman
  * carried its configuration); such work reads as failed and is never delivered. */
 export type Work = { id: string; sessionId: string; sourceId: number; state: CommandState; command: NodeCommand | null; result: NodeResult | null };
 
+/** The session's open work: its latest provision or hydrate command. */
 export function workForSession(sessionId: string): Work | null {
   const row = getCommandForSession(sessionId);
   return row ? getWork(row.id) : null;

@@ -1,6 +1,9 @@
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
+import { useFakeNode } from "../helpers/fake-node.js";
+import { createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
+import { dispatcherFor } from "../../models/node-command-dispatcher.js";
 import { createServerState } from "../helpers/server-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
@@ -262,20 +265,56 @@ describe("session routes (top-level)", () => {
     });
   });
 
+  describe("POST /api/sessions/:sessionId/move", () => {
+    const move = (sessionId: string, body: unknown) => router.handle(makeRequest("POST", `/api/sessions/${sessionId}/move`, body), state);
+
+    test("moves a session at rest onto a node and releases it back, reporting where it is", async () => {
+      createSession("movable", projectId, { agentRuntimeType: "pi" });
+      const node = useFakeNode(state);
+
+      const hydrating = await move("movable", { nodeId: "internal" });
+      expect(hydrating!.status).toBe(200);
+      expect(await hydrating!.json()).toEqual({ state: "hydrating", nodeId: "internal" });
+      // Asking again while it moves or once it is there queues nothing more.
+      expect(await (await move("movable", { nodeId: "internal" }))!.json()).toMatchObject({ nodeId: "internal" });
+      await dispatcherFor(state).drain();
+      expect(await (await move("movable", { nodeId: "internal" }))!.json()).toEqual({ state: "node", nodeId: "internal" });
+
+      expect(await (await move("movable", { nodeId: null }))!.json()).toEqual({ state: "releasing", nodeId: "internal" });
+      await dispatcherFor(state).drain();
+      expect(await (await move("movable", { nodeId: null }))!.json()).toEqual({ state: "server" });
+      expect(node.sent.map(([command]) => command.op)).toEqual(["session.hydrate", "session.release"]);
+      dispatcherFor(state).stop();
+    });
+
+    test("rejects a busy session, an unknown node, a missing session and an invalid body", async () => {
+      createProvisionedNodeSession("busy", projectId);
+      queuePrompt("busy", "pending");
+      const busy = await move("busy", { nodeId: null });
+      expect(busy!.status).toBe(409);
+      expect(await busy!.json()).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
+      createSession("resting", projectId, { agentRuntimeType: "pi" });
+      expect((await move("resting", { nodeId: "elsewhere" }))!.status).toBe(409);
+      // A legacy runtime still running on the server.
+      createSession("streaming", projectId, { agentRuntimeType: "pi" });
+      state.sessions.set("streaming", await createTestManagedSession("streaming", { isStreaming: true }));
+      expect(await (await move("streaming", { nodeId: "internal" }))!.json()).toEqual({ error: "Session is running on the server; try again when it is idle" });
+      expect((await move("missing", { nodeId: null }))!.status).toBe(404);
+      expect((await move("resting", {}))!.status).toBe(400);
+    });
+  });
+
   describe("POST /api/sessions/:sessionId/resume", () => {
-    test("resumes a pending operation without adding a prompt", async () => {
+    test("resumes a pending operation on the node without adding a prompt", async () => {
       const sessionId = "resume-operation";
       createSession(sessionId, projectId, { agentRuntimeType: "pi" });
-      const managed = await createTestManagedSession(sessionId);
-      const resumePendingOperation = mock(async () => {});
-      managed.runtime.resumePendingOperation = resumePendingOperation;
-      state.sessions.set(sessionId, managed);
+      const node = useFakeNode(state);
 
       const res = await router.handle(makeRequest("POST", `/api/sessions/${sessionId}/resume`), state);
 
       expect(res!.status).toBe(200);
       expect(await res!.json()).toEqual({ ok: true });
-      expect(resumePendingOperation).toHaveBeenCalledTimes(1);
+      expect(node.sent.map(([command]) => command.op)).toEqual(["session.resumePending"]);
     });
 
     test("returns 404 for a missing session", async () => {

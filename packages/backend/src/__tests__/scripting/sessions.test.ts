@@ -6,14 +6,13 @@ import { SessionHandleSchema } from "../../scripting/sessions.js";
 import { createProject } from "../../project-store.js";
 import { createTask } from "../../task-store.js";
 import { createSession, getSession, listSessions, updateActivityState, updateSessionMetadata } from "../session-fixture.js";
-import { loadMessages, type RuntimeMessage } from "../../messages-store.js";
+import { loadMessages } from "../../messages-store.js";
 import { SessionManager } from "../../runtimes/session-manager.js";
-import { registerRuntimeAdapter } from "../../runtimes/registry.js";
 import { buildApiObject, searchFunctions, referencedTypes } from "../../scripting/api-registry.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createServerState } from "../helpers/server-state.js";
-import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
+import { useFakeNode } from "../helpers/fake-node.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { executeTool, reinsTool } from "../helpers/execute-tool.js";
 
@@ -30,47 +29,13 @@ describe("api.sessions orchestration", () => {
 
   function setup() {
     const state = createServerState();
+    // Every session runs on the (fake) node; one at rest on the server is moved there when used.
+    const node = useFakeNode(state);
     const project = createProject("Orchestration", repo.dir, "main");
     createSession("parent", project.id, {
       agentRuntimeType: "pi", modelProvider: "test", modelId: "model", thinkingLevel: "high",
     });
-    // Scripting runs inside an already-open caller; reports steer that caller.
-    state.sessions.set("parent", { id: "parent", runtime: createRuntimeStub({ isStreaming: true }).runtime, lastActivity: Date.now() });
-    const turns: { finish: () => void; input: unknown; sessionId: string }[] = [];
-    let created = 0;
-    registerRuntimeAdapter({
-      runtimeType: "pi", listModels: async () => [], ask: async () => "",
-      createRuntime: async ({ sessionId }) => {
-        created++;
-        const stub = createRuntimeStub();
-        const messages: RuntimeMessage[] = loadMessages(sessionId);
-        stub.runtime.getMessages = async () => messages;
-        let completion = Promise.resolve();
-        let busy = false;
-        stub.runtime.prompt = async (content) => {
-          busy = true;
-          messages.push({ role: "user", content: content.filter((block) => block.type === "text"), timestamp: messages.length + 1 });
-          const messageId = `entry-${messages.length}`;
-          completion = (async () => {
-            await new Promise<void>((resolve) => turns.push({ finish: resolve, input: content, sessionId }));
-            const response: RuntimeMessage = { role: "assistant", content: text(`response ${messages.length}`), timestamp: messages.length + 1 };
-            messages.push(response);
-            stub.emit({ type: "agent_end", messages });
-          })().finally(() => { busy = false; });
-          return { messageId };
-        };
-        stub.runtime.steer = async (content) => {
-          if (!busy) {
-            await stub.runtime.prompt(content);
-            return;
-          }
-          messages.push({ role: "user", content: content.filter((block) => block.type === "text"), timestamp: messages.length + 1 });
-        };
-        stub.runtime.waitForIdle = async () => { await completion; };
-        stub.runtime.isStreaming = () => busy;
-        return stub.runtime;
-      },
-    });
+    const turns = node.turns;
     const broadcasts: unknown[] = [];
     const broadcast = (message: unknown) => broadcasts.push(message);
     const manager = new SessionManager(state);
@@ -83,8 +48,12 @@ describe("api.sessions orchestration", () => {
       broadcast,
       instance: instanceFor("parent"),
     };
-    return { state, project, turns, broadcasts, context, instanceFor, api: buildApiObject(context), get created() { return created; } };
+    const hydrations = (sessionId: string) => node.sent.filter(([command]) => command.op === "session.hydrate" && command.sessionId === sessionId).length;
+    return { state, node, project, turns, broadcasts, context, instanceFor, hydrations, api: buildApiObject(context) };
   }
+
+  /** The transcript as the server's replica holds it. */
+  const transcript = (sessionId: string, role?: string) => loadMessages(sessionId).filter(message => !role || message.role === role).map(message => message.content);
 
   test("discovers unread activity and returns persisted status without marking sessions read", async () => {
     const { api } = setup();
@@ -167,7 +136,7 @@ describe("api.sessions orchestration", () => {
   });
 
   test("starts immediately with explicit child/title semantics and waits for native settlement", async () => {
-    const { api, turns, state, project } = setup();
+    const { api, turns, project } = setup();
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Investigate", { parentSessionId: "current", title: "Investigation" }));
     expect(getSession(child.sessionId)).toMatchObject({
       name: "Investigation", parent_session_id: "parent", project_id: project.id,
@@ -176,10 +145,9 @@ describe("api.sessions orchestration", () => {
     await admitted(turns, 1);
     expect(turns[0].input).toEqual(text("Investigate"));
     expect(await api.sessions.wait(child.sessionId, 0)).toMatchObject({ status: "timeout" });
-    turns[0].finish();
+    turns[0].finish({ reply: "response 1" });
     expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed", result: "response 1" });
-    expect((await state.sessions.get(child.sessionId)!.runtime.getMessages()).map((message) => message.content)).toEqual([text("Investigate"), text("response 1")]);
-    expect(state.sessions.has(child.sessionId)).toBe(true);
+    expect(transcript(child.sessionId)).toEqual([text("Investigate"), text("response 1")]);
   });
 
   test("independent sessions preserve unnamed display defaults and allow model overrides", async () => {
@@ -191,25 +159,26 @@ describe("api.sessions orchestration", () => {
     await admitted(turns, 1);
     turns[0].finish();
     await api.sessions.wait(session.sessionId, 1000);
-    expect(listSessions({ projectId: project.id }).find((row) => row.id === session.sessionId)?.first_message).toBeNull();
+    expect(listSessions({ projectId: project.id }).find((row) => row.id === session.sessionId)?.first_message).toBe("Independent");
   });
 
-  test("reopens once, steers concurrent follow-ups, and resumes after settlement", async () => {
+  test("moves an existing session onto its node once, steers concurrent follow-ups, and resumes after settlement", async () => {
     const fixture = setup();
     const { api, project, turns } = fixture;
     createSession("existing", project.id, { agentRuntimeType: "pi", modelProvider: "test", modelId: "model" });
     persistCanonicalMessages("existing", [{ role: "assistant", content: text("earlier"), timestamp: 1 }]);
     await Promise.all([api.sessions.send("existing", "one"), api.sessions.send("existing", "two")]);
     await admitted(turns, 1);
-    expect(fixture.created).toBe(1);
+    expect(fixture.hydrations("existing")).toBe(1);
     expect(await api.sessions.wait("existing", 0)).toMatchObject({ status: "timeout" });
-    turns[0].finish();
+    turns[0].finish({ reply: "response 3" });
     expect(await api.sessions.wait("existing", 1000)).toMatchObject({ status: "completed", result: "response 3" });
-    expect((await fixture.state.sessions.get("existing")!.runtime.getMessages()).filter((message) => message.role === "user").map((message) => message.content)).toEqual([text("one"), text("two")]);
+    expect(transcript("existing", "user")).toEqual([text("one"), text("two")]);
     await api.sessions.send("existing", "resume");
     await admitted(turns, 2);
-    turns[1].finish();
+    turns[1].finish({ reply: "response 5" });
     expect(await api.sessions.wait("existing", 1000)).toMatchObject({ status: "completed", result: "response 5" });
+    expect(fixture.hydrations("existing")).toBe(1);
   });
 
   test("validates parent, model, message, scope and self-wait before side effects", async () => {
@@ -226,22 +195,19 @@ describe("api.sessions orchestration", () => {
     expect(turns).toEqual([]);
   });
 
-  test("unsupported busy steering reports failure without restarting or deferring the message", async () => {
-    const { api, turns, state } = setup();
+  test("a steer the node rejects fails without restarting or deferring the message", async () => {
+    const { api, turns, node } = setup();
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: null }));
     await admitted(turns, 1);
-    const runtime = state.sessions.get(child.sessionId)!.runtime;
-    let aborted = false;
-    runtime.abort = async () => { aborted = true; };
-    runtime.steer = async () => { throw new Error("Steering unsupported"); };
+    node.reject("session.steer", "Steering unsupported");
     await api.sessions.send(child.sessionId, "not accepted");
     await Bun.sleep(20);
-    expect(runtime.isStreaming()).toBe(true);
-    expect(aborted).toBe(false);
+    expect(getSession(child.sessionId)?.activity_state).toBe("running");
+    expect(node.sent.some(([command]) => command.op === "session.abort")).toBe(false);
     turns[0].finish();
     await api.sessions.wait(child.sessionId, 1000);
     expect(turns).toHaveLength(1);
-    expect((await state.sessions.get(child.sessionId)!.runtime.getMessages()).filter((message) => message.role === "user").map((message) => message.content)).toEqual([text("Work")]);
+    expect(transcript(child.sessionId, "user")).toEqual([text("Work")]);
   });
 
   test("inherits task scope and enforces child depth while independent sessions have no parent", async () => {
@@ -249,7 +215,6 @@ describe("api.sessions orchestration", () => {
     await Bun.spawn(["git", "branch", "task/orchestration"], { cwd: repo.dir }).exited;
     const task = createTask(project.id, "Orchestration", null, "task/orchestration");
     createSession("task-parent", project.id, { agentRuntimeType: "pi", taskId: task.id });
-    context.sessions.set("task-parent", { id: "task-parent", runtime: createRuntimeStub({ isStreaming: true }).runtime, lastActivity: Date.now() });
     const taskContext = {
       ...context,
       sessionId: "task-parent",
@@ -275,8 +240,11 @@ describe("api.sessions orchestration", () => {
     expect(listSessions({ taskId: task.id })).toEqual(before);
     const independent = Value.Decode(SessionHandleSchema, await deep.sessions.start("Independent work", { parentSessionId: null }));
     expect(getSession(independent.sessionId)).toMatchObject({ task_id: task.id, parent_session_id: null });
-    await admitted(turns, 2);
-    turns[1].finish();
+    // The first child's report also started a run on its parent.
+    const independentTurns = () => turns.filter(turn => turn.sessionId === independent.sessionId);
+    for (let i = 0; i < 100 && independentTurns().length === 0; i++) await Bun.sleep(10);
+    expect(independentTurns()).toHaveLength(1);
+    independentTurns()[0]!.finish();
     await deep.sessions.wait(independent.sessionId, 1000);
   });
 
@@ -285,7 +253,6 @@ describe("api.sessions orchestration", () => {
     await Bun.spawn(["git", "checkout", "-b", "task/parallel"], { cwd: repo.dir, stderr: "ignore" }).exited;
     const task = createTask(project.id, "Parallel", null, "task/parallel");
     createSession("task-parent", project.id, { agentRuntimeType: "pi", taskId: task.id });
-    context.sessions.set("task-parent", { id: "task-parent", runtime: createRuntimeStub({ isStreaming: true }).runtime, lastActivity: Date.now() });
     const api = buildApiObject({
       ...context,
       sessionId: "task-parent",
@@ -309,34 +276,32 @@ describe("api.sessions orchestration", () => {
   });
 
   test("returns bounded timeout and already-settled idle, failure and cancellation outcomes", async () => {
-    const { api, turns, state, project } = setup();
+    const { api, turns, project } = setup();
     createSession("empty", project.id, { agentRuntimeType: "pi" });
     persistCanonicalMessages("empty", []);
     expect(await api.sessions.wait("empty", 0)).toEqual({ sessionId: "empty", status: "idle", result: null, error: null });
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: null }));
     expect(await api.sessions.wait(child.sessionId, 5)).toMatchObject({ status: "timeout" });
     await admitted(turns, 1);
-    expect(state.sessions.get(child.sessionId)!.runtime.isStreaming()).toBe(true);
+    expect(getSession(child.sessionId)?.activity_state).toBe("running");
     turns[0].finish();
     await api.sessions.wait(child.sessionId, 1000);
-    const runtime = state.sessions.get(child.sessionId)!.runtime;
-    runtime.getLastRunOutcome = async () => ({
-      runId: "run-failed",
-      status: "failed",
-      error: { code: "provider_error", message: "Authoritative provider failure" },
-    });
-    expect(await api.sessions.wait(child.sessionId, 0)).toMatchObject({
+    // The node's durable settlement is the authoritative outcome.
+    await api.sessions.send(child.sessionId, "Fail");
+    await admitted(turns, 2);
+    turns[1].finish({ status: "failed", error: "Authoritative provider failure" });
+    expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({
       status: "failed", result: null, error: "Authoritative provider failure",
     });
-    runtime.waitForIdle = async () => { throw new Error("Provider failed"); };
-    expect(await api.sessions.wait(child.sessionId, 0)).toMatchObject({ status: "failed", result: null, error: "Provider failed" });
-    runtime.waitForIdle = async () => { throw new DOMException("Aborted", "AbortError"); };
-    expect(await api.sessions.wait(child.sessionId, 0)).toMatchObject({ status: "cancelled", result: null, error: "Aborted" });
+    await api.sessions.send(child.sessionId, "Abort");
+    await admitted(turns, 3);
+    turns[2].finish({ status: "aborted", error: "Aborted" });
+    expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "cancelled", result: null, error: "Aborted" });
     await expect(api.sessions.wait(child.sessionId, 30_001)).rejects.toThrow("timeoutMs");
   });
 
   test("execute cancellation interrupts only its wait, not the target session", async () => {
-    const { api, turns, context, state } = setup();
+    const { api, turns, context } = setup();
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: "current" }));
     const controller = new AbortController();
     const tool = reinsTool("execute", context);
@@ -344,7 +309,7 @@ describe("api.sessions orchestration", () => {
     controller.abort();
     expect((await waiting).details).toMatchObject({ success: false });
     await admitted(turns, 1);
-    expect(state.sessions.get(child.sessionId)!.runtime.isStreaming()).toBe(true);
+    expect(getSession(child.sessionId)?.activity_state).toBe("running");
     turns[0].finish();
     expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed" });
   });

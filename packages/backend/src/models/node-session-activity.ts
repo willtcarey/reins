@@ -26,10 +26,11 @@ export function nodeSessionActivity(row: Pick<SessionRow, "id" | "activity_state
   return hasPendingInput(row.id) ? "queued" : "idle";
 }
 
-/** Node-owned sessions whose `nodeSessionActivity` is not `idle` (SQL only preselects candidates). */
+/** Sessions whose `nodeSessionActivity` is not `idle`: node-owned sessions, and sessions at rest on the
+ * server whose input is queued behind their move onto a node (SQL only preselects candidates). */
 export function activeNodeSessionIds(): string[] {
   return getDb().query<Pick<SessionRow, "id" | "activity_state">, []>(`SELECT id, activity_state FROM sessions
-    WHERE storage_owner = 'internal-node' AND (activity_state = 'running'
-      OR id IN (SELECT session_id FROM node_command_outbox WHERE state IN ('queued', 'dispatching')))`).all()
+    WHERE (storage_owner = 'internal-node' AND activity_state = 'running')
+      OR id IN (SELECT session_id FROM node_command_outbox WHERE state IN ('queued', 'dispatching'))`).all()
     .filter(row => nodeSessionActivity(row) !== "idle").map(row => row.id);
 }

@@ -27,6 +27,8 @@ function recordingTarget() {
         case "session.abort": return { ok: true, value: { kind: "aborted", aborted: true } };
         case "session.resumePending": return { ok: true, value: { kind: "resumed", started: true } };
         case "session.setModel": return { ok: true, value: { kind: "modelSet" } };
+        case "session.hydrate": return { ok: true, value: { kind: "hydrated" } };
+        case "session.release": return { ok: false, error: { code: "unsupported", message: "not recorded", retryable: false } };
       }
     },
   };
@@ -98,7 +100,7 @@ test("dispatcher delivers provision, prompt and steer for both owners through th
   expect(server.sent.at(-1)).toEqual([{ op: "session.resumePending", sessionId: "legacy" }, undefined]);
 }));
 
-test("a node-owned model change is queued in outbox order: after earlier input, before later input; legacy sessions change the row directly", withDb(async (projectId, sourceId) => {
+test("a model change is queued in outbox order: after earlier input, before later input; a session at rest on the server is moved onto its node first", withDb(async (projectId, sourceId) => {
   for (const [id, storageOwner] of [["node", "internal-node"], ["legacy", "server"]] as const) {
     scheduleWork(`${id}-provision`, { op: "session.provision", sessionId: id, sourceId, configuration: { model: null, thinkingLevel: null, task: null } }, () =>
       createSession(id, projectId, { agentRuntimeType: "pi", sourceId, storageOwner, modelProvider: "anthropic", modelId: "claude-sonnet-4-5" }));
@@ -130,9 +132,11 @@ test("a node-owned model change is queued in outbox order: after earlier input, 
   expect(node.sent.at(-1)?.[0]).toEqual({ op: "session.setModel", sessionId: "node", provider: "anthropic", modelId: "claude-sonnet-4-5" });
 
   await sessions.setModel({ sessionId: "legacy", provider: "anthropic", modelId: "claude-haiku-4-5" });
-  expect(wakes).toBe(2);
+  expect(wakes).toBe(3);
   expect(getSession("legacy")?.model_id).toBe("claude-haiku-4-5");
-  expect(getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = 'legacy' AND json_extract(command_json, '$.op') = 'session.setModel'").get()).toBeNull();
+  // The lazy trigger: hydrate first (no lane seed: the caller's own model change follows), then the change.
+  expect(getDb().query<{ op: string }, []>("SELECT json_extract(command_json, '$.op') op FROM node_command_outbox WHERE session_id = 'legacy' AND state = 'queued' ORDER BY rowid").all())
+    .toEqual([{ op: "session.hydrate" }, { op: "session.setModel" }]);
 }));
 
 test("a node's model change rejection is a failed command, reported to every client viewing the session", withDb(async (projectId, sourceId) => {

@@ -3,7 +3,7 @@ import { createServerTransport } from "../../node-transport/server-peer.js";
 import { createNodeConnection } from "@reins/node/protocol";
 
 const unexpected = () => { throw new Error("unexpected"); };
-const noServer = { committed: unexpected, started: unexpected, settled: unexpected, attachment: () => null, event: () => {}, scriptExecute: unexpected, scriptSearch: unexpected, createTask: unexpected, findAttachment: () => null, storeAttachment: unexpected, readCredential: async () => null, refreshCredential: async () => null, listCredentials: async () => [] };
+const noServer = { committed: unexpected, started: unexpected, settled: unexpected, attachment: () => null, event: () => {}, scriptExecute: unexpected, scriptSearch: unexpected, createTask: unexpected, findAttachment: () => null, storeAttachment: unexpected, readCredential: async () => null, refreshCredential: async () => null, listCredentials: async () => [], snapshot: () => { throw new Error("unexpected session snapshot"); } };
 
 test("private loopback WS negotiates and provisions then reports status", async () => {
   let serverPeer: ReturnType<typeof createServerTransport> | undefined;

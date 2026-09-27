@@ -14,10 +14,10 @@ import { createProject } from "../../project-store.js";
 import { createSession } from "../session-fixture.js";
 import { setupTestDb, teardownTestDb } from "../helpers/test-db.js";
 import { createServerState } from "../helpers/server-state.js";
-import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 import { nodeSessionReports } from "../../runtimes/node-session-events.js";
 import { dispatcherFor } from "../../models/node-command-dispatcher.js";
 import { getSession } from "../../session-store.js";
+import { useFakeNode } from "../helpers/fake-node.js";
 
 const binding = { sourceId: 1, cwd: "/tmp/server-calls", createdAt: "2026-01-01", parentSessionId: null };
 const provision = { op: "session.provision" as const, sessionId: "s", sourceId: 1, configuration: { model: null, thinkingLevel: null, task: null } };
@@ -44,7 +44,7 @@ async function withNode(run: (node: Node, nodeDb: Database) => Promise<void>) {
 const until = async (done: () => boolean) => { for (let i = 0; i < 200 && !done(); i++) await Bun.sleep(5); };
 const pending = (db: Database) => db.query<{ n: number }, []>("SELECT COUNT(*) n FROM session_outbox").get()!.n;
 const unexpectedTool = () => { throw new Error("unexpected tool call"); };
-const noTools = { scriptExecute: unexpectedTool, scriptSearch: unexpectedTool, createTask: unexpectedTool, findAttachment: () => null, storeAttachment: () => { throw new Error("unexpected attachment store"); }, readCredential: async () => null, refreshCredential: async () => null, listCredentials: async () => [] };
+const noTools = { scriptExecute: unexpectedTool, scriptSearch: unexpectedTool, createTask: unexpectedTool, findAttachment: () => null, storeAttachment: () => { throw new Error("unexpected attachment store"); }, readCredential: async () => null, refreshCredential: async () => null, listCredentials: async () => [], snapshot: () => { throw new Error("unexpected session snapshot"); } };
 const noReports = { started: () => { throw new Error("unexpected report"); }, settled: () => { throw new Error("unexpected report"); }, ...noTools };
 
 test("committed batches cross the wire byte-for-byte, survive a missing or lost link and are acknowledged idempotently", async () => {
@@ -97,16 +97,16 @@ const settled = (runId: string, extra: Record<string, unknown> = {}) => JSON.str
 
 test("lifecycle reports cross the wire after preceding commits, stay pending without a link, and apply exactly once across a lost ack", async () => {
   setupTestDb();
-  const state = createServerState();
-  const parent = createRuntimeStub();
+  const state = createServerState(undefined, { loopbackNode: false });
+  // The parent's report is delivered to a stand-in node; only the child's reports cross this test's link.
+  const parentNode = useFakeNode(state);
   const errors = spyOn(console, "error").mockImplementation(() => {});
   try {
     const project = createProject("Lifecycle", "/tmp/server-calls");
     createSession("parent", project.id, { agentRuntimeType: "pi" });
-    state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: 0 });
     createSession("s", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
     const reports = nodeSessionReports(state);
-    const steers = () => parent.steerCalls.map(content => content.map(block => block.type === "text" ? block.text : "").join(""));
+    const steers = () => parentNode.sent.flatMap(([command]) => command.op === "session.steer" ? [command.content.map(block => block.type === "text" ? block.text : "").join("")] : []);
     await withNode(async (node, nodeDb) => {
       recordNodeReport(nodeDb, "s", "started", JSON.stringify({ runId: "r1" }));
       nodeDb.query("INSERT INTO session_outbox(session_id,kind,start_seq,payload) VALUES('s','committed',1,'[]')").run();
@@ -129,7 +129,7 @@ test("lifecycle reports cross the wire after preceding commits, stay pending wit
       });
       await until(() => received.length === 3);
       expect(pending(nodeDb)).toBe(2); // the applied settlement was not acknowledged
-      for (let i = 0; i < 200 && parent.steerCalls.length === 0; i++) await Bun.sleep(5);
+      for (let i = 0; i < 200 && steers().length === 0; i++) await Bun.sleep(5);
       expect(getSession("s")?.activity_state).toBeNull(); // reported to its parent
 
       await node.send(provision, binding); // replay
@@ -152,7 +152,7 @@ test("lifecycle reports cross the wire after preceding commits, stay pending wit
       expect(getSession("s")?.activity_state).toBe("finished");
       await Bun.sleep(20);
       expect(steers()).toEqual(["r1 answer"]);
-      expect(getDb().query("SELECT run_id, kind FROM node_lifecycle_receipts ORDER BY run_id, kind").all()).toEqual([
+      expect(getDb().query("SELECT run_id, kind FROM node_lifecycle_receipts WHERE session_id = 's' ORDER BY run_id, kind").all()).toEqual([
         { run_id: "r1", kind: "settled" }, { run_id: "r1", kind: "started" }, { run_id: "r2", kind: "settled" }, { run_id: "r2", kind: "started" },
       ]);
       live.close();

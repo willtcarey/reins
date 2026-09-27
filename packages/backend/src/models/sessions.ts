@@ -48,6 +48,7 @@ import { workForSession } from "./node-command-projection.js";
 import { enqueueSetModel } from "../node-command-store.js";
 import { getSource } from "../node-store.js";
 import { nodeSessionActivity } from "./node-session-activity.js";
+import { pendingMove, queueHydrationForUse, requestSessionMove, SessionMoveConflict, type SessionLocation } from "./session-ownership.js";
 
 export interface SetSessionModelParams {
   sessionId: string;
@@ -211,9 +212,10 @@ export class Sessions {
     private wakeNodeCommands?: () => void,
   ) {}
 
-  /** Node-owned sessions read activity from projections; legacy sessions also consult their live runtime. */
+  /** Node-owned sessions, and sessions moving onto a node, read activity from projections; legacy
+   * sessions also consult a live runtime the server may still hold. */
   private isActive(row: SessionRow): boolean {
-    if (row.storage_owner === "internal-node") return nodeSessionActivity(row) !== "idle";
+    if (row.storage_owner === "internal-node" || pendingMove(row.id)) return nodeSessionActivity(row) !== "idle";
     return row.activity_state === "running" || !!this.sessions.get(row.id)?.runtime.isStreaming();
   }
 
@@ -429,12 +431,28 @@ export class Sessions {
 
 
   /**
+   * Moves the session to a node (`nodeId`) or releases it back to the server (null). Queues the move in
+   * the node command outbox and returns where the session is now (moving or already there) without
+   * waiting for the node; throws `SessionMoveConflict` while the session is busy or moving the other way.
+   */
+  move(sessionId: string, nodeId: string | null): SessionLocation {
+    if (this.sessions.get(sessionId)?.runtime.isStreaming()) throw new SessionMoveConflict("Session is running on the server; try again when it is idle");
+    const location = requestSessionMove(sessionId, nodeId);
+    if (!location) throw new SessionNotFoundError();
+    this.wakeNodeCommands?.();
+    const row = getSession(sessionId);
+    if (row) this.broadcast({ type: "session_updated", sessionId, projectId: row.project_id });
+    return location;
+  }
+
+  /**
    * Change the AI model for a session.
    *
-   * The model is validated against the server's catalog and stored on the row. A legacy server-owned
-   * session that is open in memory applies it live for the next LLM turn. A node-owned session queues
-   * `session.setModel` in the node command outbox behind its earlier work and returns without waiting;
-   * the node applies it to Pi's lane asynchronously and a node rejection surfaces as a command failure.
+   * The model is validated against the server's catalog and stored on the row, then `session.setModel` is
+   * queued in the node command outbox behind the session's earlier work and this returns without waiting;
+   * the node applies it to Pi's lane asynchronously and a node rejection surfaces as a command failure. A
+   * session at rest on the server is first queued for hydration onto its node (the lazy trigger), so the
+   * change reaches Pi's lane there.
    * All session metadata changes broadcast a generic session_updated event so clients can reload the
    * canonical session state.
    */
@@ -486,12 +504,6 @@ export class Sessions {
     if (liveRuntime && isRuntimeSwitch) {
       await liveRuntime.close();
       this.sessions.delete(params.sessionId);
-    } else if (liveRuntime) {
-      await liveRuntime.setModel({
-        provider: params.provider,
-        modelId: params.modelId,
-        thinkingLevel: liveThinkingLevel,
-      });
     }
 
     const meta = {
@@ -500,20 +512,17 @@ export class Sessions {
       thinkingLevel,
       agentRuntimeType: nextRuntimeType,
     };
-    if (nodeOwned) {
-      // The row and the queued command commit together; the node applies it in outbox order.
-      getDb().transaction(() => {
-        updateSessionMeta(params.sessionId, meta);
-        enqueueSetModel(params.sessionId, {
-          provider: params.provider,
-          modelId: params.modelId,
-          ...(liveThinkingLevel ? { thinkingLevel: liveThinkingLevel } : {}),
-        });
-      })();
-      this.wakeNodeCommands?.();
-    } else {
+    // The row and the queued command commit together; the node applies it in outbox order.
+    getDb().transaction(() => {
       updateSessionMeta(params.sessionId, meta);
-    }
+      if (!nodeOwned) queueHydrationForUse(params.sessionId, { seedModel: false });
+      enqueueSetModel(params.sessionId, {
+        provider: params.provider,
+        modelId: params.modelId,
+        ...(liveThinkingLevel ? { thinkingLevel: liveThinkingLevel } : {}),
+      });
+    })();
+    this.wakeNodeCommands?.();
 
     this.broadcast({
       type: "session_updated",

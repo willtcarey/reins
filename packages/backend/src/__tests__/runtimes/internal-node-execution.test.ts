@@ -119,8 +119,7 @@ test("node rejections keep their NodeResult codes across the wire; values the wi
     // A node-owned session whose node data is missing (never provisioned on this node).
     createSession("lost", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
     const notFound = { code: "not_found" as const, message: "This session's node data is missing. Start a new session.", retryable: false };
-    expect(await target.send({ op: "session.prompt", sessionId: "lost", clientId: "x", content: text("hi") }, "lost-prompt")).toEqual({ ok: false, error: notFound });
-    expect(await target.send({ op: "session.setModel", sessionId: "lost", provider: "p", modelId: "m" }, "lost-model")).toEqual({ ok: false, error: notFound });
+    // Immediate controls report it; submitted work re-hydrates the session first (session-relocation tests).
     expect(await target.send({ op: "session.abort", sessionId: "lost" })).toEqual({ ok: false, error: notFound });
     expect(await target.send({ op: "session.resumePending", sessionId: "lost" })).toEqual({ ok: false, error: notFound });
 

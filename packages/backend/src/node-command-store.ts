@@ -11,8 +11,11 @@ export interface CommandRow {
   result_json: string | null;
 }
 
+/** The session's open record on its node: its latest provision or hydrate (a session created on a node
+ * is provisioned; one moved there from the server is hydrated, possibly again after a release). */
 export function getCommandForSession(sessionId: string): { id: string } | null {
-  return getDb().query<{ id: string }, [string]>("SELECT id FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.op') = 'session.provision' LIMIT 1").get(sessionId) ?? null;
+  return getDb().query<{ id: string }, [string]>(`SELECT id FROM node_command_outbox WHERE session_id = ?
+    AND json_extract(command_json, '$.op') IN ('session.provision', 'session.hydrate') ORDER BY rowid DESC LIMIT 1`).get(sessionId) ?? null;
 }
 
 export function getCommand(id: string): CommandRow | null {
@@ -96,6 +99,11 @@ export function enqueueSetModel(sessionId: string, model: { provider: string; mo
     ...(model.thinkingLevel === undefined ? {} : { thinkingLevel: model.thinkingLevel }) });
   getDb().query("INSERT INTO node_command_outbox (id, session_id, command_json, state) VALUES (?, ?, ?, 'queued')").run(id, sessionId, json);
   return id;
+}
+
+/** Whether input with this client ID was ever stored for the session (and not removed as failed). */
+export function hasInput(sessionId: string, clientId: string): boolean {
+  return !!getDb().query("SELECT 1 FROM node_command_outbox WHERE session_id = ? AND json_extract(command_json, '$.clientId') = ?").get(sessionId, clientId);
 }
 
 export function hasPendingInput(sessionId: string): boolean {

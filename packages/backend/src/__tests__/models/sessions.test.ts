@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
+import { getDb } from "../../db.js";
 import { createTestManagedSession } from "../helpers/test-pi.js";
 import { createProject, type Project } from "../../project-store.js";
 import { createSession, getSession } from "../session-fixture.js";
@@ -63,7 +64,7 @@ describe("Sessions.setModel", () => {
     model = new Sessions(sessions, broadcast);
   });
 
-  test("updates an open session live, persists metadata, and broadcasts a session update", async () => {
+  test("leaves a live legacy runtime alone and queues the change behind the move to its node, persists metadata, and broadcasts a session update", async () => {
     createSession("sess-1", project.id, {  agentRuntimeType: "pi",thinkingLevel: "medium" });
     const managed = await createMockManagedSession("sess-1");
     sessions.set("sess-1", managed);
@@ -75,11 +76,10 @@ describe("Sessions.setModel", () => {
       thinkingLevel: "high",
     });
 
-    expect(managed.runtime.setModel).toHaveBeenCalledWith({
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-5",
-      thinkingLevel: "high",
-    });
+    // The session runs on its node from now on: the change is queued behind its move there.
+    expect(managed.runtime.setModel).not.toHaveBeenCalled();
+    expect(getDb().query<{ op: string }, []>("SELECT json_extract(command_json, '$.op') op FROM node_command_outbox WHERE session_id = 'sess-1' ORDER BY rowid").all())
+      .toEqual([{ op: "session.hydrate" }, { op: "session.setModel" }]);
 
     const updated = getSession("sess-1");
     expect(updated!.model_provider).toBe("anthropic");

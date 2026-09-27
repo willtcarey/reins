@@ -7,6 +7,7 @@ import { createSession } from "../../session-store.js";
 import { internalSource } from "../../node-store.js";
 import { enqueueInput } from "../../node-command-store.js";
 import { NodeCommandDispatcher } from "../../models/node-command-dispatcher.js";
+import { useFakeNode } from "../helpers/fake-node.js";
 import { createServerState } from "../helpers/server-state.js";
 import { createRuntimeStub } from "../helpers/test-runtime-stub.js";
 
@@ -52,10 +53,8 @@ test("one outbox scan orders input, deduplicates clientId and removes failed com
     createSession("s", project.id, { agentRuntimeType: "pi", sourceId });
     createSession("other", project.id, { agentRuntimeType: "pi", sourceId });
     const state = createServerState();
-    const firstRuntime = createRuntimeStub();
-    const otherRuntime = createRuntimeStub();
-    state.sessions.set("s", { id: "s", runtime: firstRuntime.runtime, lastActivity: 0 });
-    state.sessions.set("other", { id: "other", runtime: otherRuntime.runtime, lastActivity: 0 });
+    const node = useFakeNode(state);
+    const inputs = (sessionId: string, op: string) => node.sent.flatMap(([command]) => command.op === op && command.sessionId === sessionId && "content" in command ? [command.content] : []);
     const first = enqueueInput("s", "prompt", [{ type: "text", text: "one" }], "a");
     expect(enqueueInput("s", "prompt", [{ type: "text", text: "one" }], "a")).toBe(first);
     expect(db.query<{ name: string }, []>("PRAGMA table_info(node_command_outbox)").all().map(row => row.name)).not.toContain("client_id");
@@ -65,24 +64,20 @@ test("one outbox scan orders input, deduplicates clientId and removes failed com
     enqueueInput("s", "steer", [{ type: "text", text: "two" }], "b");
     const dispatcher = new NodeCommandDispatcher(state);
     await dispatcher.drain();
-    expect(firstRuntime.promptCalls).toEqual([[{ type: "text", text: "one" }]]);
-    expect(firstRuntime.steerCalls).toEqual([[{ type: "text", text: "two" }]]);
-    const originalPrompt = firstRuntime.runtime.prompt.bind(firstRuntime.runtime);
-    firstRuntime.runtime.prompt = async (content, options) => {
-      if (content.some(block => block.type === "text" && block.text === "three")) throw new Error("delivery failed");
-      return originalPrompt(content, options);
-    };
+    expect(inputs("s", "session.prompt")).toEqual([[{ type: "text", text: "one" }]]);
+    expect(inputs("s", "session.steer")).toEqual([[{ type: "text", text: "two" }]]);
+    node.rejectWhen(command => "content" in command && command.content.some(block => block.type === "text" && block.text === "three") ? "delivery failed" : null);
     const third = enqueueInput("s", "prompt", [{ type: "text", text: "three" }], "c");
     enqueueInput("s", "prompt", [{ type: "text", text: "four" }], "d");
     enqueueInput("other", "prompt", [{ type: "text", text: "independent" }], "e");
     await dispatcher.drain();
-    expect(firstRuntime.promptCalls).toEqual([[{ type: "text", text: "one" }], [{ type: "text", text: "four" }]]);
-    expect(otherRuntime.promptCalls).toEqual([[{ type: "text", text: "independent" }]]);
+    expect(inputs("s", "session.prompt")).toEqual([[{ type: "text", text: "one" }], [{ type: "text", text: "three" }], [{ type: "text", text: "four" }]]);
+    expect(inputs("other", "session.prompt")).toEqual([[{ type: "text", text: "independent" }]]);
     expect(db.query("SELECT id FROM node_command_outbox WHERE id = ?").get(third)).toBeNull();
     expect(db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE id = ?").get(first)?.state).toBe("admitted");
     const afterFence = enqueueInput("other", "steer", [{ type: "text", text: "still works" }], "f");
     await dispatcher.drain();
-    expect(otherRuntime.steerCalls).toEqual([[{ type: "text", text: "still works" }]]);
+    expect(inputs("other", "session.steer")).toEqual([[{ type: "text", text: "still works" }]]);
     expect(db.query<{ state: string }, [string]>("SELECT state FROM node_command_outbox WHERE id = ?").get(afterFence)?.state).toBe("admitted");
   } finally { setDb(new Database(":memory:")); db.close(); }
 });

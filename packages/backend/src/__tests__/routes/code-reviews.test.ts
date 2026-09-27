@@ -4,7 +4,6 @@ import { createProject } from "../../project-store.js";
 import { createTask } from "../../task-store.js";
 import { createSession, updateActivityState } from "../session-fixture.js";
 import { loadMessages } from "../../messages-store.js";
-import type { AgentRuntime } from "../../runtimes/registry.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createServerState } from "../helpers/server-state.js";
@@ -14,27 +13,16 @@ import type { NodeCommand, NodeResult } from "@reins/node/contract";
 import { registerExecutionTargets, type SessionExecutionTarget } from "../../runtimes/execution-target.js";
 import { getDb } from "../../db.js";
 import { createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
+import { useFakeNode, type FakeNode } from "../helpers/fake-node.js";
+import { createSource } from "../../node-store.js";
 
-function reviewRuntime(
-  prompts: unknown[],
-  options: { rejectSubmission?: boolean } = {},
-): AgentRuntime {
-  return {
-    async prompt(message) {
-      if (options.rejectSubmission) throw new Error("admission failed");
-      prompts.push(message);
-      return { messageId: "canonical-entry-1" };
-    },
-    async waitForIdle() {},
-    async steer() {},
-    async abort() {},
-    async setModel() {},
-    subscribe() { return () => {}; },
-    async getMessages() { return []; },
-    isStreaming() { return false; },
-    async close() {},
-  };
+/** The prompt contents the fake node received for a session, once `count` arrived. */
+async function promptsTo(node: FakeNode, sessionId: string, count: number): Promise<unknown[]> {
+  const prompts = () => node.sent.flatMap(([command]) => command.op === "session.prompt" && command.sessionId === sessionId ? [command.content] : []);
+  for (let i = 0; i < 100 && prompts().length < count; i++) await Bun.sleep(5);
+  return prompts();
 }
+
 
 const filePatch = `diff --git a/src/example.ts b/src/example.ts
 index 8d57f20..4e0618a 100644
@@ -175,11 +163,9 @@ describe("code review routes", () => {
     });
   });
 
-  test("submits saved comments once to the selected idle session", async () => {
+  test("submits saved comments once to the selected idle session, moving it onto its node first", async () => {
     createSession("session-1", projectId, { agentRuntimeType: "pi", taskId });
-    const prompts: unknown[] = [];
-    const runtime = reviewRuntime(prompts);
-    state.sessions.set("session-1", { id: "session-1", runtime, lastActivity: Date.now() });
+    const node = useFakeNode(state);
     const annotationResponse = await router.handle(makeRequest(
       "POST",
       `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
@@ -219,12 +205,13 @@ describe("code review routes", () => {
     const submitted = await response!.json();
 
     expect(response?.status).toBe(200);
-    expect(submitted).toEqual({ messageId: "canonical-entry-1" });
+    expect(submitted).toEqual({ messageId: `code-review:${openReview.id}:${openReview.revision}` });
     expect(await (await router.handle(
       makeRequest("GET", `/api/projects/${projectId}/code-review?taskId=${taskId}`),
       state,
     ))!.json()).toBeNull();
-    expect(loadMessages("session-1")).toEqual([]);
+    const prompts = await promptsTo(node, "session-1", 1);
+    expect(node.sent[0]?.[0].op).toBe("session.hydrate");
     const submittedPrompt: unknown = prompts[0];
     const text = Array.isArray(submittedPrompt) && submittedPrompt[0]?.type === "text"
       ? String(submittedPrompt[0].text)
@@ -266,9 +253,7 @@ describe("code review routes", () => {
 
   test("deletes the accepted review so retries cannot duplicate its message", async () => {
     createSession("session-1", projectId, { agentRuntimeType: "pi", taskId });
-    const prompts: unknown[] = [];
-    const runtime = reviewRuntime(prompts);
-    state.sessions.set("session-1", { id: "session-1", runtime, lastActivity: Date.now() });
+    const node = useFakeNode(state);
     const created = await router.handle(makeRequest(
       "POST",
       `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
@@ -283,17 +268,15 @@ describe("code review routes", () => {
 
     expect(first?.status).toBe(200);
     expect(retry?.status).toBe(409);
-    expect(loadMessages("session-1")).toEqual([]);
-    expect(prompts).toHaveLength(1);
+    expect(await promptsTo(node, "session-1", 1)).toHaveLength(1);
+    await Bun.sleep(20);
+    expect(await promptsTo(node, "session-1", 1)).toHaveLength(1);
   });
 
   test("keeps the review when durable prompt acceptance fails", async () => {
-    createSession("session-1", projectId, { agentRuntimeType: "pi", taskId });
-    state.sessions.set("session-1", {
-      id: "session-1",
-      runtime: reviewRuntime([], { rejectSubmission: true }),
-      lastActivity: Date.now(),
-    });
+    // A session whose source is on a node this server cannot deliver to: queuing its input fails.
+    getDb().query("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')").run();
+    createSession("session-1", projectId, { agentRuntimeType: "pi", taskId, sourceId: createSource(projectId, "remote", "/remote/checkout").id });
     const created = await router.handle(makeRequest(
       "POST",
       `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,
@@ -315,11 +298,7 @@ describe("code review routes", () => {
 
   test("consumes the review after durable prompt submission", async () => {
     createSession("session-1", projectId, { agentRuntimeType: "pi", taskId });
-    state.sessions.set("session-1", {
-      id: "session-1",
-      runtime: reviewRuntime([]),
-      lastActivity: Date.now(),
-    });
+    useFakeNode(state);
     const created = await router.handle(makeRequest(
       "POST",
       `/api/projects/${projectId}/code-review/comments?taskId=${taskId}`,

@@ -11,7 +11,13 @@ import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { admitInput, createProvisionedNodeSession, queuePrompt } from "../helpers/node-session.js";
 import { nodeSessionReports } from "../../runtimes/node-session-events.js";
 import { claimCommand, deleteFailedCommand, settleCommand } from "../../node-command-store.js";
+import { useFakeNode, type FakeNode } from "../helpers/fake-node.js";
 
+/** Steers the fake node received for a session (sessions at rest on the server are moved onto it first). */
+const steersTo = (node: FakeNode, sessionId: string) => node.sent.flatMap(([command]) => command.op === "session.steer" && command.sessionId === sessionId ? [command] : []);
+async function until(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !condition(); i++) await Bun.sleep(5);
+}
 const reply = (text: string) => ({ role: "assistant", content: [{ type: "text" as const, text }], timestamp: 2 });
 const settled = (runId: string, status: "completed" | "failed" | "aborted", error?: string) => ({
   sessionId: "node", runId, status, ...(error ? { error: { message: error } } : {}),
@@ -21,36 +27,22 @@ const settled = (runId: string, status: "completed" | "failed" | "aborted", erro
 describe("SessionInstance", () => {
   useTestDb();
 
-  test("delivers addressed messages through native steering without duplicate AgentHarness broadcast", async () => {
+  test("delivers addressed messages as steers from the sender, after moving the target onto its node, without duplicate AgentHarness broadcast", async () => {
     const project = createProject("Messages", "/tmp/messages-test");
     createSession("source", project.id, { agentRuntimeType: "pi" });
     createSession("target", project.id, { agentRuntimeType: "pi" });
-    const stub = createRuntimeStub();
-    const admission = Promise.withResolvers<void>();
-    stub.runtime.steer = async (content, options) => {
-      await admission.promise;
-      stub.steerCalls.push(content);
-      stub.steerOptions.push(options);
-    };
-    stub.runtime.isStreaming = () => { throw new Error("activity must not choose delivery"); };
     const broadcasts: unknown[] = [];
     const state = createServerState();
-    state.sessions.set("target", { id: "target", runtime: stub.runtime, lastActivity: 0 });
+    const node = useFakeNode(state);
     const manager = new SessionManager(state);
     Object.defineProperty(manager, "broadcast", { value: (event: unknown) => { broadcasts.push(event); } });
     const instance = new SessionInstance(manager, "source");
 
-    const sending = instance.send("target", "First");
-    await Bun.sleep(0);
-    expect(broadcasts).toEqual([]);
-    admission.resolve();
-    expect(await sending).toEqual({ sessionId: "target" });
-    expect(stub.promptCalls).toEqual([]);
-    expect(stub.steerCalls).toEqual([[{ type: "text", text: "First" }]]);
-    expect(stub.steerOptions).toEqual([{
-      reinsId: expect.any(String),
-      metadata: { sourceSessionId: "source" },
-    }]);
+    expect(await instance.send("target", "First")).toEqual({ sessionId: "target" });
+    await until(() => steersTo(node, "target").length > 0);
+    expect(node.sent.map(([command]) => command.op)).toEqual(["session.hydrate", "session.steer"]);
+    expect(steersTo(node, "target")).toEqual([{ op: "session.steer", sessionId: "target", clientId: expect.any(String),
+      content: [{ type: "text", text: "First" }], sourceSessionId: "source" }]);
     expect(broadcasts).toEqual([]);
   });
 
@@ -62,14 +54,13 @@ describe("SessionInstance", () => {
     ).get(project.id, "Other task", "task/other");
     if (!task) throw new Error("Expected task");
     createSession("target", project.id, { agentRuntimeType: "pi", taskId: task.id });
-    const stub = createRuntimeStub();
     const state = createServerState();
-    state.sessions.set("target", { id: "target", runtime: stub.runtime, lastActivity: 0 });
+    const node = useFakeNode(state);
 
     await new SessionInstance(new SessionManager(state), "source").send("target", "Do not break mobile");
 
-    expect(stub.steerCalls).toEqual([[{ type: "text", text: "Do not break mobile" }]]);
-    expect(stub.steerOptions).toEqual([{ reinsId: expect.any(String), metadata: { sourceSessionId: "source" } }]);
+    await until(() => steersTo(node, "target").length > 0);
+    expect(steersTo(node, "target")).toEqual([expect.objectContaining({ content: [{ type: "text", text: "Do not break mobile" }], sourceSessionId: "source" })]);
   });
 
   test("rejects sending to a session in another project", async () => {
@@ -77,12 +68,11 @@ describe("SessionInstance", () => {
     const targetProject = createProject("Target", "/tmp/send-target");
     createSession("source", sourceProject.id, { agentRuntimeType: "pi" });
     createSession("target", targetProject.id, { agentRuntimeType: "pi" });
-    const stub = createRuntimeStub();
     const state = createServerState();
-    state.sessions.set("target", { id: "target", runtime: stub.runtime, lastActivity: 0 });
+    const node = useFakeNode(state);
 
     await expect(new SessionInstance(new SessionManager(state), "source").send("target", "Nope")).rejects.toThrow();
-    expect(stub.steerCalls).toEqual([]);
+    expect(node.sent).toEqual([]);
   });
 
   test("updates activity and metadata without rewriting canonical entries", () => {
@@ -108,21 +98,14 @@ describe("SessionInstance", () => {
     expect(getSession("session")).toMatchObject({ activity_state: "finished", model_provider: "faux", model_id: "model", thinking_level: "high" });
   });
 
-  test("clears child activity only after its authoritative outcome is admitted to the parent", async () => {
+  test("clears child activity once its authoritative outcome is queued for the parent", async () => {
     const project = createProject("Reporter", "/tmp/reporter-test");
     createSession("parent", project.id, { agentRuntimeType: "pi" });
     createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
-    const parent = createRuntimeStub();
     const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "stale success" }] }] });
     const activity: string[] = [];
-    const admission = Promise.withResolvers<void>();
-    const originalSteer = parent.runtime.steer;
-    parent.runtime.steer = async (content, options) => {
-      await admission.promise;
-      await originalSteer(content, options);
-    };
     const state = createServerState();
-    state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: 0 });
+    const node = useFakeNode(state);
     const manager = new SessionManager(state);
     Object.defineProperty(manager, "broadcast", { value: (event: { type: string }) => {
       if (event.type !== "session_updated") return;
@@ -142,42 +125,27 @@ describe("SessionInstance", () => {
     expect(getSession("child")?.activity_state).toBeNull();
     expect(activity).toEqual(["running", "null"]);
 
-    admission.resolve();
-    for (let i = 0; i < 100 && parent.steerCalls.length === 0; i++) await Bun.sleep(10);
-
+    await until(() => steersTo(node, "parent").length > 0);
     expect(activity).toEqual(["running", "null"]);
-    expect(parent.steerCalls).toHaveLength(1);
-    const notification = parent.steerCalls[0]?.find((block) => block.type === "text")?.text;
-    expect(notification).toBe("Session failed: Provider unavailable");
-    expect(notification).not.toContain("stale success");
-    expect(parent.steerOptions).toEqual([{
-      reinsId: expect.any(String),
-      metadata: { sourceSessionId: "child" },
-    }]);
+    expect(steersTo(node, "parent")).toEqual([expect.objectContaining({
+      content: [{ type: "text", text: "Session failed: Provider unavailable" }], sourceSessionId: "child",
+    })]);
   });
 
   test("does not clear newer child activity when an earlier report finishes delivery", async () => {
     const project = createProject("Overlapping reporter", "/tmp/overlapping-reporter-test");
     createSession("parent", project.id, { agentRuntimeType: "pi" });
     createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
-    const parent = createRuntimeStub();
     const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "Result" }] }] });
-    const admission = Promise.withResolvers<void>();
-    const reported = Promise.withResolvers<void>();
-    parent.runtime.steer = async () => {
-      await admission.promise;
-      reported.resolve();
-    };
     const state = createServerState();
-    state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: 0 });
+    const node = useFakeNode(state);
     const manager = new SessionManager(state);
     const instance = new SessionInstance(manager, "child");
 
     instance.started("run-1");
     instance.settled(child.runtime, { runId: "run-1", status: "completed" });
     instance.started("run-2");
-    admission.resolve();
-    await reported.promise;
+    await until(() => steersTo(node, "parent").length > 0);
     await Bun.sleep(0);
 
     expect(getSession("child")?.activity_state).toBe("running");
@@ -203,15 +171,14 @@ describe("SessionInstance", () => {
     expect(getSession("child")?.activity_state).toBe("finished");
   });
 
-  test("retains finished child activity when parent delivery fails", async () => {
+  test("clears child activity when the parent's node rejects the queued report", async () => {
     const project = createProject("Failed reporter", "/tmp/failed-reporter-test");
     createSession("parent", project.id, { agentRuntimeType: "pi" });
     createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
-    const parent = createRuntimeStub();
-    parent.runtime.steer = async () => { throw new Error("parent unavailable"); };
     const child = createRuntimeStub({ messages: [{ role: "assistant", content: [{ type: "text", text: "Result" }] }] });
     const state = createServerState();
-    state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: 0 });
+    const node = useFakeNode(state);
+    node.reject("session.steer", "parent unavailable");
     const manager = new SessionManager(state);
     const instance = new SessionInstance(manager, "child");
 
@@ -226,11 +193,10 @@ describe("SessionInstance", () => {
     const project = createProject("Unreadable reply", "/tmp/unreadable-reply-test");
     createSession("parent", project.id, { agentRuntimeType: "pi" });
     createSession("child", project.id, { agentRuntimeType: "pi", parentSessionId: "parent" });
-    const parent = createRuntimeStub();
     const child = createRuntimeStub();
     child.runtime.getMessages = async () => { throw new Error("transcript unavailable"); };
     const state = createServerState();
-    state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: 0 });
+    const node = useFakeNode(state);
     const instance = new SessionInstance(new SessionManager(state), "child");
 
     instance.started("run-1");
@@ -239,7 +205,7 @@ describe("SessionInstance", () => {
     await Bun.sleep(20);
 
     expect(getSession("child")?.activity_state).toBe("finished");
-    expect(parent.steerCalls).toEqual([]);
+    expect(node.sent).toEqual([]);
     expect(getDb().query("SELECT COUNT(*) n FROM node_command_outbox").get()).toEqual({ n: 0 });
   });
 
@@ -301,9 +267,8 @@ describe("SessionInstance", () => {
       const project = createProject("Node child wait", "/tmp/node-child-wait-test");
       createSession("parent", project.id, { agentRuntimeType: "pi" });
       createProvisionedNodeSession("node", project.id, { parentSessionId: "parent" });
-      const parent = createRuntimeStub();
       const state = createServerState();
-      state.sessions.set("parent", { id: "parent", runtime: parent.runtime, lastActivity: 0 });
+      const node = useFakeNode(state);
       const reports = nodeSessionReports(state);
       const command = queuePrompt("node", "client-1");
       const waiting = new SessionInstance(new SessionManager(state), "parent").wait("node", 2000);
@@ -313,8 +278,8 @@ describe("SessionInstance", () => {
       reports.settled({ ...settled("run-1", "completed"), reply: { text: "Child result", stopReason: "stop", errorMessage: null } });
       expect(await waiting).toEqual({ sessionId: "node", status: "completed", result: "Child result", error: null });
       expect(getSession("node")?.activity_state).toBeNull();
-      for (let i = 0; i < 100 && parent.steerCalls.length === 0; i++) await Bun.sleep(5);
-      expect(parent.steerCalls).toEqual([[{ type: "text", text: "Child result" }]]);
+      await until(() => steersTo(node, "parent").length > 0);
+      expect(steersTo(node, "parent")).toEqual([expect.objectContaining({ content: [{ type: "text", text: "Child result" }], sourceSessionId: "node" })]);
     });
   });
 });

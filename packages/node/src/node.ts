@@ -16,6 +16,8 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { AttachmentMaterializationError, materializePromptAttachments, type FetchAttachment } from "./runtime/attachments.js";
 import { mapContentImages } from "./protocol/event-images.js";
 import type { AgentRuntimeEvent } from "./runtime/types.js";
+import type { SessionSnapshot } from "./protocol/schema.js";
+import { hydrateNodeSession, releasedSnapshot, releaseNodeSession, type HydrateRequest, type RelocationServer } from "./relocation.js";
 
 /** Server-owned calls over a connection; calls may wait for negotiation and reject if it fails.
  * Provider credentials are served by the server too (`credentials.*`): a node needs no credential
@@ -32,6 +34,8 @@ export interface NodeServer extends CredentialServer {
   executeScript(input: ScriptExecute, signal?: AbortSignal): Promise<ScriptExecuteResult>;
   searchScript(input: ScriptSearch, signal?: AbortSignal): Promise<ScriptSearchResult>;
   createTask(input: ProjectCreateTask, signal?: AbortSignal): Promise<ProjectCreateTaskResult>;
+  /** One page of the server's copy of a session (session relocation). */
+  snapshot(sessionId: string, fromSeq: number): Promise<SessionSnapshot>;
 }
 
 export interface Node {
@@ -44,6 +48,11 @@ export interface Node {
    */
   shutdown(): Promise<void>;
   send(input: NodeCommand, binding: NodeSessionBinding, commandId?: string): Promise<NodeResult>;
+  /** `session.hydrate`: copies the server's copy of a session into node storage and binds it (see `hydrateNodeSession`). */
+  hydrate(input: Omit<HydrateRequest, "binding">, binding: NodeSessionBinding): Promise<NodeResult>;
+  /** `session.release`: refuses while a run is active; otherwise delivers the session's outbox, confirms
+   * the server's copy is complete and drops the local copy. */
+  release(sessionId: string, binding: NodeSessionBinding, commandId: string): Promise<NodeResult>;
   /** The newest attached connection serves server calls; detach when it closes. Attaching replays pending reports. */
   attach(server: NodeServer): () => void;
 }
@@ -223,7 +232,40 @@ export function startNode(): Node {
       return null;
     } finally { await storage.close(BACKGROUND_CONTEXT); }
   });
+  const relocationServer: RelocationServer = {
+    snapshot: (sessionId, fromSeq) => server().snapshot(sessionId, fromSeq),
+    fetchAttachment: (sessionId, attachmentId) => server().fetchAttachment(sessionId, attachmentId),
+  };
   const node: Node = {
+    hydrate(input, binding) {
+      if (!running) throw new Error("Node stopped");
+      // Serialized with provision and runtime opening: a replay that overlaps a slow first attempt waits
+      // for it and then finds the identical copy.
+      return serialized(input.sessionId, async (): Promise<NodeResult> => {
+        const rejected = await hydrateNodeSession(db, relocationServer, { ...input, binding });
+        return rejected ? { ok: false, error: rejected } : { ok: true, value: { kind: "hydrated" } };
+      });
+    },
+    release(sessionId, binding, commandId) {
+      if (!running) throw new Error("Node stopped");
+      return serialized(sessionId, async (): Promise<NodeResult> => {
+        const done = releasedSnapshot(db, commandId, sessionId);
+        if (done) return { ok: true, value: { kind: "released", snapshot: done } };
+        if (!nodeSessionBinding(db, sessionId)) return { ok: false, error: { code: "not_found", message: MISSING_SESSION_MESSAGE, retryable: false } };
+        verify(sessionId, binding);
+        const live = runtimes.get(sessionId);
+        if (live?.isStreaming()) return { ok: false, error: { code: "busy", message: `Session ${sessionId} has an active run; release refused`, retryable: false } };
+        if (live) {
+          runtimes.delete(sessionId);
+          await live.close();
+        }
+        await deliverNodeOutbox(db, sessionId, deliver).catch(() => undefined);
+        const released = await releaseNodeSession(db, relocationServer, sessionId, commandId);
+        if ("code" in released) return { ok: false, error: released };
+        eventSeqs.delete(sessionId);
+        return { ok: true, value: { kind: "released", snapshot: released.snapshot } };
+      });
+    },
     stop(): void {
       if (--leases > 0) return;
       running = false;
@@ -269,6 +311,9 @@ export function startNode(): Node {
         await deliverNodeOutbox(db, input.sessionId, deliver).catch(() => undefined);
         return { ok: true, value: { kind: "provisioned" } };
       }
+      if (input.op === "session.hydrate" || input.op === "session.release") return { ok: false, error: {
+        code: "unsupported", message: `${input.op} is served by its own wire method`, retryable: false,
+      } };
       if (!nodeSessionBinding(db, input.sessionId)) return { ok: false, error: {
         code: "not_found", message: MISSING_SESSION_MESSAGE, retryable: false,
       } };

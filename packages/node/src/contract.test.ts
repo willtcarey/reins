@@ -11,10 +11,16 @@ test("delivery policy belongs to the operation, not to arbitrary caller requests
   // A model change is ordered with the session's queued work, not applied immediately.
   expect(deliveryPolicy({ op: "session.setModel", sessionId: "s", provider: "p", modelId: "m" })).toBe("submit-work");
   expect(deliveryPolicy({ op: "session.abort", sessionId: "s" })).toBe("request-now");
+  // Relocation is ordered with the session's work: input submitted during a move waits behind it.
+  expect(deliveryPolicy({ op: "session.hydrate", sessionId: "s", targetSourceId: 1 })).toBe("submit-work");
+  expect(deliveryPolicy({ op: "session.release", sessionId: "s" })).toBe("submit-work");
+  const snapshot = { harnessNextSeq: 3, rowCounts: { entries: 1, values: 1, lists: 0, usage: 0 }, digest: "a".repeat(64) };
+  expect(nodeResult.safeParse({ ok: true, value: { kind: "released", snapshot } }).success).toBe(true);
+  expect(nodeResult.safeParse({ ok: true, value: { kind: "released", snapshot: { ...snapshot, digest: "x" } } }).success).toBe(false);
 });
 
 test("semantic contract validates commands, results and observations without transport framing", () => {
-  expect(contractVersion).toBe(4);
+  expect(contractVersion).toBe(5);
   expect(nodeCommand.parse({ op: "session.setModel", sessionId: "s", provider: "p", modelId: "m", thinkingLevel: "high" })).toMatchObject({ thinkingLevel: "high" });
   expect(nodeCommand.safeParse({ op: "session.setModel", sessionId: "s", provider: "", modelId: "m" }).success).toBe(false);
   expect(nodeResult.safeParse({ ok: true, value: { kind: "modelSet" } }).success).toBe(true);

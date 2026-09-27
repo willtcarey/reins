@@ -4,13 +4,20 @@ import { getSession } from "../session-store.js";
 import { getSource } from "../node-store.js";
 import { waitForAdmission, wakeOpenForInput } from "../models/node-command-dispatcher.js";
 import { executionTargetFor } from "./execution-target.js";
-import { enqueueInput } from "../node-command-store.js";
+import { enqueueInput, hasInput } from "../node-command-store.js";
+import { getDb } from "../db.js";
+import { queueHydrationForUse } from "../models/session-ownership.js";
 
 /** Resolves the session's current source and persists input synchronously, so a caller can enqueue
- * inside its own transaction. Call `wakeSessionInput` after that transaction commits. */
+ * inside its own transaction. Call `wakeSessionInput` after that transaction commits. A session at rest
+ * on the server is first queued for hydration onto its node, so the input waits behind the move (a replay
+ * of input already stored queues nothing). */
 export function enqueueSessionInput(sessionId: string, command: "prompt" | "steer", content: ClientPromptContent, clientId: string, sourceSessionId?: string): void {
   currentSource(sessionId);
-  enqueueInput(sessionId, command, content, clientId, sourceSessionId);
+  getDb().transaction(() => {
+    if (!hasInput(sessionId, clientId)) queueHydrationForUse(sessionId);
+    enqueueInput(sessionId, command, content, clientId, sourceSessionId);
+  })();
 }
 export function wakeSessionInput(state: ServerState): void { wakeOpenForInput(state); }
 

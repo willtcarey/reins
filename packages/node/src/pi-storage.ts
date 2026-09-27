@@ -468,3 +468,169 @@ export class PiStorageAdapter implements Storage {
     if (this.state !== "open") throw new Error("PiStorageAdapter is closed");
   }
 }
+
+/**
+ * Session snapshots: the verbatim rows of one session's AgentHarness state (entries, values, lists,
+ * usage) in the table layout the node's canonical storage and the server's copy share, so a session
+ * can move between them without going through Pi. Entries carry their parent's harness ID instead of
+ * a row ID (row IDs are local to a database). Rows are ordered by (seq, table, key); every row has the
+ * seq of the write that produced it (a value's last write).
+ */
+export type PiSnapshotRow =
+  | { table: "entry"; seq: number; harnessId: string; parentHarnessId: string | null; role: string; messageJson: string; createdAt: string }
+  | { table: "value"; seq: number; namespace: string; key: string; valueJson: string }
+  | { table: "list"; seq: number; namespace: string; key: string; valueJson: string }
+  | { table: "usage"; seq: number; id: string; entryId: string | null; adjustment: number; usageJson: string; detailsJson: string | null };
+export interface PiSnapshotSummary {
+  /** The session's next harness seq: the copy holds every write below it. */
+  harnessNextSeq: number;
+  rowCounts: { entries: number; values: number; lists: number; usage: number };
+  /** sha256 (hex) over every row, in snapshot order. */
+  digest: string;
+}
+export interface PiSnapshotPage { rows: PiSnapshotRow[]; nextSeq: number | null }
+export const SNAPSHOT_PAGE_ROWS = 500;
+export const SNAPSHOT_PAGE_BYTES = 4 * 1024 * 1024;
+
+const TABLE_ORDER = { entry: 0, value: 1, list: 2, usage: 3 } as const;
+function rowKey(row: PiSnapshotRow): string {
+  switch (row.table) {
+    case "entry": return row.harnessId;
+    case "value": case "list": return JSON.stringify([row.namespace, row.key]);
+    case "usage": return row.id;
+  }
+}
+function compareRows(a: PiSnapshotRow, b: PiSnapshotRow): number {
+  if (a.seq !== b.seq) return a.seq - b.seq;
+  if (a.table !== b.table) return TABLE_ORDER[a.table] - TABLE_ORDER[b.table];
+  const [left, right] = [rowKey(a), rowKey(b)];
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+function rowBytes(row: PiSnapshotRow): number {
+  return row.table === "entry" ? row.messageJson.length : row.table === "usage" ? row.usageJson.length + (row.detailsJson?.length ?? 0) : row.valueJson.length;
+}
+
+function readTableRows(db: Database, sessionId: string, fromSeq: number, limit: number): PiSnapshotRow[][] {
+  const entries = db.query<{ seq: number; harness_id: string | null; parent_harness_id: string | null; parent_id: number | null; role: string; message_json: string; created_at: string }, [string, number, number]>(
+    `SELECT child.seq, child.harness_id, parent.harness_id AS parent_harness_id, child.parent_id, child.role, child.message_json, child.created_at
+     FROM session_messages child LEFT JOIN session_messages parent ON parent.id = child.parent_id
+     WHERE child.session_id = ? AND child.seq >= ? ORDER BY child.seq LIMIT ?`,
+  ).all(sessionId, fromSeq, limit).map((row): PiSnapshotRow => {
+    // Only canonical AgentHarness history can move: every entry and parent needs its harness ID.
+    if (row.harness_id === null || (row.parent_id !== null && row.parent_harness_id === null)) {
+      throw new Error(`Session history is not canonical AgentHarness storage: ${sessionId} (seq ${row.seq})`);
+    }
+    return { table: "entry", seq: row.seq, harnessId: row.harness_id, parentHarnessId: row.parent_harness_id, role: row.role, messageJson: row.message_json, createdAt: row.created_at };
+  });
+  const keyed = (table: "value" | "list") => db.query<{ seq: number; namespace: string; key: string; value_json: string }, [string, number, number]>(
+    `SELECT seq, namespace, key, value_json FROM ${table === "value" ? "pi_values" : "pi_lists"} WHERE session_id = ? AND seq >= ? ORDER BY seq, namespace, key LIMIT ?`,
+  ).all(sessionId, fromSeq, limit).map((row): PiSnapshotRow => ({ table, seq: row.seq, namespace: row.namespace, key: row.key, valueJson: row.value_json }));
+  const usage = db.query<UsageDbRow, [string, number, number]>(
+    "SELECT id, seq, entry_id, adjustment, usage_json, details_json FROM pi_usage WHERE session_id = ? AND seq >= ? ORDER BY seq LIMIT ?",
+  ).all(sessionId, fromSeq, limit).map((row): PiSnapshotRow => ({ table: "usage", seq: row.seq, id: row.id, entryId: row.entry_id, adjustment: row.adjustment, usageJson: row.usage_json, detailsJson: row.details_json }));
+  return [entries, keyed("value"), keyed("list"), usage];
+}
+
+/**
+ * One page of a session's snapshot: rows with seq >= `fromSeq`, at most `maxRows` rows and about
+ * `maxBytes` of JSON (a page always holds at least one seq whole, so a single large row still moves).
+ * A page never splits a seq. `nextSeq` is null after the last page. Throws for history that is not
+ * canonical AgentHarness storage (an entry without a harness ID).
+ */
+export function readPiSnapshotPage(db: Database, sessionId: string, fromSeq: number, maxRows = SNAPSHOT_PAGE_ROWS, maxBytes = SNAPSHOT_PAGE_BYTES): PiSnapshotPage {
+  const tables = readTableRows(db, sessionId, fromSeq, maxRows);
+  // A table cut off by the row limit may have more rows at its last seq: stop before that seq.
+  const cutoff = Math.min(...tables.filter(rows => rows.length === maxRows).map(rows => rows.at(-1)!.seq), Infinity);
+  const merged = tables.flat().toSorted(compareRows);
+  const complete = merged.filter(row => row.seq < cutoff);
+  const candidates = complete.length ? complete : merged.filter(row => row.seq === cutoff);
+  const rows: PiSnapshotRow[] = [];
+  let bytes = 0;
+  for (let i = 0; i < candidates.length;) {
+    const seq = candidates[i]!.seq;
+    let end = i;
+    let size = 0;
+    while (end < candidates.length && candidates[end]!.seq === seq) size += rowBytes(candidates[end++]!);
+    if (rows.length && (rows.length + (end - i) > maxRows || bytes + size > maxBytes)) break;
+    rows.push(...candidates.slice(i, end));
+    bytes += size;
+    i = end;
+  }
+  if (!rows.length) return { rows, nextSeq: null };
+  const nextSeq = rows.at(-1)!.seq + 1;
+  const more = readTableRows(db, sessionId, nextSeq, 1).some(table => table.length > 0);
+  return { rows, nextSeq: more ? nextSeq : null };
+}
+
+function digestRow(row: PiSnapshotRow): string {
+  switch (row.table) {
+    case "entry": return JSON.stringify([row.table, row.seq, row.harnessId, row.parentHarnessId, row.role, row.messageJson, row.createdAt]);
+    case "value": case "list": return JSON.stringify([row.table, row.seq, row.namespace, row.key, row.valueJson]);
+    case "usage": return JSON.stringify([row.table, row.seq, row.id, row.entryId, row.adjustment, row.usageJson, row.detailsJson]);
+  }
+}
+
+/** Summarizes rows in snapshot order (e.g. the pages a node pulled), as `piSnapshotSummary` does for a stored session. */
+export function summarizePiSnapshot(harnessNextSeq: number, rows: Iterable<PiSnapshotRow>): PiSnapshotSummary {
+  const hash = new Bun.CryptoHasher("sha256");
+  const rowCounts = { entries: 0, values: 0, lists: 0, usage: 0 };
+  for (const row of rows) {
+    hash.update(digestRow(row));
+    hash.update("\n");
+    if (row.table === "entry") rowCounts.entries++;
+    else if (row.table === "value") rowCounts.values++;
+    else if (row.table === "list") rowCounts.lists++;
+    else rowCounts.usage++;
+  }
+  return { harnessNextSeq, rowCounts, digest: hash.digest("hex") };
+}
+
+function* snapshotRows(db: Database, sessionId: string): Generator<PiSnapshotRow> {
+  for (let from: number | null = 0; from !== null;) {
+    const page: PiSnapshotPage = readPiSnapshotPage(db, sessionId, from);
+    yield* page.rows;
+    from = page.nextSeq;
+  }
+}
+
+/** The stored session's snapshot summary (its seq, row counts and digest); throws if the session row is missing. */
+export function piSnapshotSummary(db: Database, sessionId: string): PiSnapshotSummary {
+  const session = db.query<{ harness_next_seq: number }, [string]>("SELECT harness_next_seq FROM sessions WHERE id = ?").get(sessionId);
+  if (!session) throw new Error(`Unknown session: ${sessionId}`);
+  return summarizePiSnapshot(session.harness_next_seq, snapshotRows(db, sessionId));
+}
+
+export function samePiSnapshot(a: PiSnapshotSummary, b: PiSnapshotSummary): boolean {
+  return a.harnessNextSeq === b.harnessNextSeq && a.digest === b.digest && a.rowCounts.entries === b.rowCounts.entries
+    && a.rowCounts.values === b.rowCounts.values && a.rowCounts.lists === b.rowCounts.lists && a.rowCounts.usage === b.rowCounts.usage;
+}
+
+/**
+ * Writes a pulled snapshot verbatim into an existing, empty session row (call inside the caller's
+ * transaction): every row as stored at the source, parents linked by harness ID, and the session's
+ * `harness_next_seq`, so new commits continue from the copied sequence.
+ */
+export function writePiSnapshot(db: Database, sessionId: string, harnessNextSeq: number, rows: readonly PiSnapshotRow[]): void {
+  if (db.query("SELECT 1 FROM session_messages WHERE session_id = ? LIMIT 1").get(sessionId)) throw new Error(`Session already has entries: ${sessionId}`);
+  const parents: Array<[string, string]> = [];
+  for (const row of rows) {
+    if (row.table === "entry") {
+      db.query("INSERT INTO session_messages (session_id, seq, parent_id, harness_id, role, message_json, created_at) VALUES (?, ?, NULL, ?, ?, ?, ?)")
+        .run(sessionId, row.seq, row.harnessId, row.role, row.messageJson, row.createdAt);
+      if (row.parentHarnessId !== null) parents.push([row.harnessId, row.parentHarnessId]);
+    } else if (row.table === "usage") {
+      db.query("INSERT INTO pi_usage (session_id, id, seq, entry_id, adjustment, usage_json, details_json) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(sessionId, row.id, row.seq, row.entryId, row.adjustment, row.usageJson, row.detailsJson);
+    } else {
+      db.query(`INSERT INTO ${row.table === "value" ? "pi_values" : "pi_lists"} (session_id, namespace, key, seq, value_json) VALUES (?, ?, ?, ?, ?)`)
+        .run(sessionId, row.namespace, row.key, row.seq, row.valueJson);
+    }
+  }
+  // Linked after every entry exists, so a parent's position in the page order does not matter.
+  for (const [child, parent] of parents) {
+    const linked = db.query(`UPDATE session_messages SET parent_id = (SELECT id FROM session_messages WHERE session_id = ?1 AND harness_id = ?2)
+      WHERE session_id = ?1 AND harness_id = ?3 AND EXISTS (SELECT 1 FROM session_messages WHERE session_id = ?1 AND harness_id = ?2)`).run(sessionId, parent, child);
+    if (!linked.changes) throw new Error(`Missing parent entry: ${parent}`);
+  }
+  db.query("UPDATE sessions SET harness_next_seq = ? WHERE id = ?").run(harnessNextSeq, sessionId);
+}

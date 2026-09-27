@@ -10,9 +10,10 @@ import { legacyExecutionTarget } from "./runtimes/legacy-session-execution.js";
 /** Install process-level runtime registrations for a server instance. */
 export function installRuntimeHooks(state: ServerState): () => void {
   registerBuiltinRuntimeAdapters();
+  const node = internalNodeExecutionTarget(state);
   const unregisterTargets = registerExecutionTargets(state, {
-    "internal-node": internalNodeExecutionTarget(state),
-    server: legacyExecutionTarget(state),
+    "internal-node": node,
+    server: legacyExecutionTarget(state, node),
   });
   const unsubscribe = subscribeInternalNodeServices(state, { ...nodeSessionReports(state), ...nodeToolCalls(state) });
   return () => { unsubscribe(); unregisterTargets(); };
