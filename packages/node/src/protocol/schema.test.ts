@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { helloParams, readyResult, provisionParams, sessionEventParams, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods } from "./schema.js";
+import { helloParams, readyResult, provisionParams, sessionEventParams, attachmentStoreParams, attachmentStoreResult, MAX_ATTACHMENT_BYTES, sessionStartedParams, sessionSettledParams, scriptExecuteParams, scriptSearchParams, projectCreateTaskParams, methods } from "./schema.js";
 
 test("version ranges and capabilities are validated at the wire boundary", () => {
   expect(helloParams.safeParse({ minVersion: 3, maxVersion: 1, instanceId: "n", capabilities: ["session.status"] }).success).toBe(false);
@@ -41,4 +41,30 @@ test("agent tool calls carry only the calling session, never a project or task s
   expect(scriptSearchParams.safeParse({ epoch, sessionId: "s", query: "", taskId: 3 }).success).toBe(false);
   expect(projectCreateTaskParams.safeParse({ epoch, sessionId: "s", title: "t", description: "d", projectId: 2 }).success).toBe(false);
   expect(projectCreateTaskParams.safeParse({ epoch, sessionId: "s", title: "t", description: "d", branchName: "task/t", prompt: "go" }).success).toBe(true);
+});
+
+const toolResult = (block: unknown) => ({ role: "toolResult", content: [{ type: "text", text: "x" }, block] });
+
+test("session events carry image references only; inline bytes are stored with attachment.store first", () => {
+  const epoch = crypto.randomUUID();
+  const event = (value: unknown) => sessionEventParams.safeParse({ epoch, sessionId: "s", seq: 1, event: value }).success;
+  const reference = { type: "image", attachmentId: "att_1", mimeType: "image/png", byteSize: 3, sha256: "a".repeat(64) };
+  const inline = { type: "image", data: "AAAA", mimeType: "image/png" };
+  expect(event({ type: "message_end", streamId: "1", message: toolResult(reference) })).toBe(true);
+  expect(event({ type: "message_end", streamId: "1", message: toolResult(inline) })).toBe(false);
+  expect(event({ type: "message_end", streamId: "1", message: toolResult({ ...reference, data: "AAAA" }) })).toBe(false);
+  expect(event({ type: "agent_end", messages: [toolResult(inline)] })).toBe(false);
+  expect(event({ type: "tool_execution_end", toolCallId: "t", toolName: "read", isError: false, result: { content: [inline] } })).toBe(false);
+  expect(event({ type: "tool_execution_update", toolCallId: "t", toolName: "read", args: {}, partialResult: { content: [inline] } })).toBe(false);
+  // Only `content` arrays hold image blocks; tool arguments are not interpreted.
+  expect(event({ type: "tool_execution_start", toolCallId: "t", toolName: "x", args: { image: inline } })).toBe(true);
+
+  const store = { epoch, sessionId: "s", mimeType: "image/png", sha256: "a".repeat(64), byteSize: 3, offset: 0, data: "AAAA" };
+  expect(methods.attachmentStore).toBe("attachment.store");
+  expect(attachmentStoreParams.safeParse(store).success).toBe(true);
+  expect(attachmentStoreParams.safeParse({ ...store, byteSize: MAX_ATTACHMENT_BYTES + 1 }).success).toBe(false);
+  expect(attachmentStoreParams.safeParse({ ...store, sha256: "nothex" }).success).toBe(false);
+  expect(attachmentStoreParams.safeParse({ ...store, attachmentId: "chosen-by-node" }).success).toBe(false);
+  expect(attachmentStoreResult.safeParse({ nextOffset: 524288 }).success).toBe(true);
+  expect(attachmentStoreResult.safeParse({ attachment: { attachmentId: "att_1", mimeType: "image/png", byteSize: 3, sha256: "a".repeat(64) } }).success).toBe(true);
 });

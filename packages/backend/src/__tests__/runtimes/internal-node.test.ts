@@ -1,4 +1,9 @@
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
+import { createHash } from "node:crypto";
+import { startNode } from "@reins/node/node";
+import { connectNode } from "@reins/node/node-connection";
+import { createLoopbackPair, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES } from "@reins/node/protocol";
+import { createServerTransport } from "../../node-transport/server-peer.js";
 import { Database } from "bun:sqlite";
 import { setDb } from "../../db.js";
 import { runMigrations } from "../../migrations.js";
@@ -10,14 +15,14 @@ import { nodeSessionTask, openNodeStorage, setNodeDb } from "@reins/node/storage
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
 import { createServerState } from "../helpers/server-state.js";
-import { internalNodeFor, provisionForSession, stopInternalNode } from "../../runtimes/internal-node.js";
+import { internalNodeFor, internalNodeServer, provisionForSession, stopInternalNode } from "../../runtimes/internal-node.js";
 import { createTask, updateTask } from "../../task-store.js";
 import { createNewSession } from "../../runtimes/session-manager.js";
 import { workForSession } from "../../models/node-command-projection.js";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { registerPiProvider, unregisterPiProvider } from "../../runtimes/pi/factory.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { setSetting } from "../../settings-store.js";
@@ -134,6 +139,103 @@ test("node session events reach browsers and durable lifecycle reports drive act
     setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true });
   }
 }, 15_000);
+
+test("tool-result images are committed and reach browsers over the internal link as references to one stored server attachment", async () => {
+  const db = new Database(":memory:");
+  db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
+  const nodeDb = new Database(":memory:");
+  setNodeDb(nodeDb);
+  const dir = mkdtempSync(join(tmpdir(), "reins-node-tool-image-"));
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  writeFileSync(join(dir, "pixel.png"), png);
+  const provider = fauxProvider({ provider: "node-tool-image-faux", models: [{ id: "fake", input: ["text", "image"], contextWindow: 200_000, maxTokens: 1_000 }] });
+  provider.setResponses([fauxAssistantMessage([fauxToolCall("read", { path: "pixel.png" }, { id: "read" })], { stopReason: "toolUse" }), fauxAssistantMessage("Seen")]);
+  registerPiProvider(provider.provider);
+  setApiKeyCredential(provider.provider.id, "test-key");
+  const state = createServerState();
+  const sent: Array<{ type: string; sessionId?: string; event?: { type: string } }> = [];
+  state.clients.add({ ws: { send: data => { sent.push(JSON.parse(data)); return 0; } } });
+  const warn = spyOn(console, "warn");
+  try {
+    const project = createProject("Tool image", dir);
+    const source = internalSource(project.id);
+    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
+    const node = internalNodeFor(state);
+    const binding = provisionForSession("owned").binding;
+    await node.send({ op: "session.provision", sessionId: "owned", sourceId: source.id,
+      configuration: { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null } }, binding);
+    await node.send({ op: "session.prompt", sessionId: "owned", clientId: "c", content: [{ type: "text", text: "Read it" }] }, binding);
+    await (await node.open("owned", binding)).waitForIdle();
+    for (let i = 0; i < 200 && !sent.some(message => message.event?.type === "agent_end"); i++) await Bun.sleep(5);
+
+    const rows = db.query<{ id: string; mime_type: string; data: Buffer; sha256: string }, []>("SELECT id, mime_type, data, sha256 FROM session_attachments WHERE session_id = 'owned'").all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.mime_type).toBe("image/png");
+    expect(createHash("sha256").update(rows[0]!.data).digest("hex")).toBe(rows[0]!.sha256);
+    const events = sent.filter(message => message.type === "event" && message.sessionId === "owned").map(message => message.event!);
+    const images = events.flatMap(event => JSON.stringify(event).match(/"type":"image"[^}]*/g) ?? []);
+    expect(images.length).toBeGreaterThan(2);
+    expect(images.every(image => image.includes(`"attachmentId":"${rows[0]!.id}"`) && !image.includes('"data"'))).toBe(true);
+    expect(events.map(event => event.type)).toEqual(expect.arrayContaining(["tool_execution_end", "turn_end", "agent_end"]));
+    expect(warn.mock.calls.filter(([message]) => String(message).includes("Dropped"))).toEqual([]);
+    // Pi committed the reference, so the server replica's transcript holds no image bytes either.
+    for (let i = 0; i < 100 && nodeDb.query("SELECT 1 FROM session_outbox").get(); i++) await Bun.sleep(5);
+    const transcript = JSON.stringify(db.query("SELECT message_json FROM session_messages WHERE session_id = 'owned'").all());
+    expect(transcript).toContain(rows[0]!.id);
+    expect(transcript).not.toContain(rows[0]!.data.toString("base64"));
+    await node.close("owned");
+  } finally {
+    warn.mockRestore(); stopInternalNode(state); unregisterPiProvider(provider.provider.id); setNodeDb(); nodeDb.close();
+    setDb(new Database(":memory:")); db.close(); rmSync(dir, { recursive: true, force: true });
+  }
+}, 15_000);
+
+test("attachment.store over a 1 MiB-capped link uploads chunks the server verifies, dedupes replays and scopes to node-owned sessions", async () => {
+  const db = new Database(":memory:");
+  db.exec("PRAGMA foreign_keys = ON"); setDb(db); runMigrations(db);
+  const nodeDb = new Database(":memory:");
+  setNodeDb(nodeDb);
+  const state = createServerState();
+  const node = startNode({ credentials: { read: async () => undefined, list: async () => [], modify: async () => { throw new Error("unexpected"); }, delete: async () => {} } });
+  const [serverEnd, nodeEnd] = createLoopbackPair();
+  const server = createServerTransport(serverEnd, internalNodeServer(state));
+  const connection = connectNode(node, nodeEnd, "capped");
+  const calls: number[] = [];
+  serverEnd.onmessage = data => { if (String(data).includes("attachment.store")) calls.push(1); server.receive(data); };
+  serverEnd.onclose = server.close;
+  nodeEnd.onmessage = connection.receive; nodeEnd.onclose = connection.close;
+  try {
+    const project = createProject("Store", "/tmp/store");
+    const source = internalSource(project.id);
+    createSession("owned", project.id, { agentRuntimeType: "pi", sourceId: source.id, storageOwner: "internal-node" });
+    createSession("legacy", project.id, { agentRuntimeType: "pi", sourceId: source.id });
+    const bytes = new Uint8Array(ATTACHMENT_CHUNK_BYTES * 2 + 5).map((_, i) => (i * 7) % 256);
+    const upload = { sessionId: "owned", mimeType: "image/png", byteSize: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), filename: "shot.png", width: 4, height: 3, data: bytes };
+
+    const stored = await connection.storeAttachment(upload);
+    expect(calls).toHaveLength(3);
+    expect(stored).toEqual({ attachmentId: expect.stringMatching(/^att_/), mimeType: "image/png", byteSize: bytes.length, sha256: upload.sha256, filename: "shot.png", width: 4, height: 3 });
+    expect(db.query("SELECT data, width, height FROM session_attachments WHERE id = ?").get(stored.attachmentId))
+      .toEqual({ data: Buffer.from(bytes), width: 4, height: 3 });
+    // A replay (e.g. after an unknown outcome) is answered from the stored row without bytes crossing again.
+    expect(await connection.storeAttachment(upload)).toEqual(stored);
+    expect(calls).toHaveLength(4);
+    expect(db.query("SELECT COUNT(*) n FROM session_attachments").get()).toEqual({ n: 1 });
+
+    const small = new Uint8Array([1, 2, 3]);
+    const smallUpload = { sessionId: "owned", mimeType: "image/png", byteSize: 3, sha256: createHash("sha256").update(small).digest("hex"), data: small };
+    await expect(connection.storeAttachment({ ...smallUpload, sha256: "0".repeat(64) })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: `Attachment checksum mismatch: ${"0".repeat(64)}` });
+    await expect(connection.storeAttachment({ ...smallUpload, byteSize: 4 })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: expect.stringContaining("chunk size mismatch") });
+    await expect(connection.storeAttachment({ ...smallUpload, byteSize: MAX_ATTACHMENT_BYTES + 1 })).rejects.toMatchObject({ code: -32602 });
+    await expect(connection.storeAttachment({ ...smallUpload, mimeType: "image/tiff" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Unsupported image type: image/tiff" });
+    await expect(connection.storeAttachment({ ...smallUpload, sessionId: "legacy" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Node session unavailable: legacy" });
+    await expect(connection.storeAttachment({ ...smallUpload, sessionId: "unknown" })).rejects.toMatchObject({ code: APPLICATION_ERROR, message: "Session not found: unknown" });
+    expect(db.query("SELECT COUNT(*) n FROM session_attachments").get()).toEqual({ n: 1 });
+  } finally {
+    serverEnd.close(); node.stop(); setNodeDb(); nodeDb.close();
+    setDb(new Database(":memory:")); db.close();
+  }
+});
 
 const lane = (target: Database, sessionId: string) => target.query<{ value_json: string }, [string]>(
   "SELECT value_json FROM pi_values WHERE session_id = ? AND namespace = 'pi.lane.config'").get(sessionId);

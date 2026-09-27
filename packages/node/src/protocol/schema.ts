@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { AgentRuntimeEvent } from "../runtime/types.js";
+import type { AgentRuntimeEvent, ImageReferenceBlock } from "../runtime/types.js";
+import { contentImages } from "./event-images.js";
 
 /** Wire v1 is independent of the in-process semantic contract. */
 export const protocolVersion = 1;
@@ -8,7 +9,7 @@ export const protocolVersion = 1;
 export const methods = {
   nodeHello: "node.hello", sessionProvision: "session.provision", sessionStatus: "session.status",
   sessionCommitted: "session.committed", sessionStarted: "session.started", sessionSettled: "session.settled",
-  attachmentFetch: "attachment.fetch", sessionEvent: "session.event",
+  attachmentFetch: "attachment.fetch", attachmentStore: "attachment.store", sessionEvent: "session.event",
   scriptExecute: "script.execute", scriptSearch: "script.search", scriptCancel: "script.cancel",
   projectCreateTask: "project.createTask",
 } as const;
@@ -66,6 +67,33 @@ export const attachmentFetchResult = z.strictObject({
     width: z.number().int().positive().optional(), height: z.number().int().positive().optional(),
   }).nullable(),
 });
+const sha256 = z.string().regex(/^[0-9a-f]{64}$/);
+const attachmentMetadata = {
+  mimeType: z.string().min(1).max(128), byteSize: z.number().int().min(1).max(MAX_ATTACHMENT_BYTES), sha256,
+  filename: z.string().max(4096).optional(),
+  width: z.number().int().positive().optional(), height: z.number().int().positive().optional(),
+};
+/** Node-created image bytes (e.g. a tool result reading a PNG) cross as a durable, idempotent request,
+ * never inside a live event. `data` is base64 of raw bytes [offset, offset + ATTACHMENT_CHUNK_BYTES);
+ * the metadata describes the whole attachment. The server keeps a partial upload per connection keyed by
+ * (sessionId, sha256, mimeType) and answers `nextOffset` until the last chunk, which it verifies (size and
+ * sha256) and stores; an attachment the server already holds answers at once, so replays are idempotent. */
+export const attachmentStoreParams = z.strictObject({
+  epoch: z.string().uuid(), sessionId: z.string().min(1).max(128), ...attachmentMetadata,
+  offset: z.number().int().min(0).max(MAX_ATTACHMENT_BYTES),
+  data: z.string().max(Math.ceil(ATTACHMENT_CHUNK_BYTES / 3) * 4).regex(/^[A-Za-z0-9+/]*={0,2}$/),
+});
+/** The reference that replaces the inline block in session events. */
+export const imageReference = z.strictObject({
+  type: z.literal("image"), attachmentId: z.string().min(1).max(128), mimeType: z.string().min(1).max(128),
+  byteSize: z.number().int().min(0), sha256: z.string().max(128).optional(), filename: z.string().max(4096).optional(),
+  width: z.number().int().positive().optional(), height: z.number().int().positive().optional(),
+});
+export const storedAttachment = z.strictObject({ attachmentId: z.string().min(1).max(128), ...attachmentMetadata });
+export const attachmentStoreResult = z.union([
+  z.strictObject({ attachment: storedAttachment }),
+  z.strictObject({ nextOffset: z.number().int().min(0).max(MAX_ATTACHMENT_BYTES) }),
+]);
 const runId = z.string().min(1).max(128);
 /** Run lifecycle reports are durable like `session.committed`: the node stores each one in its
  * per-session outbox behind the commits that preceded it, replays it until acknowledged, and the
@@ -88,11 +116,14 @@ export const sessionSettledParams = z.strictObject({
   replyError: z.string().optional(),
 });
 export const acknowledgedResult = z.strictObject({ acknowledged: z.literal(true) });
-/** Runtime events are relayed to browsers as the node runtime projected them; only `type` is checked here. */
+/** Runtime events are relayed to browsers as the node runtime projected them; only `type` and image
+ * blocks are checked here: every image in a `content` array must be an attachment reference, never
+ * inline bytes (the node stores those with `attachment.store` first). */
 export const runtimeEventTypes = ["agent_start", "agent_end", "turn_start", "turn_end", "message_start", "message_update", "message_end", "entry_added", "tool_execution_start", "tool_execution_update", "tool_execution_end", "auto_retry_start", "auto_retry_end", "compaction_start", "compaction_end"] as const;
 const runtimeEvent = z.looseObject({ type: z.enum(runtimeEventTypes) });
 /** Live UI deltas only; run lifecycle is reported durably by `session.started`/`session.settled`. */
-export const sessionEvent = z.custom<AgentRuntimeEvent>(value => runtimeEvent.safeParse(value).success);
+export const sessionEvent = z.custom<AgentRuntimeEvent<ImageReferenceBlock>>(value => runtimeEvent.safeParse(value).success
+  && contentImages(value).every(block => imageReference.safeParse(block).success));
 /** `session.event` is a live notification: best effort, never replayed. `seq` increases by one per
  * session event the node emits (dropped ones included), so a receiver can detect gaps. */
 export const sessionEventParams = z.strictObject({
@@ -134,6 +165,8 @@ export type Ready = z.infer<typeof readyResult>;
 export type Hello = z.infer<typeof helloParams>;
 export type Status = z.infer<typeof statusResult>;
 export type SessionCommitted = Omit<z.infer<typeof sessionCommittedParams>, "epoch">;
+export type AttachmentStore = Omit<z.infer<typeof attachmentStoreParams>, "epoch" | "offset" | "data">;
+export type StoredAttachment = z.infer<typeof storedAttachment>;
 export type AttachmentChunk = NonNullable<z.infer<typeof attachmentFetchResult>["attachment"]>;
 export type SessionStarted = Omit<z.infer<typeof sessionStartedParams>, "epoch">;
 export type SessionSettled = Omit<z.infer<typeof sessionSettledParams>, "epoch">;

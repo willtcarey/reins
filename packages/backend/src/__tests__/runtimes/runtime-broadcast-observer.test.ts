@@ -108,4 +108,16 @@ describe("runtime broadcast observer", () => {
     expect(payload.event.result.content[1].data).toBeUndefined();
     expect(JSON.stringify(payload)).not.toContain(imageData);
   });
+
+  test("passes image blocks that are already attachment references (user prompt images) through", () => {
+    const { runtime, emit } = createRuntimeStub();
+    const ws = createWsClient();
+    attachRuntimeBroadcastObserver({ sessionId: "sess-runtime-broadcast", projectId, runtime, clients: new Set([ws.client]) });
+    const reference = { type: "image" as const, attachmentId: "att_prompt", mimeType: "image/png", byteSize: 5, sha256: "a".repeat(64), filename: "prompt.png" };
+
+    emit({ type: "message_end", streamId: "s1", message: { role: "user", content: [{ type: "text", text: "look" }, reference] } });
+
+    expect(ws.messages()).toHaveLength(1);
+    expect(ws.lastMessage().event.message.content).toEqual([{ type: "text", text: "look" }, reference]);
+  });
 });

@@ -3,7 +3,7 @@ import type { NodeCommand, NodeResult, SessionConfiguration } from "./contract.j
 import { completeNodeReport, deliverNodeOutbox, getNodeDb, initializeNodeStorage, nodeAdmissionReceipt, nodeSessionBinding, nodeSessionTask, openNodeStorage, pendingOutboxSessions, provisionNodeSession, recordNodeAdmission, recordNodeReport, releaseUnreadReports, type NodeOutboxDelivery, type NodeSessionBinding } from "./storage.js";
 import { buildNodeRuntime, NodeModelNotFoundError, type EmitSessionEvent, type NodeRuntimePolicy, type ReportLifecycle } from "./runtime/build.js";
 import type { CredentialStore } from "@earendil-works/pi-ai";
-import type { ProjectCreateTask, ProjectCreateTaskResult, ScriptExecute, ScriptExecuteResult, ScriptSearch, ScriptSearchResult, SessionEvent, SessionEventReport, SessionSettled, SessionStarted } from "./protocol/schema.js";
+import { sessionEvent, type AttachmentStore, type ProjectCreateTask, type ProjectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type SessionEvent, type SessionEventReport, type SessionSettled, type SessionStarted, type StoredAttachment } from "./protocol/schema.js";
 import { ToolCallNotRun, ToolCallOutcomeUnknown, type ReinsToolCalls } from "./runtime/reins-tools.js";
 import type { AgentHarnessPiRuntime } from "./runtime/pi-runtime.js";
 import { APPLICATION_ERROR } from "./protocol/errors.js";
@@ -14,6 +14,9 @@ import { createPiModelRuntime } from "./runtime/context.js";
 import { PiStorageAdapter } from "./pi-storage.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { AttachmentMaterializationError, materializePromptAttachments, type FetchAttachment } from "./runtime/attachments.js";
+import type { StoreAttachment } from "./runtime/tool-images.js";
+import { mapContentImages } from "./protocol/event-images.js";
+import type { AgentRuntimeEvent } from "./runtime/types.js";
 
 /** In-process host dependencies. Session configuration arrives with `session.provision` and opening
  * a runtime needs no server; credentials are the last in-process seam, pending a credentials RPC. */
@@ -27,6 +30,8 @@ export interface NodeServer {
   started(input: SessionStarted): Promise<void>;
   settled(input: SessionSettled): Promise<void>;
   fetchAttachment: FetchAttachment;
+  /** Stores node-created image bytes (idempotent by sha256 and MIME type) and returns the reference. */
+  storeAttachment(input: AttachmentStore & { data: Uint8Array }): Promise<StoredAttachment>;
   event(input: SessionEventReport): void;
   /** Agent tool calls for one session; never retried automatically (execute and createTask have side effects). */
   executeScript(input: ScriptExecute, signal?: AbortSignal): Promise<ScriptExecuteResult>;
@@ -46,6 +51,18 @@ export interface Node {
   send(input: NodeCommand, binding: NodeSessionBinding, commandId?: string): Promise<NodeResult>;
   /** The newest attached connection serves server calls; detach when it closes. Attaching replays pending reports. */
   attach(server: NodeServer): () => void;
+}
+
+const IMAGE_UNAVAILABLE = { type: "text", text: "[Image attachment unavailable]" } as const;
+/** Session events never carry image bytes. Tool-result images are references once stored (see
+ * `runtime/tool-images.ts`); an image still inline (its store failed, or a partial tool result) is
+ * replaced by a placeholder in the live event only; the transcript keeps it. */
+function sendableEvent(event: AgentRuntimeEvent): SessionEvent {
+  const wire = sessionEvent.safeParse(event);
+  if (wire.success) return wire.data;
+  const placeholders = sessionEvent.safeParse(mapContentImages(event, block => typeof block.data === "string" ? IMAGE_UNAVAILABLE : block));
+  // The event is invalid for another reason: send it as is and let the receiver drop it (logged there).
+  return placeholders.success ? placeholders.data : event as SessionEvent; // eslint-disable-line typescript-eslint/consistent-type-assertions -- rejected by the receiver's schema
 }
 
 const instances = new WeakMap<Database, { node: Node; update: (dependencies: NodeDependencies) => void; retain: () => void }>();
@@ -116,11 +133,13 @@ export function startNode(dependencies: NodeDependencies): Node {
   // Per-session sequence for this node instance; events emitted with no attached connection are
   // dropped but still consume a seq, so the server sees the gap.
   const eventSeqs = new Map<string, number>();
-  const emitter = (sessionId: string): EmitSessionEvent => (event: SessionEvent) => {
+  const emitter = (sessionId: string): EmitSessionEvent => (event: AgentRuntimeEvent) => {
     const seq = (eventSeqs.get(sessionId) ?? 0) + 1;
     eventSeqs.set(sessionId, seq);
-    servers.at(-1)?.event({ sessionId, seq, event });
+    const connection = servers.at(-1);
+    if (connection) connection.event({ sessionId, seq, event: sendableEvent(event) });
   };
+  const storeAttachment: StoreAttachment = input => server().storeAttachment(input);
   // Pi's storage has no cross-harness conflict detection: provision's lane creation and runtime opening
   // for one session never overlap.
   const tails = new Map<string, Promise<unknown>>();
@@ -153,7 +172,7 @@ export function startNode(dependencies: NodeDependencies): Node {
       if (task) await ensureBranchCheckedOut(stored.cwd, task.branchName);
       const policy: NodeRuntimePolicy = { task, credentials: installed.credentials, ...(model ? { model } : {}) };
       const runtime = await buildNodeRuntime(sessionId, stored,
-        await openNodeStorage(db, sessionId, deliver), policy, db, emitter(sessionId), reporter(sessionId), toolCalls(sessionId));
+        await openNodeStorage(db, sessionId, deliver), policy, db, emitter(sessionId), reporter(sessionId), toolCalls(sessionId), storeAttachment);
       runtimes.set(sessionId, runtime);
       return runtime;
     });

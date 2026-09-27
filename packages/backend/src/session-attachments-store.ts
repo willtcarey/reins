@@ -231,6 +231,16 @@ export function storeSessionAttachment(
   return toInfo(row);
 }
 
+/** The session's attachment with these bytes, if its data is still held (a pruned row is restored by storing again). */
+export function findSessionAttachment(sessionId: string, sha256: string, mimeType: string): SessionAttachmentInfo | null {
+  const row = getDb()
+    .query<SessionAttachmentRow, [string, string, string]>(
+      `SELECT * FROM session_attachments WHERE session_id = ? AND sha256 = ? AND mime_type = ? AND data IS NOT NULL`,
+    )
+    .get(sessionId, sha256, mimeType);
+  return row ? toInfo(normalizeRow(row)) : null;
+}
+
 export function getSessionAttachment(sessionId: string, attachmentId: string): SessionAttachmentRow | null {
   const row = getDb()
     .query<SessionAttachmentRow, [string, string]>(
@@ -270,10 +280,10 @@ function inlineBlockFromRow(
 
 /**
  * Store inline runtime image blocks as attachment refs.
- * Non-image runtime blocks are already persistable and pass through unchanged.
+ * Non-image blocks and images that are already refs (e.g. user prompt images) pass through unchanged.
  */
 export function externalizeRuntimeContentBlock(sessionId: string, block: RuntimeContentBlock): PersistedContentBlock {
-  if (block.type !== "image") return block;
+  if (block.type !== "image" || "attachmentId" in block) return block;
 
   const data = Buffer.from(block.data, "base64");
   const info = storeSessionAttachment(sessionId, {

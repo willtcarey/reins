@@ -8,12 +8,13 @@ import { createPiContext } from "./context.js";
 import { createHostTools, type HostToolContext } from "./tools.js";
 import { createReinsTools, type ReinsToolCalls } from "./reins-tools.js";
 import { createAgentHarnessPiRuntime, type AgentHarnessPiRuntime } from "./pi-runtime.js";
-import type { RuntimeLifecycleSink, RuntimeMessage } from "./types.js";
-import type { FinalReply, SessionEvent, SessionSettled } from "../protocol/schema.js";
+import type { AgentRuntimeEvent, RuntimeLifecycleSink, RuntimeMessage } from "./types.js";
+import type { FinalReply, SessionSettled } from "../protocol/schema.js";
 import type { NodeSessionTask } from "../storage.js";
 import { NodeModelNotFoundError } from "./types.js";
 import { piThinkingLevel, storedLaneModel } from "./lane.js";
 import { hydrateCachedPrompt } from "./attachments.js";
+import { toolImageReferences, type StoreAttachment } from "./tool-images.js";
 import { expandLocalPrompt } from "../resources/prompt.js";
 import { buildReinsSystemPrompt } from "./system-prompt.js";
 
@@ -28,7 +29,7 @@ export interface NodeRuntimePolicy {
 }
 
 /** Receives this session's live runtime events in order (best effort). */
-export type EmitSessionEvent = (event: SessionEvent) => void;
+export type EmitSessionEvent = (event: AgentRuntimeEvent) => void;
 export type { FinalReply };
 export type SettledReport = Omit<SessionSettled, "sessionId">;
 /** Durable run lifecycle for one session. A settlement with `final` is recorded at once, holding its
@@ -77,7 +78,7 @@ export { NodeModelNotFoundError };
 
 /** Node assembles and opens Pi from its canonical storage and bound host resources. All agent tools
  * run here; Reins application tools reach the server only through the session-bound `calls`. */
-export async function buildNodeRuntime(sessionId: string, binding: NodeSessionBinding, storage: PiStorageAdapter, policy: NodeRuntimePolicy, db: Database, emit: EmitSessionEvent, report: ReportLifecycle, calls: ReinsToolCalls): Promise<AgentHarnessPiRuntime> {
+export async function buildNodeRuntime(sessionId: string, binding: NodeSessionBinding, storage: PiStorageAdapter, policy: NodeRuntimePolicy, db: Database, emit: EmitSessionEvent, report: ReportLifecycle, calls: ReinsToolCalls, storeAttachment: StoreAttachment): Promise<AgentHarnessPiRuntime> {
   const { modelRuntime, resourceLoader, resources: reinsResources } = await createPiContext({ cwd: binding.cwd, credentials: policy.credentials });
   // Pi's lane (created at provision) owns the model selection; it is validated here before Pi opens.
   const selected = policy.model ?? await storedLaneModel(storage);
@@ -113,7 +114,8 @@ export async function buildNodeRuntime(sessionId: string, binding: NodeSessionBi
         toolContext: { env: host.executionEnv },
       },
       sessionEnvironment, executionEnv: host.executionEnv, lifecycle: lifecycleReports(binding, report, console.error),
-      hydratePrompt: (id, content) => hydrateCachedPrompt(db, id, content), onError: console.error,
+      hydratePrompt: (id, content) => hydrateCachedPrompt(db, id, content),
+      referenceToolImages: toolImageReferences(db, sessionId, storeAttachment), onError: console.error,
     });
     const prompt = runtime.prompt.bind(runtime);
     const steer = runtime.steer.bind(runtime);

@@ -11,7 +11,8 @@ import { getSource } from "../node-store.js";
 import type { ServerState } from "../state.js";
 import { applyNodeReplica } from "../node-replica.js";
 import { createDbCredentialStore } from "./pi/credential-store.js";
-import { getSessionAttachment } from "../session-attachments-store.js";
+import { findSessionAttachment, getSessionAttachment, storeSessionAttachment, type SessionAttachmentInfo } from "../session-attachments-store.js";
+import type { StoredAttachment } from "@reins/node/protocol";
 
 /** Product identity/path resolution stays server-side. No server DB handle reaches node code. */
 export function provisionForSession(sessionId: string): { binding: NodeSessionBinding; storageOwner: string } {
@@ -44,6 +45,11 @@ const installed = (state: ServerState) => {
   if (!sink) throw new Error("Node server services unavailable");
   return sink;
 };
+const stored = (info: SessionAttachmentInfo): StoredAttachment => ({
+  attachmentId: info.id, mimeType: info.mimeType, byteSize: info.byteSize, sha256: info.sha256,
+  ...(info.filename !== undefined ? { filename: info.filename } : {}),
+  ...(info.width !== undefined && info.height !== undefined ? { width: info.width, height: info.height } : {}),
+});
 const owned = (sessionId: string) => {
   if (provisionForSession(sessionId).storageOwner !== "internal-node") throw new Error(`Node session unavailable: ${sessionId}`);
 };
@@ -63,6 +69,16 @@ export const internalNodeServer = (state: ServerState): ServerHandlers => ({
     return row?.data ? { data: row.data, mimeType: row.mime_type, byteSize: row.byte_size,
       sha256: row.sha256, filename: row.filename ?? undefined,
       width: row.width ?? undefined, height: row.height ?? undefined } : null;
+  },
+  findAttachment: (sessionId, sha256, mimeType) => {
+    owned(sessionId);
+    const info = findSessionAttachment(sessionId, sha256, mimeType);
+    return info ? stored(info) : null;
+  },
+  // The session attachment store enforces the MIME allowlist and size limit and dedupes by sha256 + MIME type.
+  storeAttachment: (sessionId, { data, mimeType, filename, width, height }) => {
+    owned(sessionId);
+    return stored(storeSessionAttachment(sessionId, { data, mimeType, filename, width, height }));
   },
   event: input => {
     owned(input.sessionId);

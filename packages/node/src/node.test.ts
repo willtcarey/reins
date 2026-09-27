@@ -2,13 +2,14 @@ import { expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFactory } from "@earendil-works/pi-ai";
 import { APPLICATION_ERROR } from "./protocol/errors.js";
 import { RpcFailure } from "./protocol/peer.js";
 import { startNode } from "./node.js";
+import { contentImages } from "./protocol/event-images.js";
 import { nodeAdmissionReceipt, nodeSessionBinding, setNodeDb } from "./storage.js";
 import { registerPiProvider, unregisterPiProvider } from "./runtime/context.js";
 import { NodeModelNotFoundError, type NodeRuntimePolicy } from "./runtime/build.js";
@@ -19,6 +20,7 @@ const noTools = {
   executeScript: async () => { throw new Error("unexpected tool call"); },
   searchScript: async () => { throw new Error("unexpected tool call"); },
   createTask: async () => { throw new Error("unexpected tool call"); },
+  storeAttachment: async () => { throw new Error("unexpected attachment store"); },
 };
 const noReports = { started: async () => {}, settled: async () => {}, ...noTools };
 const scratch: SessionConfiguration = { model: null, thinkingLevel: null, task: null };
@@ -335,7 +337,7 @@ test("Reins tools run on the node and call the attached server for the calling s
   const calls: unknown[] = [];
   const node = startNode({ credentials });
   const detach = node.attach({
-    committed: async () => {}, fetchAttachment: async () => null, event: () => {}, started: async () => {}, settled: async () => {},
+    committed: async () => {}, fetchAttachment: async () => null, storeAttachment: noTools.storeAttachment, event: () => {}, started: async () => {}, settled: async () => {},
     executeScript: async input => { calls.push(["execute", input]); return { ok: true, text: "1" }; },
     searchScript: async input => { calls.push(["search", input]); throw new RpcFailure(APPLICATION_ERROR, "Node session unavailable: s"); },
     createTask: async input => { calls.push(["createTask", input]); throw new RpcFailure("unavailable", "Call timed out after 60000ms; outcome unknown", "unknown"); },
@@ -366,6 +368,85 @@ test("Reins tools run on the node and call the attached server for the calling s
     expect(calls).toHaveLength(3);
     await node.close("s");
   } finally { node.stop(); unregisterPiProvider(provider.provider.id); setNodeDb(); db.close(); }
+});
+
+test("tool-result images are stored once and committed as references; providers get the bytes; a failed store keeps them inline", async () => {
+  const db = new Database(":memory:");
+  const dir = mkdtempSync(join(tmpdir(), "reins-node-image-"));
+  // 1x1 PNGs of different colours.
+  const pngs = ["iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="];
+  pngs.forEach((png, index) => writeFileSync(join(dir, `${index}.png`), Buffer.from(png, "base64")));
+  const provider = fauxProvider({ provider: "node-tool-images-faux", models: [{ id: "fake", input: ["text", "image"], contextWindow: 200_000, maxTokens: 1_000 }] });
+  const contexts: string[] = [];
+  const seen = (index: number): FauxResponseFactory => context => { contexts.push(JSON.stringify(context.messages)); return fauxAssistantMessage(`seen ${index}`); };
+  provider.setResponses([0, 1].flatMap(index => [
+    fauxAssistantMessage([fauxToolCall("read", { path: `${index}.png` }, { id: `read-${index}` })], { stopReason: "toolUse" }),
+    seen(index),
+  ]));
+  registerPiProvider(provider.provider);
+  setNodeDb(db);
+  const stores: Array<{ sha256: string; data: Uint8Array }> = [];
+  let available = true;
+  const received: SessionEventReport[] = [];
+  const commits: string[] = [];
+  const node = startNode({ credentials });
+  node.attach({
+    ...noReports, fetchAttachment: async () => null,
+    committed: async ({ writesJson }) => { commits.push(writesJson); },
+    event: report => { received.push(report); },
+    storeAttachment: async ({ sessionId, data, ...metadata }) => {
+      expect(sessionId).toBe("s");
+      stores.push({ sha256: metadata.sha256, data });
+      if (!available) throw new RpcFailure("unavailable", "Call timed out after 30000ms; outcome unknown", "unknown");
+      return { attachmentId: `att_${stores.length}`, ...metadata };
+    },
+  });
+  const binding = { sourceId: 7, cwd: dir, createdAt: "2026-01-01T00:00:00.000Z", parentSessionId: null };
+  const errors = spyOn(console, "error").mockImplementation(() => {});
+  const toolResult = async (id: string) => (await runtime.getMessages()).find(message => message.role === "toolResult" && message.toolCallId === id)!;
+  const run = async (clientId: string) => {
+    const from = received.length;
+    await node.send({ op: "session.prompt", sessionId: "s", clientId, content: [{ type: "text", text: "look" }] }, binding);
+    await runtime.waitForIdle();
+    for (let i = 0; i < 100 && (received.at(-1)?.event.type !== "agent_end" || db.query("SELECT 1 FROM session_outbox").get()); i++) await Bun.sleep(5);
+    return received.slice(from).map(({ event }) => event);
+  };
+  let runtime!: Awaited<ReturnType<typeof node.open>>;
+  try {
+    await node.send(provisionOf("s", { model: { provider: provider.provider.id, modelId: "fake" }, thinkingLevel: null, task: null }), binding);
+    runtime = await node.open("s", binding);
+    const first = await run("a");
+    expect(stores).toHaveLength(1);
+    const stored = Buffer.from(stores[0]!.data);
+    const reference = (await toolResult("read-0")).content!.find(block => block.type === "image");
+    expect(reference).toEqual({ type: "image", attachmentId: "att_1", mimeType: "image/png", byteSize: stored.length, sha256: stores[0]!.sha256 });
+    // Pi committed the reference: no replicated write carries the bytes.
+    expect(commits.some(writes => writes.includes("att_1"))).toBe(true);
+    expect(commits.every(writes => !writes.includes(stored.toString("base64")))).toBe(true);
+    // The provider still sees the image, hydrated from the node cache.
+    expect(contexts[0]).toContain(stored.toString("base64"));
+    expect(db.query("SELECT data FROM node_attachments WHERE session_id = 's' AND attachment_id = 'att_1'").get()).toEqual({ data: stored });
+    const images = first.flatMap(event => contentImages(event));
+    expect(images.length).toBeGreaterThan(2); // tool_execution_end, message_start/end, entry_added, turn_end, agent_end
+    expect(images.every(block => block.attachmentId === "att_1" && block.data === undefined)).toBe(true);
+    expect(received.map(({ seq }) => seq)).toEqual(received.map((_, index) => index + 1));
+
+    // No server connection for the store: the run continues with the image inline in its transcript and
+    // provider input, and live events carry a placeholder instead of the bytes.
+    available = false;
+    const second = await run("b");
+    expect(stores).toHaveLength(2);
+    const inline = (await toolResult("read-1")).content!.find(block => block.type === "image");
+    const bytes = inline && "data" in inline ? inline.data : "";
+    expect(bytes.length).toBeGreaterThan(0);
+    expect(contexts[1]).toContain(bytes);
+    expect(second.flatMap(event => contentImages(event))).toEqual([]);
+    expect(second.filter(event => JSON.stringify(event).includes("[Image attachment unavailable]")).length).toBeGreaterThan(2);
+    expect(received.every(({ event }) => !JSON.stringify(event).includes(pngs[0]!.slice(0, 40)))).toBe(true);
+    expect(errors.mock.calls.map(([message]) => String(message))).toEqual(["Failed to store tool-result image for s; keeping it inline:"]);
+    await node.close("s");
+  } finally { errors.mockRestore(); node.stop(); unregisterPiProvider(provider.provider.id); setNodeDb(); db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("opening a task session checks out its provisioned branch on the node before building Pi, with no server attached", async () => {

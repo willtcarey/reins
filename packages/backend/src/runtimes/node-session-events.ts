@@ -4,10 +4,10 @@ import { SessionManager } from "./session-manager.js";
 import { getSession } from "../session-store.js";
 import { getDb } from "../db.js";
 import { recordNodeLifecycle } from "../node-replica.js";
-import { externalizeRuntimeEventImages } from "./runtime-image-externalization.js";
 import { logger } from "../logger.js";
 
-/** Internal node reports. Live `session.event`s are broadcast to browsers (best effort). Durable
+/** Internal node reports. Live `session.event`s are broadcast to browsers as sent (best effort; their
+ * images are already attachment references). Durable
  * `session.started`/`session.settled` drive the same SessionInstance effects as in-process runtimes,
  * each applied at most once, atomically with its (session, run, kind) receipt. The node delivers a
  * session's reports in occurrence order and only after the previous one was acknowledged, so a
@@ -19,8 +19,8 @@ export function nodeSessionReports(state: ServerState): NodeSessionReports {
       if (missed > 0) logger.warn(`Missed ${missed} node session event(s) before ${sessionId}#${seq}`);
       const row = getSession(sessionId);
       if (!row) return;
-      manager.broadcast({ type: "event", sessionId, projectId: row.project_id,
-        event: externalizeRuntimeEventImages(sessionId, event) });
+      // The node stored any inline image with `attachment.store` first: event images are references.
+      manager.broadcast({ type: "event", sessionId, projectId: row.project_id, event });
     },
     started: ({ sessionId, runId }) => manager.forSession(sessionId).startedWith(
       () => recordNodeLifecycle(getDb(), sessionId, runId, "started", JSON.stringify({ runId }))),

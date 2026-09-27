@@ -18,12 +18,18 @@ import type { Message, Models } from "@earendil-works/pi-ai";
 import type { ClientPromptContent, ConversationEntry, RuntimeMessage, AgentRuntimeEvent, RuntimeLifecycleSink, RuntimePromptOptions, RuntimePromptSubmission, RuntimeRunOutcome, SetRuntimeModelParams } from "./types.js";
 import { NodeModelNotFoundError } from "./types.js";
 import { PiStorageAdapter } from "../pi-storage.js";
+import type { ReferenceToolImages } from "./tool-images.js";
 
 type HydratePrompt = (sessionId: string, content: ClientPromptContent) => Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string; filename?: string; width?: number; height?: number }>;
 const noAttachmentHydration: HydratePrompt = (_sessionId, content) => {
   if (content.some(block => block.type === "image")) throw new Error("Attachment hydration unavailable on node");
   return content.filter((block): block is Extract<ClientPromptContent[number], { type: "text" }> => block.type === "text");
 };
+
+type ImageReference = Extract<ClientPromptContent[number], { type: "image" }>;
+function isImageReference(block: unknown): block is ImageReference {
+  return typeof block === "object" && block !== null && "type" in block && block.type === "image" && "attachmentId" in block && !("data" in block);
+}
 
 export interface ReinsInputMessage {
   role: "reinsInput";
@@ -207,10 +213,17 @@ export class AgentHarnessPiRuntime {
     ] : [];
   }
 
+  /** Prompt images, and tool-result images the node stored (see `referenceToolImages`), are canonical
+   * attachment references; they are hydrated to bytes only here, for the provider. */
   static toProviderMessagesForSession(sessionId: string, messages: AgentMessage[], hydratePrompt: HydratePrompt = noAttachmentHydration): Message[] {
-    return messages.flatMap((message) => message.role === "reinsInput"
-      ? convertToLlm([providerInput(message, hydratePrompt(sessionId, message.content)) as never])
-      : convertToLlm([message]));
+    return messages.flatMap((message) => {
+      if (message.role === "reinsInput") return convertToLlm([providerInput(message, hydratePrompt(sessionId, message.content)) as never]);
+      if (message.role === "toolResult" && message.content.some(isImageReference)) {
+        const content = message.content.map(block => isImageReference(block) ? hydratePrompt(sessionId, [block])[0]! : block);
+        return convertToLlm([{ ...message, content } as never]);
+      }
+      return convertToLlm([message]);
+    });
   }
 
   async prompt(
@@ -524,6 +537,8 @@ export interface CreateAgentHarnessPiRuntimeParams {
   executionEnv?: ExecutionEnv;
   lifecycle?: RuntimeLifecycleSink;
   hydratePrompt?: HydratePrompt;
+  /** Replaces tool-result content before Pi commits it (node: inline images become stored attachment references). */
+  referenceToolImages?: ReferenceToolImages;
   onError?: (message: string, error: unknown) => void;
 }
 
@@ -548,6 +563,15 @@ export async function createAgentHarnessPiRuntime(
       toProviderMessages: (messages) => AgentHarnessPiRuntime.toProviderMessagesForSession(params.sessionId, messages, params.hydratePrompt),
     }, BACKGROUND_CONTEXT);
     harness = made.harness;
+    const referenceToolImages = params.referenceToolImages;
+    if (referenceToolImages) {
+      harness.hooks.on("after_tool", async (event) => {
+        const content = await referenceToolImages(event.content);
+        // Pi's ImageContent requires `data`: like prompt images, references reach providers only through
+        // toProviderMessages hydration. Pi stores and replays tool-result content as given.
+        return content ? { content: content as typeof event.content } : undefined;
+      });
+    }
     const lane = await harness.lane("main", BACKGROUND_CONTEXT);
     const registeredToolNames = params.options.activeToolNames
       ?? params.options.tools?.map((tool) => tool.name)

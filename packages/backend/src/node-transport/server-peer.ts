@@ -1,4 +1,5 @@
-import { createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, provisionResult, statusResult, protocolVersion, nodeError, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type PeerOptions, type Provision, type SessionCommitted, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket } from "@reins/node/protocol";
+import { createHash } from "node:crypto";
+import { createRpcPeer, RpcFailure, scriptExecuteParams, scriptExecuteResult, scriptCancelParams, scriptSearchParams, scriptSearchResult, projectCreateTaskParams, projectCreateTaskResult, type ScriptExecute, type ScriptExecuteResult, type ScriptSearch, type ScriptSearchResult, type ProjectCreateTask, type ProjectCreateTaskResult, helloParams, readyResult, provisionResult, statusResult, protocolVersion, nodeError, methods, sessionCommittedParams, sessionCommittedResult, attachmentFetchParams, attachmentFetchResult, attachmentStoreParams, attachmentStoreResult, type StoredAttachment, sessionEventParams, sessionStartedParams, sessionSettledParams, acknowledgedResult, APPLICATION_ERROR, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES, capability, type Capability, type PeerOptions, type Provision, type SessionCommitted, type SessionEventReport, type SessionSettled, type SessionStarted, type WireSocket } from "@reins/node/protocol";
 
 /** `missed` counts seqs skipped since this connection's previous event for the session (0 for its first). */
 export type NodeSessionEvent = SessionEventReport & { missed: number };
@@ -10,6 +11,11 @@ export interface ServerHandlers {
   started(input: SessionStarted): void | Promise<void>;
   settled(input: SessionSettled): void | Promise<void>;
   attachment(sessionId: string, attachmentId: string): ServerAttachment | null | Promise<ServerAttachment | null>;
+  /** `attachment.store`: the session's attachment with these bytes (data not pruned), or null. Called for
+   * every chunk, so it also authorizes the session before any bytes are buffered. */
+  findAttachment(sessionId: string, sha256: string, mimeType: string): StoredAttachment | null | Promise<StoredAttachment | null>;
+  /** Stores bytes whose size and sha256 the transport verified; deduplicated by sha256 and MIME type. */
+  storeAttachment(sessionId: string, attachment: ServerAttachment): StoredAttachment | Promise<StoredAttachment>;
   event(input: NodeSessionEvent): void | Promise<void>;
   /** Agent tool calls, scoped by the handler from the server's own row for `sessionId`. `signal`
    * aborts on `script.cancel` for this call or when the connection closes. */
@@ -17,6 +23,8 @@ export interface ServerHandlers {
   scriptSearch(input: ScriptSearch): ScriptSearchResult | Promise<ScriptSearchResult>;
   createTask(input: ProjectCreateTask): Promise<ProjectCreateTaskResult>;
 }
+/** Partial `attachment.store` uploads buffered per connection; the oldest is evicted (and restarts from 0). */
+const MAX_PARTIAL_UPLOADS = 8;
 const rejection = (error: unknown) => error instanceof RpcFailure ? error : new RpcFailure(APPLICATION_ERROR, error instanceof Error ? error.message : String(error));
 
 /** Not wired to an upgrade route. Authentication and source authorization must precede production use. */
@@ -25,6 +33,8 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
   const eventSeqs = new Map<string, number>();
   // In-flight scripts by callId; aborted by `script.cancel` from the same session or on close.
   const scripts = new Map<string, { sessionId: string; controller: AbortController }>();
+  // Content-addressed partial uploads: (sessionId, sha256, mimeType) → contiguous prefix received so far.
+  const uploads = new Map<string, { byteSize: number; parts: Buffer[]; received: number }>();
   const peer = createRpcPeer(socket, {
     [methods.nodeHello]: {
       params: helloParams, result: readyResult,
@@ -76,6 +86,38 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
         if (data.byteLength > MAX_ATTACHMENT_BYTES) throw new RpcFailure(APPLICATION_ERROR, `Attachment exceeds ${MAX_ATTACHMENT_BYTES} byte transfer limit: ${attachmentId}`);
         if (offset > data.byteLength) throw new RpcFailure(APPLICATION_ERROR, `Attachment offset out of range: ${attachmentId}`);
         return { attachment: { ...metadata, data: Buffer.from(data.subarray(offset, offset + ATTACHMENT_CHUNK_BYTES)).toString("base64") } };
+      },
+    },
+    [methods.attachmentStore]: {
+      params: attachmentStoreParams, result: attachmentStoreResult,
+      async handle(value) {
+        const { epoch, sessionId, offset, data, ...metadata } = attachmentStoreParams.parse(value);
+        issued(epoch);
+        const key = JSON.stringify([sessionId, metadata.sha256, metadata.mimeType]);
+        let existing;
+        try { existing = await handlers.findAttachment(sessionId, metadata.sha256, metadata.mimeType); } catch (error) { throw rejection(error); }
+        // Already stored (a replay, or the same image again): no bytes needed.
+        if (existing) { uploads.delete(key); return { attachment: existing }; }
+        let upload = uploads.get(key);
+        if (upload && upload.byteSize !== metadata.byteSize) { uploads.delete(key); throw new RpcFailure(APPLICATION_ERROR, `Attachment upload size changed: ${metadata.sha256}`); }
+        if (!upload) {
+          if (uploads.size >= MAX_PARTIAL_UPLOADS) uploads.delete(uploads.keys().next().value!);
+          uploads.set(key, upload = { byteSize: metadata.byteSize, parts: [], received: 0 });
+        }
+        // A retried or out-of-place chunk: the node continues from what this connection holds.
+        if (offset !== upload.received) return { nextOffset: upload.received };
+        const chunk = Buffer.from(data, "base64");
+        if (chunk.byteLength !== Math.min(ATTACHMENT_CHUNK_BYTES, metadata.byteSize - offset)) {
+          uploads.delete(key);
+          throw new RpcFailure(APPLICATION_ERROR, `Attachment chunk size mismatch: ${metadata.sha256}`);
+        }
+        upload.parts.push(chunk);
+        upload.received += chunk.byteLength;
+        if (upload.received < metadata.byteSize) return { nextOffset: upload.received };
+        uploads.delete(key);
+        const bytes = Buffer.concat(upload.parts);
+        if (createHash("sha256").update(bytes).digest("hex") !== metadata.sha256) throw new RpcFailure(APPLICATION_ERROR, `Attachment checksum mismatch: ${metadata.sha256}`);
+        try { return { attachment: await handlers.storeAttachment(sessionId, { ...metadata, data: bytes }) }; } catch (error) { throw rejection(error); }
       },
     },
     [methods.scriptExecute]: {
@@ -139,6 +181,7 @@ export function createServerTransport(socket: WireSocket, handlers: ServerHandle
     close() {
       for (const { controller } of scripts.values()) controller.abort();
       scripts.clear();
+      uploads.clear();
       peer.close();
     },
     async provision(input: Provision, timeoutMs?: number) { return peer.call(methods.sessionProvision, { ...input, epoch: authorized(methods.sessionProvision) }, provisionResult, { errorData: nodeError, timeoutMs }); },

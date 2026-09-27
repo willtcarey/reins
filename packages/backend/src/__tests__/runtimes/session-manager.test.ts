@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 import { executeSessionCommand, wakeSessionInput } from "../../runtimes/node-execution.js";
 import { closeNodeDb, setNodeDb, initializeNodeStorage } from "@reins/node/storage";
 import { join } from "node:path";
-import { describe, test, expect, mock } from "bun:test";
+import { describe, test, expect, mock, spyOn } from "bun:test";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { getDb } from "../../db.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
@@ -294,7 +294,10 @@ describe("runtime sessions manager", () => {
     registerPiProvider(provider.provider);
     setApiKeyCredential(provider.provider.id, "test-key");
     const state = createServerState();
+    const client = createCapturingWsClient();
+    state.clients.add(client.client);
     const stop = install(state);
+    const warn = spyOn(console, "warn");
     try {
       const project = createProject("Node image", repo.dir);
       const created = createNewSession(state, project.id, repo.dir, { model: { provider: provider.provider.id, modelId: "fake" } });
@@ -312,8 +315,14 @@ describe("runtime sessions manager", () => {
         "SELECT data FROM node_attachments WHERE session_id = ? AND attachment_id = ?",
       ).get(created.id, attachment.id)?.data).toEqual(Buffer.from("node image bytes"));
       expect(JSON.stringify(loadMessages(created.id))).toContain(attachment.id);
+      // The prompt's image is already a reference: its live events reach the browser (none dropped).
+      for (let i = 0; i < 100 && !client.sent.some(message => message.event?.type === "agent_end"); i++) await Bun.sleep(5);
+      expect(warn.mock.calls.filter(([message]) => String(message).includes("Dropped"))).toEqual([]);
+      const promptEvents = client.sent.filter(message => message.type === "event" && message.sessionId === created.id
+        && JSON.stringify(message.event).includes(attachment.id)).map(message => message.event.type);
+      expect(promptEvents).toEqual(["message_start", "message_end", "entry_added"]);
       await internalNodeFor(state).close(created.id);
-    } finally { stop(); unregisterPiProvider(provider.provider.id); closeNodeDb(); }
+    } finally { warn.mockRestore(); stop(); unregisterPiProvider(provider.provider.id); closeNodeDb(); }
   }, 15_000);
 
   test("createNewSession persists runtime metadata via sessions manager orchestration", async () => {

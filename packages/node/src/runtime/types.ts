@@ -1,15 +1,21 @@
 import type { LocalPromptBlock } from "../resources/prompt.js";
 
 export type ClientPromptContent = LocalPromptBlock[];
-export type RuntimeContentBlock =
+/** Base64 image bytes as Pi holds them (e.g. a tool result reading a PNG). Never sent in a session event. */
+export type InlineImageBlock = { type: "image"; data: string; mimeType: string; filename?: string; width?: number; height?: number };
+/** A server-stored attachment: user prompt images always, and node images once `attachment.store` accepted them. */
+export type ImageReferenceBlock = Extract<LocalPromptBlock, { type: "image" }>;
+export type RuntimeImageBlock = InlineImageBlock | ImageReferenceBlock;
+/** `TImage` narrows image blocks: a runtime holds both kinds, a `session.event` only references. */
+export type RuntimeContentBlock<TImage extends RuntimeImageBlock = RuntimeImageBlock> =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string; thinkingSignature?: string }
   | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> }
-  | { type: "image"; data: string; mimeType: string; filename?: string; width?: number; height?: number };
-export interface RuntimeMessage {
+  | TImage;
+export interface RuntimeMessage<TImage extends RuntimeImageBlock = RuntimeImageBlock> {
   role: string;
   metadata?: Record<string, unknown>;
-  content?: RuntimeContentBlock[];
+  content?: RuntimeContentBlock<TImage>[];
   stopReason?: string;
   summary?: string;
   [key: string]: unknown;
@@ -44,18 +50,18 @@ export class NodeModelNotFoundError extends Error {
   }
 }
 export interface SetRuntimeModelParams { provider: string; modelId: string; thinkingLevel?: string | null }
-export type AgentRuntimeEvent =
+export type AgentRuntimeEvent<TImage extends RuntimeImageBlock = RuntimeImageBlock> =
   | { type: "agent_start" }
-  | { type: "agent_end"; messages: RuntimeMessage[]; runId?: string; status?: "completed" | "failed" | "aborted"; error?: RuntimeOperationError }
+  | { type: "agent_end"; messages: RuntimeMessage<TImage>[]; runId?: string; status?: "completed" | "failed" | "aborted"; error?: RuntimeOperationError }
   | { type: "turn_start" }
-  | { type: "turn_end"; message: RuntimeMessage; toolResults: RuntimeMessage[] }
-  | { type: "message_start"; message: RuntimeMessage; streamId: string }
-  | { type: "message_update"; message: RuntimeMessage; streamId: string; assistantMessageEvent: { type: string; delta?: string; [key: string]: unknown } }
-  | { type: "message_end"; message: RuntimeMessage; streamId: string; entryId?: string }
-  | { type: "entry_added"; entry: ConversationEntry<RuntimeMessage> }
+  | { type: "turn_end"; message: RuntimeMessage<TImage>; toolResults: RuntimeMessage<TImage>[] }
+  | { type: "message_start"; message: RuntimeMessage<TImage>; streamId: string }
+  | { type: "message_update"; message: RuntimeMessage<TImage>; streamId: string; assistantMessageEvent: { type: string; delta?: string; [key: string]: unknown } }
+  | { type: "message_end"; message: RuntimeMessage<TImage>; streamId: string; entryId?: string }
+  | { type: "entry_added"; entry: ConversationEntry<RuntimeMessage<TImage>> }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
   | { type: "tool_execution_update"; toolCallId: string; toolName: string; args: Record<string, unknown>; partialResult: unknown }
-  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: { content: RuntimeContentBlock[]; details?: Record<string, unknown>; [key: string]: unknown }; isError: boolean }
+  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: { content: RuntimeContentBlock<TImage>[]; details?: Record<string, unknown>; [key: string]: unknown }; isError: boolean }
   | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
   | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
   | { type: "compaction_start"; reason: string }

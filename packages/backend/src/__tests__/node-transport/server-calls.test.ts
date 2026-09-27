@@ -44,7 +44,7 @@ async function withNode(run: (node: Node, nodeDb: Database) => Promise<void>) {
 const until = async (done: () => boolean) => { for (let i = 0; i < 200 && !done(); i++) await Bun.sleep(5); };
 const pending = (db: Database) => db.query<{ n: number }, []>("SELECT COUNT(*) n FROM session_outbox").get()!.n;
 const unexpectedTool = () => { throw new Error("unexpected tool call"); };
-const noTools = { scriptExecute: unexpectedTool, scriptSearch: unexpectedTool, createTask: unexpectedTool };
+const noTools = { scriptExecute: unexpectedTool, scriptSearch: unexpectedTool, createTask: unexpectedTool, findAttachment: () => null, storeAttachment: () => { throw new Error("unexpected attachment store"); } };
 const noReports = { started: () => { throw new Error("unexpected report"); }, settled: () => { throw new Error("unexpected report"); }, ...noTools };
 
 test("committed batches cross the wire byte-for-byte, survive a missing or lost link and are acknowledged idempotently", async () => {
@@ -206,6 +206,44 @@ test("server rejects node calls with malformed params or an epoch it did not iss
   frame(6, "session.settled", { epoch, sessionId: "s", runId: "r", status: "running", metadata: { model: null, thinkingLevel: null }, reply: null });
   await Bun.sleep(5);
   expect(sent.map(reply => [reply.id, reply.error?.code]).toSorted((a, b) => a[0]! - b[0]!)).toEqual([[1, -32003], [2, -32003], [3, -32602], [4, -32602], [5, -32003], [6, -32602]]);
+  server.close();
+});
+
+test("attachment.store resumes from the server's contiguous prefix and stores only verified bytes", async () => {
+  const sent: Array<{ id?: number; result?: any; error?: { code: number; message: string } }> = [];
+  const stored: ServerAttachment[] = [];
+  const server = createServerTransport({ send: data => sent.push(JSON.parse(data)), close: () => {} }, {
+    committed: () => {}, attachment: () => null, event: () => {}, ...noReports,
+    findAttachment: () => null,
+    storeAttachment: (_sessionId, attachment) => { stored.push(attachment); return { attachmentId: "att_1", mimeType: attachment.mimeType, byteSize: attachment.byteSize, sha256: attachment.sha256 }; },
+  });
+  let id = 1;
+  const call = async (method: string, params: unknown) => {
+    const request = ++id;
+    server.receive(JSON.stringify({ jsonrpc: "2.0", id: request, method, params }));
+    await Bun.sleep(1);
+    return sent.find(reply => reply.id === request)!;
+  };
+  server.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "node.hello", params: { minVersion: 1, maxVersion: 1, capabilities: [], instanceId: "n" } }));
+  await Bun.sleep(1);
+  const epoch = sent[0]!.result.epoch;
+  const bytes = Buffer.alloc(ATTACHMENT_CHUNK_BYTES + 10, 7);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const chunk = (offset: number, data = bytes.subarray(offset, offset + ATTACHMENT_CHUNK_BYTES)) =>
+    call("attachment.store", { epoch, sessionId: "s", mimeType: "image/png", sha256, byteSize: bytes.length, offset, data: data.toString("base64") });
+  expect((await chunk(ATTACHMENT_CHUNK_BYTES)).result).toEqual({ nextOffset: 0 }); // nothing held yet: start at 0
+  expect((await chunk(0)).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES });
+  expect((await chunk(0)).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES }); // retried chunk is not appended twice
+  expect(stored).toEqual([]);
+  expect((await chunk(ATTACHMENT_CHUNK_BYTES)).result).toEqual({ attachment: { attachmentId: "att_1", mimeType: "image/png", byteSize: bytes.length, sha256 } });
+  expect(stored).toHaveLength(1);
+  expect(Buffer.from(stored[0]!.data)).toEqual(bytes);
+  // Tampered bytes fail verification and leave nothing buffered.
+  expect((await chunk(0)).result).toEqual({ nextOffset: ATTACHMENT_CHUNK_BYTES });
+  expect((await chunk(ATTACHMENT_CHUNK_BYTES, Buffer.alloc(10, 8))).error).toMatchObject({ code: -32000, message: `Attachment checksum mismatch: ${sha256}` });
+  expect((await chunk(ATTACHMENT_CHUNK_BYTES)).result).toEqual({ nextOffset: 0 });
+  expect(stored).toHaveLength(1);
+  expect((await call("attachment.store", { epoch: crypto.randomUUID(), sessionId: "s", mimeType: "image/png", sha256, byteSize: 1, offset: 0, data: "AA==" })).error).toMatchObject({ code: -32003 });
   server.close();
 });
 

@@ -55,7 +55,8 @@ export type HydratedPromptBlock = TextContentBlock | InlineImageBlock;
 export type HydratedPromptContent = HydratedPromptBlock[];
 
 export type PersistedContentBlock = TextContentBlock | ThinkingContentBlock | ToolCallContentBlock | ImageAttachmentBlock;
-export type RuntimeContentBlock = TextContentBlock | ThinkingContentBlock | ToolCallContentBlock | InlineImageBlock;
+/** Runtime images are inline bytes (e.g. tool results) or refs to stored attachments (user prompts). */
+export type RuntimeContentBlock = TextContentBlock | ThinkingContentBlock | ToolCallContentBlock | InlineImageBlock | ImageAttachmentBlock;
 
 export interface RuntimeMessage {
   role: string;
